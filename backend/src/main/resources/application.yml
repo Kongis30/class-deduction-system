@@ -1,0 +1,84 @@
+spring:
+  application:
+    name: class-deduction-system-backend
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/class_deduction_system?useUnicode=true&characterEncoding=utf8&serverTimezone=America/New_York
+    username: root
+    password: 123456whw
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 0
+      timeout: 5s
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: 2572257215@qq.com
+    password: pvoicbuhjfsgecib
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+  jackson:
+    time-zone: America/New_York
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: is_deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  health:
+    mail:
+      enabled: false
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+app:
+  security:
+    enabled: true
+  auth:
+    session-ttl-hours: 12
+    interceptor-enabled: true
+  cors:
+    allowed-origins:
+      - http://localhost:5173
+      - http://127.0.0.1:5173
+      - http://localhost:3000
+      - http://127.0.0.1:3000
+  notification:
+    email:
+      enabled: true
+      from-address: 2572257215@qq.com
+      from-name: JIN BEST TUTORING
+      strict-allowlist: false
+      allowed-recipients:
+        - 202421045442@mail.scut.edu.cn
+      max-batch-size: 20
+      max-retries: 5

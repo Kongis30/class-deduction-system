@@ -1,0 +1,253 @@
+<template>
+  <div class="page-stack">
+    <section class="course-product-panel">
+      <div class="panel-header">
+        <span class="panel-header__title">Campuses</span>
+        <div class="panel-header__actions">
+          <el-button type="primary" @click="openCampusDialog()">
+            <el-icon><Plus /></el-icon>
+            Add campus
+          </el-button>
+        </div>
+      </div>
+
+      <el-table
+        v-loading="loading"
+        :data="tableData"
+        row-key="id"
+        class="product-table"
+        :show-empty="true"
+      >
+        <el-table-column label="Display order" width="120" align="center" prop="displayOrder" />
+        <el-table-column label="Campus name" min-width="200">
+          <template #default="{ row }">
+            <strong>{{ row.campusName }}</strong>
+          </template>
+        </el-table-column>
+        <el-table-column label="Status" min-width="100" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
+              {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Notes" min-width="200" prop="notes" show-overflow-tooltip />
+        <el-table-column label="Actions" min-width="140" fixed="right">
+          <template #default="{ row }">
+            <div class="table-actions">
+              <el-button text type="primary" @click="openCampusDialog(row)">Edit</el-button>
+              <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
+
+    <!-- Campus dialog -->
+    <el-dialog
+      v-model="campusDialogVisible"
+      width="480px"
+      :close-on-click-modal="false"
+      class="campus-dialog"
+    >
+      <template #header>
+        <h3>{{ editingId ? 'Edit campus' : 'New campus' }}</h3>
+      </template>
+
+      <el-form ref="campusFormRef" :model="campusForm" :rules="campusFormRules" label-position="top">
+        <el-form-item label="Campus name" prop="campusName">
+          <el-input v-model="campusForm.campusName" placeholder="e.g. Main Building" />
+        </el-form-item>
+        <el-form-item label="Display order">
+          <el-input-number v-model="campusForm.displayOrder" :min="1" :max="999" :controls="false" />
+        </el-form-item>
+        <el-form-item label="Status">
+          <el-select v-model="campusForm.status" style="width: 100%;">
+            <el-option label="Active" value="ACTIVE" />
+            <el-option label="Inactive" value="INACTIVE" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Notes">
+          <el-input v-model="campusForm.notes" type="textarea" :rows="2" placeholder="Optional notes" />
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="campusDialogVisible = false">Cancel</el-button>
+          <el-button type="primary" :loading="submitting" @click="handleSubmit">Save</el-button>
+        </div>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { Plus } from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { reactive, ref } from 'vue';
+
+import {
+  createCampus,
+  deleteCampus,
+  fetchCampuses,
+  updateCampus,
+  type CampusSavePayload,
+} from '@/api/base-data';
+import type { CampusItem } from '@/types/domain';
+
+const loading = ref(false);
+const submitting = ref(false);
+const campusDialogVisible = ref(false);
+const editingId = ref<number | null>(null);
+const campusFormRef = ref();
+
+const tableData = ref<CampusItem[]>([]);
+
+const campusForm = reactive<CampusSavePayload>({
+  campusName: '',
+  displayOrder: 99,
+  status: 'ACTIVE',
+  notes: '',
+});
+
+const campusFormRules = {
+  campusName: [{ required: true, message: 'Campus name is required' }],
+};
+
+// ─── Load Data ──────────────────────────────────────────
+async function loadData() {
+  loading.value = true;
+  try {
+    const res = await fetchCampuses();
+    tableData.value = res.data.data;
+  } catch {
+    ElMessage.error('Failed to load campuses.');
+  } finally {
+    loading.value = false;
+  }
+}
+
+// ─── Form ──────────────────────────────────────────────
+function openCampusDialog(row?: CampusItem) {
+  editingId.value = row?.id ?? null;
+  if (row) {
+    Object.assign(campusForm, {
+      campusName: row.campusName,
+      displayOrder: row.displayOrder,
+      status: row.status,
+      notes: row.notes ?? '',
+    });
+  } else {
+    Object.assign(campusForm, {
+      campusName: '',
+      displayOrder: 99,
+      status: 'ACTIVE',
+      notes: '',
+    });
+  }
+  campusFormRef.value?.clearValidate();
+  campusDialogVisible.value = true;
+}
+
+async function handleSubmit() {
+  const valid = await campusFormRef.value?.validate().catch(() => false);
+  if (!valid) return;
+
+  submitting.value = true;
+  try {
+    if (editingId.value) {
+      await updateCampus(editingId.value, { ...campusForm });
+      ElMessage.success('Campus updated.');
+    } else {
+      await createCampus({ ...campusForm });
+      ElMessage.success('Campus created.');
+    }
+    campusDialogVisible.value = false;
+    loadData();
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
+  } finally {
+    submitting.value = false;
+  }
+}
+
+// ─── Delete ─────────────────────────────────────────────
+async function handleDelete(row: CampusItem) {
+  try {
+    await ElMessageBox.confirm(
+      `Delete campus "${row.campusName}"?`,
+      'Confirm delete',
+      { type: 'warning' },
+    );
+    await deleteCampus(row.id);
+    ElMessage.success('Deleted.');
+    loadData();
+  } catch {
+    // User cancelled
+  }
+}
+
+// ─── Init ────────────────────────────────────────────────
+loadData();
+</script>
+
+<style scoped>
+.course-product-panel {
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #fff;
+  padding: 16px 20px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.panel-header__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.panel-header__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.product-table {
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #ebeef5;
+}
+
+.table-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.campus-dialog :deep(.el-dialog__header) {
+  border-bottom: 1px solid #ebeef5;
+  padding: 14px 20px;
+  margin-right: 0;
+}
+
+.campus-dialog :deep(.el-dialog__body) {
+  padding: 16px 20px;
+}
+
+.campus-dialog :deep(.el-dialog__footer) {
+  border-top: 1px solid #ebeef5;
+  padding: 12px 20px;
+}
+</style>

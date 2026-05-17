@@ -1,0 +1,33 @@
+package com.classdeduction.system.modules.enrollment.dto;
+
+import com.classdeduction.system.common.model.PageQuery;
+import io.swagger.v3.oas.annotations.media.Schema;
+import lombok.Getter;
+import lombok.Setter;
+
+/**
+ * 报名单分页查询参数。
+ */
+@Getter
+@Setter
+@Schema(description = "报名单分页查询参数")
+public class EnrollmentOrderPageQuery extends PageQuery {
+
+    @Schema(description = "关键字，支持报名单号和学生姓名", example = "EN2026")
+    private String keyword;
+
+    @Schema(description = "订单状态", example = "CONFIRMED")
+    private String orderStatus;
+
+    @Schema(description = "支付状态", example = "PAID")
+    private String paymentStatus;
+
+    @Schema(description = "学生ID", example = "1880000000000000001")
+    private Long studentId;
+
+    @Schema(description = "班课ID（筛选班课订单时使用）", example = "1880000000000000005")
+    private Long classId;
+
+    @Schema(description = "排除班课订单（仅查询1v1订单）")
+    private boolean excludeClassOrders;
+}
