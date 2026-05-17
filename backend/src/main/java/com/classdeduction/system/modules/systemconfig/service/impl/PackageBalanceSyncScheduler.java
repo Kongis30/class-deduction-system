@@ -7,8 +7,6 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
-import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
-import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;

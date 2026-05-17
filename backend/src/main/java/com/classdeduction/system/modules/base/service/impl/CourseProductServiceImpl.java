@@ -156,6 +156,7 @@ public class CourseProductServiceImpl implements CourseProductService {
     private void ensureProductCodeUnique(Long currentId, String productCode) {
         CourseProductEntity existing = courseProductMapper.selectOne(new LambdaQueryWrapper<CourseProductEntity>()
                 .eq(CourseProductEntity::getProductCode, productCode)
+                .eq(CourseProductEntity::getIsDeleted, 0)
                 .last("LIMIT 1"));
         if (existing != null && !Objects.equals(existing.getId(), currentId)) {
             throw new BusinessException("Course product code already exists.");

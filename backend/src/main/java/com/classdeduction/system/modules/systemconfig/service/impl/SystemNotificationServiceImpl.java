@@ -53,6 +53,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -89,12 +91,14 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     private final UserAccountMapper userAccountMapper;
 
     @Override
+    @Cacheable(value = "systemConfig:brandConfig", key = "'current'")
     public BrandConfigVO getCurrentBrandConfig() {
         return toBrandConfigVO(findCurrentBrandConfig());
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = "systemConfig:brandConfig", allEntries = true)
     public BrandConfigVO upsertCurrentBrandConfig(BrandConfigUpdateRequest request, Long operatorId) {
         BrandConfigEntity entity = findCurrentBrandConfig();
         if (entity == null) {
@@ -137,12 +141,14 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     }
 
     @Override
+    @Cacheable(value = "systemConfig:notificationTemplate", key = "#id")
     public NotificationTemplateVO getTemplate(Long id) {
         return toTemplateVO(requireTemplate(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = "systemConfig:notificationTemplate", allEntries = true)
     public NotificationTemplateVO updateTemplate(Long id, NotificationTemplateUpdateRequest request, Long operatorId) {
         NotificationTemplateEntity entity = requireTemplate(id);
         entity.setTemplateName(request.getTemplateName());
@@ -286,6 +292,7 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     // ── Sender Config ──────────────────────────────────────────────────────────
 
     @Override
+    @Cacheable(value = "systemConfig:notificationConfig", key = "'current'")
     public NotificationConfigVO getNotificationConfig() {
         NotificationConfigEntity entity = findNotificationConfig();
         return toConfigVO(entity);
@@ -293,6 +300,7 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = "systemConfig:notificationConfig", allEntries = true)
     public NotificationConfigVO updateNotificationConfig(NotificationConfigUpdateRequest request, Long operatorId) {
         NotificationConfigEntity entity = findNotificationConfig();
         if (entity == null) {
@@ -337,6 +345,7 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     // ── Trigger Rules ──────────────────────────────────────────────────────────
 
     @Override
+    @Cacheable(value = "systemConfig:notificationTriggerRules", key = "'listAll'")
     public List<NotificationTriggerRuleVO> listTriggerRules() {
         return notificationTriggerRuleMapper.selectList(
                         new LambdaQueryWrapper<NotificationTriggerRuleEntity>()
@@ -349,6 +358,7 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = "systemConfig:notificationTriggerRules", allEntries = true)
     public NotificationTriggerRuleVO updateTriggerRule(Long id, NotificationTriggerRuleUpdateRequest request, Long operatorId) {
         NotificationTriggerRuleEntity entity = notificationTriggerRuleMapper.selectById(id);
         if (entity == null) {

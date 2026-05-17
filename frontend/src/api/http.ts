@@ -86,7 +86,6 @@ export function extractErrorMessage(error: unknown): string {
       case 'ECONNABORTED':
         return '请求超时，请检查网络后重试。';
       case 'ERR_NETWORK':
-      case 'ERR_NETWORK':
         return '网络连接失败，请检查网络是否正常。';
       default:
         break;

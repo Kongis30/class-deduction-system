@@ -8,6 +8,8 @@ import com.classdeduction.system.modules.base.mapper.SubjectMapper;
 import com.classdeduction.system.modules.base.service.SubjectService;
 import com.classdeduction.system.modules.base.vo.SubjectVO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -27,6 +29,7 @@ public class SubjectServiceImpl implements SubjectService {
     private final SubjectMapper subjectMapper;
 
     @Override
+    @Cacheable(value = "reference:subjects", key = "'listAllActive'")
     public List<SubjectVO> listAllActive() {
         return subjectMapper.selectList(new LambdaQueryWrapper<SubjectEntity>()
                         .eq(SubjectEntity::getStatus, "ACTIVE")
@@ -39,12 +42,14 @@ public class SubjectServiceImpl implements SubjectService {
     }
 
     @Override
+    @Cacheable(value = "reference:subject", key = "#id")
     public SubjectVO getSubject(Long id) {
         return toVO(requireSubject(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:subjects", "reference:subject"}, allEntries = true)
     public Long createSubject(SubjectSaveRequest request) {
         ensureSubjectNameUnique(null, request.getSubjectName());
         SubjectEntity entity = new SubjectEntity();
@@ -55,6 +60,7 @@ public class SubjectServiceImpl implements SubjectService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:subjects", "reference:subject"}, allEntries = true)
     public void updateSubject(Long id, SubjectSaveRequest request) {
         SubjectEntity entity = requireSubject(id);
         ensureSubjectNameUnique(id, request.getSubjectName());
@@ -64,6 +70,7 @@ public class SubjectServiceImpl implements SubjectService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:subjects", "reference:subject"}, allEntries = true)
     public void deleteSubject(Long id) {
         requireSubject(id);
         subjectMapper.deleteById(id);

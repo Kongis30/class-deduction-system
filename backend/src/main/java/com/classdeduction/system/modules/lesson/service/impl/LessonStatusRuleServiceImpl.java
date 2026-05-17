@@ -12,6 +12,8 @@ import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.lesson.service.LessonStatusRuleService;
 import com.classdeduction.system.modules.lesson.vo.LessonStatusRuleVO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -64,12 +66,14 @@ public class LessonStatusRuleServiceImpl implements LessonStatusRuleService {
     }
 
     @Override
+    @Cacheable(value = "systemConfig:lessonStatusRule", key = "#id")
     public LessonStatusRuleVO getRule(Long id) {
         return toVO(requireRule(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = "systemConfig:lessonStatusRule", allEntries = true)
     public LessonStatusRuleVO updateRule(Long id, LessonStatusRuleUpdateRequest request, Long operatorId) {
         LessonStatusRuleEntity entity = requireRule(id);
         String targetStatus = normalizeStatus(request.getStatus());

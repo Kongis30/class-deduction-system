@@ -1,11 +1,7 @@
 package com.classdeduction.system.modules.schedule;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.entity.StudentEntity;
-import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
@@ -20,6 +16,7 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -44,6 +41,7 @@ public class DashboardServiceImpl implements DashboardService {
     private final NotificationTriggerRuleMapper notificationTriggerRuleMapper;
 
     @Override
+    @Cacheable(value = "dashboard:summary", key = "'getSummary'")
     public Map<String, Object> getSummary() {
         LocalDate today = LocalDate.now();
         LocalDateTime todayStart = today.atStartOfDay();
@@ -83,70 +81,35 @@ public class DashboardServiceImpl implements DashboardService {
                         .le(CoursePackageEntity::getRemainingUnits, lowBalanceThreshold)
         );
 
-        // 各校区明细
+        // ========= 各校区明细（批量GROUP BY查询，替代N+1）=========
+
+        // 1. 批量查询学生/教师/教室的校区分布
+        Map<Long, Long> campusStudentCount = toCampusCountMap(studentMapper.countGroupByCampus());
+        Map<Long, Long> campusTeacherCount = toCampusCountMap(teacherMapper.countGroupByCampus());
+        Map<Long, Long> campusClassroomCount = toCampusCountMap(classroomMapper.countGroupByCampus());
+
+        // 2. 批量查询今日待上课数的校区分布（JOIN classroom推算，排除已核销记录）
+        Map<Long, Long> campusTodayLessons = toCampusCountMap(
+                occurrenceMapper.countTodayByCampus(todayStart, todayEnd,
+                        recordedOccurrenceIds.isEmpty() ? null : recordedOccurrenceIds));
+
+        // 3. 批量查询低余量课包的校区分布（JOIN student推算）
+        Map<Long, Long> campusLowBalance = toCampusCountMap(
+                coursePackageMapper.countLowBalanceByCampus(lowBalanceThreshold));
+
+        // 4. 组装校区明细
         List<CampusEntity> campuses = campusMapper.selectList(new LambdaQueryWrapper<>());
         List<Map<String, Object>> campusDetails = new ArrayList<>();
-
         for (CampusEntity campus : campuses) {
             Long campusId = campus.getId();
-
-            // 学生数
-            long campusStudents = studentMapper.selectCount(
-                    new LambdaQueryWrapper<StudentEntity>().eq(StudentEntity::getCampusId, campusId)
-            );
-            // 教师数
-            long campusTeachers = teacherMapper.selectCount(
-                    new LambdaQueryWrapper<TeacherEntity>().eq(TeacherEntity::getCampusId, campusId)
-            );
-            // 教室数
-            long campusClassrooms = classroomMapper.selectCount(
-                    new LambdaQueryWrapper<ClassroomEntity>().eq(ClassroomEntity::getCampusId, campusId)
-            );
-
-            // 今日课数（通过教室归属推算）
-            List<Long> classroomIds = classroomMapper.selectList(
-                    new LambdaQueryWrapper<ClassroomEntity>()
-                            .select(ClassroomEntity::getId)
-                            .eq(ClassroomEntity::getCampusId, campusId)
-            ).stream().map(ClassroomEntity::getId).toList();
-
-            long campusTodayLessons = 0;
-            if (!classroomIds.isEmpty()) {
-                campusTodayLessons = occurrenceMapper.selectCount(
-                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                                .ge(LessonOccurrenceEntity::getPlannedStartAt, todayStart)
-                                .lt(LessonOccurrenceEntity::getPlannedEndAt, todayEnd)
-                                .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
-                                .in(LessonOccurrenceEntity::getPlannedClassroomId, classroomIds)
-                                .notIn(!recordedOccurrenceIds.isEmpty(), LessonOccurrenceEntity::getId, recordedOccurrenceIds)
-                );
-            }
-
-            // 低余量课包（通过学生归属推算）
-            List<Long> studentIds = studentMapper.selectList(
-                    new LambdaQueryWrapper<StudentEntity>()
-                            .select(StudentEntity::getId)
-                            .eq(StudentEntity::getCampusId, campusId)
-            ).stream().map(StudentEntity::getId).toList();
-
-            long campusLowBalance = 0;
-            if (!studentIds.isEmpty()) {
-                campusLowBalance = coursePackageMapper.selectCount(
-                        new LambdaQueryWrapper<CoursePackageEntity>()
-                                .eq(CoursePackageEntity::getPackageStatus, "ACTIVE")
-                                .le(CoursePackageEntity::getRemainingUnits, lowBalanceThreshold)
-                                .in(CoursePackageEntity::getStudentId, studentIds)
-                );
-            }
-
             Map<String, Object> detail = new HashMap<>();
             detail.put("campusId", campusId);
             detail.put("campusName", campus.getCampusName());
-            detail.put("students", campusStudents);
-            detail.put("teachers", campusTeachers);
-            detail.put("classrooms", campusClassrooms);
-            detail.put("todayLessons", campusTodayLessons);
-            detail.put("lowBalancePackages", campusLowBalance);
+            detail.put("students", campusStudentCount.getOrDefault(campusId, 0L));
+            detail.put("teachers", campusTeacherCount.getOrDefault(campusId, 0L));
+            detail.put("classrooms", campusClassroomCount.getOrDefault(campusId, 0L));
+            detail.put("todayLessons", campusTodayLessons.getOrDefault(campusId, 0L));
+            detail.put("lowBalancePackages", campusLowBalance.getOrDefault(campusId, 0L));
             campusDetails.add(detail);
         }
 
@@ -171,5 +134,24 @@ public class DashboardServiceImpl implements DashboardService {
                         .last("LIMIT 1")
         );
         return rule != null ? rule.getThresholdValue() : null;
+    }
+
+    /**
+     * 将 GROUP BY 查询结果（List&lt;Map&lt;String, Object&gt;&gt;）转为 Map&lt;campusId, count&gt;。
+     * 各 mapper 的 countGroupBy / countTodayByCampus / countLowBalanceByCampus
+     * 均返回包含 "campus_id" 和 "cnt" 键的 Map。
+     */
+    private Map<Long, Long> toCampusCountMap(List<Map<String, Object>> rows) {
+        Map<Long, Long> result = new HashMap<>();
+        if (rows != null) {
+            for (Map<String, Object> row : rows) {
+                Object campusIdObj = row.get("campus_id");
+                Object cntObj = row.get("cnt");
+                if (campusIdObj != null && cntObj != null) {
+                    result.put(((Number) campusIdObj).longValue(), ((Number) cntObj).longValue());
+                }
+            }
+        }
+        return result;
     }
 }

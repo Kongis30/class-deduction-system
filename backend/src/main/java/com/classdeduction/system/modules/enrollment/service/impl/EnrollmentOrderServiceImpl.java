@@ -111,7 +111,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (last != null) {
             String no = last.getEnrollmentNo();
             int seq = Integer.parseInt(no.substring(no.length() - 4));
-            BusinessNoGenerator.initSequence(seq);
+            BusinessNoGenerator.initSequence("EO", seq);
         }
     }
 

@@ -995,7 +995,7 @@
         :rules="methodFormRules"
       >
         <el-form-item label="Method name" prop="methodName">
-          <el-input v-model="methodForm.methodName" placeholder="e.g. WeChat Pay" @input="autoGenerateMethodCode" />
+          <el-input v-model="methodForm.methodName" placeholder="e.g. WeChat Pay" />
         </el-form-item>
         <div class="enrollment-form__row">
           <el-form-item label="Sort order">
@@ -1210,20 +1210,6 @@ function openPaymentMethodDialog() {
   }
 }
 
-function methodNameToCode(name: string): string {
-  return name
-    .trim()
-    .replace(/[^a-zA-Z0-9\s_-]/g, '')
-    .replace(/[\s-]+/g, '_')
-    .replace(/_+/g, '_')
-    .toUpperCase();
-}
-
-function autoGenerateMethodCode() {
-  if (!editingMethodId.value) {
-    methodForm.methodCode = methodNameToCode(methodForm.methodName);
-  }
-}
 
 function getPaymentMethodName(code: string): string {
   const m = paymentMethods.value.find(p => p.methodCode === code);
@@ -1259,12 +1245,12 @@ async function handleMethodSave() {
   if (!valid) return;
   savingMethod.value = true;
   try {
-    // Auto-generate methodCode from methodName for new methods
-    if (!editingMethodId.value) {
-      methodForm.methodCode = methodNameToCode(methodForm.methodName);
-    }
     const payload = {
-      methodCode: methodForm.methodCode,
+      methodCode: editingMethodId.value ? methodForm.methodCode : methodForm.methodName
+        .replace(/([a-z])([A-Z])/g, '$1_$2')
+        .replace(/[\s-]+/g, '_')
+        .replace(/[^a-zA-Z0-9_]/g, '')
+        .toUpperCase(),
       methodName: methodForm.methodName,
       sortOrder: methodForm.sortOrder,
       status: methodForm.status,

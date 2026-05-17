@@ -61,7 +61,11 @@ const rules: FormRules<LoginPayload> = {
 };
 
 async function submitLogin() {
-  await formRef.value?.validate();
+  try {
+    await formRef.value?.validate();
+  } catch {
+    return; // form validation failed, do not submit
+  }
   try {
     await authStore.signIn(form);
     ElMessage.success('Signed in successfully.');

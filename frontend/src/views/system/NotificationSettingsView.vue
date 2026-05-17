@@ -127,7 +127,7 @@
                       <span class="info-icon">ⓘ</span>
                     </el-tooltip>
                   </template>
-                  <el-switch v-model="configForm.enabled" active-value="true" inactive-value="false" />
+                  <el-switch v-model="configForm.enabled" :active-value="true" :inactive-value="false" />
                 </el-form-item>
 
                 <el-form-item label="Strict Allowlist Mode">
@@ -137,7 +137,7 @@
                       <span class="info-icon">ⓘ</span>
                     </el-tooltip>
                   </template>
-                  <el-switch v-model="configForm.strictAllowlist" active-value="true" inactive-value="false" />
+                  <el-switch v-model="configForm.strictAllowlist" :active-value="true" :inactive-value="false" />
                 </el-form-item>
 
                 <el-form-item label="Allowed Recipients">
@@ -187,8 +187,8 @@
                 <el-switch
                   :model-value="rule.enabled"
                   @change="(val: boolean) => handleRuleToggle(rule.id, val)"
-                  active-value="true"
-                  inactive-value="false"
+                  :active-value="true"
+                  :inactive-value="false"
                 />
               </div>
               <div class="rule-card__body">

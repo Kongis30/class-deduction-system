@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.enrollment.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -87,6 +88,7 @@ public class EnrollmentCreateRequest {
     @Schema(description = "备注")
     private String remark;
 
+    @Valid
     @Schema(description = "排课槽位列表（可选，填写则自动生成排课）")
     private List<SlotDefinition> slots;
 
@@ -100,15 +102,20 @@ public class EnrollmentCreateRequest {
     @Schema(description = "排课槽位定义")
     public static class SlotDefinition {
 
+        @NotNull(message = "weekday is required")
         @Schema(description = "星期几 1=周一 7=周日", example = "1")
         private Integer weekday;
 
+        @NotBlank(message = "startTime is required")
         @Schema(description = "开始时间 HH:mm", example = "15:00")
         private String startTime;
 
+        @NotBlank(message = "endTime is required")
         @Schema(description = "结束时间 HH:mm", example = "16:00")
         private String endTime;
 
+        @NotNull(message = "plannedUnits is required")
+        @Min(value = 1, message = "plannedUnits must be at least 1")
         @Schema(description = "本次课时单位数（1单位=0.5小时）", example = "2")
         private Integer plannedUnits;
     }

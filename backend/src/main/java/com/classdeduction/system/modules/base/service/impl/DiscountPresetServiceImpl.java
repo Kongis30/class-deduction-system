@@ -8,6 +8,8 @@ import com.classdeduction.system.modules.base.mapper.DiscountPresetMapper;
 import com.classdeduction.system.modules.base.service.DiscountPresetService;
 import com.classdeduction.system.modules.base.vo.DiscountPresetVO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -26,6 +28,7 @@ public class DiscountPresetServiceImpl implements DiscountPresetService {
     private final DiscountPresetMapper discountPresetMapper;
 
     @Override
+    @Cacheable(value = "reference:discountPresets", key = "'listAllActive'")
     public List<DiscountPresetVO> listAllActive() {
         return discountPresetMapper.selectList(new LambdaQueryWrapper<DiscountPresetEntity>()
                         .eq(DiscountPresetEntity::getIsDeleted, 0)
@@ -37,12 +40,14 @@ public class DiscountPresetServiceImpl implements DiscountPresetService {
     }
 
     @Override
+    @Cacheable(value = "reference:discountPreset", key = "#id")
     public DiscountPresetVO getPreset(Long id) {
         return toVO(requirePreset(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:discountPresets", "reference:discountPreset"}, allEntries = true)
     public Long createPreset(DiscountPresetSaveRequest request) {
         DiscountPresetEntity entity = new DiscountPresetEntity();
         applyPreset(entity, request);
@@ -52,6 +57,7 @@ public class DiscountPresetServiceImpl implements DiscountPresetService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:discountPresets", "reference:discountPreset"}, allEntries = true)
     public void updatePreset(Long id, DiscountPresetSaveRequest request) {
         DiscountPresetEntity entity = requirePreset(id);
         applyPreset(entity, request);
@@ -60,6 +66,7 @@ public class DiscountPresetServiceImpl implements DiscountPresetService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:discountPresets", "reference:discountPreset"}, allEntries = true)
     public void deletePreset(Long id) {
         requirePreset(id);
         discountPresetMapper.deleteById(id);

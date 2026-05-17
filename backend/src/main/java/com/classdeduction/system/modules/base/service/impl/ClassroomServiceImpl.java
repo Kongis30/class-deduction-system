@@ -12,6 +12,8 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.service.ClassroomService;
 import com.classdeduction.system.modules.base.vo.ClassroomVO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -31,6 +33,7 @@ public class ClassroomServiceImpl implements ClassroomService {
     private final ClassroomMapper classroomMapper;
 
     @Override
+    @Cacheable(value = "reference:classrooms", key = "'listAllActive'")
     public List<ClassroomVO> listAllActive() {
         return classroomMapper.selectList(new LambdaQueryWrapper<ClassroomEntity>()
                         .eq(ClassroomEntity::getStatus, "ACTIVE")
@@ -61,12 +64,14 @@ public class ClassroomServiceImpl implements ClassroomService {
     }
 
     @Override
+    @Cacheable(value = "reference:classroom", key = "#id")
     public ClassroomVO getClassroom(Long id) {
         return toVO(requireClassroom(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:classrooms", "reference:classroom"}, allEntries = true)
     public Long createClassroom(ClassroomSaveRequest request) {
         // Auto-generate roomCode if not provided
         String roomCode = StringUtils.hasText(request.getRoomCode())
@@ -109,6 +114,7 @@ public class ClassroomServiceImpl implements ClassroomService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:classrooms", "reference:classroom"}, allEntries = true)
     public void updateClassroom(Long id, ClassroomSaveRequest request) {
         ClassroomEntity entity = requireClassroom(id);
         // Keep original roomCode if not provided
@@ -123,6 +129,7 @@ public class ClassroomServiceImpl implements ClassroomService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:classrooms", "reference:classroom"}, allEntries = true)
     public void deleteClassroom(Long id) {
         requireClassroom(id);
         classroomMapper.deleteById(id);
@@ -131,6 +138,7 @@ public class ClassroomServiceImpl implements ClassroomService {
     private void ensureRoomCodeUnique(Long currentId, String roomCode) {
         ClassroomEntity existing = classroomMapper.selectOne(new LambdaQueryWrapper<ClassroomEntity>()
                 .eq(ClassroomEntity::getRoomCode, roomCode)
+                .eq(ClassroomEntity::getIsDeleted, 0)
                 .last("LIMIT 1"));
         if (existing != null && !Objects.equals(existing.getId(), currentId)) {
             throw new BusinessException("Room code already exists.");

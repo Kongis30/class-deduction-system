@@ -184,6 +184,7 @@ public class StudentServiceImpl implements StudentService {
     private void ensureStudentNoUnique(Long currentId, String studentNo) {
         StudentEntity existing = studentMapper.selectOne(new LambdaQueryWrapper<StudentEntity>()
                 .eq(StudentEntity::getStudentNo, studentNo)
+                .eq(StudentEntity::getIsDeleted, 0)
                 .last("LIMIT 1"));
         if (existing != null && !Objects.equals(existing.getId(), currentId)) {
             throw new BusinessException("Student ID already exists.");

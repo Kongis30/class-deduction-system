@@ -173,7 +173,7 @@ const anchor = ref<{ weekday: number; hour: number; minute: number } | null>(nul
 const currentHover = ref<{ weekday: number; hour: number; minute: number } | null>(null);
 
 function onCellClick(weekday: number, hour: number, minute: number) {
-  if (!props.readonly) return;
+  if (props.readonly) return;
   if (isOccupied(weekday, hour, minute)) {
     emit('cell-click', weekday, hour, minute);
   }

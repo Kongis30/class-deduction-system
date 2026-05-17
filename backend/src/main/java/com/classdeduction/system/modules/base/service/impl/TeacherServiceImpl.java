@@ -14,6 +14,8 @@ import com.classdeduction.system.modules.base.service.TeacherService;
 import com.classdeduction.system.modules.base.vo.TeacherVO;
 import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -35,6 +37,7 @@ public class TeacherServiceImpl implements TeacherService {
     private final JsonHelper jsonHelper;
 
     @Override
+    @Cacheable(value = "reference:teachers", key = "'listAllActive'")
     public List<TeacherVO> listAllActive() {
         return teacherMapper.selectList(new LambdaQueryWrapper<TeacherEntity>()
                         .eq(TeacherEntity::getStatus, "ACTIVE")
@@ -62,12 +65,14 @@ public class TeacherServiceImpl implements TeacherService {
     }
 
     @Override
+    @Cacheable(value = "reference:teacher", key = "#id")
     public TeacherVO getTeacher(Long id) {
         return toVO(requireTeacher(id));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:teachers", "reference:teacher"}, allEntries = true)
     public Long createTeacher(TeacherSaveRequest request) {
         String teacherNo = StringUtils.hasText(request.getTeacherNo())
                 ? request.getTeacherNo()
@@ -82,6 +87,7 @@ public class TeacherServiceImpl implements TeacherService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:teachers", "reference:teacher"}, allEntries = true)
     public void updateTeacher(Long id, TeacherSaveRequest request) {
         TeacherEntity entity = requireTeacher(id);
         if (!StringUtils.hasText(request.getTeacherNo())) {
@@ -114,6 +120,7 @@ public class TeacherServiceImpl implements TeacherService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    @CacheEvict(value = {"reference:teachers", "reference:teacher"}, allEntries = true)
     public void deleteTeacher(Long id) {
         requireTeacher(id);
         teacherMapper.deleteById(id);
@@ -122,6 +129,7 @@ public class TeacherServiceImpl implements TeacherService {
     private void ensureTeacherNoUnique(Long currentId, String teacherNo) {
         TeacherEntity existing = teacherMapper.selectOne(new LambdaQueryWrapper<TeacherEntity>()
                 .eq(TeacherEntity::getTeacherNo, teacherNo)
+                .eq(TeacherEntity::getIsDeleted, 0)
                 .last("LIMIT 1"));
         if (existing != null && !Objects.equals(existing.getId(), currentId)) {
             throw new BusinessException("Instructor ID already exists.");

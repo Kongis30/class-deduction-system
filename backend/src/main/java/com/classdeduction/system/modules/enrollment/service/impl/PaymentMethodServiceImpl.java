@@ -8,6 +8,8 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.service.PaymentMethodService;
 import com.classdeduction.system.modules.enrollment.vo.PaymentMethodVO;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -22,6 +24,7 @@ public class PaymentMethodServiceImpl implements PaymentMethodService {
     private final PaymentMethodMapper paymentMethodMapper;
 
     @Override
+    @Cacheable(value = "reference:paymentMethods", key = "'listActiveMethods'")
     public List<PaymentMethodVO> listActiveMethods() {
         return paymentMethodMapper.selectList(
                 new LambdaQueryWrapper<PaymentMethodEntity>()
@@ -31,6 +34,7 @@ public class PaymentMethodServiceImpl implements PaymentMethodService {
     }
 
     @Override
+    @Cacheable(value = "reference:paymentMethodsAll", key = "'listAllMethods'")
     public List<PaymentMethodVO> listAllMethods() {
         return paymentMethodMapper.selectList(
                 new LambdaQueryWrapper<PaymentMethodEntity>()
@@ -39,12 +43,14 @@ public class PaymentMethodServiceImpl implements PaymentMethodService {
     }
 
     @Override
+    @Cacheable(value = "reference:paymentMethod", key = "#id")
     public PaymentMethodVO getMethod(Long id) {
         PaymentMethodEntity entity = requireEntity(id);
         return toVO(entity);
     }
 
     @Override
+    @CacheEvict(value = {"reference:paymentMethods", "reference:paymentMethodsAll", "reference:paymentMethod"}, allEntries = true)
     public Long createMethod(PaymentMethodSaveRequest request) {
         // Check code uniqueness
         Long count = paymentMethodMapper.selectCount(
@@ -66,6 +72,7 @@ public class PaymentMethodServiceImpl implements PaymentMethodService {
     }
 
     @Override
+    @CacheEvict(value = {"reference:paymentMethods", "reference:paymentMethodsAll", "reference:paymentMethod"}, allEntries = true)
     public void updateMethod(Long id, PaymentMethodSaveRequest request) {
         PaymentMethodEntity entity = requireEntity(id);
 
@@ -88,6 +95,7 @@ public class PaymentMethodServiceImpl implements PaymentMethodService {
     }
 
     @Override
+    @CacheEvict(value = {"reference:paymentMethods", "reference:paymentMethodsAll", "reference:paymentMethod"}, allEntries = true)
     public void deleteMethod(Long id) {
         PaymentMethodEntity entity = requireEntity(id);
         paymentMethodMapper.deleteById(entity.getId());

@@ -2,6 +2,7 @@ import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
 import type {
   CoursePackageItem,
+  EnrollmentOrderDetailItem,
   EnrollmentOrderItem,
   PaymentMethodItem,
   PaymentRecordItem,
@@ -25,7 +26,7 @@ export function fetchEnrollmentOrders(params: EnrollmentOrderQuery = {}) {
 }
 
 export function fetchEnrollmentOrder(id: number) {
-  return http.get<ApiResponse<EnrollmentOrderItem>>(`/v1/enrollment/orders/${id}`);
+  return http.get<ApiResponse<EnrollmentOrderDetailItem>>(`/v1/enrollment/orders/${id}`);
 }
 
 export interface SlotPayload {
