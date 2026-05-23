@@ -25,7 +25,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/classrooms")
 @Tag(name = "Base Data - Classrooms")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
 public class ClassroomController {
 
     private final ClassroomService classroomService;

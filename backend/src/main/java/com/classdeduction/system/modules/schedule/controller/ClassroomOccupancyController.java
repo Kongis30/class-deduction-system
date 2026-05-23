@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @RequestMapping("/v1/schedule/classrooms")
 @Tag(name = "Schedule - Classroom Occupancy")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
 public class ClassroomOccupancyController {
 
     private final LessonOccurrenceService lessonOccurrenceService;

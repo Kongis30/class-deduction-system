@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/students")
 @Tag(name = "Base Data - Students")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
 public class StudentController {
 
     private final StudentService studentService;

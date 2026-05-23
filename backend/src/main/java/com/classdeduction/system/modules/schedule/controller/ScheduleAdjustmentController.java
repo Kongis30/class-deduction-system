@@ -20,7 +20,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @RequestMapping("/v1/schedule/adjustments")
 @Tag(name = "Schedule - Adjustments")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
 public class ScheduleAdjustmentController {
 
     private final ScheduleAdjustmentService scheduleAdjustmentService;

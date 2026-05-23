@@ -23,7 +23,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 @RequestMapping("/v1/classes")
 @Tag(name = "Schedule - Class Groups")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
 public class ClassGroupController {
 
     private final ClassGroupService classGroupService;
