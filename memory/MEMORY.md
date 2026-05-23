@@ -1,0 +1,1 @@
+- [User perspective](feedback/user-perspective.md) — always design from the end-user's vantage point, not the developer's

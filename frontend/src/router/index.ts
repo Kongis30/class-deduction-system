@@ -19,7 +19,6 @@ const ScheduleAdjustmentsView = () => import('@/views/schedule/ScheduleAdjustmen
 const TeacherScheduleView = () => import('@/views/schedule/TeacherScheduleView.vue');
 const ClassroomOccupancyView = () => import('@/views/schedule/ClassroomOccupancyView.vue');
 const StudentScheduleView = () => import('@/views/schedule/StudentScheduleView.vue');
-const LessonRulesView = () => import('@/views/system/LessonRulesView.vue');
 const NotificationSettingsView = () => import('@/views/system/NotificationSettingsView.vue');
 const BrandSettingsView = () => import('@/views/system/BrandSettingsView.vue');
 const AccountSettingsView = () => import('@/views/system/AccountSettingsView.vue');
@@ -165,16 +164,6 @@ const routes: RouteRecordRaw[] = [
           title: 'Student Calendar',
           section: 'Scheduling',
           description: 'View a student weekly class calendar with week navigation.',
-        },
-      },
-      {
-        path: 'system/rules',
-        name: 'lesson-rules',
-        component: LessonRulesView,
-        meta: {
-          title: 'Lesson Rules',
-          section: 'Settings',
-          description: 'Manage deduction and extension rules for lesson outcomes.',
         },
       },
       {

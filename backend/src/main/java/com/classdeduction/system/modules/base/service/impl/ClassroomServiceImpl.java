@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
+import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.dto.ClassroomPageQuery;
 import com.classdeduction.system.modules.base.dto.ClassroomSaveRequest;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
@@ -26,7 +27,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
@@ -149,7 +149,7 @@ public class ClassroomServiceImpl implements ClassroomService {
         Long futureOccurrences = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .eq(LessonOccurrenceEntity::getPlannedClassroomId, id)
                 .eq(LessonOccurrenceEntity::getIsDeleted, 0)
-                .gt(LessonOccurrenceEntity::getPlannedStartAt, LocalDateTime.now()));
+                .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
         // 检查活跃的排课规则
         Long activeRules = recurringScheduleRuleMapper.selectCount(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                 .eq(RecurringScheduleRuleEntity::getDefaultClassroomId, id)

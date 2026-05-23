@@ -1,0 +1,4 @@
+interface:
+  display_name: "US English UI Guardrail"
+  short_description: "Keep project UI copy fully English for US users"
+  default_prompt: "Use $us-training-center-english-ui to create or review frontend changes with English-only UI copy for this project."
