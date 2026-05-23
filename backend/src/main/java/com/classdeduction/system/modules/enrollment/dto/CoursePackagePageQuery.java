@@ -24,4 +24,10 @@ public class CoursePackagePageQuery extends PageQuery {
 
     @Schema(description = "主老师ID", example = "1880000000000000002")
     private Long teacherId;
+
+    @Schema(description = "排序字段：subjectName | progress", example = "subjectName")
+    private String sortBy;
+
+    @Schema(description = "排序方向：asc | desc", example = "asc")
+    private String sortOrder;
 }

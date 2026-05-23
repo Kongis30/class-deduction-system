@@ -106,15 +106,49 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @PostConstruct
     void initSequence() {
         String todayStr = LocalDate.now(AppTime.APP_ZONE_ID).format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        LambdaQueryWrapper<EnrollmentOrderEntity> wrapper = new LambdaQueryWrapper<EnrollmentOrderEntity>()
+        // Init enrollment order sequence (EO prefix)
+        LambdaQueryWrapper<EnrollmentOrderEntity> eoWrapper = new LambdaQueryWrapper<EnrollmentOrderEntity>()
                 .likeRight(EnrollmentOrderEntity::getEnrollmentNo, "EO" + todayStr)
                 .orderByDesc(EnrollmentOrderEntity::getEnrollmentNo)
                 .last("LIMIT 1");
-        EnrollmentOrderEntity last = enrollmentOrderMapper.selectOne(wrapper);
-        if (last != null) {
-            String no = last.getEnrollmentNo();
+        EnrollmentOrderEntity lastEO = enrollmentOrderMapper.selectOne(eoWrapper);
+        if (lastEO != null) {
+            String no = lastEO.getEnrollmentNo();
             int seq = Integer.parseInt(no.substring(no.length() - 4));
             BusinessNoGenerator.initSequence("EO", seq);
+        }
+        // Init course package sequence (PK prefix)
+        LambdaQueryWrapper<CoursePackageEntity> pkWrapper = new LambdaQueryWrapper<CoursePackageEntity>()
+                .likeRight(CoursePackageEntity::getPackageNo, "PK" + todayStr)
+                .orderByDesc(CoursePackageEntity::getPackageNo)
+                .last("LIMIT 1");
+        CoursePackageEntity lastPK = coursePackageMapper.selectOne(pkWrapper);
+        if (lastPK != null) {
+            String no = lastPK.getPackageNo();
+            int seq = Integer.parseInt(no.substring(no.length() - 4));
+            BusinessNoGenerator.initSequence("PK", seq);
+        }
+        // Init payment record sequence (PMT prefix)
+        LambdaQueryWrapper<PaymentRecordEntity> pmtWrapper = new LambdaQueryWrapper<PaymentRecordEntity>()
+                .likeRight(PaymentRecordEntity::getPaymentNo, "PMT" + todayStr)
+                .orderByDesc(PaymentRecordEntity::getPaymentNo)
+                .last("LIMIT 1");
+        PaymentRecordEntity lastPMT = paymentRecordMapper.selectOne(pmtWrapper);
+        if (lastPMT != null) {
+            String no = lastPMT.getPaymentNo();
+            int seq = Integer.parseInt(no.substring(no.length() - 4));
+            BusinessNoGenerator.initSequence("PMT", seq);
+        }
+        // Init receipt record sequence (RCP prefix)
+        LambdaQueryWrapper<ReceiptRecordEntity> rcpWrapper = new LambdaQueryWrapper<ReceiptRecordEntity>()
+                .likeRight(ReceiptRecordEntity::getReceiptNo, "RCP" + todayStr)
+                .orderByDesc(ReceiptRecordEntity::getReceiptNo)
+                .last("LIMIT 1");
+        ReceiptRecordEntity lastRCP = receiptRecordMapper.selectOne(rcpWrapper);
+        if (lastRCP != null) {
+            String no = lastRCP.getReceiptNo();
+            int seq = Integer.parseInt(no.substring(no.length() - 4));
+            BusinessNoGenerator.initSequence("RCP", seq);
         }
     }
 

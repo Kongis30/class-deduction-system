@@ -244,7 +244,7 @@
 <script setup lang="ts">
 import { Plus, Setting } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { reactive, ref, watch } from 'vue';
+import { reactive, ref } from 'vue';
 
 import FieldConfigDialog, { type FieldConfig } from '@/components/shared/FieldConfigDialog.vue';
 import {
@@ -400,8 +400,6 @@ async function loadData() {
   }
 }
 
-watch(() => filters.status, handleFilterChange);
-
 // ─── Form ──────────────────────────────────────────
 const studentForm = reactive<StudentSavePayload>({
   studentName: '',
@@ -469,7 +467,7 @@ async function handleStudentSubmit() {
   submitting.value = true;
   try {
     if (editingId.value) {
-      await updateStudent(String(editingId.value), { ...studentForm });
+      await updateStudent(editingId.value, { ...studentForm });
       ElMessage.success('Student updated.');
     } else {
       await createStudent({ ...studentForm });

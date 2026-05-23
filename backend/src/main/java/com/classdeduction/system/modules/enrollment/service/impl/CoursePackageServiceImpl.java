@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.enrollment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
@@ -55,16 +56,29 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         if (query.getTeacherId() != null && matchedPackageIds.isEmpty()) {
             return PageResponse.empty(query.getPageNum(), query.getPageSize());
         }
-        LambdaQueryWrapper<CoursePackageEntity> wrapper = new LambdaQueryWrapper<CoursePackageEntity>()
-                .and(StringUtils.hasText(query.getKeyword()), w -> w
+
+        QueryWrapper<CoursePackageEntity> wrapper = new QueryWrapper<>();
+        var lambda = wrapper.lambda();
+        lambda.and(StringUtils.hasText(query.getKeyword()), w -> w
                         .like(CoursePackageEntity::getPackageNo, query.getKeyword())
                         .or()
                         .like(CoursePackageEntity::getPackageName, query.getKeyword())
                         .or(!matchedStudentIds.isEmpty(), nested -> nested.in(CoursePackageEntity::getStudentId, matchedStudentIds)))
                 .in(query.getTeacherId() != null, CoursePackageEntity::getId, matchedPackageIds)
                 .eq(query.getStudentId() != null, CoursePackageEntity::getStudentId, query.getStudentId())
-                .eq(StringUtils.hasText(query.getPackageStatus()), CoursePackageEntity::getPackageStatus, query.getPackageStatus())
-                .orderByDesc(CoursePackageEntity::getCreatedAt);
+                .eq(StringUtils.hasText(query.getPackageStatus()), CoursePackageEntity::getPackageStatus, query.getPackageStatus());
+
+        // Apply user-specified sort before default createdAt sort
+        if (StringUtils.hasText(query.getSortBy())) {
+            boolean isAsc = !"desc".equals(query.getSortOrder());
+            if ("subjectName".equals(query.getSortBy())) {
+                lambda.orderBy(true, isAsc, CoursePackageEntity::getSubjectName);
+            } else if ("progress".equals(query.getSortBy())) {
+                wrapper.orderBy(true, isAsc, "consumedUnits / NULLIF(totalUnits, 0)");
+            }
+        }
+        lambda.orderByDesc(CoursePackageEntity::getCreatedAt);
+
         IPage<CoursePackageEntity> result = coursePackageMapper.selectPage(page, wrapper);
         if (result.getRecords().isEmpty()) {
             return PageResponse.empty(query.getPageNum(), query.getPageSize());

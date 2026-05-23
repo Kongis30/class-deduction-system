@@ -48,6 +48,7 @@
         row-key="id"
         class="product-table"
         :show-empty="true"
+        @sort-change="handleSortChange"
       >
         <el-table-column label="Package" min-width="180">
           <template #default="{ row }">
@@ -57,13 +58,13 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Subject" min-width="120" prop="subjectName" />
+        <el-table-column label="Subject" min-width="120" prop="subjectName" sortable="custom" />
         <el-table-column label="Hours" min-width="100" align="center">
           <template #default="{ row }">
             <span>{{ row.remainingUnits }} / {{ row.totalUnits }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Progress" min-width="140">
+        <el-table-column label="Progress" min-width="140" sortable="custom">
           <template #default="{ row }">
             <el-progress
               :percentage="row.totalUnits > 0 ? Math.round((row.consumedUnits / row.totalUnits) * 100) : 0"
@@ -394,9 +395,19 @@ const pagination = reactive({
   },
 });
 
+const sortBy = ref<string | undefined>();
+const sortOrder = ref<string | undefined>();
+
 const tableData = ref<CoursePackageItem[]>([]);
 
 function handleFilterChange() {
+  pagination.page = 1;
+  loadData();
+}
+
+function handleSortChange({ prop, order }: { prop?: string; order?: string }) {
+  sortBy.value = prop;
+  sortOrder.value = order === 'ascending' ? 'asc' : order === 'descending' ? 'desc' : undefined;
   pagination.page = 1;
   loadData();
 }
@@ -422,6 +433,8 @@ async function loadData() {
       keyword: filters.keyword || undefined,
       studentId: filters.studentId,
       packageStatus: filters.packageStatus || undefined,
+      sortBy: sortBy.value,
+      sortOrder: sortOrder.value,
       pageNum: pagination.page,
       pageSize: pagination.size,
     };

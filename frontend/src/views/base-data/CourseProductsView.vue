@@ -379,7 +379,6 @@ function openSubjectDialog() {
 async function loadSubjectsForDialog() {
   try {
     const res = await fetchSubjects();
-    console.log('Subjects API response:', res);
     subjectTableData.value = res.data.data;
   } catch (error) {
     console.error('Failed to load subjects:', error);
@@ -482,20 +481,15 @@ async function loadData() {
       pageSize: pagination.size,
     };
     const res = await fetchCourseProducts(params);
-    console.log('Course products API response:', res);
     const data = res.data.data;
-    console.log('Course products data:', data);
     tableData.value = data.records;
     pagination.total = data.total;
-  } catch (error) {
-    console.error('Failed to load course products:', error);
+  } catch {
     ElMessage.error('Failed to load course products.');
   } finally {
     loading.value = false;
   }
 }
-
-watch(() => filters.status, handleFilterChange);
 
 // ─── Subjects 列表 ─────────────────────────────────────
 const subjects = ref<SubjectItem[]>([]);
@@ -503,10 +497,8 @@ const subjects = ref<SubjectItem[]>([]);
 async function loadSubjects() {
   try {
     const res = await fetchSubjects();
-    console.log('Subjects API response:', res);
     subjects.value = res.data.data;
-  } catch (error) {
-    console.error('Failed to load subjects:', error);
+  } catch {
     ElMessage.error('Failed to load subjects.');
   }
 }
@@ -649,12 +641,8 @@ function openProductDialog(row?: CourseProductItem) {
     // 编辑时如果已选了教室，触发占用加载
     occupiedSlots.value = [];
   } else {
-    const nextId = computed(() => {
-      const maxId = Math.max(0, ...tableData.value.map((p) => p.id));
-      return `P${String(maxId + 1).padStart(3, '0')}`;
-    }).value;
     Object.assign(form, {
-      productCode: nextId,
+      productCode: '',
       productName: '',
       subjectName: '',
       teachingMode: 'GROUP',
@@ -700,7 +688,9 @@ async function handleSubmit() {
       payload.defaultTotalUnits = form.defaultTotalUnits;
       payload.defaultLessonUnits = form.defaultLessonUnits;
     } else {
-      payload.expiryDurationDays = calcExpiryDays(form.expiryDate);
+      payload.expiryDurationDays = editingId.value
+        ? form.expiryDurationDays
+        : calcExpiryDays(form.expiryDate);
       payload.defaultClassroomId = form.defaultClassroomId;
       payload.slots = formSlots.value.map(s => ({
         weekday: s.weekday,

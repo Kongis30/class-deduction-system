@@ -2,11 +2,9 @@ package com.classdeduction.system.modules.schedule.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
-import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
-import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -20,8 +18,6 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
-import com.classdeduction.system.modules.systemconfig.entity.NotificationTemplateEntity;
-import com.classdeduction.system.modules.systemconfig.mapper.NotificationTemplateMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -42,8 +38,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
-    private final CampusMapper campusMapper;
-    private final NotificationTemplateMapper notificationTemplateMapper;
 
     @Override
     public List<Map<String, Object>> listClasses() {
@@ -53,29 +47,33 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .isNotNull(ClassGroupEntity::getProductId)
                         .orderByAsc(ClassGroupEntity::getClassName)
         );
+        if (classes.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 批量统计在册人数
+        List<Long> classIds = classes.stream().map(ClassGroupEntity::getId).toList();
+        Map<Long, Long> enrollmentCounts = toLongMap(classEnrollmentMapper.countActiveByClassIds(classIds), "class_id", "cnt");
+
+        // 批量加载教师和教室
+        Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(classes, ClassGroupEntity::getTeacherId);
+        Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(classes, ClassGroupEntity::getClassroomId);
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassGroupEntity clz : classes) {
-            // 统计在册人数
-            long activeCount = classEnrollmentMapper.selectCount(
-                    new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                            .eq(ClassEnrollmentEntity::getClassId, clz.getId())
-                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-            );
-            TeacherEntity teacher = clz.getTeacherId() != null
-                    ? teacherMapper.selectById(clz.getTeacherId()) : null;
-            ClassroomEntity classroom = clz.getClassroomId() != null
-                    ? classroomMapper.selectById(clz.getClassroomId()) : null;
+            String teacherName = resolveTeacherName(clz.getTeacherId(), teacherMap);
+            String classroomName = resolveClassroomName(clz.getClassroomId(), classroomMap);
             Map<String, Object> item = new HashMap<>();
             item.put("id", clz.getId());
             item.put("className", clz.getClassName());
             item.put("description", clz.getDescription());
             item.put("scheduleDesc", clz.getScheduleDesc());
-            item.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
-            item.put("classroomName", classroom != null ? classroom.getRoomName() : null);
+            item.put("teacherName", teacherName);
+            item.put("classroomName", classroomName);
             item.put("listPrice", clz.getListPrice());
             item.put("productId", clz.getProductId());
             item.put("status", clz.getStatus());
-            item.put("activeStudentCount", activeCount);
+            item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
             result.add(item);
         }
         return result;
@@ -107,11 +105,23 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .eq(ClassEnrollmentEntity::getClassId, classId)
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
         );
+        if (enrollments.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 批量加载学生
+        List<Long> studentIds = enrollments.stream()
+                .map(ClassEnrollmentEntity::getStudentId)
+                .toList();
+        Map<Long, StudentEntity> studentMap = studentMapper.selectBatchIds(studentIds).stream()
+                .collect(Collectors.toMap(StudentEntity::getId, s -> s));
+
         LocalDate today = LocalDate.now();
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassEnrollmentEntity enrollment : enrollments) {
-            StudentEntity student = studentMapper.selectById(enrollment.getStudentId());
+            StudentEntity student = studentMap.get(enrollment.getStudentId());
             if (student == null) continue;
+
             String expiryStatus;
             if (enrollment.getExpiryDate().isBefore(today)) {
                 expiryStatus = "EXPIRED";
@@ -144,42 +154,61 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     @Override
     public List<Map<String, Object>> listClassOccurrences(Long classId) {
-        // 查询该班课的所有排课记录
         List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
                         .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt)
         );
+        if (occurrences.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        // 批量查询已核销记录（只需知道每个 occurrence 是否有核销）
+        List<Long> occurrenceIds = occurrences.stream().map(LessonOccurrenceEntity::getId).toList();
+        Set<Long> confirmedOccurrenceIds = lessonRecordMapper.selectList(
+                new LambdaQueryWrapper<LessonRecordEntity>()
+                        .select(LessonRecordEntity::getOccurrenceId)
+                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                        .groupBy(LessonRecordEntity::getOccurrenceId)
+        ).stream().map(LessonRecordEntity::getOccurrenceId).collect(Collectors.toSet());
+
+        // 批量加载教师和教室
+        Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(occurrences, LessonOccurrenceEntity::getPlannedTeacherId);
+        Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(occurrences, LessonOccurrenceEntity::getPlannedClassroomId);
+
+        // 取出现有的核销记录中第一条的 resultStatus（按 occurrence 分组）
+        Map<Long, String> resultStatusByOccurrence = Collections.emptyMap();
+        if (!confirmedOccurrenceIds.isEmpty()) {
+            resultStatusByOccurrence = lessonRecordMapper.selectList(
+                    new LambdaQueryWrapper<LessonRecordEntity>()
+                            .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                            .orderByAsc(LessonRecordEntity::getId)
+            ).stream().collect(Collectors.toMap(
+                    LessonRecordEntity::getOccurrenceId,
+                    LessonRecordEntity::getResultStatus,
+                    (a, b) -> a
+            ));
+        }
+
         List<Map<String, Object>> result = new ArrayList<>();
         for (LessonOccurrenceEntity occ : occurrences) {
-            // 查询核销记录（已确认的所有学生）
-            List<LessonRecordEntity> records = lessonRecordMapper.selectList(
-                    new LambdaQueryWrapper<LessonRecordEntity>()
-                            .eq(LessonRecordEntity::getOccurrenceId, occ.getId())
-                            .last("LIMIT 1")
-            );
-            boolean hasRecord = !records.isEmpty();
-            String resultStatus = hasRecord ? records.get(0).getResultStatus() : null;
-
-            // 查询教师/教室名称
-            TeacherEntity teacher = occ.getPlannedTeacherId() != null
-                    ? teacherMapper.selectById(occ.getPlannedTeacherId()) : null;
-            ClassroomEntity classroom = occ.getPlannedClassroomId() != null
-                    ? classroomMapper.selectById(occ.getPlannedClassroomId()) : null;
+            boolean hasRecord = confirmedOccurrenceIds.contains(occ.getId());
+            String teacherName = resolveTeacherName(occ.getPlannedTeacherId(), teacherMap);
+            String classroomName = resolveClassroomName(occ.getPlannedClassroomId(), classroomMap);
 
             Map<String, Object> item = new HashMap<>();
             item.put("id", occ.getId());
             item.put("lessonNo", occ.getLessonNo());
             item.put("occurrenceType", occ.getOccurrenceType());
             item.put("plannedTeacherId", occ.getPlannedTeacherId());
-            item.put("plannedTeacherName", teacher != null ? teacher.getTeacherName() : null);
+            item.put("plannedTeacherName", teacherName);
             item.put("plannedClassroomId", occ.getPlannedClassroomId());
-            item.put("plannedClassroomName", classroom != null ? classroom.getRoomName() : null);
+            item.put("plannedClassroomName", classroomName);
             item.put("plannedStartAt", occ.getPlannedStartAt());
             item.put("plannedEndAt", occ.getPlannedEndAt());
             item.put("plannedUnits", occ.getPlannedUnits());
             item.put("planningStatus", occ.getPlanningStatus());
-            item.put("resultStatus", resultStatus);
+            item.put("resultStatus", hasRecord ? resultStatusByOccurrence.get(occ.getId()) : null);
             item.put("confirmed", hasRecord);
             result.add(item);
         }
@@ -215,7 +244,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (activeEnrollments.isEmpty()) {
             throw new BusinessException("NO_ACTIVE_STUDENTS", "No active students in this class.");
         }
-        // 为每个在册学生创建 lesson_record
+        // 为每个在册学生创建 lesson_record（班课确认频率低，无需批量优化）
         int confirmedCount = 0;
 
         // 解析 body 参数
@@ -245,6 +274,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             lessonRecordMapper.insert(record);
             confirmedCount++;
         }
+
         Map<String, Object> result = new HashMap<>();
         result.put("confirmedCount", confirmedCount);
         result.put("occurrenceId", occurrenceId);
@@ -320,7 +350,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     @Override
     public List<Map<String, Object>> listEnrolledByStudent(Long studentId) {
-        // 查询学生已报名的活跃班课
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .eq(ClassEnrollmentEntity::getStudentId, studentId)
@@ -335,27 +364,28 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .map(ClassEnrollmentEntity::getClassId)
                 .toList();
 
-        // 批量查询班课信息
         Map<Long, ClassGroupEntity> classMap = classGroupMapper.selectBatchIds(classIds).stream()
                 .collect(Collectors.toMap(ClassGroupEntity::getId, c -> c));
+
+        // 批量加载教师和教室
+        Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(classMap.values(), ClassGroupEntity::getTeacherId);
+        Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(classMap.values(), ClassGroupEntity::getClassroomId);
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassEnrollmentEntity enrollment : enrollments) {
             ClassGroupEntity clz = classMap.get(enrollment.getClassId());
             if (clz == null || !"ACTIVE".equals(clz.getStatus())) continue;
 
-            TeacherEntity teacher = clz.getTeacherId() != null
-                    ? teacherMapper.selectById(clz.getTeacherId()) : null;
-            ClassroomEntity classroom = clz.getClassroomId() != null
-                    ? classroomMapper.selectById(clz.getClassroomId()) : null;
+            String teacherName = resolveTeacherName(clz.getTeacherId(), teacherMap);
+            String classroomName = resolveClassroomName(clz.getClassroomId(), classroomMap);
 
             Map<String, Object> item = new HashMap<>();
             item.put("id", clz.getId());
             item.put("className", clz.getClassName());
             item.put("description", clz.getDescription());
             item.put("scheduleDesc", clz.getScheduleDesc());
-            item.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
-            item.put("classroomName", classroom != null ? classroom.getRoomName() : null);
+            item.put("teacherName", teacherName);
+            item.put("classroomName", classroomName);
             item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc()));
             result.add(item);
         }
@@ -370,7 +400,15 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .eq(ClassGroupEntity::getStatus, "ACTIVE")
                         .isNotNull(ClassGroupEntity::getProductId)
         );
-        return classes.stream().map(this::toClassSlotMap).toList();
+        if (classes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        // 批量加载后组装
+        Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(classes, ClassGroupEntity::getTeacherId);
+        Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(classes, ClassGroupEntity::getClassroomId);
+        return classes.stream()
+                .map(clz -> toClassSlotMap(clz, teacherMap, classroomMap))
+                .toList();
     }
 
     @Override
@@ -381,25 +419,88 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .eq(ClassGroupEntity::getStatus, "ACTIVE")
                         .isNotNull(ClassGroupEntity::getProductId)
         );
-        return classes.stream().map(this::toClassSlotMap).toList();
+        if (classes.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(classes, ClassGroupEntity::getTeacherId);
+        Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(classes, ClassGroupEntity::getClassroomId);
+        return classes.stream()
+                .map(clz -> toClassSlotMap(clz, teacherMap, classroomMap))
+                .toList();
+    }
+
+    // ========== 批量查询辅助方法 ==========
+
+    /**
+     * 从实体集合中提取所有非空 teacherId 并批量查询。
+     */
+    private <T> Map<Long, TeacherEntity> batchLoadTeachers(Collection<T> entities,
+                                                            java.util.function.Function<T, Long> teacherIdFn) {
+        Set<Long> ids = entities.stream()
+                .map(teacherIdFn)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (ids.isEmpty()) return Collections.emptyMap();
+        return teacherMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(TeacherEntity::getId, t -> t));
     }
 
     /**
-     * 将 ClassGroupEntity 转为包含解析时段的前端 Map。
+     * 从实体集合中提取所有非空 classroomId 并批量查询。
      */
-    private Map<String, Object> toClassSlotMap(ClassGroupEntity clz) {
-        TeacherEntity teacher = clz.getTeacherId() != null
-                ? teacherMapper.selectById(clz.getTeacherId()) : null;
-        ClassroomEntity classroom = clz.getClassroomId() != null
-                ? classroomMapper.selectById(clz.getClassroomId()) : null;
+    private <T> Map<Long, ClassroomEntity> batchLoadClassrooms(Collection<T> entities,
+                                                                java.util.function.Function<T, Long> classroomIdFn) {
+        Set<Long> ids = entities.stream()
+                .map(classroomIdFn)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (ids.isEmpty()) return Collections.emptyMap();
+        return classroomMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(ClassroomEntity::getId, c -> c));
+    }
+
+    private String resolveTeacherName(Long teacherId, Map<Long, TeacherEntity> teacherMap) {
+        if (teacherId == null) return null;
+        TeacherEntity t = teacherMap.get(teacherId);
+        return t != null ? t.getTeacherName() : null;
+    }
+
+    private String resolveClassroomName(Long classroomId, Map<Long, ClassroomEntity> classroomMap) {
+        if (classroomId == null) return null;
+        ClassroomEntity c = classroomMap.get(classroomId);
+        return c != null ? c.getRoomName() : null;
+    }
+
+    private Map<Long, Long> toLongMap(List<Map<String, Object>> rows, String keyCol, String valCol) {
+        Map<Long, Long> result = new HashMap<>();
+        if (rows != null) {
+            for (Map<String, Object> row : rows) {
+                Object keyObj = row.get(keyCol);
+                Object valObj = row.get(valCol);
+                if (keyObj != null && valObj != null) {
+                    result.put(((Number) keyObj).longValue(), ((Number) valObj).longValue());
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 将 ClassGroupEntity 转为包含解析时段的前端 Map（使用预加载的 teacher/classroom map）。
+     */
+    private Map<String, Object> toClassSlotMap(ClassGroupEntity clz,
+                                                Map<Long, TeacherEntity> teacherMap,
+                                                Map<Long, ClassroomEntity> classroomMap) {
+        String teacherName = resolveTeacherName(clz.getTeacherId(), teacherMap);
+        String classroomName = resolveClassroomName(clz.getClassroomId(), classroomMap);
 
         Map<String, Object> item = new HashMap<>();
         item.put("id", clz.getId());
         item.put("className", clz.getClassName());
         item.put("description", clz.getDescription());
         item.put("scheduleDesc", clz.getScheduleDesc());
-        item.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
-        item.put("classroomName", classroom != null ? classroom.getRoomName() : null);
+        item.put("teacherName", teacherName);
+        item.put("classroomName", classroomName);
         item.put("listPrice", clz.getListPrice());
         item.put("productId", clz.getProductId());
         item.put("status", clz.getStatus());
@@ -411,6 +512,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
      * 解析 scheduleDesc 为前端可用的 slot 列表。
      */
     private List<Map<String, Object>> toScheduleSlotList(String scheduleDesc) {
+        if (scheduleDesc == null) return Collections.emptyList();
         return ScheduleDescParser.parse(scheduleDesc).stream()
                 .map(slot -> {
                     Map<String, Object> m = new HashMap<>();

@@ -6,12 +6,20 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.util.JsonHelper;
+import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
+import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.base.dto.TeacherPageQuery;
 import com.classdeduction.system.modules.base.dto.TeacherSaveRequest;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.TeacherService;
 import com.classdeduction.system.modules.base.vo.TeacherVO;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
@@ -20,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
@@ -34,6 +43,10 @@ public class TeacherServiceImpl implements TeacherService {
     private static final String DEFAULT_STATUS = "ACTIVE";
 
     private final TeacherMapper teacherMapper;
+    private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final UserAccountMapper userAccountMapper;
+    private final ClassGroupMapper classGroupMapper;
     private final JsonHelper jsonHelper;
 
     @Override
@@ -123,6 +136,29 @@ public class TeacherServiceImpl implements TeacherService {
     @CacheEvict(value = {"reference:teachers", "reference:teacher"}, allEntries = true)
     public void deleteTeacher(Long id) {
         requireTeacher(id);
+        // 检查未来的排课
+        Long futureOccurrences = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPlannedTeacherId, id)
+                .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                .gt(LessonOccurrenceEntity::getPlannedStartAt, LocalDateTime.now()));
+        // 检查活跃的排课规则
+        Long activeRules = recurringScheduleRuleMapper.selectCount(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                .eq(RecurringScheduleRuleEntity::getPrimaryTeacherId, id)
+                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                .eq(RecurringScheduleRuleEntity::getIsDeleted, 0));
+        // 检查登录账号
+        Long userAccounts = userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccountEntity>()
+                .eq(UserAccountEntity::getTeacherId, id)
+                .eq(UserAccountEntity::getIsDeleted, 0));
+        // 检查班级
+        Long classGroups = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getTeacherId, id)
+                .eq(ClassGroupEntity::getIsDeleted, 0));
+        if (futureOccurrences + activeRules + userAccounts + classGroups > 0) {
+            throw new BusinessException("TEACHER_HAS_REFERENCES",
+                    "Cannot delete instructor: there are future lessons, active schedule rules, "
+                            + "user accounts, or assigned classes. Set to INACTIVE instead.");
+        }
         teacherMapper.deleteById(id);
     }
 

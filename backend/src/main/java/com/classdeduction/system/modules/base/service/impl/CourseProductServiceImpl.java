@@ -15,15 +15,15 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.service.CourseProductService;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
+import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalTime;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -38,6 +38,7 @@ public class CourseProductServiceImpl implements CourseProductService {
     private final CourseProductMapper courseProductMapper;
     private final CourseProductScheduleSlotMapper scheduleSlotMapper;
     private final ClassroomMapper classroomMapper;
+    private final CoursePackageMapper coursePackageMapper;
 
     @Override
     public PageResponse<CourseProductVO> pageCourseProducts(CourseProductPageQuery query) {
@@ -53,8 +54,32 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .eq(StringUtils.hasText(query.getTeachingMode()), CourseProductEntity::getTeachingMode, query.getTeachingMode())
                 .orderByDesc(CourseProductEntity::getCreatedAt);
         IPage<CourseProductEntity> result = courseProductMapper.selectPage(page, wrapper);
-        return PageResponse.of(result.getRecords().stream().map(this::toVO).toList(),
-                result.getTotal(), result.getCurrent(), result.getSize());
+
+        List<CourseProductEntity> records = result.getRecords();
+        if (records.isEmpty()) {
+            return PageResponse.of(List.of(), result.getTotal(), result.getCurrent(), result.getSize());
+        }
+
+        // 批量加载排课时段
+        List<Long> productIds = records.stream().map(CourseProductEntity::getId).toList();
+        List<CourseProductScheduleSlotEntity> allSlots = scheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
+                        .in(CourseProductScheduleSlotEntity::getProductId, productIds));
+        Map<Long, List<CourseProductScheduleSlotEntity>> slotsByProduct = allSlots.stream()
+                .collect(Collectors.groupingBy(CourseProductScheduleSlotEntity::getProductId));
+
+        // 批量加载教室名称
+        Set<Long> classroomIds = records.stream()
+                .map(CourseProductEntity::getDefaultClassroomId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, ClassroomEntity> classroomMap = classroomIds.isEmpty() ? Collections.emptyMap()
+                : classroomMapper.selectBatchIds(classroomIds).stream()
+                        .collect(Collectors.toMap(ClassroomEntity::getId, c -> c));
+
+        return PageResponse.of(records.stream()
+                .map(entity -> toVO(entity, slotsByProduct.getOrDefault(entity.getId(), List.of()), classroomMap))
+                .toList(), result.getTotal(), result.getCurrent(), result.getSize());
     }
 
     @Override
@@ -91,6 +116,12 @@ public class CourseProductServiceImpl implements CourseProductService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteCourseProduct(Long id) {
         requireCourseProduct(id);
+        // 检查是否有课包引用了该产品（学生已报名缴费，不能删）
+        if (coursePackageMapper.countByCourseProductId(id) > 0) {
+            throw new BusinessException("PRODUCT_HAS_PACKAGES",
+                    "Cannot delete course product: there are active course packages. "
+                            + "Set the product status to INACTIVE instead.");
+        }
         // 级联删除排课时段
         scheduleSlotMapper.delete(new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
                 .eq(CourseProductScheduleSlotEntity::getProductId, id));
@@ -195,12 +226,25 @@ public class CourseProductServiceImpl implements CourseProductService {
         entity.setNotes(request.getNotes());
     }
 
+    /**
+     * 将 entity 转为 VO（单条查询，供 getCourseProduct 使用）。
+     */
     private CourseProductVO toVO(CourseProductEntity entity) {
-        // 查询排课时段
         List<CourseProductScheduleSlotEntity> slotEntities = scheduleSlotMapper.selectList(
                 new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
                         .eq(CourseProductScheduleSlotEntity::getProductId, entity.getId()));
+        Map<Long, ClassroomEntity> classroomMap = entity.getDefaultClassroomId() != null
+                ? Map.of(entity.getDefaultClassroomId(), classroomMapper.selectById(entity.getDefaultClassroomId()))
+                : Collections.emptyMap();
+        return toVO(entity, slotEntities, classroomMap);
+    }
 
+    /**
+     * 将 entity 转为 VO（批量加载场景，传入预查询的时段和教室 Map，避免 N+1）。
+     */
+    private CourseProductVO toVO(CourseProductEntity entity,
+                                  List<CourseProductScheduleSlotEntity> slotEntities,
+                                  Map<Long, ClassroomEntity> classroomMap) {
         List<CourseProductVO.ProductScheduleSlotVO> slotVOs = slotEntities.stream()
                 .map(s -> CourseProductVO.ProductScheduleSlotVO.builder()
                         .id(s.getId())
@@ -210,10 +254,9 @@ public class CourseProductServiceImpl implements CourseProductService {
                         .build())
                 .toList();
 
-        // 查询默认教室名称
         String defaultClassroomName = null;
         if (entity.getDefaultClassroomId() != null) {
-            ClassroomEntity classroom = classroomMapper.selectById(entity.getDefaultClassroomId());
+            ClassroomEntity classroom = classroomMap.get(entity.getDefaultClassroomId());
             if (classroom != null) {
                 defaultClassroomName = classroom.getRoomName();
             }

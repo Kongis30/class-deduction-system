@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.enrollment.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.classdeduction.system.common.model.BaseEntity;
@@ -34,6 +35,7 @@ public class CoursePackageEntity extends BaseEntity {
 
     private Long studentId;
 
+    @TableField("course_product_id")
     private Long courseProductId;
 
     private String packageName;

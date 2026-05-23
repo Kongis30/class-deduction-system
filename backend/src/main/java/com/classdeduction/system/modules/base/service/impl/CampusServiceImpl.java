@@ -4,8 +4,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.dto.CampusSaveRequest;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
+import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
+import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.CampusService;
 import com.classdeduction.system.modules.base.vo.CampusVO;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +35,10 @@ public class CampusServiceImpl implements CampusService {
     private final CampusMapper campusMapper;
 
     private final ClassroomMapper classroomMapper;
+
+    private final TeacherMapper teacherMapper;
+
+    private final StudentMapper studentMapper;
 
     @Override
     @Cacheable(value = "reference:campuses", key = "'listAllActive'")
@@ -77,6 +86,21 @@ public class CampusServiceImpl implements CampusService {
     @CacheEvict(value = {"reference:campuses", "reference:campus"}, allEntries = true)
     public void deleteCampus(Long id) {
         requireCampus(id);
+        // 检查该校区下是否有教师、教室、学生
+        Long teacherCount = teacherMapper.selectCount(new LambdaQueryWrapper<TeacherEntity>()
+                .eq(TeacherEntity::getCampusId, id)
+                .eq(TeacherEntity::getIsDeleted, 0));
+        Long classroomCount = classroomMapper.selectCount(new LambdaQueryWrapper<ClassroomEntity>()
+                .eq(ClassroomEntity::getCampusId, id)
+                .eq(ClassroomEntity::getIsDeleted, 0));
+        Long studentCount = studentMapper.selectCount(new LambdaQueryWrapper<StudentEntity>()
+                .eq(StudentEntity::getCampusId, id)
+                .eq(StudentEntity::getIsDeleted, 0));
+        if (teacherCount + classroomCount + studentCount > 0) {
+            throw new BusinessException("CAMPUS_HAS_REFERENCES",
+                    "Cannot delete campus: there are still teachers, classrooms, or students "
+                            + "assigned to this campus. Reassign or set them to INACTIVE first.");
+        }
         campusMapper.deleteById(id);
     }
 

@@ -8,9 +8,17 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.base.dto.ClassroomPageQuery;
 import com.classdeduction.system.modules.base.dto.ClassroomSaveRequest;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.ClassroomService;
 import com.classdeduction.system.modules.base.vo.ClassroomVO;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
@@ -18,6 +26,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 
@@ -31,6 +40,10 @@ public class ClassroomServiceImpl implements ClassroomService {
     private static final String DEFAULT_STATUS = "ACTIVE";
 
     private final ClassroomMapper classroomMapper;
+    private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final CourseProductMapper courseProductMapper;
+    private final ClassGroupMapper classGroupMapper;
 
     @Override
     @Cacheable(value = "reference:classrooms", key = "'listAllActive'")
@@ -132,6 +145,30 @@ public class ClassroomServiceImpl implements ClassroomService {
     @CacheEvict(value = {"reference:classrooms", "reference:classroom"}, allEntries = true)
     public void deleteClassroom(Long id) {
         requireClassroom(id);
+        // 检查未来的排课
+        Long futureOccurrences = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPlannedClassroomId, id)
+                .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                .gt(LessonOccurrenceEntity::getPlannedStartAt, LocalDateTime.now()));
+        // 检查活跃的排课规则
+        Long activeRules = recurringScheduleRuleMapper.selectCount(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                .eq(RecurringScheduleRuleEntity::getDefaultClassroomId, id)
+                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                .eq(RecurringScheduleRuleEntity::getIsDeleted, 0));
+        // 检查课程产品
+        Long courseProducts = courseProductMapper.selectCount(new LambdaQueryWrapper<CourseProductEntity>()
+                .eq(CourseProductEntity::getDefaultClassroomId, id)
+                .eq(CourseProductEntity::getStatus, "ACTIVE")
+                .eq(CourseProductEntity::getIsDeleted, 0));
+        // 检查班级
+        Long classGroups = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getClassroomId, id)
+                .eq(ClassGroupEntity::getIsDeleted, 0));
+        if (futureOccurrences + activeRules + courseProducts + classGroups > 0) {
+            throw new BusinessException("CLASSROOM_HAS_REFERENCES",
+                    "Cannot delete classroom: there are future lessons, active schedule rules, "
+                            + "course products, or classes using it. Reassign them first.");
+        }
         classroomMapper.deleteById(id);
     }
 

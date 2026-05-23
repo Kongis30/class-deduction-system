@@ -22,6 +22,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -60,19 +61,23 @@ public class DashboardServiceImpl implements DashboardService {
         long totalCampuses = campusMapper.selectCount(new LambdaQueryWrapper<>());
         long totalCourseProducts = courseProductMapper.selectCount(new LambdaQueryWrapper<>());
 
-        // 今日所有课程（已核销的排除）
-        List<Long> recordedOccurrenceIds = lessonRecordMapper.selectList(
-                new LambdaQueryWrapper<LessonRecordEntity>()
-                        .select(LessonRecordEntity::getOccurrenceId)
-        ).stream().map(LessonRecordEntity::getOccurrenceId).toList();
-
-        long todayLessonsCount = occurrenceMapper.selectCount(
+        // 今日已核销的 occurrence ID（仅限今日范围内的排课，避免全表扫描）
+        List<Long> todayOccurrenceIds = occurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .select(LessonOccurrenceEntity::getId)
                         .ge(LessonOccurrenceEntity::getPlannedStartAt, todayStart)
                         .lt(LessonOccurrenceEntity::getPlannedEndAt, todayEnd)
                         .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
-                        .notIn(!recordedOccurrenceIds.isEmpty(), LessonOccurrenceEntity::getId, recordedOccurrenceIds)
-        );
+        ).stream().map(LessonOccurrenceEntity::getId).toList();
+
+        List<Long> recordedOccurrenceIds = todayOccurrenceIds.isEmpty() ? Collections.emptyList()
+                : lessonRecordMapper.selectList(
+                        new LambdaQueryWrapper<LessonRecordEntity>()
+                                .select(LessonRecordEntity::getOccurrenceId)
+                                .in(LessonRecordEntity::getOccurrenceId, todayOccurrenceIds)
+                ).stream().map(LessonRecordEntity::getOccurrenceId).distinct().toList();
+
+        long todayLessonsCount = todayOccurrenceIds.size() - recordedOccurrenceIds.size();
 
         // 系统级低余量课包
         long lowBalancePackages = coursePackageMapper.selectCount(

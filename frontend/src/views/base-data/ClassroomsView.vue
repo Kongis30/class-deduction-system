@@ -115,7 +115,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="Capacity">
-          <el-input-number v-model="classroomForm.capacity" :min="1" :max="99" :controls="false" style="width: 100px;" />
+          <el-input-number v-model="classroomForm.capacity" :min="1" :max="9999" :controls="false" style="width: 100px;" />
         </el-form-item>
         <el-form-item label="Status">
           <el-select v-model="classroomForm.status" style="width: 110px;">
@@ -141,7 +141,7 @@
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { reactive, ref, watch } from 'vue';
+import { reactive, ref } from 'vue';
 
 import {
   createClassroom,
@@ -217,8 +217,6 @@ async function loadCampuses() {
     ElMessage.error('Failed to load campuses.');
   }
 }
-
-watch(() => filters.status, handleFilterChange);
 
 // ─── Form ──────────────────────────────────────────────
 const classroomForm = reactive<ClassroomSavePayload>({

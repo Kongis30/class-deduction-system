@@ -98,6 +98,8 @@ export interface CoursePackageQuery {
   studentId?: number;
   packageStatus?: string;
   teacherId?: number;
+  sortBy?: string;
+  sortOrder?: string;
   pageNum?: number;
   pageSize?: number;
 }
