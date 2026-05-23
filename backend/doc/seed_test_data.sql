@@ -419,19 +419,19 @@ ON DUPLICATE KEY UPDATE id=id;
 
 -- ── 20. Teacher Role Assignments ────────────────────────────────
 INSERT INTO sys_user_role (id, user_id, role_id, created_at)
-VALUES (1, 2001, 120, '2024-01-01 00:00:00.000')
+VALUES (101, 2001, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
 INSERT INTO sys_user_role (id, user_id, role_id, created_at)
-VALUES (2, 2002, 120, '2024-01-01 00:00:00.000')
+VALUES (102, 2002, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
 INSERT INTO sys_user_role (id, user_id, role_id, created_at)
-VALUES (3, 2003, 120, '2024-01-01 00:00:00.000')
+VALUES (103, 2003, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
 INSERT INTO sys_user_role (id, user_id, role_id, created_at)
-VALUES (4, 2004, 120, '2024-01-01 00:00:00.000')
+VALUES (104, 2004, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
 -- ── Done ─────────────────────────────────────────────────────
