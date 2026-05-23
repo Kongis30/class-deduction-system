@@ -207,27 +207,27 @@ ON DUPLICATE KEY UPDATE id=id;
 -- ── 11. Package Balance Snapshots ───────────────────────────
 INSERT INTO package_balance_snapshot (package_id, total_units, consumed_units, remaining_units, last_ledger_id, snapshot_at)
 VALUES (12001, 40, 20, 20, NULL, '2024-05-15 00:00:00.000')
-ON DUPLICATE KEY UPDATE id=id;
+ON DUPLICATE KEY UPDATE package_id=package_id;
 
 INSERT INTO package_balance_snapshot (package_id, total_units, consumed_units, remaining_units, last_ledger_id, snapshot_at)
 VALUES (12002, 60, 10, 50, NULL, '2024-05-15 00:00:00.000')
-ON DUPLICATE KEY UPDATE id=id;
+ON DUPLICATE KEY UPDATE package_id=package_id;
 
 INSERT INTO package_balance_snapshot (package_id, total_units, consumed_units, remaining_units, last_ledger_id, snapshot_at)
 VALUES (12003, 40, 34, 6, NULL, '2024-05-15 00:00:00.000')
-ON DUPLICATE KEY UPDATE id=id;
+ON DUPLICATE KEY UPDATE package_id=package_id;
 
 INSERT INTO package_balance_snapshot (package_id, total_units, consumed_units, remaining_units, last_ledger_id, snapshot_at)
 VALUES (12004, 80, 16, 64, NULL, '2024-05-15 00:00:00.000')
-ON DUPLICATE KEY UPDATE id=id;
+ON DUPLICATE KEY UPDATE package_id=package_id;
 
 INSERT INTO package_balance_snapshot (package_id, total_units, consumed_units, remaining_units, last_ledger_id, snapshot_at)
 VALUES (12005, 40, 12, 28, NULL, '2024-05-15 00:00:00.000')
-ON DUPLICATE KEY UPDATE id=id;
+ON DUPLICATE KEY UPDATE package_id=package_id;
 
 INSERT INTO package_balance_snapshot (package_id, total_units, consumed_units, remaining_units, last_ledger_id, snapshot_at)
 VALUES (12006, 60, 8, 52, NULL, '2024-05-15 00:00:00.000')
-ON DUPLICATE KEY UPDATE id=id;
+ON DUPLICATE KEY UPDATE package_id=package_id;
 
 -- ── 12. Package Teacher Assignments ──────────────────────────
 INSERT INTO package_teacher_assignment (id, package_id, teacher_id, is_primary, effective_from, effective_to, assignment_status, change_reason, created_at, created_by, updated_at, updated_by, is_deleted, version)
@@ -330,8 +330,8 @@ INSERT INTO lesson_record (id, occurrence_id, package_id, student_id, actual_tea
 VALUES (17001, 16001, 12001, 8001, 7001, 6101, '2024-05-15 16:00:00.000', '2024-05-15 18:00:00.000', 4, 'COMPLETED', 1, '2024-05-15 18:05:00.000', '', '2024-05-15 18:05:00.000', 1, '2024-05-15 18:05:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO hour_ledger (id, package_id, lesson_record_id, occurrence_id, ledger_type, change_units, balance_after_units, business_date, reason_code, reason_desc, operated_by, operated_at, notes, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (18001, 12001, 17001, 16001, 'DEDUCT', -4, 16, '2024-05-15', 'COMPLETED', 'Lesson confirmed', 1, '2024-05-15 18:05:00.000', '', '2024-05-15 18:05:00.000', 1, '2024-05-15 18:05:00.000', 1, 0, 0)
+INSERT INTO hour_ledger (id, package_id, lesson_record_id, occurrence_id, ledger_type, change_units, balance_after_units, business_date, reason_code, reason_desc, operated_by, operated_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+VALUES (18001, 12001, 17001, 16001, 'DEDUCT', -4, 16, '2024-05-15', 'COMPLETED', 'Lesson confirmed', 1, '2024-05-15 18:05:00.000', '2024-05-15 18:05:00.000', 1, '2024-05-15 18:05:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
 -- ── 17. Notification Templates ──────────────────────────────────
@@ -353,7 +353,7 @@ ON DUPLICATE KEY UPDATE id=id;
 INSERT INTO notification_template (id, template_code, template_name, channel_type, subject_template, body_template, status, remark, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (2, 'LOW_BALANCE_DEFAULT', 'Low Balance Warning - Default', 'EMAIL', '${brandName} - Low Balance Warning: ${studentName}', 'Dear Parent,
 
-This is to inform you that ${studentName}'s course package is running low.
+This is to inform you that ${studentName}\'s course package is running low.
 
 Package: ${packageName}
 Remaining hours: ${remainingHours}
@@ -418,20 +418,20 @@ VALUES (8006, 'zhou.yating', @PASS, 'STUDENT', '周雅婷', 'zhou.huifang.guardi
 ON DUPLICATE KEY UPDATE id=id;
 
 -- ── 20. Teacher Role Assignments ────────────────────────────────
-INSERT INTO sys_user_role (id, user_id, role_code, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (1, 2001, 'TEACHER', '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user_role (id, user_id, role_id, created_at)
+VALUES (1, 2001, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user_role (id, user_id, role_code, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (2, 2002, 'TEACHER', '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user_role (id, user_id, role_id, created_at)
+VALUES (2, 2002, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user_role (id, user_id, role_code, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (3, 2003, 'TEACHER', '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user_role (id, user_id, role_id, created_at)
+VALUES (3, 2003, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user_role (id, user_id, role_code, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (4, 2004, 'TEACHER', '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user_role (id, user_id, role_id, created_at)
+VALUES (4, 2004, 120, '2024-01-01 00:00:00.000')
 ON DUPLICATE KEY UPDATE id=id;
 
 -- ── Done ─────────────────────────────────────────────────────
