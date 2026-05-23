@@ -377,43 +377,43 @@ ON DUPLICATE KEY UPDATE id=id;
 -- Password for all users: admin123 (bcrypt hash)
 SET @PASS = '{bcrypt}$2b$12$Qv8n1eJPgIUwRToa3SOVL.3WSBG.x.747wvtFCBweU80udprGHq4K';
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (2001, 'sarah.johnson', @PASS, 'TEACHER', 'Sarah Johnson', 'sarah.johnson@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (2002, 'michael.chen', @PASS, 'TEACHER', 'Michael Chen', 'michael.chen@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (2003, 'emily.rodriguez', @PASS, 'TEACHER', 'Emily Rodriguez', 'emily.rodriguez@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (2004, 'david.kim', @PASS, 'TEACHER', 'David Kim', 'david.kim@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (8001, 'zhang.ming', @PASS, 'STUDENT', '张明轩', 'zhang.wei.guardian@gmail.com', 'ACTIVE', NULL, '2024-02-10 10:00:00.000', 1, '2024-02-10 10:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (8002, 'li.yuhan', @PASS, 'STUDENT', '李雨涵', 'li.xiaoming.guardian@gmail.com', 'ACTIVE', NULL, '2024-03-01 11:00:00.000', 1, '2024-03-01 11:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (8003, 'wang.haoran', @PASS, 'STUDENT', '王浩然', 'wang.jiaming.guardian@gmail.com', 'ACTIVE', NULL, '2024-03-15 09:00:00.000', 1, '2024-03-15 09:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (8004, 'chen.siqi', @PASS, 'STUDENT', '陈思琪', 'chen.guohua.guardian@gmail.com', 'ACTIVE', NULL, '2024-04-01 10:00:00.000', 1, '2024-04-01 10:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (8005, 'liu.zihan', @PASS, 'STUDENT', '刘子涵', 'liu.zhongming.guardian@gmail.com', 'ACTIVE', NULL, '2024-04-15 11:00:00.000', 1, '2024-04-15 11:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (8006, 'zhou.yating', @PASS, 'STUDENT', '周雅婷', 'zhou.huifang.guardian@gmail.com', 'ACTIVE', NULL, '2024-05-01 09:00:00.000', 1, '2024-05-01 09:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 

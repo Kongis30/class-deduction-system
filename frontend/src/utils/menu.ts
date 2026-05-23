@@ -46,7 +46,6 @@ export const appMenus: AppMenuItem[] = [
     title: 'Settings',
     icon: 'Setting',
     children: [
-      { key: 'rules', title: 'Lesson Rules', path: '/system/rules' },
       { key: 'notifications', title: 'Notifications', path: '/system/notifications' },
       { key: 'brand', title: 'Brand Settings', path: '/system/brand' },
       { key: 'accounts', title: 'Accounts & Permissions', path: '/system/accounts' },
