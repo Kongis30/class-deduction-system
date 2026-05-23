@@ -377,20 +377,20 @@ ON DUPLICATE KEY UPDATE id=id;
 -- Password for all users: admin123 (bcrypt hash)
 SET @PASS = '{bcrypt}$2b$12$Qv8n1eJPgIUwRToa3SOVL.3WSBG.x.747wvtFCBweU80udprGHq4K';
 
-INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (2001, 'sarah.johnson', @PASS, 'TEACHER', 'Sarah Johnson', 'sarah.johnson@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, teacher_id, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+VALUES (2001, 'sarah.johnson', @PASS, 'TEACHER', 'Sarah Johnson', 'sarah.johnson@jinbest.edu', 'ACTIVE', 7001, NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (2002, 'michael.chen', @PASS, 'TEACHER', 'Michael Chen', 'michael.chen@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, teacher_id, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+VALUES (2002, 'michael.chen', @PASS, 'TEACHER', 'Michael Chen', 'michael.chen@jinbest.edu', 'ACTIVE', 7002, NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (2003, 'emily.rodriguez', @PASS, 'TEACHER', 'Emily Rodriguez', 'emily.rodriguez@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, teacher_id, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+VALUES (2003, 'emily.rodriguez', @PASS, 'TEACHER', 'Emily Rodriguez', 'emily.rodriguez@jinbest.edu', 'ACTIVE', 7003, NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
-INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (2004, 'david.kim', @PASS, 'TEACHER', 'David Kim', 'david.kim@jinbest.edu', 'ACTIVE', NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
+INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, teacher_id, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
+VALUES (2004, 'david.kim', @PASS, 'TEACHER', 'David Kim', 'david.kim@jinbest.edu', 'ACTIVE', 7004, NULL, '2024-01-01 00:00:00.000', 1, '2024-01-01 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
 INSERT INTO sys_user (id, username, password_hash, user_type, display_name, email, status, last_login_at, created_at, created_by, updated_at, updated_by, is_deleted, version)
