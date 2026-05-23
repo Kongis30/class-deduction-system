@@ -80,6 +80,9 @@ class LessonRecordServiceImplTest {
     @Mock
     private NotificationOutboxService notificationOutboxService;
 
+    @Mock
+    private com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper notificationTriggerRuleMapper;
+
     @Captor
     private ArgumentCaptor<LessonRecordEntity> recordCaptor;
 
@@ -106,7 +109,8 @@ class LessonRecordServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
-                notificationOutboxService
+                notificationOutboxService,
+                notificationTriggerRuleMapper
         );
     }
 

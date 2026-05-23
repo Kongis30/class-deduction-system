@@ -28,6 +28,10 @@ export interface StudentSavePayload {
   guardianRelationType?: string;
   status?: string;
   notes?: string;
+  englishName?: string;
+  birthDate?: string;
+  sourceChannel?: string;
+  campusId?: number;
 }
 
 export function createStudent(data: StudentSavePayload) {

@@ -57,6 +57,21 @@ class SystemNotificationServiceImplTest {
     @Mock
     private HourLedgerMapper hourLedgerMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.systemconfig.mapper.NotificationConfigMapper notificationConfigMapper;
+
+    @Mock
+    private com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper notificationTriggerRuleMapper;
+
+    @Mock
+    private com.classdeduction.system.modules.base.mapper.StudentMapper studentMapper;
+
+    @Mock
+    private com.classdeduction.system.modules.base.mapper.GuardianContactMapper guardianContactMapper;
+
+    @Mock
+    private com.classdeduction.system.modules.auth.mapper.UserAccountMapper userAccountMapper;
+
     @Captor
     private ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<NotificationLogEntity>> updateCaptor;
 
@@ -70,11 +85,16 @@ class SystemNotificationServiceImplTest {
                 notificationTemplateMapper,
                 notificationLogMapper,
                 brandConfigMapper,
+                notificationConfigMapper,
+                notificationTriggerRuleMapper,
                 javaMailSender,
                 new ObjectMapper(),
                 notificationEmailProperties,
                 coursePackageMapper,
-                hourLedgerMapper
+                hourLedgerMapper,
+                studentMapper,
+                guardianContactMapper,
+                userAccountMapper
         );
     }
 

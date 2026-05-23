@@ -189,13 +189,14 @@
             </div>
             <el-table :data="enrolledStudents" v-loading="classStudentsLoading" size="small" max-height="220" stripe>
               <el-table-column label="Student" prop="studentName" min-width="120" />
-              <el-table-column label="Enrolled" prop="enrollmentDate" min-width="100">
+              <el-table-column label="Enrolled" prop="enrollmentDate" min-width="100" sortable>
                 <template #default="{ row }">{{ formatDateShort(row.enrollmentDate) }}</template>
               </el-table-column>
-              <el-table-column label="Expiry" prop="expiryDate" min-width="100">
+              <el-table-column label="Expiry" prop="expiryDate" min-width="100" sortable>
                 <template #default="{ row }">{{ formatDateShort(row.expiryDate) }}</template>
               </el-table-column>
-              <el-table-column label="Expiry Status" width="130">
+              <el-table-column label="Expiry Status" width="130"
+                :filters="expiryStatusFilters" :filter-method="filterExpiryStatus">
                 <template #default="{ row }">
                   <el-tag
                     size="small"
@@ -581,6 +582,16 @@ async function computeLastDates(studentId: string) {
 const hasExpiringStudents = computed(() =>
   enrolledStudents.value.some(s => s.expiryStatus === 'EXPIRING_SOON' || s.expiryStatus === 'EXPIRED')
 );
+
+const expiryStatusFilters = [
+  { text: 'Normal', value: 'NORMAL' },
+  { text: 'Expiring Soon', value: 'EXPIRING_SOON' },
+  { text: 'Expired', value: 'EXPIRED' },
+];
+
+function filterExpiryStatus(value: string, row: ClassEnrolledStudentItem): boolean {
+  return row.expiryStatus === value;
+}
 
 async function selectClass(id: number) {
   selectedClassId.value = id;

@@ -244,8 +244,8 @@ const teacherForm = reactive<TeacherSavePayload>({
 
 const teacherFormRules = {
   teacherName: [{ required: true, message: 'Name is required' }],
-  mobile: [{ required: true, message: 'Phone is required' }],
-  email: [{ required: true, message: 'Email is required', type: 'email' }],
+  mobile: [{ pattern: /^$|^[0-9+\-() ]{6,32}$/, message: 'Phone number format is invalid' }],
+  email: [{ type: 'email', message: 'Email format is invalid' }],
 };
 
 async function openTeacherDialog(row?: TeacherItem) {
@@ -253,11 +253,11 @@ async function openTeacherDialog(row?: TeacherItem) {
   if (row) {
     Object.assign(teacherForm, {
       teacherName: row.teacherName,
-      mobile: row.mobile,
-      email: row.email,
-      subjectTags: [...row.subjectTags],
+      mobile: row.mobile ?? '',
+      email: row.email ?? '',
+      subjectTags: [...(row.subjectTags || [])],
       status: row.status,
-      notes: '',
+      notes: row.notes ?? '',
     });
   } else {
     Object.assign(teacherForm, {
@@ -269,6 +269,7 @@ async function openTeacherDialog(row?: TeacherItem) {
       notes: '',
     });
   }
+  teacherFormRef.value?.clearValidate();
   teacherDialogVisible.value = true;
 }
 
@@ -276,13 +277,24 @@ async function handleTeacherSubmit() {
   const valid = await teacherFormRef.value?.validate().catch(() => false);
   if (!valid) return;
 
+  // Convert empty strings to null so backend @Email/@Pattern validation passes
+  // (@Email rejects "" but accepts null; @Pattern(regexp="^$|...") accepts "")
+  const payload: TeacherSavePayload = {
+    teacherName: teacherForm.teacherName,
+    mobile: teacherForm.mobile || null,
+    email: teacherForm.email || null,
+    subjectTags: teacherForm.subjectTags?.length ? teacherForm.subjectTags : [],
+    status: teacherForm.status,
+    notes: teacherForm.notes || null,
+  };
+
   submitting.value = true;
   try {
     if (editingId.value) {
-      await updateTeacher(editingId.value, { ...teacherForm });
+      await updateTeacher(editingId.value, payload);
       ElMessage.success('Instructor updated.');
     } else {
-      await createTeacher({ ...teacherForm });
+      await createTeacher(payload);
       ElMessage.success('Instructor created.');
     }
     teacherDialogVisible.value = false;

@@ -15,14 +15,27 @@
           :key="day"
           class="wts-cell"
           :class="cellClass(day, time.hour, time.minute)"
-          :title="occupiedTitle(day, time.hour, time.minute)"
           @mousedown.prevent="onMouseDown(day, time.hour, time.minute)"
           @mouseenter="onMouseEnter(day, time.hour, time.minute)"
           @click="onCellClick(day, time.hour, time.minute)"
         >
-          <span v-if="occupiedLabel(day, time.hour, time.minute)" class="wts-cell__label">
-            {{ occupiedLabel(day, time.hour, time.minute) }}
-          </span>
+          <el-tooltip
+            v-if="isOccupied(day, time.hour, time.minute)"
+            :content="occupiedTooltipContent(day, time.hour, time.minute)"
+            placement="top"
+            :show-after="200"
+            raw-content
+          >
+            <span v-if="occupiedLabel(day, time.hour, time.minute)" class="wts-cell__label">
+              {{ occupiedLabel(day, time.hour, time.minute) }}
+            </span>
+            <span v-else class="wts-cell__fill" style="display:block;height:100%;width:100%"></span>
+          </el-tooltip>
+          <template v-else>
+            <span v-if="occupiedLabel(day, time.hour, time.minute)" class="wts-cell__label">
+              {{ occupiedLabel(day, time.hour, time.minute) }}
+            </span>
+          </template>
         </div>
       </div>
     </div>
@@ -147,14 +160,17 @@ function isOccupied(day: number, hour: number, minute: number): boolean {
   return occupiedMap.value.has(`${day}:${timeToMinutes(hour, minute)}`);
 }
 
-function occupiedTitle(day: number, hour: number, minute: number): string {
+function occupiedTooltipContent(day: number, hour: number, minute: number): string {
   const slot = occupiedMap.value.get(`${day}:${timeToMinutes(hour, minute)}`);
   if (!slot) return '';
-  const parts = [slot.courseLabel, `${slot.startTime}–${slot.endTime}`];
-  if (slot.studentName) parts.push(`Student: ${slot.studentName}`);
-  if (slot.teacherName) parts.push(`Teacher: ${slot.teacherName}`);
-  if (slot.classroomName) parts.push(`Room: ${slot.classroomName}`);
-  return parts.join('\n');
+  const lines = [
+    `<b>${slot.courseLabel}</b>`,
+    `${slot.startTime}–${slot.endTime}`,
+  ];
+  if (slot.studentName) lines.push(`Student: ${slot.studentName}`);
+  if (slot.teacherName) lines.push(`Teacher: ${slot.teacherName}`);
+  if (slot.classroomName) lines.push(`Room: ${slot.classroomName}`);
+  return lines.join('<br>');
 }
 
 function occupiedLabel(day: number, hour: number, minute: number): string {
@@ -387,6 +403,7 @@ function weekdayName(d: number) {
   border-bottom: 1px solid #f0f0f0;
   border-right: 1px solid #f5f5f5;
   position: relative;
+  overflow: hidden;
 }
 .wts-row:last-child .wts-cell {
   border-bottom: none;
@@ -457,10 +474,12 @@ function weekdayName(d: number) {
   line-height: 26px;
   padding: 0 0 0 4px;
   white-space: nowrap;
-  overflow: hidden;
+  overflow: hidden !important;
   text-overflow: ellipsis;
   pointer-events: none;
   font-weight: 600;
+  max-width: 100%;
+  width: 100%;
 }
 .wts-cell--occupied .wts-cell__label {
   color: #999;

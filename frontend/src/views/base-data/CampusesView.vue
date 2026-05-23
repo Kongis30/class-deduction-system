@@ -18,7 +18,6 @@
         class="product-table"
         :show-empty="true"
       >
-        <el-table-column label="Display order" width="120" align="center" prop="displayOrder" />
         <el-table-column label="Campus name" min-width="200">
           <template #default="{ row }">
             <strong>{{ row.campusName }}</strong>

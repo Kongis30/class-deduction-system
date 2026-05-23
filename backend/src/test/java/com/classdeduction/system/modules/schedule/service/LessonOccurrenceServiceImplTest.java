@@ -47,6 +47,9 @@ class LessonOccurrenceServiceImplTest {
     @Mock
     private ClassroomMapper classroomMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper classGroupMapper;
+
     private LessonOccurrenceServiceImpl lessonOccurrenceService;
 
     @BeforeEach
@@ -58,7 +61,8 @@ class LessonOccurrenceServiceImplTest {
                 coursePackageMapper,
                 studentMapper,
                 teacherMapper,
-                classroomMapper
+                classroomMapper,
+                classGroupMapper
         );
     }
 

@@ -10,9 +10,11 @@ import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateRequest;
@@ -95,6 +97,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
 
     /**
      * Initialize the business number sequence from the database to avoid
@@ -928,16 +931,86 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         // Validate student
         StudentEntity student = requireStudent(request.getStudentId());
 
-        // Validate class
-        ClassGroupEntity clz = classGroupMapper.selectById(request.getClassId());
-        if (clz == null || !"ACTIVE".equals(clz.getStatus())) {
-            throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+        // Resolve class_group from productId or classId
+        ClassGroupEntity clz;
+        Long resolvedClassId;
+        if (request.getProductId() != null) {
+            CourseProductEntity product = courseProductMapper.selectById(request.getProductId());
+            if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
+                throw new BusinessException("PRODUCT_NOT_FOUND", "Group course product not found or not active.");
+            }
+            // Check if a class_group already exists for this product
+            ClassGroupEntity existingGroup = classGroupMapper.selectOne(
+                    new LambdaQueryWrapper<ClassGroupEntity>()
+                            .eq(ClassGroupEntity::getProductId, request.getProductId())
+                            .eq(ClassGroupEntity::getIsDeleted, 0)
+                            .last("LIMIT 1"));
+            if (existingGroup != null) {
+                clz = existingGroup;
+            } else {
+                ClassGroupEntity newGroup = new ClassGroupEntity();
+                newGroup.setClassName(product.getProductName());
+                newGroup.setListPrice(product.getListPrice());
+                newGroup.setProductId(request.getProductId());
+                newGroup.setStatus("ACTIVE");
+                classGroupMapper.insert(newGroup);
+                clz = newGroup;
+            }
+            resolvedClassId = clz.getId();
+        } else {
+            // Existing behavior: validate classId as class_group.id
+            if (request.getClassId() == null) {
+                throw new BusinessException("CLASS_ID_REQUIRED", "Either classId or productId is required.");
+            }
+            clz = classGroupMapper.selectById(request.getClassId());
+            if (clz == null || !"ACTIVE".equals(clz.getStatus())) {
+                throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+            }
+            resolvedClassId = request.getClassId();
+        }
+
+        // Generate lesson_occurrence records if this class_group has none yet
+        if (request.getProductId() != null) {
+            long existingOccCount = lessonOccurrenceMapper.selectCount(
+                    new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                            .eq(LessonOccurrenceEntity::getClassGroupId, resolvedClassId));
+            if (existingOccCount == 0) {
+                List<CourseProductScheduleSlotEntity> slots = courseProductScheduleSlotMapper.selectList(
+                        new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
+                                .eq(CourseProductScheduleSlotEntity::getProductId, request.getProductId())
+                                .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
+                if (!slots.isEmpty()) {
+                    LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+                    LocalDate horizonEnd = today.plusDays(90);
+                    CourseProductEntity product = courseProductMapper.selectById(request.getProductId());
+                    for (LocalDate date = today; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
+                        int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
+                        for (CourseProductScheduleSlotEntity slot : slots) {
+                            if (slot.getWeekday() != weekday) continue;
+                            // 跳过无效时段（结束时间不晚于开始时间）
+                            if (!slot.getEndTime().isAfter(slot.getStartTime())) continue;
+                            long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                            LessonOccurrenceEntity occ = new LessonOccurrenceEntity();
+                            occ.setLessonNo(generateClassLessonNo());
+                            occ.setClassGroupId(resolvedClassId);
+                            occ.setOccurrenceType("REGULAR");
+                            occ.setPlannedClassroomId(product.getDefaultClassroomId());
+                            occ.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
+                            occ.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
+                            occ.setPlannedUnits((int) (minutes / 30));
+                            occ.setPlanningStatus("SCHEDULED");
+                            occ.setConflictChecked(1);
+                            lessonOccurrenceMapper.insert(occ);
+                        }
+                    }
+                }
+            }
         }
 
         // Check duplicate enrollment (only active enrollments, not withdrawn)
         Long existingCount = classEnrollmentMapper.selectCount(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .eq(ClassEnrollmentEntity::getClassId, request.getClassId())
+                        .eq(ClassEnrollmentEntity::getClassId, resolvedClassId)
                         .eq(ClassEnrollmentEntity::getStudentId, request.getStudentId())
                         .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
@@ -959,7 +1032,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setEnrollmentNo(BusinessNoGenerator.generateEnrollmentNo());
         order.setStudentId(student.getId());
-        order.setClassId(request.getClassId());
+        order.setClassId(resolvedClassId);
         order.setOrderStatus("CONFIRMED");
         order.setHandledByName(request.getHandledByName());
         order.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
@@ -972,7 +1045,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
         // Create class_enrollment
         ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
-        enrollment.setClassId(request.getClassId());
+        enrollment.setClassId(resolvedClassId);
         enrollment.setStudentId(student.getId());
         enrollment.setEnrollmentDate(java.time.LocalDate.parse(request.getEnrollmentDate()));
         enrollment.setExpiryDate(java.time.LocalDate.parse(request.getExpiryDate()));
@@ -1023,5 +1096,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .stream()
                 .map(StudentEntity::getId)
                 .toList();
+    }
+
+    /**
+     * 生成班课排课编号：CLS + yyyyMMddHHmmss + 4 位随机数
+     */
+    private String generateClassLessonNo() {
+        return "CLS" + AppTime.nowLocalDateTime()
+                .format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
     }
 }

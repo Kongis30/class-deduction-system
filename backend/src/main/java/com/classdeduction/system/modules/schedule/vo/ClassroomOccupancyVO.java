@@ -25,6 +25,8 @@ public record ClassroomOccupancyVO(
         LocalDateTime plannedStartAt,
         LocalDateTime plannedEndAt,
         Integer plannedUnits,
-        String planningStatus
+        String planningStatus,
+        Long classGroupId,
+        String className
 ) {
 }

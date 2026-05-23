@@ -5,6 +5,7 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.dto.CampusSaveRequest;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
+import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.service.CampusService;
 import com.classdeduction.system.modules.base.vo.CampusVO;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,8 @@ public class CampusServiceImpl implements CampusService {
     private static final String DEFAULT_STATUS = "ACTIVE";
 
     private final CampusMapper campusMapper;
+
+    private final ClassroomMapper classroomMapper;
 
     @Override
     @Cacheable(value = "reference:campuses", key = "'listAllActive'")
@@ -65,6 +68,8 @@ public class CampusServiceImpl implements CampusService {
         ensureCampusNameUnique(id, request.getCampusName());
         applyCampus(entity, request);
         campusMapper.updateById(entity);
+        // 同步更新该校区下所有教室的冗余 campus 名称字段
+        classroomMapper.syncCampusName(id, request.getCampusName());
     }
 
     @Override

@@ -77,7 +77,8 @@ export function deleteEnrollmentOrder(id: number) {
 
 export interface ClassEnrollmentCreatePayload {
   studentId: number;
-  classId: number;
+  classId?: number;
+  productId?: number;
   enrollmentDate: string;
   expiryDate: string;
   handledByName?: string;

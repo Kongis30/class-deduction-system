@@ -19,9 +19,11 @@ public class ClassEnrollmentCreateRequest {
     @Schema(description = "学生ID", example = "1880000000000000001")
     private Long studentId;
 
-    @NotNull(message = "班课ID不能为空")
-    @Schema(description = "班课ID", example = "1880000000000000005")
+    @Schema(description = "班课ID（与 productId 二选一）", example = "1880000000000000005")
     private Long classId;
+
+    @Schema(description = "课程产品ID（GROUP 类型，与 classId 二选一）", example = "1880000000000000003")
+    private Long productId;
 
     @NotBlank(message = "报名日期不能为空")
     @Schema(description = "报名日期 (ISO date)", example = "2026-05-17")

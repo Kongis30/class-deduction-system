@@ -85,6 +85,7 @@ export interface LessonOccurrenceQuery {
   studentId?: number;
   teacherId?: number;
   classroomId?: number;
+  classGroupId?: number;
   planningStatus?: string;
   startAt?: string;
   endAt?: string;
@@ -193,4 +194,16 @@ export function enrollClassStudent(classId: number, data: {
   expiryDate: string;
 }) {
   return http.post<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/enroll`, data);
+}
+
+export function fetchEnrolledClassGroups(studentId: number) {
+  return http.get<ApiResponse<any[]>>(`/v1/classes/enrolled/${studentId}`);
+}
+
+export function fetchClassGroupsByTeacher(teacherId: number) {
+  return http.get<ApiResponse<any[]>>(`/v1/classes/teacher/${teacherId}`);
+}
+
+export function fetchClassGroupsByClassroom(classroomId: number) {
+  return http.get<ApiResponse<any[]>>(`/v1/classes/classroom/${classroomId}`);
 }

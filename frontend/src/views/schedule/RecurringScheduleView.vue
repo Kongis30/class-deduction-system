@@ -363,6 +363,8 @@ import {
   updateRecurringScheduleRule,
   fetchRecurringScheduleRule,
   fetchRecurringScheduleRules,
+  fetchLessonOccurrences,
+  fetchEnrolledClassGroups,
 } from '@/api/schedule';
 import type { CoursePackageItem } from '@/types/domain';
 import type { RecurringScheduleRuleItem } from '@/types/domain';
@@ -382,6 +384,9 @@ const students = ref<{ id: number; studentName: string }[]>([]);
 const studentPackages = ref<CoursePackageItem[]>([]);
 const teachers = ref<{ id: number; teacherName: string }[]>([]);
 const classrooms = ref<{ id: number; roomName: string }[]>([]);
+const enrolledClassGroups = ref<any[]>([]);
+const classGroupLoading = ref(false);
+const classGroupOccupiedSlots = ref<OccupiedSlotDef[]>([]);
 
 // ─── All package rules (preloaded per student) ──
 const allPackageRules = ref<Record<number, any>>({});
@@ -460,7 +465,7 @@ const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
       displaySlots = rule.slots || [];
     }
 
-    const pkgName = getPackageName(pkgId);
+    const pkgName = rule.packageName || getPackageName(pkgId);
 
     for (const slot of displaySlots) {
       result.push({
@@ -471,6 +476,10 @@ const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
         isCurrent,
       });
     }
+  }
+  // 添加班课占用
+  for (const slot of classGroupOccupiedSlots.value) {
+    result.push(slot);
   }
   return result;
 });
@@ -486,7 +495,7 @@ const otherPackageOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
   for (const [pkgIdStr, rule] of Object.entries(allPackageRules.value)) {
     if (Number(pkgIdStr) === selectedPackageId.value) continue;
-    const pkgName = getPackageName(Number(pkgIdStr));
+    const pkgName = rule.packageName || getPackageName(Number(pkgIdStr));
     for (const slot of (rule.slots || [])) {
       result.push({
         weekday: slot.weekday,
@@ -495,6 +504,10 @@ const otherPackageOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
         courseLabel: `${pkgName} ${(slot.plannedUnits * 0.5).toFixed(1)}h`,
       });
     }
+  }
+  // 添加班课占用（编辑对话框也显示）
+  for (const slot of classGroupOccupiedSlots.value) {
+    result.push(slot);
   }
   return result;
 });
@@ -512,6 +525,7 @@ async function onStudentSelect(id: number) {
   selectedStudentId.value = id;
   selectedPackageId.value = null;
   allPackageRules.value = {};
+  classGroupOccupiedSlots.value = [];
   loadingPackages.value = true;
   try {
     const res = await fetchCoursePackages({ studentId: id, packageStatus: 'ACTIVE', pageSize: 50 });
@@ -522,6 +536,7 @@ async function onStudentSelect(id: number) {
   } finally {
     loadingPackages.value = false;
   }
+  loadEnrolledClassGroups(id);
 }
 
 // ─── Package selection ─────────────────────────
@@ -556,6 +571,56 @@ async function loadAllPackageRules() {
     }
   }
   allPackageRules.value = map;
+}
+
+// ─── Load enrolled class group slots ────────────
+const classGroupSlotCache = new Map<number, OccupiedSlotDef[]>();
+
+async function loadEnrolledClassGroups(studentId: number) {
+  classGroupLoading.value = true;
+  try {
+    const res = await fetchEnrolledClassGroups(studentId);
+    enrolledClassGroups.value = res.data.data;
+    await loadClassGroupSlots();
+  } catch {
+    enrolledClassGroups.value = [];
+    classGroupOccupiedSlots.value = [];
+  } finally {
+    classGroupLoading.value = false;
+  }
+}
+
+async function loadClassGroupSlots() {
+  const monday = dayjs().startOf('week').add(1, 'day'); // 本周一
+  const sunday = monday.add(6, 'day').endOf('day');
+  const weekStart = monday.format('YYYY-MM-DDTHH:mm:ss');
+  const weekEnd = sunday.format('YYYY-MM-DDTHH:mm:ss');
+
+  const allSlots: OccupiedSlotDef[] = [];
+  for (const cls of enrolledClassGroups.value) {
+    try {
+      const res = await fetchLessonOccurrences({
+        classGroupId: cls.id,
+        startAt: weekStart,
+        endAt: weekEnd,
+        pageSize: 50,
+      });
+      for (const occ of res.data.data.records) {
+        if (occ.planningStatus === 'CANCELLED') continue;
+        const start = dayjs(occ.plannedStartAt);
+        const weekday = start.day() === 0 ? 7 : start.day();
+        allSlots.push({
+          weekday,
+          startTime: start.format('HH:mm'),
+          endTime: dayjs(occ.plannedEndAt).format('HH:mm'),
+          courseLabel: cls.className,
+          teacherName: occ.plannedTeacherName,
+          classroomName: occ.plannedClassroomName,
+        });
+      }
+    } catch { /* skip failed class group */ }
+  }
+  classGroupOccupiedSlots.value = allSlots;
 }
 
 // ─── Edit Form ──────────────────────────────────

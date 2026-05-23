@@ -155,6 +155,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .id(rule.getId())
                 .packageId(rule.getPackageId())
                 .packageNo(coursePackage.getPackageNo())
+                .packageName(coursePackage.getPackageName())
                 .studentId(coursePackage.getStudentId())
                 .studentName(student == null ? null : student.getStudentName())
                 .primaryTeacherId(rule.getPrimaryTeacherId())

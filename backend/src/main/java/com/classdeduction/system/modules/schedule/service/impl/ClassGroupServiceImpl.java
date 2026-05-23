@@ -19,6 +19,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
+import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTemplateEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTemplateMapper;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -48,6 +50,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         List<ClassGroupEntity> classes = classGroupMapper.selectList(
                 new LambdaQueryWrapper<ClassGroupEntity>()
                         .eq(ClassGroupEntity::getStatus, "ACTIVE")
+                        .isNotNull(ClassGroupEntity::getProductId)
                         .orderByAsc(ClassGroupEntity::getClassName)
         );
         List<Map<String, Object>> result = new ArrayList<>();
@@ -70,6 +73,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
             item.put("classroomName", classroom != null ? classroom.getRoomName() : null);
             item.put("listPrice", clz.getListPrice());
+            item.put("productId", clz.getProductId());
+            item.put("status", clz.getStatus());
             item.put("activeStudentCount", activeCount);
             result.add(item);
         }
@@ -311,5 +316,110 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         result.put("enrollmentDate", enrollmentDate);
         result.put("expiryDate", expiryDate);
         return result;
+    }
+
+    @Override
+    public List<Map<String, Object>> listEnrolledByStudent(Long studentId) {
+        // 查询学生已报名的活跃班课
+        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+        );
+        if (enrollments.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Long> classIds = enrollments.stream()
+                .map(ClassEnrollmentEntity::getClassId)
+                .toList();
+
+        // 批量查询班课信息
+        Map<Long, ClassGroupEntity> classMap = classGroupMapper.selectBatchIds(classIds).stream()
+                .collect(Collectors.toMap(ClassGroupEntity::getId, c -> c));
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            ClassGroupEntity clz = classMap.get(enrollment.getClassId());
+            if (clz == null || !"ACTIVE".equals(clz.getStatus())) continue;
+
+            TeacherEntity teacher = clz.getTeacherId() != null
+                    ? teacherMapper.selectById(clz.getTeacherId()) : null;
+            ClassroomEntity classroom = clz.getClassroomId() != null
+                    ? classroomMapper.selectById(clz.getClassroomId()) : null;
+
+            Map<String, Object> item = new HashMap<>();
+            item.put("id", clz.getId());
+            item.put("className", clz.getClassName());
+            item.put("description", clz.getDescription());
+            item.put("scheduleDesc", clz.getScheduleDesc());
+            item.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
+            item.put("classroomName", classroom != null ? classroom.getRoomName() : null);
+            item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc()));
+            result.add(item);
+        }
+        return result;
+    }
+
+    @Override
+    public List<Map<String, Object>> listByTeacher(Long teacherId) {
+        List<ClassGroupEntity> classes = classGroupMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupEntity>()
+                        .eq(ClassGroupEntity::getTeacherId, teacherId)
+                        .eq(ClassGroupEntity::getStatus, "ACTIVE")
+                        .isNotNull(ClassGroupEntity::getProductId)
+        );
+        return classes.stream().map(this::toClassSlotMap).toList();
+    }
+
+    @Override
+    public List<Map<String, Object>> listByClassroom(Long classroomId) {
+        List<ClassGroupEntity> classes = classGroupMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupEntity>()
+                        .eq(ClassGroupEntity::getClassroomId, classroomId)
+                        .eq(ClassGroupEntity::getStatus, "ACTIVE")
+                        .isNotNull(ClassGroupEntity::getProductId)
+        );
+        return classes.stream().map(this::toClassSlotMap).toList();
+    }
+
+    /**
+     * 将 ClassGroupEntity 转为包含解析时段的前端 Map。
+     */
+    private Map<String, Object> toClassSlotMap(ClassGroupEntity clz) {
+        TeacherEntity teacher = clz.getTeacherId() != null
+                ? teacherMapper.selectById(clz.getTeacherId()) : null;
+        ClassroomEntity classroom = clz.getClassroomId() != null
+                ? classroomMapper.selectById(clz.getClassroomId()) : null;
+
+        Map<String, Object> item = new HashMap<>();
+        item.put("id", clz.getId());
+        item.put("className", clz.getClassName());
+        item.put("description", clz.getDescription());
+        item.put("scheduleDesc", clz.getScheduleDesc());
+        item.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
+        item.put("classroomName", classroom != null ? classroom.getRoomName() : null);
+        item.put("listPrice", clz.getListPrice());
+        item.put("productId", clz.getProductId());
+        item.put("status", clz.getStatus());
+        item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc()));
+        return item;
+    }
+
+    /**
+     * 解析 scheduleDesc 为前端可用的 slot 列表。
+     */
+    private List<Map<String, Object>> toScheduleSlotList(String scheduleDesc) {
+        return ScheduleDescParser.parse(scheduleDesc).stream()
+                .map(slot -> {
+                    Map<String, Object> m = new HashMap<>();
+                    m.put("weekday", slot.weekday());
+                    m.put("startTime", slot.startTime());
+                    m.put("endTime", slot.endTime());
+                    m.put("plannedUnits", slot.plannedUnits());
+                    return m;
+                })
+                .toList();
     }
 }

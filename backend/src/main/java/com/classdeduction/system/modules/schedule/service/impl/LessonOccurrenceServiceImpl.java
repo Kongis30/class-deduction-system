@@ -89,6 +89,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .eq(query.getStudentId() != null, LessonOccurrenceEntity::getStudentId, query.getStudentId())
                 .eq(query.getTeacherId() != null, LessonOccurrenceEntity::getPlannedTeacherId, query.getTeacherId())
                 .eq(query.getClassroomId() != null, LessonOccurrenceEntity::getPlannedClassroomId, query.getClassroomId())
+                .eq(query.getClassGroupId() != null, LessonOccurrenceEntity::getClassGroupId, query.getClassGroupId())
                 .ge(LessonOccurrenceEntity::getPlannedStartAt, window[0])
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, window[1])
                 .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt);
@@ -138,6 +139,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, StudentEntity> studentMap = listStudentsByIds(result.getRecords().stream().map(LessonOccurrenceEntity::getStudentId).collect(Collectors.toSet()));
         Map<Long, TeacherEntity> teacherMap = listTeachersByIds(result.getRecords().stream().map(LessonOccurrenceEntity::getPlannedTeacherId).filter(Objects::nonNull).collect(Collectors.toSet()));
         Map<Long, ClassroomEntity> classroomMap = listClassroomsByIds(result.getRecords().stream().map(LessonOccurrenceEntity::getPlannedClassroomId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        Map<Long, ClassGroupEntity> classGroupMap = listClassGroupsByIds(result.getRecords().stream().map(LessonOccurrenceEntity::getClassGroupId).filter(Objects::nonNull).collect(Collectors.toSet()));
 
         List<ClassroomOccupancyVO> records = result.getRecords().stream()
                 .map(item -> {
@@ -145,6 +147,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     StudentEntity student = studentMap.get(item.getStudentId());
                     TeacherEntity teacher = teacherMap.get(item.getPlannedTeacherId());
                     ClassroomEntity classroom = classroomMap.get(item.getPlannedClassroomId());
+                    ClassGroupEntity classGroup = classGroupMap.get(item.getClassGroupId());
                     return ClassroomOccupancyVO.builder()
                             .occurrenceId(item.getId())
                             .lessonNo(item.getLessonNo())
@@ -161,6 +164,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .plannedEndAt(item.getPlannedEndAt())
                             .plannedUnits(item.getPlannedUnits())
                             .planningStatus(item.getPlanningStatus())
+                            .classGroupId(item.getClassGroupId())
+                            .className(classGroup == null ? null : classGroup.getClassName())
                             .build();
                 })
                 .toList();

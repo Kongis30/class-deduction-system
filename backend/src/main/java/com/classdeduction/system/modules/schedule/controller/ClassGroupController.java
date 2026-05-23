@@ -96,4 +96,22 @@ public class ClassGroupController {
     public ApiResponse<Map<String, Object>> sendExpiryReminders(@PathVariable Long classId) {
         return ApiResponse.success("Reminders sent.", classGroupService.sendExpiryReminders(classId));
     }
+
+    @GetMapping("/enrolled/{studentId}")
+    @Operation(summary = "List class groups enrolled by a student")
+    public ApiResponse<List<Map<String, Object>>> listEnrolledByStudent(@PathVariable Long studentId) {
+        return ApiResponse.success(classGroupService.listEnrolledByStudent(studentId));
+    }
+
+    @GetMapping("/teacher/{teacherId}")
+    @Operation(summary = "List active class groups taught by a teacher")
+    public ApiResponse<List<Map<String, Object>>> listByTeacher(@PathVariable Long teacherId) {
+        return ApiResponse.success(classGroupService.listByTeacher(teacherId));
+    }
+
+    @GetMapping("/classroom/{classroomId}")
+    @Operation(summary = "List active class groups using a classroom")
+    public ApiResponse<List<Map<String, Object>>> listByClassroom(@PathVariable Long classroomId) {
+        return ApiResponse.success(classGroupService.listByClassroom(classroomId));
+    }
 }

@@ -38,4 +38,7 @@ public class LessonOccurrencePageQuery extends PageQuery {
 
     @Schema(description = "Window end time", example = "2026-04-30T23:59:59")
     private LocalDateTime endAt;
+
+    @Schema(description = "Class group ID", example = "1880000000000000005")
+    private Long classGroupId;
 }

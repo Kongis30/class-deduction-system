@@ -753,7 +753,7 @@
             <el-option
               v-for="c in classes"
               :key="c.id"
-              :label="`${c.className} (${c.teacherName || '—'})`"
+              :label="c.productName"
               :value="c.id"
             />
           </el-select>
@@ -1082,7 +1082,7 @@ const students = ref<{ id: number; studentName: string }[]>([]);
 const teachers = ref<{ id: number; teacherName: string }[]>([]);
 const courseProducts = ref<{ id: number; productName: string; subjectName?: string; defaultTotalUnits?: number; defaultLessonUnits?: number; listPrice?: number }[]>([]);
 const classrooms = ref<{ id: number; roomName: string }[]>([]);
-const classes = ref<{ id: number; className: string; teacherName?: string; listPrice?: number }[]>([]);
+const classes = ref<{ id: number; productName: string; listPrice?: number }[]>([]);
 const occupiedSlots = ref<OccupiedSlotDef[]>([]);
 const loadingSchedule = ref(false);
 const scheduleLoadError = ref('');
@@ -1484,16 +1484,15 @@ async function loadClassrooms() {
 
 async function loadClasses() {
   try {
-    const res = await fetchClassGroups();
-    const data = res.data.data as any[];
-    classes.value = data.map((r: any) => ({
+    const res = await fetchCourseProducts({ teachingMode: 'GROUP', status: 'ACTIVE' });
+    const records = (res.data.data as any).records ?? [];
+    classes.value = records.map((r: any) => ({
       id: r.id,
-      className: r.className,
-      teacherName: r.teacherName,
+      productName: r.productName,
       listPrice: r.listPrice ?? 0,
     }));
   } catch {
-    // silent fail
+    classes.value = [];
   }
 }
 
@@ -1842,7 +1841,7 @@ async function submitClassEnroll() {
   try {
     await createClassEnrollmentOrder({
       studentId: classEnrollForm.studentId!,
-      classId: classEnrollForm.classId!,
+      productId: classEnrollForm.classId!,
       enrollmentDate: classEnrollForm.enrollmentDate,
       expiryDate: classEnrollForm.expiryDate,
       originalAmount: classEnrollForm.originalAmount,
@@ -1854,11 +1853,6 @@ async function submitClassEnroll() {
     ElMessage.success('Class enrollment created.');
     classEnrollDialogVisible.value = false;
     loadClassEnrollments();
-    // If the enrolled class is currently expanded, reload its orders
-    const classId = classEnrollForm.classId;
-    if (classId && expandedClassOrders[classId] !== undefined) {
-      loadExpandedClassOrders(classId);
-    }
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
   } finally {

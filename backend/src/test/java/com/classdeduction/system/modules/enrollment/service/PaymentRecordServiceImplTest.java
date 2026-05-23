@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.enrollment.service;
 
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.enrollment.dto.PaymentRecordSaveRequest;
+import com.classdeduction.system.modules.enrollment.dto.PaymentSplitDTO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
@@ -87,8 +88,7 @@ class PaymentRecordServiceImplTest {
 
             PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
             request.setEnrollmentOrderId(1L);
-            request.setAmount(new BigDecimal("500.00"));
-            request.setPaymentMethod("CASH");
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("500.00"))));
             request.setHandledByName("Admin");
 
             when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
@@ -99,11 +99,9 @@ class PaymentRecordServiceImplTest {
             });
 
             // When
-            Long result = paymentRecordService.createPaymentRecord(request);
+            paymentRecordService.createPaymentRecord(request);
 
             // Then
-            assertThat(result).isEqualTo(1L);
-
             // Verify payment record was saved
             ArgumentCaptor<PaymentRecordEntity> paymentCaptor = ArgumentCaptor.forClass(PaymentRecordEntity.class);
             verify(paymentRecordMapper).insert(paymentCaptor.capture());
@@ -126,8 +124,7 @@ class PaymentRecordServiceImplTest {
             // Given
             PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
             request.setEnrollmentOrderId(1L);
-            request.setAmount(new BigDecimal("200.00"));
-            request.setPaymentMethod("CASH");
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("200.00"))));
             request.setHandledByName("Admin");
 
             when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
@@ -138,11 +135,9 @@ class PaymentRecordServiceImplTest {
             });
 
             // When
-            Long result = paymentRecordService.createPaymentRecord(request);
+            paymentRecordService.createPaymentRecord(request);
 
             // Then
-            assertThat(result).isEqualTo(1L);
-
             ArgumentCaptor<EnrollmentOrderEntity> orderCaptor = ArgumentCaptor.forClass(EnrollmentOrderEntity.class);
             verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
             EnrollmentOrderEntity updatedOrder = orderCaptor.getValue();
@@ -156,8 +151,7 @@ class PaymentRecordServiceImplTest {
             // Given
             PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
             request.setEnrollmentOrderId(999L);
-            request.setAmount(new BigDecimal("500.00"));
-            request.setPaymentMethod("CASH");
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("500.00"))));
             request.setHandledByName("Admin");
 
             when(enrollmentOrderMapper.selectById(999L)).thenReturn(null);
@@ -165,7 +159,7 @@ class PaymentRecordServiceImplTest {
             // When/Then
             assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
                     .isInstanceOf(BusinessException.class)
-                    .hasMessageContaining("报名订单不存在");
+                    .hasMessageContaining("Enrollment order not found");
         }
 
         @Test
@@ -174,8 +168,7 @@ class PaymentRecordServiceImplTest {
             // Given
             PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
             request.setEnrollmentOrderId(1L);
-            request.setAmount(new BigDecimal("-100.00"));
-            request.setPaymentMethod("CASH");
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("-100.00"))));
             request.setHandledByName("Admin");
 
             when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
@@ -183,7 +176,7 @@ class PaymentRecordServiceImplTest {
             // When/Then
             assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
                     .isInstanceOf(BusinessException.class)
-                    .hasMessageContaining("支付金额不能为负数");
+                    .hasMessageContaining("Each split amount must be greater than 0");
         }
     }
 

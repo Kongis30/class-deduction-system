@@ -172,6 +172,54 @@
             <el-input v-model="studentForm.notes" type="textarea" :rows="2" placeholder="Optional notes" />
           </el-form-item>
         </div>
+
+        <!-- English Name - configurable -->
+        <div v-if="fieldConfig.englishName.visible" class="student-form__row">
+          <el-form-item :label="fieldConfig.englishName.customLabel" class="student-form__half">
+            <el-input v-model="studentForm.englishName" placeholder="e.g. Sophia" />
+          </el-form-item>
+        </div>
+
+        <!-- Birth Date - configurable -->
+        <div v-if="fieldConfig.birthDate.visible" class="student-form__row">
+          <el-form-item :label="fieldConfig.birthDate.customLabel" class="student-form__half">
+            <el-date-picker v-model="studentForm.birthDate" type="date" placeholder="Select date" style="width: 100%;" value-format="YYYY-MM-DD" />
+          </el-form-item>
+        </div>
+
+        <!-- Source Channel - configurable -->
+        <div v-if="fieldConfig.sourceChannel.visible" class="student-form__row">
+          <el-form-item :label="fieldConfig.sourceChannel.customLabel" class="student-form__half">
+            <el-select v-model="studentForm.sourceChannel" placeholder="Select source" clearable style="width: 100%;">
+              <el-option label="Referral" value="REFERRAL" />
+              <el-option label="Online" value="ONLINE" />
+              <el-option label="Walk-in" value="WALK_IN" />
+              <el-option label="Advertisement" value="AD" />
+              <el-option label="Other" value="OTHER" />
+            </el-select>
+          </el-form-item>
+        </div>
+
+        <!-- Campus - configurable -->
+        <div v-if="fieldConfig.campusId.visible" class="student-form__row">
+          <el-form-item :label="fieldConfig.campusId.customLabel" class="student-form__half">
+            <el-select v-model="studentForm.campusId" placeholder="Select campus" clearable style="width: 100%;">
+              <el-option v-for="c in campusOptions" :key="c.id" :label="c.campusName" :value="c.id" />
+            </el-select>
+          </el-form-item>
+        </div>
+
+        <!-- Guardian Relation - configurable -->
+        <div v-if="fieldConfig.guardianRelationType.visible" class="student-form__row">
+          <el-form-item :label="fieldConfig.guardianRelationType.customLabel" class="student-form__half">
+            <el-select v-model="studentForm.guardianRelationType" placeholder="Select relation" clearable style="width: 100%;">
+              <el-option label="Mother" value="MOTHER" />
+              <el-option label="Father" value="FATHER" />
+              <el-option label="Grandparent" value="GRANDPARENT" />
+              <el-option label="Other" value="OTHER" />
+            </el-select>
+          </el-form-item>
+        </div>
       </el-form>
 
       <template #footer>
@@ -202,12 +250,13 @@ import FieldConfigDialog, { type FieldConfig } from '@/components/shared/FieldCo
 import {
   createStudent,
   deleteStudent,
+  fetchCampuses,
   fetchStudents,
   updateStudent,
   type StudentQuery,
   type StudentSavePayload,
 } from '@/api/base-data';
-import type { StudentItem } from '@/types/domain';
+import type { CampusItem, StudentItem } from '@/types/domain';
 
 const loading = ref(false);
 const submitting = ref(false);
@@ -226,6 +275,11 @@ const defaultFieldConfig: FieldConfigMap = {
   email: { key: 'email', defaultLabel: 'Email', visible: true, customLabel: 'Email' },
   status: { key: 'status', defaultLabel: 'Status', visible: true, customLabel: 'Status' },
   notes: { key: 'notes', defaultLabel: 'Notes', visible: false, customLabel: 'Notes' },
+  englishName: { key: 'englishName', defaultLabel: 'English Name', visible: false, customLabel: 'English Name' },
+  birthDate: { key: 'birthDate', defaultLabel: 'Birth Date', visible: false, customLabel: 'Birth Date' },
+  sourceChannel: { key: 'sourceChannel', defaultLabel: 'Source', visible: false, customLabel: 'Source' },
+  campusId: { key: 'campusId', defaultLabel: 'Campus', visible: false, customLabel: 'Campus' },
+  guardianRelationType: { key: 'guardianRelationType', defaultLabel: 'Relation', visible: false, customLabel: 'Relation' },
 };
 
 function loadFieldConfig(): FieldConfigMap {
@@ -233,14 +287,31 @@ function loadFieldConfig(): FieldConfigMap {
     const saved = localStorage.getItem('fieldConfig:studentForm');
     if (saved) {
       const parsed = JSON.parse(saved) as FieldConfig[];
+      // Filter out stale keys that no longer exist in defaultFieldConfig (e.g. "grade")
+      const validKeys = new Set(Object.keys(defaultFieldConfig));
       const map: FieldConfigMap = {};
-      parsed.forEach((f) => { map[f.key] = f; });
+      parsed.forEach((f) => {
+        if (validKeys.has(f.key)) {
+          map[f.key] = f;
+        }
+      });
+      // Merge with defaults so any new default fields not yet saved are included
+      for (const key of Object.keys(defaultFieldConfig)) {
+        if (!map[key]) {
+          map[key] = { ...defaultFieldConfig[key] };
+        }
+      }
       return map;
     }
   } catch {
     // ignore
   }
-  return { ...defaultFieldConfig };
+  // Deep clone to avoid mutating the original
+  const cloned: FieldConfigMap = {};
+  for (const key of Object.keys(defaultFieldConfig)) {
+    cloned[key] = { ...defaultFieldConfig[key] };
+  }
+  return cloned;
 }
 
 const fieldConfig = reactive<FieldConfigMap>(loadFieldConfig());
@@ -267,6 +338,19 @@ function handleFieldConfigChange(fields: FieldConfig[]) {
     fieldConfig[f.key].customLabel = f.customLabel;
   });
 }
+
+// ─── Campus options for dropdown ────────────────────
+const campusOptions = ref<CampusItem[]>([]);
+
+async function loadCampuses() {
+  try {
+    const res = await fetchCampuses();
+    campusOptions.value = res.data.data ?? [];
+  } catch {
+    campusOptions.value = [];
+  }
+}
+loadCampuses();
 
 // ─── Filters & Pagination ───────────────────────────
 const filters = reactive({
@@ -328,6 +412,10 @@ const studentForm = reactive<StudentSavePayload>({
   guardianRelationType: '',
   status: 'ACTIVE',
   notes: '',
+  englishName: '',
+  birthDate: '',
+  sourceChannel: '',
+  campusId: undefined,
 });
 
 const studentFormRules = {
@@ -344,8 +432,14 @@ function openStudentDialog(row?: StudentItem) {
       gender: row.gender,
       guardianName: row.guardianName,
       guardianPhone: row.phone ?? '',
+      guardianEmail: row.guardianEmail ?? '',
+      guardianRelationType: row.guardianRelationType ?? '',
       status: row.status,
       notes: row.notes ?? '',
+      englishName: row.englishName ?? '',
+      birthDate: row.birthDate ?? '',
+      sourceChannel: row.sourceChannel ?? '',
+      campusId: row.campusId ?? undefined,
     });
   } else {
     Object.assign(studentForm, {
@@ -357,6 +451,10 @@ function openStudentDialog(row?: StudentItem) {
       guardianRelationType: '',
       status: 'ACTIVE',
       notes: '',
+      englishName: '',
+      birthDate: '',
+      sourceChannel: '',
+      campusId: undefined,
     });
   }
   // Clear any previous validation errors when opening dialog

@@ -106,8 +106,8 @@
               </el-tag>
             </div>
             <div class="detail-field">
-              <label>Student</label>
-              <span>{{ detailData.studentName }}</span>
+              <label>{{ detailData.className ? 'Class' : 'Student' }}</label>
+              <span>{{ detailData.className || detailData.studentName }}</span>
             </div>
             <div class="detail-field">
               <label>Package</label>
@@ -165,6 +165,7 @@ import { fetchAllTeachers } from '@/api/base-data';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
+  fetchClassGroupsByTeacher,
 } from '@/api/schedule';
 import type { LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
@@ -234,31 +235,40 @@ function jumpToDate(date: string | null) {
 const loading = ref(false);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
+const teacherClassGroups = ref<any[]>([]);
+const teacherClassGroupSlots = ref<OccupiedSlotDef[]>([]);
 
 const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
-  return occurrences.value
-    .filter(o => o.planningStatus !== 'CANCELLED')
-    .map(o => {
-      const start = dayjs(o.plannedStartAt);
-      const weekday = start.day() === 0 ? 7 : start.day();
-      return {
-        weekday,
-        startTime: start.format('HH:mm'),
-        endTime: dayjs(o.plannedEndAt).format('HH:mm'),
-        courseLabel: o.packageName || o.lessonNo || '',
-        studentName: o.studentName,
-        teacherName: o.plannedTeacherName,
-        classroomName: o.plannedClassroomName,
-      };
+  const result: OccupiedSlotDef[] = [];
+  for (const o of occurrences.value) {
+    if (o.planningStatus === 'CANCELLED') continue;
+    const start = dayjs(o.plannedStartAt);
+    const weekday = start.day() === 0 ? 7 : start.day();
+    result.push({
+      weekday,
+      startTime: start.format('HH:mm'),
+      endTime: dayjs(o.plannedEndAt).format('HH:mm'),
+      courseLabel: o.className || o.packageName || o.lessonNo || '',
+      studentName: o.studentName,
+      teacherName: o.plannedTeacherName,
+      classroomName: o.plannedClassroomName,
     });
+  }
+  // 添加班课占用
+  for (const slot of teacherClassGroupSlots.value) {
+    result.push(slot);
+  }
+  return result;
 });
 
 async function loadSchedule() {
   if (!selectedTeacherId.value) return;
   loading.value = true;
+  teacherClassGroupSlots.value = [];
   try {
     const monday = dayjs(weekMonday.value);
     const sunday = monday.add(6, 'day').endOf('day');
+    // 1v1 课次
     const res = await fetchLessonOccurrences({
       teacherId: selectedTeacherId.value,
       startAt: monday.format('YYYY-MM-DDTHH:mm:ss'),
@@ -266,12 +276,36 @@ async function loadSchedule() {
       pageSize: 100,
     });
     occurrences.value = res.data.data.records;
+
+    // 班课占用（解析 scheduleDesc）
+    const clsRes = await fetchClassGroupsByTeacher(selectedTeacherId.value);
+    teacherClassGroups.value = clsRes.data.data;
+    teacherClassGroupSlots.value = parseClassGroupSlots(clsRes.data.data);
   } catch {
     ElMessage.error('Failed to load schedule.');
     occurrences.value = [];
+    teacherClassGroupSlots.value = [];
   } finally {
     loading.value = false;
   }
+}
+
+function parseClassGroupSlots(classGroups: any[]): OccupiedSlotDef[] {
+  const slots: OccupiedSlotDef[] = [];
+  for (const cls of classGroups) {
+    const scheduleSlots = cls.scheduleSlots || [];
+    for (const s of scheduleSlots) {
+      slots.push({
+        weekday: s.weekday,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        courseLabel: cls.className,
+        teacherName: cls.teacherName,
+        classroomName: cls.classroomName,
+      });
+    }
+  }
+  return slots;
 }
 
 // ─── Cell click → detail dialog ────────────────

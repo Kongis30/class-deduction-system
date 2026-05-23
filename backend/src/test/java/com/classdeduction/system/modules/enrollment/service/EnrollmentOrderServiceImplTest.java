@@ -83,6 +83,12 @@ class EnrollmentOrderServiceImplTest {
     @Mock
     private com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper lessonOccurrenceMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper classGroupMapper;
+
+    @Mock
+    private com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper classEnrollmentMapper;
+
     @Captor
     private ArgumentCaptor<EnrollmentOrderEntity> orderCaptor;
 
@@ -114,7 +120,9 @@ class EnrollmentOrderServiceImplTest {
                 jsonHelper,
                 recurringScheduleRuleMapper,
                 recurringScheduleSlotMapper,
-                lessonOccurrenceMapper
+                lessonOccurrenceMapper,
+                classGroupMapper,
+                classEnrollmentMapper
         );
     }
 

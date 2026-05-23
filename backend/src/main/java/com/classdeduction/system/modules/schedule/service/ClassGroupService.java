@@ -28,4 +28,13 @@ public interface ClassGroupService {
 
     /** 学生报名班课 */
     Map<String, Object> enrollStudent(Long classId, Long studentId, LocalDate enrollmentDate, LocalDate expiryDate);
+
+    /** 获取学生已报名的活跃班课列表（含解析后的时段） */
+    List<Map<String, Object>> listEnrolledByStudent(Long studentId);
+
+    /** 获取教师授课的活跃班课列表（含解析后的时段） */
+    List<Map<String, Object>> listByTeacher(Long teacherId);
+
+    /** 获取教室占用的活跃班课列表（含解析后的时段） */
+    List<Map<String, Object>> listByClassroom(Long classroomId);
 }

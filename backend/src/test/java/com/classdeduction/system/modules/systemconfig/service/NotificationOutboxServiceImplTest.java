@@ -49,6 +49,9 @@ class NotificationOutboxServiceImplTest {
     @Mock
     private GuardianContactMapper guardianContactMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper notificationTriggerRuleMapper;
+
     @Captor
     private ArgumentCaptor<NotificationLogEntity> logCaptor;
 
@@ -61,6 +64,7 @@ class NotificationOutboxServiceImplTest {
                 notificationLogMapper,
                 brandConfigMapper,
                 guardianContactMapper,
+                notificationTriggerRuleMapper,
                 new JsonHelper(new ObjectMapper())
         );
     }

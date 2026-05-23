@@ -38,10 +38,14 @@ export interface StudentItem {
   id: string;
   studentNo: string;
   studentName: string;
+  englishName?: string;
   gender: string;
+  birthDate?: string;
+  sourceChannel?: string;
   guardianName: string;
   phone: string;
   guardianEmail?: string;
+  guardianRelationType?: string;
   status: string;
   campusId?: number;
   notes?: string;
@@ -240,6 +244,7 @@ export interface RecurringScheduleSlotItem {
 }
 
 export interface RecurringScheduleRuleDetailItem extends RecurringScheduleRuleItem {
+  packageName?: string;
   notes?: string;
   slots: RecurringScheduleSlotItem[];
   createdAt: string;
@@ -282,12 +287,14 @@ export interface ClassroomOccupancyItem {
   packageId: number;
   packageNo: string;
   packageName?: string;
-  studentId: number;
-  studentName: string;
+  studentId?: number;
+  studentName?: string;
   plannedStartAt: string;
   plannedEndAt: string;
   plannedUnits: number;
   planningStatus: string;
+  classGroupId?: number;
+  className?: string;
 }
 
 // ─── Class Group ─────────────────────────────────────────

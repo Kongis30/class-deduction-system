@@ -37,4 +37,6 @@ public class ClassGroupEntity extends BaseEntity {
     private String scheduleDesc;
 
     private String status;
+
+    private Long productId;
 }
