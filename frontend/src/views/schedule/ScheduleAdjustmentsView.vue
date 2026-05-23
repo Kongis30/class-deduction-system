@@ -303,13 +303,12 @@
         <el-form-item label="Hours">
           <div class="units-input-row">
             <el-input-number
-              v-model="confirmForm.actualUnits"
-              :min="0" :max="20" :precision="1" :step="0.5"
+              v-model="confirmForm.actualHours"
+              :min="0" :max="10" :precision="1" :step="0.5"
               style="width: 120px;"
             />
-            <span class="units-convert">{{ unitToHours(confirmForm.actualUnits) }}</span>
           </div>
-          <div class="form-hint">0.5h increments (e.g. 2 = 2h)</div>
+          <div class="form-hint">0.5h increments</div>
         </el-form-item>
         <el-form-item v-if="confirmForm.resultStatus !== 'FORMAL_LEAVE' && confirmForm.resultStatus !== 'CANCELLED'" label="Deduction Preview">
           <el-alert :title="deductionPreview" type="info" :closable="false" show-icon />
@@ -723,11 +722,6 @@ function formatTimeRange(startAt: string, endAt: string): string {
   const e = endAt.includes('T') ? endAt.split('T')[1].slice(0, 5) : endAt.slice(0, 5);
   return `${s} – ${e}`;
 }
-function unitToHours(units: number | undefined): string {
-  if (units == null || units <= 0) return '= 0h';
-  return `= ${(units * 0.5).toFixed(1)}h`;
-}
-
 // ─── 状态工具 ─────────────────────────
 function resultStatusTag(status: string) {
   return { COMPLETED: 'success', FORMAL_LEAVE: 'warning', NO_SHOW: 'danger', CANCELLED: 'info' }[status] ?? '';
@@ -743,7 +737,7 @@ const confirmForm = reactive({
   actualClassroomId: undefined as number | undefined,
   actualStartAt: '',
   actualEndAt: '',
-  actualUnits: undefined as number | undefined,
+  actualHours: undefined as number | undefined,
   notes: '',
 });
 const confirmFormRules: FormRules = {
@@ -753,9 +747,9 @@ const confirmFormRules: FormRules = {
 const deductionPreview = computed(() => {
   const status = confirmForm.resultStatus;
   if (status === 'FORMAL_LEAVE' || status === 'CANCELLED') return 'No hours will be deducted for this status.';
-  const units = confirmForm.actualUnits;
-  if (units == null || units <= 0) return 'No hours will be deducted.';
-  return `This lesson will deduct ${(units * 0.5).toFixed(1)}h.`;
+  const hours = confirmForm.actualHours;
+  if (hours == null || hours <= 0) return 'No hours will be deducted.';
+  return `This lesson will deduct ${hours.toFixed(1)}h.`;
 });
 
 function openConfirmDialog(occ: LessonOccurrenceItem) {
@@ -768,7 +762,7 @@ function openConfirmDialog(occ: LessonOccurrenceItem) {
     actualClassroomId: occ.plannedClassroomId,
     actualStartAt: occ.plannedStartAt || '',
     actualEndAt: occ.plannedEndAt || '',
-    actualUnits: occ.plannedUnits,
+    actualHours: (occ.plannedUnits ?? 0) * 0.5,
     notes: '',
   });
 
@@ -795,6 +789,7 @@ async function submitConfirm() {
     if (!valid) return;
     submitting.value = true;
     try {
+      const hours = confirmForm.actualHours ?? 0;
       const result = await confirmLesson({
         occurrenceId: selectedOcc.value!.id,
         resultStatus: confirmForm.resultStatus,
@@ -802,11 +797,11 @@ async function submitConfirm() {
         actualClassroomId: confirmForm.actualClassroomId,
         actualStartAt: confirmForm.actualStartAt || undefined,
         actualEndAt: confirmForm.actualEndAt || undefined,
-        actualUnits: confirmForm.actualUnits,
+        actualUnits: hours * 2,
         notes: confirmForm.notes || undefined,
       });
       const data = result.data.data;
-      ElMessage.success(`Lesson confirmed. Deducted ${data.deductedUnits}h, remaining ${data.remainingUnits}h.`);
+      ElMessage.success(`Lesson confirmed. Deducted ${(data.deductedUnits * 0.5).toFixed(1)}h, remaining ${(data.remainingUnits * 0.5).toFixed(1)}h.`);
       confirmDialogVisible.value = false;
       // 刷新当前课包的排课记录
       if (selectedPackageId.value) await selectPackage(selectedPackageId.value);
@@ -1208,11 +1203,6 @@ function disabledPastDatetime(date: Date) {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-.units-convert {
-  font-size: 13px;
-  color: #606266;
-  white-space: nowrap;
 }
 .form-hint {
   margin-top: 4px;
