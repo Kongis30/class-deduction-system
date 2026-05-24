@@ -117,6 +117,22 @@
                   </template>
                   <el-input v-model="configForm.authCode" placeholder="16-character authorization code" show-password />
                 </el-form-item>
+
+                <el-form-item label="SMTP Host">
+                  <el-input v-model="configForm.smtpHost" placeholder="smtp.qq.com" />
+                </el-form-item>
+
+                <el-form-item label="SMTP Port">
+                  <el-input-number v-model="configForm.smtpPort" :min="1" :max="65535" style="width:100%" />
+                </el-form-item>
+
+                <el-form-item label="SMTP Username">
+                  <el-input v-model="configForm.smtpUsername" placeholder="your-email@qq.com" />
+                </el-form-item>
+
+                <el-form-item label="SMTP Password">
+                  <el-input v-model="configForm.smtpPassword" placeholder="SMTP authorization code or password" show-password />
+                </el-form-item>
               </div>
 
               <div class="config-col config-col--side">
@@ -414,6 +430,10 @@ const configForm = reactive({
   authCode: '',
   strictAllowlist: true,
   allowedRecipients: '',
+  smtpHost: '',
+  smtpPort: 587,
+  smtpUsername: '',
+  smtpPassword: '',
 });
 
 async function loadConfig() {
@@ -427,6 +447,9 @@ async function loadConfig() {
     configForm.authCode = c.authCode ?? '';
     configForm.strictAllowlist = c.strictAllowlist ?? true;
     configForm.allowedRecipients = c.allowedRecipients ?? '';
+    configForm.smtpHost = c.smtpHost ?? '';
+    configForm.smtpPort = c.smtpPort ?? 587;
+    configForm.smtpUsername = c.smtpUsername ?? '';
   } catch {
     // not configured yet
   } finally {
@@ -446,6 +469,10 @@ async function handleConfigSave() {
       allowedRecipients: configForm.allowedRecipients,
       lowBalanceThreshold: 2,
       lowBalanceRecipients: '[]',
+      smtpHost: configForm.smtpHost,
+      smtpPort: configForm.smtpPort,
+      smtpUsername: configForm.smtpUsername,
+      smtpPassword: configForm.smtpPassword || undefined,
     });
     ElMessage.success('Sender settings saved.');
   } catch (err: any) {

@@ -55,8 +55,10 @@ import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
@@ -86,6 +88,18 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     private final HourLedgerMapper hourLedgerMapper;
     private final StudentMapper studentMapper;
     private final UserAccountMapper userAccountMapper;
+
+    @Value("${spring.mail.host:}")
+    private String defaultSmtpHost;
+
+    @Value("${spring.mail.port:587}")
+    private int defaultSmtpPort;
+
+    @Value("${spring.mail.username:}")
+    private String defaultSmtpUsername;
+
+    @Value("${spring.mail.password:}")
+    private String defaultSmtpPassword;
 
     @Override
     @Cacheable(value = "systemConfig:brandConfig", key = "'current'")
@@ -313,6 +327,10 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         entity.setAllowedRecipients(request.getAllowedRecipients());
         entity.setLowBalanceThreshold(request.getLowBalanceThreshold() != null ? request.getLowBalanceThreshold() : 2);
         entity.setLowBalanceRecipients(request.getLowBalanceRecipients());
+        entity.setSmtpHost(request.getSmtpHost());
+        entity.setSmtpPort(request.getSmtpPort() != null ? request.getSmtpPort() : 587);
+        entity.setSmtpUsername(request.getSmtpUsername());
+        entity.setSmtpPassword(request.getSmtpPassword());
         entity.setUpdatedBy(operatorId);
         notificationConfigMapper.insertOrUpdate(entity);
         return toConfigVO(entity);
@@ -457,6 +475,29 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         }
     }
 
+    /**
+     * 解析当前生效的 JavaMailSender：优先使用 DB 中配置的 SMTP 凭证，
+     * 若未配置则回退到 application.yml 的 spring.mail.* 自动配置 bean。
+     */
+    private JavaMailSender resolveMailSender() {
+        NotificationConfigEntity config = findNotificationConfig();
+        if (config != null && StringUtils.hasText(config.getSmtpHost())) {
+            JavaMailSenderImpl impl = new JavaMailSenderImpl();
+            impl.setHost(config.getSmtpHost());
+            impl.setPort(config.getSmtpPort() != null ? config.getSmtpPort() : 587);
+            if (StringUtils.hasText(config.getSmtpUsername())) {
+                impl.setUsername(config.getSmtpUsername());
+            }
+            if (StringUtils.hasText(config.getSmtpPassword())) {
+                impl.setPassword(config.getSmtpPassword());
+            }
+            impl.getJavaMailProperties().put("mail.smtp.auth", StringUtils.hasText(config.getSmtpUsername()));
+            impl.getJavaMailProperties().put("mail.smtp.starttls.enable", true);
+            return impl;
+        }
+        return javaMailSender;
+    }
+
     private String resolveFromAddress() {
         NotificationConfigEntity config = findNotificationConfig();
         if (config != null && StringUtils.hasText(config.getFromAddress())) {
@@ -476,7 +517,8 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     private void sendOne(NotificationLogEntity logEntity, String fromAddress, String fromName) throws Exception {
         RenderedMessage renderedMessage = parseRenderedMessage(logEntity.getRequestPayload());
         ensureRecipientAllowed(logEntity.getRecipient());
-        MimeMessage mimeMessage = javaMailSender.createMimeMessage();
+        JavaMailSender sender = resolveMailSender();
+        MimeMessage mimeMessage = sender.createMimeMessage();
         MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, false, StandardCharsets.UTF_8.name());
         if (StringUtils.hasText(fromName)) {
             helper.setFrom(fromAddress, fromName);
@@ -486,18 +528,19 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         helper.setTo(logEntity.getRecipient());
         helper.setSubject(renderedMessage.subject());
         helper.setText(renderedMessage.body(), false);
-        javaMailSender.send(mimeMessage);
+        sender.send(mimeMessage);
     }
 
     private void sendDirect(String to, String fromAddress, String subject, String body) {
         try {
-            MimeMessage mimeMessage = javaMailSender.createMimeMessage();
+            JavaMailSender sender = resolveMailSender();
+            MimeMessage mimeMessage = sender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, false, StandardCharsets.UTF_8.name());
             helper.setFrom(fromAddress);
             helper.setTo(to);
             helper.setSubject(subject);
             helper.setText(body, false);
-            javaMailSender.send(mimeMessage);
+            sender.send(mimeMessage);
         } catch (Exception e) {
             log.error("Failed to send test email to {}", to, e);
             throw new BusinessException("EMAIL_SEND_FAILED", "Failed to send test email: " + e.getMessage());
@@ -833,6 +876,9 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
                 .allowedRecipients(entity.getAllowedRecipients())
                 .lowBalanceThreshold(entity.getLowBalanceThreshold())
                 .lowBalanceRecipients(entity.getLowBalanceRecipients())
+                .smtpHost(entity.getSmtpHost())
+                .smtpPort(entity.getSmtpPort())
+                .smtpUsername(entity.getSmtpUsername())
                 .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().toString() : null)
                 .build();
     }

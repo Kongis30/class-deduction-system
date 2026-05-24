@@ -42,6 +42,18 @@ public class NotificationConfigEntity extends BaseEntity {
     /** 允许的收件人 JSON 数组 */
     private String allowedRecipients;
 
+    /** SMTP 服务器地址 */
+    private String smtpHost;
+
+    /** SMTP 服务器端口 */
+    private Integer smtpPort;
+
+    /** SMTP 登录账号 */
+    private String smtpUsername;
+
+    /** SMTP 登录密码/授权码 */
+    private String smtpPassword;
+
     /** 课时不足预警阈值（单位：0.5h，即 2=1小时） */
     private Integer lowBalanceThreshold;
 

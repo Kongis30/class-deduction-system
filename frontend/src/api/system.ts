@@ -95,6 +95,10 @@ export interface NotificationConfigUpdatePayload {
   allowedRecipients: string;
   lowBalanceThreshold: number;
   lowBalanceRecipients: string;
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUsername?: string;
+  smtpPassword?: string;
 }
 
 export function fetchNotificationConfig() {

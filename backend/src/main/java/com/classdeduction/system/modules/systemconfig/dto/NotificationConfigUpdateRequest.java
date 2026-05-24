@@ -27,6 +27,18 @@ public class NotificationConfigUpdateRequest {
     @Schema(description = "SMTP authorization code")
     private String authCode;
 
+    @Schema(description = "SMTP server hostname (e.g. smtp.qq.com)")
+    private String smtpHost;
+
+    @Schema(description = "SMTP server port (e.g. 587)")
+    private Integer smtpPort;
+
+    @Schema(description = "SMTP login username/account")
+    private String smtpUsername;
+
+    @Schema(description = "SMTP login password or authorization code")
+    private String smtpPassword;
+
     @Schema(description = "Strict allowlist mode: true=only allowed recipients, false=allow all")
     private Boolean strictAllowlist;
 
