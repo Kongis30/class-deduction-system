@@ -24,8 +24,8 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
     List<Map<String, Object>> countLowBalanceByCampus(@Param("threshold") Integer threshold);
 
     /**
-     * 查询是否有课包引用了指定课程产品（用于删除保护检查）
+     * 查询是否有未完成的课包（DRAFT/ACTIVE）引用了指定课程产品（用于删除保护检查）
      */
-    @Select("SELECT COUNT(*) FROM course_package WHERE course_product_id = #{productId} AND is_deleted = 0")
+    @Select("SELECT COUNT(*) FROM course_package WHERE course_product_id = #{productId} AND is_deleted = 0 AND package_status IN ('DRAFT', 'ACTIVE')")
     int countByCourseProductId(@Param("productId") Long productId);
 }
