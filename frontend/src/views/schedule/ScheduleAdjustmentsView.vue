@@ -173,10 +173,19 @@
             <div class="class-detail__title-row">
               <div class="class-detail__title">{{ classDetail.className }}</div>
             </div>
-            <div class="class-detail__meta">
-              <span v-if="classDetail.teacherName">Teacher: {{ classDetail.teacherName }}</span>
-              <span v-if="classDetail.classroomName">Room: {{ classDetail.classroomName }}</span>
-              <span v-if="classDetail.scheduleDesc">{{ classDetail.scheduleDesc }}</span>
+            <div class="class-detail__info-grid">
+              <div class="class-detail__info-item" v-if="classDetail.teacherName">
+                <span class="class-detail__info-label">Teacher</span>
+                <span class="class-detail__info-value">{{ classDetail.teacherName }}</span>
+              </div>
+              <div class="class-detail__info-item" v-if="classDetail.classroomName">
+                <span class="class-detail__info-label">Classroom</span>
+                <span class="class-detail__info-value">{{ classDetail.classroomName }}</span>
+              </div>
+              <div class="class-detail__info-item" v-if="classDetail.scheduleDesc">
+                <span class="class-detail__info-label">Schedule</span>
+                <span class="class-detail__info-value">{{ classDetail.scheduleDesc }}</span>
+              </div>
             </div>
             <div v-if="classDetail.description" class="class-detail__desc">{{ classDetail.description }}</div>
           </div>
@@ -1185,11 +1194,27 @@ function disabledPastDatetime(date: Date) {
   font-weight: 700;
   color: #303133;
 }
-.class-detail__meta {
+.class-detail__info-grid {
   display: flex;
-  gap: 16px;
-  font-size: 13px;
-  color: #606266;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  margin-top: 8px;
+}
+.class-detail__info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.class-detail__info-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: #909399;
+  letter-spacing: 0.3px;
+}
+.class-detail__info-value {
+  font-size: 14px;
+  color: #303133;
 }
 .class-detail__desc {
   margin-top: 6px;
