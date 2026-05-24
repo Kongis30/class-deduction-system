@@ -9,6 +9,7 @@ import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.StudentNoGenerator;
 import com.classdeduction.system.modules.auth.dto.StudentAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.StudentAccountPageQuery;
+import com.classdeduction.system.modules.auth.dto.StudentAccountUpdateRequest;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
 import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
@@ -105,6 +106,33 @@ public class StudentAccountServiceImpl implements StudentAccountService {
         userAccountMapper.insert(entity);
         bindStudentRole(entity.getId());
         return entity.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateStudentAccount(Long userId, StudentAccountUpdateRequest request) {
+        UserAccountEntity entity = userAccountMapper.selectById(userId);
+        if (entity == null || !"STUDENT".equals(entity.getUserType())) {
+            throw new BusinessException("ACCOUNT_NOT_FOUND", "Student account not found.");
+        }
+        if (StringUtils.hasText(request.getUsername())
+                && !request.getUsername().equals(entity.getUsername())) {
+            ensureUsernameUnique(request.getUsername());
+            entity.setUsername(request.getUsername());
+        }
+        if (StringUtils.hasText(request.getPassword())) {
+            entity.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        }
+        if (StringUtils.hasText(request.getDisplayName())) {
+            entity.setDisplayName(request.getDisplayName());
+        }
+        if (StringUtils.hasText(request.getEmail())) {
+            entity.setEmail(request.getEmail());
+        }
+        if (StringUtils.hasText(request.getStatus())) {
+            entity.setStatus(request.getStatus());
+        }
+        userAccountMapper.updateById(entity);
     }
 
     private void ensureUsernameUnique(String username) {

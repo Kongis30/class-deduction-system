@@ -9,6 +9,7 @@ import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountPageQuery;
+import com.classdeduction.system.modules.auth.dto.TeacherAccountUpdateRequest;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
 import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
@@ -106,6 +107,36 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
         userAccountMapper.insert(entity);
         bindTeacherRole(entity.getId());
         return entity.getId();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateTeacherAccount(Long userId, TeacherAccountUpdateRequest request) {
+        UserAccountEntity entity = userAccountMapper.selectById(userId);
+        if (entity == null || !"TEACHER".equals(entity.getUserType())) {
+            throw new BusinessException("ACCOUNT_NOT_FOUND", "Teacher account not found.");
+        }
+        if (StringUtils.hasText(request.getUsername())
+                && !request.getUsername().equals(entity.getUsername())) {
+            ensureUsernameUnique(request.getUsername());
+            entity.setUsername(request.getUsername());
+        }
+        if (StringUtils.hasText(request.getPassword())) {
+            entity.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        }
+        if (StringUtils.hasText(request.getDisplayName())) {
+            entity.setDisplayName(request.getDisplayName());
+        }
+        if (StringUtils.hasText(request.getEmail())) {
+            entity.setEmail(request.getEmail());
+        }
+        if (StringUtils.hasText(request.getMobile())) {
+            entity.setMobile(request.getMobile());
+        }
+        if (StringUtils.hasText(request.getStatus())) {
+            entity.setStatus(request.getStatus());
+        }
+        userAccountMapper.updateById(entity);
     }
 
     private String generateTeacherNo() {

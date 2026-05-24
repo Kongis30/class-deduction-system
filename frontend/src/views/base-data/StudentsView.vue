@@ -272,7 +272,7 @@ interface FieldConfigMap {
 
 const defaultFieldConfig: FieldConfigMap = {
   gender: { key: 'gender', defaultLabel: 'Gender', visible: true, customLabel: 'Gender' },
-  email: { key: 'email', defaultLabel: 'Guardian Email', visible: true, customLabel: 'Guardian Email' },
+  email: { key: 'email', defaultLabel: '监护人邮箱', visible: true, customLabel: '监护人邮箱' },
   status: { key: 'status', defaultLabel: 'Status', visible: true, customLabel: 'Status' },
   notes: { key: 'notes', defaultLabel: 'Notes', visible: false, customLabel: 'Notes' },
   englishName: { key: 'englishName', defaultLabel: 'English Name', visible: false, customLabel: 'English Name' },

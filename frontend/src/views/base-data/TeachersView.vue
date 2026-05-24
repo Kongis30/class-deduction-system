@@ -102,7 +102,7 @@
       class="teacher-dialog"
     >
       <template #header>
-        <h3>Edit instructor</h3>
+        <h3>Edit</h3>
       </template>
 
       <el-form ref="teacherFormRef" label-position="top" :model="teacherForm" :rules="teacherFormRules" class="teacher-form">
@@ -238,7 +238,7 @@ const teacherForm = reactive<TeacherSavePayload>({
 
 const teacherFormRules = {
   teacherName: [{ required: true, message: 'Name is required' }],
-  mobile: [{ pattern: /^$|^[0-9+\-() ]{6,32}$/, message: 'Phone number format is invalid' }],
+  mobile: [],
   email: [{ type: 'email', message: 'Email format is invalid' }],
 };
 

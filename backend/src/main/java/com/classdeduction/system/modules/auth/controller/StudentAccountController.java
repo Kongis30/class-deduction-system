@@ -5,6 +5,7 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.dto.StudentAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.StudentAccountPageQuery;
+import com.classdeduction.system.modules.auth.dto.StudentAccountUpdateRequest;
 import com.classdeduction.system.modules.auth.service.StudentAccountService;
 import com.classdeduction.system.modules.auth.vo.StudentAccountVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -38,5 +39,13 @@ public class StudentAccountController {
     @Operation(summary = "Create a student login account linked to one student profile")
     public ApiResponse<Long> createStudentAccount(@Valid @RequestBody StudentAccountCreateRequest request) {
         return ApiResponse.success("Created successfully.", studentAccountService.createStudentAccount(request));
+    }
+
+    @PutMapping("/{id}")
+    @Operation(summary = "Update a student account")
+    public ApiResponse<Void> updateStudentAccount(@PathVariable Long id,
+                                                  @Valid @RequestBody StudentAccountUpdateRequest request) {
+        studentAccountService.updateStudentAccount(id, request);
+        return ApiResponse.success("Updated successfully.");
     }
 }

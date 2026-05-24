@@ -79,3 +79,22 @@ export interface StudentAccountCreatePayload {
 export function createStudentAccount(data: StudentAccountCreatePayload) {
   return http.post<ApiResponse<number>>('/v1/auth/student-accounts', data);
 }
+
+// ─── Account Updates ────────────────────────────────
+
+export interface AccountUpdatePayload {
+  username?: string;
+  password?: string;
+  displayName?: string;
+  email?: string;
+  mobile?: string;
+  status?: string;
+}
+
+export function updateTeacherAccount(id: number, data: AccountUpdatePayload) {
+  return http.put(`/v1/auth/teacher-accounts/${id}`, data);
+}
+
+export function updateStudentAccount(id: number, data: AccountUpdatePayload) {
+  return http.put(`/v1/auth/student-accounts/${id}`, data);
+}

@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.auth.service;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.dto.StudentAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.StudentAccountPageQuery;
+import com.classdeduction.system.modules.auth.dto.StudentAccountUpdateRequest;
 import com.classdeduction.system.modules.auth.vo.StudentAccountVO;
 
 /**
@@ -13,4 +14,6 @@ public interface StudentAccountService {
     PageResponse<StudentAccountVO> pageStudentAccounts(StudentAccountPageQuery query);
 
     Long createStudentAccount(StudentAccountCreateRequest request);
+
+    void updateStudentAccount(Long userId, StudentAccountUpdateRequest request);
 }

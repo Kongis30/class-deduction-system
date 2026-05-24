@@ -22,6 +22,11 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
+        <el-table-column label="Actions" min-width="120" fixed="right">
+          <template #default="{ row }">
+            <el-button text type="primary" @click="openEditDialog(row, 'TEACHER')">Edit</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </section>
 
@@ -47,6 +52,11 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
+        <el-table-column label="Actions" min-width="120" fixed="right">
+          <template #default="{ row }">
+            <el-button text type="primary" @click="openEditDialog(row, 'STUDENT')">Edit</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </section>
 
@@ -119,6 +129,49 @@
         <el-button type="primary" :loading="saving" @click="handleCreate">Create</el-button>
       </template>
     </el-dialog>
+
+    <!-- Edit Dialog -->
+    <el-dialog v-model="editDialogVisible" width="480px" :close-on-click-modal="false" class="account-dialog">
+      <template #header><h3>Edit Account</h3></template>
+      <el-form ref="editFormRef" label-position="top" :model="editForm" class="account-form">
+        <el-form-item label="Username">
+          <el-input v-model="editForm.username" placeholder="Login username" />
+        </el-form-item>
+        <el-form-item label="Display name">
+          <el-input v-model="editForm.displayName" placeholder="Display name" />
+        </el-form-item>
+        <template v-if="editForm.userType === 'TEACHER'">
+          <el-form-item label="Email">
+            <el-input v-model="editForm.email" placeholder="Email address" />
+          </el-form-item>
+          <el-form-item label="Phone">
+            <el-input v-model="editForm.mobile" placeholder="Phone number" />
+          </el-form-item>
+        </template>
+        <template v-else>
+          <el-form-item label="Email">
+            <el-input v-model="editForm.email" placeholder="Email address" />
+          </el-form-item>
+        </template>
+        <el-form-item label="Status">
+          <el-select v-model="editForm.status" style="width: 100%;">
+            <el-option label="Active" value="ACTIVE" />
+            <el-option label="Inactive" value="INACTIVE" />
+          </el-select>
+        </el-form-item>
+        <div class="form-divider">Reset Password</div>
+        <el-form-item label="New password" prop="editPassword">
+          <el-input v-model="editForm.password" type="password" placeholder="Leave blank to keep current" show-password />
+        </el-form-item>
+        <el-form-item label="Confirm password" prop="editConfirmPassword">
+          <el-input v-model="editForm.confirmPassword" type="password" placeholder="Re-enter new password" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="editSaving" @click="handleEditSubmit">Save</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -126,7 +179,7 @@
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { onMounted, reactive, ref, computed } from 'vue';
-import { createStudentAccount, createTeacherAccount, fetchStudentAccounts, fetchTeacherAccounts } from '@/api/auth';
+import { createStudentAccount, createTeacherAccount, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
 import type { StudentAccountItem, TeacherAccountItem } from '@/types/domain';
 
 const teacherLoading = ref(false);
@@ -178,6 +231,71 @@ const formRules = computed(() => ({
     },
   ],
 }));
+
+// ─── Edit Account ────────────────────────────────────
+const editDialogVisible = ref(false);
+const editSaving = ref(false);
+const editFormRef = ref();
+const editingUserType = ref<'TEACHER' | 'STUDENT'>('TEACHER');
+const editingUserId = ref<number | null>(null);
+
+const editForm = reactive({
+  userType: 'TEACHER' as 'TEACHER' | 'STUDENT',
+  username: '',
+  displayName: '',
+  email: '',
+  mobile: '',
+  status: 'ACTIVE',
+  password: '',
+  confirmPassword: '',
+});
+
+function openEditDialog(row: any, type: 'TEACHER' | 'STUDENT') {
+  editingUserType.value = type;
+  editingUserId.value = row.userId;
+  editForm.userType = type;
+  editForm.username = row.username ?? '';
+  editForm.displayName = row.displayName ?? '';
+  editForm.email = row.email ?? '';
+  editForm.mobile = row.mobile ?? '';
+  editForm.status = row.status ?? 'ACTIVE';
+  editForm.password = '';
+  editForm.confirmPassword = '';
+  editFormRef.value?.clearValidate();
+  editDialogVisible.value = true;
+}
+
+async function handleEditSubmit() {
+  if (editForm.password && editForm.password !== editForm.confirmPassword) {
+    ElMessage.error('Passwords do not match.');
+    return;
+  }
+  editSaving.value = true;
+  try {
+    const payload: Record<string, any> = {};
+    if (editForm.username) payload.username = editForm.username;
+    if (editForm.displayName) payload.displayName = editForm.displayName;
+    if (editForm.email) payload.email = editForm.email;
+    if (editForm.password) payload.password = editForm.password;
+    if (editForm.status) payload.status = editForm.status;
+    if (editForm.userType === 'TEACHER' && editForm.mobile) {
+      payload.mobile = editForm.mobile;
+    }
+
+    if (editingUserType.value === 'TEACHER') {
+      await updateTeacherAccount(editingUserId.value!, payload);
+    } else {
+      await updateStudentAccount(editingUserId.value!, payload);
+    }
+    ElMessage.success('Account updated.');
+    editDialogVisible.value = false;
+    await Promise.all([loadTeacherAccounts(), loadStudentAccounts()]);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Update failed.');
+  } finally {
+    editSaving.value = false;
+  }
+}
 
 onMounted(async () => {
   await Promise.all([loadTeacherAccounts(), loadStudentAccounts()]);
