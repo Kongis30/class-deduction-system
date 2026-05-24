@@ -48,6 +48,7 @@ export interface StudentItem {
   guardianRelationType?: string;
   status: string;
   campusId?: number;
+  campusName?: string;
   notes?: string;
 }
 

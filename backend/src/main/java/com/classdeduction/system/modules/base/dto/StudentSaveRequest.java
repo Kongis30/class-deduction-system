@@ -50,4 +50,7 @@ public class StudentSaveRequest {
 
     @Schema(description = "Guardian relation type", example = "MOTHER")
     private String guardianRelationType;
+
+    @Schema(description = "Campus ID", example = "1")
+    private Long campusId;
 }

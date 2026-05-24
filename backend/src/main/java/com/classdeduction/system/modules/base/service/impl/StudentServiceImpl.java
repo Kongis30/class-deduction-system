@@ -8,7 +8,9 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.util.StudentNoGenerator;
 import com.classdeduction.system.modules.base.dto.StudentPageQuery;
 import com.classdeduction.system.modules.base.dto.StudentSaveRequest;
+import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.service.StudentService;
 import com.classdeduction.system.modules.base.vo.StudentDetailVO;
@@ -23,8 +25,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * Student service managing the student profile (guardian info stored as flat fields on student table).
@@ -39,6 +45,7 @@ public class StudentServiceImpl implements StudentService {
     private final StudentNoGenerator studentNoGenerator;
     private final CoursePackageMapper coursePackageMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final CampusMapper campusMapper;
 
     @Override
     public List<StudentListItemVO> listAllActive() {
@@ -47,8 +54,9 @@ public class StudentServiceImpl implements StudentService {
                 .eq(StudentEntity::getIsDeleted, 0)
                 .orderByAsc(StudentEntity::getStudentNo));
 
+        Map<Long, String> campusNameMap = buildCampusNameMap(students);
         return students.stream()
-                .map(this::toListItem)
+                .map(s -> toListItem(s, campusNameMap))
                 .toList();
     }
 
@@ -68,9 +76,10 @@ public class StudentServiceImpl implements StudentService {
             return PageResponse.empty(query.getPageNum(), query.getPageSize());
         }
 
+        Map<Long, String> campusNameMap = buildCampusNameMap(result.getRecords());
         List<StudentListItemVO> list = result.getRecords()
                 .stream()
-                .map(this::toListItem)
+                .map(s -> toListItem(s, campusNameMap))
                 .toList();
         return PageResponse.of(list, result.getTotal(), result.getCurrent(), result.getSize());
     }
@@ -161,9 +170,29 @@ public class StudentServiceImpl implements StudentService {
         entity.setGuardianPhone(request.getGuardianPhone());
         entity.setGuardianEmail(request.getGuardianEmail());
         entity.setGuardianRelationType(request.getGuardianRelationType());
+        entity.setCampusId(request.getCampusId());
     }
 
-    private StudentListItemVO toListItem(StudentEntity student) {
+    /**
+     * 从学生列表中提取所有 campusId，批量查询 campus 表，构建 id -> name 映射。
+     */
+    private Map<Long, String> buildCampusNameMap(List<StudentEntity> students) {
+        Set<Long> campusIds = students.stream()
+                .map(StudentEntity::getCampusId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (campusIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<CampusEntity> campuses = campusMapper.selectBatchIds(campusIds);
+        Map<Long, String> map = new HashMap<>();
+        for (CampusEntity c : campuses) {
+            map.put(c.getId(), c.getCampusName());
+        }
+        return map;
+    }
+
+    private StudentListItemVO toListItem(StudentEntity student, Map<Long, String> campusNameMap) {
         return StudentListItemVO.builder()
                 .id(student.getId())
                 .studentNo(student.getStudentNo())
@@ -177,12 +206,19 @@ public class StudentServiceImpl implements StudentService {
                 .guardianName(student.getGuardianName())
                 .phone(student.getGuardianPhone())
                 .guardianEmail(student.getGuardianEmail())
+                .campusId(student.getCampusId())
+                .campusName(student.getCampusId() != null ? campusNameMap.get(student.getCampusId()) : null)
                 .createdAt(student.getCreatedAt())
                 .updatedAt(student.getUpdatedAt())
                 .build();
     }
 
     private StudentDetailVO toDetail(StudentEntity student) {
+        String campusName = null;
+        if (student.getCampusId() != null) {
+            CampusEntity campus = campusMapper.selectById(student.getCampusId());
+            campusName = campus != null ? campus.getCampusName() : null;
+        }
         return StudentDetailVO.builder()
                 .id(student.getId())
                 .studentNo(student.getStudentNo())
@@ -197,6 +233,8 @@ public class StudentServiceImpl implements StudentService {
                 .guardianPhone(student.getGuardianPhone())
                 .guardianEmail(student.getGuardianEmail())
                 .guardianRelationType(student.getGuardianRelationType())
+                .campusId(student.getCampusId())
+                .campusName(campusName)
                 .createdAt(student.getCreatedAt())
                 .updatedAt(student.getUpdatedAt())
                 .build();

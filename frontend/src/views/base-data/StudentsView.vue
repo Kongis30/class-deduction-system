@@ -68,6 +68,11 @@
             {{ row.guardianEmail || '-' }}
           </template>
         </el-table-column>
+        <el-table-column label="Campus" min-width="120">
+          <template #default="{ row }">
+            {{ row.campusName || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column label="Status" min-width="90" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
@@ -278,7 +283,7 @@ const defaultFieldConfig: FieldConfigMap = {
   englishName: { key: 'englishName', defaultLabel: 'English Name', visible: false, customLabel: 'English Name' },
   birthDate: { key: 'birthDate', defaultLabel: 'Birth Date', visible: false, customLabel: 'Birth Date' },
   sourceChannel: { key: 'sourceChannel', defaultLabel: 'Source', visible: false, customLabel: 'Source' },
-  campusId: { key: 'campusId', defaultLabel: 'Campus', visible: false, customLabel: 'Campus' },
+  campusId: { key: 'campusId', defaultLabel: 'Campus', visible: true, customLabel: 'Campus' },
   guardianRelationType: { key: 'guardianRelationType', defaultLabel: 'Relation', visible: false, customLabel: 'Relation' },
 };
 

@@ -25,6 +25,8 @@ public record StudentDetailVO(
         String guardianPhone,
         String guardianEmail,
         String guardianRelationType,
+        Long campusId,
+        String campusName,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
