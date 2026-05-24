@@ -171,23 +171,23 @@
           <!-- 班课基本信息 -->
           <div class="class-detail__header">
             <div class="class-detail__title-row">
-              <div class="class-detail__title">{{ classDetail.className }}</div>
+              <div class="class-detail__title">{{ selectedClass?.className }}</div>
             </div>
             <div class="class-detail__info-grid">
-              <div class="class-detail__info-item" v-if="classDetail.teacherName">
+              <div class="class-detail__info-item" v-if="selectedClass?.teacherName">
                 <span class="class-detail__info-label">Teacher</span>
-                <span class="class-detail__info-value">{{ classDetail.teacherName }}</span>
+                <span class="class-detail__info-value">{{ selectedClass.teacherName }}</span>
               </div>
-              <div class="class-detail__info-item" v-if="classDetail.classroomName">
+              <div class="class-detail__info-item" v-if="selectedClass?.classroomName">
                 <span class="class-detail__info-label">Classroom</span>
-                <span class="class-detail__info-value">{{ classDetail.classroomName }}</span>
+                <span class="class-detail__info-value">{{ selectedClass.classroomName }}</span>
               </div>
-              <div class="class-detail__info-item" v-if="classDetail.scheduleDesc">
+              <div class="class-detail__info-item" v-if="selectedClass?.scheduleDesc">
                 <span class="class-detail__info-label">Schedule</span>
-                <span class="class-detail__info-value">{{ classDetail.scheduleDesc }}</span>
+                <span class="class-detail__info-value">{{ selectedClass.scheduleDesc }}</span>
               </div>
             </div>
-            <div v-if="classDetail.description" class="class-detail__desc">{{ classDetail.description }}</div>
+            <div v-if="selectedClass?.description" class="class-detail__desc">{{ selectedClass.description }}</div>
           </div>
 
           <!-- 在册学生 + 到期管理 -->
@@ -454,7 +454,7 @@ const classKeyword = ref('');
 const classesLoading = ref(false);
 const classes = ref<ClassGroupItem[]>([]);
 const selectedClassId = ref<number | null>(null);
-const classDetail = reactive<Record<string, any>>({});
+const selectedClass = computed(() => classes.value.find(c => c.id === selectedClassId.value) ?? null);
 const enrolledStudents = ref<ClassEnrolledStudentItem[]>([]);
 const classOccurrences = ref<ClassOccurrenceItem[]>([]);
 const classStudentsLoading = ref(false);
@@ -602,21 +602,8 @@ async function selectClass(id: number) {
   selectedClassId.value = id;
   classOccurrences.value = [];
   enrolledStudents.value = [];
-  Object.keys(classDetail).forEach(k => delete classDetail[k]);
 
-  await Promise.all([loadClassDetail(id), loadClassStudents(id), loadClassOccurrences(id)]);
-}
-
-async function loadClassDetail(id: number) {
-  // 从类列表中恢复基本信息
-  const found = classes.value.find(c => c.id === id);
-  if (found) {
-    classDetail.className = found.className;
-    classDetail.teacherName = found.teacherName;
-    classDetail.classroomName = found.classroomName;
-    classDetail.description = found.description;
-    classDetail.scheduleDesc = found.scheduleDesc;
-  }
+  await Promise.all([loadClassStudents(id), loadClassOccurrences(id)]);
 }
 
 async function loadClassStudents(id: number) {
@@ -648,8 +635,8 @@ function openClassConfirmDialog(occ: ClassOccurrenceItem) {
   confirmFormRef.value?.resetFields();
   Object.assign(confirmForm, {
     resultStatus: 'COMPLETED',
-    actualTeacherId: occ.plannedTeacherId,
-    actualClassroomId: occ.plannedClassroomId,
+    actualTeacherId: occ.plannedTeacherId ?? selectedClass?.teacherId,
+    actualClassroomId: occ.plannedClassroomId ?? selectedClass?.classroomId,
     actualStartAt: occ.plannedStartAt || '',
     actualHours: (occ.plannedUnits ?? 0) * 0.5,
     notes: '',
@@ -723,7 +710,6 @@ async function handleDeleteClass() {
     await deleteClassGroup(selectedClassId.value);
     ElMessage.success('Class group deleted.');
     selectedClassId.value = null;
-    Object.keys(classDetail).forEach(k => delete classDetail[k]);
     enrolledStudents.value = [];
     classOccurrences.value = [];
     await loadClasses();

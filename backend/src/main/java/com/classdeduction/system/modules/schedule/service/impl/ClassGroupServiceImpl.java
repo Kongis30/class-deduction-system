@@ -75,7 +75,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("className", clz.getClassName());
             item.put("description", clz.getDescription());
             item.put("scheduleDesc", clz.getScheduleDesc());
+            item.put("teacherId", clz.getTeacherId());
             item.put("teacherName", teacherName);
+            item.put("classroomId", clz.getClassroomId());
             item.put("classroomName", classroomName);
             item.put("listPrice", clz.getListPrice());
             item.put("productId", clz.getProductId());

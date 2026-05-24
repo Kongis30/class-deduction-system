@@ -306,7 +306,9 @@ export interface ClassGroupItem {
   className: string;
   description?: string;
   scheduleDesc?: string;
+  teacherId?: number;
   teacherName?: string;
+  classroomId?: number;
   classroomName?: string;
   activeStudentCount: number;
 }

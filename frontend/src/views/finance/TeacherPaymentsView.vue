@@ -498,9 +498,9 @@ async function handleCreatePayment() {
   if (zeroRateItems.length > 0) {
     try {
       await ElMessageBox.confirm(
-        `${zeroRateItems.length} lesson(s) have no pay rate (hourly rate = $0). Pay anyway?`,
+        `<b style="color:#f56c6c;">${zeroRateItems.length} lesson(s) have no pay rate (hourly rate = $0). Pay anyway?</b>`,
         'Zero Rate Warning',
-        { type: 'warning', confirmButtonText: 'Pay Anyway', cancelButtonText: 'Cancel' },
+        { type: 'warning', confirmButtonText: 'Pay Anyway', cancelButtonText: 'Cancel', dangerouslyUseHTMLString: true },
       );
     } catch {
       return;
