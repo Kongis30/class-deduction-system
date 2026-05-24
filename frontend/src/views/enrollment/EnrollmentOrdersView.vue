@@ -652,24 +652,6 @@
             <span>{{ scheduleLoadError }}</span>
           </div>
 
-          <!-- DEBUG: raw occupied data -->
-          <div style="font-size:11px;color:#909399;margin-bottom:4px;line-height:1.5;">
-            occupiedSlots.length = {{ occupiedSlots.length }},
-            uniqueOccupiedCount = {{ uniqueOccupiedCount }}
-            <span v-if="occupiedSlots.length > 0">
-              | sample: weekday={{ occupiedSlots[0].weekday }}
-              {{ occupiedSlots[0].startTime }}-{{ occupiedSlots[0].endTime }}
-              "{{ occupiedSlots[0].courseLabel }}"
-            </span>
-          </div>
-
-          <div v-if="uniqueOccupiedCount > 0" class="existing-classes-banner">
-            <el-icon><InfoFilled /></el-icon>
-            <span>Student has <strong>{{ uniqueOccupiedCount }}</strong> existing weekly class slot(s) shown in gray below.</span>
-          </div>
-          <div v-else class="no-classes-banner">
-            No existing classes found for this student in upcoming schedule.
-          </div>
           <div class="enrollment-form__row">
             <el-form-item class="enrollment-form__full">
               <WeeklyTimeSelector
@@ -826,6 +808,7 @@
               :min="0"
               :precision="2"
               :controls="false"
+              :disabled="true"
               style="width: 100%;"
               placeholder="0.00"
             />
@@ -1027,8 +1010,8 @@ import dayjs from 'dayjs';
 
 import { createEnrollmentOrder, cancelEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, createClassEnrollmentOrder, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
 import { fetchAllStudents, fetchAllTeachers, fetchAllClassrooms, fetchCourseProducts, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
-import { fetchLessonOccurrences, fetchClassGroups } from '@/api/schedule';
-import type { DiscountPresetItem, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem } from '@/types/domain';
+import { fetchLessonOccurrences, fetchClassGroups, fetchClassroomOccupancy, fetchClassGroupsByClassroom } from '@/api/schedule';
+import type { DiscountPresetItem, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ClassroomOccupancyItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef, OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
 
@@ -1083,9 +1066,15 @@ const teachers = ref<{ id: number; teacherName: string }[]>([]);
 const courseProducts = ref<{ id: number; productName: string; subjectName?: string; defaultTotalUnits?: number; defaultLessonUnits?: number; listPrice?: number }[]>([]);
 const classrooms = ref<{ id: number; roomName: string }[]>([]);
 const classes = ref<{ id: number; productName: string; listPrice?: number }[]>([]);
-const occupiedSlots = ref<OccupiedSlotDef[]>([]);
+const studentOccupiedSlots = ref<OccupiedSlotDef[]>([]);
+const classroomOccupiedSlots = ref<OccupiedSlotDef[]>([]);
 const loadingSchedule = ref(false);
 const scheduleLoadError = ref('');
+
+const occupiedSlots = computed<OccupiedSlotDef[]>(() => [
+  ...studentOccupiedSlots.value,
+  ...classroomOccupiedSlots.value,
+]);
 
 // ─── Discount Presets ──────────────────────────────────
 const discountPresets = ref<DiscountPresetItem[]>([]);
@@ -1817,6 +1806,11 @@ watch(() => classEnrollForm.originalAmount, () => {
   }
 });
 
+// Auto-calculate receivedAmount = originalAmount - discountAmount
+watch([() => classEnrollForm.originalAmount, () => classEnrollForm.discountAmount], () => {
+  classEnrollForm.receivedAmount = Math.max(0, classEnrollForm.originalAmount - classEnrollForm.discountAmount);
+});
+
 function openClassEnrollDialog() {
   classEnrollFormRef.value?.resetFields();
   Object.assign(classEnrollForm, {
@@ -1934,9 +1928,8 @@ watch(() => createForm.courseProductId, (productId) => {
 // ─── Load student's existing schedule ──────────
 async function loadExistingSchedule() {
   const studentId = createForm.studentId;
-  console.log('[loadExistingSchedule] called, studentId =', studentId);
   if (!studentId) {
-    occupiedSlots.value = [];
+    studentOccupiedSlots.value = [];
     return;
   }
   loadingSchedule.value = true;
@@ -1945,7 +1938,6 @@ async function loadExistingSchedule() {
     const baseDate = startDate.isBefore(dayjs(), 'day') ? dayjs() : startDate;
     const startAt = baseDate.startOf('day').format('YYYY-MM-DDTHH:mm:ss');
     const endAt = baseDate.add(180, 'day').format('YYYY-MM-DDTHH:mm:ss');
-    console.log('[loadExistingSchedule] fetching for student', studentId, 'window', startAt, '–', endAt);
     const res = await fetchLessonOccurrences({
       studentId,
       startAt,
@@ -1953,11 +1945,7 @@ async function loadExistingSchedule() {
       pageSize: 200,
     });
     const records = res.data.data.records || [];
-    console.log('[loadExistingSchedule] got', records.length, 'records, total =', res.data.data.total);
-    if (records.length > 0) {
-      console.log('[loadExistingSchedule] first record:', JSON.stringify(records[0]));
-    }
-    occupiedSlots.value = records
+    studentOccupiedSlots.value = records
       .filter(o => o.planningStatus !== 'CANCELLED')
       .map(o => {
         const start = dayjs(o.plannedStartAt);
@@ -1973,37 +1961,103 @@ async function loadExistingSchedule() {
           classroomName: o.plannedClassroomName,
         };
       });
-    console.log('[loadExistingSchedule] mapped to', occupiedSlots.value.length, 'occupiedSlots');
-    if (occupiedSlots.value.length > 0) {
-      console.table(occupiedSlots.value.slice(0, 10));
-    }
   } catch (err: any) {
     const msg = err?.response?.data?.message || err?.message || 'Unknown error';
-    console.error('[loadExistingSchedule] FAILED:', err?.response?.status, msg);
     scheduleLoadError.value = `Failed to load student schedule: ${msg}`;
-    occupiedSlots.value = [];
+    studentOccupiedSlots.value = [];
   } finally {
     loadingSchedule.value = false;
   }
 }
 
 watch(() => createForm.studentId, (newVal, oldVal) => {
-  console.log('[EnrollmentForm] studentId changed:', oldVal, '->', newVal);
-  occupiedSlots.value = [];
+  studentOccupiedSlots.value = [];
   scheduleLoadError.value = '';
   loadExistingSchedule();
 });
 
 watch(() => createForm.startDate, (newVal) => {
-  console.log('[EnrollmentForm] startDate changed:', newVal);
   scheduleLoadError.value = '';
   if (newVal && createForm.studentId && createForm.courseProductId) {
     loadExistingSchedule();
   }
+  if (newVal && createForm.defaultClassroomId) {
+    loadClassroomOccupancyData();
+  }
 });
 
-watch(() => occupiedSlots.value, (val) => {
-  console.log('[EnrollmentForm] occupiedSlots ref changed, now', val.length, 'items');
+// ─── Load classroom occupancy when classroom selected ──
+const loadingClassroomOcc = ref(false);
+
+async function loadClassroomOccupancyData() {
+  const classroomId = createForm.defaultClassroomId;
+  if (!classroomId || !createForm.startDate) {
+    classroomOccupiedSlots.value = [];
+    return;
+  }
+  loadingClassroomOcc.value = true;
+  try {
+    const monday = dayjs(createForm.startDate).day(1).startOf('day');
+    const sunday = monday.add(6, 'day').endOf('day');
+    const startAt = monday.format('YYYY-MM-DDTHH:mm:ss');
+    const endAt = sunday.format('YYYY-MM-DDTHH:mm:ss');
+
+    // 1. 加载教室的课次占用
+    const occRes = await fetchClassroomOccupancy({
+      classroomId,
+      startAt,
+      endAt,
+      pageSize: 200,
+    });
+    const items: ClassroomOccupancyItem[] = occRes.data.data.records || [];
+
+    // 2. 加载班课排课时段
+    const clsRes = await fetchClassGroupsByClassroom(classroomId);
+    const classGroups: any[] = clsRes.data.data || [];
+
+    // 合并
+    const slots: OccupiedSlotDef[] = [];
+
+    for (const o of items) {
+      if (o.planningStatus === 'CANCELLED') continue;
+      const start = dayjs(o.plannedStartAt);
+      const weekday = start.day() === 0 ? 7 : start.day();
+      slots.push({
+        weekday,
+        startTime: start.format('HH:mm'),
+        endTime: dayjs(o.plannedEndAt).format('HH:mm'),
+        courseLabel: o.className || o.packageName || o.lessonNo || '',
+        studentName: o.studentName,
+        teacherName: o.teacherName,
+        classroomName: o.classroomName,
+      });
+    }
+
+    // 班课周期时段
+    for (const cls of classGroups) {
+      const scheduleSlots = cls.scheduleSlots || [];
+      for (const s of scheduleSlots) {
+        slots.push({
+          weekday: s.weekday,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          courseLabel: cls.className || '',
+          teacherName: cls.teacherName,
+          classroomName: cls.classroomName,
+        });
+      }
+    }
+
+    classroomOccupiedSlots.value = slots;
+  } catch {
+    classroomOccupiedSlots.value = [];
+  } finally {
+    loadingClassroomOcc.value = false;
+  }
+}
+
+watch(() => createForm.defaultClassroomId, () => {
+  loadClassroomOccupancyData();
 });
 
 function openCreateDialog() {
@@ -2021,7 +2075,8 @@ function openCreateDialog() {
     defaultClassroomId: undefined,
   });
   createDiscountPresetId.value = null;
-  occupiedSlots.value = [];
+  studentOccupiedSlots.value = [];
+  classroomOccupiedSlots.value = [];
   scheduleLoadError.value = '';
   createDialogVisible.value = true;
 }
