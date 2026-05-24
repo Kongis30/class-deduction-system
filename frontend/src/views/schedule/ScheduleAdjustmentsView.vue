@@ -113,7 +113,7 @@
                       v-if="!occ.resultStatus && occ.planningStatus !== 'CANCELLED'"
                       type="success" size="small" plain
                       @click="openConfirmDialog(occ)"
-                    >Write-off</el-button>
+                    >Confirm</el-button>
                     <el-button
                       v-if="occ.resultStatus"
                       size="small" plain
@@ -256,7 +256,7 @@
                     v-if="!occ.confirmed && occ.planningStatus !== 'CANCELLED'"
                     type="success" size="small" plain
                     @click="openClassConfirmDialog(occ)"
-                  >Write-off</el-button>
+                  >Confirm</el-button>
                 </div>
               </div>
             </div>
