@@ -184,7 +184,6 @@ import { fetchCoursePackages } from '@/api/enrollment';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
-  fetchEnrolledClassGroups,
 } from '@/api/schedule';
 import type { LessonOccurrenceItem } from '@/types/domain';
 import type { CoursePackageItem } from '@/types/domain';
@@ -198,7 +197,6 @@ const selectedStudentId = ref<number | null>(null);
 const weekOffset = ref(0);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
-const enrolledClassGroups = ref<any[]>([]);
 
 // ─── Package info bar ──────────────────────────
 const studentPackages = ref<CoursePackageItem[]>([]);
@@ -221,10 +219,8 @@ async function onStudentSelect(id: number) {
   weekOffset.value = 0;
   studentPackages.value = [];
   packageLastDates.value = {};
-  enrolledClassGroups.value = [];
   loadSchedule();
   loadPackageInfo();
-  loadEnrolledClassGroups(id);
 }
 
 async function loadPackageInfo() {
@@ -320,20 +316,6 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
       classroomName: o.plannedClassroomName,
     });
   }
-  // 班课占用（从已加载的班课数据解析）
-  for (const cls of enrolledClassGroups.value) {
-    const scheduleSlots = cls.scheduleSlots || [];
-    for (const s of scheduleSlots) {
-      result.push({
-        weekday: s.weekday,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        courseLabel: cls.className,
-        teacherName: cls.teacherName,
-        classroomName: cls.classroomName,
-      });
-    }
-  }
   return result;
 });
 
@@ -359,16 +341,6 @@ async function loadSchedule() {
     occurrences.value = [];
   } finally {
     loading.value = false;
-  }
-}
-
-// ─── Class group loading ────────────────────────
-async function loadEnrolledClassGroups(studentId: number) {
-  try {
-    const res = await fetchEnrolledClassGroups(studentId);
-    enrolledClassGroups.value = res.data.data;
-  } catch {
-    enrolledClassGroups.value = [];
   }
 }
 

@@ -22,8 +22,10 @@ import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.service.LessonOccurrenceService;
 import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
@@ -58,6 +60,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final ClassEnrollmentMapper classEnrollmentMapper;
 
     @Override
     public PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query) {
@@ -88,13 +91,25 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             }
         }
 
+        // 当按 studentId 查询时，同时匹配该学生的班课课次（班课 lesson_occurrence 没有 studentId）
         LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .and(StringUtils.hasText(query.getKeyword()), nested -> nested
                         .like(LessonOccurrenceEntity::getLessonNo, query.getKeyword())
                         .or(!matchedPackageIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getPackageId, matchedPackageIds))
                         .or(!matchedStudentIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getStudentId, matchedStudentIds)))
                 .eq(query.getPackageId() != null, LessonOccurrenceEntity::getPackageId, query.getPackageId())
-                .eq(query.getStudentId() != null, LessonOccurrenceEntity::getStudentId, query.getStudentId())
+                .and(query.getStudentId() != null, studentWrapper -> {
+                    studentWrapper.eq(LessonOccurrenceEntity::getStudentId, query.getStudentId());
+                    List<Long> enrolledClassGroupIds = classEnrollmentMapper.selectList(
+                                    new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                                            .eq(ClassEnrollmentEntity::getStudentId, query.getStudentId())
+                                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE"))
+                            .stream().map(ClassEnrollmentEntity::getClassId)
+                            .filter(Objects::nonNull).toList();
+                    if (!enrolledClassGroupIds.isEmpty()) {
+                        studentWrapper.or().in(LessonOccurrenceEntity::getClassGroupId, enrolledClassGroupIds);
+                    }
+                })
                 .eq(query.getTeacherId() != null, LessonOccurrenceEntity::getPlannedTeacherId, query.getTeacherId())
                 .eq(query.getClassroomId() != null, LessonOccurrenceEntity::getPlannedClassroomId, query.getClassroomId())
                 .eq(query.getClassGroupId() != null, LessonOccurrenceEntity::getClassGroupId, query.getClassGroupId())
