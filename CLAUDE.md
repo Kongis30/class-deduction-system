@@ -8,6 +8,24 @@ This is an internal admin system for **JIN BEST TUTORING**, a US-based tutoring 
 
 The MVP is staff-facing only — parent/teacher portals are out of scope for the first release.
 
+## 开发纪律
+
+### Git 自动保存进度
+
+用户已开启 auto-permit 模式。每完成一个有意义的开发节点（功能实现、Bug 修复、重构、测试通过），必须主动执行 `git add` + `git commit` 保存进度。commit message 用中文简要描述改动内容。不要等到用户要求才提交。
+
+### 数据库操作审查原则
+
+所有数据库操作（尤其是表结构变更 DDL）必须遵守以下流程：
+
+1. **先理解业务需求** — 明确要解决什么问题、涉及哪些业务概念
+2. **对照系统规范** — 查阅 `doc/mysql_schema.sql`、`doc/API_CONTRACT.md` 等文档，确认现有设计是否已覆盖需求
+3. **判断必要性** — 只有在现有表结构确实无法满足需求时，才考虑新增表或字段；优先复用已有设计
+4. **评估影响范围** — 考虑对现有数据、已有 API、前端页面、业务逻辑的影响
+5. **执行后验证** — 变更后检查后端启动、API 响应、前端展示是否正常
+
+禁止直接执行未经验证的 DDL。查询操作（SELECT）不受此限制。
+
 ## Project Structure
 
 ```
