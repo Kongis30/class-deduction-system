@@ -46,6 +46,6 @@ public class TeacherAccountController {
     public ApiResponse<Void> updateTeacherAccount(@PathVariable Long id,
                                                   @Valid @RequestBody TeacherAccountUpdateRequest request) {
         teacherAccountService.updateTeacherAccount(id, request);
-        return ApiResponse.success("Updated successfully.");
+        return ApiResponse.success(null);
     }
 }

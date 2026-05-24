@@ -46,6 +46,6 @@ public class StudentAccountController {
     public ApiResponse<Void> updateStudentAccount(@PathVariable Long id,
                                                   @Valid @RequestBody StudentAccountUpdateRequest request) {
         studentAccountService.updateStudentAccount(id, request);
-        return ApiResponse.success("Updated successfully.");
+        return ApiResponse.success(null);
     }
 }
