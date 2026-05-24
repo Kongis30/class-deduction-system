@@ -170,7 +170,12 @@
         <div v-else class="class-detail">
           <!-- 班课基本信息 -->
           <div class="class-detail__header">
-            <div class="class-detail__title">{{ classDetail.className }}</div>
+            <div class="class-detail__title-row">
+              <div class="class-detail__title">{{ classDetail.className }}</div>
+              <el-button type="danger" size="small" plain :loading="deleting" @click="handleDeleteClass">
+                Delete
+              </el-button>
+            </div>
             <div class="class-detail__meta">
               <span v-if="classDetail.teacherName">Teacher: {{ classDetail.teacherName }}</span>
               <span v-if="classDetail.classroomName">Room: {{ classDetail.classroomName }}</span>
@@ -269,7 +274,6 @@
             <el-option label="Completed" value="COMPLETED" />
             <el-option label="Formal Leave" value="FORMAL_LEAVE" />
             <el-option label="No Show" value="NO_SHOW" />
-            <el-option label="Cancelled" value="CANCELLED" />
           </el-select>
         </el-form-item>
         <el-form-item label="Actual Teacher">
@@ -287,18 +291,13 @@
             v-model="confirmForm.actualStartAt"
             type="datetime"
             value-format="YYYY-MM-DDTHH:mm:ss"
+            format="YYYY-MM-DD HH:mm"
             placeholder="Defaults to planned start"
             style="width: 100%;"
           />
         </el-form-item>
         <el-form-item label="Actual End Time">
-          <el-date-picker
-            v-model="confirmForm.actualEndAt"
-            type="datetime"
-            value-format="YYYY-MM-DDTHH:mm:ss"
-            placeholder="Defaults to planned end"
-            style="width: 100%;"
-          />
+          <div class="end-time-display">{{ computedEndTime || '—' }}</div>
         </el-form-item>
         <el-form-item label="Hours">
           <div class="units-input-row">
@@ -310,7 +309,7 @@
           </div>
           <div class="form-hint">0.5h increments</div>
         </el-form-item>
-        <el-form-item v-if="confirmForm.resultStatus !== 'FORMAL_LEAVE' && confirmForm.resultStatus !== 'CANCELLED'" label="Deduction Preview">
+        <el-form-item v-if="confirmForm.resultStatus !== 'FORMAL_LEAVE'" label="Deduction Preview">
           <el-alert :title="deductionPreview" type="info" :closable="false" show-icon />
         </el-form-item>
         <el-form-item label="Notes">
@@ -413,7 +412,7 @@ import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
 
 import { fetchAllClassrooms, fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
-import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, sendClassExpiryReminders } from '@/api/schedule';
+import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, sendClassExpiryReminders, deleteClassGroup } from '@/api/schedule';
 import { fetchCoursePackages } from '@/api/enrollment';
 import { confirmLesson } from '@/api/lesson';
 import { useAuthStore } from '@/stores/auth';
@@ -454,6 +453,7 @@ const enrolledStudents = ref<ClassEnrolledStudentItem[]>([]);
 const classOccurrences = ref<ClassOccurrenceItem[]>([]);
 const classStudentsLoading = ref(false);
 const reminding = ref(false);
+const deleting = ref(false);
 
 // 教师/教室（弹窗用）
 const teachers = ref<{ id: number; teacherName: string }[]>([]);
@@ -645,8 +645,7 @@ function openClassConfirmDialog(occ: ClassOccurrenceItem) {
     actualTeacherId: undefined,
     actualClassroomId: undefined,
     actualStartAt: '',
-    actualEndAt: '',
-    actualUnits: undefined,
+    actualHours: undefined,
     notes: '',
   });
   confirmDialogVisible.value = true;
@@ -663,12 +662,17 @@ async function submitClassConfirm(occId: number) {
     if (!valid) return;
     submitting.value = true;
     try {
+      const hours = confirmForm.actualHours ?? 0;
+      const startAt = confirmForm.actualStartAt || undefined;
+      const endAt = startAt && hours > 0
+        ? dayjs(startAt).add(hours, 'hour').format('YYYY-MM-DDTHH:mm:ss')
+        : undefined;
       await confirmClassLesson(selectedClassId.value!, occId, {
         actualTeacherId: confirmForm.actualTeacherId,
         actualClassroomId: confirmForm.actualClassroomId,
-        actualStartAt: confirmForm.actualStartAt || undefined,
-        actualEndAt: confirmForm.actualEndAt || undefined,
-        actualUnits: confirmForm.actualUnits,
+        actualStartAt: startAt,
+        actualEndAt: endAt,
+        actualUnits: hours * 2,
         notes: confirmForm.notes || undefined,
       });
       ElMessage.success('Class lesson confirmed successfully.');
@@ -694,6 +698,33 @@ async function sendReminders() {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to send reminders.');
   } finally {
     reminding.value = false;
+  }
+}
+
+async function handleDeleteClass() {
+  if (!selectedClassId.value) return;
+  try {
+    await ElMessageBox.confirm(
+      'Are you sure you want to delete this class? This will cancel all future occurrences and remove all enrollments.',
+      'Delete Class',
+      { confirmButtonText: 'Delete', cancelButtonText: 'Cancel', type: 'warning' }
+    );
+  } catch {
+    return; // user cancelled
+  }
+  deleting.value = true;
+  try {
+    await deleteClassGroup(selectedClassId.value);
+    ElMessage.success('Class group deleted.');
+    selectedClassId.value = null;
+    Object.keys(classDetail).forEach(k => delete classDetail[k]);
+    enrolledStudents.value = [];
+    classOccurrences.value = [];
+    await loadClasses();
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -736,7 +767,6 @@ const confirmForm = reactive({
   actualTeacherId: undefined as number | undefined,
   actualClassroomId: undefined as number | undefined,
   actualStartAt: '',
-  actualEndAt: '',
   actualHours: undefined as number | undefined,
   notes: '',
 });
@@ -746,10 +776,15 @@ const confirmFormRules: FormRules = {
 
 const deductionPreview = computed(() => {
   const status = confirmForm.resultStatus;
-  if (status === 'FORMAL_LEAVE' || status === 'CANCELLED') return 'No hours will be deducted for this status.';
+  if (status === 'FORMAL_LEAVE') return 'No hours will be deducted for this status.';
   const hours = confirmForm.actualHours;
   if (hours == null || hours <= 0) return 'No hours will be deducted.';
   return `This lesson will deduct ${hours.toFixed(1)}h.`;
+});
+
+const computedEndTime = computed(() => {
+  if (!confirmForm.actualStartAt || !confirmForm.actualHours) return '';
+  return dayjs(confirmForm.actualStartAt).add(confirmForm.actualHours, 'hour').format('YYYY-MM-DD HH:mm');
 });
 
 function openConfirmDialog(occ: LessonOccurrenceItem) {
@@ -761,7 +796,6 @@ function openConfirmDialog(occ: LessonOccurrenceItem) {
     actualTeacherId: occ.plannedTeacherId,
     actualClassroomId: occ.plannedClassroomId,
     actualStartAt: occ.plannedStartAt || '',
-    actualEndAt: occ.plannedEndAt || '',
     actualHours: (occ.plannedUnits ?? 0) * 0.5,
     notes: '',
   });
@@ -790,13 +824,17 @@ async function submitConfirm() {
     submitting.value = true;
     try {
       const hours = confirmForm.actualHours ?? 0;
+      const startAt = confirmForm.actualStartAt || undefined;
+      const endAt = startAt && hours > 0
+        ? dayjs(startAt).add(hours, 'hour').format('YYYY-MM-DDTHH:mm:ss')
+        : undefined;
       const result = await confirmLesson({
         occurrenceId: selectedOcc.value!.id,
         resultStatus: confirmForm.resultStatus,
         actualTeacherId: confirmForm.actualTeacherId,
         actualClassroomId: confirmForm.actualClassroomId,
-        actualStartAt: confirmForm.actualStartAt || undefined,
-        actualEndAt: confirmForm.actualEndAt || undefined,
+        actualStartAt: startAt,
+        actualEndAt: endAt,
         actualUnits: hours * 2,
         notes: confirmForm.notes || undefined,
       });
@@ -1137,11 +1175,17 @@ function disabledPastDatetime(date: Date) {
   border-radius: 8px;
   border: 1px solid #e8edf2;
 }
+.class-detail__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
 .class-detail__title {
   font-size: 16px;
   font-weight: 700;
   color: #303133;
-  margin-bottom: 6px;
 }
 .class-detail__meta {
   display: flex;
@@ -1208,6 +1252,12 @@ function disabledPastDatetime(date: Date) {
   margin-top: 4px;
   color: #909399;
   font-size: 12px;
+}
+.end-time-display {
+  padding: 6px 0;
+  color: #606266;
+  font-size: 14px;
+  font-weight: 500;
 }
 .lesson-detail {
   display: flex;

@@ -46,6 +46,9 @@ public class CourseProductSaveRequest {
     @Schema(description = "Default classroom ID (for GROUP)", example = "6101")
     private Long defaultClassroomId;
 
+    @Schema(description = "Default teacher ID (for GROUP)", example = "7001")
+    private Long defaultTeacherId;
+
     @DecimalMin(value = "0.00", message = "Original price must be 0 or greater")
     @Schema(description = "Original price", example = "2699.00")
     private BigDecimal listPrice;

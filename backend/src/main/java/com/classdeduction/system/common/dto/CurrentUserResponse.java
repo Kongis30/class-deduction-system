@@ -16,6 +16,8 @@ public record CurrentUserResponse(
         String userType,
         @Schema(description = "绑定的老师ID，教师账号才会有值")
         Long teacherId,
+        @Schema(description = "绑定的学生ID，学生账号才会有值")
+        Long studentId,
         @Schema(description = "角色编码列表")
         List<String> roleCodes
 ) {

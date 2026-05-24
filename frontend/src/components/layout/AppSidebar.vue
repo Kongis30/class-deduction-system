@@ -45,7 +45,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Calendar, DataAnalysis, Files, HomeFilled, Setting, Tickets } from '@element-plus/icons-vue';
+import { Calendar, DataAnalysis, Files, HomeFilled, Money, Setting, Tickets } from '@element-plus/icons-vue';
 import { useRoute } from 'vue-router';
 
 import { APP_SHORT_NAME } from '@/config/app-config';
@@ -65,6 +65,7 @@ const iconMap = {
   Tickets,
   Calendar,
   DataAnalysis,
+  Money,
   Setting,
 };
 

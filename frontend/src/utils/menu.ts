@@ -42,6 +42,15 @@ export const appMenus: AppMenuItem[] = [
     ],
   },
   {
+    key: 'finance',
+    title: 'Finance',
+    icon: 'Money',
+    children: [
+      { key: 'pay-rates', title: 'Pay Rates', path: '/finance/pay-rates' },
+      { key: 'teacher-payments', title: 'Payments', path: '/finance/payments' },
+    ],
+  },
+  {
     key: 'settings',
     title: 'Settings',
     icon: 'Setting',

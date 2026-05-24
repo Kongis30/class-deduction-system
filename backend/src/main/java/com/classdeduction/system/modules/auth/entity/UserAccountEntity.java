@@ -34,6 +34,8 @@ public class UserAccountEntity extends BaseEntity {
 
     private Long teacherId;
 
+    private Long studentId;
+
     private String status;
 
     private LocalDateTime lastLoginAt;

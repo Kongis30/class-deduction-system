@@ -99,7 +99,7 @@ class TeacherSelfLessonServiceImplTest {
     }
 
     private CurrentUserResponse currentTeacherUser() {
-        return new CurrentUserResponse(1002L, "teacher", "Emma Wang", "TEACHER", 9001L, List.of("TEACHER"));
+        return new CurrentUserResponse(1002L, "teacher", "Emma Wang", "TEACHER", 9001L, null, List.of("TEACHER"));
     }
 
     private LessonOccurrenceEntity buildOccurrence(Long teacherId, LocalDateTime baseTime) {

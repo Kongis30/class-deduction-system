@@ -23,6 +23,8 @@ const StudentScheduleView = () => import('@/views/schedule/StudentScheduleView.v
 const NotificationSettingsView = () => import('@/views/system/NotificationSettingsView.vue');
 const BrandSettingsView = () => import('@/views/system/BrandSettingsView.vue');
 const AccountSettingsView = () => import('@/views/system/AccountSettingsView.vue');
+const TeacherPayRatesView = () => import('@/views/finance/TeacherPayRatesView.vue');
+const TeacherPaymentsView = () => import('@/views/finance/TeacherPaymentsView.vue');
 
 const routes: RouteRecordRaw[] = [
   {
@@ -195,6 +197,26 @@ const routes: RouteRecordRaw[] = [
           title: 'Accounts & Permissions',
           section: 'Settings',
           description: 'Manage permissions for admins, staff, and future instructor roles.',
+        },
+      },
+      {
+        path: 'finance/pay-rates',
+        name: 'pay-rates',
+        component: TeacherPayRatesView,
+        meta: {
+          title: 'Teacher Pay Rates',
+          section: 'Finance',
+          description: 'Configure per-teacher, per-product hourly pay rates.',
+        },
+      },
+      {
+        path: 'finance/payments',
+        name: 'teacher-payments',
+        component: TeacherPaymentsView,
+        meta: {
+          title: 'Teacher Payments',
+          section: 'Finance',
+          description: 'Settle teacher payments based on confirmed lesson records.',
         },
       },
     ],

@@ -207,3 +207,7 @@ export function fetchClassGroupsByTeacher(teacherId: number) {
 export function fetchClassGroupsByClassroom(classroomId: number) {
   return http.get<ApiResponse<any[]>>(`/v1/classes/classroom/${classroomId}`);
 }
+
+export function deleteClassGroup(classId: number) {
+  return http.delete<ApiResponse<null>>(`/v1/classes/${classId}`);
+}

@@ -103,6 +103,8 @@ export interface CourseProductItem {
   expiryDurationDays?: number;
   defaultClassroomId?: number;
   defaultClassroomName?: string;
+  defaultTeacherId?: number;
+  defaultTeacherName?: string;
   listPrice: number;
   status: string;
   notes?: string;
@@ -464,4 +466,86 @@ export interface TeacherAccountItem {
   status: string;
   lastLoginAt?: string;
   remark?: string;
+}
+
+export interface StudentAccountItem {
+  userId: number;
+  studentId: number;
+  studentNo?: string;
+  studentName?: string;
+  username: string;
+  displayName?: string;
+  email?: string;
+  status: string;
+  lastLoginAt?: string;
+  remark?: string;
+}
+
+// ─── Finance ────────────────────────────────────────────
+
+export interface TeacherPayRateItem {
+  id: number;
+  teacherId: number;
+  teacherNo: string;
+  teacherName: string;
+  courseProductId: number;
+  productCode: string;
+  productName: string;
+  subjectName: string;
+  hourlyRate: number;
+  notes?: string;
+}
+
+export interface UnpaidLessonItem {
+  lessonRecordId: number;
+  lessonDate: string;
+  studentId: number;
+  studentName: string;
+  packageId: number;
+  packageName: string;
+  courseProductId: number;
+  productName: string;
+  subjectName: string;
+  actualUnits: number;
+  hours: number;
+  hourlyRate: number;
+  amount: number;
+  resultStatus: string;
+  occurrenceType?: string;
+  className?: string;
+}
+
+export interface TeacherPaymentItem {
+  id: number;
+  paymentNo: string;
+  teacherId: number;
+  teacherNo: string;
+  teacherName: string;
+  periodStart: string;
+  periodEnd: string;
+  totalUnits: number;
+  totalHours: number;
+  totalAmount: number;
+  status: string;
+  paidAt?: string;
+  paidByName?: string;
+  notes?: string;
+  createdAt: string;
+  items?: TeacherPaymentItemDetail[];
+}
+
+export interface TeacherPaymentItemDetail {
+  id: number;
+  lessonRecordId: number;
+  packageId: number;
+  packageName: string;
+  courseProductId: number;
+  productName: string;
+  subjectName: string;
+  actualUnits: number;
+  hours: number;
+  hourlyRate: number;
+  amount: number;
+  occurrenceType?: string;
+  className?: string;
 }

@@ -109,6 +109,14 @@ public class ClassGroupController {
         return ApiResponse.success(classGroupService.listByTeacher(teacherId));
     }
 
+    @DeleteMapping("/{classId}")
+    @Operation(summary = "Delete a class group (cancel future occurrences, remove enrollments, soft-delete)")
+    @RequireRoles({"ADMIN", "STAFF"})
+    public ApiResponse<String> deleteClassGroup(@PathVariable Long classId) {
+        classGroupService.deleteClassGroup(classId);
+        return ApiResponse.success("Class group deleted.");
+    }
+
     @GetMapping("/classroom/{classroomId}")
     @Operation(summary = "List active class groups using a classroom")
     public ApiResponse<List<Map<String, Object>>> listByClassroom(@PathVariable Long classroomId) {

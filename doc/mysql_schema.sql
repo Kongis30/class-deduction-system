@@ -95,11 +95,12 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
   `id` BIGINT NOT NULL COMMENT 'Primary key ID',
   `username` VARCHAR(64) NOT NULL COMMENT 'Username',
   `password_hash` VARCHAR(255) NOT NULL COMMENT 'Password hash',
-  `user_type` VARCHAR(32) NOT NULL COMMENT 'User type: ADMIN/STAFF/TEACHER',
+  `user_type` VARCHAR(32) NOT NULL COMMENT 'User type: ADMIN/STAFF/TEACHER/STUDENT',
   `display_name` VARCHAR(64) NOT NULL COMMENT 'Display name',
   `mobile` VARCHAR(32) DEFAULT NULL COMMENT 'Mobile',
   `email` VARCHAR(128) DEFAULT NULL COMMENT 'Email',
   `teacher_id` BIGINT DEFAULT NULL COMMENT 'Linked teacher ID, used by teacher accounts only',
+  `student_id` BIGINT DEFAULT NULL COMMENT 'Linked student ID, used by student accounts only',
   `status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/DISABLED/LOCKED',
   `last_login_at` DATETIME(3) DEFAULT NULL COMMENT 'Last login time',
   `remark` VARCHAR(500) DEFAULT NULL COMMENT 'Notes',
@@ -114,9 +115,11 @@ CREATE TABLE IF NOT EXISTS `sys_user` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_sys_user_username` (`username`),
   UNIQUE KEY `uk_sys_user_teacher_id` (`teacher_id`),
+  UNIQUE KEY `uk_sys_user_student_id` (`student_id`),
   KEY `idx_sys_user_teacher_id` (`teacher_id`),
   KEY `idx_sys_user_type_status` (`user_type`, `status`),
-  CONSTRAINT `fk_sys_user_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
+  CONSTRAINT `fk_sys_user_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`),
+  CONSTRAINT `fk_sys_user_student` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='System users';
 
 CREATE TABLE IF NOT EXISTS `sys_user_role` (
@@ -353,6 +356,8 @@ CREATE TABLE IF NOT EXISTS `course_product` (
   `default_total_units` INT DEFAULT NULL COMMENT 'Default total units, null for class group products',
   `default_lesson_units` INT DEFAULT NULL COMMENT 'Default lesson units, null for class group products',
   `expiry_duration_days` INT DEFAULT NULL COMMENT 'Default enrollment expiry duration in days, for class group products',
+  `default_classroom_id` BIGINT DEFAULT NULL COMMENT 'Default classroom ID (for class group products)',
+  `default_teacher_id` BIGINT DEFAULT NULL COMMENT 'Default teacher ID (for class group products)',
   `list_price` DECIMAL(12,2) NOT NULL DEFAULT 0.00 COMMENT 'List price',
   `status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
   `notes` VARCHAR(500) DEFAULT NULL COMMENT 'Notes',
@@ -693,7 +698,7 @@ CREATE TABLE IF NOT EXISTS `lesson_record` (
   `deleted_by` BIGINT DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` INT NOT NULL DEFAULT 0 COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_lesson_record_occurrence` (`occurrence_id`),
+  UNIQUE KEY `uk_lesson_record_occurrence_student` (`occurrence_id`, `student_id`),
   KEY `idx_lesson_record_package` (`package_id`, `confirmed_at` DESC),
   KEY `idx_lesson_record_student` (`student_id`, `confirmed_at` DESC),
   KEY `idx_lesson_record_actual_teacher` (`actual_teacher_id`, `confirmed_at` DESC),
@@ -945,7 +950,8 @@ INSERT INTO `sys_role` (`id`, `role_code`, `role_name`, `status`, `remark`)
 VALUES
   (100, 'ADMIN', 'Administrator', 'ACTIVE', 'System administrator with full permissions'),
   (110, 'STAFF', 'Staff', 'ACTIVE', 'Internal staff responsible for day-to-day operations'),
-  (120, 'TEACHER', 'Teacher', 'ACTIVE', 'Future role limited to viewing a personal timetable and confirming personal lessons')
+  (120, 'TEACHER', 'Teacher', 'ACTIVE', 'Future role limited to viewing a personal timetable and confirming personal lessons'),
+  (130, 'STUDENT', 'Student', 'ACTIVE', 'Student who can access their own learning portal')
 ON DUPLICATE KEY UPDATE
   `role_name` = VALUES(`role_name`),
   `status` = VALUES(`status`),
@@ -1282,3 +1288,75 @@ ON DUPLICATE KEY UPDATE
   `enabled` = VALUES(`enabled`),
   `recipient_type` = VALUES(`recipient_type`),
   `threshold_value` = VALUES(`threshold_value`);
+
+-- ----------------------------
+-- 10. Teacher payment tables
+-- ----------------------------
+
+CREATE TABLE IF NOT EXISTS `teacher_pay_rate` (
+  `id` BIGINT NOT NULL COMMENT 'Primary key ID',
+  `teacher_id` BIGINT NOT NULL COMMENT 'Teacher ID',
+  `course_product_id` BIGINT NOT NULL COMMENT 'Course product ID',
+  `hourly_rate` DECIMAL(10,2) NOT NULL COMMENT 'Per-hour rate in dollars',
+  `notes` VARCHAR(500) DEFAULT NULL COMMENT 'Notes',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
+  `created_by` BIGINT DEFAULT NULL COMMENT 'Created by user ID',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
+  `updated_by` BIGINT DEFAULT NULL COMMENT 'Updated by user ID',
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag: 0=no, 1=yes',
+  `deleted_at` DATETIME(3) DEFAULT NULL COMMENT 'Deleted at',
+  `deleted_by` BIGINT DEFAULT NULL COMMENT 'Deleted by user ID',
+  `version` INT NOT NULL DEFAULT 0 COMMENT 'Optimistic lock version',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_teacher_product` (`teacher_id`, `course_product_id`),
+  KEY `idx_pay_rate_teacher` (`teacher_id`),
+  KEY `idx_pay_rate_product` (`course_product_id`),
+  CONSTRAINT `fk_pay_rate_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`),
+  CONSTRAINT `fk_pay_rate_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Teacher hourly pay rate configuration';
+
+CREATE TABLE IF NOT EXISTS `teacher_payment` (
+  `id` BIGINT NOT NULL COMMENT 'Primary key ID',
+  `payment_no` VARCHAR(32) NOT NULL COMMENT 'Payment number',
+  `teacher_id` BIGINT NOT NULL COMMENT 'Teacher ID',
+  `period_start` DATE NOT NULL COMMENT 'Settlement period start',
+  `period_end` DATE NOT NULL COMMENT 'Settlement period end',
+  `total_units` INT NOT NULL COMMENT 'Total half-hour units',
+  `total_hours` DECIMAL(8,1) NOT NULL COMMENT 'Total hours (units/2)',
+  `total_amount` DECIMAL(10,2) NOT NULL COMMENT 'Total payment amount',
+  `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT 'Status: PENDING/PAID/CANCELLED',
+  `paid_at` DATETIME(3) DEFAULT NULL COMMENT 'Paid at timestamp',
+  `paid_by` BIGINT DEFAULT NULL COMMENT 'Paid by user ID',
+  `notes` VARCHAR(500) DEFAULT NULL COMMENT 'Notes',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
+  `created_by` BIGINT DEFAULT NULL COMMENT 'Created by user ID',
+  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
+  `updated_by` BIGINT DEFAULT NULL COMMENT 'Updated by user ID',
+  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag: 0=no, 1=yes',
+  `deleted_at` DATETIME(3) DEFAULT NULL COMMENT 'Deleted at',
+  `deleted_by` BIGINT DEFAULT NULL COMMENT 'Deleted by user ID',
+  `version` INT NOT NULL DEFAULT 0 COMMENT 'Optimistic lock version',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_payment_no` (`payment_no`),
+  KEY `idx_payment_teacher` (`teacher_id`),
+  KEY `idx_payment_status` (`status`),
+  CONSTRAINT `fk_payment_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Teacher payment records';
+
+CREATE TABLE IF NOT EXISTS `teacher_payment_item` (
+  `id` BIGINT NOT NULL COMMENT 'Primary key ID',
+  `payment_id` BIGINT NOT NULL COMMENT 'Payment ID',
+  `lesson_record_id` BIGINT NOT NULL COMMENT 'Lesson record ID',
+  `package_id` BIGINT DEFAULT NULL COMMENT 'Course package ID',
+  `course_product_id` BIGINT DEFAULT NULL COMMENT 'Course product ID',
+  `actual_units` INT NOT NULL COMMENT 'Actual half-hour units',
+  `hourly_rate` DECIMAL(10,2) NOT NULL COMMENT 'Hourly rate snapshot at payment time',
+  `amount` DECIMAL(10,2) NOT NULL COMMENT 'Calculated amount (hours * rate)',
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_payment_item_lesson_record` (`lesson_record_id`),
+  KEY `idx_payment_item_payment` (`payment_id`),
+  CONSTRAINT `fk_payment_item_payment` FOREIGN KEY (`payment_id`) REFERENCES `teacher_payment` (`id`),
+  CONSTRAINT `fk_payment_item_lesson_record` FOREIGN KEY (`lesson_record_id`) REFERENCES `lesson_record` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Teacher payment item details';
+

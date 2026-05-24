@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountPageQuery;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
@@ -31,7 +32,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 教师账号服务：负责老师账号与 teacher 档案的一对一绑定。
+ * 教师账号服务：创建老师档案同时创建登录账号。
  */
 @Service
 @RequiredArgsConstructor
@@ -42,6 +43,7 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
     private final RoleMapper roleMapper;
     private final TeacherMapper teacherMapper;
     private final PasswordEncoder passwordEncoder;
+    private final JsonHelper jsonHelper;
 
     @Override
     public PageResponse<TeacherAccountVO> pageTeacherAccounts(TeacherAccountPageQuery query) {
@@ -78,17 +80,26 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createTeacherAccount(TeacherAccountCreateRequest request) {
-        TeacherEntity teacher = requireActiveTeacher(request.getTeacherId());
-        ensureTeacherAccountNotExists(teacher.getId());
         ensureUsernameUnique(request.getUsername());
 
+        // 1. Create teacher profile
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setTeacherNo(generateTeacherNo());
+        teacher.setTeacherName(request.getTeacherName());
+        teacher.setEmail(request.getEmail());
+        teacher.setMobile(request.getMobile());
+        teacher.setSubjectTags(request.getSubjectTags() != null ? jsonHelper.toJson(request.getSubjectTags()) : null);
+        teacher.setStatus("ACTIVE");
+        teacherMapper.insert(teacher);
+
+        // 2. Create login account linked to the teacher
         UserAccountEntity entity = new UserAccountEntity();
         entity.setUsername(request.getUsername());
         entity.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         entity.setUserType("TEACHER");
         entity.setDisplayName(StringUtils.hasText(request.getDisplayName()) ? request.getDisplayName() : teacher.getTeacherName());
-        entity.setMobile(StringUtils.hasText(request.getMobile()) ? request.getMobile() : teacher.getMobile());
-        entity.setEmail(StringUtils.hasText(request.getEmail()) ? request.getEmail() : teacher.getEmail());
+        entity.setMobile(request.getMobile());
+        entity.setEmail(request.getEmail());
         entity.setTeacherId(teacher.getId());
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : "ACTIVE");
         entity.setRemark(request.getRemark());
@@ -97,25 +108,26 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
         return entity.getId();
     }
 
-    private TeacherEntity requireActiveTeacher(Long teacherId) {
-        TeacherEntity teacher = teacherMapper.selectById(teacherId);
-        if (teacher == null) {
-            throw new BusinessException("TEACHER_NOT_FOUND", "Teacher not found.");
-        }
-        if (!"ACTIVE".equalsIgnoreCase(teacher.getStatus())) {
-            throw new BusinessException("TEACHER_NOT_ACTIVE", "Only active teachers can be linked to a login account.");
-        }
-        return teacher;
-    }
-
-    private void ensureTeacherAccountNotExists(Long teacherId) {
-        UserAccountEntity existing = userAccountMapper.selectOne(new LambdaQueryWrapper<UserAccountEntity>()
-                .eq(UserAccountEntity::getTeacherId, teacherId)
-                .eq(UserAccountEntity::getIsDeleted, 0)
+    private String generateTeacherNo() {
+        // Only look at existing INS-prefixed numbers to avoid collision with seed data (THxxx)
+        TeacherEntity maxTeacher = teacherMapper.selectOne(new LambdaQueryWrapper<TeacherEntity>()
+                .eq(TeacherEntity::getIsDeleted, 0)
+                .likeRight(TeacherEntity::getTeacherNo, "INS-")
+                .orderByDesc(TeacherEntity::getTeacherNo)
                 .last("LIMIT 1"));
-        if (existing != null) {
-            throw new BusinessException("TEACHER_ACCOUNT_EXISTS", "This teacher is already linked to a login account.");
+        int nextSeq = 1;
+        if (maxTeacher != null && maxTeacher.getTeacherNo() != null) {
+            String maxNo = maxTeacher.getTeacherNo();
+            try {
+                String numPart = maxNo.replaceAll("[^0-9]", "");
+                if (!numPart.isEmpty()) {
+                    nextSeq = Integer.parseInt(numPart) + 1;
+                }
+            } catch (NumberFormatException e) {
+                nextSeq = 1;
+            }
         }
+        return String.format("INS-%04d", nextSeq);
     }
 
     private void ensureUsernameUnique(String username) {

@@ -35,6 +35,9 @@ public interface ClassGroupService {
     /** 获取教师授课的活跃班课列表（含解析后的时段） */
     List<Map<String, Object>> listByTeacher(Long teacherId);
 
+    /** 删除班课：取消未来课次、删除报名记录、软删除班课本身 */
+    void deleteClassGroup(Long classId);
+
     /** 获取教室占用的活跃班课列表（含解析后的时段） */
     List<Map<String, Object>> listByClassroom(Long classroomId);
 }

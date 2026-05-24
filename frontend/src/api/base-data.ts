@@ -191,6 +191,7 @@ export interface CourseProductSavePayload {
   defaultLessonUnits?: number;
   expiryDurationDays?: number;
   defaultClassroomId?: number;
+  defaultTeacherId?: number;
   listPrice: number;
   status?: string;
   notes?: string;

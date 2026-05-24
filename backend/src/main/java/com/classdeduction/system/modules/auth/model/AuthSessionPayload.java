@@ -11,6 +11,7 @@ public record AuthSessionPayload(
         String displayName,
         String userType,
         Long teacherId,
+        Long studentId,
         List<String> roleCodes
 ) {
 }

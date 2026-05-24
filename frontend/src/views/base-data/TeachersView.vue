@@ -4,10 +4,6 @@
       <div class="panel-header">
         <span class="panel-header__title">Instructors</span>
         <div class="panel-header__actions">
-          <el-button type="primary" @click="openTeacherDialog()">
-            <el-icon><Plus /></el-icon>
-            Add instructor
-          </el-button>
         </div>
       </div>
 
@@ -106,7 +102,7 @@
       class="teacher-dialog"
     >
       <template #header>
-        <h3>{{ editingId ? 'Edit instructor' : 'New instructor' }}</h3>
+        <h3>Edit instructor</h3>
       </template>
 
       <el-form ref="teacherFormRef" label-position="top" :model="teacherForm" :rules="teacherFormRules" class="teacher-form">
@@ -160,12 +156,10 @@
 </template>
 
 <script setup lang="ts">
-import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { reactive, ref, watch } from 'vue';
 
 import {
-  createTeacher,
   deleteTeacher,
   fetchAllTeachers,
   fetchTeachers,
@@ -248,27 +242,16 @@ const teacherFormRules = {
   email: [{ type: 'email', message: 'Email format is invalid' }],
 };
 
-async function openTeacherDialog(row?: TeacherItem) {
-  editingId.value = row?.id ?? null;
-  if (row) {
-    Object.assign(teacherForm, {
-      teacherName: row.teacherName,
-      mobile: row.mobile ?? '',
-      email: row.email ?? '',
-      subjectTags: [...(row.subjectTags || [])],
-      status: row.status,
-      notes: row.notes ?? '',
-    });
-  } else {
-    Object.assign(teacherForm, {
-      teacherName: '',
-      mobile: '',
-      email: '',
-      subjectTags: [],
-      status: 'ACTIVE',
-      notes: '',
-    });
-  }
+async function openTeacherDialog(row: TeacherItem) {
+  editingId.value = row.id;
+  Object.assign(teacherForm, {
+    teacherName: row.teacherName,
+    mobile: row.mobile ?? '',
+    email: row.email ?? '',
+    subjectTags: [...(row.subjectTags || [])],
+    status: row.status,
+    notes: row.notes ?? '',
+  });
   teacherFormRef.value?.clearValidate();
   teacherDialogVisible.value = true;
 }
@@ -290,13 +273,8 @@ async function handleTeacherSubmit() {
 
   submitting.value = true;
   try {
-    if (editingId.value) {
-      await updateTeacher(editingId.value, payload);
-      ElMessage.success('Instructor updated.');
-    } else {
-      await createTeacher(payload);
-      ElMessage.success('Instructor created.');
-    }
+    await updateTeacher(editingId.value!, payload);
+    ElMessage.success('Instructor updated.');
     teacherDialogVisible.value = false;
     loadData();
   } catch (err: any) {

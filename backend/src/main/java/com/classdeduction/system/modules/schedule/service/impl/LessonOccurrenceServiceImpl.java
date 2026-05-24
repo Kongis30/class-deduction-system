@@ -80,6 +80,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             }
         }
 
+        // 按班课查询时验证班课存在且未删除（@TableLogic 已过滤 is_deleted=1）
+        if (query.getClassGroupId() != null) {
+            ClassGroupEntity cls = classGroupMapper.selectById(query.getClassGroupId());
+            if (cls == null) {
+                return PageResponse.empty(query.getPageNum(), query.getPageSize());
+            }
+        }
+
         LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .and(StringUtils.hasText(query.getKeyword()), nested -> nested
                         .like(LessonOccurrenceEntity::getLessonNo, query.getKeyword())

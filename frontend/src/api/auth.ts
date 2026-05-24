@@ -1,7 +1,7 @@
 import http from './http';
 import type { LoginPayload, LoginResult, AuthUser } from '@/types/auth';
 import type { ApiResponse, PageResult } from '@/types/http';
-import type { TeacherAccountItem } from '@/types/domain';
+import type { StudentAccountItem, TeacherAccountItem } from '@/types/domain';
 
 export function login(payload: LoginPayload) {
   return http.post<ApiResponse<LoginResult>>('/v1/auth/login', payload);
@@ -34,16 +34,48 @@ export function fetchTeacherAccounts(params: TeacherAccountQuery = {}) {
 }
 
 export interface TeacherAccountCreatePayload {
-  teacherId: number;
+  teacherName: string;
   username: string;
   password: string;
   displayName?: string;
   mobile?: string;
   email?: string;
+  subjectTags?: string[];
   status?: string;
   remark?: string;
 }
 
 export function createTeacherAccount(data: TeacherAccountCreatePayload) {
   return http.post<ApiResponse<number>>('/v1/auth/teacher-accounts', data);
+}
+
+// ─── Student Accounts ───────────────────────────────
+
+export interface StudentAccountQuery {
+  keyword?: string;
+  studentId?: string;
+  status?: string;
+  pageNum?: number;
+  pageSize?: number;
+}
+
+export function fetchStudentAccounts(params: StudentAccountQuery = {}) {
+  return http.get<ApiResponse<PageResult<StudentAccountItem>>>('/v1/auth/student-accounts', { params });
+}
+
+export interface StudentAccountCreatePayload {
+  studentName: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  guardianEmail?: string;
+  username: string;
+  password: string;
+  displayName?: string;
+  email?: string;
+  status?: string;
+  remark?: string;
+}
+
+export function createStudentAccount(data: StudentAccountCreatePayload) {
+  return http.post<ApiResponse<number>>('/v1/auth/student-accounts', data);
 }

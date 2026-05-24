@@ -1,11 +1,15 @@
 package com.classdeduction.system.modules.schedule.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
@@ -24,6 +28,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -38,6 +44,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
 
     @Override
     public List<Map<String, Object>> listClasses() {
@@ -226,14 +233,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (occ.getPlanningStatus().equals("CANCELLED")) {
             throw new BusinessException("OCCURRENCE_CANCELLED", "Cannot confirm a cancelled occurrence.");
         }
-        // 检查是否已核销
-        long existingCount = lessonRecordMapper.selectCount(
-                new LambdaQueryWrapper<LessonRecordEntity>()
-                        .eq(LessonRecordEntity::getOccurrenceId, occurrenceId)
-        );
-        if (existingCount > 0) {
-            throw new BusinessException("ALREADY_CONFIRMED", "This lesson has already been confirmed.");
-        }
         // 获取在册学生
         List<ClassEnrollmentEntity> activeEnrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
@@ -249,15 +248,24 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
         // 解析 body 参数
         Long actualTeacherId = body != null && body.get("actualTeacherId") instanceof Number
-                ? ((Number) body.get("actualTeacherId")).longValue() : occ.getPlannedTeacherId();
+                ? Long.valueOf(((Number) body.get("actualTeacherId")).longValue()) : occ.getPlannedTeacherId();
         Long actualClassroomId = body != null && body.get("actualClassroomId") instanceof Number
-                ? ((Number) body.get("actualClassroomId")).longValue() : occ.getPlannedClassroomId();
+                ? Long.valueOf(((Number) body.get("actualClassroomId")).longValue()) : occ.getPlannedClassroomId();
         Integer actualUnits = body != null && body.get("actualUnits") instanceof Number
-                ? ((Number) body.get("actualUnits")).intValue() : null;
+                ? Integer.valueOf(((Number) body.get("actualUnits")).intValue()) : null;
         String notes = body != null && body.get("notes") instanceof String
                 ? (String) body.get("notes") : null;
 
         for (ClassEnrollmentEntity enrollment : activeEnrollments) {
+            // 逐学生检查是否已核销（班课一个 occurrence 对应多条记录）
+            long existingCount = lessonRecordMapper.selectCount(
+                    new LambdaQueryWrapper<LessonRecordEntity>()
+                            .eq(LessonRecordEntity::getOccurrenceId, occurrenceId)
+                            .eq(LessonRecordEntity::getStudentId, enrollment.getStudentId())
+            );
+            if (existingCount > 0) {
+                continue; // 该学生已确认，跳过
+            }
             LessonRecordEntity record = new LessonRecordEntity();
             record.setOccurrenceId(occurrenceId);
             record.setStudentId(enrollment.getStudentId());
@@ -267,6 +275,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             record.setActualClassroomId(actualClassroomId);
             record.setActualUnits(actualUnits != null ? actualUnits : occ.getPlannedUnits());
             record.setShouldDeduct(0); // 班课不扣课时
+            record.setDeductedUnits(0);
             record.setShouldExtendEndDate(0);
             record.setRecordSource("CLASS_CONFIRM");
             record.setNotes(notes);
@@ -386,7 +395,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("scheduleDesc", clz.getScheduleDesc());
             item.put("teacherName", teacherName);
             item.put("classroomName", classroomName);
-            item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc()));
+            item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc(), clz.getProductId()));
             result.add(item);
         }
         return result;
@@ -427,6 +436,39 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return classes.stream()
                 .map(clz -> toClassSlotMap(clz, teacherMap, classroomMap))
                 .toList();
+    }
+
+    // ========== 删除班课 ==========
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteClassGroup(Long classId) {
+        // 1. 校验班课存在（selectById 利用 @TableLogic 自动过滤已删除的）
+        ClassGroupEntity clz = classGroupMapper.selectById(classId);
+        if (clz == null) {
+            throw new BusinessException("CLASS_GROUP_NOT_FOUND", "Class group not found or already deleted.");
+        }
+
+        LocalDateTime now = AppTime.nowLocalDateTime();
+
+        // 2. 取消未来所有课次（已发生的课次保留历史数据）
+        LessonOccurrenceEntity occUpdate = new LessonOccurrenceEntity();
+        occUpdate.setPlanningStatus("CANCELLED");
+        lessonOccurrenceMapper.update(occUpdate, new LambdaUpdateWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .gt(LessonOccurrenceEntity::getPlannedStartAt, now));
+
+        // 3. 软删除所有活跃报名记录
+        ClassEnrollmentEntity enrollUpdate = new ClassEnrollmentEntity();
+        enrollUpdate.setIsDeleted(1);
+        classEnrollmentMapper.update(enrollUpdate, new LambdaUpdateWrapper<ClassEnrollmentEntity>()
+                .eq(ClassEnrollmentEntity::getClassId, classId)
+                .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+
+        // 4. 软删除班课本身
+        classGroupMapper.deleteById(classId);
     }
 
     // ========== 批量查询辅助方法 ==========
@@ -504,24 +546,48 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("listPrice", clz.getListPrice());
         item.put("productId", clz.getProductId());
         item.put("status", clz.getStatus());
-        item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc()));
+        item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc(), clz.getProductId()));
         return item;
     }
 
     /**
      * 解析 scheduleDesc 为前端可用的 slot 列表。
+     * 优先从产品排课时段表加载（更准确），降级到解析 scheduleDesc 文本。
      */
-    private List<Map<String, Object>> toScheduleSlotList(String scheduleDesc) {
-        if (scheduleDesc == null) return Collections.emptyList();
-        return ScheduleDescParser.parse(scheduleDesc).stream()
-                .map(slot -> {
-                    Map<String, Object> m = new HashMap<>();
-                    m.put("weekday", slot.weekday());
-                    m.put("startTime", slot.startTime());
-                    m.put("endTime", slot.endTime());
-                    m.put("plannedUnits", slot.plannedUnits());
-                    return m;
-                })
-                .toList();
+    private List<Map<String, Object>> toScheduleSlotList(String scheduleDesc, Long productId) {
+        // Prefer product schedule slots when productId is available (authoritative data)
+        if (productId != null) {
+            List<CourseProductScheduleSlotEntity> slots = courseProductScheduleSlotMapper.selectList(
+                    new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
+                            .eq(CourseProductScheduleSlotEntity::getProductId, productId)
+                            .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
+            if (!slots.isEmpty()) {
+                return slots.stream()
+                        .map(slot -> {
+                            int minutes = (int) ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                            return toSlotMap(slot.getWeekday(),
+                                    slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
+                                    slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
+                                    minutes > 0 ? minutes / 30 : 0);
+                        })
+                        .toList();
+            }
+        }
+        // Fallback: parse scheduleDesc text
+        if (scheduleDesc != null) {
+            return ScheduleDescParser.parse(scheduleDesc).stream()
+                    .map(slot -> toSlotMap(slot.weekday(), slot.startTime(), slot.endTime(), slot.plannedUnits()))
+                    .toList();
+        }
+        return Collections.emptyList();
+    }
+
+    private Map<String, Object> toSlotMap(int weekday, String startTime, String endTime, int plannedUnits) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("weekday", weekday);
+        m.put("startTime", startTime);
+        m.put("endTime", endTime);
+        m.put("plannedUnits", plannedUnits);
+        return m;
     }
 }

@@ -1037,6 +1037,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                             lessonOccurrenceMapper.insert(occ);
                         }
                     }
+                    // 生成 scheduleDesc 并更新班课（用于学生日历等前端展示）
+                    String scheduleDesc = buildScheduleDesc(slots);
+                    clz.setScheduleDesc(scheduleDesc);
+                    classGroupMapper.updateById(clz);
                 }
             }
         }
@@ -1139,5 +1143,28 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return "CLS" + AppTime.nowLocalDateTime()
                 .format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
                 + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
+    }
+
+    /**
+     * 从 course_product_schedule_slot 列表生成 scheduleDesc 文本，如 "Mon/Wed 09:00-10:30"。
+     */
+    private String buildScheduleDesc(List<CourseProductScheduleSlotEntity> slots) {
+        // 按 (startTime, endTime) 分组，每组的星期合并
+        Map<String, List<Integer>> timeToWeekdays = new LinkedHashMap<>();
+        for (CourseProductScheduleSlotEntity slot : slots) {
+            String key = slot.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm"))
+                    + "-" + slot.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm"));
+            timeToWeekdays.computeIfAbsent(key, k -> new ArrayList<>()).add(slot.getWeekday());
+        }
+        String[] weekdayAbbr = {"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+        List<String> lines = new ArrayList<>();
+        for (Map.Entry<String, List<Integer>> entry : timeToWeekdays.entrySet()) {
+            String weekPart = entry.getValue().stream()
+                    .sorted()
+                    .map(w -> weekdayAbbr[w])
+                    .collect(Collectors.joining("/"));
+            lines.add(weekPart + " " + entry.getKey());
+        }
+        return String.join("\n", lines);
     }
 }

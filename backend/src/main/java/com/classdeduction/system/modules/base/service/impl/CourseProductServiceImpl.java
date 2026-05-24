@@ -10,9 +10,11 @@ import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
+import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.CourseProductService;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -38,6 +40,7 @@ public class CourseProductServiceImpl implements CourseProductService {
     private final CourseProductMapper courseProductMapper;
     private final CourseProductScheduleSlotMapper scheduleSlotMapper;
     private final ClassroomMapper classroomMapper;
+    private final TeacherMapper teacherMapper;
     private final CoursePackageMapper coursePackageMapper;
 
     @Override
@@ -77,8 +80,17 @@ public class CourseProductServiceImpl implements CourseProductService {
                 : classroomMapper.selectBatchIds(classroomIds).stream()
                         .collect(Collectors.toMap(ClassroomEntity::getId, c -> c));
 
+        // 批量加载老师名称
+        Set<Long> teacherIds = records.stream()
+                .map(CourseProductEntity::getDefaultTeacherId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, TeacherEntity> teacherMap = teacherIds.isEmpty() ? Collections.emptyMap()
+                : teacherMapper.selectBatchIds(teacherIds).stream()
+                        .collect(Collectors.toMap(TeacherEntity::getId, t -> t));
+
         return PageResponse.of(records.stream()
-                .map(entity -> toVO(entity, slotsByProduct.getOrDefault(entity.getId(), List.of()), classroomMap))
+                .map(entity -> toVO(entity, slotsByProduct.getOrDefault(entity.getId(), List.of()), classroomMap, teacherMap))
                 .toList(), result.getTotal(), result.getCurrent(), result.getSize());
     }
 
@@ -223,6 +235,7 @@ public class CourseProductServiceImpl implements CourseProductService {
         entity.setListPrice(request.getListPrice());
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : DEFAULT_STATUS);
         entity.setDefaultClassroomId(request.getDefaultClassroomId());
+        entity.setDefaultTeacherId(request.getDefaultTeacherId());
         entity.setNotes(request.getNotes());
     }
 
@@ -236,7 +249,10 @@ public class CourseProductServiceImpl implements CourseProductService {
         Map<Long, ClassroomEntity> classroomMap = entity.getDefaultClassroomId() != null
                 ? Map.of(entity.getDefaultClassroomId(), classroomMapper.selectById(entity.getDefaultClassroomId()))
                 : Collections.emptyMap();
-        return toVO(entity, slotEntities, classroomMap);
+        Map<Long, TeacherEntity> teacherMap = entity.getDefaultTeacherId() != null
+                ? Map.of(entity.getDefaultTeacherId(), teacherMapper.selectById(entity.getDefaultTeacherId()))
+                : Collections.emptyMap();
+        return toVO(entity, slotEntities, classroomMap, teacherMap);
     }
 
     /**
@@ -244,7 +260,8 @@ public class CourseProductServiceImpl implements CourseProductService {
      */
     private CourseProductVO toVO(CourseProductEntity entity,
                                   List<CourseProductScheduleSlotEntity> slotEntities,
-                                  Map<Long, ClassroomEntity> classroomMap) {
+                                  Map<Long, ClassroomEntity> classroomMap,
+                                  Map<Long, TeacherEntity> teacherMap) {
         List<CourseProductVO.ProductScheduleSlotVO> slotVOs = slotEntities.stream()
                 .map(s -> CourseProductVO.ProductScheduleSlotVO.builder()
                         .id(s.getId())
@@ -262,6 +279,14 @@ public class CourseProductServiceImpl implements CourseProductService {
             }
         }
 
+        String defaultTeacherName = null;
+        if (entity.getDefaultTeacherId() != null) {
+            TeacherEntity teacher = teacherMap.get(entity.getDefaultTeacherId());
+            if (teacher != null) {
+                defaultTeacherName = teacher.getTeacherName();
+            }
+        }
+
         return CourseProductVO.builder()
                 .id(entity.getId())
                 .productCode(entity.getProductCode())
@@ -273,6 +298,8 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .expiryDurationDays(entity.getExpiryDurationDays())
                 .defaultClassroomId(entity.getDefaultClassroomId())
                 .defaultClassroomName(defaultClassroomName)
+                .defaultTeacherId(entity.getDefaultTeacherId())
+                .defaultTeacherName(defaultTeacherName)
                 .listPrice(entity.getListPrice())
                 .status(entity.getStatus())
                 .notes(entity.getNotes())

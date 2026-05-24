@@ -4,10 +4,6 @@
       <div class="panel-header">
         <span class="panel-header__title">Students</span>
         <div class="panel-header__actions">
-          <el-button type="primary" @click="openStudentDialog()">
-            <el-icon><Plus /></el-icon>
-            Add student
-          </el-button>
         </div>
       </div>
 
@@ -108,7 +104,7 @@
     >
       <template #header>
         <div class="dialog-header">
-          <h3 class="dialog-header__title">{{ editingId ? 'Edit student' : 'New student' }}</h3>
+          <h3 class="dialog-header__title">Edit student</h3>
           <el-button
             text
             size="small"
@@ -242,13 +238,12 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, Setting } from '@element-plus/icons-vue';
+import { Setting } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { reactive, ref } from 'vue';
+import { reactive, ref, watch } from 'vue';
 
 import FieldConfigDialog, { type FieldConfig } from '@/components/shared/FieldConfigDialog.vue';
 import {
-  createStudent,
   deleteStudent,
   fetchCampuses,
   fetchStudents,
@@ -422,39 +417,22 @@ const studentFormRules = {
   guardianPhone: [{ required: true, message: 'Phone is required' }],
 };
 
-function openStudentDialog(row?: StudentItem) {
-  editingId.value = row?.id ?? null;
-  if (row) {
-    Object.assign(studentForm, {
-      studentName: row.studentName,
-      gender: row.gender,
-      guardianName: row.guardianName,
-      guardianPhone: row.phone ?? '',
-      guardianEmail: row.guardianEmail ?? '',
-      guardianRelationType: row.guardianRelationType ?? '',
-      status: row.status,
-      notes: row.notes ?? '',
-      englishName: row.englishName ?? '',
-      birthDate: row.birthDate ?? '',
-      sourceChannel: row.sourceChannel ?? '',
-      campusId: row.campusId ?? undefined,
-    });
-  } else {
-    Object.assign(studentForm, {
-      studentName: '',
-      gender: 'Female',
-      guardianName: '',
-      guardianPhone: '',
-      guardianEmail: '',
-      guardianRelationType: '',
-      status: 'ACTIVE',
-      notes: '',
-      englishName: '',
-      birthDate: '',
-      sourceChannel: '',
-      campusId: undefined,
-    });
-  }
+function openStudentDialog(row: StudentItem) {
+  editingId.value = row.id;
+  Object.assign(studentForm, {
+    studentName: row.studentName,
+    gender: row.gender,
+    guardianName: row.guardianName,
+    guardianPhone: row.phone ?? '',
+    guardianEmail: row.guardianEmail ?? '',
+    guardianRelationType: row.guardianRelationType ?? '',
+    status: row.status,
+    notes: row.notes ?? '',
+    englishName: row.englishName ?? '',
+    birthDate: row.birthDate ?? '',
+    sourceChannel: row.sourceChannel ?? '',
+    campusId: row.campusId ?? undefined,
+  });
   // Clear any previous validation errors when opening dialog
   studentFormRef.value?.clearValidate();
   studentDialogVisible.value = true;
@@ -466,13 +444,8 @@ async function handleStudentSubmit() {
 
   submitting.value = true;
   try {
-    if (editingId.value) {
-      await updateStudent(editingId.value, { ...studentForm });
-      ElMessage.success('Student updated.');
-    } else {
-      await createStudent({ ...studentForm });
-      ElMessage.success('Student created.');
-    }
+    await updateStudent(editingId.value!, { ...studentForm });
+    ElMessage.success('Student updated.');
     studentDialogVisible.value = false;
     loadData();
   } catch (err: any) {

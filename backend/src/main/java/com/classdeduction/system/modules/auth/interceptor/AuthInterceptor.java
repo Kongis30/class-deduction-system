@@ -30,7 +30,7 @@ public class AuthInterceptor implements HandlerInterceptor {
     private final AuthService authService;
 
     private static final CurrentUserResponse DEV_DEFAULT = new CurrentUserResponse(
-            2049011197944602625L, "admin", "System Administrator", "ADMIN", null, java.util.List.of("ADMIN"));
+            2049011197944602625L, "admin", "System Administrator", "ADMIN", null, null, java.util.List.of("ADMIN"));
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {

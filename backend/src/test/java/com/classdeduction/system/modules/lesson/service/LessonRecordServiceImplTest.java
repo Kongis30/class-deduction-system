@@ -178,7 +178,7 @@ class LessonRecordServiceImplTest {
     }
 
     private CurrentUserResponse currentStaffUser() {
-        return new CurrentUserResponse(999L, "staff", "Front Desk", "STAFF", null, List.of("STAFF"));
+        return new CurrentUserResponse(999L, "staff", "Front Desk", "STAFF", null, null, List.of("STAFF"));
     }
 
     private LessonOccurrenceEntity buildOccurrence() {

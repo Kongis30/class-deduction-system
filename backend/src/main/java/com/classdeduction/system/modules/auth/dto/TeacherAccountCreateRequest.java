@@ -3,20 +3,31 @@ package com.classdeduction.system.modules.auth.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+import java.util.List;
+
 /**
- * 教师账号创建请求：由教务或管理员为老师创建登录账号。
+ * 教师账号创建请求：创建老师档案同时创建登录账号。
  */
 @Data
 @Schema(description = "Teacher account create request")
 public class TeacherAccountCreateRequest {
 
-    @NotNull(message = "Teacher ID is required")
-    @Schema(description = "Linked teacher ID", example = "1880000000000000001")
-    private Long teacherId;
+    @NotBlank(message = "Teacher name is required")
+    @Schema(description = "Teacher name", example = "Emily Chen")
+    private String teacherName;
+
+    @Schema(description = "Phone number", example = "917-555-0201")
+    private String mobile;
+
+    @Email(message = "Email format is invalid")
+    @Schema(description = "Email address")
+    private String email;
+
+    @Schema(description = "Subject tags")
+    private List<String> subjectTags;
 
     @NotBlank(message = "Username is required")
     @Size(max = 64, message = "Username must not exceed 64 characters")
@@ -30,13 +41,6 @@ public class TeacherAccountCreateRequest {
 
     @Schema(description = "Display name, defaulting to teacher name")
     private String displayName;
-
-    @Schema(description = "Mobile number")
-    private String mobile;
-
-    @Email(message = "Email format is invalid")
-    @Schema(description = "Email address")
-    private String email;
 
     @Schema(description = "Account status", example = "ACTIVE")
     private String status;

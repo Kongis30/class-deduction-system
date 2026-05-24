@@ -14,7 +14,9 @@ import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.auth.model.AuthSessionPayload;
 import com.classdeduction.system.modules.auth.service.AuthService;
+import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,6 +48,7 @@ public class AuthServiceImpl implements AuthService {
     private final UserAccountMapper userAccountMapper;
     private final UserRoleMapper userRoleMapper;
     private final TeacherMapper teacherMapper;
+    private final StudentMapper studentMapper;
     private final AuthSessionMapper authSessionMapper;
     private final StringRedisTemplate stringRedisTemplate;
     private final ObjectMapper objectMapper;
@@ -57,7 +60,7 @@ public class AuthServiceImpl implements AuthService {
     public LoginResponse login(LoginRequest request) {
         UserAccountEntity user = requireUserByUsername(request.getUsername());
         validateUserStatus(user);
-        validateTeacherBinding(user.getUserType(), user.getTeacherId());
+        validateEntityBinding(user.getUserType(), user.getTeacherId(), user.getStudentId());
         if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new BusinessException("INVALID_CREDENTIALS", "Invalid username or password.");
         }
@@ -69,6 +72,7 @@ public class AuthServiceImpl implements AuthService {
                 user.getDisplayName(),
                 user.getUserType(),
                 user.getTeacherId(),
+                user.getStudentId(),
                 roleCodes
         );
         String token = createSession(currentUser);
@@ -97,7 +101,7 @@ public class AuthServiceImpl implements AuthService {
             String sessionJson = stringRedisTemplate.opsForValue().get(sessionKey(token));
             if (StringUtils.hasText(sessionJson)) {
                 AuthSessionPayload payload = objectMapper.readValue(sessionJson, AuthSessionPayload.class);
-                validateTeacherBinding(payload.userType(), payload.teacherId());
+                validateEntityBinding(payload.userType(), payload.teacherId(), payload.studentId());
                 return toCurrentUser(payload);
             }
         } catch (RedisConnectionFailureException e) {
@@ -119,7 +123,7 @@ public class AuthServiceImpl implements AuthService {
 
         try {
             AuthSessionPayload payload = objectMapper.readValue(dbSession.getSessionData(), AuthSessionPayload.class);
-            validateTeacherBinding(payload.userType(), payload.teacherId());
+            validateEntityBinding(payload.userType(), payload.teacherId(), payload.studentId());
             // Try to re-populate Redis for next request
             backfillRedis(token, payload);
             return toCurrentUser(payload);
@@ -153,6 +157,7 @@ public class AuthServiceImpl implements AuthService {
                 currentUser.displayName(),
                 currentUser.userType(),
                 currentUser.teacherId(),
+                currentUser.studentId(),
                 currentUser.roleCodes()
         );
 
@@ -229,6 +234,7 @@ public class AuthServiceImpl implements AuthService {
                 payload.displayName(),
                 payload.userType(),
                 payload.teacherId(),
+                payload.studentId(),
                 payload.roleCodes()
         );
     }
@@ -264,16 +270,23 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
-    private void validateTeacherBinding(String userType, Long teacherId) {
-        if (!"TEACHER".equalsIgnoreCase(userType)) {
-            return;
-        }
-        if (teacherId == null) {
-            throw new BusinessException("TEACHER_BINDING_REQUIRED", "This teacher account is not linked to an active teacher profile.");
-        }
-        TeacherEntity teacher = teacherMapper.selectById(teacherId);
-        if (teacher == null || !"ACTIVE".equalsIgnoreCase(teacher.getStatus())) {
-            throw new BusinessException("TEACHER_BINDING_INVALID", "This teacher account is not linked to an active teacher profile.");
+    private void validateEntityBinding(String userType, Long teacherId, Long studentId) {
+        if ("TEACHER".equalsIgnoreCase(userType)) {
+            if (teacherId == null) {
+                throw new BusinessException("TEACHER_BINDING_REQUIRED", "This teacher account is not linked to an active teacher profile.");
+            }
+            TeacherEntity teacher = teacherMapper.selectById(teacherId);
+            if (teacher == null || !"ACTIVE".equalsIgnoreCase(teacher.getStatus())) {
+                throw new BusinessException("TEACHER_BINDING_INVALID", "This teacher account is not linked to an active teacher profile.");
+            }
+        } else if ("STUDENT".equalsIgnoreCase(userType)) {
+            if (studentId == null) {
+                throw new BusinessException("STUDENT_BINDING_REQUIRED", "This student account is not linked to an active student profile.");
+            }
+            StudentEntity student = studentMapper.selectById(studentId);
+            if (student == null || !"ACTIVE".equalsIgnoreCase(student.getStatus())) {
+                throw new BusinessException("STUDENT_BINDING_INVALID", "This student account is not linked to an active student profile.");
+            }
         }
     }
 }

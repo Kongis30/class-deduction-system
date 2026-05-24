@@ -144,7 +144,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (currentUser == null) {
             // In dev mode (auth disabled), fall back to a default admin identity
             // Dev-mode default: use the bootstrapped admin account which always exists (id from data init)
-            currentUser = new CurrentUserResponse(2049011197944602625L, "admin", "System Administrator", "ADMIN", null, java.util.List.of("ADMIN"));
+            currentUser = new CurrentUserResponse(2049011197944602625L, "admin", "System Administrator", "ADMIN", null, null, java.util.List.of("ADMIN"));
         }
         LessonOccurrenceEntity occurrence = requireConfirmableOccurrence(request.getOccurrenceId());
         if (lessonRecordMapper.selectOne(new LambdaQueryWrapper<LessonRecordEntity>()
@@ -206,7 +206,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 makeup.setPlannedClassroomId(lastOccurrence.getPlannedClassroomId());
                 makeup.setPlannedStartAt(lastOccurrence.getPlannedStartAt().plusWeeks(1));
                 makeup.setPlannedEndAt(lastOccurrence.getPlannedEndAt().plusWeeks(1));
-                makeup.setPlannedUnits(lastOccurrence.getPlannedUnits());
+                makeup.setPlannedUnits(occurrence.getPlannedUnits());
                 makeup.setPlanningStatus("SCHEDULED");
                 makeup.setSourceOccurrenceId(occurrence.getId());
                 makeup.setConflictChecked(1);
@@ -217,6 +217,15 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 coursePackage.setEstimatedEndDate(newEndDate);
                 coursePackageMapper.updateById(coursePackage);
             }
+        }
+
+        // Dynamic adjustment: when actual duration differs from planned, redistribute the delta
+        // across future occurrences (e.g., a 2h lesson confirmed as 1h → surplus goes to last lesson)
+        int adjustmentDelta = decision.shouldDeduct()
+                ? occurrence.getPlannedUnits() - decision.deductedUnits()
+                : 0;
+        if (adjustmentDelta != 0) {
+            adjustFutureOccurrences(coursePackage.getId(), adjustmentDelta);
         }
 
         notificationOutboxService.queueLessonBalanceEmail(record, coursePackage, student, rule.getStatusName());
@@ -314,6 +323,44 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             }
         }
         return candidateDate;
+    }
+
+    /**
+     * Redistribute a surplus or deficit from the confirmed lesson across future scheduled occurrences.
+     * Surplus (confirmed lesson used fewer units than planned) is added to the last occurrence.
+     * Deficit (confirmed lesson used more units than planned) is subtracted from the last occurrence(s),
+     * with each occurrence keeping at least 1 unit (0.5h).
+     */
+    private void adjustFutureOccurrences(Long packageId, int delta) {
+        if (delta == 0) return;
+        List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
+                        .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
+                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
+
+        if (futureOccurrences.isEmpty()) return;
+
+        if (delta > 0) {
+            // Surplus: add to the last occurrence
+            LessonOccurrenceEntity last = futureOccurrences.get(futureOccurrences.size() - 1);
+            last.setPlannedUnits(last.getPlannedUnits() + delta);
+            lessonOccurrenceMapper.updateById(last);
+        } else {
+            // Deficit: reduce from last occurrence backwards, min 1 unit per occurrence
+            int toReduce = -delta;
+            for (int i = futureOccurrences.size() - 1; i >= 0 && toReduce > 0; i--) {
+                LessonOccurrenceEntity occ = futureOccurrences.get(i);
+                int current = occ.getPlannedUnits();
+                int canReduce = Math.min(current - 1, toReduce);
+                if (canReduce > 0) {
+                    occ.setPlannedUnits(current - canReduce);
+                    lessonOccurrenceMapper.updateById(occ);
+                    toReduce -= canReduce;
+                }
+            }
+        }
     }
 
     private void upsertBalanceSnapshot(CoursePackageEntity coursePackage, Long lastLedgerId) {

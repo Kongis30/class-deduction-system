@@ -23,6 +23,8 @@ public record CourseProductVO(
         Integer expiryDurationDays,
         Long defaultClassroomId,
         String defaultClassroomName,
+        Long defaultTeacherId,
+        String defaultTeacherName,
         BigDecimal listPrice,
         String status,
         String notes,

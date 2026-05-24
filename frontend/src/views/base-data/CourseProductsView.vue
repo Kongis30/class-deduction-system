@@ -114,6 +114,11 @@
                 <span v-else class="text-muted">—</span>
               </template>
             </el-table-column>
+            <el-table-column label="Instructor" min-width="130">
+              <template #default="{ row }">
+                {{ row.defaultTeacherName || '—' }}
+              </template>
+            </el-table-column>
             <el-table-column label="Original price" min-width="110" align="right">
               <template #default="{ row }">{{ formatPrice(row.listPrice) }}</template>
             </el-table-column>
@@ -195,6 +200,15 @@
           <el-form-item label="Default classroom" class="product-form__full">
             <el-select v-model="form.defaultClassroomId" placeholder="Select classroom" filterable clearable style="width: 100%;">
               <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
+            </el-select>
+          </el-form-item>
+        </div>
+
+        <!-- Group: Default teacher -->
+        <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
+          <el-form-item label="Instructor" class="product-form__full">
+            <el-select v-model="form.defaultTeacherId" placeholder="Select teacher" filterable clearable style="width: 100%;">
+              <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
             </el-select>
           </el-form-item>
         </div>
@@ -330,6 +344,7 @@ import {
   deleteCourseProduct,
   deleteSubject,
   fetchAllClassrooms,
+  fetchAllTeachers,
   fetchCourseProducts,
   fetchSubjects,
   updateCourseProduct,
@@ -349,6 +364,7 @@ const editingId = ref<number | null>(null);
 const formRef = ref();
 
 const classrooms = ref<{ id: number; roomName: string }[]>([]);
+const teachers = ref<{ id: number; teacherName: string }[]>([]);
 const formSlots = ref<SlotDef[]>([]);
 const occupiedSlots = ref<OccupiedSlotDef[]>([]);
 
@@ -514,6 +530,7 @@ const form = reactive<CourseProductSavePayload & { expiryDate: string | undefine
   expiryDurationDays: undefined,
   expiryDate: undefined,
   defaultClassroomId: undefined,
+  defaultTeacherId: undefined,
   listPrice: 0,
   status: 'ACTIVE',
   notes: '',
@@ -620,6 +637,7 @@ function openProductDialog(row?: CourseProductItem) {
       expiryDurationDays: row.expiryDurationDays ?? undefined,
       expiryDate: calcExpiryDate(row.expiryDurationDays),
       defaultClassroomId: row.defaultClassroomId ?? undefined,
+      defaultTeacherId: row.defaultTeacherId ?? undefined,
       listPrice: row.listPrice,
       status: row.status,
       notes: row.notes ?? '',
@@ -651,6 +669,7 @@ function openProductDialog(row?: CourseProductItem) {
       expiryDurationDays: undefined,
       expiryDate: undefined,
       defaultClassroomId: undefined,
+      defaultTeacherId: undefined,
       listPrice: 0,
       status: 'ACTIVE',
       notes: '',
@@ -692,6 +711,7 @@ async function handleSubmit() {
         ? form.expiryDurationDays
         : calcExpiryDays(form.expiryDate);
       payload.defaultClassroomId = form.defaultClassroomId;
+      payload.defaultTeacherId = form.defaultTeacherId || undefined;
       payload.slots = formSlots.value.map(s => ({
         weekday: s.weekday,
         startTime: s.startTime,
@@ -756,10 +776,20 @@ async function loadClassrooms() {
   }
 }
 
+async function loadTeachers() {
+  try {
+    const res = await fetchAllTeachers();
+    teachers.value = res.data.data.map(t => ({ id: t.id, teacherName: t.teacherName }));
+  } catch {
+    // ignore
+  }
+}
+
 // ─── 初始化 ────────────────────────────────────────────
 loadData();
 loadSubjects();
 loadClassrooms();
+loadTeachers();
 
 // ─── Date helpers ──────────────────────────────────────────
 function disabledPastDate(date: Date) {

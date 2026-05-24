@@ -42,6 +42,8 @@ public class CourseProductEntity extends BaseEntity {
 
     private Long defaultClassroomId;
 
+    private Long defaultTeacherId;
+
     private BigDecimal listPrice;
 
     private String status;
