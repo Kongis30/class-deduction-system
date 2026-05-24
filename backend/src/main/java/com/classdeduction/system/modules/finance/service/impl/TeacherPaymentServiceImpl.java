@@ -322,8 +322,23 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             throw new BusinessException("ALREADY_PAID", paidIds.size() + " lesson record(s) are already settled.");
         }
 
-        // 2. 计算总额
-        Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).collect(Collectors.toSet());
+        // 2. 计算总额 — 先批量加载 occurrence + classGroup（用于班课）
+        Set<Long> occurrenceIds = records.stream().map(LessonRecordEntity::getOccurrenceId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, LessonOccurrenceEntity> occurrenceMap = !occurrenceIds.isEmpty()
+                ? lessonOccurrenceMapper.selectBatchIds(occurrenceIds).stream()
+                .collect(Collectors.toMap(LessonOccurrenceEntity::getId, o -> o))
+                : Collections.emptyMap();
+        Set<Long> classGroupIds = occurrenceMap.values().stream()
+                .map(LessonOccurrenceEntity::getClassGroupId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, ClassGroupEntity> classGroupMap = !classGroupIds.isEmpty()
+                ? classGroupMapper.selectBatchIds(classGroupIds).stream()
+                .collect(Collectors.toMap(ClassGroupEntity::getId, cg -> cg))
+                : Collections.emptyMap();
+
+        Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, CoursePackageEntity> packageMap = coursePackageMapper.selectBatchIds(packageIds).stream()
                 .collect(Collectors.toMap(CoursePackageEntity::getId, p -> p));
 
@@ -340,8 +355,17 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         List<PaymentItemCalc> items = new ArrayList<>();
 
         for (LessonRecordEntity rec : records) {
-            CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
-            Long productId = pkg != null ? pkg.getCourseProductId() : null;
+            Long productId;
+            if (rec.getPackageId() != null) {
+                // 1v1：从课包获取 productId
+                CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
+                productId = pkg != null ? pkg.getCourseProductId() : null;
+            } else {
+                // 班课：从 occurrence → class_group 获取 productId
+                LessonOccurrenceEntity occ = occurrenceMap.get(rec.getOccurrenceId());
+                ClassGroupEntity cg = occ != null ? classGroupMap.get(occ.getClassGroupId()) : null;
+                productId = cg != null ? cg.getProductId() : null;
+            }
             BigDecimal hr = rateMap.getOrDefault(request.getTeacherId() + ":" + productId, BigDecimal.ZERO);
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                     .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
