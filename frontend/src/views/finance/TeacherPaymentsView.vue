@@ -160,7 +160,7 @@
         </section>
 
         <el-empty
-          v-else-if="searched && !unpaidLoading && individualLessons.length === 0 && groupLessons.length === 0 && !hasPendingPayment"
+          v-else-if="searched && !unpaidLoading && individualLessons.length === 0 && groupLessons.length === 0"
           :description="'No unpaid lessons found for this period.'"
           class="tp-empty"
         />
@@ -245,37 +245,6 @@
         </section>
 
         <!-- ─── 7. Pending payment banner ────────────── -->
-        <section v-if="hasPendingPayment" class="tp-section tp-section--card">
-          <div class="tp-section__header">
-            <span class="tp-section__title">
-              <el-tag type="warning" size="small" style="margin-right: 6px;">PENDING</el-tag>
-              Outstanding Payment
-            </span>
-          </div>
-          <el-table
-            v-loading="pendingLoading"
-            :data="pendingPayments"
-            row-key="id"
-            class="tp-table"
-          >
-            <el-table-column label="Payment No" min-width="140" prop="paymentNo" />
-            <el-table-column label="Period" min-width="155">
-              <template #default="{ row }">
-                {{ row.periodStart }} – {{ row.periodEnd }}
-              </template>
-            </el-table-column>
-            <el-table-column label="Amount" width="110" align="right">
-              <template #default="{ row }">${{ row.totalAmount?.toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column label="Actions" width="100" fixed="right">
-              <template #default="{ row }">
-                <el-button text type="success" size="small" @click="handleConfirm(row)">
-                  Confirm
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </section>
       </template>
     </main>
 
@@ -447,10 +416,6 @@ const groupTotal = computed(() => {
   return `${h.toFixed(1)}h · $${a.toFixed(2)}`;
 });
 
-const hasPendingPayment = computed(() =>
-  pendingPayments.value.length > 0,
-);
-
 function updateMergedSelection() {
   const allRows = [...individualSelections.value, ...groupSelections.value];
   selectedIds.value = allRows.map(r => r.lessonRecordId);
@@ -561,34 +526,10 @@ async function loadHistory(pageNum?: number) {
     const data = res.data.data;
     historyData.value = data.records;
     pagination.total = data.total;
-    loadPendingPayments();
   } catch {
     ElMessage.error('Failed to load payment history.');
   } finally {
     historyLoading.value = false;
-  }
-}
-
-// ─── 待结算 payment 列表（PENDING 状态）───────────────
-
-const pendingLoading = ref(false);
-const pendingPayments = ref<TeacherPaymentItem[]>([]);
-
-async function loadPendingPayments() {
-  if (!selectedTeacherId.value) return;
-  pendingLoading.value = true;
-  try {
-    const res = await fetchPayments({
-      teacherId: selectedTeacherId.value,
-      status: 'PENDING',
-      pageNum: 1,
-      pageSize: 100,
-    });
-    pendingPayments.value = res.data.data.records;
-  } catch {
-    // silent
-  } finally {
-    pendingLoading.value = false;
   }
 }
 
