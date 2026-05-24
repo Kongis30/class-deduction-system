@@ -78,8 +78,8 @@ public class ClassGroupController {
     public ApiResponse<Map<String, Object>> enrollStudent(
             @PathVariable Long classId,
             @RequestBody Map<String, Object> body) {
-        Long studentId = body.get("studentId") instanceof Number
-                ? ((Number) body.get("studentId")).longValue() : null;
+        // 支持 Number 和 String（前端 transformResponse 会将大数字 ID 转字符串）
+        Long studentId = parseLongFromBody(body, "studentId");
         if (studentId == null) {
             throw new IllegalArgumentException("studentId is required.");
         }
@@ -121,5 +121,24 @@ public class ClassGroupController {
     @Operation(summary = "List active class groups using a classroom")
     public ApiResponse<List<Map<String, Object>>> listByClassroom(@PathVariable Long classroomId) {
         return ApiResponse.success(classGroupService.listByClassroom(classroomId));
+    }
+
+    /**
+     * 从 body Map 解析 Long 参数，支持 Number 和 String。
+     * 前端 transformResponse 会将大数字 ID 转为字符串防止 JS 精度丢失。
+     */
+    private static Long parseLongFromBody(Map<String, Object> body, String key) {
+        Object value = body.get(key);
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Long.parseLong(s);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        return null;
     }
 }

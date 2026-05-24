@@ -248,11 +248,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // 为每个在册学生创建 lesson_record（班课确认频率低，无需批量优化）
         int confirmedCount = 0;
 
-        // 解析 body 参数
-        Long actualTeacherId = body != null && body.get("actualTeacherId") instanceof Number
-                ? Long.valueOf(((Number) body.get("actualTeacherId")).longValue()) : occ.getPlannedTeacherId();
-        Long actualClassroomId = body != null && body.get("actualClassroomId") instanceof Number
-                ? Long.valueOf(((Number) body.get("actualClassroomId")).longValue()) : occ.getPlannedClassroomId();
+        // 解析 body 参数（支持 Number 和 String，因为前端 transformResponse 会将大数字 ID 转为字符串防止精度丢失）
+        Long actualTeacherId = parseLongParam(body, "actualTeacherId", occ.getPlannedTeacherId());
+        Long actualClassroomId = parseLongParam(body, "actualClassroomId", occ.getPlannedClassroomId());
         Integer actualUnits = body != null && body.get("actualUnits") instanceof Number
                 ? Integer.valueOf(((Number) body.get("actualUnits")).intValue()) : null;
         String notes = body != null && body.get("notes") instanceof String
@@ -511,6 +509,27 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (ids.isEmpty()) return Collections.emptyMap();
         return classroomMapper.selectBatchIds(ids).stream()
                 .collect(Collectors.toMap(ClassroomEntity::getId, c -> c));
+    }
+
+    /**
+     * 从 body Map 中解析 Long 参数，支持 Number 和 String 两种类型。
+     * 前端 transformResponse 会将大数字 ID 转成字符串以防止 JS 精度丢失，
+     * 因此不能仅用 instanceof Number 判断。
+     */
+    private Long parseLongParam(Map<String, Object> body, String key, Long fallback) {
+        if (body == null) return fallback;
+        Object value = body.get(key);
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return Long.parseLong(s);
+            } catch (NumberFormatException e) {
+                return fallback;
+            }
+        }
+        return fallback;
     }
 
     private String resolveTeacherName(Long teacherId, Map<Long, TeacherEntity> teacherMap) {
