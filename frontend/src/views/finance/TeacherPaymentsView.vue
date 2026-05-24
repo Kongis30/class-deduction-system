@@ -393,15 +393,28 @@ const selectedTeacher = computed(() =>
 
 async function selectTeacher(id: number) {
   selectedTeacherId.value = id;
+  // 默认当前月份
+  dateRange.value = currentMonthRange();
   searched.value = false;
   unpaidLessons.value = [];
+  individualSelections.value = [];
+  groupSelections.value = [];
   selectedIds.value = [];
   loadHistory(1);
+  loadUnpaidLessons();
 }
 
 // ─── 日期范围 ─────────────────────────────────────────
 
 const dateRange = ref<[string, string] | null>(null);
+
+function currentMonthRange(): [string, string] {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return [`${y}-${m}-01`, `${y}-${m}-${String(lastDay).padStart(2, '0')}`];
+}
 
 // ─── 未结算课次 ────────────────────────────────────
 
