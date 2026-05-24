@@ -172,9 +172,6 @@
           <div class="class-detail__header">
             <div class="class-detail__title-row">
               <div class="class-detail__title">{{ classDetail.className }}</div>
-              <el-button type="danger" size="small" plain :loading="deleting" @click="handleDeleteClass">
-                Delete
-              </el-button>
             </div>
             <div class="class-detail__meta">
               <span v-if="classDetail.teacherName">Teacher: {{ classDetail.teacherName }}</span>
@@ -276,8 +273,8 @@
             <el-option label="No Show" value="NO_SHOW" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Actual Teacher">
-          <el-select v-model="confirmForm.actualTeacherId" placeholder="Defaults to planned teacher" clearable filterable style="width: 100%;">
+        <el-form-item label="Actual Teacher" prop="actualTeacherId">
+          <el-select v-model="confirmForm.actualTeacherId" placeholder="Select teacher" filterable style="width: 100%;">
             <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
           </el-select>
         </el-form-item>
@@ -642,10 +639,10 @@ function openClassConfirmDialog(occ: ClassOccurrenceItem) {
   confirmFormRef.value?.resetFields();
   Object.assign(confirmForm, {
     resultStatus: 'COMPLETED',
-    actualTeacherId: undefined,
-    actualClassroomId: undefined,
-    actualStartAt: '',
-    actualHours: undefined,
+    actualTeacherId: occ.plannedTeacherId,
+    actualClassroomId: occ.plannedClassroomId,
+    actualStartAt: occ.plannedStartAt || '',
+    actualHours: (occ.plannedUnits ?? 0) * 0.5,
     notes: '',
   });
   confirmDialogVisible.value = true;
@@ -772,6 +769,7 @@ const confirmForm = reactive({
 });
 const confirmFormRules: FormRules = {
   resultStatus: [{ required: true, message: 'Result status is required', trigger: 'change' }],
+  actualTeacherId: [{ required: true, message: 'Teacher is required for payment', trigger: 'change' }],
 };
 
 const deductionPreview = computed(() => {

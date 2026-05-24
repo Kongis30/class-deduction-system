@@ -114,7 +114,7 @@
                 <span v-else class="text-muted">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="Instructor" min-width="130">
+            <el-table-column label="Teacher" min-width="130">
               <template #default="{ row }">
                 {{ row.defaultTeacherName || '—' }}
               </template>
@@ -206,7 +206,7 @@
 
         <!-- Group: Default teacher -->
         <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
-          <el-form-item label="Instructor" class="product-form__full">
+          <el-form-item label="Teacher" class="product-form__full">
             <el-select v-model="form.defaultTeacherId" placeholder="Select teacher" filterable clearable style="width: 100%;">
               <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
             </el-select>
