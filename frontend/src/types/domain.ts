@@ -259,6 +259,8 @@ export interface LessonOccurrenceItem {
   packageId: number;
   packageNo: string;
   packageName?: string;
+  classGroupId?: number;
+  className?: string;
   studentId: number;
   studentName: string;
   scheduleRuleId?: number;

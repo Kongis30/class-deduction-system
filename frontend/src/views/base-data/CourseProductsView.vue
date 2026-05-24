@@ -743,11 +743,15 @@ async function handleDelete(row: CourseProductItem) {
       'Confirm delete',
       { type: 'warning' },
     );
+  } catch {
+    return; // 用户取消
+  }
+  try {
     await deleteCourseProduct(row.id);
     ElMessage.success('Deleted.');
     loadData();
-  } catch {
-    // 用户取消
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
   }
 }
 

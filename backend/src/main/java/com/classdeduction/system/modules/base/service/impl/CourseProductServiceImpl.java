@@ -21,7 +21,11 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalTime;
@@ -36,12 +40,14 @@ import java.util.stream.Collectors;
 public class CourseProductServiceImpl implements CourseProductService {
 
     private static final String DEFAULT_STATUS = "ACTIVE";
+    private final Object createProductLock = new Object();
 
     private final CourseProductMapper courseProductMapper;
     private final CourseProductScheduleSlotMapper scheduleSlotMapper;
     private final ClassroomMapper classroomMapper;
     private final TeacherMapper teacherMapper;
     private final CoursePackageMapper coursePackageMapper;
+    private final PlatformTransactionManager transactionManager;
 
     @Override
     public PageResponse<CourseProductVO> pageCourseProducts(CourseProductPageQuery query) {
@@ -100,25 +106,32 @@ public class CourseProductServiceImpl implements CourseProductService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public Long createCourseProduct(CourseProductSaveRequest request) {
-        if (!StringUtils.hasText(request.getProductCode())) {
-            request.setProductCode(generateProductCode());
+        synchronized (createProductLock) {
+            TransactionTemplate tt = new TransactionTemplate(transactionManager);
+            return tt.execute(status -> {
+                if (!StringUtils.hasText(request.getProductCode())) {
+                    request.setProductCode(generateProductCode());
+                }
+                ensureProductCodeUnique(null, request.getProductCode());
+                ensureProductNameUnique(null, request.getProductName());
+                validateByTeachingMode(request);
+                CourseProductEntity entity = new CourseProductEntity();
+                applyCourseProduct(entity, request);
+                courseProductMapper.insert(entity);
+                saveSlots(entity.getId(), request.getSlots());
+                return entity.getId();
+            });
         }
-        ensureProductCodeUnique(null, request.getProductCode());
-        ensureProductNameUnique(null, request.getProductName());
-        validateByTeachingMode(request);
-        CourseProductEntity entity = new CourseProductEntity();
-        applyCourseProduct(entity, request);
-        courseProductMapper.insert(entity);
-        saveSlots(entity.getId(), request.getSlots());
-        return entity.getId();
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateCourseProduct(Long id, CourseProductSaveRequest request) {
         CourseProductEntity entity = requireCourseProduct(id);
+        if (!StringUtils.hasText(request.getProductCode())) {
+            request.setProductCode(entity.getProductCode());
+        }
         ensureProductCodeUnique(id, request.getProductCode());
         ensureProductNameUnique(id, request.getProductName());
         validateByTeachingMode(request);
@@ -209,16 +222,12 @@ public class CourseProductServiceImpl implements CourseProductService {
         }
     }
 
-    private String generateProductCode() {
-        CourseProductEntity max = courseProductMapper.selectOne(new LambdaQueryWrapper<CourseProductEntity>()
-                .likeRight(CourseProductEntity::getProductCode, "PRD-")
-                .eq(CourseProductEntity::getIsDeleted, 0)
-                .orderByDesc(CourseProductEntity::getProductCode)
-                .last("LIMIT 1"));
+    private synchronized String generateProductCode() {
+        String maxCode = courseProductMapper.selectMaxProductCodeByPrefix("PRD-");
         int nextSeq = 1;
-        if (max != null && StringUtils.hasText(max.getProductCode())) {
+        if (StringUtils.hasText(maxCode)) {
             try {
-                String numPart = max.getProductCode().replaceAll("[^0-9]", "");
+                String numPart = maxCode.replaceAll("[^0-9]", "");
                 if (!numPart.isEmpty()) {
                     nextSeq = Integer.parseInt(numPart) + 1;
                 }
