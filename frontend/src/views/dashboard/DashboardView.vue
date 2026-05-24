@@ -29,26 +29,16 @@
           </div>
           <div class="campus-card__stats">
             <div class="campus-stat">
-              <span>Classrooms</span>
-              <strong>{{ campus.classrooms }}</strong>
-            </div>
-            <div class="campus-stat">
               <span>Today's Lessons</span>
               <strong>{{ campus.todayLessons }}</strong>
             </div>
             <div class="campus-stat">
-              <span>Teachers</span>
-              <strong>{{ campus.teachers }}</strong>
+              <span>Classrooms</span>
+              <strong>{{ campus.classrooms }}</strong>
             </div>
             <div class="campus-stat">
               <span>Students</span>
               <strong>{{ campus.students }}</strong>
-            </div>
-            <div class="campus-stat">
-              <span>Low Balance</span>
-              <strong :class="{ 'campus-stat--warn': campus.lowBalancePackages > 0 }">
-                {{ campus.lowBalancePackages }}
-              </strong>
             </div>
           </div>
         </article>
@@ -90,7 +80,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { fetchDashboardSummary } from '@/api/dashboard';
@@ -128,13 +118,28 @@ const actions = [
   { label: 'Confirm lesson', handler: () => router.push('/schedule/adjustments') },
 ];
 
-onMounted(async () => {
+async function loadSummary() {
   try {
     const response = await fetchDashboardSummary();
     summary.value = response.data.data;
   } catch (error) {
     console.error('Failed to load dashboard data:', error);
   }
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') {
+    loadSummary();
+  }
+}
+
+onMounted(() => {
+  loadSummary();
+  document.addEventListener('visibilitychange', onVisibilityChange);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
 

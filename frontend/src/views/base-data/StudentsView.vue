@@ -179,33 +179,6 @@
           </el-form-item>
         </div>
 
-        <!-- English Name - configurable -->
-        <div v-if="fieldConfig.englishName.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.englishName.customLabel" class="student-form__half">
-            <el-input v-model="studentForm.englishName" placeholder="e.g. Sophia" />
-          </el-form-item>
-        </div>
-
-        <!-- Birth Date - configurable -->
-        <div v-if="fieldConfig.birthDate.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.birthDate.customLabel" class="student-form__half">
-            <el-date-picker v-model="studentForm.birthDate" type="date" placeholder="Select date" style="width: 100%;" value-format="YYYY-MM-DD" />
-          </el-form-item>
-        </div>
-
-        <!-- Source Channel - configurable -->
-        <div v-if="fieldConfig.sourceChannel.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.sourceChannel.customLabel" class="student-form__half">
-            <el-select v-model="studentForm.sourceChannel" placeholder="Select source" clearable style="width: 100%;">
-              <el-option label="Referral" value="REFERRAL" />
-              <el-option label="Online" value="ONLINE" />
-              <el-option label="Walk-in" value="WALK_IN" />
-              <el-option label="Advertisement" value="AD" />
-              <el-option label="Other" value="OTHER" />
-            </el-select>
-          </el-form-item>
-        </div>
-
         <!-- Campus - configurable -->
         <div v-if="fieldConfig.campusId.visible" class="student-form__row">
           <el-form-item :label="fieldConfig.campusId.customLabel" class="student-form__half">
@@ -277,12 +250,9 @@ interface FieldConfigMap {
 
 const defaultFieldConfig: FieldConfigMap = {
   gender: { key: 'gender', defaultLabel: 'Gender', visible: true, customLabel: 'Gender' },
-  email: { key: 'email', defaultLabel: '监护人邮箱', visible: true, customLabel: '监护人邮箱' },
+  email: { key: 'email', defaultLabel: 'Guardian email', visible: true, customLabel: 'Guardian email' },
   status: { key: 'status', defaultLabel: 'Status', visible: true, customLabel: 'Status' },
   notes: { key: 'notes', defaultLabel: 'Notes', visible: false, customLabel: 'Notes' },
-  englishName: { key: 'englishName', defaultLabel: 'English Name', visible: false, customLabel: 'English Name' },
-  birthDate: { key: 'birthDate', defaultLabel: 'Birth Date', visible: false, customLabel: 'Birth Date' },
-  sourceChannel: { key: 'sourceChannel', defaultLabel: 'Source', visible: false, customLabel: 'Source' },
   campusId: { key: 'campusId', defaultLabel: 'Campus', visible: true, customLabel: 'Campus' },
   guardianRelationType: { key: 'guardianRelationType', defaultLabel: 'Relation', visible: false, customLabel: 'Relation' },
 };

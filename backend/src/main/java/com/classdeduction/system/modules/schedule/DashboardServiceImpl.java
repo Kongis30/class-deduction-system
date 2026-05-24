@@ -16,7 +16,6 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import lombok.RequiredArgsConstructor;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -42,7 +41,6 @@ public class DashboardServiceImpl implements DashboardService {
     private final NotificationTriggerRuleMapper notificationTriggerRuleMapper;
 
     @Override
-    @Cacheable(value = "dashboard:summary", key = "'getSummary'")
     public Map<String, Object> getSummary() {
         LocalDate today = LocalDate.now();
         LocalDateTime todayStart = today.atStartOfDay();
