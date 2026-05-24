@@ -6,6 +6,7 @@ import com.classdeduction.system.common.dto.LoginRequest;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.auth.config.AuthProperties;
+import com.classdeduction.system.modules.auth.dto.ChangePasswordRequest;
 import com.classdeduction.system.modules.auth.dto.LoginResponse;
 import com.classdeduction.system.modules.auth.entity.AuthSessionEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
@@ -147,6 +148,25 @@ public class AuthServiceImpl implements AuthService {
         // Always delete from MySQL (source of truth)
         authSessionMapper.delete(new LambdaQueryWrapper<AuthSessionEntity>()
                 .eq(AuthSessionEntity::getToken, token));
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void changePassword(ChangePasswordRequest request, CurrentUserResponse currentUser) {
+        UserAccountEntity user = userAccountMapper.selectById(currentUser.userId());
+        if (user == null) {
+            throw new BusinessException("USER_NOT_FOUND", "User account not found.");
+        }
+        // 验证原密码
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
+            throw new BusinessException("INVALID_CURRENT_PASSWORD", "Current password is incorrect.");
+        }
+        // 新密码不能与原密码相同
+        if (passwordEncoder.matches(request.getNewPassword(), user.getPasswordHash())) {
+            throw new BusinessException("SAME_PASSWORD", "New password must be different from the current password.");
+        }
+        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        userAccountMapper.updateById(user);
     }
 
     private String createSession(CurrentUserResponse currentUser) {

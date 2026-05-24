@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.auth;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.dto.LoginRequest;
 import com.classdeduction.system.common.model.ApiResponse;
+import com.classdeduction.system.modules.auth.dto.ChangePasswordRequest;
 import com.classdeduction.system.modules.auth.dto.LoginResponse;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.auth.service.AuthService;
@@ -54,5 +55,19 @@ public class AuthController {
     @Operation(summary = "Refresh the current session token to extend expiry")
     public ApiResponse<LoginResponse> refresh(@RequestHeader(HttpHeaders.AUTHORIZATION) String authorizationHeader) {
         return ApiResponse.success("Session refreshed.", authService.refreshSession(authorizationHeader));
+    }
+
+    @PostMapping("/change-password")
+    @Operation(summary = "Change the current user's password")
+    public ApiResponse<Void> changePassword(
+            @Valid @RequestBody ChangePasswordRequest request,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser,
+            @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorizationHeader
+    ) {
+        CurrentUserResponse resolvedUser = currentUser == null
+                ? authService.requireCurrentUser(authorizationHeader)
+                : currentUser;
+        authService.changePassword(request, resolvedUser);
+        return ApiResponse.success("Password changed successfully.", null);
     }
 }

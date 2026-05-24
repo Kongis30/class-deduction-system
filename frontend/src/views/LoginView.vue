@@ -40,7 +40,7 @@ const formRef = ref<FormInstance>();
 
 const form = reactive<LoginPayload>({
   username: 'admin',
-  password: 'Admin@123456',
+  password: 'Jin2025',
 });
 
 const rules: FormRules<LoginPayload> = {

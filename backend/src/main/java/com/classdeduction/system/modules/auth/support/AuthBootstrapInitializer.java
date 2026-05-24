@@ -30,7 +30,7 @@ public class AuthBootstrapInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        ensureDefaultUser("admin", "Admin@123456", "System Administrator", "ADMIN", "ADMIN");
+        ensureDefaultUser("admin", "Jin2025", "System Administrator", "ADMIN", "ADMIN");
         ensureDefaultUser("staff", "Staff@123456", "Front Desk Staff", "STAFF", "STAFF");
     }
 

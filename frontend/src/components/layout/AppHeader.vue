@@ -12,7 +12,6 @@
     </div>
 
     <div class="app-header__right">
-      <el-input placeholder="Search students, instructors, classrooms, or packages" class="app-header__search" />
       <el-tag type="success" effect="light">{{ APP_TIMEZONE_LABEL }} timezone</el-tag>
 
       <el-dropdown trigger="click" @command="handleDropdownCommand">

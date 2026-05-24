@@ -98,3 +98,9 @@ export function updateTeacherAccount(id: number, data: AccountUpdatePayload) {
 export function updateStudentAccount(id: number, data: AccountUpdatePayload) {
   return http.put(`/v1/auth/student-accounts/${id}`, data);
 }
+
+// ─── Self-service Password Change ──────────────────
+
+export function changePassword(data: { currentPassword: string; newPassword: string }) {
+  return http.post<ApiResponse<null>>('/v1/auth/change-password', data);
+}

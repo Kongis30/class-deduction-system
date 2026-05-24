@@ -111,9 +111,9 @@ const cards = computed(() => [
 
 const actions = [
   { label: 'Create enrollment', handler: () => router.push('/enrollment/orders') },
-  { label: 'Build schedule', handler: () => router.push('/schedule/rules') },
-  { label: 'Add student', handler: () => router.push('/base-data/students') },
-  { label: 'Add instructor', handler: () => router.push('/base-data/teachers') },
+  { label: 'Build schedule', handler: () => router.push('/schedule/recurring') },
+  { label: 'Add student', handler: () => router.push('/system/accounts') },
+  { label: 'Add teacher', handler: () => router.push('/system/accounts') },
   { label: 'Add classroom', handler: () => router.push('/base-data/classrooms') },
   { label: 'Confirm lesson', handler: () => router.push('/schedule/adjustments') },
 ];
