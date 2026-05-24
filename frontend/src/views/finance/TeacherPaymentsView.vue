@@ -154,7 +154,7 @@
               :loading="creatingPayment"
               @click="handleCreatePayment"
             >
-              Create Payment
+              Pay
             </el-button>
           </div>
         </section>
@@ -492,9 +492,24 @@ const creatingPayment = ref(false);
 async function handleCreatePayment() {
   if (!selectedTeacherId.value || selectedIds.value.length === 0) return;
 
+  // 检查是否有 rate 为 0 的课次
+  const allSelected = [...individualSelections.value, ...groupSelections.value];
+  const zeroRateItems = allSelected.filter(r => !r.hourlyRate || r.hourlyRate === 0);
+  if (zeroRateItems.length > 0) {
+    try {
+      await ElMessageBox.confirm(
+        `${zeroRateItems.length} lesson(s) have no pay rate (hourly rate = $0). Pay anyway?`,
+        'Zero Rate Warning',
+        { type: 'warning', confirmButtonText: 'Pay Anyway', cancelButtonText: 'Cancel' },
+      );
+    } catch {
+      return;
+    }
+  }
+
   try {
     await ElMessageBox.confirm(
-      `Create payment for ${selectedIds.value.length} lesson(s) — total $${selectedTotalAmount.value}?`,
+      `Pay for ${selectedIds.value.length} lesson(s) — total $${selectedTotalAmount.value}?`,
       'Confirm payment',
       { type: 'info' },
     );
