@@ -64,7 +64,7 @@
             <span>{{ row.remainingUnits }} / {{ row.totalUnits }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Progress" min-width="140" prop="progress" sortable="custom">
+        <el-table-column label="Progress" min-width="140" prop="progress" sortable :sort-method="sortByProgress">
           <template #default="{ row }">
             <el-progress
               :percentage="row.totalUnits > 0 ? Math.round((row.consumedUnits / row.totalUnits) * 100) : 0"
@@ -409,7 +409,17 @@ function handleSortChange({ prop, order }: { prop?: string; order?: string }) {
   sortBy.value = prop;
   sortOrder.value = order === 'ascending' ? 'asc' : order === 'descending' ? 'desc' : undefined;
   pagination.page = 1;
-  loadData();
+  // Progress is a computed value (consumed/total), sort client-side only
+  if (prop && prop !== 'progress') {
+    loadData();
+  }
+}
+
+/** Client-side sort by progress percentage */
+function sortByProgress(a: CoursePackageItem, b: CoursePackageItem): number {
+  const pctA = a.totalUnits > 0 ? a.consumedUnits / a.totalUnits : 0;
+  const pctB = b.totalUnits > 0 ? b.consumedUnits / b.totalUnits : 0;
+  return pctA - pctB;
 }
 
 function packageStatusType(status: string) {

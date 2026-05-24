@@ -73,8 +73,6 @@ public class CoursePackageServiceImpl implements CoursePackageService {
             boolean isAsc = !"desc".equals(query.getSortOrder());
             if ("subjectName".equals(query.getSortBy())) {
                 lambda.orderBy(true, isAsc, CoursePackageEntity::getSubjectName);
-            } else if ("progress".equals(query.getSortBy())) {
-                wrapper.orderBy(true, isAsc, "consumedUnits / NULLIF(totalUnits, 0)");
             }
         }
         lambda.orderByDesc(CoursePackageEntity::getCreatedAt);
