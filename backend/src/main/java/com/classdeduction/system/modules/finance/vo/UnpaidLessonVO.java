@@ -5,6 +5,7 @@ import lombok.Builder;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 未结算课次响应。
@@ -27,5 +28,6 @@ public record UnpaidLessonVO(
         BigDecimal amount,
         String resultStatus,
         String occurrenceType,
-        String className
+        String className,
+        List<Long> lessonRecordIds
 ) {}

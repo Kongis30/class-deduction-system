@@ -71,6 +71,23 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 .map(TeacherPaymentItemEntity::getLessonRecordId)
                 .toList();
 
+        // 1a. 如果已结算记录中有班课，找到其 occurrence_id，
+        //     将同 occurrence 的所有记录排除（班课只结算一次，不按学生数重复结算）
+        Set<Long> settledGroupOccurrenceIds = Collections.emptySet();
+        if (!paidRecordIds.isEmpty()) {
+            List<LessonRecordEntity> paidRecords = lessonRecordMapper.selectBatchIds(paidRecordIds);
+            Set<Long> paidOccurrenceIds = paidRecords.stream()
+                    .map(LessonRecordEntity::getOccurrenceId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            if (!paidOccurrenceIds.isEmpty()) {
+                settledGroupOccurrenceIds = lessonOccurrenceMapper.selectBatchIds(paidOccurrenceIds).stream()
+                        .filter(o -> o.getClassGroupId() != null)
+                        .map(LessonOccurrenceEntity::getId)
+                        .collect(Collectors.toSet());
+            }
+        }
+
         // 2. 查询未结算的课次
         LocalDateTime start = query.getStartDate() != null
                 ? query.getStartDate().atStartOfDay() : null;
@@ -82,6 +99,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                         .eq(LessonRecordEntity::getActualTeacherId, query.getTeacherId())
                         .in(LessonRecordEntity::getResultStatus, PAYABLE_STATUSES)
                         .notIn(!paidRecordIds.isEmpty(), LessonRecordEntity::getId, paidRecordIds)
+                        .notIn(!settledGroupOccurrenceIds.isEmpty(),
+                                LessonRecordEntity::getOccurrenceId, settledGroupOccurrenceIds)
                         .ge(start != null, LessonRecordEntity::getConfirmedAt, start)
                         .lt(end != null, LessonRecordEntity::getConfirmedAt, end)
                         .orderByAsc(LessonRecordEntity::getConfirmedAt)
@@ -127,8 +146,56 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         }
 
         // 6. 组装结果
+        // 班课按 occurrence 聚合成一条记录（用第一条的课时数，不叠加学生数）
+        // 非班课一条记录一行
         List<UnpaidLessonVO> result = new ArrayList<>();
+        Set<Long> groupedOccurrenceIds = new HashSet<>();
+
         for (LessonRecordEntity rec : records) {
+            LessonOccurrenceEntity occurrence = occurrenceMap.get(rec.getOccurrenceId());
+
+            // 班课：同一 occurrence 只取第一条记录
+            if (occurrence != null && occurrence.getClassGroupId() != null) {
+                if (groupedOccurrenceIds.contains(rec.getOccurrenceId())) {
+                    continue; // 该 occurrence 已处理过
+                }
+                groupedOccurrenceIds.add(rec.getOccurrenceId());
+
+                CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
+                Long productId = pkg != null ? pkg.getCourseProductId() : null;
+                String rateKey = query.getTeacherId() + ":" + productId;
+                BigDecimal hourlyRate = rateMap.getOrDefault(rateKey, BigDecimal.ZERO);
+
+                BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
+                        .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
+                BigDecimal amount = hours.multiply(hourlyRate).setScale(2, RoundingMode.HALF_UP);
+
+                CourseProductEntity product = productId != null ? productMap.get(productId) : null;
+
+                result.add(UnpaidLessonVO.builder()
+                        .lessonRecordId(rec.getId())
+                        .lessonDate(rec.getConfirmedAt())
+                        .studentId(rec.getStudentId())
+                        .studentName(null) // 班课不显示学生名字
+                        .packageId(rec.getPackageId())
+                        .packageName(pkg != null ? pkg.getPackageName() : null)
+                        .courseProductId(productId)
+                        .productName(product != null ? product.getProductName() : null)
+                        .subjectName(product != null ? product.getSubjectName() : null)
+                        .actualUnits(rec.getActualUnits())
+                        .hours(hours)
+                        .hourlyRate(hourlyRate)
+                        .amount(amount)
+                        .resultStatus(rec.getResultStatus())
+                        .occurrenceType(occurrence.getOccurrenceType())
+                        .className(resolveClassName(occurrence))
+                        .lessonRecordId(rec.getId()) // 只用一条 lessonRecordId 去结算
+                        .lessonRecordIds(null)
+                        .build());
+                continue;
+            }
+
+            // 非班课：一条记录一行
             CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
             Long productId = pkg != null ? pkg.getCourseProductId() : null;
             String rateKey = query.getTeacherId() + ":" + productId;
@@ -140,7 +207,6 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
 
             StudentEntity student = studentMap.get(rec.getStudentId());
             CourseProductEntity product = productId != null ? productMap.get(productId) : null;
-            LessonOccurrenceEntity occurrence = occurrenceMap.get(rec.getOccurrenceId());
 
             result.add(UnpaidLessonVO.builder()
                     .lessonRecordId(rec.getId())
@@ -159,6 +225,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                     .resultStatus(rec.getResultStatus())
                     .occurrenceType(occurrence != null ? occurrence.getOccurrenceType() : null)
                     .className(resolveClassName(occurrence))
+                    .lessonRecordIds(null)
                     .build());
         }
         return result;

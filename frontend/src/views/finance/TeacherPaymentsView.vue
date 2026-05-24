@@ -63,40 +63,33 @@
           </div>
         </section>
 
-        <!-- ─── 2. Unpaid lessons ─────────────────────── -->
-        <section v-if="unpaidLessons.length > 0" class="tp-section tp-section--card">
+        <!-- ─── 2. Unpaid 1:1 Lessons ────────────────── -->
+        <section v-if="individualLessons.length > 0" class="tp-section tp-section--card">
           <div class="tp-section__header">
-            <span class="tp-section__title">Unpaid Lessons</span>
-            <span v-if="unpaidTotal" class="tp-section__subtitle">
-              {{ unpaidLessons.length }} lesson(s) · {{ unpaidTotal }}
+            <span class="tp-section__title">1:1 Lessons</span>
+            <span v-if="individualTotal" class="tp-section__subtitle">
+              {{ individualLessons.length }} lesson(s) · {{ individualTotal }}
             </span>
           </div>
 
           <el-table
-            ref="unpaidTableRef"
             v-loading="unpaidLoading"
-            :data="unpaidLessons"
+            :data="individualLessons"
             row-key="lessonRecordId"
             class="tp-table"
-            @selection-change="onSelectionChange"
+            @selection-change="individualSelections = $event; updateMergedSelection()"
           >
             <el-table-column type="selection" width="36" />
             <el-table-column label="Date" min-width="105">
               <template #default="{ row }">{{ row.lessonDate }}</template>
             </el-table-column>
-            <el-table-column label="Type" width="70" align="center">
+            <el-table-column label="Type" width="58" align="center">
               <template #default="{ row }">
-                <el-tag v-if="row.className" size="small" type="warning">Group</el-tag>
-                <el-tag v-else size="small" type="primary">1:1</el-tag>
+                <el-tag size="small" type="primary">1:1</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="Student" min-width="110" prop="studentName" />
             <el-table-column label="Product" min-width="120" prop="productName" show-overflow-tooltip />
-            <el-table-column label="Class" min-width="100" prop="className" show-overflow-tooltip>
-              <template #default="{ row }">
-                {{ row.className || '—' }}
-              </template>
-            </el-table-column>
             <el-table-column label="Hours" width="65" align="center" prop="hours" />
             <el-table-column label="Rate" width="90" align="right">
               <template #default="{ row }">${{ row.hourlyRate?.toFixed(2) }}</template>
@@ -107,8 +100,50 @@
               </template>
             </el-table-column>
           </el-table>
+        </section>
 
-          <div v-if="selectedIds.length > 0" class="tp-summary">
+        <!-- ─── 3. Unpaid Group Class Lessons ─────────── -->
+        <section v-if="groupLessons.length > 0" class="tp-section tp-section--card">
+          <div class="tp-section__header">
+            <span class="tp-section__title">Group Class Lessons</span>
+            <span v-if="groupTotal" class="tp-section__subtitle">
+              {{ groupLessons.length }} lesson(s) · {{ groupTotal }}
+            </span>
+          </div>
+
+          <el-table
+            v-loading="unpaidLoading"
+            :data="groupLessons"
+            row-key="lessonRecordId"
+            class="tp-table"
+            @selection-change="groupSelections = $event; updateMergedSelection()"
+          >
+            <el-table-column type="selection" width="36" />
+            <el-table-column label="Date" min-width="105">
+              <template #default="{ row }">{{ row.lessonDate }}</template>
+            </el-table-column>
+            <el-table-column label="Type" width="58" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" type="warning">G</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Class" min-width="120" prop="className" show-overflow-tooltip />
+            <el-table-column label="Product" min-width="120" prop="productName" show-overflow-tooltip />
+            <el-table-column label="Hours" width="65" align="center" prop="hours" />
+            <el-table-column label="Rate" width="90" align="right">
+              <template #default="{ row }">${{ row.hourlyRate?.toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="Amount" width="100" align="right">
+              <template #default="{ row }">
+                <strong>${{ row.amount?.toFixed(2) }}</strong>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+
+        <!-- ─── 4. Summary & Create Payment ────────────── -->
+        <section v-if="selectedIds.length > 0" class="tp-section tp-section--card">
+          <div class="tp-summary">
             <span>
               Selected <strong>{{ selectedIds.length }}</strong> lessons ·
               Hours: <strong>{{ selectedTotalHours }}</strong> ·
@@ -125,12 +160,12 @@
         </section>
 
         <el-empty
-          v-else-if="searched && !unpaidLoading && !hasPendingPayment"
+          v-else-if="searched && !unpaidLoading && individualLessons.length === 0 && groupLessons.length === 0 && !hasPendingPayment"
           :description="'No unpaid lessons found for this period.'"
           class="tp-empty"
         />
 
-        <!-- ─── 3. Payment History ─────────────────────── -->
+        <!-- ─── 6. Payment History ─────────────────────── -->
         <section class="tp-section tp-section--card" style="margin-top: 4px;">
           <div class="tp-section__header">
             <div class="tp-section__header-left">
@@ -209,7 +244,7 @@
           </div>
         </section>
 
-        <!-- ─── 4. Pending payment banner ────────────── -->
+        <!-- ─── 7. Pending payment banner ────────────── -->
         <section v-if="hasPendingPayment" class="tp-section tp-section--card">
           <div class="tp-section__header">
             <span class="tp-section__title">
@@ -373,31 +408,49 @@ const dateRange = ref<[string, string] | null>(null);
 const unpaidLoading = ref(false);
 const searched = ref(false);
 const unpaidLessons = ref<UnpaidLessonItem[]>([]);
+const individualSelections = ref<UnpaidLessonItem[]>([]);
+const groupSelections = ref<UnpaidLessonItem[]>([]);
 const selectedIds = ref<number[]>([]);
 
-const unpaidTotal = computed(() => {
-  if (!unpaidLessons.value.length) return '';
-  const h = unpaidLessons.value.reduce((s, r) => s + r.hours, 0);
-  const a = unpaidLessons.value.reduce((s, r) => s + r.amount, 0);
-  return `Total: ${h.toFixed(1)}h · $${a.toFixed(2)}`;
+const individualLessons = computed(() =>
+  unpaidLessons.value.filter(r => !r.className),
+);
+
+const groupLessons = computed(() =>
+  unpaidLessons.value.filter(r => !!r.className),
+);
+
+const individualTotal = computed(() => {
+  if (!individualLessons.value.length) return '';
+  const h = individualLessons.value.reduce((s, r) => s + r.hours, 0);
+  const a = individualLessons.value.reduce((s, r) => s + r.amount, 0);
+  return `${h.toFixed(1)}h · $${a.toFixed(2)}`;
+});
+
+const groupTotal = computed(() => {
+  if (!groupLessons.value.length) return '';
+  const h = groupLessons.value.reduce((s, r) => s + r.hours, 0);
+  const a = groupLessons.value.reduce((s, r) => s + r.amount, 0);
+  return `${h.toFixed(1)}h · $${a.toFixed(2)}`;
 });
 
 const hasPendingPayment = computed(() =>
   pendingPayments.value.length > 0,
 );
 
-function onSelectionChange(rows: UnpaidLessonItem[]) {
-  selectedIds.value = rows.map(r => r.lessonRecordId);
+function updateMergedSelection() {
+  const allRows = [...individualSelections.value, ...groupSelections.value];
+  selectedIds.value = allRows.map(r => r.lessonRecordId);
 }
 
 const selectedTotalHours = computed(() => {
-  const selected = unpaidLessons.value.filter(r => selectedIds.value.includes(r.lessonRecordId));
-  return selected.reduce((s, r) => s + r.hours, 0).toFixed(1);
+  const allRows = [...individualSelections.value, ...groupSelections.value];
+  return allRows.reduce((s, r) => s + r.hours, 0).toFixed(1);
 });
 
 const selectedTotalAmount = computed(() => {
-  const selected = unpaidLessons.value.filter(r => selectedIds.value.includes(r.lessonRecordId));
-  return selected.reduce((s, r) => s + r.amount, 0).toFixed(2);
+  const allRows = [...individualSelections.value, ...groupSelections.value];
+  return allRows.reduce((s, r) => s + r.amount, 0).toFixed(2);
 });
 
 async function loadUnpaidLessons() {
@@ -446,6 +499,8 @@ async function handleCreatePayment() {
     });
     ElMessage.success('Payment created.');
     unpaidLessons.value = [];
+    individualSelections.value = [];
+    groupSelections.value = [];
     selectedIds.value = [];
     searched.value = false;
     loadHistory(1);
@@ -775,6 +830,7 @@ onMounted(async () => {
   background: #fff;
   padding: 30px 0;
 }
+
 
 /* ─── Detail Dialog ───────────────────────────────────── */
 
