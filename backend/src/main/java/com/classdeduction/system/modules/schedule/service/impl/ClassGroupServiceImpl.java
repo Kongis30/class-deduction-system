@@ -273,6 +273,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             record.setStudentId(enrollment.getStudentId());
             record.setPackageId(null); // 班课不关联课包
             record.setResultStatus("COMPLETED");
+            record.setPlannedTeacherId(occ.getPlannedTeacherId()); // 保存原始安排，供审计
+            record.setPlannedClassroomId(occ.getPlannedClassroomId());
             record.setActualTeacherId(actualTeacherId);
             record.setActualClassroomId(actualClassroomId);
             record.setActualUnits(actualUnits != null ? actualUnits : occ.getPlannedUnits());
@@ -285,6 +287,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             lessonRecordMapper.insert(record);
             confirmedCount++;
         }
+
+        // 同步更新 lesson_occurrence 的 teacher/classroom/units，使前端刷新后显示正确
+        occ.setPlannedTeacherId(actualTeacherId);
+        occ.setPlannedClassroomId(actualClassroomId);
+        if (actualUnits != null) {
+            occ.setPlannedUnits(actualUnits);
+        }
+        lessonOccurrenceMapper.updateById(occ);
 
         Map<String, Object> result = new HashMap<>();
         result.put("confirmedCount", confirmedCount);
