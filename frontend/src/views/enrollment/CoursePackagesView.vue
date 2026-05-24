@@ -64,7 +64,7 @@
             <span>{{ row.remainingUnits }} / {{ row.totalUnits }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Progress" min-width="140" sortable="custom">
+        <el-table-column label="Progress" min-width="140" prop="progress" sortable="custom">
           <template #default="{ row }">
             <el-progress
               :percentage="row.totalUnits > 0 ? Math.round((row.consumedUnits / row.totalUnits) * 100) : 0"
