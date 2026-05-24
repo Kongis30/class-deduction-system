@@ -253,6 +253,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         Long actualClassroomId = parseLongParam(body, "actualClassroomId", occ.getPlannedClassroomId());
         Integer actualUnits = body != null && body.get("actualUnits") instanceof Number
                 ? Integer.valueOf(((Number) body.get("actualUnits")).intValue()) : null;
+        LocalDateTime actualStartAt = parseDateTimeParam(body, "actualStartAt");
+        LocalDateTime actualEndAt = parseDateTimeParam(body, "actualEndAt");
         String notes = body != null && body.get("notes") instanceof String
                 ? (String) body.get("notes") : null;
 
@@ -276,6 +278,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             record.setActualTeacherId(actualTeacherId);
             record.setActualClassroomId(actualClassroomId);
             record.setActualUnits(actualUnits != null ? actualUnits : occ.getPlannedUnits());
+            record.setActualStartAt(actualStartAt);
+            record.setActualEndAt(actualEndAt);
             record.setShouldDeduct(0); // 班课不扣课时
             record.setDeductedUnits(0);
             record.setShouldExtendEndDate(0);
@@ -286,11 +290,15 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             confirmedCount++;
         }
 
-        // 同步更新 lesson_occurrence 的 teacher/classroom/units，使前端刷新后显示正确
+        // 同步更新 lesson_occurrence，使前端刷新后显示正确
         occ.setPlannedTeacherId(actualTeacherId);
         occ.setPlannedClassroomId(actualClassroomId);
         if (actualUnits != null) {
             occ.setPlannedUnits(actualUnits);
+        }
+        if (actualStartAt != null) {
+            occ.setPlannedStartAt(actualStartAt);
+            occ.setPlannedEndAt(actualEndAt);
         }
         lessonOccurrenceMapper.updateById(occ);
 
@@ -530,6 +538,19 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             }
         }
         return fallback;
+    }
+
+    private LocalDateTime parseDateTimeParam(Map<String, Object> body, String key) {
+        if (body == null) return null;
+        Object value = body.get(key);
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return LocalDateTime.parse(s);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        return null;
     }
 
     private String resolveTeacherName(Long teacherId, Map<Long, TeacherEntity> teacherMap) {
