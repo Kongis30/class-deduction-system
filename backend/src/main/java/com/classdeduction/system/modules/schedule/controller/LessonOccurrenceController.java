@@ -27,7 +27,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/schedule/occurrences")
 @Tag(name = "Schedule - Lesson Occurrences")
-@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
+@RequireRoles({"ADMIN", "STAFF", "TEACHER", "STUDENT"})
 public class LessonOccurrenceController {
 
     private final LessonOccurrenceService lessonOccurrenceService;

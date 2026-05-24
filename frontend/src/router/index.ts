@@ -3,7 +3,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import AppLayout from '@/components/layout/AppLayout.vue';
 import { APP_SYSTEM_NAME } from '@/config/app-config';
 import { getStoredAuthToken, getStoredAuthUser } from '@/utils/auth-storage';
-import { isTeacherUser } from '@/types/auth';
+import { isStudentUser, isTeacherUser } from '@/types/auth';
 
 // Route-level lazy loading keeps the initial admin bundle smaller.
 const LoginView = () => import('@/views/LoginView.vue');
@@ -235,6 +235,9 @@ router.beforeEach((to) => {
   const hasToken = Boolean(getStoredAuthToken());
   if (to.name === 'login' && hasToken) {
     const storedUser = getStoredAuthUser();
+    if (isStudentUser(storedUser)) {
+      return { name: 'student-schedule' };
+    }
     return {
       name: isTeacherUser(storedUser) ? 'teacher-schedule' : 'dashboard',
     };

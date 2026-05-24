@@ -1,5 +1,5 @@
 import type { AppMenuItem } from '@/types/menu';
-import { isTeacherUser, type AuthUser } from '@/types/auth';
+import { isStudentUser, isTeacherUser, type AuthUser } from '@/types/auth';
 
 export const appMenus: AppMenuItem[] = [
   {
@@ -84,9 +84,29 @@ export function getTeacherMenus(): AppMenuItem[] {
 }
 
 /**
+ * Returns menus filtered for a student user.
+ * Students only see their own schedule.
+ */
+export function getStudentMenus(): AppMenuItem[] {
+  return [
+    {
+      key: 'schedule',
+      title: 'Scheduling',
+      icon: 'Calendar',
+      children: [
+        { key: 'student-schedule', title: 'My Schedule', path: '/schedule/student' },
+      ],
+    },
+  ];
+}
+
+/**
  * Returns the appropriate menus for the current user.
  */
 export function getMenusForUser(user: AuthUser | null): AppMenuItem[] {
+  if (isStudentUser(user)) {
+    return getStudentMenus();
+  }
   if (isTeacherUser(user)) {
     return getTeacherMenus();
   }

@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/packages")
 @Tag(name = "Enrollment - Course Packages")
-@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
+@RequireRoles({"ADMIN", "STAFF", "TEACHER", "STUDENT"})
 public class CoursePackageController {
 
     private final CoursePackageService coursePackageService;

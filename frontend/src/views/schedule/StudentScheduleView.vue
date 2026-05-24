@@ -2,12 +2,12 @@
   <div class="page-stack">
     <section class="student-calendar">
       <div class="student-calendar__header">
-        <span class="student-calendar__title">Student Schedule</span>
+        <span class="student-calendar__title">{{ isStudent ? 'My Schedule' : 'Student Schedule' }}</span>
       </div>
 
       <div class="student-calendar__body">
-        <!-- Left: Student list -->
-        <aside class="student-list-panel">
+        <!-- Left: Student list (hidden for student users) -->
+        <aside v-if="!isStudent" class="student-list-panel">
           <div class="student-list-panel__header">
             <el-input
               v-model="searchText"
@@ -189,6 +189,11 @@ import type { LessonOccurrenceItem } from '@/types/domain';
 import type { CoursePackageItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
+import { useAuthStore } from '@/stores/auth';
+import { isStudentUser } from '@/types/auth';
+
+const authStore = useAuthStore();
+const isStudent = computed(() => isStudentUser(authStore.currentUser));
 
 const loading = ref(false);
 const students = ref<{ id: number; studentName: string }[]>([]);
@@ -402,6 +407,18 @@ function planningStatusLabel(status: string) {
 
 // ─── Init ──────────────────────────────────────
 onMounted(async () => {
+  if (isStudent.value) {
+    // Student user: auto-select their own profile
+    const studentId = authStore.currentUser?.studentId;
+    if (studentId) {
+      selectedStudentId.value = studentId;
+      students.value = [{ id: studentId, studentName: authStore.currentUser?.displayName || 'Me' }];
+      loadSchedule();
+      loadPackageInfo();
+    }
+    return;
+  }
+  // Admin/staff/teacher: show student list
   try {
     const res = await fetchAllStudents();
     students.value = res.data.data.map(s => ({ id: s.id, studentName: s.studentName }));
