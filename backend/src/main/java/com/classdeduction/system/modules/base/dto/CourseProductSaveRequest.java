@@ -16,8 +16,7 @@ import java.util.List;
 @Schema(description = "Course product save request")
 public class CourseProductSaveRequest {
 
-    @NotBlank(message = "Course product code is required")
-    @Schema(description = "Course product code", example = "MATH-24-1ON1")
+    @Schema(description = "Course product code (auto-generated if empty)", example = "MATH-24-1ON1")
     private String productCode;
 
     @NotBlank(message = "Course product name is required")

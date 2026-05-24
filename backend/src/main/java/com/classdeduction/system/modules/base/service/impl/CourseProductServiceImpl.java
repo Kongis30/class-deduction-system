@@ -102,6 +102,9 @@ public class CourseProductServiceImpl implements CourseProductService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createCourseProduct(CourseProductSaveRequest request) {
+        if (!StringUtils.hasText(request.getProductCode())) {
+            request.setProductCode(generateProductCode());
+        }
         ensureProductCodeUnique(null, request.getProductCode());
         ensureProductNameUnique(null, request.getProductName());
         validateByTeachingMode(request);
@@ -204,6 +207,26 @@ public class CourseProductServiceImpl implements CourseProductService {
         if (existing != null && !Objects.equals(existing.getId(), currentId)) {
             throw new BusinessException("Course product code already exists.");
         }
+    }
+
+    private String generateProductCode() {
+        CourseProductEntity max = courseProductMapper.selectOne(new LambdaQueryWrapper<CourseProductEntity>()
+                .likeRight(CourseProductEntity::getProductCode, "PRD-")
+                .eq(CourseProductEntity::getIsDeleted, 0)
+                .orderByDesc(CourseProductEntity::getProductCode)
+                .last("LIMIT 1"));
+        int nextSeq = 1;
+        if (max != null && StringUtils.hasText(max.getProductCode())) {
+            try {
+                String numPart = max.getProductCode().replaceAll("[^0-9]", "");
+                if (!numPart.isEmpty()) {
+                    nextSeq = Integer.parseInt(numPart) + 1;
+                }
+            } catch (NumberFormatException e) {
+                nextSeq = 1;
+            }
+        }
+        return String.format("PRD-%04d", nextSeq);
     }
 
     private void ensureProductNameUnique(Long currentId, String productName) {
