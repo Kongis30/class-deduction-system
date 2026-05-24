@@ -181,6 +181,10 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         record.setNotes(request.getNotes());
         lessonRecordMapper.insert(record);
 
+        // Reflect actual teacher/classroom on the occurrence so the frontend list
+        // shows the confirmed values instead of the original planned ones.
+        occurrence.setPlannedTeacherId(decision.actualTeacherId());
+        occurrence.setPlannedClassroomId(decision.actualClassroomId());
         // Mark the planned occurrence as merged — it is now a confirmed lesson record
         occurrence.setPlanningStatus("MERGED");
         lessonOccurrenceMapper.updateById(occurrence);

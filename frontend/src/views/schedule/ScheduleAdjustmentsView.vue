@@ -794,7 +794,7 @@ function openConfirmDialog(occ: LessonOccurrenceItem) {
   });
 
   // 老师代其他老师确认 — 提示
-  if (authStore.currentUser?.userType === 'TEACHER' && occ.plannedTeacherId && occ.plannedTeacherId !== authStore.currentUser.userId) {
+  if (authStore.currentUser?.userType === 'TEACHER' && occ.plannedTeacherId && authStore.currentUser.teacherId != null && occ.plannedTeacherId !== authStore.currentUser.teacherId) {
     ElMessageBox.confirm(
       'This lesson is assigned to another teacher. Are you sure you want to confirm it?',
       'Confirm as Another Teacher',

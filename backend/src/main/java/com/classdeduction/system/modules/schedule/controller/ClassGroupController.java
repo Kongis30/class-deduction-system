@@ -3,11 +3,6 @@ package com.classdeduction.system.modules.schedule.controller;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
-import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
-import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
-import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
-import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +22,6 @@ import java.util.Map;
 public class ClassGroupController {
 
     private final ClassGroupService classGroupService;
-    private final LessonOccurrenceMapper lessonOccurrenceMapper;
-    private final LessonRecordMapper lessonRecordMapper;
 
     @GetMapping
     @Operation(summary = "List all active class groups")
@@ -51,14 +44,7 @@ public class ClassGroupController {
     @GetMapping("/{classId}/occurrences")
     @Operation(summary = "List planned lesson occurrences for a class")
     public ApiResponse<List<Map<String, Object>>> listClassOccurrences(@PathVariable Long classId) {
-        List<Map<String, Object>> occurrences = classGroupService.listClassOccurrences(classId);
-        // 补全教师/教室名称（直接查）
-        for (Map<String, Object> occ : occurrences) {
-            if (occ.get("plannedTeacherId") != null) {
-                // handled in service if needed; minimal enrichment here
-            }
-        }
-        return ApiResponse.success(occurrences);
+        return ApiResponse.success(classGroupService.listClassOccurrences(classId));
     }
 
     @PostMapping("/{classId}/occurrences/{occurrenceId}/confirm")
