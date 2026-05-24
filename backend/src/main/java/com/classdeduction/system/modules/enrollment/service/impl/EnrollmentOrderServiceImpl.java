@@ -986,6 +986,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 newGroup.setClassName(product.getProductName());
                 newGroup.setListPrice(product.getListPrice());
                 newGroup.setProductId(request.getProductId());
+                newGroup.setTeacherId(product.getDefaultTeacherId());
+                newGroup.setClassroomId(product.getDefaultClassroomId());
                 newGroup.setStatus("ACTIVE");
                 classGroupMapper.insert(newGroup);
                 clz = newGroup;
@@ -1028,6 +1030,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                             occ.setLessonNo(generateClassLessonNo());
                             occ.setClassGroupId(resolvedClassId);
                             occ.setOccurrenceType("REGULAR");
+                            occ.setPlannedTeacherId(product.getDefaultTeacherId());
                             occ.setPlannedClassroomId(product.getDefaultClassroomId());
                             occ.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
                             occ.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
