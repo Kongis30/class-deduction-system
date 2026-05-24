@@ -15,7 +15,7 @@
       <el-input placeholder="Search students, instructors, classrooms, or packages" class="app-header__search" />
       <el-tag type="success" effect="light">{{ APP_TIMEZONE_LABEL }} timezone</el-tag>
 
-      <el-dropdown trigger="click" @command="handleDropdownCommand">
+      <el-dropdown trigger="click">
         <span class="app-header__user-trigger">
           <span class="app-header__user-name">{{ authStore.displayName }}</span>
           <el-avatar :size="34">{{ authStore.userInitials }}</el-avatar>
@@ -23,11 +23,11 @@
         </span>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="changePassword">
+            <el-dropdown-item @click="passwordDialogVisible = true">
               <el-icon><Key /></el-icon>
               Change Password
             </el-dropdown-item>
-            <el-dropdown-item command="signOut" divided class="app-header__signout-item">
+            <el-dropdown-item divided class="app-header__signout-item" @click="handleSignOut">
               Sign out
             </el-dropdown-item>
           </el-dropdown-menu>
@@ -108,16 +108,6 @@ const sectionTitle = computed(() => String(route.meta.section ?? 'Admin'));
 async function handleSignOut() {
   await authStore.signOut();
   await router.push('/login');
-}
-
-// ─── Dropdown ───────────────────────────────────────
-
-function handleDropdownCommand(command: string) {
-  if (command === 'changePassword') {
-    passwordDialogVisible.value = true;
-  } else if (command === 'signOut') {
-    handleSignOut();
-  }
 }
 
 // ─── Change Password Dialog ─────────────────────────
