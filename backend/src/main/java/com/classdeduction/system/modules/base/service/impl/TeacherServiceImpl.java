@@ -21,6 +21,8 @@ import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEn
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
+import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.cache.annotation.CacheEvict;
@@ -47,6 +49,7 @@ public class TeacherServiceImpl implements TeacherService {
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
     private final UserAccountMapper userAccountMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final JsonHelper jsonHelper;
 
     @Override
@@ -154,10 +157,16 @@ public class TeacherServiceImpl implements TeacherService {
         Long classGroups = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
                 .eq(ClassGroupEntity::getTeacherId, id)
                 .eq(ClassGroupEntity::getIsDeleted, 0));
-        if (futureOccurrences + activeRules + userAccounts + classGroups > 0) {
+        // 检查课包分配
+        Long packageAssignments = packageTeacherAssignmentMapper.selectCount(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                .eq(PackageTeacherAssignmentEntity::getTeacherId, id)
+                .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
+                .eq(PackageTeacherAssignmentEntity::getIsDeleted, 0));
+        if (futureOccurrences + activeRules + userAccounts + classGroups + packageAssignments > 0) {
             throw new BusinessException("TEACHER_HAS_REFERENCES",
                     "Cannot delete instructor: there are future lessons, active schedule rules, "
-                            + "user accounts, or assigned classes. Set to INACTIVE instead.");
+                            + "user accounts, assigned classes, or active course package assignments. "
+                            + "Set to INACTIVE instead.");
         }
         teacherMapper.deleteById(id);
     }

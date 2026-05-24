@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.common.util.StudentNoGenerator;
 import com.classdeduction.system.modules.auth.dto.StudentAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.StudentAccountPageQuery;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
@@ -24,8 +25,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
-import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
@@ -43,6 +42,7 @@ public class StudentAccountServiceImpl implements StudentAccountService {
     private final UserRoleMapper userRoleMapper;
     private final RoleMapper roleMapper;
     private final StudentMapper studentMapper;
+    private final StudentNoGenerator studentNoGenerator;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -84,7 +84,7 @@ public class StudentAccountServiceImpl implements StudentAccountService {
 
         // 1. Create student profile
         StudentEntity student = new StudentEntity();
-        student.setStudentNo(generateUniqueStudentNo());
+        student.setStudentNo(studentNoGenerator.generate());
         student.setStudentName(request.getStudentName());
         student.setStatus("ACTIVE");
         student.setGuardianName(request.getGuardianName());
@@ -105,30 +105,6 @@ public class StudentAccountServiceImpl implements StudentAccountService {
         userAccountMapper.insert(entity);
         bindStudentRole(entity.getId());
         return entity.getId();
-    }
-
-    private String generateUniqueStudentNo() {
-        String todayPrefix = "STU" + LocalDate.now(AppTime.APP_ZONE_ID)
-                .format(DateTimeFormatter.ofPattern("yyyyMMdd"));
-        StudentEntity maxStudent = studentMapper.selectOne(
-                new LambdaQueryWrapper<StudentEntity>()
-                        .likeRight(StudentEntity::getStudentNo, todayPrefix)
-                        .eq(StudentEntity::getIsDeleted, 0)
-                        .orderByDesc(StudentEntity::getStudentNo)
-                        .last("LIMIT 1"));
-        int nextSeq = 1;
-        if (maxStudent != null && maxStudent.getStudentNo() != null) {
-            String maxNo = maxStudent.getStudentNo();
-            if (maxNo.startsWith(todayPrefix)) {
-                try {
-                    String seqStr = maxNo.substring(todayPrefix.length());
-                    nextSeq = Integer.parseInt(seqStr) + 1;
-                } catch (NumberFormatException e) {
-                    nextSeq = 1;
-                }
-            }
-        }
-        return String.format("%s%04d", todayPrefix, nextSeq);
     }
 
     private void ensureUsernameUnique(String username) {

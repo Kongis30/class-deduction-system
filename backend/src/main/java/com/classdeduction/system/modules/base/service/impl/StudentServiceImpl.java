@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
+import com.classdeduction.system.common.util.StudentNoGenerator;
 import com.classdeduction.system.modules.base.dto.StudentPageQuery;
 import com.classdeduction.system.modules.base.dto.StudentSaveRequest;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
@@ -12,6 +13,10 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.service.StudentService;
 import com.classdeduction.system.modules.base.vo.StudentDetailVO;
 import com.classdeduction.system.modules.base.vo.StudentListItemVO;
+import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +36,9 @@ public class StudentServiceImpl implements StudentService {
     private static final String DEFAULT_STATUS = "ACTIVE";
 
     private final StudentMapper studentMapper;
+    private final StudentNoGenerator studentNoGenerator;
+    private final CoursePackageMapper coursePackageMapper;
+    private final ClassEnrollmentMapper classEnrollmentMapper;
 
     @Override
     public List<StudentListItemVO> listAllActive() {
@@ -78,46 +86,13 @@ public class StudentServiceImpl implements StudentService {
     public Long createStudent(StudentSaveRequest request) {
         String studentNo = StringUtils.hasText(request.getStudentNo())
                 ? request.getStudentNo()
-                : generateUniqueStudentNo();
+                : studentNoGenerator.generate();
         request.setStudentNo(studentNo);
 
         StudentEntity entity = new StudentEntity();
         applyStudent(entity, request);
         studentMapper.insert(entity);
         return entity.getId();
-    }
-
-    /**
-     * Generate a unique student number based on the max existing number for today.
-     * Format: STU + yyyyMMdd + 4-digit sequence
-     */
-    private String generateUniqueStudentNo() {
-        String todayPrefix = "STU" + java.time.LocalDate.now(
-                com.classdeduction.system.common.time.AppTime.APP_ZONE_ID)
-                .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd"));
-
-        // Find max studentNo with today's prefix (excluding soft-deleted records)
-        StudentEntity maxStudent = studentMapper.selectOne(
-                new LambdaQueryWrapper<StudentEntity>()
-                        .likeRight(StudentEntity::getStudentNo, todayPrefix)
-                        .eq(StudentEntity::getIsDeleted, 0)
-                        .orderByDesc(StudentEntity::getStudentNo)
-                        .last("LIMIT 1"));
-
-        int nextSeq = 1;
-        if (maxStudent != null && maxStudent.getStudentNo() != null) {
-            String maxNo = maxStudent.getStudentNo();
-            if (maxNo.startsWith(todayPrefix)) {
-                try {
-                    String seqStr = maxNo.substring(todayPrefix.length());
-                    nextSeq = Integer.parseInt(seqStr) + 1;
-                } catch (NumberFormatException e) {
-                    nextSeq = 1;
-                }
-            }
-        }
-
-        return String.format("%s%04d", todayPrefix, nextSeq);
     }
 
     @Override
@@ -137,6 +112,21 @@ public class StudentServiceImpl implements StudentService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteStudent(Long id) {
         requireStudent(id);
+        // 检查未完成的课包（DRAFT 或 ACTIVE）
+        Long activePackages = coursePackageMapper.selectCount(new LambdaQueryWrapper<CoursePackageEntity>()
+                .eq(CoursePackageEntity::getStudentId, id)
+                .in(CoursePackageEntity::getPackageStatus, "DRAFT", "ACTIVE")
+                .eq(CoursePackageEntity::getIsDeleted, 0));
+        // 检查活跃的班课报名
+        Long activeEnrollments = classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                .eq(ClassEnrollmentEntity::getStudentId, id)
+                .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+        if (activePackages + activeEnrollments > 0) {
+            throw new BusinessException("STUDENT_HAS_REFERENCES",
+                    "Cannot delete student: there are active course packages or class group enrollments. "
+                            + "Set to INACTIVE instead.");
+        }
         studentMapper.deleteById(id);
     }
 

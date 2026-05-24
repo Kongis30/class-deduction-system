@@ -292,11 +292,15 @@ async function handleDelete(row: TeacherItem) {
       'Confirm delete',
       { type: 'warning' },
     );
+  } catch {
+    return; // User cancelled
+  }
+  try {
     await deleteTeacher(row.id);
     ElMessage.success('Deleted.');
     loadData();
-  } catch {
-    // User cancelled
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
   }
 }
 
