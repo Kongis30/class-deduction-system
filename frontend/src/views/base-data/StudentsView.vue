@@ -63,6 +63,11 @@
             </div>
           </template>
         </el-table-column>
+        <el-table-column label="Guardian Email" min-width="160">
+          <template #default="{ row }">
+            {{ row.guardianEmail || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column label="Status" min-width="90" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
@@ -267,7 +272,7 @@ interface FieldConfigMap {
 
 const defaultFieldConfig: FieldConfigMap = {
   gender: { key: 'gender', defaultLabel: 'Gender', visible: true, customLabel: 'Gender' },
-  email: { key: 'email', defaultLabel: 'Email', visible: true, customLabel: 'Email' },
+  email: { key: 'email', defaultLabel: 'Guardian Email', visible: true, customLabel: 'Guardian Email' },
   status: { key: 'status', defaultLabel: 'Status', visible: true, customLabel: 'Status' },
   notes: { key: 'notes', defaultLabel: 'Notes', visible: false, customLabel: 'Notes' },
   englishName: { key: 'englishName', defaultLabel: 'English Name', visible: false, customLabel: 'English Name' },

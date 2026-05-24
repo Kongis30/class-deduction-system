@@ -52,23 +52,6 @@ VALUES (8006, 'ST2024006', '周雅婷', 'Yating Zhou', 'FEMALE', '2011-09-05', '
 ON DUPLICATE KEY UPDATE id=id;
 
 
--- ── 3. Guardian Contacts ─────────────────────────────────────
-INSERT INTO guardian_contact (id, student_id, contact_name, relation_type, mobile, email, is_primary, status, notes, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (9001, 8001, 'Zhang Li', 'MOTHER', '917-555-0211', 'zhangli.guardian@gmail.com', 1, 'ACTIVE', '', '2024-02-10 10:00:00.000', 1, '2024-02-10 10:00:00.000', 1, 0, 0)
-ON DUPLICATE KEY UPDATE id=id;
-
-INSERT INTO guardian_contact (id, student_id, contact_name, relation_type, mobile, email, is_primary, status, notes, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (9002, 8002, 'Li Ming', 'FATHER', '917-555-0212', 'liming.guardian@gmail.com', 1, 'ACTIVE', '', '2024-03-01 11:00:00.000', 1, '2024-03-01 11:00:00.000', 1, 0, 0)
-ON DUPLICATE KEY UPDATE id=id;
-
-INSERT INTO guardian_contact (id, student_id, contact_name, relation_type, mobile, email, is_primary, status, notes, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (9003, 8003, 'Wang Fang', 'MOTHER', '917-555-0213', 'wangfang.guardian@gmail.com', 1, 'ACTIVE', '', '2024-03-15 09:00:00.000', 1, '2024-03-15 09:00:00.000', 1, 0, 0)
-ON DUPLICATE KEY UPDATE id=id;
-
-INSERT INTO guardian_contact (id, student_id, contact_name, relation_type, mobile, email, is_primary, status, notes, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (9004, 8004, 'Chen Lihua', 'FATHER', '917-555-0214', 'chenlihua.guardian@gmail.com', 1, 'ACTIVE', '', '2024-04-01 10:00:00.000', 1, '2024-04-01 10:00:00.000', 1, 0, 0)
-ON DUPLICATE KEY UPDATE id=id;
-
 -- ── 4. Campuses ──────────────────────────────────────────────
 INSERT INTO campus (id, campus_name, display_order, status, notes, created_at, created_by, updated_at, updated_by, is_deleted, version)
 VALUES (6001, 'Manhattan Campus', 1, 'ACTIVE', 'Main campus in Midtown Manhattan', '2023-01-01 00:00:00.000', 1, '2023-01-01 00:00:00.000', 1, 0, 0)

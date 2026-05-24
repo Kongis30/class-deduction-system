@@ -5,10 +5,9 @@ import lombok.Builder;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.List;
 
 /**
- * Student detail response payload including guardian contacts.
+ * Student detail response payload.
  */
 @Builder
 @Schema(description = "Student detail response payload")
@@ -22,7 +21,10 @@ public record StudentDetailVO(
         String sourceChannel,
         String status,
         String notes,
-        List<GuardianContactVO> guardianContacts,
+        String guardianName,
+        String guardianPhone,
+        String guardianEmail,
+        String guardianRelationType,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

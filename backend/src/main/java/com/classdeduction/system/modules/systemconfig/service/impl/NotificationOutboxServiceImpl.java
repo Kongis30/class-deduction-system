@@ -3,9 +3,8 @@ package com.classdeduction.system.modules.systemconfig.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
-import com.classdeduction.system.modules.base.entity.GuardianContactEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
-import com.classdeduction.system.modules.base.mapper.GuardianContactMapper;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.systemconfig.entity.BrandConfigEntity;
@@ -43,7 +42,7 @@ public class NotificationOutboxServiceImpl implements NotificationOutboxService 
     private final NotificationTemplateMapper notificationTemplateMapper;
     private final NotificationLogMapper notificationLogMapper;
     private final BrandConfigMapper brandConfigMapper;
-    private final GuardianContactMapper guardianContactMapper;
+    private final StudentMapper studentMapper;
     private final NotificationTriggerRuleMapper notificationTriggerRuleMapper;
     private final JsonHelper jsonHelper;
 
@@ -137,31 +136,14 @@ public class NotificationOutboxServiceImpl implements NotificationOutboxService 
     }
 
     /**
-     * 先通知主联系人；若未维护主联系人邮箱，则退化为所有可用邮箱去重后发送。
+     * 返回学生档案中的监护人邮箱。如果未维护则返回空列表。
      */
     private List<String> findRecipients(Long studentId) {
-        List<GuardianContactEntity> contacts = guardianContactMapper.selectList(new LambdaQueryWrapper<GuardianContactEntity>()
-                .eq(GuardianContactEntity::getStudentId, studentId)
-                .eq(GuardianContactEntity::getStatus, "ACTIVE")
-                .orderByDesc(GuardianContactEntity::getIsPrimary)
-                .orderByAsc(GuardianContactEntity::getId));
-        List<GuardianContactEntity> eligible = contacts.stream()
-                .filter(item -> StringUtils.hasText(item.getEmail()))
-                .toList();
-        if (eligible.isEmpty()) {
+        StudentEntity student = studentMapper.selectById(studentId);
+        if (student == null || !StringUtils.hasText(student.getGuardianEmail())) {
             return Collections.emptyList();
         }
-        List<GuardianContactEntity> primaryContacts = eligible.stream()
-                .filter(item -> item.getIsPrimary() != null && item.getIsPrimary() == 1)
-                .toList();
-        List<GuardianContactEntity> selected = primaryContacts.isEmpty() ? eligible : primaryContacts;
-        return selected.stream()
-                .map(GuardianContactEntity::getEmail)
-                .filter(StringUtils::hasText)
-                .map(String::trim)
-                .map(String::toLowerCase)
-                .distinct()
-                .collect(Collectors.toList());
+        return Collections.singletonList(student.getGuardianEmail().trim().toLowerCase());
     }
 
     private Map<String, String> buildVariables(LessonRecordEntity lessonRecord,

@@ -21,7 +21,7 @@ This system is an internal admin product for a single tutoring brand in the Unit
 
 Confirmed MVP scope:
 
-- student, guardian, teacher, classroom, and course product management
+- student, teacher, classroom, and course product management
 - enrollment orders and course package creation
 - cash payment records and receipt export
 - primary teacher assignment per package
@@ -59,8 +59,7 @@ Reserved for a future role with restricted self-service access such as viewing a
 
 ## Core Domain Concepts
 
-- `Student`: the learner record
-- `GuardianContact`: parent or guardian contact information
+- `Student`: the learner record with guardian contact info (guardian_name, guardian_phone, guardian_email, guardian_relation_type)
 - `Teacher`: instructional staff record
 - `Classroom`: a physical teaching room
 - `CourseProduct`: reusable course and pricing template

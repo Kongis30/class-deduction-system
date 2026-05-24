@@ -105,9 +105,6 @@
         <el-form-item label="Account" prop="username">
           <el-input v-model="createForm.username" placeholder="Login username" />
         </el-form-item>
-        <el-form-item label="Display name" prop="displayName">
-          <el-input v-model="createForm.displayName" placeholder="Display name (defaults to person name)" />
-        </el-form-item>
         <div class="form-row">
           <el-form-item label="Password" prop="password">
             <el-input v-model="createForm.password" type="password" placeholder="Min 8 characters" show-password />
@@ -152,7 +149,6 @@ const createForm = reactive({
   guardianPhone: '',
   guardianEmail: '',
   username: '',
-  displayName: '',
   password: '',
   confirmPassword: '',
   email: '',
@@ -222,7 +218,6 @@ function openCreateDialog(type: 'TEACHER' | 'STUDENT') {
     guardianPhone: '',
     guardianEmail: '',
     username: '',
-    displayName: '',
     password: '',
     confirmPassword: '',
     email: '',
@@ -241,7 +236,6 @@ async function handleCreate() {
         teacherName: createForm.teacherName,
         username: createForm.username,
         password: createForm.password,
-        displayName: createForm.displayName || undefined,
         mobile: createForm.mobile || undefined,
         email: createForm.email || undefined,
         subjectTags: createForm.subjectTags.length ? createForm.subjectTags : undefined,
@@ -257,7 +251,6 @@ async function handleCreate() {
         guardianEmail: createForm.guardianEmail || undefined,
         username: createForm.username,
         password: createForm.password,
-        displayName: createForm.displayName || undefined,
         email: createForm.email || undefined,
       });
       ElMessage.success('Student account created.');

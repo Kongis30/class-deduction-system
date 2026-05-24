@@ -37,7 +37,6 @@ Purpose:
 Main tables:
 
 - `student`
-- `guardian_contact`
 - `teacher`
 - `classroom`
 - `course_product`

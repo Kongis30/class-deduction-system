@@ -253,31 +253,6 @@ CREATE TABLE IF NOT EXISTS `student` (
   CONSTRAINT `fk_student_campus` FOREIGN KEY (`campus_id`) REFERENCES `campus` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Student master';
 
-CREATE TABLE IF NOT EXISTS `guardian_contact` (
-  `id` BIGINT NOT NULL COMMENT 'Primary key ID',
-  `student_id` BIGINT NOT NULL COMMENT 'Student ID',
-  `contact_name` VARCHAR(64) NOT NULL COMMENT 'Contact name',
-  `relation_type` VARCHAR(32) DEFAULT NULL COMMENT 'Relationship type',
-  `mobile` VARCHAR(32) DEFAULT NULL COMMENT 'Mobile',
-  `email` VARCHAR(128) DEFAULT NULL COMMENT 'Email',
-  `is_primary` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Primary contact flag: 0=no, 1=yes',
-  `status` VARCHAR(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
-  `notes` VARCHAR(500) DEFAULT NULL COMMENT 'Notes',
-  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
-  `created_by` BIGINT DEFAULT NULL COMMENT 'Created by user ID',
-  `updated_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
-  `updated_by` BIGINT DEFAULT NULL COMMENT 'Updated by user ID',
-  `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag: 0=no, 1=yes',
-  `deleted_at` DATETIME(3) DEFAULT NULL COMMENT 'Deleted at',
-  `deleted_by` BIGINT DEFAULT NULL COMMENT 'Deleted by user ID',
-  `version` INT NOT NULL DEFAULT 0 COMMENT 'Optimistic lock version',
-  PRIMARY KEY (`id`),
-  KEY `idx_guardian_student` (`student_id`, `is_primary`),
-  KEY `idx_guardian_email` (`email`),
-  KEY `idx_guardian_mobile` (`mobile`),
-  CONSTRAINT `fk_guardian_student` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Guardian contacts';
-
 -- Campus table for managing building/campus locations
 CREATE TABLE IF NOT EXISTS `campus` (
   `id` BIGINT NOT NULL COMMENT 'Primary key ID',

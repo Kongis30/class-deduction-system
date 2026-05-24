@@ -1,8 +1,7 @@
 package com.classdeduction.system.modules.systemconfig.service;
 
-import com.classdeduction.system.modules.base.entity.GuardianContactEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
-import com.classdeduction.system.modules.base.mapper.GuardianContactMapper;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.systemconfig.entity.BrandConfigEntity;
@@ -32,7 +31,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 通知出站服务测试：确保课后通知会写入 pending 邮件日志，并优先通知主联系人。
+ * 通知出站服务测试：确保课后通知会写入 pending 邮件日志，并正确使用监护人邮箱。
  */
 @ExtendWith(MockitoExtension.class)
 class NotificationOutboxServiceImplTest {
@@ -47,7 +46,7 @@ class NotificationOutboxServiceImplTest {
     private BrandConfigMapper brandConfigMapper;
 
     @Mock
-    private GuardianContactMapper guardianContactMapper;
+    private StudentMapper studentMapper;
 
     @Mock
     private com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper notificationTriggerRuleMapper;
@@ -63,7 +62,7 @@ class NotificationOutboxServiceImplTest {
                 notificationTemplateMapper,
                 notificationLogMapper,
                 brandConfigMapper,
-                guardianContactMapper,
+                studentMapper,
                 notificationTriggerRuleMapper,
                 new JsonHelper(new ObjectMapper())
         );
@@ -73,11 +72,7 @@ class NotificationOutboxServiceImplTest {
     void shouldQueuePendingEmailForPrimaryGuardian() {
         when(notificationTemplateMapper.selectOne(any())).thenReturn(buildTemplate());
         when(brandConfigMapper.selectOne(any())).thenReturn(buildBrandConfig());
-        when(guardianContactMapper.selectList(any())).thenReturn(List.of(
-                buildGuardian("secondary@example.com", 0),
-                buildGuardian("primary@example.com", 1),
-                buildGuardian("PRIMARY@example.com", 1)
-        ));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudentWithGuardianEmail());
 
         notificationOutboxService.queueLessonBalanceEmail(buildLessonRecord(), buildCoursePackage(), buildStudent(), "Completed");
 
@@ -107,12 +102,11 @@ class NotificationOutboxServiceImplTest {
         return entity;
     }
 
-    private GuardianContactEntity buildGuardian(String email, int isPrimary) {
-        GuardianContactEntity entity = new GuardianContactEntity();
-        entity.setStudentId(601L);
-        entity.setEmail(email);
-        entity.setIsPrimary(isPrimary);
-        entity.setStatus("ACTIVE");
+    private StudentEntity buildStudentWithGuardianEmail() {
+        StudentEntity entity = new StudentEntity();
+        entity.setId(601L);
+        entity.setStudentName("Olivia Lin");
+        entity.setGuardianEmail("primary@example.com");
         return entity;
     }
 

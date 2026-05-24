@@ -42,9 +42,7 @@ import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
-import com.classdeduction.system.modules.base.entity.GuardianContactEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
-import com.classdeduction.system.modules.base.mapper.GuardianContactMapper;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -87,7 +85,6 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     private final CoursePackageMapper coursePackageMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final StudentMapper studentMapper;
-    private final GuardianContactMapper guardianContactMapper;
     private final UserAccountMapper userAccountMapper;
 
     @Override
@@ -644,16 +641,8 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         if (students.isEmpty()) {
             return Collections.emptyList();
         }
-        List<Long> studentIds = students.stream().map(StudentEntity::getId).toList();
-        LambdaQueryWrapper<GuardianContactEntity> contactWrapper = new LambdaQueryWrapper<GuardianContactEntity>()
-                .select(GuardianContactEntity::getEmail)
-                .in(GuardianContactEntity::getStudentId, studentIds)
-                .isNotNull(GuardianContactEntity::getEmail)
-                .ne(GuardianContactEntity::getEmail, "")
-                .in(GuardianContactEntity::getIsDeleted, 0);
-        List<GuardianContactEntity> contacts = guardianContactMapper.selectList(contactWrapper);
-        return contacts.stream()
-                .map(GuardianContactEntity::getEmail)
+        return students.stream()
+                .map(StudentEntity::getGuardianEmail)
                 .filter(StringUtils::hasText)
                 .distinct()
                 .toList();

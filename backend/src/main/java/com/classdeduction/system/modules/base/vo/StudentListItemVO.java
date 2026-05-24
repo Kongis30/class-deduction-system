@@ -21,13 +21,9 @@ public record StudentListItemVO(
         String sourceChannel,
         String status,
         String notes,
-        String primaryGuardianName,
-        String primaryGuardianMobile,
-        String primaryGuardianEmail,
-        int guardianCount,
-        // Flat fields matching frontend expectations
         String guardianName,
         String phone,
+        String guardianEmail,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {

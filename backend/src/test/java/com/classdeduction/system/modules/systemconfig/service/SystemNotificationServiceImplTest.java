@@ -67,9 +67,6 @@ class SystemNotificationServiceImplTest {
     private com.classdeduction.system.modules.base.mapper.StudentMapper studentMapper;
 
     @Mock
-    private com.classdeduction.system.modules.base.mapper.GuardianContactMapper guardianContactMapper;
-
-    @Mock
     private com.classdeduction.system.modules.auth.mapper.UserAccountMapper userAccountMapper;
 
     @Captor
@@ -93,7 +90,6 @@ class SystemNotificationServiceImplTest {
                 coursePackageMapper,
                 hourLedgerMapper,
                 studentMapper,
-                guardianContactMapper,
                 userAccountMapper
         );
     }
