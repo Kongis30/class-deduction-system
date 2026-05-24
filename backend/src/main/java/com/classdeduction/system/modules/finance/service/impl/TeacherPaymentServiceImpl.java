@@ -125,11 +125,25 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 .collect(Collectors.toMap(LessonOccurrenceEntity::getId, o -> o))
                 : Collections.emptyMap();
 
-        // 4. 获取产品的 productId 集合
+        // 3b. 批量加载 class_group（班课通过 class_group.productId 找 rate）
+        Set<Long> classGroupIds = occurrenceMap.values().stream()
+                .map(LessonOccurrenceEntity::getClassGroupId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, ClassGroupEntity> classGroupMap = !classGroupIds.isEmpty()
+                ? classGroupMapper.selectBatchIds(classGroupIds).stream()
+                .collect(Collectors.toMap(ClassGroupEntity::getId, cg -> cg))
+                : Collections.emptyMap();
+
+        // 4. 获取产品的 productId 集合（包括 1v1 课包和班课产品）
         Set<Long> productIds = packageMap.values().stream()
                 .map(CoursePackageEntity::getCourseProductId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
+        productIds.addAll(classGroupMap.values().stream()
+                .map(ClassGroupEntity::getProductId)
+                .filter(Objects::nonNull)
+                .toList());
 
         Map<Long, CourseProductEntity> productMap = !productIds.isEmpty()
                 ? courseProductMapper.selectBatchIds(productIds).stream()
@@ -161,8 +175,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 }
                 groupedOccurrenceIds.add(rec.getOccurrenceId());
 
-                CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
-                Long productId = pkg != null ? pkg.getCourseProductId() : null;
+                // 班课没有 packageId，从 class_group 获取 productId
+                ClassGroupEntity cg = classGroupMap.get(occurrence.getClassGroupId());
+                Long productId = cg != null ? cg.getProductId() : null;
                 String rateKey = query.getTeacherId() + ":" + productId;
                 BigDecimal hourlyRate = rateMap.getOrDefault(rateKey, BigDecimal.ZERO);
 
@@ -177,8 +192,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                         .lessonDate(rec.getConfirmedAt())
                         .studentId(rec.getStudentId())
                         .studentName(null) // 班课不显示学生名字
-                        .packageId(rec.getPackageId())
-                        .packageName(pkg != null ? pkg.getPackageName() : null)
+                        .packageId(null)
+                        .packageName(null)
                         .courseProductId(productId)
                         .productName(product != null ? product.getProductName() : null)
                         .subjectName(product != null ? product.getSubjectName() : null)
@@ -188,7 +203,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                         .amount(amount)
                         .resultStatus(rec.getResultStatus())
                         .occurrenceType(occurrence.getOccurrenceType())
-                        .className(resolveClassName(occurrence))
+                        .className(cg != null ? cg.getClassName() : null)
                         .lessonRecordId(rec.getId()) // 只用一条 lessonRecordId 去结算
                         .lessonRecordIds(null)
                         .build());
