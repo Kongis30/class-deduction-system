@@ -8,8 +8,8 @@
     <div class="login-page__dots"></div>
     <div class="login-card">
       <div class="login-card__brand">
-        <div class="login-card__logo">J</div>
-        <h1>{{ APP_SYSTEM_NAME }}</h1>
+        <img src="/logo.jpg" alt="JIN BEST TUTORING" class="login-card__logo-img" />
+        <h1>JIN BEST TUTORING</h1>
       </div>
 
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="submitLogin">
@@ -34,7 +34,6 @@ import type { FormInstance, FormRules } from 'element-plus';
 import { AxiosError } from 'axios';
 import { useRoute, useRouter } from 'vue-router';
 
-import { APP_SYSTEM_NAME } from '@/config/app-config';
 import { useAuthStore } from '@/stores/auth';
 import { isStudentUser, isTeacherUser, type LoginPayload } from '@/types/auth';
 import type { ApiResponse } from '@/types/http';
