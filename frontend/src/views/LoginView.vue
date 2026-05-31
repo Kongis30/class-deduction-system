@@ -8,7 +8,7 @@
 
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="submitLogin">
         <el-form-item label="Account" prop="username">
-          <el-input v-model="form.username" placeholder="admin / staff" @keyup.enter="submitLogin" />
+          <el-input v-model="form.username" placeholder="Enter your username" @keyup.enter="submitLogin" />
         </el-form-item>
         <el-form-item label="Password" prop="password">
           <el-input v-model="form.password" placeholder="Enter password" show-password @keyup.enter="submitLogin" />
@@ -39,8 +39,8 @@ const authStore = useAuthStore();
 const formRef = ref<FormInstance>();
 
 const form = reactive<LoginPayload>({
-  username: 'admin',
-  password: 'Jin2025',
+  username: '',
+  password: '',
 });
 
 const rules: FormRules<LoginPayload> = {
