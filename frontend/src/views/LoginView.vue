@@ -1,5 +1,11 @@
 <template>
   <div class="login-page">
+    <div class="login-page__stripe"></div>
+    <div class="login-page__deco-1"></div>
+    <div class="login-page__deco-2"></div>
+    <div class="login-page__deco-3"></div>
+    <div class="login-page__deco-4"></div>
+    <div class="login-page__dots"></div>
     <div class="login-card">
       <div class="login-card__brand">
         <div class="login-card__logo">J</div>
