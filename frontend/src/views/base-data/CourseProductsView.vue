@@ -197,8 +197,8 @@
 
         <!-- Group: Default classroom -->
         <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
-          <el-form-item label="Default classroom" class="product-form__full">
-            <el-select v-model="form.defaultClassroomId" placeholder="Select classroom" filterable clearable style="width: 100%;">
+          <el-form-item label="Default classroom" prop="defaultClassroomId" class="product-form__full">
+            <el-select v-model="form.defaultClassroomId" placeholder="Select classroom" filterable style="width: 100%;">
               <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
             </el-select>
           </el-form-item>
@@ -206,8 +206,8 @@
 
         <!-- Group: Default teacher -->
         <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
-          <el-form-item label="Teacher" class="product-form__full">
-            <el-select v-model="form.defaultTeacherId" placeholder="Select teacher" filterable clearable style="width: 100%;">
+          <el-form-item label="Teacher" prop="defaultTeacherId" class="product-form__full">
+            <el-select v-model="form.defaultTeacherId" placeholder="Select teacher" filterable style="width: 100%;">
               <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
             </el-select>
           </el-form-item>
@@ -554,6 +554,24 @@ const formRules = {
     },
   ],
   listPrice: [{ required: true, message: 'List price is required' }],
+  defaultClassroomId: [{
+    validator: (rule: any, value: any, callback: any) => {
+      if (form.teachingMode === 'GROUP' && (value === undefined || value === null || value === '')) {
+        callback(new Error('Classroom is required for group products'));
+      } else {
+        callback();
+      }
+    }, trigger: 'change',
+  }],
+  defaultTeacherId: [{
+    validator: (rule: any, value: any, callback: any) => {
+      if (form.teachingMode === 'GROUP' && (value === undefined || value === null || value === '')) {
+        callback(new Error('Teacher is required for group products'));
+      } else {
+        callback();
+      }
+    }, trigger: 'change',
+  }],
   expiryDate: [{
     validator: (rule: any, value: any, callback: any) => {
       if (form.teachingMode === 'GROUP' && !value) {
