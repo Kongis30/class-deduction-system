@@ -6,11 +6,11 @@
   "scripts": {
     "start": "electron .",
     "build:frontend": "cd ../frontend && npm run build",
-    "pack": "electron-builder --dir",
-    "dist": "electron-builder",
-    "dist:mac": "electron-builder --mac",
-    "dist:win": "electron-builder --win",
-    "dist:linux": "electron-builder --linux"
+    "pack": "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --dir",
+    "dist": "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder",
+    "dist:mac": "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --mac",
+    "dist:win": "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --win",
+    "dist:linux": "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ electron-builder --linux"
   },
   "build": {
     "appId": "com.jinbesttutoring.class-deduction",
