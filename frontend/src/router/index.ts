@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router';
+import { createRouter, createWebHistory, createWebHashHistory, type RouteRecordRaw } from 'vue-router';
 
 import AppLayout from '@/components/layout/AppLayout.vue';
 import { APP_SYSTEM_NAME } from '@/config/app-config';
@@ -223,8 +223,16 @@ const routes: RouteRecordRaw[] = [
   },
 ];
 
+declare global {
+  interface Window {
+    electronAPI?: { platform: string };
+  }
+}
+
+const isElectron = typeof window !== 'undefined' && window.electronAPI?.platform !== undefined;
+
 const router = createRouter({
-  history: createWebHistory(),
+  history: isElectron ? createWebHashHistory() : createWebHistory(),
   routes,
   scrollBehavior: () => ({
     top: 0,
