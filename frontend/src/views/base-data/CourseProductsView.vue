@@ -195,8 +195,8 @@
           </el-form-item>
         </div>
 
-        <!-- Group: Default classroom -->
-        <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
+        <!-- Default classroom -->
+        <div class="product-form__row">
           <el-form-item label="Default classroom" prop="defaultClassroomId" class="product-form__full">
             <el-select v-model="form.defaultClassroomId" placeholder="Select classroom" filterable style="width: 100%;">
               <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
@@ -204,8 +204,8 @@
           </el-form-item>
         </div>
 
-        <!-- Group: Default teacher -->
-        <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
+        <!-- Default teacher -->
+        <div class="product-form__row">
           <el-form-item label="Teacher" prop="defaultTeacherId" class="product-form__full">
             <el-select v-model="form.defaultTeacherId" placeholder="Select teacher" filterable style="width: 100%;">
               <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
@@ -556,8 +556,8 @@ const formRules = {
   listPrice: [{ required: true, message: 'List price is required' }],
   defaultClassroomId: [{
     validator: (rule: any, value: any, callback: any) => {
-      if (form.teachingMode === 'GROUP' && (value === undefined || value === null || value === '')) {
-        callback(new Error('Classroom is required for group products'));
+      if (value === undefined || value === null || value === '') {
+        callback(new Error('Classroom is required'));
       } else {
         callback();
       }
@@ -565,8 +565,8 @@ const formRules = {
   }],
   defaultTeacherId: [{
     validator: (rule: any, value: any, callback: any) => {
-      if (form.teachingMode === 'GROUP' && (value === undefined || value === null || value === '')) {
-        callback(new Error('Teacher is required for group products'));
+      if (value === undefined || value === null || value === '') {
+        callback(new Error('Teacher is required'));
       } else {
         callback();
       }
@@ -720,6 +720,8 @@ async function handleSubmit() {
       listPrice: form.listPrice,
       status: form.status,
       notes: form.notes,
+      defaultClassroomId: form.defaultClassroomId,
+      defaultTeacherId: form.defaultTeacherId || undefined,
     };
     if (form.teachingMode === 'ONE_ON_ONE') {
       payload.defaultTotalUnits = form.defaultTotalUnits;
@@ -728,8 +730,6 @@ async function handleSubmit() {
       payload.expiryDurationDays = editingId.value
         ? form.expiryDurationDays
         : calcExpiryDays(form.expiryDate);
-      payload.defaultClassroomId = form.defaultClassroomId;
-      payload.defaultTeacherId = form.defaultTeacherId || undefined;
       payload.slots = formSlots.value.map(s => ({
         weekday: s.weekday,
         startTime: s.startTime,
