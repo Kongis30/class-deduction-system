@@ -22,23 +22,10 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
-        <el-table-column label="Actions" min-width="200" fixed="right">
+        <el-table-column label="Actions" min-width="180" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'TEACHER')">Edit</el-button>
-            <el-button
-              text
-              type="danger"
-              :disabled="deleteCountdowns[String(row.userId)] !== undefined && deleteCountdowns[String(row.userId)] > 0"
-              @click="handleDeleteAccount(row, 'TEACHER')"
-            >
-              {{
-                deleteCountdowns[String(row.userId)] === undefined
-                  ? 'Delete'
-                  : deleteCountdowns[String(row.userId)] > 0
-                    ? `Confirm (${deleteCountdowns[String(row.userId)]}s)`
-                    : 'Confirm delete'
-              }}
-            </el-button>
+            <el-button text type="danger" @click="openDeleteDialog(row, 'TEACHER')">Delete</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -66,23 +53,10 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
-        <el-table-column label="Actions" min-width="200" fixed="right">
+        <el-table-column label="Actions" min-width="180" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'STUDENT')">Edit</el-button>
-            <el-button
-              text
-              type="danger"
-              :disabled="deleteCountdowns[String(row.userId)] !== undefined && deleteCountdowns[String(row.userId)] > 0"
-              @click="handleDeleteAccount(row, 'STUDENT')"
-            >
-              {{
-                deleteCountdowns[String(row.userId)] === undefined
-                  ? 'Delete'
-                  : deleteCountdowns[String(row.userId)] > 0
-                    ? `Confirm (${deleteCountdowns[String(row.userId)]}s)`
-                    : 'Confirm delete'
-              }}
-            </el-button>
+            <el-button text type="danger" @click="openDeleteDialog(row, 'STUDENT')">Delete</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -200,13 +174,39 @@
         <el-button type="primary" :loading="editSaving" @click="handleEditSubmit">Save</el-button>
       </template>
     </el-dialog>
+
+    <!-- Delete Confirmation Dialog -->
+    <el-dialog v-model="deleteDialogVisible" width="460px" :close-on-click-modal="false" class="account-dialog" :close-on-press-escape="false">
+      <template #header><h3>Delete Account</h3></template>
+      <div class="delete-warning">
+        <div class="delete-warning__title">
+          确认删除账户「{{ deleteTargetName }}」？
+        </div>
+        <div class="delete-warning__body">
+          <p>删除后，该登录账号将被立即禁用，无法再登录系统。</p>
+          <p>对应的{{ deleteType === 'TEACHER' ? '老师' : '学生' }}档案不受影响，仍保留在系统中。</p>
+          <p class="delete-warning__caution">此操作不可撤销，请谨慎操作。</p>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="closeDeleteDialog">Cancel</el-button>
+        <el-button
+          type="danger"
+          :disabled="deleteCountdown > 0"
+          :loading="deleteSubmitting"
+          @click="handleConfirmDelete"
+        >
+          {{ deleteCountdown > 0 ? `确认删除 (${deleteCountdown}s)` : '确认删除' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import { onMounted, onUnmounted, reactive, ref, computed } from 'vue';
+import { ElMessage } from 'element-plus';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { createStudentAccount, createTeacherAccount, deleteStudentAccount, deleteTeacherAccount, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
 import type { StudentAccountItem, TeacherAccountItem } from '@/types/domain';
 
@@ -218,89 +218,57 @@ const formRef = ref();
 const teacherAccounts = ref<TeacherAccountItem[]>([]);
 const studentAccounts = ref<StudentAccountItem[]>([]);
 
-// ─── Delete countdown (userId -> remaining seconds) ──
-const deleteCountdowns = reactive<Record<string, number>>({});
-const countdownTimers: Record<string, ReturnType<typeof setInterval>> = {};
+// ─── Delete Confirmation Dialog ──────────────────────
+const deleteDialogVisible = ref(false);
+const deleteType = ref<'TEACHER' | 'STUDENT'>('TEACHER');
+const deleteTargetId = ref<number | null>(null);
+const deleteTargetName = ref('');
+const deleteCountdown = ref(0);
+const deleteSubmitting = ref(false);
+let deleteTimer: ReturnType<typeof setInterval> | null = null;
 
-function startCountdown(userId: string) {
-  deleteCountdowns[userId] = 10;
-  countdownTimers[userId] = setInterval(() => {
-    deleteCountdowns[userId]--;
-    if (deleteCountdowns[userId] <= 0) {
-      clearInterval(countdownTimers[userId]);
-      delete countdownTimers[userId];
+function openDeleteDialog(row: any, type: 'TEACHER' | 'STUDENT') {
+  deleteType.value = type;
+  deleteTargetId.value = row.userId;
+  deleteTargetName.value = row.displayName || row.username || `${type === 'TEACHER' ? 'Teacher' : 'Student'} #${row.userId}`;
+  deleteCountdown.value = 10;
+  deleteSubmitting.value = false;
+  deleteDialogVisible.value = true;
+  deleteTimer = setInterval(() => {
+    deleteCountdown.value--;
+    if (deleteCountdown.value <= 0 && deleteTimer) {
+      clearInterval(deleteTimer);
+      deleteTimer = null;
     }
   }, 1000);
 }
 
-function cleanupCountdown(userId: string) {
-  if (countdownTimers[userId]) {
-    clearInterval(countdownTimers[userId]);
-    delete countdownTimers[userId];
+function closeDeleteDialog() {
+  if (deleteTimer) {
+    clearInterval(deleteTimer);
+    deleteTimer = null;
   }
-  delete deleteCountdowns[userId];
+  deleteDialogVisible.value = false;
 }
 
-async function handleDeleteAccount(row: any, type: 'TEACHER' | 'STUDENT') {
-  const userId = String(row.userId);
-  const displayName = row.displayName || row.username || '';
-
-  // 处于倒计时中且倒计时已结束 -> 执行删除
-  if (deleteCountdowns[userId] !== undefined && deleteCountdowns[userId] <= 0) {
-    await executeDelete(userId, type, displayName);
-    return;
-  }
-
-  // 倒计时进行中 -> 忽略点击
-  if (deleteCountdowns[userId] !== undefined && deleteCountdowns[userId] > 0) {
-    return;
-  }
-
-  // 首次点击 -> 弹出确认框
+async function handleConfirmDelete() {
+  if (deleteCountdown.value > 0) return;
+  deleteSubmitting.value = true;
   try {
-    await ElMessageBox.confirm(
-      `Delete account "${displayName}"?\n\nThis will revoke login access immediately. The ${type.toLowerCase()} profile will NOT be affected.`,
-      'Delete Account',
-      { type: 'warning', confirmButtonText: 'Start 10s countdown', cancelButtonText: 'Cancel' }
-    );
-  } catch {
-    return; // 用户取消
-  }
-
-  // 开始倒计时
-  startCountdown(userId);
-}
-
-async function executeDelete(userId: string, type: 'TEACHER' | 'STUDENT', displayName: string) {
-  try {
-    await ElMessageBox.confirm(
-      `Are you sure you want to permanently delete the account for "${displayName}"?\n\nThis action cannot be undone.`,
-      'Confirm Delete',
-      { type: 'warning', confirmButtonText: 'Delete', confirmButtonClass: 'el-button--danger' }
-    );
-  } catch {
-    cleanupCountdown(userId);
-    return;
-  }
-
-  try {
-    if (type === 'TEACHER') {
-      await deleteTeacherAccount(Number(userId));
+    if (deleteType.value === 'TEACHER') {
+      await deleteTeacherAccount(deleteTargetId.value!);
     } else {
-      await deleteStudentAccount(Number(userId));
+      await deleteStudentAccount(deleteTargetId.value!);
     }
-    ElMessage.success(`${type === 'TEACHER' ? 'Teacher' : 'Student'} account deleted.`);
-    cleanupCountdown(userId);
+    ElMessage.success(`Account deleted.`);
+    closeDeleteDialog();
     await Promise.all([loadTeacherAccounts(), loadStudentAccounts()]);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
-    cleanupCountdown(userId);
+  } finally {
+    deleteSubmitting.value = false;
   }
 }
-
-onUnmounted(() => {
-  Object.values(countdownTimers).forEach((timer) => clearInterval(timer));
-});
 
 const subjectOptions = ['Math', 'English', 'Science', 'History', 'SAT', 'ACT', 'ESL', 'Music', 'Art', 'Other'];
 
@@ -551,5 +519,31 @@ async function handleCreate() {
 .account-dialog :deep(.el-dialog__footer) {
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
+}
+
+.delete-warning {
+  padding: 8px 0;
+}
+
+.delete-warning__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 12px;
+}
+
+.delete-warning__body {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.7;
+}
+
+.delete-warning__body p {
+  margin: 0 0 6px;
+}
+
+.delete-warning__caution {
+  color: #e6a23c;
+  font-weight: 500;
 }
 </style>
