@@ -84,7 +84,6 @@
           <template #default="{ row }">
             <div class="table-actions">
               <el-button text type="primary" @click="openStudentDialog(row)">Edit</el-button>
-              <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
             </div>
           </template>
         </el-table-column>
@@ -222,12 +221,11 @@
 
 <script setup lang="ts">
 import { Setting } from '@element-plus/icons-vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { reactive, ref, watch } from 'vue';
 
 import FieldConfigDialog, { type FieldConfig } from '@/components/shared/FieldConfigDialog.vue';
 import {
-  deleteStudent,
   fetchCampuses,
   fetchStudents,
   updateStudent,
@@ -432,26 +430,6 @@ async function handleStudentSubmit() {
     ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
   } finally {
     submitting.value = false;
-  }
-}
-
-// ─── Delete ────────────────────────────────────────
-async function handleDelete(row: StudentItem) {
-  try {
-    await ElMessageBox.confirm(
-      `Delete "${row.studentName}"? This action cannot be undone.`,
-      'Confirm delete',
-      { type: 'warning' },
-    );
-  } catch {
-    return; // User cancelled
-  }
-  try {
-    await deleteStudent(String(row.id));
-    ElMessage.success('Deleted.');
-    loadData();
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
   }
 }
 

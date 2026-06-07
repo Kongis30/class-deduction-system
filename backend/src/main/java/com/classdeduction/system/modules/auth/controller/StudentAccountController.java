@@ -48,4 +48,11 @@ public class StudentAccountController {
         studentAccountService.updateStudentAccount(id, request);
         return ApiResponse.success(null);
     }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a student account (soft-delete login, keep student profile)")
+    public ApiResponse<Void> deleteStudentAccount(@PathVariable Long id) {
+        studentAccountService.deleteStudentAccount(id);
+        return ApiResponse.success(null);
+    }
 }

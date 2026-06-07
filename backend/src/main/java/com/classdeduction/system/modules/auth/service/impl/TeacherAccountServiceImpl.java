@@ -139,6 +139,20 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
         userAccountMapper.updateById(entity);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteTeacherAccount(Long userId) {
+        UserAccountEntity entity = userAccountMapper.selectById(userId);
+        if (entity == null || !"TEACHER".equals(entity.getUserType())) {
+            throw new BusinessException("ACCOUNT_NOT_FOUND", "Teacher account not found.");
+        }
+        // 硬删除用户-角色关联（sys_user_role 没有 is_deleted 字段）
+        userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
+                .eq(UserRoleEntity::getUserId, userId));
+        // 软删除登录账号（@TableLogic 自动设置 is_deleted=1）
+        userAccountMapper.deleteById(userId);
+    }
+
     private String generateTeacherNo() {
         // Only look at existing INS-prefixed numbers to avoid collision with seed data (THxxx)
         TeacherEntity maxTeacher = teacherMapper.selectOne(new LambdaQueryWrapper<TeacherEntity>()

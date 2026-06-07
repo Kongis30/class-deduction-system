@@ -135,6 +135,20 @@ public class StudentAccountServiceImpl implements StudentAccountService {
         userAccountMapper.updateById(entity);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteStudentAccount(Long userId) {
+        UserAccountEntity entity = userAccountMapper.selectById(userId);
+        if (entity == null || !"STUDENT".equals(entity.getUserType())) {
+            throw new BusinessException("ACCOUNT_NOT_FOUND", "Student account not found.");
+        }
+        // 硬删除用户-角色关联（sys_user_role 没有 is_deleted 字段）
+        userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
+                .eq(UserRoleEntity::getUserId, userId));
+        // 软删除登录账号（@TableLogic 自动设置 is_deleted=1）
+        userAccountMapper.deleteById(userId);
+    }
+
     private void ensureUsernameUnique(String username) {
         UserAccountEntity existing = userAccountMapper.selectOne(new LambdaQueryWrapper<UserAccountEntity>()
                 .eq(UserAccountEntity::getUsername, username)

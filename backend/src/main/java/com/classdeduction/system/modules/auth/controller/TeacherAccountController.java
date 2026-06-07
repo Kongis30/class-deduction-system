@@ -48,4 +48,11 @@ public class TeacherAccountController {
         teacherAccountService.updateTeacherAccount(id, request);
         return ApiResponse.success(null);
     }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Delete a teacher account (soft-delete login, keep teacher profile)")
+    public ApiResponse<Void> deleteTeacherAccount(@PathVariable Long id) {
+        teacherAccountService.deleteTeacherAccount(id);
+        return ApiResponse.success(null);
+    }
 }

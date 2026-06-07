@@ -13,4 +13,6 @@ public interface TeacherAccountService {
     Long createTeacherAccount(TeacherAccountCreateRequest request);
 
     void updateTeacherAccount(Long userId, TeacherAccountUpdateRequest request);
+
+    void deleteTeacherAccount(Long userId);
 }

@@ -16,4 +16,6 @@ public interface StudentAccountService {
     Long createStudentAccount(StudentAccountCreateRequest request);
 
     void updateStudentAccount(Long userId, StudentAccountUpdateRequest request);
+
+    void deleteStudentAccount(Long userId);
 }

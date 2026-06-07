@@ -99,6 +99,14 @@ export function updateStudentAccount(id: number, data: AccountUpdatePayload) {
   return http.put(`/v1/auth/student-accounts/${id}`, data);
 }
 
+export function deleteTeacherAccount(id: number) {
+  return http.delete<ApiResponse<null>>(`/v1/auth/teacher-accounts/${id}`);
+}
+
+export function deleteStudentAccount(id: number) {
+  return http.delete<ApiResponse<null>>(`/v1/auth/student-accounts/${id}`);
+}
+
 // ─── Self-service Password Change ──────────────────
 
 export function changePassword(data: { currentPassword: string; newPassword: string }) {

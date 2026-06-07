@@ -22,9 +22,23 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
-        <el-table-column label="Actions" min-width="120" fixed="right">
+        <el-table-column label="Actions" min-width="200" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'TEACHER')">Edit</el-button>
+            <el-button
+              text
+              type="danger"
+              :disabled="deleteCountdowns[String(row.userId)] !== undefined && deleteCountdowns[String(row.userId)] > 0"
+              @click="handleDeleteAccount(row, 'TEACHER')"
+            >
+              {{
+                deleteCountdowns[String(row.userId)] === undefined
+                  ? 'Delete'
+                  : deleteCountdowns[String(row.userId)] > 0
+                    ? `Confirm (${deleteCountdowns[String(row.userId)]}s)`
+                    : 'Confirm delete'
+              }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -52,9 +66,23 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
-        <el-table-column label="Actions" min-width="120" fixed="right">
+        <el-table-column label="Actions" min-width="200" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'STUDENT')">Edit</el-button>
+            <el-button
+              text
+              type="danger"
+              :disabled="deleteCountdowns[String(row.userId)] !== undefined && deleteCountdowns[String(row.userId)] > 0"
+              @click="handleDeleteAccount(row, 'STUDENT')"
+            >
+              {{
+                deleteCountdowns[String(row.userId)] === undefined
+                  ? 'Delete'
+                  : deleteCountdowns[String(row.userId)] > 0
+                    ? `Confirm (${deleteCountdowns[String(row.userId)]}s)`
+                    : 'Confirm delete'
+              }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -177,9 +205,9 @@
 
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
-import { onMounted, reactive, ref, computed } from 'vue';
-import { createStudentAccount, createTeacherAccount, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { onMounted, onUnmounted, reactive, ref, computed } from 'vue';
+import { createStudentAccount, createTeacherAccount, deleteStudentAccount, deleteTeacherAccount, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
 import type { StudentAccountItem, TeacherAccountItem } from '@/types/domain';
 
 const teacherLoading = ref(false);
@@ -189,6 +217,90 @@ const dialogVisible = ref(false);
 const formRef = ref();
 const teacherAccounts = ref<TeacherAccountItem[]>([]);
 const studentAccounts = ref<StudentAccountItem[]>([]);
+
+// ─── Delete countdown (userId -> remaining seconds) ──
+const deleteCountdowns = reactive<Record<string, number>>({});
+const countdownTimers: Record<string, ReturnType<typeof setInterval>> = {};
+
+function startCountdown(userId: string) {
+  deleteCountdowns[userId] = 10;
+  countdownTimers[userId] = setInterval(() => {
+    deleteCountdowns[userId]--;
+    if (deleteCountdowns[userId] <= 0) {
+      clearInterval(countdownTimers[userId]);
+      delete countdownTimers[userId];
+    }
+  }, 1000);
+}
+
+function cleanupCountdown(userId: string) {
+  if (countdownTimers[userId]) {
+    clearInterval(countdownTimers[userId]);
+    delete countdownTimers[userId];
+  }
+  delete deleteCountdowns[userId];
+}
+
+async function handleDeleteAccount(row: any, type: 'TEACHER' | 'STUDENT') {
+  const userId = String(row.userId);
+  const displayName = row.displayName || row.username || '';
+
+  // 处于倒计时中且倒计时已结束 -> 执行删除
+  if (deleteCountdowns[userId] !== undefined && deleteCountdowns[userId] <= 0) {
+    await executeDelete(userId, type, displayName);
+    return;
+  }
+
+  // 倒计时进行中 -> 忽略点击
+  if (deleteCountdowns[userId] !== undefined && deleteCountdowns[userId] > 0) {
+    return;
+  }
+
+  // 首次点击 -> 弹出确认框
+  try {
+    await ElMessageBox.confirm(
+      `Delete account "${displayName}"?\n\nThis will revoke login access immediately. The ${type.toLowerCase()} profile will NOT be affected.`,
+      'Delete Account',
+      { type: 'warning', confirmButtonText: 'Start 10s countdown', cancelButtonText: 'Cancel' }
+    );
+  } catch {
+    return; // 用户取消
+  }
+
+  // 开始倒计时
+  startCountdown(userId);
+}
+
+async function executeDelete(userId: string, type: 'TEACHER' | 'STUDENT', displayName: string) {
+  try {
+    await ElMessageBox.confirm(
+      `Are you sure you want to permanently delete the account for "${displayName}"?\n\nThis action cannot be undone.`,
+      'Confirm Delete',
+      { type: 'warning', confirmButtonText: 'Delete', confirmButtonClass: 'el-button--danger' }
+    );
+  } catch {
+    cleanupCountdown(userId);
+    return;
+  }
+
+  try {
+    if (type === 'TEACHER') {
+      await deleteTeacherAccount(Number(userId));
+    } else {
+      await deleteStudentAccount(Number(userId));
+    }
+    ElMessage.success(`${type === 'TEACHER' ? 'Teacher' : 'Student'} account deleted.`);
+    cleanupCountdown(userId);
+    await Promise.all([loadTeacherAccounts(), loadStudentAccounts()]);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
+    cleanupCountdown(userId);
+  }
+}
+
+onUnmounted(() => {
+  Object.values(countdownTimers).forEach((timer) => clearInterval(timer));
+});
 
 const subjectOptions = ['Math', 'English', 'Science', 'History', 'SAT', 'ACT', 'ESL', 'Music', 'Art', 'Other'];
 
