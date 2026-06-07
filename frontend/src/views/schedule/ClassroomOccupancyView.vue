@@ -153,14 +153,14 @@ import { computed, onMounted, ref } from 'vue';
 import dayjs from 'dayjs';
 import { fetchAllClassrooms } from '@/api/base-data';
 import { fetchClassroomOccupancy, fetchClassGroupsByClassroom, type ClassroomOccupancyQuery } from '@/api/schedule';
-import type { ClassroomOccupancyItem } from '@/types/domain';
+import type { ClassroomOccupancyItem, EntityId } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 
 // ─── Classrooms ────────────────────────────────
-const classrooms = ref<{ id: number; roomName: string }[]>([]);
+const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
 const searchText = ref('');
-const selectedClassroomId = ref<number | null>(null);
+const selectedClassroomId = ref<EntityId | null>(null);
 
 const filteredClassrooms = computed(() => {
   const q = searchText.value.trim().toLowerCase();
@@ -173,7 +173,7 @@ const selectedClassroomName = computed(() => {
   return c?.roomName ?? '';
 });
 
-function onClassroomSelect(id: number) {
+function onClassroomSelect(id: EntityId) {
   selectedClassroomId.value = id;
   weekOffset.value = 0;
   loadData();

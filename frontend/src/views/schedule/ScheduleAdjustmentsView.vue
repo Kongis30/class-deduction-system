@@ -49,7 +49,7 @@
         <div v-else-if="packagesLoading" class="adj-content__loading" v-loading="packagesLoading" />
 
         <div v-else-if="packages.length === 0" class="adj-content__placeholder">
-          No active packages for this student.
+          No 1v1 course packages for this student.
         </div>
 
         <!-- 课包列表 -->
@@ -58,27 +58,27 @@
             v-for="pkg in packages"
             :key="pkg.id"
             class="pkg-card"
-            :class="{ 'pkg-card--expanded': selectedPackageId === pkg.id }"
+            :class="{ 'pkg-card--expanded': selectedPackageId === String(pkg.id) }"
           >
             <!-- 课包头部 — 点击展开/收起 -->
             <div class="pkg-card__header" @click="selectPackage(pkg.id)">
               <div class="pkg-card__info">
                 <span class="pkg-card__name">{{ pkg.packageName }}</span>
                 <span class="pkg-card__badge">{{ pkg.remainingUnits }}h left</span>
-                <span v-if="occurrenceCounts[pkg.id]" class="pkg-card__count">{{ occurrenceCounts[pkg.id] }} lessons</span>
+                <span v-if="occurrenceCounts[String(pkg.id)]" class="pkg-card__count">{{ occurrenceCounts[String(pkg.id)] }} lessons</span>
               </div>
               <div class="pkg-card__meta">
-                <span v-if="packageLastDates[pkg.id]" class="pkg-card__last">
-                  Last: {{ packageLastDates[pkg.id] }}
+                <span v-if="packageLastDates[String(pkg.id)]" class="pkg-card__last">
+                  Last: {{ packageLastDates[String(pkg.id)] }}
                 </span>
-                <el-icon class="pkg-card__arrow" :class="{ 'pkg-card__arrow--open': selectedPackageId === pkg.id }">
+                <el-icon class="pkg-card__arrow" :class="{ 'pkg-card__arrow--open': selectedPackageId === String(pkg.id) }">
                   <ArrowDown />
                 </el-icon>
               </div>
             </div>
 
             <!-- 课包排课记录 -->
-            <div v-if="selectedPackageId === pkg.id" class="pkg-card__body">
+            <div v-if="selectedPackageId === String(pkg.id)" class="pkg-card__body">
               <div v-loading="occurrencesLoading" class="pkg-occ-list">
                 <div v-for="occ in occurrences" :key="occ.id" class="pkg-occ-row" :class="dayMarkerClass(occ.plannedStartAt)">
                   <!-- 日期标记 -->
@@ -149,7 +149,7 @@
             v-for="clz in filteredClasses"
             :key="clz.id"
             class="adj-sidebar__item"
-            :class="{ 'adj-sidebar__item--active': selectedClassId === clz.id }"
+            :class="{ 'adj-sidebar__item--active': selectedClassId === String(clz.id) }"
             @click="selectClass(clz.id)"
           >
             <div class="adj-sidebar__name">{{ clz.className }}</div>
@@ -422,7 +422,7 @@ import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fet
 import { fetchCoursePackages } from '@/api/enrollment';
 import { confirmLesson } from '@/api/lesson';
 import { useAuthStore } from '@/stores/auth';
-import type { CoursePackageItem, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem } from '@/types/domain';
+import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem } from '@/types/domain';
 import { ElMessageBox } from 'element-plus';
 
 // ─── State ──────────────────────────────────────────────
@@ -430,14 +430,14 @@ const activeTab = ref<'one-on-one' | 'class'>('one-on-one');
 
 // 学生列表
 const studentsLoading = ref(false);
-const students = ref<{ id: string; studentName: string }[]>([]);
+const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const studentKeyword = ref('');
-const selectedStudentId = ref<string | null>(null);
+const selectedStudentId = ref<EntityId | null>(null);
 
 // 课包
 const packagesLoading = ref(false);
 const packages = ref<CoursePackageItem[]>([]);
-const selectedPackageId = ref<number | null>(null);
+const selectedPackageId = ref<EntityId | null>(null);
 
 // 排课记录
 const occurrencesLoading = ref(false);
@@ -445,16 +445,16 @@ const occurrences = ref<LessonOccurrenceItem[]>([]);
 
 // 缓存：学生/课包的最后课程日期
 const studentLastDates = reactive<Record<string, string>>({});
-const packageLastDates = reactive<Record<number, string>>({});
+const packageLastDates = reactive<Record<string, string>>({});
 // 缓存：课包的排课记录数
-const occurrenceCounts = reactive<Record<number, number>>({});
+const occurrenceCounts = reactive<Record<string, number>>({});
 
 // 班课管理
 const classKeyword = ref('');
 const classesLoading = ref(false);
 const classes = ref<ClassGroupItem[]>([]);
-const selectedClassId = ref<number | null>(null);
-const selectedClass = computed(() => classes.value.find(c => c.id === selectedClassId.value) ?? null);
+const selectedClassId = ref<EntityId | null>(null);
+const selectedClass = computed(() => classes.value.find(c => String(c.id) === selectedClassId.value) ?? null);
 const enrolledStudents = ref<ClassEnrolledStudentItem[]>([]);
 const classOccurrences = ref<ClassOccurrenceItem[]>([]);
 const classStudentsLoading = ref(false);
@@ -462,8 +462,8 @@ const reminding = ref(false);
 const deleting = ref(false);
 
 // 教师/教室（弹窗用）
-const teachers = ref<{ id: number; teacherName: string }[]>([]);
-const classrooms = ref<{ id: number; roomName: string }[]>([]);
+const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
+const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
 
 // 弹窗
 const authStore = useAuthStore();
@@ -494,18 +494,17 @@ const filteredClasses = computed(() => {
 // ─── 方法 ──────────────────────────────
 
 // 选中学生 → 加载课包
-async function selectStudent(id: string) {
+async function selectStudent(id: EntityId) {
   selectedStudentId.value = id;
   selectedPackageId.value = null;
   occurrences.value = [];
   packagesLoading.value = true;
   try {
     const res = await fetchCoursePackages({
-      studentId: Number(id),
-      packageStatus: 'ACTIVE',
+      studentId: id,
       pageSize: 50,
     });
-    packages.value = res.data.data.records;
+    packages.value = res.data.data.records.filter(pkg => !pkg.teachingMode || pkg.teachingMode === 'ONE_ON_ONE');
     // 计算每个课包的最后课程日期
     await computeLastDates(id);
   } catch {
@@ -516,30 +515,35 @@ async function selectStudent(id: string) {
 }
 
 // 选中课包 → 加载排课记录
-async function selectPackage(pkgId: number) {
-  if (selectedPackageId.value === pkgId) {
+async function selectPackage(pkgId: string | number) {
+  const packageKey = String(pkgId);
+  if (selectedPackageId.value === packageKey) {
     // 已展开则收起
     selectedPackageId.value = null;
     occurrences.value = [];
     return;
   }
-  selectedPackageId.value = pkgId;
+  selectedPackageId.value = packageKey;
+  await loadPackageOccurrences(packageKey);
+}
+
+async function loadPackageOccurrences(pkgId: EntityId) {
+  const packageKey = String(pkgId);
   occurrencesLoading.value = true;
   try {
     // 以课包起止时间为查询范围，确保拉取所有排课记录
-    const pkg = packages.value.find(p => p.id === pkgId);
+    const pkg = packages.value.find(p => String(p.id) === packageKey);
     const pkgStart = pkg?.startDate ? dayjs(pkg.startDate).format('YYYY-MM-DDT00:00:00') : null;
     const pkgEnd = pkg?.estimatedEndDate ? dayjs(pkg.estimatedEndDate).format('YYYY-MM-DDT23:59:59') : null;
     const res = await fetchLessonOccurrences({
-      packageId: pkgId,
-      studentId: Number(selectedStudentId.value),
+      packageId: packageKey,
       startAt: pkgStart ?? dayjs().subtract(90, 'day').format('YYYY-MM-DDT00:00:00'),
       endAt: pkgEnd ?? dayjs().add(90, 'day').format('YYYY-MM-DDT23:59:59'),
       pageSize: 200,
     });
     occurrences.value = res.data.data.records;
     // 用实际返回的记录数更新课包排课计数（比 computeLastDates 的 ±89 天精确）
-    occurrenceCounts[pkgId] = res.data.data.records.length;
+    occurrenceCounts[packageKey] = res.data.data.records.length;
   } catch {
     occurrences.value = [];
   } finally {
@@ -548,29 +552,30 @@ async function selectPackage(pkgId: number) {
 }
 
 // 计算学生每个课包的最后课程日期和排课记录数
-async function computeLastDates(studentId: string) {
+async function computeLastDates(studentId: EntityId) {
   try {
     // ±89 天（共 178 天），安全低于后端 180 天限制；23:59:59 已被后端忽略时分秒
     const startAt = dayjs().subtract(89, 'day').format('YYYY-MM-DDT00:00:00');
     const endAt = dayjs().add(89, 'day').format('YYYY-MM-DDT23:59:59');
     const res = await fetchLessonOccurrences({
-      studentId: Number(studentId),
+      studentId,
       startAt,
       endAt,
       pageSize: 200,
     });
     const allOccs = res.data.data.records;
     // 按 packageId 分组：记录最后日期和记录数
-    const byPkg = new Map<number, string>();
-    const counts = new Map<number, number>();
+    const byPkg = new Map<string, string>();
+    const counts = new Map<string, number>();
     let studentLast = '';
     for (const occ of allOccs) {
       if (!occ.packageId) continue;
+      const packageKey = String(occ.packageId);
       const date = dayjs(occ.plannedStartAt).format('MM/DD');
-      if (!byPkg.has(occ.packageId) || occ.plannedStartAt > byPkg.get(occ.packageId)!) {
-        byPkg.set(occ.packageId, date);
+      if (!byPkg.has(packageKey) || occ.plannedStartAt > byPkg.get(packageKey)!) {
+        byPkg.set(packageKey, date);
       }
-      counts.set(occ.packageId, (counts.get(occ.packageId) ?? 0) + 1);
+      counts.set(packageKey, (counts.get(packageKey) ?? 0) + 1);
       if (!studentLast || occ.plannedStartAt > studentLast) {
         studentLast = occ.plannedStartAt;
       }
@@ -598,15 +603,16 @@ function filterExpiryStatus(value: string, row: ClassEnrolledStudentItem): boole
   return row.expiryStatus === value;
 }
 
-async function selectClass(id: number) {
-  selectedClassId.value = id;
+async function selectClass(id: string | number) {
+  const classKey = String(id);
+  selectedClassId.value = classKey;
   classOccurrences.value = [];
   enrolledStudents.value = [];
 
-  await Promise.all([loadClassStudents(id), loadClassOccurrences(id)]);
+  await Promise.all([loadClassStudents(classKey), loadClassOccurrences(classKey)]);
 }
 
-async function loadClassStudents(id: number) {
+async function loadClassStudents(id: EntityId) {
   classStudentsLoading.value = true;
   try {
     const res = await fetchClassStudents(id);
@@ -618,7 +624,7 @@ async function loadClassStudents(id: number) {
   }
 }
 
-async function loadClassOccurrences(id: number) {
+async function loadClassOccurrences(id: EntityId) {
   occurrencesLoading.value = true;
   try {
     const res = await fetchClassOccurrences(id);
@@ -635,8 +641,8 @@ function openClassConfirmDialog(occ: ClassOccurrenceItem) {
   confirmFormRef.value?.resetFields();
   Object.assign(confirmForm, {
     resultStatus: 'COMPLETED',
-    actualTeacherId: occ.plannedTeacherId ?? selectedClass?.teacherId,
-    actualClassroomId: occ.plannedClassroomId ?? selectedClass?.classroomId,
+    actualTeacherId: occ.plannedTeacherId ?? selectedClass.value?.teacherId,
+    actualClassroomId: occ.plannedClassroomId ?? selectedClass.value?.classroomId,
     actualStartAt: occ.plannedStartAt || '',
     actualHours: (occ.plannedUnits ?? 0) * 0.5,
     notes: '',
@@ -648,7 +654,7 @@ function openClassConfirmDialog(occ: ClassOccurrenceItem) {
 
 const classConfirmMode = ref(false);
 
-async function submitClassConfirm(occId: number) {
+async function submitClassConfirm(occId: string | number) {
   if (!selectedClassId.value) return;
   if (!confirmFormRef.value) return;
   await confirmFormRef.value.validate(async (valid) => {
@@ -720,6 +726,18 @@ async function handleDeleteClass() {
   }
 }
 
+async function loadClasses() {
+  classesLoading.value = true;
+  try {
+    const res = await fetchClassGroups();
+    classes.value = res.data.data;
+  } catch {
+    classes.value = [];
+  } finally {
+    classesLoading.value = false;
+  }
+}
+
 function formatDateShort(dt: string): string {
   return dt ? dayjs(dt).format('MM/DD/YYYY') : '—';
 }
@@ -756,8 +774,8 @@ function resultStatusLabel(status: string) {
 // ─── Confirm 弹窗 ─────────────────────
 const confirmForm = reactive({
   resultStatus: 'COMPLETED',
-  actualTeacherId: undefined as number | undefined,
-  actualClassroomId: undefined as number | undefined,
+  actualTeacherId: undefined as string | number | undefined,
+  actualClassroomId: undefined as string | number | undefined,
   actualStartAt: '',
   actualHours: undefined as number | undefined,
   notes: '',
@@ -832,10 +850,10 @@ async function submitConfirm() {
         notes: confirmForm.notes || undefined,
       });
       const data = result.data.data;
-      ElMessage.success(`Lesson confirmed. Deducted ${(data.deductedUnits * 0.5).toFixed(1)}h, remaining ${(data.remainingUnits * 0.5).toFixed(1)}h.`);
+      ElMessage.success(`Lesson confirmed. Deducted ${data.deductedUnits.toFixed(1)}h, remaining ${data.remainingUnits.toFixed(1)}h.`);
       confirmDialogVisible.value = false;
       // 刷新当前课包的排课记录
-      if (selectedPackageId.value) await selectPackage(selectedPackageId.value);
+      if (selectedPackageId.value) await loadPackageOccurrences(selectedPackageId.value);
     } catch (err: any) {
       ElMessage.error(err?.response?.data?.message ?? 'Confirmation failed.');
     } finally {
@@ -852,8 +870,8 @@ async function openDetailDialog(occ: LessonOccurrenceItem) {
 
 // ─── Makeup 弹窗 ──────────────────────
 const makeupForm = reactive({
-  plannedTeacherId: undefined as number | undefined,
-  plannedClassroomId: undefined as number | undefined,
+  plannedTeacherId: undefined as string | number | undefined,
+  plannedClassroomId: undefined as string | number | undefined,
   plannedStartAt: '',
   plannedEndAt: '',
   reason: '',
@@ -894,7 +912,7 @@ async function submitMakeup() {
       ElMessage.success('Makeup lesson created.');
       makeupDialogVisible.value = false;
       // 刷新排课记录
-      if (selectedPackageId.value) await selectPackage(selectedPackageId.value);
+      if (selectedPackageId.value) await loadPackageOccurrences(selectedPackageId.value);
     } catch (err: any) {
       ElMessage.error(err?.response?.data?.message ?? 'Failed to create makeup.');
     } finally {

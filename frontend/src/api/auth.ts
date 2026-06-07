@@ -1,7 +1,7 @@
 import http from './http';
 import type { LoginPayload, LoginResult, AuthUser } from '@/types/auth';
 import type { ApiResponse, PageResult } from '@/types/http';
-import type { StudentAccountItem, TeacherAccountItem } from '@/types/domain';
+import type { EntityId, StudentAccountItem, TeacherAccountItem } from '@/types/domain';
 
 export function login(payload: LoginPayload) {
   return http.post<ApiResponse<LoginResult>>('/v1/auth/login', payload);
@@ -46,7 +46,7 @@ export interface TeacherAccountCreatePayload {
 }
 
 export function createTeacherAccount(data: TeacherAccountCreatePayload) {
-  return http.post<ApiResponse<number>>('/v1/auth/teacher-accounts', data);
+  return http.post<ApiResponse<EntityId>>('/v1/auth/teacher-accounts', data);
 }
 
 // ─── Student Accounts ───────────────────────────────
@@ -77,7 +77,7 @@ export interface StudentAccountCreatePayload {
 }
 
 export function createStudentAccount(data: StudentAccountCreatePayload) {
-  return http.post<ApiResponse<number>>('/v1/auth/student-accounts', data);
+  return http.post<ApiResponse<EntityId>>('/v1/auth/student-accounts', data);
 }
 
 // ─── Account Updates ────────────────────────────────
@@ -91,19 +91,19 @@ export interface AccountUpdatePayload {
   status?: string;
 }
 
-export function updateTeacherAccount(id: number, data: AccountUpdatePayload) {
+export function updateTeacherAccount(id: EntityId, data: AccountUpdatePayload) {
   return http.put(`/v1/auth/teacher-accounts/${id}`, data);
 }
 
-export function updateStudentAccount(id: number, data: AccountUpdatePayload) {
+export function updateStudentAccount(id: EntityId, data: AccountUpdatePayload) {
   return http.put(`/v1/auth/student-accounts/${id}`, data);
 }
 
-export function deleteTeacherAccount(id: number) {
+export function deleteTeacherAccount(id: EntityId) {
   return http.delete<ApiResponse<null>>(`/v1/auth/teacher-accounts/${id}`);
 }
 
-export function deleteStudentAccount(id: number) {
+export function deleteStudentAccount(id: EntityId) {
   return http.delete<ApiResponse<null>>(`/v1/auth/student-accounts/${id}`);
 }
 

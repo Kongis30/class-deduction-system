@@ -12,15 +12,15 @@ import lombok.Data;
 @Schema(description = "收据保存请求")
 public class ReceiptRecordSaveRequest {
 
-    @NotNull(message = "报名订单ID不能为空")
+    @NotNull(message = "Enrollment order is required")
     @Schema(description = "报名订单ID", example = "1880000000000000001")
     private Long enrollmentOrderId;
 
-    @NotNull(message = "学生ID不能为空")
+    @NotNull(message = "Student is required")
     @Schema(description = "学生ID", example = "1880000000000000002")
     private Long studentId;
 
-    @NotBlank(message = "模板编码不能为空")
+    @NotBlank(message = "Template code is required")
     @Schema(description = "模板编码", example = "DEFAULT_RECEIPT")
     private String templateCode;
 

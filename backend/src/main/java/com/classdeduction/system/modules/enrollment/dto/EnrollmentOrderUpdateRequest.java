@@ -14,7 +14,7 @@ import lombok.Data;
 public class EnrollmentOrderUpdateRequest {
 
     @Schema(description = "订单状态: DRAFT/CONFIRMED/CANCELLED", example = "CONFIRMED")
-    @Pattern(regexp = "^(DRAFT|CONFIRMED|CANCELLED)$", message = "订单状态必须是 DRAFT、CONFIRMED 或 CANCELLED")
+    @Pattern(regexp = "^(DRAFT|CONFIRMED|CANCELLED)$", message = "Order status must be DRAFT, CONFIRMED, or CANCELLED")
     private String orderStatus;
 
     @Schema(description = "收银员用户ID", example = "1880000000000000001")

@@ -359,14 +359,14 @@ import {
   type LessonRecordQuery,
 } from '@/api/lesson';
 import { fetchAllStudents } from '@/api/base-data';
-import type { CoursePackageItem, LessonRecordDetailItem, LessonRecordItem } from '@/types/domain';
+import type { CoursePackageItem, EntityId, LessonRecordDetailItem, LessonRecordItem } from '@/types/domain';
 
 const loading = ref(false);
 const detailDialogVisible = ref(false);
 const detailTab = ref('overview');
 const detailData = ref<CoursePackageItem | null>(null);
 
-const students = ref<{ id: number; studentName: string }[]>([]);
+const students = ref<{ id: EntityId; studentName: string }[]>([]);
 
 // Lesson History
 const lessonHistoryLoading = ref(false);

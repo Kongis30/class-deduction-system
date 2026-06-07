@@ -94,7 +94,7 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
     public void endAssignment(Long id, String changeReason) {
         PackageTeacherAssignmentEntity assignment = requireAssignment(id);
         if (!"ACTIVE".equals(assignment.getAssignmentStatus())) {
-            throw new BusinessException("ASSIGNMENT_ALREADY_ENDED", "该分配记录已经是结束状态。");
+            throw new BusinessException("ASSIGNMENT_ALREADY_ENDED", "This assignment has already ended.");
         }
         assignment.setAssignmentStatus("ENDED");
         assignment.setEffectiveTo(AppTime.nowLocalDateTime());
@@ -147,7 +147,7 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
     private PackageTeacherAssignmentEntity requireAssignment(Long id) {
         PackageTeacherAssignmentEntity assignment = packageTeacherAssignmentMapper.selectById(id);
         if (assignment == null) {
-            throw new BusinessException("ASSIGNMENT_NOT_FOUND", "老师分配记录不存在。");
+            throw new BusinessException("ASSIGNMENT_NOT_FOUND", "Teacher assignment not found.");
         }
         return assignment;
     }
@@ -155,7 +155,7 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
     private CoursePackageEntity requireCoursePackage(Long id) {
         CoursePackageEntity packageEntity = coursePackageMapper.selectById(id);
         if (packageEntity == null) {
-            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "课时包不存在。");
+            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
         }
         return packageEntity;
     }
@@ -163,7 +163,7 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
     private TeacherEntity requireTeacher(Long id) {
         TeacherEntity teacher = teacherMapper.selectById(id);
         if (teacher == null) {
-            throw new BusinessException("TEACHER_NOT_FOUND", "老师不存在。");
+            throw new BusinessException("TEACHER_NOT_FOUND", "Teacher not found.");
         }
         return teacher;
     }

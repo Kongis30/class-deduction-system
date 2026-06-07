@@ -2,6 +2,7 @@ import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
 import type {
   CoursePackageItem,
+  EntityId,
   EnrollmentOrderDetailItem,
   EnrollmentOrderItem,
   PaymentMethodItem,
@@ -14,8 +15,8 @@ export interface EnrollmentOrderQuery {
   keyword?: string;
   orderStatus?: string;
   paymentStatus?: string;
-  studentId?: number;
-  classId?: number;
+  studentId?: string | number;
+  classId?: string | number;
   excludeClassOrders?: boolean;
   pageNum?: number;
   pageSize?: number;
@@ -25,7 +26,7 @@ export function fetchEnrollmentOrders(params: EnrollmentOrderQuery = {}) {
   return http.get<ApiResponse<PageResult<EnrollmentOrderItem>>>('/v1/enrollment/orders', { params });
 }
 
-export function fetchEnrollmentOrder(id: number) {
+export function fetchEnrollmentOrder(id: string | number) {
   return http.get<ApiResponse<EnrollmentOrderDetailItem>>(`/v1/enrollment/orders/${id}`);
 }
 
@@ -37,10 +38,10 @@ export interface SlotPayload {
 }
 
 export interface EnrollmentOrderSavePayload {
-  studentId: number;
-  courseProductId: number;
-  primaryTeacherId?: number;
-  cashierUserId?: number;
+  studentId: string | number;
+  courseProductId: string | number;
+  primaryTeacherId?: string | number;
+  cashierUserId?: EntityId;
   handledByName: string;
   currencyCode?: string;
   packageName?: string;
@@ -56,29 +57,29 @@ export interface EnrollmentOrderSavePayload {
   defaultLessonUnits?: number;
   remark?: string;
   slots?: SlotPayload[];
-  defaultClassroomId?: number;
+  defaultClassroomId?: string | number;
 }
 
 export function createEnrollmentOrder(data: EnrollmentOrderSavePayload) {
   return http.post('/v1/enrollment/orders', data);
 }
 
-export function updateEnrollmentOrder(id: number, data: EnrollmentOrderSavePayload) {
+export function updateEnrollmentOrder(id: string | number, data: EnrollmentOrderSavePayload) {
   return http.put(`/v1/enrollment/orders/${id}`, data);
 }
 
-export function cancelEnrollmentOrder(id: number) {
+export function cancelEnrollmentOrder(id: string | number) {
   return http.post(`/v1/enrollment/orders/${id}/cancel`);
 }
 
-export function deleteEnrollmentOrder(id: number) {
+export function deleteEnrollmentOrder(id: string | number) {
   return http.delete(`/v1/enrollment/orders/${id}`);
 }
 
 export interface ClassEnrollmentCreatePayload {
-  studentId: number;
-  classId?: number;
-  productId?: number;
+  studentId: string | number;
+  classId?: string | number;
+  productId?: string | number;
   enrollmentDate: string;
   expiryDate: string;
   handledByName?: string;
@@ -95,9 +96,9 @@ export function createClassEnrollmentOrder(data: ClassEnrollmentCreatePayload) {
 // ─── Course Packages ─────────────────────────────────
 export interface CoursePackageQuery {
   keyword?: string;
-  studentId?: number;
+  studentId?: string | number;
   packageStatus?: string;
-  teacherId?: number;
+  teacherId?: EntityId;
   sortBy?: string;
   sortOrder?: string;
   pageNum?: number;
@@ -108,7 +109,7 @@ export function fetchCoursePackages(params: CoursePackageQuery = {}) {
   return http.get<ApiResponse<PageResult<CoursePackageItem>>>('/v1/enrollment/packages', { params });
 }
 
-export function fetchCoursePackage(id: number) {
+export function fetchCoursePackage(id: string | number) {
   return http.get<ApiResponse<CoursePackageItem>>(`/v1/enrollment/packages/${id}`);
 }
 
@@ -119,24 +120,24 @@ export interface CoursePackageUpdatePayload {
   remark?: string;
 }
 
-export function updateCoursePackage(id: number, data: CoursePackageUpdatePayload) {
+export function updateCoursePackage(id: string | number, data: CoursePackageUpdatePayload) {
   return http.put(`/v1/enrollment/packages/${id}`, data);
 }
 
-export function closeCoursePackage(id: number) {
+export function closeCoursePackage(id: string | number) {
   return http.post(`/v1/enrollment/packages/${id}/close`);
 }
 
-export function getCoursePackageBalance(id: number) {
+export function getCoursePackageBalance(id: string | number) {
   return http.get<ApiResponse<number>>(`/v1/enrollment/packages/${id}/balance`);
 }
 
 // ─── Payment Records ─────────────────────────────────
-export function fetchPaymentsByOrder(enrollmentOrderId: number) {
+export function fetchPaymentsByOrder(enrollmentOrderId: EntityId) {
   return http.get<ApiResponse<PaymentRecordItem[]>>(`/v1/enrollment/payments/order/${enrollmentOrderId}`);
 }
 
-export function fetchPayment(id: number) {
+export function fetchPayment(id: EntityId) {
   return http.get<ApiResponse<PaymentRecordItem>>(`/v1/enrollment/payments/${id}`);
 }
 
@@ -146,7 +147,7 @@ export interface PaymentSplit {
 }
 
 export interface PaymentRecordSavePayload {
-  enrollmentOrderId: number;
+  enrollmentOrderId: EntityId;
   splits: PaymentSplit[];
   paidAt?: string;
   handledByName: string;
@@ -166,7 +167,7 @@ export function fetchActivePaymentMethods() {
   return http.get<ApiResponse<PaymentMethodItem[]>>('/v1/enrollment/payment-methods/active');
 }
 
-export function fetchPaymentMethod(id: number) {
+export function fetchPaymentMethod(id: EntityId) {
   return http.get<ApiResponse<PaymentMethodItem>>(`/v1/enrollment/payment-methods/${id}`);
 }
 
@@ -181,19 +182,19 @@ export function createPaymentMethod(data: PaymentMethodSavePayload) {
   return http.post('/v1/enrollment/payment-methods', data);
 }
 
-export function updatePaymentMethod(id: number, data: PaymentMethodSavePayload) {
+export function updatePaymentMethod(id: EntityId, data: PaymentMethodSavePayload) {
   return http.put(`/v1/enrollment/payment-methods/${id}`, data);
 }
 
-export function deletePaymentMethod(id: number) {
+export function deletePaymentMethod(id: EntityId) {
   return http.delete(`/v1/enrollment/payment-methods/${id}`);
 }
 
 // ─── Receipt Records ─────────────────────────────────
 export interface ReceiptQuery {
   keyword?: string;
-  studentId?: number;
-  enrollmentOrderId?: number;
+  studentId?: EntityId;
+  enrollmentOrderId?: EntityId;
   pageNum?: number;
   pageSize?: number;
 }
@@ -202,6 +203,6 @@ export function fetchReceipts(params: ReceiptQuery = {}) {
   return http.get<ApiResponse<PageResult<ReceiptRecordItem>>>('/v1/enrollment/receipts', { params });
 }
 
-export function fetchReceipt(id: number) {
+export function fetchReceipt(id: EntityId) {
   return http.get<ApiResponse<ReceiptRecordItem>>(`/v1/enrollment/receipts/${id}`);
 }

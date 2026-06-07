@@ -366,8 +366,7 @@ import {
   fetchLessonOccurrences,
   fetchEnrolledClassGroups,
 } from '@/api/schedule';
-import type { CoursePackageItem } from '@/types/domain';
-import type { RecurringScheduleRuleItem } from '@/types/domain';
+import type { CoursePackageItem, EntityId, RecurringScheduleRuleItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 
@@ -376,25 +375,25 @@ const editDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
 const submitting = ref(false);
 const isEditing = ref(false);
-const editingRuleId = ref<number | null>(null);
+const editingRuleId = ref<EntityId | null>(null);
 const editFormRef = ref<FormInstance>();
 
 const detailData = ref<any>(null);
-const students = ref<{ id: number; studentName: string }[]>([]);
+const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const studentPackages = ref<CoursePackageItem[]>([]);
-const teachers = ref<{ id: number; teacherName: string }[]>([]);
-const classrooms = ref<{ id: number; roomName: string }[]>([]);
+const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
+const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
 const enrolledClassGroups = ref<any[]>([]);
 const classGroupLoading = ref(false);
 const classGroupOccupiedSlots = ref<OccupiedSlotDef[]>([]);
 
 // ─── All package rules (preloaded per student) ──
-const allPackageRules = ref<Record<number, any>>({});
+const allPackageRules = ref<Record<string, any>>({});
 
 // ─── Selection state ────────────────────────────
 const studentSearch = ref('');
-const selectedStudentId = ref<number | null>(null);
-const selectedPackageId = ref<number | null>(null);
+const selectedStudentId = ref<EntityId | null>(null);
+const selectedPackageId = ref<EntityId | null>(null);
 const emptySlots = ref<SlotDef[]>([]);
 
 const displayMonday = computed(() => dayjs().startOf('day').day(1).format('YYYY-MM-DD'));
@@ -417,9 +416,9 @@ const selectedStudentName = computed(() => {
 
 // ─── Package name lookup ──────────────────────
 const packageNameMap = computed(() => {
-  const map: Record<number, string> = {};
+  const map: Record<string, string> = {};
   for (const pkg of studentPackages.value) {
-    map[pkg.id] = pkg.packageName;
+    map[String(pkg.id)] = pkg.packageName;
   }
   return map;
 });
@@ -427,7 +426,7 @@ const packageNameMap = computed(() => {
 // ─── Current rule/slots (derived from preloaded map) ─
 const currentRule = computed(() => {
   if (!selectedPackageId.value) return null;
-  return allPackageRules.value[selectedPackageId.value] || null;
+  return allPackageRules.value[String(selectedPackageId.value)] || null;
 });
 
 const currentRuleSlots = computed(() => {
@@ -442,8 +441,9 @@ const currentRuleSlots = computed(() => {
 });
 
 // ─── Helper: get package name for display ──────
-function getPackageName(pkgId: number): string {
-  return packageNameMap.value[pkgId] || studentPackages.value.find(p => p.id === pkgId)?.packageName || `#${pkgId}`;
+function getPackageName(pkgId: EntityId): string {
+  const packageKey = String(pkgId);
+  return packageNameMap.value[packageKey] || studentPackages.value.find(p => String(p.id) === packageKey)?.packageName || `#${packageKey}`;
 }
 
 // ─── All-student occupied slots (main calendar) ─
@@ -451,8 +451,7 @@ const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
 
   for (const [pkgIdStr, rule] of Object.entries(allPackageRules.value)) {
-    const pkgId = Number(pkgIdStr);
-    const isCurrent = pkgId === selectedPackageId.value;
+    const isCurrent = pkgIdStr === String(selectedPackageId.value);
 
     // Determine which slots to show for this package
     let displaySlots: SlotDef[] = [];
@@ -465,7 +464,7 @@ const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
       displaySlots = rule.slots || [];
     }
 
-    const pkgName = rule.packageName || getPackageName(pkgId);
+    const pkgName = rule.packageName || getPackageName(pkgIdStr);
 
     for (const slot of displaySlots) {
       result.push({
@@ -494,8 +493,8 @@ function parseTimeToMin(time: string): number {
 const otherPackageOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
   for (const [pkgIdStr, rule] of Object.entries(allPackageRules.value)) {
-    if (Number(pkgIdStr) === selectedPackageId.value) continue;
-    const pkgName = rule.packageName || getPackageName(Number(pkgIdStr));
+    if (pkgIdStr === String(selectedPackageId.value)) continue;
+    const pkgName = rule.packageName || getPackageName(pkgIdStr);
     for (const slot of (rule.slots || [])) {
       result.push({
         weekday: slot.weekday,
@@ -521,7 +520,7 @@ const editWeekMonday = computed(() => {
 });
 
 // ─── Student selection ─────────────────────────
-async function onStudentSelect(id: number) {
+async function onStudentSelect(id: EntityId) {
   selectedStudentId.value = id;
   selectedPackageId.value = null;
   allPackageRules.value = {};
@@ -564,19 +563,19 @@ async function loadAllPackageRules() {
       }
     })
   );
-  const map: Record<number, any> = {};
+    const map: Record<string, any> = {};
   for (const r of results) {
     if (r.status === 'fulfilled' && r.value.rule) {
-      map[r.value.packageId] = r.value.rule;
+        map[String(r.value.packageId)] = r.value.rule;
     }
   }
   allPackageRules.value = map;
 }
 
 // ─── Load enrolled class group slots ────────────
-const classGroupSlotCache = new Map<number, OccupiedSlotDef[]>();
+const classGroupSlotCache = new Map<string, OccupiedSlotDef[]>();
 
-async function loadEnrolledClassGroups(studentId: number) {
+async function loadEnrolledClassGroups(studentId: EntityId) {
   classGroupLoading.value = true;
   try {
     const res = await fetchEnrolledClassGroups(studentId);
@@ -625,8 +624,8 @@ async function loadClassGroupSlots() {
 
 // ─── Edit Form ──────────────────────────────────
 const editForm = reactive({
-  primaryTeacherId: undefined as number | undefined,
-  defaultClassroomId: undefined as number | undefined,
+  primaryTeacherId: undefined as EntityId | undefined,
+  defaultClassroomId: undefined as EntityId | undefined,
   ruleStatus: undefined as string | undefined,
   startDate: '',
   notes: '',

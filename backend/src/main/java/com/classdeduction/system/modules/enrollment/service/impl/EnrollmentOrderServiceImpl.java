@@ -1,9 +1,11 @@
 package com.classdeduction.system.modules.enrollment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.util.UnitConverter;
@@ -289,6 +291,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         validateAmounts(request);
         StudentEntity student = requireStudent(request.getStudentId());
         CourseProductEntity product = requireCourseProduct(request.getCourseProductId());
+        validateOneOnOneProduct(product);
         TeacherEntity primaryTeacher = request.getPrimaryTeacherId() == null ? null : requireTeacher(request.getPrimaryTeacherId());
 
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
@@ -366,17 +369,26 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         validatePackageUnits(request);
     }
 
+    private void validateOneOnOneProduct(CourseProductEntity product) {
+        if (!"ACTIVE".equals(product.getStatus())) {
+            throw new BusinessException("COURSE_PRODUCT_INACTIVE", "Course product is not active.");
+        }
+        if (!"ONE_ON_ONE".equals(product.getTeachingMode())) {
+            throw new BusinessException("INVALID_COURSE_PRODUCT_TYPE", "Only 1:1 course products can be used for new enrollment.");
+        }
+    }
+
     private void validatePackageUnits(EnrollmentCreateRequest request) {
         if (request.getTotalUnits() != null && request.getTotalUnits() <= 0) {
-            throw new BusinessException("INVALID_TOTAL_UNITS", "总课时单位必须大于0。");
+            throw new BusinessException("INVALID_TOTAL_UNITS", "Total units must be greater than 0.");
         }
         if (request.getDefaultLessonUnits() != null && request.getDefaultLessonUnits() <= 0) {
-            throw new BusinessException("INVALID_LESSON_UNITS", "默认单节课时单位必须大于0。");
+            throw new BusinessException("INVALID_LESSON_UNITS", "Default lesson units must be greater than 0.");
         }
         if (request.getTotalUnits() != null
                 && request.getDefaultLessonUnits() != null
                 && request.getDefaultLessonUnits() > request.getTotalUnits()) {
-            throw new BusinessException("LESSON_UNITS_EXCEED_TOTAL", "默认单节课时单位不能大于总课时单位。");
+            throw new BusinessException("LESSON_UNITS_EXCEED_TOTAL", "Default lesson units cannot exceed total units.");
         }
     }
 
@@ -389,15 +401,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 ? request.getDefaultLessonUnits()
                 : product.getDefaultLessonUnits();
         if (defaultLessonUnits <= 0) {
-            throw new BusinessException("INVALID_LESSON_UNITS", "默认单节课时单位必须大于0。");
+            throw new BusinessException("INVALID_LESSON_UNITS", "Default lesson units must be greater than 0.");
         }
         if (totalUnits <= 0) {
-            throw new BusinessException("INVALID_TOTAL_UNITS", "总课时必须大于0。");
+            throw new BusinessException("INVALID_TOTAL_UNITS", "Total units must be greater than 0.");
         }
         // totalUnits 从前端传入的是小时数，内部存储统一转为半课时单位（1单位=0.5h）
         int halfHourUnits = totalUnits * 2;
         if (defaultLessonUnits > halfHourUnits) {
-            throw new BusinessException("LESSON_UNITS_EXCEED_TOTAL", "默认单节课时单位不能大于总课时单位。");
+            throw new BusinessException("LESSON_UNITS_EXCEED_TOTAL", "Default lesson units cannot exceed total units.");
         }
 
         CoursePackageEntity coursePackage = new CoursePackageEntity();
@@ -570,7 +582,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         LocalDateTime windowEnd = generatedOccurrences.stream()
                 .map(LessonOccurrenceEntity::getPlannedEndAt).max(Comparator.naturalOrder()).orElseThrow();
 
-        var studentOccurrences = lessonOccurrenceMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<LessonOccurrenceEntity>()
+        var studentOccurrences = studentId == null ? Collections.<LessonOccurrenceEntity>emptyList()
+                : lessonOccurrenceMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .eq(LessonOccurrenceEntity::getStudentId, studentId)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
@@ -590,7 +603,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
         List<String> conflicts = new ArrayList<>();
         for (LessonOccurrenceEntity candidate : generatedOccurrences) {
-            if (hasOverlap(candidate, studentOccurrences)) {
+            if (studentId != null && hasOverlap(candidate, studentOccurrences)) {
                 conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
             }
             if (teacherId != null && hasOverlap(candidate, teacherOccurrences)) {
@@ -703,7 +716,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private EnrollmentOrderEntity requireOrder(Long id) {
         EnrollmentOrderEntity order = enrollmentOrderMapper.selectById(id);
         if (order == null) {
-            throw new BusinessException("ENROLLMENT_ORDER_NOT_FOUND", "报名单不存在。");
+            throw new BusinessException("ENROLLMENT_ORDER_NOT_FOUND", "Enrollment order not found.");
         }
         return order;
     }
@@ -711,7 +724,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private StudentEntity requireStudent(Long studentId) {
         StudentEntity student = studentMapper.selectById(studentId);
         if (student == null) {
-            throw new BusinessException("STUDENT_NOT_FOUND", "学生不存在。");
+            throw new BusinessException("STUDENT_NOT_FOUND", "Student not found.");
         }
         return student;
     }
@@ -719,7 +732,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private CourseProductEntity requireCourseProduct(Long courseProductId) {
         CourseProductEntity product = courseProductMapper.selectById(courseProductId);
         if (product == null) {
-            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "课程产品不存在。");
+            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
         }
         return product;
     }
@@ -727,7 +740,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private TeacherEntity requireTeacher(Long teacherId) {
         TeacherEntity teacher = teacherMapper.selectById(teacherId);
         if (teacher == null) {
-            throw new BusinessException("TEACHER_NOT_FOUND", "老师不存在。");
+            throw new BusinessException("TEACHER_NOT_FOUND", "Teacher not found.");
         }
         return teacher;
     }
@@ -908,42 +921,92 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public void cancelOrder(Long id) {
         EnrollmentOrderEntity order = requireOrder(id);
 
-        // Validate cancellation
         if ("CANCELLED".equals(order.getOrderStatus())) {
             throw new BusinessException("ORDER_ALREADY_CANCELLED", "Order is already cancelled.");
         }
 
         if (order.getClassId() != null) {
-            // Class order: soft-delete class_enrollment so re-enrollment is possible
-            ClassEnrollmentEntity enrollment = classEnrollmentMapper.selectOne(
-                    new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                            .eq(ClassEnrollmentEntity::getClassId, order.getClassId())
-                            .eq(ClassEnrollmentEntity::getStudentId, order.getStudentId())
-                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                            .eq(ClassEnrollmentEntity::getIsDeleted, 0)
-            );
-            if (enrollment != null) {
-                classEnrollmentMapper.update(
-                        new LambdaUpdateWrapper<ClassEnrollmentEntity>()
-                                .eq(ClassEnrollmentEntity::getId, enrollment.getId())
-                                .set(ClassEnrollmentEntity::getStatus, "WITHDRAWN")
-                                .set(ClassEnrollmentEntity::getIsDeleted, 1)
-                );
-            }
+            cancelClassEnrollment(order);
         } else {
-            // 1v1 order: check for active course packages
-            List<CoursePackageEntity> activePackages = coursePackageMapper.selectList(
-                    new LambdaQueryWrapper<CoursePackageEntity>()
-                            .eq(CoursePackageEntity::getEnrollmentOrderId, id)
-                            .ne(CoursePackageEntity::getPackageStatus, "CLOSED")
-            );
-            if (!activePackages.isEmpty()) {
-                throw new BusinessException("CANNOT_CANCEL_ORDER_WITH_ACTIVE_PACKAGES", "Cannot cancel order with active packages.");
-            }
+            cancelOneOnOneEnrollment(order);
         }
 
         order.setOrderStatus("CANCELLED");
         enrollmentOrderMapper.updateById(order);
+    }
+
+    private void cancelClassEnrollment(EnrollmentOrderEntity order) {
+        // Keep the order and payment history, but release the active class seat.
+        ClassEnrollmentEntity enrollment = classEnrollmentMapper.selectOne(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, order.getClassId())
+                        .eq(ClassEnrollmentEntity::getStudentId, order.getStudentId())
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+        );
+        if (enrollment != null) {
+            classEnrollmentMapper.update(
+                    new LambdaUpdateWrapper<ClassEnrollmentEntity>()
+                            .eq(ClassEnrollmentEntity::getId, enrollment.getId())
+                            .set(ClassEnrollmentEntity::getStatus, "WITHDRAWN")
+                            .set(ClassEnrollmentEntity::getIsDeleted, 1)
+            );
+        }
+    }
+
+    private void cancelOneOnOneEnrollment(EnrollmentOrderEntity order) {
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(
+                new LambdaQueryWrapper<CoursePackageEntity>()
+                        .eq(CoursePackageEntity::getEnrollmentOrderId, order.getId())
+        );
+        if (packages.isEmpty()) {
+            return;
+        }
+
+        List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
+        cancelFutureOccurrences(packageIds);
+        deactivateRecurringSchedules(packageIds);
+
+        // Closing the package prevents further deduction while preserving consumed lessons and payments.
+        for (CoursePackageEntity coursePackage : packages) {
+            if (!"CLOSED".equals(coursePackage.getPackageStatus())) {
+                coursePackage.setPackageStatus("CLOSED");
+                coursePackageMapper.updateById(coursePackage);
+            }
+        }
+    }
+
+    private void cancelFutureOccurrences(List<Long> packageIds) {
+        lessonOccurrenceMapper.update(
+                new UpdateWrapper<LessonOccurrenceEntity>()
+                        .in("package_id", packageIds)
+                        .in("planning_status", List.of("SCHEDULED", "ADJUSTED"))
+                        .gt("planned_start_at", AppTime.nowLocalDateTime())
+                        .set("planning_status", "CANCELLED")
+        );
+    }
+
+    private void deactivateRecurringSchedules(List<Long> packageIds) {
+        List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
+                new QueryWrapper<RecurringScheduleRuleEntity>()
+                        .in("package_id", packageIds)
+                        .ne("rule_status", "INACTIVE")
+        );
+        if (rules.isEmpty()) {
+            return;
+        }
+
+        List<Long> ruleIds = rules.stream().map(RecurringScheduleRuleEntity::getId).toList();
+        recurringScheduleRuleMapper.update(
+                new UpdateWrapper<RecurringScheduleRuleEntity>()
+                        .in("id", ruleIds)
+                        .set("rule_status", "INACTIVE")
+        );
+        recurringScheduleSlotMapper.update(
+                new UpdateWrapper<RecurringScheduleSlotEntity>()
+                        .in("rule_id", ruleIds)
+                        .set("slot_status", "INACTIVE")
+        );
     }
 
     @Override
@@ -964,12 +1027,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public void createClassEnrollmentOrder(ClassEnrollmentCreateRequest request) {
         // Validate student
         StudentEntity student = requireStudent(request.getStudentId());
+        LocalDate enrollmentDate = LocalDate.parse(request.getEnrollmentDate());
+        LocalDate expiryDate = LocalDate.parse(request.getExpiryDate());
+        if (expiryDate.isBefore(enrollmentDate)) {
+            throw new BusinessException("INVALID_ENROLLMENT_DATE_RANGE", "Expiry date cannot be earlier than enrollment date.");
+        }
 
         // Resolve class_group from productId or classId
         ClassGroupEntity clz;
         Long resolvedClassId;
+        CourseProductEntity product = null;
         if (request.getProductId() != null) {
-            CourseProductEntity product = courseProductMapper.selectById(request.getProductId());
+            product = courseProductMapper.selectById(request.getProductId());
             if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
                 throw new BusinessException("PRODUCT_NOT_FOUND", "Group course product not found or not active.");
             }
@@ -1003,49 +1072,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
             }
             resolvedClassId = request.getClassId();
+            if (clz.getProductId() != null) {
+                product = courseProductMapper.selectById(clz.getProductId());
+            }
         }
 
-        // Generate lesson_occurrence records if this class_group has none yet
-        if (request.getProductId() != null) {
-            long existingOccCount = lessonOccurrenceMapper.selectCount(
-                    new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                            .eq(LessonOccurrenceEntity::getClassGroupId, resolvedClassId));
-            if (existingOccCount == 0) {
-                List<CourseProductScheduleSlotEntity> slots = courseProductScheduleSlotMapper.selectList(
-                        new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
-                                .eq(CourseProductScheduleSlotEntity::getProductId, request.getProductId())
-                                .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
-                if (!slots.isEmpty()) {
-                    LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
-                    LocalDate horizonEnd = today.plusDays(90);
-                    CourseProductEntity product = courseProductMapper.selectById(request.getProductId());
-                    for (LocalDate date = today; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
-                        int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
-                        for (CourseProductScheduleSlotEntity slot : slots) {
-                            if (slot.getWeekday() != weekday) continue;
-                            // 跳过无效时段（结束时间不晚于开始时间）
-                            if (!slot.getEndTime().isAfter(slot.getStartTime())) continue;
-                            long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
-                            LessonOccurrenceEntity occ = new LessonOccurrenceEntity();
-                            occ.setLessonNo(generateClassLessonNo());
-                            occ.setClassGroupId(resolvedClassId);
-                            occ.setOccurrenceType("REGULAR");
-                            occ.setPlannedTeacherId(product.getDefaultTeacherId());
-                            occ.setPlannedClassroomId(product.getDefaultClassroomId());
-                            occ.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
-                            occ.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
-                            occ.setPlannedUnits((int) (minutes / 30));
-                            occ.setPlanningStatus("SCHEDULED");
-                            occ.setConflictChecked(1);
-                            lessonOccurrenceMapper.insert(occ);
-                        }
-                    }
-                    // 生成 scheduleDesc 并更新班课（用于学生日历等前端展示）
-                    String scheduleDesc = buildScheduleDesc(slots);
-                    clz.setScheduleDesc(scheduleDesc);
-                    classGroupMapper.updateById(clz);
-                }
-            }
+        if (product != null && "GROUP".equals(product.getTeachingMode())) {
+            ensureClassOccurrencesThrough(clz, product, expiryDate);
         }
 
         // Check duplicate enrollment (only active enrollments, not withdrawn)
@@ -1088,8 +1121,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
         enrollment.setClassId(resolvedClassId);
         enrollment.setStudentId(student.getId());
-        enrollment.setEnrollmentDate(java.time.LocalDate.parse(request.getEnrollmentDate()));
-        enrollment.setExpiryDate(java.time.LocalDate.parse(request.getExpiryDate()));
+        enrollment.setEnrollmentDate(enrollmentDate);
+        enrollment.setExpiryDate(expiryDate);
         enrollment.setStatus("ACTIVE");
         classEnrollmentMapper.insert(enrollment);
 
@@ -1108,6 +1141,73 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
     }
 
+    private void ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
+                                               CourseProductEntity product,
+                                               LocalDate requestedExpiryDate) {
+        List<CourseProductScheduleSlotEntity> slots = courseProductScheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
+                        .eq(CourseProductScheduleSlotEntity::getProductId, product.getId())
+                        .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
+        if (slots.isEmpty()) {
+            return;
+        }
+
+        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+        LocalDate horizonEnd = requestedExpiryDate.isAfter(today.plusDays(90))
+                ? requestedExpiryDate
+                : today.plusDays(90);
+        LocalDateTime windowStart = today.atStartOfDay();
+        LocalDateTime windowEnd = horizonEnd.plusDays(1).atStartOfDay();
+
+        Set<LocalDateTime> existingStarts = lessonOccurrenceMapper.selectList(
+                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                                .eq(LessonOccurrenceEntity::getClassGroupId, classGroup.getId())
+                                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                                .ge(LessonOccurrenceEntity::getPlannedStartAt, windowStart)
+                                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd))
+                .stream()
+                .map(LessonOccurrenceEntity::getPlannedStartAt)
+                .collect(Collectors.toSet());
+
+        List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
+        for (LocalDate date = today; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
+            int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
+            for (CourseProductScheduleSlotEntity slot : slots) {
+                if (slot.getWeekday() != weekday || !slot.getEndTime().isAfter(slot.getStartTime())) {
+                    continue;
+                }
+                LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
+                if (existingStarts.contains(plannedStartAt)) {
+                    continue;
+                }
+                long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                LessonOccurrenceEntity occ = new LessonOccurrenceEntity();
+                occ.setLessonNo(generateClassLessonNo());
+                occ.setClassGroupId(classGroup.getId());
+                occ.setOccurrenceType("REGULAR");
+                occ.setPlannedTeacherId(product.getDefaultTeacherId());
+                occ.setPlannedClassroomId(product.getDefaultClassroomId());
+                occ.setPlannedStartAt(plannedStartAt);
+                occ.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
+                occ.setPlannedUnits((int) (minutes / 30));
+                occ.setPlanningStatus("SCHEDULED");
+                occ.setConflictChecked(1);
+                occurrences.add(occ);
+            }
+        }
+
+        if (!occurrences.isEmpty()) {
+            ensureNoConflicts(occurrences, null, product.getDefaultTeacherId(), product.getDefaultClassroomId());
+            occurrences.forEach(lessonOccurrenceMapper::insert);
+        }
+
+        String scheduleDesc = buildScheduleDesc(slots);
+        if (!scheduleDesc.equals(classGroup.getScheduleDesc())) {
+            classGroup.setScheduleDesc(scheduleDesc);
+            classGroupMapper.updateById(classGroup);
+        }
+    }
+
     /**
      * Validate status transition rules.
      */
@@ -1122,7 +1222,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         Set<String> allowed = validTransitions.getOrDefault(currentStatus, Set.of());
         if (!allowed.contains(newStatus)) {
             throw new BusinessException("INVALID_STATUS_TRANSITION",
-                    String.format("不允许的状态转换: %s -> %s", currentStatus, newStatus));
+                    String.format("Status transition is not allowed: %s -> %s", currentStatus, newStatus));
         }
     }
 

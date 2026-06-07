@@ -45,7 +45,7 @@ public class PackageTeacherAssignmentController {
     @PostMapping
     @Operation(summary = "创建老师分配记录")
     public ApiResponse<Long> createAssignment(@Valid @RequestBody PackageTeacherAssignmentRequest request) {
-        return ApiResponse.success("分配创建成功。", packageTeacherAssignmentService.createAssignment(request));
+        return ApiResponse.success("Assignment created successfully.", packageTeacherAssignmentService.createAssignment(request));
     }
 
     @PutMapping("/{id}/end")
@@ -54,7 +54,7 @@ public class PackageTeacherAssignmentController {
             @Parameter(description = "分配ID") @PathVariable Long id,
             @Parameter(description = "变更原因") @RequestParam(required = false) String changeReason) {
         packageTeacherAssignmentService.endAssignment(id, changeReason);
-        return ApiResponse.success("分配已结束。", null);
+        return ApiResponse.success("Assignment ended successfully.", null);
     }
 
     @PutMapping("/package/{packageId}/switch")
@@ -64,6 +64,6 @@ public class PackageTeacherAssignmentController {
             @Parameter(description = "新老师ID") @RequestParam Long newTeacherId,
             @Parameter(description = "变更原因") @RequestParam(required = false) String changeReason) {
         packageTeacherAssignmentService.switchPrimaryTeacher(packageId, newTeacherId, changeReason);
-        return ApiResponse.success("主老师切换成功。", null);
+        return ApiResponse.success("Primary teacher changed successfully.", null);
     }
 }

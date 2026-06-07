@@ -1,11 +1,13 @@
+import type { EntityId } from './domain';
+
 export interface AuthUser {
-  userId: number;
+  userId: EntityId;
   username: string;
   displayName: string;
   userType: string;
   roleCodes: string[];
-  teacherId?: number;
-  studentId?: number;
+  teacherId?: EntityId;
+  studentId?: EntityId;
 }
 
 export function isTeacherUser(user: AuthUser | null): boolean {

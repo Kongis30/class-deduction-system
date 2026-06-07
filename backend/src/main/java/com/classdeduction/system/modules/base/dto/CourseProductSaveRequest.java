@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -48,6 +49,7 @@ public class CourseProductSaveRequest {
     @Schema(description = "Default teacher ID (for GROUP)", example = "7001")
     private Long defaultTeacherId;
 
+    @NotNull(message = "Original price is required")
     @DecimalMin(value = "0.00", message = "Original price must be 0 or greater")
     @Schema(description = "Original price", example = "2699.00")
     private BigDecimal listPrice;

@@ -5,6 +5,9 @@
 frontend/node_modules
 frontend/dist
 frontend/.vite
+frontend/test-results
+frontend/playwright-report
+class-deduction-desktop/node_modules
 
 # Backend
 backend/target
@@ -14,7 +17,22 @@ backend/.mvn/wrapper/maven-wrapper.jar
 .idea
 .vscode
 *.iml
+.claude/
+.codex/
+.cursor/
+.windsurf/
+
+# AI memory / local planning artifacts
+memory/
+memroy/
+.memory/
+.specify/memory/
 
 # Logs
 *.log
 
+# Local env / editor temp files
+.env.local
+.env.*.local
+*.swp
+*.swo

@@ -35,6 +35,8 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
+    show: false, // 先隐藏窗口，等页面渲染就绪后再显示，避免白屏
+    backgroundColor: '#f5f6fa', // 背景色与应用主题一致，防止闪烁
     icon: fs.existsSync(path.join(distDir, 'logo.jpg')) ? path.join(distDir, 'logo.jpg') : undefined,
     title: 'JIN BEST TUTORING',
     webPreferences: {
@@ -46,10 +48,13 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(distDir, 'index.html'));
 
-  // 开发环境下可打开 DevTools
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.webContents.openDevTools();
-  }
+  // 等待页面加载完成后显示窗口，消除白屏
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show();
+    if (process.env.NODE_ENV === 'development') {
+      mainWindow.webContents.openDevTools();
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

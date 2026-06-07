@@ -2,7 +2,9 @@ package com.classdeduction.system.modules.systemconfig.service;
 
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.systemconfig.config.NotificationEmailProperties;
+import com.classdeduction.system.modules.systemconfig.dto.NotificationConfigUpdateRequest;
 import com.classdeduction.system.modules.systemconfig.dto.NotificationDispatchRequest;
+import com.classdeduction.system.modules.systemconfig.entity.NotificationConfigEntity;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.BrandConfigMapper;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationLogMapper;
@@ -22,7 +24,6 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mail.javamail.JavaMailSender;
-
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Properties;
@@ -72,6 +73,9 @@ class SystemNotificationServiceImplTest {
     @Captor
     private ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<NotificationLogEntity>> updateCaptor;
 
+    @Captor
+    private ArgumentCaptor<NotificationConfigEntity> configCaptor;
+
     private NotificationEmailProperties notificationEmailProperties;
     private SystemNotificationServiceImpl systemNotificationService;
 
@@ -105,6 +109,58 @@ class SystemNotificationServiceImplTest {
     }
 
     @Test
+    void shouldUseDbDisabledSenderConfigInsteadOfYamlFallback() {
+        notificationEmailProperties.setEnabled(true);
+        notificationEmailProperties.setFromAddress("fallback@example.com");
+        when(notificationConfigMapper.selectById(1L)).thenReturn(buildNotificationConfig(false));
+
+        NotificationDispatchRequest request = new NotificationDispatchRequest();
+        request.setBatchSize(10);
+
+        assertThatThrownBy(() -> systemNotificationService.dispatchPendingEmails(request, 3001L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Email dispatch is currently disabled.");
+    }
+
+    @Test
+    void shouldPreserveExistingSmtpSecretWhenUpdateOmitsSecretFields() {
+        NotificationConfigEntity existing = buildNotificationConfig(true);
+        existing.setAuthCode("old-auth-code");
+        existing.setSmtpPassword("old-smtp-password");
+        when(notificationConfigMapper.selectById(1L)).thenReturn(existing);
+
+        NotificationConfigUpdateRequest request = buildConfigUpdateRequest();
+        request.setAuthCode("");
+
+        systemNotificationService.updateNotificationConfig(request, 3001L);
+
+        verify(notificationConfigMapper).insertOrUpdate(configCaptor.capture());
+        NotificationConfigEntity saved = configCaptor.getValue();
+        assertThat(saved.getAuthCode()).isEqualTo("old-auth-code");
+        assertThat(saved.getSmtpPassword()).isEqualTo("old-smtp-password");
+        assertThat(saved.getSmtpUsername()).isEqualTo("sender@example.com");
+    }
+
+    @Test
+    void shouldStoreNewAuthCodeAsSmtpCredential() {
+        NotificationConfigEntity existing = buildNotificationConfig(true);
+        existing.setAuthCode("old-auth-code");
+        existing.setSmtpPassword("old-smtp-password");
+        when(notificationConfigMapper.selectById(1L)).thenReturn(existing);
+
+        NotificationConfigUpdateRequest request = buildConfigUpdateRequest();
+        request.setAuthCode("new-auth-code");
+
+        systemNotificationService.updateNotificationConfig(request, 3001L);
+
+        verify(notificationConfigMapper).insertOrUpdate(configCaptor.capture());
+        NotificationConfigEntity saved = configCaptor.getValue();
+        assertThat(saved.getAuthCode()).isEqualTo("new-auth-code");
+        assertThat(saved.getSmtpPassword()).isEqualTo("new-auth-code");
+        assertThat(saved.getSmtpUsername()).isEqualTo("sender@example.com");
+    }
+
+    @Test
     void shouldDispatchAllowlistedPendingEmail() {
         notificationEmailProperties.setEnabled(true);
         notificationEmailProperties.setFromAddress("no-reply@example.com");
@@ -135,5 +191,35 @@ class SystemNotificationServiceImplTest {
         assertThat(result.successCount()).isEqualTo(1);
         assertThat(result.failedCount()).isEqualTo(0);
         assertThat(result.successLogIds()).containsExactly(9001L);
+    }
+
+    private NotificationConfigEntity buildNotificationConfig(boolean enabled) {
+        NotificationConfigEntity config = new NotificationConfigEntity();
+        config.setId(1L);
+        config.setEnabled(enabled ? 1 : 0);
+        config.setFromAddress("sender@example.com");
+        config.setFromName("JIN BEST TUTORING");
+        config.setAuthCode("auth-code");
+        config.setStrictAllowlist(1);
+        config.setAllowedRecipients("[\"parent@example.com\"]");
+        config.setSmtpHost("smtp.example.com");
+        config.setSmtpPort(587);
+        config.setSmtpUsername("sender@example.com");
+        config.setSmtpPassword("auth-code");
+        return config;
+    }
+
+    private NotificationConfigUpdateRequest buildConfigUpdateRequest() {
+        NotificationConfigUpdateRequest request = new NotificationConfigUpdateRequest();
+        request.setEnabled(true);
+        request.setFromAddress("sender@example.com");
+        request.setFromName("JIN BEST TUTORING");
+        request.setStrictAllowlist(true);
+        request.setAllowedRecipients("[\"parent@example.com\"]");
+        request.setLowBalanceThreshold(2);
+        request.setLowBalanceRecipients("[]");
+        request.setSmtpHost("smtp.example.com");
+        request.setSmtpPort(587);
+        return request;
     }
 }

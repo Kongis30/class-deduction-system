@@ -149,30 +149,31 @@ import { computed, onMounted, ref } from 'vue';
 import { fetchPayRates, savePayRate, type TeacherPayRateSavePayload } from '@/api/finance';
 import { fetchAllTeachers } from '@/api/base-data';
 import { fetchCourseProducts } from '@/api/base-data';
+import type { EntityId } from '@/types/domain';
 
 const teacherKeyword = ref('');
 const teachersLoading = ref(false);
 const loading = ref(false);
 
-const allTeachers = ref<{ id: number; teacherName: string; teacherNo: string }[]>([]);
-const allProducts = ref<{ id: number; productCode: string; productName: string; subjectName: string }[]>([]);
+const allTeachers = ref<{ id: EntityId; teacherName: string; teacherNo: string }[]>([]);
+const allProducts = ref<{ id: EntityId; productCode: string; productName: string; subjectName: string }[]>([]);
 
-const selectedTeacherId = ref<number | null>(null);
+const selectedTeacherId = ref<EntityId | null>(null);
 
 // Row type: a product with editable rate
 interface RateRow {
-  productId: number;
+  productId: EntityId;
   productCode: string;
   productName: string;
   subjectName: string;
-  rateId?: number;
+  rateId?: EntityId;
   hourlyRate: number;
   originalRate: number; // for change detection
   notes?: string;
 }
 
 const rateRows = ref<RateRow[]>([]);
-const savingProductId = ref<number | null>(null);
+const savingProductId = ref<EntityId | null>(null);
 
 // ─── 编辑弹窗 ──────────────────────────────────────────
 
@@ -196,7 +197,7 @@ async function handleEditSave() {
       teacherId: selectedTeacherId.value,
       courseProductId: row.productId,
       hourlyRate: newRate,
-      notes: newRate > 0 ? null : undefined,
+        notes: undefined,
     };
     const res = await savePayRate(payload);
     row.rateId = res.data.data;
@@ -226,7 +227,7 @@ const selectedTeacher = computed(() =>
 
 // ─── 选中老师 ───────────────────────────────────────────
 
-async function selectTeacher(id: number) {
+async function selectTeacher(id: EntityId) {
   selectedTeacherId.value = id;
   await loadRates();
 }
@@ -242,14 +243,14 @@ async function loadRates() {
     const existingRates = ratesRes.data.data;
 
     // 构建 rate lookup: productId → rate info
-    const rateMap = new Map<number, any>();
+      const rateMap = new Map<string, any>();
     for (const r of existingRates) {
-      rateMap.set(r.courseProductId, r);
+        rateMap.set(String(r.courseProductId), r);
     }
 
     // 组装所有产品 + 已有单价
     rateRows.value = allProducts.value.map(p => {
-      const existing = rateMap.get(p.id);
+        const existing = rateMap.get(String(p.id));
       return {
         productId: p.id,
         productCode: p.productCode,

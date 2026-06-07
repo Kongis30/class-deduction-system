@@ -7,6 +7,7 @@ import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.systemconfig.entity.BrandConfigEntity;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTemplateEntity;
+import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.BrandConfigMapper;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationLogMapper;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTemplateMapper;
@@ -70,6 +71,7 @@ class NotificationOutboxServiceImplTest {
 
     @Test
     void shouldQueuePendingEmailForPrimaryGuardian() {
+        when(notificationTriggerRuleMapper.selectOne(any())).thenReturn(buildEnabledLessonConfirmedRule());
         when(notificationTemplateMapper.selectOne(any())).thenReturn(buildTemplate());
         when(brandConfigMapper.selectOne(any())).thenReturn(buildBrandConfig());
         when(studentMapper.selectById(601L)).thenReturn(buildStudentWithGuardianEmail());
@@ -81,6 +83,15 @@ class NotificationOutboxServiceImplTest {
         assertThat(logCaptor.getValue().getSendStatus()).isEqualTo("PENDING");
         assertThat(logCaptor.getValue().getRequestPayload()).contains("Olivia Lin");
         assertThat(logCaptor.getValue().getRequestPayload()).contains("JIN BEST TUTORING");
+    }
+
+    private NotificationTriggerRuleEntity buildEnabledLessonConfirmedRule() {
+        NotificationTriggerRuleEntity entity = new NotificationTriggerRuleEntity();
+        entity.setId(70001L);
+        entity.setTriggerType("LESSON_CONFIRMED");
+        entity.setEnabled(1);
+        entity.setRecipientType("GUARDIAN_EMAIL");
+        return entity;
     }
 
     private NotificationTemplateEntity buildTemplate() {

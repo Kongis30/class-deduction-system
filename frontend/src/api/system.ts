@@ -1,6 +1,6 @@
 import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
-import type { BrandConfigItem, LessonStatusRuleItem, NotificationTemplateItem, NotificationConfigItem, NotificationTriggerRuleItem } from '@/types/domain';
+import type { BrandConfigItem, EntityId, LessonStatusRuleItem, NotificationTemplateItem, NotificationConfigItem, NotificationTriggerRuleItem } from '@/types/domain';
 
 // ─── Lesson Status Rules ────────────────────────────
 
@@ -16,7 +16,7 @@ export function fetchLessonStatusRules(params: LessonStatusRuleQuery = {}) {
   return http.get<ApiResponse<PageResult<LessonStatusRuleItem>>>('/v1/system/lesson-status-rules', { params });
 }
 
-export function fetchLessonStatusRule(id: number) {
+export function fetchLessonStatusRule(id: EntityId) {
   return http.get<ApiResponse<LessonStatusRuleItem>>(`/v1/system/lesson-status-rules/${id}`);
 }
 
@@ -31,7 +31,7 @@ export interface LessonStatusRuleUpdatePayload {
   remark?: string;
 }
 
-export function updateLessonStatusRule(id: number, data: LessonStatusRuleUpdatePayload) {
+export function updateLessonStatusRule(id: EntityId, data: LessonStatusRuleUpdatePayload) {
   return http.put<ApiResponse<LessonStatusRuleItem>>(`/v1/system/lesson-status-rules/${id}`, data);
 }
 
@@ -68,7 +68,7 @@ export function fetchNotificationTemplates(params: NotificationTemplateQuery = {
   return http.get<ApiResponse<PageResult<NotificationTemplateItem>>>('/v1/system/notification-templates', { params });
 }
 
-export function fetchNotificationTemplate(id: number) {
+export function fetchNotificationTemplate(id: EntityId) {
   return http.get<ApiResponse<NotificationTemplateItem>>(`/v1/system/notification-templates/${id}`);
 }
 
@@ -80,7 +80,7 @@ export interface NotificationTemplateUpdatePayload {
   remark?: string;
 }
 
-export function updateNotificationTemplate(id: number, data: NotificationTemplateUpdatePayload) {
+export function updateNotificationTemplate(id: EntityId, data: NotificationTemplateUpdatePayload) {
   return http.put<ApiResponse<NotificationTemplateItem>>(`/v1/system/notification-templates/${id}`, data);
 }
 
@@ -90,15 +90,13 @@ export interface NotificationConfigUpdatePayload {
   enabled: boolean;
   fromAddress: string;
   fromName: string;
-  authCode: string;
+  authCode?: string;
   strictAllowlist: boolean;
   allowedRecipients: string;
   lowBalanceThreshold: number;
   lowBalanceRecipients: string;
   smtpHost?: string;
   smtpPort?: number;
-  smtpUsername?: string;
-  smtpPassword?: string;
 }
 
 export function fetchNotificationConfig() {
@@ -117,6 +115,7 @@ export function sendTestEmail() {
 
 export interface NotificationTriggerRuleUpdatePayload {
   enabled: boolean;
+  templateId?: EntityId | null;
   recipientType: string;
   customRecipients: string;
   thresholdValue: number | null;
@@ -127,17 +126,19 @@ export function fetchNotificationTriggerRules() {
   return http.get<ApiResponse<NotificationTriggerRuleItem[]>>('/v1/system/notification-trigger-rules');
 }
 
-export function updateNotificationTriggerRule(id: number, data: NotificationTriggerRuleUpdatePayload) {
+export function updateNotificationTriggerRule(id: EntityId, data: NotificationTriggerRuleUpdatePayload) {
   return http.put<ApiResponse<NotificationTriggerRuleItem>>(`/v1/system/notification-trigger-rules/${id}`, data);
 }
 
 // ─── Broadcast ──────────────────────────────────────────
 
+export type NotificationRecipientPreset = 'ALL_STUDENTS' | 'ALL_ENROLLED_STUDENTS' | 'ALL_TEACHERS' | 'ALL_ADMIN_USERS' | 'CUSTOM';
+
 export interface NotificationBroadcastPayload {
   subject: string;
   body: string;
   recipients?: string[];
-  recipientPreset?: 'ALL_STUDENTS' | 'ALL_ENROLLED_STUDENTS' | 'ALL_TEACHERS' | 'ALL_ADMIN_USERS' | 'CUSTOM';
+  recipientPreset?: NotificationRecipientPreset;
   studentKeyword?: string;
 }
 

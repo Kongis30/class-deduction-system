@@ -151,6 +151,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())) != null) {
             throw new BusinessException("LESSON_ALREADY_CONFIRMED", "This planned lesson has already been confirmed.");
         }
+        int originalPlannedUnits = occurrence.getPlannedUnits();
         CoursePackageEntity coursePackage = requirePackage(occurrence.getPackageId());
         StudentEntity student = requireStudent(occurrence.getStudentId());
         LessonStatusRuleEntity rule = requireActiveRule(request.getResultStatus());
@@ -183,9 +184,15 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
         // Reflect actual values on the occurrence so the frontend list
         // shows the confirmed values instead of the original planned ones.
-        occurrence.setPlannedTeacherId(decision.actualTeacherId());
-        occurrence.setPlannedClassroomId(decision.actualClassroomId());
-        occurrence.setPlannedUnits(decision.actualUnits());
+        if (decision.actualTeacherId() != null) {
+            occurrence.setPlannedTeacherId(decision.actualTeacherId());
+        }
+        if (decision.actualClassroomId() != null) {
+            occurrence.setPlannedClassroomId(decision.actualClassroomId());
+        }
+        if (decision.actualUnits() > 0) {
+            occurrence.setPlannedUnits(decision.actualUnits());
+        }
         if (decision.actualStartAt() != null) {
             occurrence.setPlannedStartAt(decision.actualStartAt());
             occurrence.setPlannedEndAt(decision.actualEndAt());
@@ -215,7 +222,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 makeup.setPlannedClassroomId(lastOccurrence.getPlannedClassroomId());
                 makeup.setPlannedStartAt(lastOccurrence.getPlannedStartAt().plusWeeks(1));
                 makeup.setPlannedEndAt(lastOccurrence.getPlannedEndAt().plusWeeks(1));
-                makeup.setPlannedUnits(occurrence.getPlannedUnits());
+                makeup.setPlannedUnits(originalPlannedUnits);
                 makeup.setPlanningStatus("SCHEDULED");
                 makeup.setSourceOccurrenceId(occurrence.getId());
                 makeup.setConflictChecked(1);
@@ -231,7 +238,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         // Dynamic adjustment: when actual duration differs from planned, redistribute the delta
         // across future occurrences (e.g., a 2h lesson confirmed as 1h → surplus goes to last lesson)
         int adjustmentDelta = decision.shouldDeduct()
-                ? occurrence.getPlannedUnits() - decision.deductedUnits()
+                ? originalPlannedUnits - decision.deductedUnits()
                 : 0;
         if (adjustmentDelta != 0) {
             adjustFutureOccurrences(coursePackage.getId(), adjustmentDelta);

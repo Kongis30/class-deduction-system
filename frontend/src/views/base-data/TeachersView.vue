@@ -74,7 +74,6 @@
           <template #default="{ row }">
             <div class="table-actions">
               <el-button text type="primary" @click="openTeacherDialog(row)">Edit</el-button>
-              <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
             </div>
           </template>
         </el-table-column>
@@ -156,13 +155,13 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { reactive, ref, watch } from 'vue';
 
 import {
-  deleteTeacher,
   fetchAllTeachers,
   fetchTeachers,
+  updateTeacher,
   type TeacherQuery,
   type TeacherSavePayload,
 } from '@/api/base-data';
@@ -281,26 +280,6 @@ async function handleTeacherSubmit() {
     ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
   } finally {
     submitting.value = false;
-  }
-}
-
-// ─── 删除 ──────────────────────────────────────────────
-async function handleDelete(row: TeacherItem) {
-  try {
-    await ElMessageBox.confirm(
-      `Delete "${row.teacherName}"? This action cannot be undone.`,
-      'Confirm delete',
-      { type: 'warning' },
-    );
-  } catch {
-    return; // User cancelled
-  }
-  try {
-    await deleteTeacher(row.id);
-    ElMessage.success('Deleted.');
-    loadData();
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
   }
 }
 

@@ -1,3 +1,5 @@
+export type EntityId = string;
+
 export interface DashboardSummary {
   totalStudents: number;
   totalTeachers: number;
@@ -10,7 +12,7 @@ export interface DashboardSummary {
 }
 
 export interface CampusDetail {
-  campusId: number;
+  campusId: EntityId;
   campusName: string;
   students: number;
   teachers: number;
@@ -22,7 +24,7 @@ export interface CampusDetail {
 // ─── Discount Presets ──────────────────────────────────
 
 export interface DiscountPresetItem {
-  id: number;
+  id: EntityId;
   presetName: string;
   discountType: 'PERCENTAGE' | 'FIXED';
   discountValue: number;
@@ -35,7 +37,7 @@ export interface DiscountPresetItem {
 // ─── Base Data ─────────────────────────────────────────
 
 export interface StudentItem {
-  id: string;
+  id: EntityId;
   studentNo: string;
   studentName: string;
   englishName?: string;
@@ -47,36 +49,36 @@ export interface StudentItem {
   guardianEmail?: string;
   guardianRelationType?: string;
   status: string;
-  campusId?: number;
+  campusId?: EntityId;
   campusName?: string;
   notes?: string;
 }
 
 export interface TeacherItem {
-  id: number;
+  id: EntityId;
   teacherNo: string;
   teacherName: string;
   mobile: string;
   email: string;
   subjectTags: string[];
   status: string;
-  campusId?: number;
+  campusId?: EntityId;
   notes?: string;
 }
 
 export interface ClassroomItem {
-  id: number;
+  id: EntityId;
   roomCode: string;
   roomName: string;
   campus: string;
-  campusId?: number;
+  campusId?: EntityId;
   capacity: number;
   status: string;
   notes?: string;
 }
 
 export interface SubjectItem {
-  id: number;
+  id: EntityId;
   subjectName: string;
   displayOrder: number;
   status: string;
@@ -86,7 +88,7 @@ export interface SubjectItem {
 }
 
 export interface CampusItem {
-  id: number;
+  id: EntityId;
   campusName: string;
   displayOrder: number;
   status: string;
@@ -94,7 +96,7 @@ export interface CampusItem {
 }
 
 export interface CourseProductItem {
-  id: number;
+  id: EntityId;
   productCode: string;
   productName: string;
   subjectName?: string;
@@ -102,9 +104,9 @@ export interface CourseProductItem {
   defaultTotalUnits: number;
   defaultLessonUnits: number;
   expiryDurationDays?: number;
-  defaultClassroomId?: number;
+  defaultClassroomId?: EntityId;
   defaultClassroomName?: string;
-  defaultTeacherId?: number;
+  defaultTeacherId?: EntityId;
   defaultTeacherName?: string;
   listPrice: number;
   status: string;
@@ -113,7 +115,7 @@ export interface CourseProductItem {
 }
 
 export interface ProductScheduleSlotItem {
-  id?: number;
+  id?: EntityId;
   weekday: number;
   startTime: string;
   endTime: string;
@@ -122,13 +124,13 @@ export interface ProductScheduleSlotItem {
 // ─── Enrollment ────────────────────────────────────────
 
 export interface EnrollmentOrderItem {
-  id: number;
+  id: EntityId;
   enrollmentNo: string;
-  studentId: number;
+  studentId: EntityId;
   studentName: string;
-  classId?: number;
+  classId?: EntityId;
   className?: string;
-  courseProductId?: number;
+  courseProductId?: EntityId;
   courseProductName?: string;
   handledByName?: string;
   currencyCode?: string;
@@ -142,15 +144,15 @@ export interface EnrollmentOrderItem {
 }
 
 export interface EnrollmentOrderDetailItem {
-  id: number;
+  id: EntityId;
   enrollmentNo: string;
-  studentId: number;
+  studentId: EntityId;
   studentNo: string;
   studentName: string;
-  classId?: number;
+  classId?: EntityId;
   className?: string;
   orderStatus: string;
-  cashierUserId?: number;
+  cashierUserId?: EntityId;
   handledByName?: string;
   currencyCode?: string;
   originalAmount: number;
@@ -165,12 +167,12 @@ export interface EnrollmentOrderDetailItem {
 }
 
 export interface CoursePackageItem {
-  id: number;
+  id: EntityId;
   packageNo: string;
-  enrollmentOrderId: number;
-  studentId: number;
+  enrollmentOrderId: EntityId;
+  studentId: EntityId;
   studentName: string;
-  courseProductId: number;
+  courseProductId: EntityId;
   packageName: string;
   subjectName?: string;
   teachingMode?: string;
@@ -186,7 +188,7 @@ export interface CoursePackageItem {
 }
 
 export interface PaymentMethodItem {
-  id: number;
+  id: EntityId;
   methodCode: string;
   methodName: string;
   sortOrder: number;
@@ -194,7 +196,7 @@ export interface PaymentMethodItem {
 }
 
 export interface PaymentRecordItem {
-  id: number;
+  id: EntityId;
   paymentNo: string;
   paymentMethod: string;
   paymentStatus: string;
@@ -205,10 +207,10 @@ export interface PaymentRecordItem {
 }
 
 export interface ReceiptRecordItem {
-  id: number;
+  id: EntityId;
   receiptNo: string;
-  enrollmentOrderId: number;
-  studentId: number;
+  enrollmentOrderId: EntityId;
+  studentId: EntityId;
   studentName: string;
   templateCode?: string;
   fileUrl?: string;
@@ -218,14 +220,14 @@ export interface ReceiptRecordItem {
 // ─── Schedule ──────────────────────────────────────────
 
 export interface RecurringScheduleRuleItem {
-  id: number;
-  packageId: number;
+  id: EntityId;
+  packageId: EntityId;
   packageNo: string;
-  studentId: number;
+  studentId: EntityId;
   studentName: string;
-  primaryTeacherId?: number;
+  primaryTeacherId?: EntityId;
   primaryTeacherName?: string;
-  defaultClassroomId?: number;
+  defaultClassroomId?: EntityId;
   defaultClassroomName?: string;
   ruleStatus: string;
   startDate: string;
@@ -238,7 +240,7 @@ export interface RecurringScheduleRuleItem {
 }
 
 export interface RecurringScheduleSlotItem {
-  id: number;
+  id: EntityId;
   weekday: number;
   startTime: string;
   endTime: string;
@@ -255,27 +257,27 @@ export interface RecurringScheduleRuleDetailItem extends RecurringScheduleRuleIt
 }
 
 export interface LessonOccurrenceItem {
-  id: number;
+  id: EntityId;
   lessonNo: string;
-  packageId: number;
+  packageId: EntityId;
   packageNo: string;
   packageName?: string;
-  classGroupId?: number;
+  classGroupId?: EntityId;
   className?: string;
-  studentId: number;
+  studentId: EntityId;
   studentName: string;
-  scheduleRuleId?: number;
-  scheduleSlotId?: number;
+  scheduleRuleId?: EntityId;
+  scheduleSlotId?: EntityId;
   occurrenceType: string;
-  plannedTeacherId?: number;
+  plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
-  plannedClassroomId?: number;
+  plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
   plannedStartAt: string;
   plannedEndAt: string;
   plannedUnits: number;
   planningStatus: string;
-  sourceOccurrenceId?: number;
+  sourceOccurrenceId?: EntityId;
   conflictChecked: boolean;
   notes?: string;
   resultStatus?: string;
@@ -283,41 +285,41 @@ export interface LessonOccurrenceItem {
 }
 
 export interface ClassroomOccupancyItem {
-  occurrenceId: number;
+  occurrenceId: EntityId;
   lessonNo: string;
-  classroomId: number;
+  classroomId: EntityId;
   classroomName: string;
-  teacherId?: number;
+  teacherId?: EntityId;
   teacherName?: string;
-  packageId: number;
+  packageId: EntityId;
   packageNo: string;
   packageName?: string;
-  studentId?: number;
+  studentId?: EntityId;
   studentName?: string;
   plannedStartAt: string;
   plannedEndAt: string;
   plannedUnits: number;
   planningStatus: string;
-  classGroupId?: number;
+  classGroupId?: EntityId;
   className?: string;
 }
 
 // ─── Class Group ─────────────────────────────────────────
 
 export interface ClassGroupItem {
-  id: number;
+  id: EntityId;
   className: string;
   description?: string;
   scheduleDesc?: string;
-  teacherId?: number;
+  teacherId?: EntityId;
   teacherName?: string;
-  classroomId?: number;
+  classroomId?: EntityId;
   classroomName?: string;
   activeStudentCount: number;
 }
 
 export interface ClassEnrolledStudentItem {
-  studentId: number;
+  studentId: EntityId;
   studentName: string;
   enrollmentDate: string;
   expiryDate: string;
@@ -326,12 +328,12 @@ export interface ClassEnrolledStudentItem {
 }
 
 export interface ClassOccurrenceItem {
-  id: number;
+  id: EntityId;
   lessonNo: string;
   occurrenceType: string;
-  plannedTeacherId?: number;
+  plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
-  plannedClassroomId?: number;
+  plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
   plannedStartAt: string;
   plannedEndAt: string;
@@ -344,18 +346,18 @@ export interface ClassOccurrenceItem {
 // ─── Lesson ─────────────────────────────────────────────
 
 export interface LessonRecordItem {
-  id: number;
-  occurrenceId: number;
+  id: EntityId;
+  occurrenceId: EntityId;
   lessonNo: string;
-  packageId: number;
+  packageId: EntityId;
   packageNo: string;
   packageName?: string;
-  studentId: number;
+  studentId: EntityId;
   studentName: string;
   resultStatus: string;
-  actualTeacherId?: number;
+  actualTeacherId?: EntityId;
   actualTeacherName?: string;
-  actualClassroomId?: number;
+  actualClassroomId?: EntityId;
   actualClassroomName?: string;
   actualUnits: number;
   shouldDeduct: boolean;
@@ -366,37 +368,37 @@ export interface LessonRecordItem {
 }
 
 export interface LessonRecordDetailItem extends LessonRecordItem {
-  plannedTeacherId?: number;
+  plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
-  plannedClassroomId?: number;
+  plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
   actualStartAt?: string;
   actualEndAt?: string;
-  confirmedByUserId?: number;
+  confirmedByUserId?: EntityId;
   notes?: string;
 }
 
 export interface LessonRecordConfirmResult {
-  lessonRecordId: number;
-  occurrenceId: number;
-  ledgerId: number;
+  lessonRecordId: EntityId;
+  occurrenceId: EntityId;
+  ledgerId: EntityId;
   deductedUnits: number;
   remainingUnits: number;
   packageCompleted: boolean;
 }
 
 export interface PackageBalanceSnapshotItem {
-  packageId: number;
+  packageId: EntityId;
   packageNo: string;
   totalUnits: number;
   consumedUnits: number;
   remainingUnits: number;
-  lastLedgerId?: number;
+  lastLedgerId?: EntityId;
   snapshotAt?: string;
 }
 
 export interface LessonStatusRuleItem {
-  id: number;
+  id: EntityId;
   statusCode: string;
   statusName: string;
   defaultShouldDeduct: boolean;
@@ -411,7 +413,7 @@ export interface LessonStatusRuleItem {
 // ─── System Config ─────────────────────────────────────
 
 export interface BrandConfigItem {
-  id: number;
+  id: EntityId;
   brandName: string;
   logoUrl?: string;
   themeColor?: string;
@@ -421,7 +423,7 @@ export interface BrandConfigItem {
 }
 
 export interface NotificationTemplateItem {
-  id: number;
+  id: EntityId;
   templateCode: string;
   templateName: string;
   channelType: string;
@@ -432,7 +434,7 @@ export interface NotificationTemplateItem {
 }
 
 export interface NotificationConfigItem {
-  id: number;
+  id: EntityId;
   enabled: boolean;
   fromAddress: string;
   fromName: string;
@@ -442,15 +444,14 @@ export interface NotificationConfigItem {
   lowBalanceRecipients: string;
   smtpHost: string;
   smtpPort: number;
-  smtpUsername: string;
   updatedAt?: string;
 }
 
 export interface NotificationTriggerRuleItem {
-  id: number;
+  id: EntityId;
   triggerType: string;
   triggerName: string;
-  templateId: number | null;
+  templateId: EntityId | null;
   templateName: string | null;
   enabled: boolean;
   recipientType: string;
@@ -463,8 +464,8 @@ export interface NotificationTriggerRuleItem {
 // ─── Auth ──────────────────────────────────────────────
 
 export interface TeacherAccountItem {
-  userId: number;
-  teacherId: number;
+  userId: EntityId;
+  teacherId: EntityId;
   teacherNo?: string;
   teacherName?: string;
   username: string;
@@ -477,8 +478,8 @@ export interface TeacherAccountItem {
 }
 
 export interface StudentAccountItem {
-  userId: number;
-  studentId: number;
+  userId: EntityId;
+  studentId: EntityId;
   studentNo?: string;
   studentName?: string;
   username: string;
@@ -492,11 +493,11 @@ export interface StudentAccountItem {
 // ─── Finance ────────────────────────────────────────────
 
 export interface TeacherPayRateItem {
-  id: number;
-  teacherId: number;
+  id: EntityId;
+  teacherId: EntityId;
   teacherNo: string;
   teacherName: string;
-  courseProductId: number;
+  courseProductId: EntityId;
   productCode: string;
   productName: string;
   subjectName: string;
@@ -505,13 +506,13 @@ export interface TeacherPayRateItem {
 }
 
 export interface UnpaidLessonItem {
-  lessonRecordId: number;
+  lessonRecordId: EntityId;
   lessonDate: string;
-  studentId: number;
+  studentId: EntityId;
   studentName: string;
-  packageId: number;
+  packageId: EntityId;
   packageName: string;
-  courseProductId: number;
+  courseProductId: EntityId;
   productName: string;
   subjectName: string;
   actualUnits: number;
@@ -524,9 +525,9 @@ export interface UnpaidLessonItem {
 }
 
 export interface TeacherPaymentItem {
-  id: number;
+  id: EntityId;
   paymentNo: string;
-  teacherId: number;
+  teacherId: EntityId;
   teacherNo: string;
   teacherName: string;
   periodStart: string;
@@ -543,11 +544,11 @@ export interface TeacherPaymentItem {
 }
 
 export interface TeacherPaymentItemDetail {
-  id: number;
-  lessonRecordId: number;
-  packageId: number;
+  id: EntityId;
+  lessonRecordId: EntityId;
+  packageId: EntityId;
   packageName: string;
-  courseProductId: number;
+  courseProductId: EntityId;
   productName: string;
   subjectName: string;
   actualUnits: number;

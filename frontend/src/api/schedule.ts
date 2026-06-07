@@ -2,6 +2,7 @@ import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
 import type {
   ClassroomOccupancyItem,
+  EntityId,
   LessonOccurrenceItem,
   RecurringScheduleRuleDetailItem,
   RecurringScheduleRuleItem,
@@ -11,9 +12,9 @@ import type {
 export interface RecurringScheduleRuleQuery {
   keyword?: string;
   ruleStatus?: string;
-  teacherId?: number;
-  classroomId?: number;
-  packageId?: number;
+  teacherId?: EntityId;
+  classroomId?: EntityId;
+  packageId?: EntityId;
   pageNum?: number;
   pageSize?: number;
 }
@@ -22,7 +23,7 @@ export function fetchRecurringScheduleRules(params: RecurringScheduleRuleQuery =
   return http.get<ApiResponse<PageResult<RecurringScheduleRuleItem>>>('/v1/schedule/rules', { params });
 }
 
-export function fetchRecurringScheduleRule(id: number) {
+export function fetchRecurringScheduleRule(id: EntityId) {
   return http.get<ApiResponse<RecurringScheduleRuleDetailItem>>(`/v1/schedule/rules/${id}`);
 }
 
@@ -34,16 +35,16 @@ export interface RecurringScheduleSlotPayload {
 }
 
 export interface RecurringScheduleRuleCreatePayload {
-  packageId: number;
-  primaryTeacherId?: number;
-  defaultClassroomId?: number;
+  packageId: EntityId;
+  primaryTeacherId?: EntityId;
+  defaultClassroomId?: EntityId;
   startDate: string;
   notes?: string;
   slots: RecurringScheduleSlotPayload[];
 }
 
 export interface ScheduleRuleCreateResult {
-  ruleId: number;
+  ruleId: EntityId;
   slotCount: number;
   generatedOccurrenceCount: number;
   firstGeneratedStartAt?: string;
@@ -55,8 +56,8 @@ export function createRecurringScheduleRule(data: RecurringScheduleRuleCreatePay
 }
 
 export interface RecurringScheduleRuleUpdatePayload {
-  primaryTeacherId?: number;
-  defaultClassroomId?: number;
+  primaryTeacherId?: EntityId;
+  defaultClassroomId?: EntityId;
   ruleStatus?: string;
   startDate: string;
   notes?: string;
@@ -64,7 +65,7 @@ export interface RecurringScheduleRuleUpdatePayload {
 }
 
 export interface ScheduleRuleUpdateResult {
-  ruleId: number;
+  ruleId: EntityId;
   newSlotCount: number;
   preservedOccurrenceCount: number;
   deletedOccurrenceCount: number;
@@ -74,18 +75,18 @@ export interface ScheduleRuleUpdateResult {
   lastGeneratedEndAt?: string;
 }
 
-export function updateRecurringScheduleRule(id: number, data: RecurringScheduleRuleUpdatePayload) {
+export function updateRecurringScheduleRule(id: EntityId, data: RecurringScheduleRuleUpdatePayload) {
   return http.put<ApiResponse<ScheduleRuleUpdateResult>>(`/v1/schedule/rules/${id}`, data);
 }
 
 // ─── Lesson Occurrences ────────────────────────────────
 export interface LessonOccurrenceQuery {
   keyword?: string;
-  packageId?: number;
-  studentId?: number;
-  teacherId?: number;
-  classroomId?: number;
-  classGroupId?: number;
+  packageId?: string | number;
+  studentId?: string | number;
+  teacherId?: string | number;
+  classroomId?: string | number;
+  classGroupId?: string | number;
   planningStatus?: string;
   startAt?: string;
   endAt?: string;
@@ -97,16 +98,16 @@ export function fetchLessonOccurrences(params: LessonOccurrenceQuery = {}) {
   return http.get<ApiResponse<PageResult<LessonOccurrenceItem>>>('/v1/schedule/occurrences', { params });
 }
 
-export function fetchLessonOccurrence(id: number) {
+export function fetchLessonOccurrence(id: EntityId) {
   return http.get<ApiResponse<LessonOccurrenceItem>>(`/v1/schedule/occurrences/${id}`);
 }
 
 // ─── Schedule Adjustments ──────────────────────────────
 export interface ScheduleAdjustmentPayload {
-  occurrenceId: number;
+  occurrenceId: string | number;
   adjustmentType: string;
-  plannedTeacherId?: number;
-  plannedClassroomId?: number;
+  plannedTeacherId?: string | number;
+  plannedClassroomId?: string | number;
   plannedStartAt?: string;
   plannedEndAt?: string;
   plannedUnits?: number;
@@ -114,9 +115,9 @@ export interface ScheduleAdjustmentPayload {
 }
 
 export interface ScheduleAdjustmentResult {
-  adjustmentLogId: number;
-  affectedOccurrenceId: number;
-  createdOccurrenceId?: number;
+  adjustmentLogId: EntityId;
+  affectedOccurrenceId: EntityId;
+  createdOccurrenceId?: EntityId;
   adjustmentType: string;
 }
 
@@ -126,8 +127,8 @@ export function createScheduleAdjustment(data: ScheduleAdjustmentPayload) {
 
 // ─── Classroom Occupancy ──────────────────────────────
 export interface ClassroomOccupancyQuery {
-  classroomId?: number;
-  teacherId?: number;
+  classroomId?: string | number;
+  teacherId?: string | number;
   startAt?: string;
   endAt?: string;
   pageNum?: number;
@@ -140,24 +141,24 @@ export function fetchClassroomOccupancy(params: ClassroomOccupancyQuery = {}) {
 
 // ─── Student Schedule ─────────────────────────────────
 export interface StudentScheduleSlot {
-  occurrenceId: number;
+  occurrenceId: EntityId;
   weekday: number;
   startTime: string;
   endTime: string;
   plannedUnits: number;
   courseLabel: string;
-  packageId: number;
+  packageId: EntityId;
   planningStatus: string;
 }
 
-export function fetchActiveStudentSchedule(studentId: number) {
+export function fetchActiveStudentSchedule(studentId: string | number) {
   return http.get<ApiResponse<StudentScheduleSlot[]>>(`/v1/schedule/occurrences/student/${studentId}/active`);
 }
 
 // ─── Class Groups ──────────────────────────────────────
 export interface ClassGroupConfirmPayload {
-  actualTeacherId?: number;
-  actualClassroomId?: number;
+  actualTeacherId?: string | number;
+  actualClassroomId?: string | number;
   actualStartAt?: string;
   actualEndAt?: string;
   actualUnits?: number;
@@ -168,46 +169,46 @@ export function fetchClassGroups() {
   return http.get<ApiResponse<import('@/types/domain').ClassGroupItem[]>>('/v1/classes');
 }
 
-export function fetchClassDetail(classId: number) {
+export function fetchClassDetail(classId: string | number) {
   return http.get<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}`);
 }
 
-export function fetchClassStudents(classId: number) {
+export function fetchClassStudents(classId: string | number) {
   return http.get<ApiResponse<import('@/types/domain').ClassEnrolledStudentItem[]>>(`/v1/classes/${classId}/students`);
 }
 
-export function fetchClassOccurrences(classId: number) {
+export function fetchClassOccurrences(classId: string | number) {
   return http.get<ApiResponse<import('@/types/domain').ClassOccurrenceItem[]>>(`/v1/classes/${classId}/occurrences`);
 }
 
-export function confirmClassLesson(classId: number, occurrenceId: number, data: ClassGroupConfirmPayload = {}) {
+export function confirmClassLesson(classId: string | number, occurrenceId: string | number, data: ClassGroupConfirmPayload = {}) {
   return http.post<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/occurrences/${occurrenceId}/confirm`, data);
 }
 
-export function sendClassExpiryReminders(classId: number) {
+export function sendClassExpiryReminders(classId: string | number) {
   return http.post<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/send-expiry-reminders`);
 }
 
-export function enrollClassStudent(classId: number, data: {
-  studentId: number;
+export function enrollClassStudent(classId: string | number, data: {
+  studentId: string | number;
   enrollmentDate: string;
   expiryDate: string;
 }) {
   return http.post<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/enroll`, data);
 }
 
-export function fetchEnrolledClassGroups(studentId: number) {
+export function fetchEnrolledClassGroups(studentId: string | number) {
   return http.get<ApiResponse<any[]>>(`/v1/classes/enrolled/${studentId}`);
 }
 
-export function fetchClassGroupsByTeacher(teacherId: number) {
+export function fetchClassGroupsByTeacher(teacherId: EntityId) {
   return http.get<ApiResponse<any[]>>(`/v1/classes/teacher/${teacherId}`);
 }
 
-export function fetchClassGroupsByClassroom(classroomId: number) {
+export function fetchClassGroupsByClassroom(classroomId: string | number) {
   return http.get<ApiResponse<any[]>>(`/v1/classes/classroom/${classroomId}`);
 }
 
-export function deleteClassGroup(classId: number) {
+export function deleteClassGroup(classId: string | number) {
   return http.delete<ApiResponse<null>>(`/v1/classes/${classId}`);
 }

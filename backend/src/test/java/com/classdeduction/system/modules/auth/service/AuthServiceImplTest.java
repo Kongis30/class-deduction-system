@@ -12,6 +12,7 @@ import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.auth.service.impl.AuthServiceImpl;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,6 +54,9 @@ class AuthServiceImplTest {
     private TeacherMapper teacherMapper;
 
     @Mock
+    private StudentMapper studentMapper;
+
+    @Mock
     private AuthSessionMapper authSessionMapper;
 
     @Mock
@@ -82,6 +86,7 @@ class AuthServiceImplTest {
                 userAccountMapper,
                 userRoleMapper,
                 teacherMapper,
+                studentMapper,
                 authSessionMapper,
                 stringRedisTemplate,
                 objectMapper,
@@ -136,9 +141,12 @@ class AuthServiceImplTest {
                         "Front Desk Staff",
                         "STAFF",
                         null,
+                        null,
                         List.of("STAFF")
                 )
         ));
+        when(userAccountMapper.selectById(1001L)).thenReturn(buildActiveUser());
+        when(userRoleMapper.listRoleCodesByUserId(1001L)).thenReturn(List.of("STAFF"));
 
         CurrentUserResponse currentUser = authService.requireCurrentUser("Bearer token-123");
 
@@ -175,14 +183,14 @@ class AuthServiceImplTest {
 
     @Test
     void shouldRefreshSessionAndReturnNewToken() throws Exception {
-        CurrentUserResponse currentUser = new CurrentUserResponse(
-                1001L, "staff", "Front Desk Staff", "STAFF", null, List.of("STAFF"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
         when(valueOperations.get(any())).thenReturn(objectMapper.writeValueAsString(
                 new com.classdeduction.system.modules.auth.model.AuthSessionPayload(
-                        1001L, "staff", "Front Desk Staff", "STAFF", null, List.of("STAFF")
+                        1001L, "staff", "Front Desk Staff", "STAFF", null, null, List.of("STAFF")
                 )
         ));
+        when(userAccountMapper.selectById(1001L)).thenReturn(buildActiveUser());
+        when(userRoleMapper.listRoleCodesByUserId(1001L)).thenReturn(List.of("STAFF"));
 
         LoginResponse refreshed = authService.refreshSession("Bearer old-token-456");
 
@@ -207,6 +215,21 @@ class AuthServiceImplTest {
         assertThatThrownBy(() -> authService.login(request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("This teacher account is not linked to an active teacher profile.");
+    }
+
+    @Test
+    void shouldRejectSessionWhenAccountWasDeleted() throws Exception {
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("auth:session:deleted-token")).thenReturn(objectMapper.writeValueAsString(
+                new com.classdeduction.system.modules.auth.model.AuthSessionPayload(
+                        1001L, "staff", "Front Desk Staff", "STAFF", null, null, List.of("STAFF")
+                )
+        ));
+        when(userAccountMapper.selectById(1001L)).thenReturn(null);
+
+        assertThatThrownBy(() -> authService.requireCurrentUser("Bearer deleted-token"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Your account is no longer available. Please sign in again.");
     }
 
     private UserAccountEntity buildActiveUser() {

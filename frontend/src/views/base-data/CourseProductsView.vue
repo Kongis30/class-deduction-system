@@ -355,16 +355,16 @@ import {
 import { fetchClassroomOccupancy } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
-import type { CourseProductItem, SubjectItem } from '@/types/domain';
+import type { CourseProductItem, EntityId, SubjectItem } from '@/types/domain';
 
 const loading = ref(false);
 const submitting = ref(false);
 const dialogVisible = ref(false);
-const editingId = ref<number | null>(null);
+const editingId = ref<EntityId | null>(null);
 const formRef = ref();
 
-const classrooms = ref<{ id: number; roomName: string }[]>([]);
-const teachers = ref<{ id: number; teacherName: string }[]>([]);
+const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
+const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const formSlots = ref<SlotDef[]>([]);
 const occupiedSlots = ref<OccupiedSlotDef[]>([]);
 
@@ -372,7 +372,7 @@ const occupiedSlots = ref<OccupiedSlotDef[]>([]);
 const subjectDialogVisible = ref(false);
 const subjectTableData = ref<SubjectItem[]>([]);
 const subjectFormRef = ref();
-const subjectEditingId = ref<number | null>(null);
+const subjectEditingId = ref<EntityId | null>(null);
 
 const subjectForm = reactive({
   subjectName: '',

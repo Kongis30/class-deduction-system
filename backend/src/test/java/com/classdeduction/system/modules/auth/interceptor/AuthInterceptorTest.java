@@ -37,7 +37,7 @@ class AuthInterceptorTest {
         request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer token-123");
         MockHttpServletResponse response = new MockHttpServletResponse();
         HandlerMethod handlerMethod = new HandlerMethod(new DummyController(), DummyController.class.getMethod("staffOnly"));
-        CurrentUserResponse currentUser = new CurrentUserResponse(1001L, "staff", "Front Desk Staff", "STAFF", null, List.of("STAFF"));
+        CurrentUserResponse currentUser = new CurrentUserResponse(1001L, "staff", "Front Desk Staff", "STAFF", null, null, List.of("STAFF"));
         when(authService.requireCurrentUser("Bearer token-123")).thenReturn(currentUser);
 
         boolean allowed = interceptor.preHandle(request, response, handlerMethod);
@@ -55,7 +55,7 @@ class AuthInterceptorTest {
         MockHttpServletResponse response = new MockHttpServletResponse();
         HandlerMethod handlerMethod = new HandlerMethod(new DummyController(), DummyController.class.getMethod("staffOnly"));
         when(authService.requireCurrentUser("Bearer token-123"))
-                .thenReturn(new CurrentUserResponse(1002L, "teacher", "Teacher", "TEACHER", 9001L, List.of("TEACHER")));
+                .thenReturn(new CurrentUserResponse(1002L, "teacher", "Teacher", "TEACHER", 9001L, null, List.of("TEACHER")));
 
         assertThatThrownBy(() -> interceptor.preHandle(request, response, handlerMethod))
                 .isInstanceOf(BusinessException.class)

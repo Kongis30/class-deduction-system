@@ -10,9 +10,9 @@ import type {
 // ─── Lesson Records ─────────────────────────────────
 export interface LessonRecordQuery {
   keyword?: string;
-  packageId?: number;
-  studentId?: number;
-  teacherId?: number;
+  packageId?: string | number;
+  studentId?: string | number;
+  teacherId?: string | number;
   resultStatus?: string;
   recordSource?: string;
   confirmedFrom?: string;
@@ -25,15 +25,15 @@ export function fetchLessonRecords(params: LessonRecordQuery = {}) {
   return http.get<ApiResponse<PageResult<LessonRecordItem>>>('/v1/lessons/records', { params });
 }
 
-export function fetchLessonRecord(id: number) {
+export function fetchLessonRecord(id: string | number) {
   return http.get<ApiResponse<LessonRecordDetailItem>>(`/v1/lessons/records/${id}`);
 }
 
 export interface LessonConfirmPayload {
-  occurrenceId: number;
+  occurrenceId: string | number;
   resultStatus: string;
-  actualTeacherId?: number;
-  actualClassroomId?: number;
+  actualTeacherId?: string | number;
+  actualClassroomId?: string | number;
   actualStartAt?: string;
   actualEndAt?: string;
   actualUnits?: number;
@@ -48,6 +48,6 @@ export function confirmLesson(data: LessonConfirmPayload) {
 }
 
 // ─── Package Balance Snapshot ───────────────────────
-export function fetchPackageBalanceSnapshot(packageId: number) {
+export function fetchPackageBalanceSnapshot(packageId: string | number) {
   return http.get<ApiResponse<PackageBalanceSnapshotItem>>(`/v1/lessons/balance-snapshots/${packageId}`);
 }

@@ -76,6 +76,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         BigDecimal totalAmount = splits.stream()
                 .map(PaymentSplitDTO::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        validatePaymentAmount(order, totalAmount);
 
         // 4. Create payment records (one per split)
         List<PaymentRecordEntity> records = new ArrayList<>();
@@ -115,6 +116,36 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         order.setReceivedAmount(newReceived);
         order.setPaymentStatus(resolvePaymentStatus(dueAmount, newReceived));
         enrollmentOrderMapper.updateById(order);
+        updatePackageReceivedAmount(order.getId(), newPaymentAmount);
+    }
+
+    private void validatePaymentAmount(EnrollmentOrderEntity order, BigDecimal newPaymentAmount) {
+        BigDecimal originalReceived = order.getReceivedAmount() != null ? order.getReceivedAmount() : BigDecimal.ZERO;
+        BigDecimal dueAmount = order.getOriginalAmount().subtract(order.getDiscountAmount());
+        if (dueAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("ORDER_ALREADY_PAID", "This order has no remaining amount due.");
+        }
+        BigDecimal newReceived = originalReceived.add(newPaymentAmount);
+        if (newReceived.compareTo(dueAmount) > 0) {
+            throw new BusinessException("PAYMENT_EXCEEDS_AMOUNT_DUE", "Payment amount cannot exceed the remaining amount due.");
+        }
+    }
+
+    private void updatePackageReceivedAmount(Long enrollmentOrderId, BigDecimal newPaymentAmount) {
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(
+                new LambdaQueryWrapper<CoursePackageEntity>()
+                        .eq(CoursePackageEntity::getEnrollmentOrderId, enrollmentOrderId)
+        );
+        if (packages == null || packages.isEmpty()) {
+            return;
+        }
+        for (CoursePackageEntity coursePackage : packages) {
+            BigDecimal currentReceived = coursePackage.getReceivedAmount() == null
+                    ? BigDecimal.ZERO
+                    : coursePackage.getReceivedAmount();
+            coursePackage.setReceivedAmount(currentReceived.add(newPaymentAmount));
+            coursePackageMapper.updateById(coursePackage);
+        }
     }
 
     /**

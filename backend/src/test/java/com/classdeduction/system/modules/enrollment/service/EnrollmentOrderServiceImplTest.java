@@ -3,11 +3,13 @@ package com.classdeduction.system.modules.enrollment.service;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
@@ -21,6 +23,9 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.EnrollmentOrderServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,12 +37,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -89,6 +97,9 @@ class EnrollmentOrderServiceImplTest {
     @Mock
     private com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper classEnrollmentMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
+
     @Captor
     private ArgumentCaptor<EnrollmentOrderEntity> orderCaptor;
 
@@ -122,7 +133,8 @@ class EnrollmentOrderServiceImplTest {
                 recurringScheduleSlotMapper,
                 lessonOccurrenceMapper,
                 classGroupMapper,
-                classEnrollmentMapper
+                classEnrollmentMapper,
+                courseProductScheduleSlotMapper
         );
     }
 
@@ -152,9 +164,9 @@ class EnrollmentOrderServiceImplTest {
         assertThat(order.getEnrollmentNo()).startsWith("EO");
         assertThat(order.getPaymentStatus()).isEqualTo("PAID");
         assertThat(coursePackage.getPackageNo()).startsWith("PK");
-        assertThat(coursePackage.getTotalUnits()).isEqualTo(80);
+        assertThat(coursePackage.getTotalUnits()).isEqualTo(160);
         assertThat(coursePackage.getDefaultLessonUnits()).isEqualTo(4);
-        assertThat(coursePackage.getRemainingUnits()).isEqualTo(80);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(160);
         assertThat(assignment.getPackageId()).isEqualTo(3001L);
         assertThat(assignment.getTeacherId()).isEqualTo(301L);
         assertThat(payment.getPaymentNo()).startsWith("PMT");
@@ -187,6 +199,32 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldRejectInactiveOneOnOneProduct() {
+        EnrollmentCreateRequest request = buildCreateRequest();
+        CourseProductEntity product = buildCourseProduct();
+        product.setStatus("INACTIVE");
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(courseProductMapper.selectById(201L)).thenReturn(product);
+
+        assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Course product is not active.");
+    }
+
+    @Test
+    void shouldRejectGroupProductForOneOnOneEnrollment() {
+        EnrollmentCreateRequest request = buildCreateRequest();
+        CourseProductEntity product = buildCourseProduct();
+        product.setTeachingMode("GROUP");
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(courseProductMapper.selectById(201L)).thenReturn(product);
+
+        assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only 1:1 course products can be used for new enrollment.");
+    }
+
+    @Test
     void shouldRejectWhenDefaultLessonUnitsExceedTotalUnits() {
         EnrollmentCreateRequest request = buildCreateRequest();
         request.setTotalUnits(4);
@@ -194,7 +232,71 @@ class EnrollmentOrderServiceImplTest {
 
         assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("默认单节课时单位不能大于总课时单位。");
+                .hasMessage("Default lesson units cannot exceed total units.");
+    }
+
+    @Test
+    void shouldCancelOneOnOneOrderAndReleaseFutureScheduling() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("1100.00"));
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setEnrollmentOrderId(2001L);
+        coursePackage.setPackageStatus("ACTIVE");
+
+        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
+        rule.setId(7001L);
+        rule.setPackageId(3001L);
+        rule.setRuleStatus("ACTIVE");
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
+
+        enrollmentOrderService.cancelOrder(2001L);
+
+        verify(lessonOccurrenceMapper).update(any());
+        verify(recurringScheduleRuleMapper).update(any());
+        verify(recurringScheduleSlotMapper).update(any());
+        verify(coursePackageMapper).updateById(packageCaptor.capture());
+        verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
+
+        assertThat(packageCaptor.getValue().getPackageStatus()).isEqualTo("CLOSED");
+        assertThat(orderCaptor.getValue().getOrderStatus()).isEqualTo("CANCELLED");
+        assertThat(orderCaptor.getValue().getPaymentStatus()).isEqualTo("PAID");
+    }
+
+    @Test
+    void shouldExtendExistingClassOccurrencesToEnrollmentExpiryDate() {
+        LocalDate today = LocalDate.now();
+        LocalDate expiryDate = today.plusDays(180);
+        ClassEnrollmentCreateRequest request = buildClassEnrollmentRequest(expiryDate);
+        CourseProductEntity product = buildGroupCourseProduct();
+        CourseProductScheduleSlotEntity slot = buildClassSlot(expiryDate.getDayOfWeek().getValue());
+        ClassGroupEntity existingGroup = buildClassGroup(product.getId());
+
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(courseProductMapper.selectById(product.getId())).thenReturn(product);
+        when(classGroupMapper.selectOne(any())).thenReturn(existingGroup);
+        when(courseProductScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        doAnswer(invocation -> {
+            EnrollmentOrderEntity entity = invocation.getArgument(0);
+            entity.setId(2001L);
+            return 1;
+        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+
+        enrollmentOrderService.createClassEnrollmentOrder(request);
+
+        ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper, times(26)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues())
+                .anySatisfy(occ -> assertThat(occ.getPlannedStartAt().toLocalDate()).isEqualTo(expiryDate));
     }
 
     private void stubGeneratedIds(boolean includeAssignmentInsert, boolean includePaymentInsert) {
@@ -253,6 +355,20 @@ class EnrollmentOrderServiceImplTest {
         return request;
     }
 
+    private ClassEnrollmentCreateRequest buildClassEnrollmentRequest(LocalDate expiryDate) {
+        ClassEnrollmentCreateRequest request = new ClassEnrollmentCreateRequest();
+        request.setStudentId(101L);
+        request.setProductId(202L);
+        request.setEnrollmentDate(LocalDate.now().toString());
+        request.setExpiryDate(expiryDate.toString());
+        request.setHandledByName("Amy");
+        request.setCurrencyCode("USD");
+        request.setOriginalAmount(new BigDecimal("1200.00"));
+        request.setDiscountAmount(BigDecimal.ZERO);
+        request.setReceivedAmount(BigDecimal.ZERO);
+        return request;
+    }
+
     private StudentEntity buildStudent() {
         StudentEntity student = new StudentEntity();
         student.setId(101L);
@@ -268,9 +384,45 @@ class EnrollmentOrderServiceImplTest {
         product.setProductName("SHSAT Math 1:1");
         product.setSubjectName("SHSAT Math");
         product.setTeachingMode("ONE_ON_ONE");
+        product.setStatus("ACTIVE");
         product.setDefaultTotalUnits(80);
         product.setDefaultLessonUnits(4);
         return product;
+    }
+
+    private CourseProductEntity buildGroupCourseProduct() {
+        CourseProductEntity product = new CourseProductEntity();
+        product.setId(202L);
+        product.setProductCode("COURSE-202");
+        product.setProductName("SHSAT Group");
+        product.setSubjectName("SHSAT Math");
+        product.setTeachingMode("GROUP");
+        product.setStatus("ACTIVE");
+        product.setDefaultTeacherId(301L);
+        product.setDefaultClassroomId(401L);
+        product.setListPrice(new BigDecimal("1200.00"));
+        return product;
+    }
+
+    private ClassGroupEntity buildClassGroup(Long productId) {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(801L);
+        classGroup.setClassName("SHSAT Group");
+        classGroup.setProductId(productId);
+        classGroup.setTeacherId(301L);
+        classGroup.setClassroomId(401L);
+        classGroup.setStatus("ACTIVE");
+        return classGroup;
+    }
+
+    private CourseProductScheduleSlotEntity buildClassSlot(int weekday) {
+        CourseProductScheduleSlotEntity slot = new CourseProductScheduleSlotEntity();
+        slot.setId(901L);
+        slot.setProductId(202L);
+        slot.setWeekday(weekday);
+        slot.setStartTime(LocalTime.of(9, 0));
+        slot.setEndTime(LocalTime.of(10, 0));
+        return slot;
     }
 
     private TeacherEntity buildTeacher() {

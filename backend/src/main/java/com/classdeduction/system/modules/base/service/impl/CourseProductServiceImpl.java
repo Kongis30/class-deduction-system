@@ -19,6 +19,8 @@ import com.classdeduction.system.modules.base.service.CourseProductService;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -47,6 +49,7 @@ public class CourseProductServiceImpl implements CourseProductService {
     private final ClassroomMapper classroomMapper;
     private final TeacherMapper teacherMapper;
     private final CoursePackageMapper coursePackageMapper;
+    private final ClassGroupMapper classGroupMapper;
     private final PlatformTransactionManager transactionManager;
 
     @Override
@@ -116,6 +119,7 @@ public class CourseProductServiceImpl implements CourseProductService {
                 ensureProductCodeUnique(null, request.getProductCode());
                 ensureProductNameUnique(null, request.getProductName());
                 validateByTeachingMode(request);
+                  validateSlots(request.getSlots());
                 CourseProductEntity entity = new CourseProductEntity();
                 applyCourseProduct(entity, request);
                 courseProductMapper.insert(entity);
@@ -135,6 +139,8 @@ public class CourseProductServiceImpl implements CourseProductService {
         ensureProductCodeUnique(id, request.getProductCode());
         ensureProductNameUnique(id, request.getProductName());
         validateByTeachingMode(request);
+          validateSlots(request.getSlots());
+          protectReferencedProductCriticalFields(entity, request);
         applyCourseProduct(entity, request);
         courseProductMapper.updateById(entity);
         saveSlots(entity.getId(), request.getSlots());
@@ -160,6 +166,12 @@ public class CourseProductServiceImpl implements CourseProductService {
      * 根据 teachingMode 校验必填字段。
      */
     private void validateByTeachingMode(CourseProductSaveRequest request) {
+         if (!Set.of("ONE_ON_ONE", "GROUP").contains(request.getTeachingMode())) {
+             throw new BusinessException("INVALID_TEACHING_MODE", "Teaching mode must be ONE_ON_ONE or GROUP.");
+         }
+         if (StringUtils.hasText(request.getStatus()) && !Set.of("ACTIVE", "INACTIVE").contains(request.getStatus())) {
+             throw new BusinessException("INVALID_PRODUCT_STATUS", "Course product status must be ACTIVE or INACTIVE.");
+         }
         if ("GROUP".equals(request.getTeachingMode())) {
             if (request.getDefaultTotalUnits() != null) {
                 throw new BusinessException("GROUP product should not have total units.");
@@ -189,6 +201,101 @@ public class CourseProductServiceImpl implements CourseProductService {
             }
         }
     }
+
+     private void validateSlots(List<CourseProductSaveRequest.ProductScheduleSlotDTO> slots) {
+         if (slots == null || slots.isEmpty()) {
+             return;
+         }
+         Set<String> seen = new HashSet<>();
+         for (CourseProductSaveRequest.ProductScheduleSlotDTO slot : slots) {
+             if (slot.getWeekday() == null || slot.getWeekday() < 1 || slot.getWeekday() > 7) {
+                 throw new BusinessException("INVALID_SLOT_WEEKDAY", "Schedule slot weekday must be between 1 and 7.");
+             }
+             LocalTime startTime = parseSlotTime(slot.getStartTime(), "start time");
+             LocalTime endTime = parseSlotTime(slot.getEndTime(), "end time");
+             if (!endTime.isAfter(startTime)) {
+                 throw new BusinessException("INVALID_SLOT_TIME_RANGE", "Schedule slot end time must be after start time.");
+             }
+             String key = slot.getWeekday() + "|" + startTime + "|" + endTime;
+             if (!seen.add(key)) {
+                 throw new BusinessException("DUPLICATE_SLOT", "Duplicate schedule slots are not allowed.");
+             }
+         }
+     }
+
+     private LocalTime parseSlotTime(String value, String fieldName) {
+         if (!StringUtils.hasText(value)) {
+             throw new BusinessException("INVALID_SLOT_TIME", "Schedule slot " + fieldName + " is required.");
+         }
+         try {
+             return LocalTime.parse(value);
+         } catch (RuntimeException ex) {
+             throw new BusinessException("INVALID_SLOT_TIME", "Schedule slot " + fieldName + " must use HH:mm format.");
+         }
+     }
+
+     private void protectReferencedProductCriticalFields(CourseProductEntity existing, CourseProductSaveRequest request) {
+         if (!isProductReferenced(existing.getId())) {
+             return;
+         }
+         List<String> changedFields = new ArrayList<>();
+         addIfChanged(changedFields, "teaching format", existing.getTeachingMode(), request.getTeachingMode());
+         addIfChanged(changedFields, "default total hours", existing.getDefaultTotalUnits(), request.getDefaultTotalUnits());
+         addIfChanged(changedFields, "default lesson units", existing.getDefaultLessonUnits(), request.getDefaultLessonUnits());
+         addIfChanged(changedFields, "expiry duration", existing.getExpiryDurationDays(), request.getExpiryDurationDays());
+         addIfChanged(changedFields, "default classroom", existing.getDefaultClassroomId(), request.getDefaultClassroomId());
+         addIfChanged(changedFields, "default teacher", existing.getDefaultTeacherId(), request.getDefaultTeacherId());
+         if ("GROUP".equals(existing.getTeachingMode()) && slotsChanged(existing.getId(), request.getSlots())) {
+             changedFields.add("weekly schedule");
+         }
+         if (!changedFields.isEmpty()) {
+             throw new BusinessException("PRODUCT_ALREADY_REFERENCED",
+                     "This course product is already used. Create a new product to change: "
+                             + String.join(", ", changedFields) + ".");
+         }
+     }
+
+     private boolean isProductReferenced(Long productId) {
+         Long packageCount = coursePackageMapper.selectCount(new LambdaQueryWrapper<CoursePackageEntity>()
+                 .eq(CoursePackageEntity::getCourseProductId, productId)
+                 .eq(CoursePackageEntity::getIsDeleted, 0));
+         Long classCount = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
+                 .eq(ClassGroupEntity::getProductId, productId)
+                 .eq(ClassGroupEntity::getIsDeleted, 0));
+         return packageCount > 0 || classCount > 0;
+     }
+
+     private void addIfChanged(List<String> changedFields, String label, Object oldValue, Object newValue) {
+         if (!Objects.equals(oldValue, newValue)) {
+             changedFields.add(label);
+         }
+     }
+
+     private boolean slotsChanged(Long productId, List<CourseProductSaveRequest.ProductScheduleSlotDTO> requestSlots) {
+         List<CourseProductScheduleSlotEntity> existingSlots = scheduleSlotMapper.selectList(
+                 new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
+                         .eq(CourseProductScheduleSlotEntity::getProductId, productId)
+                         .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
+         return !slotKeys(existingSlots).equals(requestSlotKeys(requestSlots));
+     }
+
+     private Set<String> slotKeys(List<CourseProductScheduleSlotEntity> slots) {
+         if (slots == null || slots.isEmpty()) {
+             return Collections.emptySet();
+         }
+         return slots.stream()
+                 .map(slot -> slot.getWeekday() + "|" + slot.getStartTime() + "|" + slot.getEndTime())
+                 .collect(Collectors.toCollection(TreeSet::new));
+     }
+
+     private Set<String> requestSlotKeys(List<CourseProductSaveRequest.ProductScheduleSlotDTO> slots) {
+         if (slots == null) {
+             return Collections.emptySet();
+         }
+         return slots.stream()
+                 .map(slot -> slot.getWeekday() + "|" + LocalTime.parse(slot.getStartTime()) + "|" + LocalTime.parse(slot.getEndTime()))
+                 .collect(Collectors.toCollection(TreeSet::new));
+     }
 
     /**
      * 保存排课时段：先删后插。

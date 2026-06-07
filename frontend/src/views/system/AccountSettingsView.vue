@@ -25,7 +25,7 @@
         <el-table-column label="Actions" min-width="180" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'TEACHER')">Edit</el-button>
-            <el-button text type="danger" @click="openDeleteDialog(row, 'TEACHER')">Delete</el-button>
+            <el-button text type="danger" @click="openDeleteDialog(row, 'TEACHER')">Disable login</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -56,7 +56,7 @@
         <el-table-column label="Actions" min-width="180" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'STUDENT')">Edit</el-button>
-            <el-button text type="danger" @click="openDeleteDialog(row, 'STUDENT')">Delete</el-button>
+            <el-button text type="danger" @click="openDeleteDialog(row, 'STUDENT')">Disable login</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -175,17 +175,18 @@
       </template>
     </el-dialog>
 
-    <!-- Delete Confirmation Dialog -->
+    <!-- Login Disable Confirmation Dialog -->
     <el-dialog v-model="deleteDialogVisible" width="460px" :close-on-click-modal="false" class="account-dialog" :close-on-press-escape="false">
-      <template #header><h3>Delete Account</h3></template>
+      <template #header><h3>Disable Login Account</h3></template>
       <div class="delete-warning">
         <div class="delete-warning__title">
-          确认删除账户「{{ deleteTargetName }}」？
+          Disable login account "{{ deleteTargetName }}"?
         </div>
         <div class="delete-warning__body">
-          <p>删除后，该登录账号将被立即禁用，无法再登录系统。</p>
-          <p>对应的{{ deleteType === 'TEACHER' ? '老师' : '学生' }}档案不受影响，仍保留在系统中。</p>
-          <p class="delete-warning__caution">此操作不可撤销，请谨慎操作。</p>
+          <p>After confirmation, this login account will be removed. Existing sessions will expire, and the user will no longer be able to sign in.</p>
+          <p>The linked {{ deleteProfileTypeLabel }} profile and business records will be kept.</p>
+          <p>This action will not cancel future lessons, close packages, stop scheduling, or change existing deduction records.</p>
+          <p class="delete-warning__caution">For business deactivation, set the {{ deleteProfileTypeLabel }} profile status to Inactive on the profile page.</p>
         </div>
       </div>
       <template #footer>
@@ -196,7 +197,7 @@
           :loading="deleteSubmitting"
           @click="handleConfirmDelete"
         >
-          {{ deleteCountdown > 0 ? `确认删除 (${deleteCountdown}s)` : '确认删除' }}
+          {{ deleteCountdown > 0 ? `Disable login (${deleteCountdown}s)` : 'Disable login' }}
         </el-button>
       </template>
     </el-dialog>
@@ -226,6 +227,7 @@ const deleteTargetName = ref('');
 const deleteCountdown = ref(0);
 const deleteSubmitting = ref(false);
 let deleteTimer: ReturnType<typeof setInterval> | null = null;
+const deleteProfileTypeLabel = computed(() => (deleteType.value === 'TEACHER' ? 'teacher' : 'student'));
 
 function openDeleteDialog(row: any, type: 'TEACHER' | 'STUDENT') {
   deleteType.value = type;
@@ -260,7 +262,7 @@ async function handleConfirmDelete() {
     } else {
       await deleteStudentAccount(deleteTargetId.value!);
     }
-    ElMessage.success(`Account deleted.`);
+    ElMessage.success(`Login account disabled.`);
     closeDeleteDialog();
     await Promise.all([loadTeacherAccounts(), loadStudentAccounts()]);
   } catch (err: any) {

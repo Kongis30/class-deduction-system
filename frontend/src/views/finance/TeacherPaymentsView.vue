@@ -338,14 +338,14 @@ import {
   fetchUnpaidLessons,
 } from '@/api/finance';
 import { fetchAllTeachers } from '@/api/base-data';
-import type { TeacherPaymentItem, UnpaidLessonItem } from '@/types/domain';
+import type { EntityId, TeacherPaymentItem, UnpaidLessonItem } from '@/types/domain';
 
 // ─── 老师列表 ──────────────────────────────────────────
 
 const teacherKeyword = ref('');
 const teachersLoading = ref(false);
-const allTeachers = ref<{ id: number; teacherName: string; teacherNo: string }[]>([]);
-const selectedTeacherId = ref<number | null>(null);
+const allTeachers = ref<{ id: EntityId; teacherName: string; teacherNo: string }[]>([]);
+const selectedTeacherId = ref<EntityId | null>(null);
 
 const filteredTeachers = computed(() => {
   const kw = teacherKeyword.value.toLowerCase().trim();
@@ -360,7 +360,7 @@ const selectedTeacher = computed(() =>
   allTeachers.value.find(t => t.id === selectedTeacherId.value),
 );
 
-async function selectTeacher(id: number) {
+async function selectTeacher(id: EntityId) {
   selectedTeacherId.value = id;
   // 默认当前月份
   dateRange.value = currentMonthRange();
@@ -392,7 +392,7 @@ const searched = ref(false);
 const unpaidLessons = ref<UnpaidLessonItem[]>([]);
 const individualSelections = ref<UnpaidLessonItem[]>([]);
 const groupSelections = ref<UnpaidLessonItem[]>([]);
-const selectedIds = ref<number[]>([]);
+const selectedIds = ref<EntityId[]>([]);
 
 const individualLessons = computed(() =>
   unpaidLessons.value.filter(r => !r.className),

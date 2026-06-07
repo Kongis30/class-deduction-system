@@ -24,6 +24,7 @@ public record StudentListItemVO(
         String guardianName,
         String phone,
         String guardianEmail,
+        String guardianRelationType,
         Long campusId,
         String campusName,
         LocalDateTime createdAt,

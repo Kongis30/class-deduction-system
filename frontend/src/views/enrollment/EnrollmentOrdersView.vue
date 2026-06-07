@@ -208,7 +208,7 @@
                       :total="expandedClassPagination[row.id]?.total ?? 0"
                       :page-size="expandedClassPagination[row.id]?.size ?? 10"
                       :current-page="expandedClassPagination[row.id]?.page ?? 1"
-                      @current-change="(p: number) => loadExpandedClassOrders(Number(row.id), p)"
+                      @current-change="(p: number) => loadExpandedClassOrders(row.id, p)"
                     />
                   </div>
                 </div>
@@ -1011,7 +1011,7 @@ import dayjs from 'dayjs';
 import { createEnrollmentOrder, cancelEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, createClassEnrollmentOrder, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
 import { fetchAllStudents, fetchAllTeachers, fetchAllClassrooms, fetchCourseProducts, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchLessonOccurrences, fetchClassGroups, fetchClassroomOccupancy, fetchClassGroupsByClassroom } from '@/api/schedule';
-import type { DiscountPresetItem, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ClassroomOccupancyItem } from '@/types/domain';
+import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ClassroomOccupancyItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef, OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
 
@@ -1025,30 +1025,31 @@ const loadingClasses = ref(false);
 const classEnrollmentData = ref<any[]>([]);
 
 // ─── Group Class expandable rows ──────────────────
-const expandedClassOrders = reactive<Record<number, EnrollmentOrderItem[]>>({});
-const expandedClassLoading = reactive<Record<number, boolean>>({});
-const expandedClassPagination = reactive<Record<number, { page: number; size: number; total: number }>>({});
+const expandedClassOrders = reactive<Record<string, EnrollmentOrderItem[]>>({});
+const expandedClassLoading = reactive<Record<string, boolean>>({});
+const expandedClassPagination = reactive<Record<string, { page: number; size: number; total: number }>>({});
 
-async function loadExpandedClassOrders(classId: number, pageNum = 1) {
-  expandedClassLoading[classId] = true;
+async function loadExpandedClassOrders(classId: string | number, pageNum = 1) {
+  const classKey = String(classId);
+  expandedClassLoading[classKey] = true;
   try {
-    if (!expandedClassPagination[classId]) {
-      expandedClassPagination[classId] = { page: 1, size: 10, total: 0 };
+    if (!expandedClassPagination[classKey]) {
+      expandedClassPagination[classKey] = { page: 1, size: 10, total: 0 };
     }
-    expandedClassPagination[classId].page = pageNum;
+    expandedClassPagination[classKey].page = pageNum;
     const res = await fetchEnrollmentOrders({
       classId,
       pageNum,
-      pageSize: expandedClassPagination[classId].size,
+      pageSize: expandedClassPagination[classKey].size,
     });
     const data = res.data.data;
-    expandedClassOrders[classId] = data.records.filter((o: EnrollmentOrderItem) => o.orderStatus !== 'CANCELLED');
-    expandedClassPagination[classId].total = data.records.filter((o: EnrollmentOrderItem) => o.orderStatus !== 'CANCELLED').length;
+    expandedClassOrders[classKey] = data.records.filter((o: EnrollmentOrderItem) => o.orderStatus !== 'CANCELLED');
+    expandedClassPagination[classKey].total = data.records.filter((o: EnrollmentOrderItem) => o.orderStatus !== 'CANCELLED').length;
   } catch {
-    expandedClassOrders[classId] = [];
-    expandedClassPagination[classId] = { page: 1, size: 10, total: 0 };
+    expandedClassOrders[classKey] = [];
+    expandedClassPagination[classKey] = { page: 1, size: 10, total: 0 };
   } finally {
-    expandedClassLoading[classId] = false;
+    expandedClassLoading[classKey] = false;
   }
 }
 
@@ -1061,11 +1062,11 @@ function handleExpandChange(row: any, expandedRows: any[]) {
 
 const detailData = ref<EnrollmentOrderDetailItem | null>(null);
 const paymentRecords = computed(() => detailData.value?.payments ?? []);
-const students = ref<{ id: number; studentName: string }[]>([]);
-const teachers = ref<{ id: number; teacherName: string }[]>([]);
-const courseProducts = ref<{ id: number; productName: string; subjectName?: string; defaultTotalUnits?: number; defaultLessonUnits?: number; listPrice?: number }[]>([]);
-const classrooms = ref<{ id: number; roomName: string }[]>([]);
-const classes = ref<{ id: number; productName: string; listPrice?: number }[]>([]);
+const students = ref<{ id: string; studentName: string }[]>([]);
+const teachers = ref<{ id: string; teacherName: string }[]>([]);
+const courseProducts = ref<{ id: string; productName: string; subjectName?: string; defaultTotalUnits?: number; defaultLessonUnits?: number; listPrice?: number }[]>([]);
+const classrooms = ref<{ id: string; roomName: string }[]>([]);
+const classes = ref<{ id: string; productName: string; listPrice?: number }[]>([]);
 const studentOccupiedSlots = ref<OccupiedSlotDef[]>([]);
 const classroomOccupiedSlots = ref<OccupiedSlotDef[]>([]);
 const loadingSchedule = ref(false);
@@ -1082,7 +1083,7 @@ const discountPresetsLoading = ref(false);
 const discountPresetDialogVisible = ref(false);
 const presetEditDialogVisible = ref(false);
 const savingPreset = ref(false);
-const editingPresetId = ref<number | null>(null);
+const editingPresetId = ref<EntityId | null>(null);
 const presetFormRef = ref();
 const presetForm = reactive({
   presetName: '',
@@ -1101,8 +1102,8 @@ const presetFormRules = {
 };
 
 // ─── Discount preset selection for dialogs ──────────
-const createDiscountPresetId = ref<number | '__custom__' | null>(null);
-const classEnrollDiscountPresetId = ref<number | '__custom__' | null>(null);
+const createDiscountPresetId = ref<EntityId | '__custom__' | null>(null);
+const classEnrollDiscountPresetId = ref<EntityId | '__custom__' | null>(null);
 
 async function loadDiscountPresets() {
   try {
@@ -1159,7 +1160,7 @@ async function submitPreset() {
   }
 }
 
-async function handleDeletePreset(id: number) {
+async function handleDeletePreset(id: EntityId) {
   try {
     await ElMessageBox.confirm('Delete this discount preset?', 'Confirm', { type: 'warning' });
     await deleteDiscountPreset(id);
@@ -1260,7 +1261,7 @@ async function handleMethodSave() {
   }
 }
 
-async function handleDeleteMethod(id: number) {
+async function handleDeleteMethod(id: EntityId) {
   try {
     await ElMessageBox.confirm('Delete this payment method?', 'Confirm', { type: 'warning' });
     await deletePaymentMethod(id);
@@ -1273,7 +1274,7 @@ async function handleDeleteMethod(id: number) {
 }
 
 // ─── Compute discount amount from selected preset ──
-function applyPresetDiscount(presetId: number | '__custom__' | null, form: { originalAmount: number; discountAmount: number }) {
+function applyPresetDiscount(presetId: EntityId | '__custom__' | null, form: { originalAmount: number; discountAmount: number }) {
   if (!presetId || presetId === '__custom__') return;
   const preset = discountPresets.value.find(p => p.id === presetId);
   if (!preset) return;
@@ -1331,7 +1332,7 @@ const paymentMethodList = ref<PaymentMethodItem[]>([]);
 const paymentMethodLoading = ref(false);
 const methodEditDialogVisible = ref(false);
 const methodFormRef = ref();
-const editingMethodId = ref<number | null>(null);
+const editingMethodId = ref<EntityId | null>(null);
 const savingMethod = ref(false);
 const methodForm = reactive({
   methodCode: '',
@@ -1510,16 +1511,26 @@ async function openDetailDialog(row: EnrollmentOrderItem) {
 
 async function handleCancel(row: EnrollmentOrderItem) {
   try {
+    const paymentNotice = (row.receivedAmount ?? 0) > 0
+      ? '\n\nPayment records will be retained for manual follow-up.'
+      : '';
     await ElMessageBox.confirm(
-      `Cancel enrollment order ${row.enrollmentNo}?`,
+      `Cancel enrollment order ${row.enrollmentNo}?\n\nFuture scheduled lessons and occupancy will be cancelled.${paymentNotice}`,
       'Confirm cancel',
       { type: 'warning' },
     );
     await cancelEnrollmentOrder(row.id);
     ElMessage.success('Order cancelled.');
-    loadData();
-  } catch {
-    // User cancelled
+    if (row.classId) {
+      await loadExpandedClassOrders(row.classId, expandedClassPagination[row.classId]?.page ?? 1);
+    } else {
+      await loadData();
+    }
+  } catch (err: any) {
+    if (err === 'cancel' || err === 'close') {
+      return;
+    }
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to cancel order.');
   }
 }
 
@@ -1725,16 +1736,16 @@ function receiptHtml(cfg: ReceiptConfig): string {
 
 // ─── Create Dialog ──────────────────────────────────
 const createForm = reactive({
-  studentId: undefined as number | undefined,
-  courseProductId: undefined as number | undefined,
-  primaryTeacherId: undefined as number | undefined,
+  studentId: undefined as string | undefined,
+  courseProductId: undefined as string | undefined,
+  primaryTeacherId: undefined as string | undefined,
   handledByName: '',
   startDate: '',
   originalAmount: 0,
   discountAmount: 0,
   remark: '',
   slots: [] as SlotDef[],
-  defaultClassroomId: undefined as number | undefined,
+  defaultClassroomId: undefined as string | undefined,
 });
 
 const createFormRules = {
@@ -1748,8 +1759,8 @@ const classEnrollDialogVisible = ref(false);
 const submittingClassEnroll = ref(false);
 const classEnrollFormRef = ref();
 const classEnrollForm = reactive({
-  studentId: undefined as number | undefined,
-  classId: undefined as number | undefined,
+  studentId: undefined as string | undefined,
+  classId: undefined as string | undefined,
   enrollmentDate: dayjs().format('YYYY-MM-DD'),
   expiryDate: '',
   originalAmount: 0,

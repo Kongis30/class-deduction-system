@@ -292,7 +292,8 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
                         ledgerBalance,
                         ledgerBalance,
                         discrepancyType,
-                        String.format("课包余额（%d）与账本余额（%d）不一致，建议将课包余额修正为 %d。", packageBalance, ledgerBalance, ledgerBalance)
+                        String.format("Package balance (%d) does not match ledger balance (%d). Recommended package balance: %d.",
+                                packageBalance, ledgerBalance, ledgerBalance)
                 ));
             }
         }
@@ -322,15 +323,15 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         entity.setEnabled(request.getEnabled() != null ? (request.getEnabled() ? 1 : 0) : 0);
         entity.setFromAddress(request.getFromAddress());
         entity.setFromName(request.getFromName());
-        entity.setAuthCode(request.getAuthCode());
+        applySmtpCredential(entity, request);
         entity.setStrictAllowlist(request.getStrictAllowlist() != null ? (request.getStrictAllowlist() ? 1 : 0) : 1);
         entity.setAllowedRecipients(request.getAllowedRecipients());
         entity.setLowBalanceThreshold(request.getLowBalanceThreshold() != null ? request.getLowBalanceThreshold() : 2);
         entity.setLowBalanceRecipients(request.getLowBalanceRecipients());
         entity.setSmtpHost(request.getSmtpHost());
         entity.setSmtpPort(request.getSmtpPort() != null ? request.getSmtpPort() : 587);
-        entity.setSmtpUsername(request.getSmtpUsername());
-        entity.setSmtpPassword(request.getSmtpPassword());
+        entity.setSmtpUsername(request.getFromAddress());
+        validateNotificationConfig(entity);
         entity.setUpdatedBy(operatorId);
         notificationConfigMapper.insertOrUpdate(entity);
         return toConfigVO(entity);
@@ -461,11 +462,9 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
 
     private void ensureDispatchEnabled() {
         NotificationConfigEntity config = findNotificationConfig();
-        boolean enabled = config != null && config.getEnabled() != null && config.getEnabled() == 1;
-        if (!enabled) {
-            // Fallback to YAML config for backward compatibility
-            enabled = notificationEmailProperties.isEnabled();
-        }
+        boolean enabled = config != null
+                ? config.getEnabled() != null && config.getEnabled() == 1
+                : notificationEmailProperties.isEnabled();
         if (!enabled) {
             throw new BusinessException("EMAIL_DISPATCH_DISABLED", "Email dispatch is currently disabled.");
         }
@@ -481,17 +480,22 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
      */
     private JavaMailSender resolveMailSender() {
         NotificationConfigEntity config = findNotificationConfig();
-        if (config != null && StringUtils.hasText(config.getSmtpHost())) {
+        if (config != null) {
+            if (!StringUtils.hasText(config.getSmtpHost())) {
+                throw new BusinessException("EMAIL_SMTP_HOST_MISSING", "SMTP host is not configured.");
+            }
             JavaMailSenderImpl impl = new JavaMailSenderImpl();
             impl.setHost(config.getSmtpHost());
             impl.setPort(config.getSmtpPort() != null ? config.getSmtpPort() : 587);
-            if (StringUtils.hasText(config.getSmtpUsername())) {
-                impl.setUsername(config.getSmtpUsername());
+            String username = cleanSecret(config.getFromAddress());
+            String password = cleanSecret(config.getAuthCode());
+            if (StringUtils.hasText(username)) {
+                impl.setUsername(username);
             }
-            if (StringUtils.hasText(config.getSmtpPassword())) {
-                impl.setPassword(config.getSmtpPassword());
+            if (StringUtils.hasText(password)) {
+                impl.setPassword(password);
             }
-            impl.getJavaMailProperties().put("mail.smtp.auth", StringUtils.hasText(config.getSmtpUsername()));
+            impl.getJavaMailProperties().put("mail.smtp.auth", StringUtils.hasText(username));
             impl.getJavaMailProperties().put("mail.smtp.starttls.enable", true);
             return impl;
         }
@@ -552,13 +556,10 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         boolean strict = false;
         List<String> allowed = Collections.emptyList();
 
-        if (config != null && config.getStrictAllowlist() != null && config.getStrictAllowlist() == 1) {
-            strict = true;
-            allowed = parseJsonArray(config.getAllowedRecipients());
-        }
-
-        // Fallback to YAML config
-        if (!strict && notificationEmailProperties.isStrictAllowlist()) {
+        if (config != null) {
+            strict = config.getStrictAllowlist() != null && config.getStrictAllowlist() == 1;
+            allowed = strict ? parseJsonArray(config.getAllowedRecipients()) : Collections.emptyList();
+        } else if (notificationEmailProperties.isStrictAllowlist()) {
             strict = true;
             allowed = notificationEmailProperties.getAllowedRecipients();
         }
@@ -701,6 +702,36 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
             log.warn("Failed to parse JSON array: {}", json);
             return Collections.emptyList();
         }
+    }
+
+    private void applySmtpCredential(NotificationConfigEntity entity, NotificationConfigUpdateRequest request) {
+        String newAuthCode = cleanSecret(request.getAuthCode());
+        if (StringUtils.hasText(newAuthCode)) {
+            entity.setAuthCode(newAuthCode);
+            entity.setSmtpPassword(newAuthCode);
+        }
+    }
+
+    private void validateNotificationConfig(NotificationConfigEntity entity) {
+        if (!StringUtils.hasText(entity.getFromAddress())) {
+            throw new BusinessException("EMAIL_FROM_ADDRESS_MISSING", "Email from-address is not configured.");
+        }
+        if (!entity.getFromAddress().contains("@")) {
+            throw new BusinessException("EMAIL_FROM_ADDRESS_INVALID", "Email from-address must be a valid mailbox.");
+        }
+        if (!StringUtils.hasText(entity.getFromName())) {
+            throw new BusinessException("EMAIL_FROM_NAME_MISSING", "Email from-name is not configured.");
+        }
+        if (!StringUtils.hasText(entity.getSmtpHost())) {
+            throw new BusinessException("EMAIL_SMTP_HOST_MISSING", "SMTP host is not configured.");
+        }
+        if (!StringUtils.hasText(entity.getAuthCode())) {
+            throw new BusinessException("EMAIL_SMTP_PASSWORD_MISSING", "SMTP authorization code is not configured.");
+        }
+    }
+
+    private String cleanSecret(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     private NotificationConfigEntity findNotificationConfig() {
@@ -878,7 +909,6 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
                 .lowBalanceRecipients(entity.getLowBalanceRecipients())
                 .smtpHost(entity.getSmtpHost())
                 .smtpPort(entity.getSmtpPort())
-                .smtpUsername(entity.getSmtpUsername())
                 .updatedAt(entity.getUpdatedAt() != null ? entity.getUpdatedAt().toString() : null)
                 .build();
     }

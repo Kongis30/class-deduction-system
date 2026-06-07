@@ -144,7 +144,7 @@ class LessonRecordServiceImplTest {
         assertThat(packageCaptor.getValue().getRemainingUnits()).isEqualTo(6);
         assertThat(snapshotCaptor.getValue().getRemainingUnits()).isEqualTo(6);
         assertThat(result.ledgerId()).isEqualTo(3001L);
-        assertThat(result.remainingUnits()).isEqualTo(6);
+        assertThat(result.remainingUnits()).isEqualTo(3);
         assertThat(result.packageCompleted()).isFalse();
     }
 

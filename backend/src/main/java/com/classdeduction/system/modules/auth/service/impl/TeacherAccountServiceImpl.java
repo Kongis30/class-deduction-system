@@ -10,9 +10,11 @@ import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountPageQuery;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountUpdateRequest;
+import com.classdeduction.system.modules.auth.entity.AuthSessionEntity;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
 import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
+import com.classdeduction.system.modules.auth.mapper.AuthSessionMapper;
 import com.classdeduction.system.modules.auth.mapper.RoleMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
@@ -45,6 +47,7 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
     private final TeacherMapper teacherMapper;
     private final PasswordEncoder passwordEncoder;
     private final JsonHelper jsonHelper;
+    private final AuthSessionMapper authSessionMapper;
 
     @Override
     public PageResponse<TeacherAccountVO> pageTeacherAccounts(TeacherAccountPageQuery query) {
@@ -149,6 +152,12 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
         // 硬删除用户-角色关联（sys_user_role 没有 is_deleted 字段）
         userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
                 .eq(UserRoleEntity::getUserId, userId));
+        // 清理 MySQL fallback 会话；Redis 会话会在下一次鉴权时因账号已删除而失效。
+        authSessionMapper.delete(new LambdaQueryWrapper<AuthSessionEntity>()
+                .eq(AuthSessionEntity::getUserId, userId));
+        // 释放档案绑定，避免软删除账号继续占用 teacher_id 唯一键。
+        entity.setTeacherId(null);
+        userAccountMapper.updateById(entity);
         // 软删除登录账号（@TableLogic 自动设置 is_deleted=1）
         userAccountMapper.deleteById(userId);
     }

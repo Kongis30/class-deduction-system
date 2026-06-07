@@ -185,8 +185,7 @@ import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
 } from '@/api/schedule';
-import type { LessonOccurrenceItem } from '@/types/domain';
-import type { CoursePackageItem } from '@/types/domain';
+import type { CoursePackageItem, EntityId, LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { useAuthStore } from '@/stores/auth';
@@ -196,9 +195,9 @@ const authStore = useAuthStore();
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
 
 const loading = ref(false);
-const students = ref<{ id: number; studentName: string }[]>([]);
+const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const searchText = ref('');
-const selectedStudentId = ref<number | null>(null);
+const selectedStudentId = ref<EntityId | null>(null);
 const weekOffset = ref(0);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
@@ -219,7 +218,7 @@ const selectedStudentName = computed(() => {
   return s?.studentName ?? '';
 });
 
-async function onStudentSelect(id: number) {
+async function onStudentSelect(id: EntityId) {
   selectedStudentId.value = id;
   weekOffset.value = 0;
   studentPackages.value = [];

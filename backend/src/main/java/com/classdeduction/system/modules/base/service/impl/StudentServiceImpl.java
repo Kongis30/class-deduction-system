@@ -206,6 +206,7 @@ public class StudentServiceImpl implements StudentService {
                 .guardianName(student.getGuardianName())
                 .phone(student.getGuardianPhone())
                 .guardianEmail(student.getGuardianEmail())
+                .guardianRelationType(student.getGuardianRelationType())
                 .campusId(student.getCampusId())
                 .campusName(student.getCampusId() != null ? campusNameMap.get(student.getCampusId()) : null)
                 .createdAt(student.getCreatedAt())

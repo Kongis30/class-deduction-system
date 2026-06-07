@@ -66,7 +66,7 @@ public class ReceiptServiceImpl implements ReceiptService {
     public ReceiptRecordVO getReceipt(Long id) {
         ReceiptRecordEntity receipt = receiptRecordMapper.selectById(id);
         if (receipt == null) {
-            throw new BusinessException("RECEIPT_NOT_FOUND", "收据不存在。");
+            throw new BusinessException("RECEIPT_NOT_FOUND", "Receipt not found.");
         }
         StudentEntity student = studentMapper.selectById(receipt.getStudentId());
         return toVO(receipt, student);

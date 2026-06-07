@@ -24,14 +24,14 @@ public class LessonStatusRuleBootstrapInitializer implements ApplicationRunner {
 
     /** 核心状态码及其默认配置 */
     private static final RuleSeed[] CORE_RULES = {
-            new RuleSeed("COMPLETED",         "已完成",         1, "ACTUAL_UNITS",  0, 1, "正常完成课程"),
-            new RuleSeed("FORMAL_LEAVE",      "请假",           0, "NONE",          1, 0, "正式请假，不扣课时，顺延一节"),
-            new RuleSeed("TEMP_CANCEL",       "临时取消",       0, "NONE",          0, 1, "临时取消"),
-            new RuleSeed("NO_SHOW",           "翘课",           1, "PLANNED_UNITS", 0, 1, "学生缺席，按计划扣课时"),
-            new RuleSeed("TEACHER_CANCEL",    "老师取消",       0, "NONE",          0, 1, "老师取消课程"),
-            new RuleSeed("MAKEUP_COMPLETED",  "补课完成",       1, "ACTUAL_UNITS",  0, 1, "补课完成"),
-            new RuleSeed("SUBSTITUTED",       "代课完成",       1, "ACTUAL_UNITS",  0, 1, "代课完成"),
-            new RuleSeed("CANCELLED",         "取消",           0, "NONE",          1, 0, "课程取消，不扣课时，顺延一节"),
+            new RuleSeed("COMPLETED",         "Completed",        1, "ACTUAL_UNITS",  0, 1, "Lesson completed normally"),
+            new RuleSeed("FORMAL_LEAVE",      "Formal Leave",     0, "NONE",          1, 0, "Approved leave, no deduction, extend by one lesson"),
+            new RuleSeed("TEMP_CANCEL",       "Temporary Cancel", 0, "NONE",          0, 1, "Temporary cancellation"),
+            new RuleSeed("NO_SHOW",           "No Show",          1, "PLANNED_UNITS", 0, 1, "Student absent, deduct planned units"),
+            new RuleSeed("TEACHER_CANCEL",    "Teacher Cancel",   0, "NONE",          0, 1, "Teacher cancelled the lesson"),
+            new RuleSeed("MAKEUP_COMPLETED",  "Makeup Completed", 1, "ACTUAL_UNITS",  0, 1, "Makeup lesson completed"),
+            new RuleSeed("SUBSTITUTED",       "Substituted",      1, "ACTUAL_UNITS",  0, 1, "Substitute lesson completed"),
+            new RuleSeed("CANCELLED",         "Cancelled",        0, "NONE",          1, 0, "Lesson cancelled, no deduction, extend by one lesson"),
     };
 
     @Override

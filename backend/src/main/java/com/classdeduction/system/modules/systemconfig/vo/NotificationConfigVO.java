@@ -15,7 +15,6 @@ public record NotificationConfigVO(
         String fromName,
         String smtpHost,
         Integer smtpPort,
-        String smtpUsername,
         Boolean strictAllowlist,
         String allowedRecipients,
         Integer lowBalanceThreshold,

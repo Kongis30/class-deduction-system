@@ -21,7 +21,7 @@ public class CoursePackageUpdateRequest {
     private String packageName;
 
     @Schema(description = "课时包状态: DRAFT/ACTIVE/COMPLETED/CLOSED", example = "ACTIVE")
-    @Pattern(regexp = "^(DRAFT|ACTIVE|COMPLETED|CLOSED)$", message = "课时包状态必须是 DRAFT、ACTIVE、COMPLETED 或 CLOSED")
+    @Pattern(regexp = "^(DRAFT|ACTIVE|COMPLETED|CLOSED)$", message = "Package status must be DRAFT, ACTIVE, COMPLETED, or CLOSED")
     private String packageStatus;
 
     @Schema(description = "开始日期", example = "2026-04-07")

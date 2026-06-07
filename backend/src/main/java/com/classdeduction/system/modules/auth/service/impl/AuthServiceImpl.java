@@ -102,8 +102,7 @@ public class AuthServiceImpl implements AuthService {
             String sessionJson = stringRedisTemplate.opsForValue().get(sessionKey(token));
             if (StringUtils.hasText(sessionJson)) {
                 AuthSessionPayload payload = objectMapper.readValue(sessionJson, AuthSessionPayload.class);
-                validateEntityBinding(payload.userType(), payload.teacherId(), payload.studentId());
-                return toCurrentUser(payload);
+                return restoreCurrentUser(payload);
             }
         } catch (RedisConnectionFailureException e) {
             log.warn("Redis unavailable during session lookup, falling back to MySQL: {}", e.getMessage());
@@ -124,10 +123,10 @@ public class AuthServiceImpl implements AuthService {
 
         try {
             AuthSessionPayload payload = objectMapper.readValue(dbSession.getSessionData(), AuthSessionPayload.class);
-            validateEntityBinding(payload.userType(), payload.teacherId(), payload.studentId());
+            CurrentUserResponse currentUser = restoreCurrentUser(payload);
             // Try to re-populate Redis for next request
-            backfillRedis(token, payload);
-            return toCurrentUser(payload);
+            backfillRedis(token, toSessionPayload(currentUser));
+            return currentUser;
         } catch (JsonProcessingException e) {
             throw new BusinessException("UNAUTHORIZED", "Your session could not be restored. Please sign in again.");
         }
@@ -171,15 +170,7 @@ public class AuthServiceImpl implements AuthService {
 
     private String createSession(CurrentUserResponse currentUser) {
         String token = UUID.randomUUID().toString().replace("-", "");
-        AuthSessionPayload payload = new AuthSessionPayload(
-                currentUser.userId(),
-                currentUser.username(),
-                currentUser.displayName(),
-                currentUser.userType(),
-                currentUser.teacherId(),
-                currentUser.studentId(),
-                currentUser.roleCodes()
-        );
+        AuthSessionPayload payload = toSessionPayload(currentUser);
 
         // Try Redis first
         boolean persistedToMysql = false;
@@ -247,15 +238,34 @@ public class AuthServiceImpl implements AuthService {
         }
     }
 
-    private CurrentUserResponse toCurrentUser(AuthSessionPayload payload) {
+    private CurrentUserResponse restoreCurrentUser(AuthSessionPayload payload) {
+        UserAccountEntity user = userAccountMapper.selectById(payload.userId());
+        if (user == null) {
+            throw new BusinessException("UNAUTHORIZED", "Your account is no longer available. Please sign in again.");
+        }
+        validateUserStatus(user);
+        validateEntityBinding(user.getUserType(), user.getTeacherId(), user.getStudentId());
+        List<String> roleCodes = userRoleMapper.listRoleCodesByUserId(user.getId());
         return new CurrentUserResponse(
-                payload.userId(),
-                payload.username(),
-                payload.displayName(),
-                payload.userType(),
-                payload.teacherId(),
-                payload.studentId(),
-                payload.roleCodes()
+                user.getId(),
+                user.getUsername(),
+                user.getDisplayName(),
+                user.getUserType(),
+                user.getTeacherId(),
+                user.getStudentId(),
+                roleCodes
+        );
+    }
+
+    private AuthSessionPayload toSessionPayload(CurrentUserResponse currentUser) {
+        return new AuthSessionPayload(
+                currentUser.userId(),
+                currentUser.username(),
+                currentUser.displayName(),
+                currentUser.userType(),
+                currentUser.teacherId(),
+                currentUser.studentId(),
+                currentUser.roleCodes()
         );
     }
 

@@ -4,17 +4,22 @@ import axiosRetry from 'axios-retry';
 import { clearStoredAuthSession, getStoredAuthToken } from '@/utils/auth-storage';
 
 /**
- * Safely converts large numeric IDs to strings BEFORE JSON.parse.
- * JavaScript's Number loses precision for values > 2^53 (MyBatis-Plus snowflake IDs).
+ * Safely converts JSON id fields to strings BEFORE JSON.parse.
+ * MyBatis-Plus Snowflake IDs exceed JavaScript's safe integer range; converting
+ * every id-like response field keeps frontend ID handling consistent.
  */
-const BIG_ID_REGEX = /"(\w*[iI][dD])":\s*(\d{15,})/g;
+const ID_FIELD_REGEX = /"(\w*[iI][dD])":\s*(\d+)/g;
 
 function preprocessLargeIds(jsonString: string): string {
-  return jsonString.replace(BIG_ID_REGEX, '"$1":"$2"');
+  return jsonString.replace(ID_FIELD_REGEX, '"$1":"$2"');
 }
 
+const apiBaseURL =
+  import.meta.env.VITE_API_BASE_URL ??
+  (window.location.protocol === 'file:' ? 'http://127.0.0.1:8084/api' : '/api');
+
 const http = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? '/api',
+  baseURL: apiBaseURL,
   timeout: 15000,
   transformResponse: [
     (data) => {

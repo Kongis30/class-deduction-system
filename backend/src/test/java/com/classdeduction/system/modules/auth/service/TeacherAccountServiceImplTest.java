@@ -1,16 +1,19 @@
 package com.classdeduction.system.modules.auth.service;
 
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.auth.dto.TeacherAccountCreateRequest;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
 import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
+import com.classdeduction.system.modules.auth.mapper.AuthSessionMapper;
 import com.classdeduction.system.modules.auth.mapper.RoleMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.auth.service.impl.TeacherAccountServiceImpl;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,7 +49,11 @@ class TeacherAccountServiceImplTest {
     @Mock
     private TeacherMapper teacherMapper;
 
+    @Mock
+    private AuthSessionMapper authSessionMapper;
+
     private final PasswordEncoder passwordEncoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
+    private final JsonHelper jsonHelper = new JsonHelper(new ObjectMapper());
 
     @Captor
     private ArgumentCaptor<UserAccountEntity> userCaptor;
@@ -63,20 +70,26 @@ class TeacherAccountServiceImplTest {
                 userRoleMapper,
                 roleMapper,
                 teacherMapper,
-                passwordEncoder
+                passwordEncoder,
+                jsonHelper,
+                authSessionMapper
         );
     }
 
     @Test
     void shouldCreateTeacherAccountAndBindTeacherRole() {
         TeacherAccountCreateRequest request = new TeacherAccountCreateRequest();
-        request.setTeacherId(701L);
+        request.setTeacherName("Emma Wang");
         request.setUsername("emma.wang");
         request.setPassword("Teacher@123456");
 
-        when(teacherMapper.selectById(701L)).thenReturn(buildActiveTeacher());
         when(userAccountMapper.selectOne(any())).thenReturn(null);
         when(roleMapper.selectOne(any())).thenReturn(buildTeacherRole());
+        doAnswer(invocation -> {
+            TeacherEntity entity = invocation.getArgument(0);
+            entity.setId(701L);
+            return 1;
+        }).when(teacherMapper).insert(any(TeacherEntity.class));
         doAnswer(invocation -> {
             UserAccountEntity entity = invocation.getArgument(0);
             entity.setId(9001L);
@@ -96,19 +109,18 @@ class TeacherAccountServiceImplTest {
     }
 
     @Test
-    void shouldRejectWhenTeacherAlreadyHasAccount() {
+    void shouldRejectWhenUsernameAlreadyExists() {
         TeacherAccountCreateRequest request = new TeacherAccountCreateRequest();
-        request.setTeacherId(701L);
+        request.setTeacherName("Emma Wang");
         request.setUsername("emma.wang");
         request.setPassword("Teacher@123456");
 
-        when(teacherMapper.selectById(701L)).thenReturn(buildActiveTeacher());
         when(userAccountMapper.selectOne(any()))
                 .thenReturn(buildExistingTeacherAccount());
 
         assertThatThrownBy(() -> teacherAccountService.createTeacherAccount(request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("This teacher is already linked to a login account.");
+                .hasMessage("Username already exists.");
     }
 
     private TeacherEntity buildActiveTeacher() {

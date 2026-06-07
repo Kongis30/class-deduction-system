@@ -167,14 +167,14 @@ import {
   fetchLessonOccurrences,
   fetchClassGroupsByTeacher,
 } from '@/api/schedule';
-import type { LessonOccurrenceItem } from '@/types/domain';
+import type { EntityId, LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 
 // ─── Teachers ───────────────────────────────────
-const teachers = ref<{ id: number; teacherName: string }[]>([]);
+const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const searchText = ref('');
-const selectedTeacherId = ref<number | null>(null);
+const selectedTeacherId = ref<EntityId | null>(null);
 
 const filteredTeachers = computed(() => {
   const q = searchText.value.trim().toLowerCase();
@@ -187,7 +187,7 @@ const selectedTeacherName = computed(() => {
   return t?.teacherName ?? '';
 });
 
-function onTeacherSelect(id: number) {
+function onTeacherSelect(id: EntityId) {
   selectedTeacherId.value = id;
   weekOffset.value = 0;
   loadSchedule();

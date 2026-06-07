@@ -98,7 +98,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     public CoursePackageDetailVO getPackage(Long id) {
         CoursePackageEntity coursePackage = coursePackageMapper.selectById(id);
         if (coursePackage == null) {
-            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "课时包不存在。");
+            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
         }
         StudentEntity student = studentMapper.selectById(coursePackage.getStudentId());
         CourseProductEntity courseProduct = courseProductMapper.selectById(coursePackage.getCourseProductId());
@@ -273,7 +273,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
         // Validate that the package can be closed
         if ("CLOSED".equals(coursePackage.getPackageStatus())) {
-            throw new BusinessException("PACKAGE_ALREADY_CLOSED", "课时包已经是关闭状态。");
+            throw new BusinessException("PACKAGE_ALREADY_CLOSED", "Course package is already closed.");
         }
 
         // Mark as closed
@@ -296,14 +296,14 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         Set<String> allowed = validTransitions.getOrDefault(currentStatus, Set.of());
         if (!allowed.contains(newStatus)) {
             throw new BusinessException("INVALID_STATUS_TRANSITION",
-                    String.format("不允许的状态转换: %s -> %s", currentStatus, newStatus));
+                    String.format("Status transition is not allowed: %s -> %s", currentStatus, newStatus));
         }
     }
 
     private CoursePackageEntity requireCoursePackage(Long id) {
         CoursePackageEntity packageEntity = coursePackageMapper.selectById(id);
         if (packageEntity == null) {
-            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "课时包不存在。");
+            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
         }
         return packageEntity;
     }

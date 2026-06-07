@@ -1,6 +1,6 @@
 import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
-import type { CampusItem, ClassroomItem, CourseProductItem, DiscountPresetItem, StudentItem, SubjectItem, TeacherItem } from '@/types/domain';
+import type { CampusItem, ClassroomItem, CourseProductItem, DiscountPresetItem, EntityId, StudentItem, SubjectItem, TeacherItem } from '@/types/domain';
 
 // ─── Students ──────────────────────────────────────��─
 export interface StudentQuery {
@@ -31,7 +31,7 @@ export interface StudentSavePayload {
   englishName?: string;
   birthDate?: string;
   sourceChannel?: string;
-  campusId?: number;
+  campusId?: EntityId;
 }
 
 export function createStudent(data: StudentSavePayload) {
@@ -65,22 +65,22 @@ export function fetchTeachers(params: TeacherQuery = {}) {
 
 export interface TeacherSavePayload {
   teacherName: string;
-  mobile?: string;
-  email?: string;
+  mobile?: string | null;
+  email?: string | null;
   subjectTags?: string[];
   status?: string;
-  notes?: string;
+  notes?: string | null;
 }
 
 export function createTeacher(data: TeacherSavePayload) {
   return http.post('/v1/base/teachers', data);
 }
 
-export function updateTeacher(id: number, data: TeacherSavePayload) {
+export function updateTeacher(id: EntityId, data: TeacherSavePayload) {
   return http.put(`/v1/base/teachers/${id}`, data);
 }
 
-export function deleteTeacher(id: number) {
+export function deleteTeacher(id: EntityId) {
   return http.delete(`/v1/base/teachers/${id}`);
 }
 
@@ -113,11 +113,11 @@ export function createClassroom(data: ClassroomSavePayload) {
   return http.post('/v1/base/classrooms', data);
 }
 
-export function updateClassroom(id: number, data: ClassroomSavePayload) {
+export function updateClassroom(id: EntityId, data: ClassroomSavePayload) {
   return http.put(`/v1/base/classrooms/${id}`, data);
 }
 
-export function deleteClassroom(id: number) {
+export function deleteClassroom(id: EntityId) {
   return http.delete(`/v1/base/classrooms/${id}`);
 }
 
@@ -137,11 +137,11 @@ export function createSubject(data: SubjectSavePayload) {
   return http.post<ApiResponse<number>>('/v1/base/subjects', data);
 }
 
-export function updateSubject(id: number, data: SubjectSavePayload) {
+export function updateSubject(id: EntityId, data: SubjectSavePayload) {
   return http.put<ApiResponse<void>>(`/v1/base/subjects/${id}`, data);
 }
 
-export function deleteSubject(id: number) {
+export function deleteSubject(id: EntityId) {
   return http.delete<ApiResponse<void>>(`/v1/base/subjects/${id}`);
 }
 
@@ -161,11 +161,11 @@ export function createCampus(data: CampusSavePayload) {
   return http.post('/v1/base/campuses', data);
 }
 
-export function updateCampus(id: number, data: CampusSavePayload) {
+export function updateCampus(id: EntityId, data: CampusSavePayload) {
   return http.put(`/v1/base/campuses/${id}`, data);
 }
 
-export function deleteCampus(id: number) {
+export function deleteCampus(id: EntityId) {
   return http.delete(`/v1/base/campuses/${id}`);
 }
 
@@ -190,8 +190,8 @@ export interface CourseProductSavePayload {
   defaultTotalUnits?: number;
   defaultLessonUnits?: number;
   expiryDurationDays?: number;
-  defaultClassroomId?: number;
-  defaultTeacherId?: number;
+  defaultClassroomId?: EntityId;
+  defaultTeacherId?: EntityId;
   listPrice: number;
   status?: string;
   notes?: string;
@@ -202,11 +202,11 @@ export function createCourseProduct(data: CourseProductSavePayload) {
   return http.post('/v1/base/course-products', data);
 }
 
-export function updateCourseProduct(id: number, data: CourseProductSavePayload) {
+export function updateCourseProduct(id: EntityId, data: CourseProductSavePayload) {
   return http.put(`/v1/base/course-products/${id}`, data);
 }
 
-export function deleteCourseProduct(id: number) {
+export function deleteCourseProduct(id: EntityId) {
   return http.delete(`/v1/base/course-products/${id}`);
 }
 
@@ -227,11 +227,10 @@ export function createDiscountPreset(data: DiscountPresetSavePayload) {
   return http.post('/v1/base/discount-presets', data);
 }
 
-export function updateDiscountPreset(id: number, data: DiscountPresetSavePayload) {
+export function updateDiscountPreset(id: EntityId, data: DiscountPresetSavePayload) {
   return http.put(`/v1/base/discount-presets/${id}`, data);
 }
 
-export function deleteDiscountPreset(id: number) {
+export function deleteDiscountPreset(id: EntityId) {
   return http.delete(`/v1/base/discount-presets/${id}`);
 }
-

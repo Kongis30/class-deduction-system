@@ -178,6 +178,23 @@ class PaymentRecordServiceImplTest {
                     .isInstanceOf(BusinessException.class)
                     .hasMessageContaining("Each split amount must be greater than 0");
         }
+
+          @Test
+          @DisplayName("Should reject payment when amount exceeds remaining due")
+          void shouldRejectPaymentWhenAmountExceedsRemainingDue() {
+              PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+              request.setEnrollmentOrderId(1L);
+              request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("2000.00"))));
+              request.setHandledByName("Admin");
+
+              when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+
+              assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                      .isInstanceOf(BusinessException.class)
+                      .hasMessage("Payment amount cannot exceed the remaining amount due.");
+              verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+              verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
+          }
     }
 
     @Nested
@@ -209,7 +226,7 @@ class PaymentRecordServiceImplTest {
             // When/Then
             assertThatThrownBy(() -> paymentRecordService.getPaymentRecord(999L))
                     .isInstanceOf(BusinessException.class)
-                    .hasMessageContaining("支付记录不存在");
+                    .hasMessageContaining("Payment record not found");
         }
     }
 
@@ -268,7 +285,7 @@ class PaymentRecordServiceImplTest {
             // When/Then
             assertThatThrownBy(() -> paymentRecordService.getPackageBalance(999L))
                     .isInstanceOf(BusinessException.class)
-                    .hasMessageContaining("课时包不存在");
+                    .hasMessageContaining("Course package not found");
         }
     }
 }

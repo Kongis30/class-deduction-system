@@ -20,11 +20,11 @@ import java.util.List;
 @Schema(description = "报名开单请求")
 public class EnrollmentCreateRequest {
 
-    @NotNull(message = "学生ID不能为空")
+    @NotNull(message = "Student is required")
     @Schema(description = "学生ID", example = "1880000000000000001")
     private Long studentId;
 
-    @NotNull(message = "课程产品ID不能为空")
+    @NotNull(message = "Course product is required")
     @Schema(description = "课程产品ID", example = "1880000000000000002")
     private Long courseProductId;
 
@@ -34,7 +34,7 @@ public class EnrollmentCreateRequest {
     @Schema(description = "收银员用户ID", example = "1880000000000000004")
     private Long cashierUserId;
 
-    @NotBlank(message = "经手人姓名不能为空")
+    @NotBlank(message = "Handler name is required")
     @Schema(description = "经手人姓名快照", example = "Amy")
     private String handledByName;
 
@@ -62,27 +62,27 @@ public class EnrollmentCreateRequest {
     @Schema(description = "收据模板编码", example = "DEFAULT_RECEIPT")
     private String templateCode;
 
-    @NotNull(message = "原价不能为空")
-    @DecimalMin(value = "0.00", message = "原价不能小于0")
+    @NotNull(message = "Original amount is required")
+    @DecimalMin(value = "0.00", message = "Original amount cannot be negative")
     @Schema(description = "原价", example = "2699.00")
     private BigDecimal originalAmount;
 
-    @NotNull(message = "优惠金额不能为空")
-    @DecimalMin(value = "0.00", message = "优惠金额不能小于0")
+    @NotNull(message = "Discount amount is required")
+    @DecimalMin(value = "0.00", message = "Discount amount cannot be negative")
     @Schema(description = "优惠金额", example = "100.00")
     private BigDecimal discountAmount;
 
-    @NotNull(message = "实收金额不能为空")
-    @DecimalMin(value = "0.00", message = "实收金额不能小于0")
+    @NotNull(message = "Received amount is required")
+    @DecimalMin(value = "0.00", message = "Received amount cannot be negative")
     @Schema(description = "实收金额", example = "2599.00")
     private BigDecimal receivedAmount;
 
     @Schema(description = "覆盖总课时单位，默认取课程产品配置", example = "80")
-    @Min(value = 0, message = "总课时单位不能小于0")
+    @Min(value = 0, message = "Total units cannot be negative")
     private Integer totalUnits;
 
     @Schema(description = "覆盖默认单节课时单位，默认取课程产品配置", example = "4")
-    @Min(value = 1, message = "默认单节课时单位至少为1")
+    @Min(value = 1, message = "Default lesson units must be at least 1")
     private Integer defaultLessonUnits;
 
     @Schema(description = "备注")
