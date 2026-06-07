@@ -16,7 +16,7 @@ function preprocessLargeIds(jsonString: string): string {
 
 const apiBaseURL =
   import.meta.env.VITE_API_BASE_URL ??
-  (window.location.protocol === 'file:' ? 'http://127.0.0.1:8084/api' : '/api');
+  (window.location.protocol === 'file:' ? 'https://class.jinbesttutoring.com/api' : '/api');
 
 const http = axios.create({
   baseURL: apiBaseURL,
