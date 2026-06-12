@@ -21,4 +21,9 @@ public interface StudentService {
     void updateStudent(Long id, StudentSaveRequest request);
 
     void deleteStudent(Long id);
+
+    /**
+     * 列出已软删除的学生档案，用于"已删除"查看窗口。
+     */
+    List<StudentListItemVO> listDeleted();
 }

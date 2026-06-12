@@ -70,6 +70,7 @@ public class StudentServiceImpl implements StudentService {
                         .like(StudentEntity::getStudentNo, query.getKeyword()))
                 .eq(StringUtils.hasText(query.getStatus()), StudentEntity::getStatus, query.getStatus())
                 .like(StringUtils.hasText(query.getGuardian()), StudentEntity::getGuardianName, query.getGuardian())
+                .eq(StudentEntity::getIsDeleted, 0)
                 .orderByDesc(StudentEntity::getCreatedAt);
         IPage<StudentEntity> result = studentMapper.selectPage(page, wrapper);
         if (result.getRecords().isEmpty()) {
@@ -137,6 +138,18 @@ public class StudentServiceImpl implements StudentService {
                             + "Set to INACTIVE instead.");
         }
         studentMapper.deleteById(id);
+    }
+
+    @Override
+    public List<StudentListItemVO> listDeleted() {
+        List<StudentEntity> students = studentMapper.selectDeleted();
+        if (students.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Map<Long, String> campusNameMap = buildCampusNameMap(students);
+        return students.stream()
+                .map(s -> toListItem(s, campusNameMap))
+                .toList();
     }
 
     private void ensureStudentNoUnique(Long currentId, String studentNo) {

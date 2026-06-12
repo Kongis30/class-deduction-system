@@ -15,4 +15,9 @@ public interface TeacherAccountService {
     void updateTeacherAccount(Long userId, TeacherAccountUpdateRequest request);
 
     void deleteTeacherAccount(Long userId);
+
+    /**
+     * 列出已软删除的教师账号，用于"已删除"查看窗口。
+     */
+    java.util.List<TeacherAccountVO> listDeletedTeacherAccounts();
 }

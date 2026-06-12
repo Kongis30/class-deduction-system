@@ -49,8 +49,14 @@ public class TeacherAccountController {
         return ApiResponse.success(null);
     }
 
+    @GetMapping("/deleted")
+    @Operation(summary = "List soft-deleted teacher accounts (with their soft-deleted teacher profile)")
+    public ApiResponse<java.util.List<TeacherAccountVO>> listDeletedTeacherAccounts() {
+        return ApiResponse.success(teacherAccountService.listDeletedTeacherAccounts());
+    }
+
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete a teacher account (soft-delete login, keep teacher profile)")
+    @Operation(summary = "Soft-delete a teacher account and cascade soft-delete its linked teacher profile")
     public ApiResponse<Void> deleteTeacherAccount(@PathVariable Long id) {
         teacherAccountService.deleteTeacherAccount(id);
         return ApiResponse.success(null);

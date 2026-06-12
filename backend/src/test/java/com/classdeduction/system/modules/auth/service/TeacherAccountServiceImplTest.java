@@ -13,6 +13,7 @@ import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.auth.service.impl.TeacherAccountServiceImpl;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.base.service.TeacherService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -52,6 +55,9 @@ class TeacherAccountServiceImplTest {
     @Mock
     private AuthSessionMapper authSessionMapper;
 
+    @Mock
+    private TeacherService teacherService;
+
     private final PasswordEncoder passwordEncoder = PasswordEncoderFactories.createDelegatingPasswordEncoder();
     private final JsonHelper jsonHelper = new JsonHelper(new ObjectMapper());
 
@@ -72,7 +78,8 @@ class TeacherAccountServiceImplTest {
                 teacherMapper,
                 passwordEncoder,
                 jsonHelper,
-                authSessionMapper
+                authSessionMapper,
+                teacherService
         );
     }
 
@@ -121,6 +128,36 @@ class TeacherAccountServiceImplTest {
         assertThatThrownBy(() -> teacherAccountService.createTeacherAccount(request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Username already exists.");
+    }
+
+    @Test
+    void shouldSoftDeleteTeacherProfileWhenDeletingTeacherAccount() {
+        UserAccountEntity entity = new UserAccountEntity();
+        entity.setId(9001L);
+        entity.setUserType("TEACHER");
+        entity.setTeacherId(701L);
+        when(userAccountMapper.selectById(9001L)).thenReturn(entity);
+
+        teacherAccountService.deleteTeacherAccount(9001L);
+
+        verify(userRoleMapper).delete(any());
+        verify(authSessionMapper).delete(any());
+        verify(userAccountMapper).deleteById(9001L);
+        verify(teacherService).deleteTeacher(701L);
+    }
+
+    @Test
+    void shouldSkipTeacherProfileDeletionWhenAccountHasNoTeacherBinding() {
+        UserAccountEntity entity = new UserAccountEntity();
+        entity.setId(9002L);
+        entity.setUserType("TEACHER");
+        entity.setTeacherId(null);
+        when(userAccountMapper.selectById(9002L)).thenReturn(entity);
+
+        teacherAccountService.deleteTeacherAccount(9002L);
+
+        verify(userAccountMapper).deleteById(9002L);
+        verify(teacherService, never()).deleteTeacher(any());
     }
 
     private TeacherEntity buildActiveTeacher() {

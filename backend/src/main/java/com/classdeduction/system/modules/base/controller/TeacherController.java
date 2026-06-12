@@ -36,6 +36,12 @@ public class TeacherController {
         return ApiResponse.success(teacherService.listAllActive());
     }
 
+    @GetMapping("/deleted")
+    @Operation(summary = "List soft-deleted instructor profiles")
+    public ApiResponse<List<TeacherVO>> listDeleted() {
+        return ApiResponse.success(teacherService.listDeleted());
+    }
+
     @GetMapping
     @Operation(summary = "List instructor profiles")
     public ApiResponse<PageResponse<TeacherVO>> pageTeachers(@ParameterObject @Valid TeacherPageQuery query) {

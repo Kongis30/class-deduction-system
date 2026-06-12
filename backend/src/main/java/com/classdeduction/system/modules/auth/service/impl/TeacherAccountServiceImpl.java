@@ -22,6 +22,7 @@ import com.classdeduction.system.modules.auth.service.TeacherAccountService;
 import com.classdeduction.system.modules.auth.vo.TeacherAccountVO;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.base.service.TeacherService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -48,6 +50,7 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
     private final PasswordEncoder passwordEncoder;
     private final JsonHelper jsonHelper;
     private final AuthSessionMapper authSessionMapper;
+    private final TeacherService teacherService;
 
     @Override
     public PageResponse<TeacherAccountVO> pageTeacherAccounts(TeacherAccountPageQuery query) {
@@ -149,29 +152,45 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
         if (entity == null || !"TEACHER".equals(entity.getUserType())) {
             throw new BusinessException("ACCOUNT_NOT_FOUND", "Teacher account not found.");
         }
+        Long teacherId = entity.getTeacherId();
         // 硬删除用户-角色关联（sys_user_role 没有 is_deleted 字段）
         userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
                 .eq(UserRoleEntity::getUserId, userId));
         // 清理 MySQL fallback 会话；Redis 会话会在下一次鉴权时因账号已删除而失效。
         authSessionMapper.delete(new LambdaQueryWrapper<AuthSessionEntity>()
                 .eq(AuthSessionEntity::getUserId, userId));
-        // 释放档案绑定，避免软删除账号继续占用 teacher_id 唯一键。
-        entity.setTeacherId(null);
-        userAccountMapper.updateById(entity);
-        // 软删除登录账号（@TableLogic 自动设置 is_deleted=1）
+        // 软删除登录账号（保留删除前的账号-档案关联用于审计）
         userAccountMapper.deleteById(userId);
+        // 同步软删除教师档案，保持教师账号与教师档案一体删除。
+        if (teacherId != null) {
+            teacherService.deleteTeacher(teacherId);
+        }
+    }
+
+    @Override
+    public List<TeacherAccountVO> listDeletedTeacherAccounts() {
+        List<UserAccountEntity> accounts = userAccountMapper.selectDeletedByType("TEACHER");
+        if (accounts.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Set<Long> teacherIds = accounts.stream()
+                .map(UserAccountEntity::getTeacherId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, TeacherEntity> teacherMap = teacherIds.isEmpty()
+                ? Collections.emptyMap()
+                : teacherMapper.selectByIdsIgnoreLogicDelete(teacherIds).stream()
+                        .collect(Collectors.toMap(TeacherEntity::getId, item -> item));
+        return accounts.stream()
+                .map(item -> toVO(item, teacherMap.get(item.getTeacherId())))
+                .toList();
     }
 
     private String generateTeacherNo() {
-        // Only look at existing INS-prefixed numbers to avoid collision with seed data (THxxx)
-        TeacherEntity maxTeacher = teacherMapper.selectOne(new LambdaQueryWrapper<TeacherEntity>()
-                .eq(TeacherEntity::getIsDeleted, 0)
-                .likeRight(TeacherEntity::getTeacherNo, "INS-")
-                .orderByDesc(TeacherEntity::getTeacherNo)
-                .last("LIMIT 1"));
+        // 只看 INS- 前缀，且忽略逻辑删除：软删除的教师档案仍占用 uk_teacher_no 唯一索引。
+        String maxNo = teacherMapper.selectMaxTeacherNoByPrefix("INS-");
         int nextSeq = 1;
-        if (maxTeacher != null && maxTeacher.getTeacherNo() != null) {
-            String maxNo = maxTeacher.getTeacherNo();
+        if (maxNo != null) {
             try {
                 String numPart = maxNo.replaceAll("[^0-9]", "");
                 if (!numPart.isEmpty()) {

@@ -22,6 +22,7 @@ import com.classdeduction.system.modules.auth.service.StudentAccountService;
 import com.classdeduction.system.modules.auth.vo.StudentAccountVO;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
+import com.classdeduction.system.modules.base.service.StudentService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -29,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -48,6 +50,7 @@ public class StudentAccountServiceImpl implements StudentAccountService {
     private final StudentNoGenerator studentNoGenerator;
     private final PasswordEncoder passwordEncoder;
     private final AuthSessionMapper authSessionMapper;
+    private final StudentService studentService;
 
     @Override
     public PageResponse<StudentAccountVO> pageStudentAccounts(StudentAccountPageQuery query) {
@@ -145,17 +148,38 @@ public class StudentAccountServiceImpl implements StudentAccountService {
         if (entity == null || !"STUDENT".equals(entity.getUserType())) {
             throw new BusinessException("ACCOUNT_NOT_FOUND", "Student account not found.");
         }
+        Long studentId = entity.getStudentId();
         // 硬删除用户-角色关联（sys_user_role 没有 is_deleted 字段）
         userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
                 .eq(UserRoleEntity::getUserId, userId));
         // 清理 MySQL fallback 会话；Redis 会话会在下一次鉴权时因账号已删除而失效。
         authSessionMapper.delete(new LambdaQueryWrapper<AuthSessionEntity>()
                 .eq(AuthSessionEntity::getUserId, userId));
-        // 释放档案绑定，避免软删除账号继续占用 student_id 唯一键。
-        entity.setStudentId(null);
-        userAccountMapper.updateById(entity);
-        // 软删除登录账号（@TableLogic 自动设置 is_deleted=1）
+        // 软删除登录账号（保留删除前的账号-档案关联用于审计）
         userAccountMapper.deleteById(userId);
+        // 同步软删除学生档案，保持学生账号与学生档案一体删除。
+        if (studentId != null) {
+            studentService.deleteStudent(studentId);
+        }
+    }
+
+    @Override
+    public List<StudentAccountVO> listDeletedStudentAccounts() {
+        List<UserAccountEntity> accounts = userAccountMapper.selectDeletedByType("STUDENT");
+        if (accounts.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Set<Long> studentIds = accounts.stream()
+                .map(UserAccountEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, StudentEntity> studentMap = studentIds.isEmpty()
+                ? Collections.emptyMap()
+                : studentMapper.selectByIdsIgnoreLogicDelete(studentIds).stream()
+                        .collect(Collectors.toMap(StudentEntity::getId, item -> item));
+        return accounts.stream()
+                .map(item -> toVO(item, studentMap.get(item.getStudentId())))
+                .toList();
     }
 
     private void ensureUsernameUnique(String username) {

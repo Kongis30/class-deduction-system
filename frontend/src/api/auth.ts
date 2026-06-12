@@ -107,6 +107,14 @@ export function deleteStudentAccount(id: EntityId) {
   return http.delete<ApiResponse<null>>(`/v1/auth/student-accounts/${id}`);
 }
 
+export function fetchDeletedTeacherAccounts() {
+  return http.get<ApiResponse<TeacherAccountItem[]>>('/v1/auth/teacher-accounts/deleted');
+}
+
+export function fetchDeletedStudentAccounts() {
+  return http.get<ApiResponse<StudentAccountItem[]>>('/v1/auth/student-accounts/deleted');
+}
+
 // ─── Self-service Password Change ──────────────────
 
 export function changePassword(data: { currentPassword: string; newPassword: string }) {

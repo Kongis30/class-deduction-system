@@ -49,8 +49,14 @@ public class StudentAccountController {
         return ApiResponse.success(null);
     }
 
+    @GetMapping("/deleted")
+    @Operation(summary = "List soft-deleted student accounts (with their soft-deleted student profile)")
+    public ApiResponse<java.util.List<StudentAccountVO>> listDeletedStudentAccounts() {
+        return ApiResponse.success(studentAccountService.listDeletedStudentAccounts());
+    }
+
     @DeleteMapping("/{id}")
-    @Operation(summary = "Delete a student account (soft-delete login, keep student profile)")
+    @Operation(summary = "Soft-delete a student account and cascade soft-delete its linked student profile")
     public ApiResponse<Void> deleteStudentAccount(@PathVariable Long id) {
         studentAccountService.deleteStudentAccount(id);
         return ApiResponse.success(null);

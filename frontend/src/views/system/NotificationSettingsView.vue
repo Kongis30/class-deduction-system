@@ -1,77 +1,68 @@
 <template>
   <div class="settings-page">
     <el-tabs v-model="activeTab" class="settings-tabs">
-      <!-- Tab 1: Templates -->
-      <el-tab-pane label="Templates" name="templates">
+      <el-tab-pane label="Events" name="events">
         <div class="panel">
           <div class="panel__header">
-            <span class="panel__title">Notification Templates</span>
-            <span class="panel__hint">Customize email subject and body templates with variable placeholders.</span>
+            <span class="panel__title">Notification Events</span>
+            <span class="panel__hint">Turn notification events on or off and configure the email template used for each event.</span>
           </div>
-          <el-table v-loading="loading" :data="tableData" row-key="id" class="data-table">
-            <el-table-column label="Name" min-width="160" prop="templateName" />
-            <el-table-column label="Code" min-width="120" prop="templateCode" />
-            <el-table-column label="Channel" min-width="90" align="center" prop="channelType" />
-            <el-table-column label="Subject" min-width="200">
+
+          <el-table v-loading="eventsLoading" :data="eventRows" row-key="id" class="data-table">
+            <el-table-column label="Event" min-width="220">
               <template #default="{ row }">
-                {{ row.subjectTemplate?.slice(0, 80) }}{{ row.subjectTemplate?.length > 80 ? '…' : '' }}
+                <div class="event-cell">
+                  <div class="event-cell__title">{{ row.eventName }}</div>
+                  <div class="event-cell__desc">{{ row.description }}</div>
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="Status" min-width="80" align="center">
+
+            <el-table-column label="Template" min-width="200">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
-                  {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-                </el-tag>
+                <div class="event-template-cell">
+                  <div>{{ row.templateName }}</div>
+                  <div class="event-template-cell__hint">{{ row.templateHint }}</div>
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" min-width="80" fixed="right">
+
+            <el-table-column label="Status" min-width="140" align="center">
               <template #default="{ row }">
-                <el-button text type="primary" @click="openTemplateDialog(row)">Edit</el-button>
+                <div class="event-status-cell">
+                  <el-switch
+                    :model-value="row.enabled"
+                    :loading="eventToggleLoading"
+                    @change="(val: boolean) => handleLowBalanceToggle(val)"
+                  />
+                  <el-tag size="small" :type="row.enabled ? 'success' : 'info'">
+                    {{ row.enabled ? 'Enabled' : 'Disabled' }}
+                  </el-tag>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="Actions" min-width="180" align="right">
+              <template #default>
+                <el-button type="primary" plain @click="openLowBalanceTemplateDialog">Set Email Template</el-button>
               </template>
             </el-table-column>
           </el-table>
-        </div>
 
-        <!-- Template Edit Dialog -->
-        <el-dialog v-model="templateDialogVisible" width="640px" :close-on-click-modal="false" class="edit-dialog">
-          <template #header><h3>Edit Template</h3></template>
-          <el-form ref="templateFormRef" label-position="top" :model="templateForm">
-            <el-form-item label="Template Name" prop="templateName" :rules="[{ required: true, message: 'Required' }]">
-              <el-input v-model="templateForm.templateName" />
-            </el-form-item>
-            <el-form-item label="Subject Template" prop="subjectTemplate" :rules="[{ required: true, message: 'Required' }]">
-              <el-input v-model="templateForm.subjectTemplate" />
-            </el-form-item>
-            <el-form-item label="Body Template" prop="bodyTemplate" :rules="[{ required: true, message: 'Required' }]">
-              <el-input v-model="templateForm.bodyTemplate" type="textarea" :rows="6" />
-            </el-form-item>
-            <div class="variable-hint">
-              Available variables:
-              <span class="var-list">
-                <code v-for="v in templateVariables" :key="v" class="var-tag">{{ v }}</code>
-              </span>
-            </div>
-            <el-form-item label="Status">
-              <el-select v-model="templateForm.status" style="width:140px">
-                <el-option label="Active" value="ACTIVE" />
-                <el-option label="Inactive" value="INACTIVE" />
-              </el-select>
-            </el-form-item>
-          </el-form>
-          <template #footer>
-            <el-button @click="templateDialogVisible = false">Cancel</el-button>
-            <el-button type="primary" :loading="saving" @click="handleTemplateSave">Save</el-button>
-          </template>
-        </el-dialog>
+          <el-empty
+            v-if="!eventsLoading && eventRows.length === 0"
+            description="No notification events are available right now."
+          />
+        </div>
       </el-tab-pane>
 
-      <!-- Tab 2: System Email -->
       <el-tab-pane label="System Email" name="sender">
         <div class="panel">
           <div class="panel__header">
             <span class="panel__title">System Email Account</span>
             <span class="panel__hint">View or update the mailbox used by the system to send notifications.</span>
           </div>
+
           <div v-loading="configLoading" class="sender-summary">
             <el-empty v-if="!currentConfig" description="No system email account has been configured.">
               <el-button type="primary" @click="openConfigDialog">Set System Email</el-button>
@@ -200,6 +191,7 @@
                   </el-form-item>
                 </div>
               </div>
+
               <div class="config-hint">
                 Existing authorization codes are never shown. Leave the authorization code blank unless you need to replace it.
               </div>
@@ -211,186 +203,198 @@
           </el-dialog>
         </div>
       </el-tab-pane>
-
-      <!-- Tab 3: Triggers -->
-      <el-tab-pane label="Triggers" name="triggers">
-        <div class="panel">
-          <div class="panel__header">
-            <span class="panel__title">Email Trigger Rules</span>
-            <span class="panel__hint">Control when and to whom automated emails are sent.</span>
-          </div>
-          <div v-loading="rulesLoading" class="rule-list">
-            <div v-for="rule in triggerRules" :key="rule.id" class="rule-card">
-              <div class="rule-card__header">
-                <div class="rule-card__title-row">
-                  <span class="rule-card__name">{{ getTriggerLabel(rule.triggerType) }}</span>
-                  <el-tooltip :content="getTriggerDescription(rule.triggerType)" placement="top" raw-content>
-                    <span class="info-icon">ⓘ</span>
-                  </el-tooltip>
-                </div>
-                <el-switch
-                  :model-value="rule.enabled"
-                  @change="(val: boolean) => handleRuleToggle(rule.id, val)"
-                  :active-value="true"
-                  :inactive-value="false"
-                />
-              </div>
-              <div class="rule-card__body">
-                <div class="rule-form__row">
-                  <template v-if="rule.triggerType === 'LOW_BALANCE'">
-                    <div class="rule-field">
-                      <span class="rule-field__label">{{ getThresholdLabel() }}</span>
-                      <el-tooltip content="Enter the remaining hours threshold. When a student's package balance drops below this value, a notification email is sent. Unit: 0.5h (e.g. 4 units = 2 hours)." placement="top" raw-content>
-                        <span class="info-icon">ⓘ</span>
-                      </el-tooltip>
-                      <el-input-number
-                        v-model="(ruleEditForms[rule.id] as any).thresholdValue"
-                        :min="1"
-                        :step="2"
-                        :precision="0"
-                        style="width:140px"
-                      />
-                    </div>
-                  </template>
-
-                  <div class="rule-field">
-                    <span class="rule-field__label">Email Template</span>
-                    <el-select
-                      v-model="(ruleEditForms[rule.id] as any).templateId"
-                      placeholder="Select template"
-                      clearable
-                      style="width: 200px"
-                    >
-                      <el-option
-                        v-for="t in triggerTemplates"
-                        :key="t.id"
-                        :label="t.templateName"
-                        :value="t.id"
-                      />
-                    </el-select>
-                  </div>
-                </div>
-                <div class="rule-card__actions">
-                  <el-button size="small" type="primary" :loading="ruleSaving[rule.id]" @click="handleRuleSave(rule.id)">Save Rule</el-button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </el-tab-pane>
-
-      <!-- Tab 4: Broadcast -->
-      <el-tab-pane label="Broadcast" name="broadcast">
-        <div class="panel">
-          <div class="panel__header">
-            <span class="panel__title">Send Bulk Notification</span>
-            <span class="panel__hint">Queue a batch email to selected recipients. Emails are sent asynchronously via the scheduler.</span>
-          </div>
-          <el-form ref="broadcastFormRef" label-position="top" :model="broadcastForm" class="broadcast-form">
-            <el-form-item
-              :label="getRecipientPresetLabel()"
-              prop="recipientPreset"
-              :rules="[{ required: true, message: 'Please select a recipient group' }]"
-            >
-              <div class="preset-grid">
-                <label
-                  v-for="opt in recipientPresetOptions"
-                  :key="opt.value"
-                  class="preset-card"
-                  :class="{ 'preset-card--active': broadcastForm.recipientPreset === opt.value }"
-                >
-                  <input type="radio" :value="opt.value" v-model="broadcastForm.recipientPreset" style="display:none" />
-                  <div class="preset-card__icon">{{ opt.icon }}</div>
-                  <div class="preset-card__title">{{ opt.label }}</div>
-                  <div class="preset-card__desc">{{ opt.description }}</div>
-                </label>
-              </div>
-            </el-form-item>
-
-            <el-form-item
-              v-if="broadcastForm.recipientPreset === 'CUSTOM'"
-              :label="getCustomRecipientsLabel()"
-              prop="recipients"
-              :rules="[{ required: true, message: 'At least one recipient is required' }]"
-            >
-              <el-input
-                v-model="broadcastForm.recipientsInput"
-                type="textarea"
-                :rows="4"
-                placeholder="recipient1@example.com&#10;recipient2@example.com&#10;recipient3@example.com"
-              />
-              <div class="field-hint">Enter one email per line or separate with commas. Each address must contain @.</div>
-            </el-form-item>
-
-            <div v-if="broadcastForm.recipientPreset && broadcastForm.recipientPreset !== 'CUSTOM'" class="recipient-count-hint">
-              <span class="count-badge">{{ recipientCount }}</span> recipient(s) will receive this email based on the selected group.
-            </div>
-
-            <el-form-item
-              label="Email Subject"
-              prop="subject"
-              :rules="[{ required: true, message: 'Subject is required' }]"
-            >
-              <el-input v-model="broadcastForm.subject" placeholder="Enter email subject" />
-            </el-form-item>
-            <el-form-item
-              label="Email Body"
-              prop="body"
-              :rules="[{ required: true, message: 'Body is required' }]"
-            >
-              <el-input v-model="broadcastForm.body" type="textarea" :rows="8" placeholder="Enter email body content" />
-            </el-form-item>
-            <div class="variable-hint">
-              Available variable: <code>${brandName}</code> — replaced with your brand name.
-            </div>
-            <div class="broadcast-actions">
-              <el-button type="primary" :loading="broadcasting" @click="handleBroadcast">Queue Broadcast</el-button>
-            </div>
-            <div v-if="broadcastResult" class="broadcast-result">
-              <el-alert
-                :title="`Queued ${broadcastResult.queuedCount} email(s) for ${broadcastResult.totalRecipients} recipient(s).`"
-                type="success"
-                :closable="false"
-                show-icon
-              />
-              <div class="recipient-preview">
-                <span class="preview-label">Recipients:</span>
-                <span v-for="(r, i) in broadcastResult.recipientPreview" :key="i" class="preview-item">{{ r }}</span>
-                <span v-if="broadcastResult.totalRecipients > broadcastResult.recipientPreview.length" class="preview-more">
-                  +{{ broadcastResult.totalRecipients - broadcastResult.recipientPreview.length }} more
-                </span>
-              </div>
-            </div>
-          </el-form>
-        </div>
-      </el-tab-pane>
     </el-tabs>
+
+    <el-dialog v-model="templateDialogVisible" width="720px" :close-on-click-modal="false" class="edit-dialog">
+      <template #header><h3>Low Balance Renewal Reminder Template</h3></template>
+
+      <div class="template-dialog__intro">
+        <div class="template-dialog__intro-title">Insert placeholders by clicking</div>
+        <div class="template-dialog__intro-text">
+          Use the buttons below to insert student name, course name, remaining hours and other placeholders into the email subject or body.
+        </div>
+      </div>
+
+      <el-form ref="templateFormRef" label-position="top" :model="templateForm">
+        <el-form-item label="Template Name" prop="templateName" :rules="[{ required: true, message: 'Required' }]">
+          <el-input v-model="templateForm.templateName" placeholder="e.g. Low Balance Reminder" />
+        </el-form-item>
+
+        <el-form-item label="Email Subject" prop="subjectTemplate" :rules="[{ required: true, message: 'Required' }]">
+          <el-input ref="subjectInputRef" v-model="templateForm.subjectTemplate" placeholder="Enter email subject" />
+        </el-form-item>
+        <div class="placeholder-panel">
+          <div class="placeholder-panel__title">Click to insert into subject</div>
+          <div class="placeholder-panel__list">
+            <el-button
+              v-for="placeholder in lowBalancePlaceholders"
+              :key="`subject-${placeholder.token}`"
+              size="small"
+              @click="insertPlaceholder('subjectTemplate', placeholder.token)"
+            >
+              {{ placeholder.label }}
+            </el-button>
+          </div>
+        </div>
+
+        <el-form-item label="Email Body" prop="bodyTemplate" :rules="[{ required: true, message: 'Required' }]">
+          <el-input
+            ref="bodyInputRef"
+            v-model="templateForm.bodyTemplate"
+            type="textarea"
+            :rows="8"
+            placeholder="Enter email body"
+          />
+        </el-form-item>
+        <div class="placeholder-panel placeholder-panel--body">
+          <div class="placeholder-panel__title">Click to insert into body</div>
+          <div class="placeholder-panel__list">
+            <el-button
+              v-for="placeholder in lowBalancePlaceholders"
+              :key="`body-${placeholder.token}`"
+              size="small"
+              @click="insertPlaceholder('bodyTemplate', placeholder.token)"
+            >
+              {{ placeholder.label }}
+            </el-button>
+          </div>
+          <div class="placeholder-panel__descriptions">
+            <div v-for="placeholder in lowBalancePlaceholders" :key="placeholder.token" class="placeholder-panel__description-item">
+              <span class="placeholder-panel__description-label">{{ placeholder.label }}</span>
+              <span class="placeholder-panel__description-text">{{ placeholder.description }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-panel">
+          <div class="preview-panel__header">
+            <div>
+              <div class="preview-panel__title">Preview Email</div>
+              <div class="preview-panel__subtitle">Preview uses friendly sample values so you can quickly see what the email will look like.</div>
+            </div>
+          </div>
+
+          <div class="preview-panel__chips">
+            <span v-for="item in previewPlaceholderEntries" :key="item.token" class="preview-chip">
+              <strong>{{ item.label }}:</strong> {{ item.value }}
+            </span>
+          </div>
+
+          <div class="preview-email">
+            <div class="preview-email__row">
+              <span class="preview-email__label">Subject</span>
+              <span class="preview-email__value">{{ previewSubject }}</span>
+            </div>
+            <div class="preview-email__divider"></div>
+            <div class="preview-email__label preview-email__label--body">Body</div>
+            <div class="preview-email__body">{{ previewBody }}</div>
+          </div>
+        </div>
+
+        <el-form-item label="Status">
+          <el-select v-model="templateForm.status" style="width: 160px;">
+            <el-option label="Active" value="ACTIVE" />
+            <el-option label="Inactive" value="INACTIVE" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="templateDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="templateSaving" @click="handleTemplateSave">Save</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from 'element-plus';
-import { onMounted, reactive, ref } from 'vue';
+import { ElMessage, type InputInstance } from 'element-plus';
+import { computed, nextTick, reactive, ref } from 'vue';
+
 import {
-  fetchNotificationTemplates, updateNotificationTemplate,
-  fetchNotificationConfig, updateNotificationConfig, sendTestEmail,
-  fetchNotificationTriggerRules, updateNotificationTriggerRule,
-  broadcastNotification, type BroadcastResult, type NotificationRecipientPreset
+  fetchNotificationConfig,
+  fetchNotificationTemplates,
+  fetchNotificationTriggerRules,
+  sendTestEmail,
+  updateNotificationConfig,
+  updateNotificationTemplate,
+  updateNotificationTriggerRule,
 } from '@/api/system';
-import type { EntityId, NotificationTemplateItem, NotificationConfigItem, NotificationTriggerRuleItem } from '@/types/domain';
+import type { EntityId, NotificationConfigItem, NotificationTemplateItem, NotificationTriggerRuleItem } from '@/types/domain';
 
-// ── Tab ────────────────────────────────────────────────
-const activeTab = ref('templates');
+const LOW_BALANCE_TRIGGER = 'LOW_BALANCE';
 
-// ── Templates ──────────────────────────────────────────
-const templateVariables = ['${brandName}', '${studentName}', '${packageName}', '${lessonStatus}', '${deductHours}', '${remainingHours}', '${estimatedEndDate}'];
+const activeTab = ref('events');
 
-const loading = ref(false);
-const saving = ref(false);
-const tableData = ref<NotificationTemplateItem[]>([]);
+const lowBalancePlaceholders = [
+  { label: 'Student Name', token: '${studentName}', description: 'The student name tied to the low-balance package.' },
+  { label: 'Course Name', token: '${packageName}', description: 'The package or course name that needs renewal.' },
+  { label: 'Remaining Hours', token: '${remainingHours}', description: 'The current remaining lesson hours.' },
+  { label: 'Estimated End Date', token: '${estimatedEndDate}', description: 'The estimated package completion date.' },
+  { label: 'Brand Name', token: '${brandName}', description: 'Your configured school or brand name.' },
+];
+
+const previewPlaceholderMap: Record<string, string> = {
+  '${studentName}': 'Jack',
+  '${packageName}': 'SHSAT lesson',
+  '${remainingHours}': '2.0',
+  '${estimatedEndDate}': '2026-07-15',
+  '${brandName}': 'JIN BEST TUTORING',
+};
+
+const previewPlaceholderEntries = lowBalancePlaceholders.map((item) => ({
+  ...item,
+  value: previewPlaceholderMap[item.token] ?? item.token,
+}));
+
+const eventsLoading = ref(false);
+const eventToggleLoading = ref(false);
+const triggerRules = ref<NotificationTriggerRuleItem[]>([]);
+const notificationTemplates = ref<NotificationTemplateItem[]>([]);
+
+const lowBalanceRule = computed(() =>
+  triggerRules.value.find((rule) => rule.triggerType === LOW_BALANCE_TRIGGER) ?? null,
+);
+
+const lowBalanceTemplate = computed(() => {
+  const rule = lowBalanceRule.value;
+  if (rule?.templateId != null) {
+    const assigned = notificationTemplates.value.find((template) => String(template.id) === String(rule.templateId));
+    if (assigned) {
+      return assigned;
+    }
+  }
+
+  return notificationTemplates.value.find((template) =>
+    template.templateCode === 'LOW_BALANCE_DEFAULT'
+    || template.templateCode.includes('LOW_BALANCE')
+    || template.templateName.toLowerCase().includes('low balance'),
+  ) ?? null;
+});
+
+const eventRows = computed(() => {
+  const rule = lowBalanceRule.value;
+  if (!rule) {
+    return [];
+  }
+  return [
+    {
+      id: rule.id,
+      eventName: 'Low Balance Renewal Reminder',
+      description: 'Send an email reminder when a student package balance becomes low and renewal follow-up is needed.',
+      enabled: rule.enabled,
+      templateName: lowBalanceTemplate.value?.templateName ?? 'No template selected',
+      templateHint: lowBalanceTemplate.value?.subjectTemplate ?? 'Open template settings to choose and edit the email content.',
+    },
+  ];
+});
+
 const templateDialogVisible = ref(false);
+const templateSaving = ref(false);
 const templateFormRef = ref();
 const editingTemplateId = ref<EntityId | null>(null);
+const subjectInputRef = ref<InputInstance>();
+const bodyInputRef = ref<InputInstance>();
 const templateForm = reactive({
   templateName: '',
   subjectTemplate: '',
@@ -398,57 +402,9 @@ const templateForm = reactive({
   status: 'ACTIVE',
 });
 
-onMounted(() => {
-  loadTemplates();
-  loadConfig();
-  loadRules();
-});
+const previewSubject = computed(() => renderPreviewTemplate(templateForm.subjectTemplate));
+const previewBody = computed(() => renderPreviewTemplate(templateForm.bodyTemplate));
 
-async function loadTemplates() {
-  loading.value = true;
-  try {
-    const res = await fetchNotificationTemplates({ pageSize: 100 });
-    tableData.value = res.data.data.records;
-  } catch {
-    ElMessage.error('Failed to load templates.');
-  } finally {
-    loading.value = false;
-  }
-}
-
-function openTemplateDialog(row: NotificationTemplateItem) {
-  editingTemplateId.value = row.id;
-  Object.assign(templateForm, {
-    templateName: row.templateName,
-    subjectTemplate: row.subjectTemplate,
-    bodyTemplate: row.bodyTemplate,
-    status: row.status,
-  });
-  templateDialogVisible.value = true;
-}
-
-async function handleTemplateSave() {
-  const valid = await templateFormRef.value?.validate().catch(() => false);
-  if (!valid) return;
-  saving.value = true;
-  try {
-    await updateNotificationTemplate(editingTemplateId.value!, {
-      templateName: templateForm.templateName,
-      subjectTemplate: templateForm.subjectTemplate,
-      bodyTemplate: templateForm.bodyTemplate,
-      status: templateForm.status,
-    });
-    ElMessage.success('Template updated.');
-    templateDialogVisible.value = false;
-    await loadTemplates();
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Save failed.');
-  } finally {
-    saving.value = false;
-  }
-}
-
-// ── Sender Config ───────────────────────────────────────
 const configLoading = ref(false);
 const testing = ref(false);
 const configSaving = ref(false);
@@ -465,6 +421,128 @@ const configForm = reactive({
   smtpHost: '',
   smtpPort: 587,
 });
+
+loadEventData();
+loadConfig();
+
+async function loadEventData() {
+  eventsLoading.value = true;
+  try {
+    const [rulesRes, templatesRes] = await Promise.all([
+      fetchNotificationTriggerRules(),
+      fetchNotificationTemplates({ pageSize: 100 }),
+    ]);
+    triggerRules.value = rulesRes.data.data;
+    notificationTemplates.value = templatesRes.data.data.records;
+  } catch {
+    ElMessage.error('Failed to load notification events.');
+  } finally {
+    eventsLoading.value = false;
+  }
+}
+
+function buildLowBalanceRulePayload(rule: NotificationTriggerRuleItem, overrides: Partial<Record<'enabled' | 'templateId', unknown>> = {}) {
+  return {
+    enabled: (overrides.enabled as boolean | undefined) ?? rule.enabled,
+    templateId: (overrides.templateId as EntityId | null | undefined) ?? rule.templateId ?? lowBalanceTemplate.value?.id ?? null,
+    recipientType: rule.recipientType ?? 'GUARDIAN_EMAIL',
+    customRecipients: rule.customRecipients ?? '',
+    thresholdValue: rule.thresholdValue ?? null,
+    remark: rule.remark ?? '',
+  };
+}
+
+async function handleLowBalanceToggle(enabled: boolean) {
+  if (!lowBalanceRule.value) {
+    ElMessage.error('Low balance event is not configured yet.');
+    return;
+  }
+  eventToggleLoading.value = true;
+  try {
+    await updateNotificationTriggerRule(lowBalanceRule.value.id, buildLowBalanceRulePayload(lowBalanceRule.value, { enabled }));
+    lowBalanceRule.value.enabled = enabled;
+    ElMessage.success(enabled ? 'Event enabled.' : 'Event disabled.');
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Update failed.');
+  } finally {
+    eventToggleLoading.value = false;
+  }
+}
+
+function openLowBalanceTemplateDialog() {
+  const template = lowBalanceTemplate.value;
+  if (!template) {
+    ElMessage.error('No low balance reminder template was found. Please initialize a default template first.');
+    return;
+  }
+  editingTemplateId.value = template.id;
+  Object.assign(templateForm, {
+    templateName: template.templateName,
+    subjectTemplate: template.subjectTemplate,
+    bodyTemplate: template.bodyTemplate,
+    status: template.status,
+  });
+  templateDialogVisible.value = true;
+}
+
+async function handleTemplateSave() {
+  const valid = await templateFormRef.value?.validate().catch(() => false);
+  if (!valid || !editingTemplateId.value) {
+    return;
+  }
+  templateSaving.value = true;
+  try {
+    await updateNotificationTemplate(editingTemplateId.value, {
+      templateName: templateForm.templateName,
+      subjectTemplate: templateForm.subjectTemplate,
+      bodyTemplate: templateForm.bodyTemplate,
+      status: templateForm.status,
+    });
+
+    if (lowBalanceRule.value && String(lowBalanceRule.value.templateId ?? '') !== String(editingTemplateId.value)) {
+      await updateNotificationTriggerRule(
+        lowBalanceRule.value.id,
+        buildLowBalanceRulePayload(lowBalanceRule.value, { templateId: editingTemplateId.value }),
+      );
+    }
+
+    ElMessage.success('Template saved.');
+    templateDialogVisible.value = false;
+    await loadEventData();
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Save failed.');
+  } finally {
+    templateSaving.value = false;
+  }
+}
+
+async function insertPlaceholder(field: 'subjectTemplate' | 'bodyTemplate', token: string) {
+  const inputRef = field === 'subjectTemplate' ? subjectInputRef.value : bodyInputRef.value;
+  const inputEl = field === 'subjectTemplate' ? inputRef?.input : inputRef?.textarea;
+  const currentValue = templateForm[field];
+
+  if (!inputEl || typeof inputEl.selectionStart !== 'number' || typeof inputEl.selectionEnd !== 'number') {
+    templateForm[field] = `${currentValue}${token}`;
+    return;
+  }
+
+  const start = inputEl.selectionStart;
+  const end = inputEl.selectionEnd;
+  templateForm[field] = `${currentValue.slice(0, start)}${token}${currentValue.slice(end)}`;
+
+  await nextTick();
+  const nextPosition = start + token.length;
+  inputEl.focus();
+  inputEl.setSelectionRange(nextPosition, nextPosition);
+}
+
+function renderPreviewTemplate(template: string) {
+  let preview = template || '';
+  for (const [token, sampleValue] of Object.entries(previewPlaceholderMap)) {
+    preview = preview.split(token).join(sampleValue);
+  }
+  return preview;
+}
 
 async function loadConfig() {
   configLoading.value = true;
@@ -503,7 +581,9 @@ function displayValue(value?: string | number | null): string {
 
 async function handleConfigSave() {
   const valid = await configFormRef.value?.validate().catch(() => false);
-  if (!valid) return;
+  if (!valid) {
+    return;
+  }
   if (!currentConfig.value && !configForm.authCode.trim()) {
     ElMessage.error('SMTP authorization code is required for the first setup.');
     return;
@@ -541,170 +621,6 @@ async function handleTestEmail() {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to send test email.');
   } finally {
     testing.value = false;
-  }
-}
-
-// ── Trigger Rules ───────────────────────────────────────
-const rulesLoading = ref(false);
-const triggerRules = ref<NotificationTriggerRuleItem[]>([]);
-const ruleEditForms = reactive<Record<string, Record<string, unknown>>>({});
-const ruleSaving = reactive<Record<string, boolean>>({});
-const triggerTemplates = ref<{ id: EntityId; templateName: string }[]>([]);
-
-function getTriggerLabel(type: string): string {
-  return type === 'LESSON_CONFIRMED' ? 'Lesson Confirmed' : 'Low Balance Warning';
-}
-
-function getTriggerDescription(type: string): string {
-  return type === 'LESSON_CONFIRMED'
-    ? 'Sends an email notification to the guardian after a lesson record is confirmed (COMPLETED, MAKEUP_COMPLETED, etc.).'
-    : 'Sends an email notification when a course package remaining balance drops below the configured threshold.';
-}
-
-function getRecipientTypeLabel(): string {
-  return 'Recipient Type';
-}
-
-function getGuardianEmailLabel(): string {
-  return 'Guardian Email — sent to student\'s guardian';
-}
-
-function getCustomEmailLabel(): string {
-  return 'Custom Email — use specified addresses';
-}
-
-function getTriggerCustomRecipientsLabel(): string {
-  return 'Custom Recipients (JSON array)';
-}
-
-function getThresholdLabel(): string {
-  return 'Balance Threshold (units, 1 unit = 0.5h)';
-}
-
-function getTemplateLabel(): string {
-  return 'Email Template';
-}
-
-async function loadRules() {
-  rulesLoading.value = true;
-  try {
-    const [rulesRes, templatesRes] = await Promise.all([
-      fetchNotificationTriggerRules(),
-      fetchNotificationTemplates({ pageSize: 100 }),
-    ]);
-    triggerRules.value = rulesRes.data.data;
-    triggerTemplates.value = templatesRes.data.data.records.map(t => ({ id: t.id, templateName: t.templateName }));
-    for (const rule of triggerRules.value) {
-      ruleEditForms[rule.id] = {
-        recipientType: rule.recipientType ?? 'GUARDIAN_EMAIL',
-        customRecipients: rule.customRecipients ?? '',
-        thresholdValue: rule.thresholdValue ?? 4,
-        templateId: rule.templateId ?? null,
-      };
-    }
-  } catch {
-    ElMessage.error('Failed to load trigger rules.');
-  } finally {
-    rulesLoading.value = false;
-  }
-}
-
-async function handleRuleToggle(ruleId: EntityId, enabled: boolean) {
-  try {
-    const form = ruleEditForms[ruleId] as any;
-    await updateNotificationTriggerRule(ruleId, {
-      enabled,
-      templateId: form?.templateId ?? null,
-      recipientType: form?.recipientType ?? 'GUARDIAN_EMAIL',
-      customRecipients: form?.customRecipients ?? '',
-      thresholdValue: form?.thresholdValue ?? null,
-    });
-    const rule = triggerRules.value.find(r => r.id === ruleId);
-    if (rule) rule.enabled = enabled;
-    ElMessage.success(enabled ? 'Trigger enabled.' : 'Trigger disabled.');
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Update failed.');
-  }
-}
-
-async function handleRuleSave(ruleId: EntityId) {
-  ruleSaving[ruleId] = true;
-  const form = ruleEditForms[ruleId] as any;
-  const rule = triggerRules.value.find(r => r.id === ruleId);
-  try {
-    await updateNotificationTriggerRule(ruleId, {
-      enabled: rule?.enabled ?? false,
-      templateId: form?.templateId ?? null,
-      recipientType: form?.recipientType ?? 'GUARDIAN_EMAIL',
-      customRecipients: form?.customRecipients ?? '',
-      thresholdValue: form?.thresholdValue ?? null,
-    });
-    await loadRules();
-    ElMessage.success('Trigger rule saved.');
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Save failed.');
-  } finally {
-    ruleSaving[ruleId] = false;
-  }
-}
-
-// ── Broadcast ───────────────────────────────────────────
-const broadcastFormRef = ref();
-const broadcasting = ref(false);
-const broadcastResult = ref<BroadcastResult | null>(null);
-const recipientCount = ref(0);
-const recipientPresetOptions = [
-  { value: 'ALL_STUDENTS', label: 'All Students', icon: '👨‍🎓', description: 'All registered students (guardian email)' },
-  { value: 'ALL_ENROLLED_STUDENTS', label: 'Enrolled Students', icon: '📚', description: 'Students with active course packages' },
-  { value: 'ALL_TEACHERS', label: 'All Teachers', icon: '👩‍🏫', description: 'All teachers with user accounts' },
-  { value: 'ALL_ADMIN_USERS', label: 'Admin Users', icon: '🔐', description: 'All admin users in the system' },
-  { value: 'CUSTOM', label: 'Custom', icon: '✏️', description: 'Manually enter email addresses below' },
-];
-const broadcastForm = reactive({
-  recipientPreset: '' as NotificationRecipientPreset | '',
-  recipientsInput: '',
-  subject: '',
-  body: '',
-});
-
-function getRecipientsLabel(): string {
-  return 'Recipient Email Addresses';
-}
-
-function getRecipientPresetLabel(): string {
-  return 'Recipient Group';
-}
-
-function getCustomRecipientsLabel(): string {
-  return 'Custom Email Addresses';
-}
-
-function parseRecipients(input: string): string[] {
-  return input
-    .split(/[\n,]+/)
-    .map(r => r.trim())
-    .filter(r => r.includes('@'));
-}
-
-async function handleBroadcast() {
-  const valid = await broadcastFormRef.value?.validate().catch(() => false);
-  if (!valid) return;
-  broadcasting.value = true;
-  broadcastResult.value = null;
-  try {
-    const recipients = broadcastForm.recipientPreset === 'CUSTOM' ? parseRecipients(broadcastForm.recipientsInput) : [];
-    const result = await broadcastNotification({
-      subject: broadcastForm.subject,
-      body: broadcastForm.body,
-      recipients,
-      recipientPreset: broadcastForm.recipientPreset || undefined,
-    });
-    broadcastResult.value = result.data.data;
-    ElMessage.success('Notification queued for dispatch.');
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Broadcast failed.');
-  } finally {
-    broadcasting.value = false;
   }
 }
 </script>
@@ -764,13 +680,214 @@ async function handleBroadcast() {
   border: 1px solid #ebeef5;
 }
 
-/* Edit Dialog */
-.edit-dialog :deep(.el-dialog__body) { padding: 16px 20px; }
-.edit-dialog :deep(.el-dialog__header) { border-bottom: 1px solid #ebeef5; padding: 16px 20px; }
-.edit-dialog :deep(.el-dialog__header h3) { margin: 0; font-size: 16px; font-weight: 600; }
-.edit-dialog :deep(.el-dialog__footer) { border-top: 1px solid #ebeef5; padding: 12px 20px; }
+.event-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 
-/* Sender Config */
+.event-cell__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.event-cell__desc,
+.event-template-cell__hint {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
+}
+
+.event-template-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.event-status-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.edit-dialog :deep(.el-dialog__body) {
+  padding: 16px 20px;
+}
+
+.edit-dialog :deep(.el-dialog__header) {
+  border-bottom: 1px solid #ebeef5;
+  padding: 16px 20px;
+}
+
+.edit-dialog :deep(.el-dialog__header h3) {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.edit-dialog :deep(.el-dialog__footer) {
+  border-top: 1px solid #ebeef5;
+  padding: 12px 20px;
+}
+
+.template-dialog__intro {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #f5f9ff;
+  border: 1px solid #d9ecff;
+}
+
+.template-dialog__intro-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2d3d;
+  margin-bottom: 4px;
+}
+
+.template-dialog__intro-text {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #606266;
+}
+
+.placeholder-panel {
+  margin: -6px 0 18px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #fafbfc;
+  border: 1px dashed #dcdfe6;
+}
+
+.placeholder-panel__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #606266;
+  margin-bottom: 10px;
+}
+
+.placeholder-panel__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.placeholder-panel__descriptions {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.placeholder-panel__description-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.placeholder-panel__description-label {
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.placeholder-panel__description-text {
+  color: #909399;
+}
+
+.preview-panel {
+  margin: 4px 0 18px;
+  padding: 16px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f6f9fc 100%);
+  border: 1px solid #e3ebf3;
+}
+
+.preview-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.preview-panel__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.preview-panel__subtitle {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
+}
+
+.preview-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.preview-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #4b5e73;
+  font-size: 12px;
+}
+
+.preview-email {
+  background: #fff;
+  border: 1px solid #e8edf2;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.preview-email__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preview-email__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #909399;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.preview-email__label--body {
+  margin-bottom: 8px;
+}
+
+.preview-email__value {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #1f2d3d;
+  white-space: pre-wrap;
+}
+
+.preview-email__divider {
+  margin: 14px 0;
+  border-top: 1px solid #eef2f6;
+}
+
+.preview-email__body {
+  font-size: 14px;
+  line-height: 1.75;
+  color: #1f2d3d;
+  white-space: pre-wrap;
+}
+
 .sender-summary {
   min-height: 180px;
 }
@@ -805,7 +922,9 @@ async function handleBroadcast() {
   max-width: 960px;
 }
 
-.config-form { max-width: 960px; }
+.config-form {
+  max-width: 960px;
+}
 
 .config-grid {
   display: flex;
@@ -854,228 +973,5 @@ async function handleBroadcast() {
   font-size: 12px;
   color: #909399;
   line-height: 1.5;
-}
-
-/* Variable hint */
-.variable-hint {
-  font-size: 12px;
-  color: #909399;
-  margin: -8px 0 16px 0;
-  line-height: 1.6;
-}
-
-.variable-hint code,
-.var-tag {
-  background: #f4f4f5;
-  padding: 1px 5px;
-  border-radius: 3px;
-  font-family: 'Courier New', monospace;
-  font-size: 12px;
-  color: #606266;
-}
-
-.var-list {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-left: 4px;
-}
-
-/* Trigger Rules */
-.rule-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.rule-card {
-  border: 1px solid #e8edf2;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.rule-card__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 16px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e8edf2;
-  gap: 12px;
-}
-
-.rule-card__title-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rule-card__name {
-  font-weight: 600;
-  font-size: 14px;
-  color: #1a1a1a;
-}
-
-.rule-card__body {
-  padding: 16px;
-}
-
-.rule-form {
-  margin-bottom: 12px;
-}
-
-.rule-form :deep(.el-form-item) {
-  margin-bottom: 8px;
-}
-
-.rule-form :deep(.el-form-item__label) {
-  font-size: 13px;
-  color: #606266;
-}
-
-.rule-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.rule-field__label {
-  font-size: 13px;
-  color: #606266;
-  white-space: nowrap;
-}
-
-.rule-form__row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 16px;
-}
-
-.rule-template-name {
-  font-size: 13px;
-  color: #909399;
-}
-
-.rule-card__actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
-}
-
-/* Broadcast */
-.broadcast-form {
-  max-width: 720px;
-}
-
-.broadcast-actions {
-  margin-top: 20px;
-}
-
-/* Preset grid */
-.preset-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 12px;
-  width: 100%;
-}
-
-.preset-card {
-  border: 1.5px solid #e8edf2;
-  border-radius: 8px;
-  padding: 14px 16px;
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
-  user-select: none;
-}
-
-.preset-card:hover {
-  border-color: #a0c4f0;
-  background: #f0f7ff;
-}
-
-.preset-card--active {
-  border-color: #409eff;
-  background: #ecf5ff;
-  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.15);
-}
-
-.preset-card__icon {
-  font-size: 22px;
-  margin-bottom: 6px;
-}
-
-.preset-card__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: #1a1a1a;
-  margin-bottom: 4px;
-}
-
-.preset-card__desc {
-  font-size: 11px;
-  color: #909399;
-  line-height: 1.4;
-}
-
-.recipient-count-hint {
-  font-size: 13px;
-  color: #606266;
-  margin-bottom: 16px;
-  padding: 8px 12px;
-  background: #f4f9ff;
-  border: 1px solid #d9ecff;
-  border-radius: 6px;
-  display: inline-block;
-}
-
-.count-badge {
-  display: inline-block;
-  background: #409eff;
-  color: #fff;
-  border-radius: 10px;
-  padding: 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  margin-right: 6px;
-  line-height: 20px;
-}
-
-.field-hint {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
-}
-
-.broadcast-result {
-  margin-top: 16px;
-}
-
-.recipient-preview {
-  margin-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.preview-label {
-  font-size: 13px;
-  color: #606266;
-  margin-right: 4px;
-}
-
-.preview-item {
-  background: #f0f9eb;
-  color: #67c23a;
-  border: 1px solid #c2e7b0;
-  border-radius: 4px;
-  padding: 2px 8px;
-  font-size: 12px;
-}
-
-.preview-more {
-  color: #909399;
-  font-size: 12px;
 }
 </style>

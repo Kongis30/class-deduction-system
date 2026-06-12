@@ -18,4 +18,9 @@ public interface TeacherService {
     void updateTeacher(Long id, TeacherSaveRequest request);
 
     void deleteTeacher(Long id);
+
+    /**
+     * 列出已软删除的教师档案，用于"已删除"查看窗口。
+     */
+    java.util.List<TeacherVO> listDeleted();
 }

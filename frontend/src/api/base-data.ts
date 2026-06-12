@@ -46,6 +46,10 @@ export function deleteStudent(id: string) {
   return http.delete(`/v1/base/students/${id}`);
 }
 
+export function fetchDeletedStudents() {
+  return http.get<ApiResponse<StudentItem[]>>('/v1/base/students/deleted');
+}
+
 // ─── Teachers ────────��───────────────────────────────
 export function fetchAllTeachers() {
   return http.get<ApiResponse<TeacherItem[]>>('/v1/base/teachers/active');
@@ -82,6 +86,10 @@ export function updateTeacher(id: EntityId, data: TeacherSavePayload) {
 
 export function deleteTeacher(id: EntityId) {
   return http.delete(`/v1/base/teachers/${id}`);
+}
+
+export function fetchDeletedTeachers() {
+  return http.get<ApiResponse<TeacherItem[]>>('/v1/base/teachers/deleted');
 }
 
 // ─── Classrooms ─────────────────────────────────────

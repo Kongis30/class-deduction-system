@@ -4,6 +4,10 @@
       <div class="panel-header">
         <span class="panel-header__title">Students</span>
         <div class="panel-header__actions">
+          <el-button text size="small" @click="openDeletedDialog">
+            <el-icon><Delete /></el-icon>
+            Deleted
+          </el-button>
         </div>
       </div>
 
@@ -216,17 +220,43 @@
       :default-fields="defaultFields"
       @change="handleFieldConfigChange"
     />
+
+    <!-- Deleted Students Dialog -->
+    <el-dialog
+      v-model="deletedDialogVisible"
+      title="Deleted Students"
+      width="720px"
+    >
+      <p class="deleted-hint">These student profiles have been deleted. This view is read-only.</p>
+      <el-table v-loading="deletedLoading" :data="deletedRows" row-key="id" class="product-table" max-height="420">
+        <el-table-column label="Student name" min-width="140" prop="studentName" />
+        <el-table-column label="Guardian" min-width="140">
+          <template #default="{ row }">{{ row.guardianName || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="Guardian Email" min-width="160">
+          <template #default="{ row }">{{ row.guardianEmail || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="Campus" min-width="120">
+          <template #default="{ row }">{{ row.campusName || '-' }}</template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!deletedLoading && deletedRows.length === 0" description="No deleted students." />
+      <template #footer>
+        <el-button @click="deletedDialogVisible = false">Close</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { Setting } from '@element-plus/icons-vue';
+import { Delete, Setting } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { reactive, ref, watch } from 'vue';
 
 import FieldConfigDialog, { type FieldConfig } from '@/components/shared/FieldConfigDialog.vue';
 import {
   fetchCampuses,
+  fetchDeletedStudents,
   fetchStudents,
   updateStudent,
   type StudentQuery,
@@ -433,6 +463,25 @@ async function handleStudentSubmit() {
   }
 }
 
+// ─── Deleted Students Dialog ───────────────────────
+const deletedDialogVisible = ref(false);
+const deletedLoading = ref(false);
+const deletedRows = ref<StudentItem[]>([]);
+
+async function openDeletedDialog() {
+  deletedDialogVisible.value = true;
+  deletedLoading.value = true;
+  deletedRows.value = [];
+  try {
+    const res = await fetchDeletedStudents();
+    deletedRows.value = res.data.data ?? [];
+  } catch {
+    ElMessage.error('Failed to load deleted students.');
+  } finally {
+    deletedLoading.value = false;
+  }
+}
+
 // ─── Init ──────────────────────────────────────────
 loadData();
 </script>
@@ -519,6 +568,12 @@ loadData();
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.deleted-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #909399;
 }
 
 /* Student dialog */

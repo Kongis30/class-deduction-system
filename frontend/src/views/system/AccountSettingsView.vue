@@ -4,10 +4,16 @@
     <section class="settings-panel">
       <div class="settings-panel__header">
         <span class="settings-panel__title">Teacher Accounts</span>
-        <el-button type="primary" @click="openCreateDialog('TEACHER')">
-          <el-icon><Plus /></el-icon>
-          Add account
-        </el-button>
+        <div class="settings-panel__header-actions">
+          <el-button text size="small" @click="openDeletedDialog('TEACHER')">
+            <el-icon><Delete /></el-icon>
+            Deleted
+          </el-button>
+          <el-button type="primary" @click="openCreateDialog('TEACHER')">
+            <el-icon><Plus /></el-icon>
+            Add account
+          </el-button>
+        </div>
       </div>
       <el-table v-loading="teacherLoading" :data="teacherAccounts" row-key="userId" class="data-table">
         <el-table-column label="Username" min-width="120" prop="username" />
@@ -25,7 +31,7 @@
         <el-table-column label="Actions" min-width="180" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'TEACHER')">Edit</el-button>
-            <el-button text type="danger" @click="openDeleteDialog(row, 'TEACHER')">Disable login</el-button>
+            <el-button text type="danger" @click="openDeleteDialog(row, 'TEACHER')">Delete account</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -35,10 +41,16 @@
     <section class="settings-panel">
       <div class="settings-panel__header">
         <span class="settings-panel__title">Student Accounts</span>
-        <el-button type="primary" @click="openCreateDialog('STUDENT')">
-          <el-icon><Plus /></el-icon>
-          Add account
-        </el-button>
+        <div class="settings-panel__header-actions">
+          <el-button text size="small" @click="openDeletedDialog('STUDENT')">
+            <el-icon><Delete /></el-icon>
+            Deleted
+          </el-button>
+          <el-button type="primary" @click="openCreateDialog('STUDENT')">
+            <el-icon><Plus /></el-icon>
+            Add account
+          </el-button>
+        </div>
       </div>
       <el-table v-loading="studentLoading" :data="studentAccounts" row-key="userId" class="data-table">
         <el-table-column label="Username" min-width="120" prop="username" />
@@ -56,7 +68,7 @@
         <el-table-column label="Actions" min-width="180" fixed="right">
           <template #default="{ row }">
             <el-button text type="primary" @click="openEditDialog(row, 'STUDENT')">Edit</el-button>
-            <el-button text type="danger" @click="openDeleteDialog(row, 'STUDENT')">Disable login</el-button>
+            <el-button text type="danger" @click="openDeleteDialog(row, 'STUDENT')">Delete account</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -175,18 +187,18 @@
       </template>
     </el-dialog>
 
-    <!-- Login Disable Confirmation Dialog -->
+    <!-- Account Delete Confirmation Dialog -->
     <el-dialog v-model="deleteDialogVisible" width="460px" :close-on-click-modal="false" class="account-dialog" :close-on-press-escape="false">
-      <template #header><h3>Disable Login Account</h3></template>
+      <template #header><h3>Delete Account</h3></template>
       <div class="delete-warning">
         <div class="delete-warning__title">
-          Disable login account "{{ deleteTargetName }}"?
+          Delete account "{{ deleteTargetName }}"?
         </div>
         <div class="delete-warning__body">
-          <p>After confirmation, this login account will be removed. Existing sessions will expire, and the user will no longer be able to sign in.</p>
-          <p>The linked {{ deleteProfileTypeLabel }} profile and business records will be kept.</p>
-          <p>This action will not cancel future lessons, close packages, stop scheduling, or change existing deduction records.</p>
-          <p class="delete-warning__caution">For business deactivation, set the {{ deleteProfileTypeLabel }} profile status to Inactive on the profile page.</p>
+          <p>After confirmation, this login account and the linked {{ deleteProfileTypeLabel }} profile will be deleted together.</p>
+          <p>Existing sessions will expire immediately, and the user will no longer be able to sign in.</p>
+          <p>Historical business records are retained, but if the linked profile still has active business references, the deletion will be blocked.</p>
+          <p class="delete-warning__caution">Create new {{ deleteProfileTypeLabel }} data only from the Account page so the account and profile stay bound together.</p>
         </div>
       </div>
       <template #footer>
@@ -197,18 +209,55 @@
           :loading="deleteSubmitting"
           @click="handleConfirmDelete"
         >
-          {{ deleteCountdown > 0 ? `Disable login (${deleteCountdown}s)` : 'Disable login' }}
+          {{ deleteCountdown > 0 ? `Delete account (${deleteCountdown}s)` : 'Delete account' }}
         </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Deleted Accounts Dialog -->
+    <el-dialog
+      v-model="deletedDialogVisible"
+      :title="deletedDialogType === 'TEACHER' ? 'Deleted Teacher Accounts' : 'Deleted Student Accounts'"
+      width="720px"
+      class="account-dialog"
+    >
+      <p class="deleted-hint">
+        These accounts and their linked {{ deletedDialogType === 'TEACHER' ? 'teacher' : 'student' }} profiles have been deleted. This view is read-only.
+      </p>
+      <el-table v-loading="deletedLoading" :data="deletedRows" row-key="userId" class="data-table" max-height="420">
+        <el-table-column label="Username" min-width="120" prop="username" />
+        <el-table-column label="Display name" min-width="140" prop="displayName" />
+        <el-table-column
+          :label="deletedDialogType === 'TEACHER' ? 'Teacher' : 'Student'"
+          min-width="120"
+        >
+          <template #default="{ row }">
+            {{ (deletedDialogType === 'TEACHER' ? row.teacherName : row.studentName) || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="Email" min-width="180">
+          <template #default="{ row }">{{ row.email || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="Last login" min-width="160">
+          <template #default="{ row }">{{ row.lastLoginAt || '-' }}</template>
+        </el-table-column>
+      </el-table>
+      <el-empty
+        v-if="!deletedLoading && deletedRows.length === 0"
+        description="No deleted accounts."
+      />
+      <template #footer>
+        <el-button @click="deletedDialogVisible = false">Close</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { Plus } from '@element-plus/icons-vue';
+import { Delete, Plus } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
-import { createStudentAccount, createTeacherAccount, deleteStudentAccount, deleteTeacherAccount, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
+import { createStudentAccount, createTeacherAccount, deleteStudentAccount, deleteTeacherAccount, fetchDeletedStudentAccounts, fetchDeletedTeacherAccounts, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
 import type { StudentAccountItem, TeacherAccountItem } from '@/types/domain';
 
 const teacherLoading = ref(false);
@@ -262,7 +311,7 @@ async function handleConfirmDelete() {
     } else {
       await deleteStudentAccount(deleteTargetId.value!);
     }
-    ElMessage.success(`Login account disabled.`);
+    ElMessage.success(`Account deleted.`);
     closeDeleteDialog();
     await Promise.all([loadTeacherAccounts(), loadStudentAccounts()]);
   } catch (err: any) {
@@ -272,8 +321,30 @@ async function handleConfirmDelete() {
   }
 }
 
-const subjectOptions = ['Math', 'English', 'Science', 'History', 'SAT', 'ACT', 'ESL', 'Music', 'Art', 'Other'];
+// ─── Deleted Accounts Dialog ─────────────────────────
+const deletedDialogVisible = ref(false);
+const deletedDialogType = ref<'TEACHER' | 'STUDENT'>('TEACHER');
+const deletedLoading = ref(false);
+const deletedRows = ref<Array<TeacherAccountItem | StudentAccountItem>>([]);
 
+async function openDeletedDialog(type: 'TEACHER' | 'STUDENT') {
+  deletedDialogType.value = type;
+  deletedDialogVisible.value = true;
+  deletedLoading.value = true;
+  deletedRows.value = [];
+  try {
+    const res = type === 'TEACHER'
+      ? await fetchDeletedTeacherAccounts()
+      : await fetchDeletedStudentAccounts();
+    deletedRows.value = res.data.data ?? [];
+  } catch {
+    ElMessage.error('Failed to load deleted accounts.');
+  } finally {
+    deletedLoading.value = false;
+  }
+}
+
+const subjectOptions = ['Math', 'English', 'Science', 'History', 'SAT', 'ACT', 'ESL', 'Music', 'Art', 'Other'];
 const createForm = reactive({
   userType: 'TEACHER' as 'TEACHER' | 'STUDENT',
   teacherName: '',
@@ -486,6 +557,16 @@ async function handleCreate() {
   font-size: 15px;
   font-weight: 600;
   color: #1a1a1a;
+}
+.settings-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.deleted-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #909399;
 }
 .data-table {
   border-radius: 6px;

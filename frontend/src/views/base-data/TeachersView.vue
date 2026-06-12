@@ -4,6 +4,10 @@
       <div class="panel-header">
         <span class="panel-header__title">Instructors</span>
         <div class="panel-header__actions">
+          <el-button text size="small" @click="openDeletedDialog">
+            <el-icon><Delete /></el-icon>
+            Deleted
+          </el-button>
         </div>
       </div>
 
@@ -151,15 +155,46 @@
         </div>
       </template>
     </el-dialog>
+
+    <!-- Deleted Instructors Dialog -->
+    <el-dialog
+      v-model="deletedDialogVisible"
+      title="Deleted Instructors"
+      width="720px"
+    >
+      <p class="deleted-hint">These instructor profiles have been deleted. This view is read-only.</p>
+      <el-table v-loading="deletedLoading" :data="deletedRows" row-key="id" class="product-table" max-height="420">
+        <el-table-column label="Name" min-width="140" prop="teacherName" />
+        <el-table-column label="Phone" min-width="140">
+          <template #default="{ row }">{{ row.mobile || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="Email" min-width="200">
+          <template #default="{ row }">{{ row.email || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="Subjects" min-width="160">
+          <template #default="{ row }">
+            <div class="tag-list">
+              <el-tag v-for="subj in row.subjectTags" :key="subj" size="small" type="info">{{ subj }}</el-tag>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!deletedLoading && deletedRows.length === 0" description="No deleted instructors." />
+      <template #footer>
+        <el-button @click="deletedDialogVisible = false">Close</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
+import { Delete } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { reactive, ref, watch } from 'vue';
 
 import {
   fetchAllTeachers,
+  fetchDeletedTeachers,
   fetchTeachers,
   updateTeacher,
   type TeacherQuery,
@@ -283,6 +318,25 @@ async function handleTeacherSubmit() {
   }
 }
 
+// ─── Deleted Instructors Dialog ────────────────────────
+const deletedDialogVisible = ref(false);
+const deletedLoading = ref(false);
+const deletedRows = ref<TeacherItem[]>([]);
+
+async function openDeletedDialog() {
+  deletedDialogVisible.value = true;
+  deletedLoading.value = true;
+  deletedRows.value = [];
+  try {
+    const res = await fetchDeletedTeachers();
+    deletedRows.value = res.data.data ?? [];
+  } catch {
+    ElMessage.error('Failed to load deleted instructors.');
+  } finally {
+    deletedLoading.value = false;
+  }
+}
+
 // ─── 初始化 ────────────────────────────────────────────
 loadData();
 </script>
@@ -375,6 +429,12 @@ loadData();
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.deleted-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #909399;
 }
 
 /* Teacher dialog */

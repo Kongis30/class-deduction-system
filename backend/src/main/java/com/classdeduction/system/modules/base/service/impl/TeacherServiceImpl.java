@@ -74,6 +74,7 @@ public class TeacherServiceImpl implements TeacherService {
                         .or()
                         .like(TeacherEntity::getTeacherName, query.getKeyword()))
                 .eq(StringUtils.hasText(query.getStatus()), TeacherEntity::getStatus, query.getStatus())
+                .eq(TeacherEntity::getIsDeleted, 0)
                 .orderByDesc(TeacherEntity::getCreatedAt);
         IPage<TeacherEntity> result = teacherMapper.selectPage(page, wrapper);
         return PageResponse.of(result.getRecords().stream().map(this::toVO).toList(),
@@ -115,13 +116,10 @@ public class TeacherServiceImpl implements TeacherService {
     }
 
     private String generateTeacherNo() {
-        TeacherEntity maxTeacher = teacherMapper.selectOne(new LambdaQueryWrapper<TeacherEntity>()
-                .eq(TeacherEntity::getIsDeleted, 0)
-                .orderByDesc(TeacherEntity::getTeacherNo)
-                .last("LIMIT 1"));
+        // 只看 INS- 前缀，且忽略逻辑删除：软删除的教师档案仍占用 uk_teacher_no 唯一索引。
+        String maxNo = teacherMapper.selectMaxTeacherNoByPrefix("INS-");
         int nextSeq = 1;
-        if (maxTeacher != null && maxTeacher.getTeacherNo() != null) {
-            String maxNo = maxTeacher.getTeacherNo();
+        if (maxNo != null) {
             try {
                 String numPart = maxNo.replaceAll("[^0-9]", "");
                 if (!numPart.isEmpty()) {
@@ -169,6 +167,13 @@ public class TeacherServiceImpl implements TeacherService {
                             + "Set to INACTIVE instead.");
         }
         teacherMapper.deleteById(id);
+    }
+
+    @Override
+    public List<TeacherVO> listDeleted() {
+        return teacherMapper.selectDeleted().stream()
+                .map(this::toVO)
+                .toList();
     }
 
     private void ensureTeacherNoUnique(Long currentId, String teacherNo) {

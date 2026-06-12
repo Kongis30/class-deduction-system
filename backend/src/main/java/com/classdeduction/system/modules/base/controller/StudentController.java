@@ -37,6 +37,12 @@ public class StudentController {
         return ApiResponse.success(studentService.listAllActive());
     }
 
+    @GetMapping("/deleted")
+    @Operation(summary = "List soft-deleted student profiles")
+    public ApiResponse<java.util.List<StudentListItemVO>> listDeleted() {
+        return ApiResponse.success(studentService.listDeleted());
+    }
+
     @GetMapping
     @Operation(summary = "List student profiles")
     public ApiResponse<PageResponse<StudentListItemVO>> pageStudents(@ParameterObject @Valid StudentPageQuery query) {
