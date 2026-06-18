@@ -11,8 +11,10 @@ import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleCreateRequest;
+import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleUpdateRequest;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleSlotRequest;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
@@ -22,6 +24,7 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMa
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.impl.RecurringScheduleRuleServiceImpl;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
+import com.classdeduction.system.modules.schedule.vo.ScheduleRuleUpdateResultVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -138,6 +141,7 @@ class RecurringScheduleRuleServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(lessonOccurrenceMapper.selectList(any()))
                 .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList())
                 .thenReturn(List.of(buildTeacherConflict()))
                 .thenReturn(Collections.emptyList());
         stubGeneratedIds(false);
@@ -145,6 +149,74 @@ class RecurringScheduleRuleServiceImplTest {
         assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Teacher conflict");
+    }
+
+    @Test
+    void shouldUpdateRuleWithoutDuplicatingRecordedOccurrencesAndCapGeneratedUnits() {
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        RecurringScheduleRuleEntity existingRule = buildExistingRule();
+        LessonOccurrenceEntity recordedFirst = buildRuleOccurrence(7001L, request.getStartDate(), 2, "SCHEDULED");
+        LessonOccurrenceEntity recordedSecond = buildRuleOccurrence(7002L, request.getStartDate().plusWeeks(1), 2, "SCHEDULED");
+        LessonRecordEntity firstRecord = buildRecord(recordedFirst.getId(), 2);
+        LessonRecordEntity secondRecord = buildRecord(recordedSecond.getId(), 2);
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(existingRule);
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(7);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(List.of(recordedFirst, recordedSecond))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(firstRecord, secondRecord));
+        doAnswer(invocation -> {
+            RecurringScheduleSlotEntity entity = invocation.getArgument(0);
+            entity.setId(6002L);
+            return 1;
+        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
+
+        ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
+
+        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
+        LessonOccurrenceEntity inserted = occurrenceCaptor.getValue();
+        assertThat(result.preservedOccurrenceCount()).isEqualTo(2);
+        assertThat(result.generatedOccurrenceCount()).isEqualTo(1);
+        assertThat(inserted.getPlannedStartAt().toLocalDate()).isEqualTo(request.getStartDate().plusWeeks(2));
+        assertThat(inserted.getPlannedUnits()).isEqualTo(3);
+        assertThat(inserted.getPlannedEndAt()).isEqualTo(inserted.getPlannedStartAt().plusMinutes(90));
+    }
+
+    @Test
+    void shouldNotGenerateMoreOccurrencesWhenRecordedUnitsAlreadyFillPackage() {
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        RecurringScheduleRuleEntity existingRule = buildExistingRule();
+        LessonOccurrenceEntity recordedFirst = buildRuleOccurrence(7001L, request.getStartDate(), 2, "SCHEDULED");
+        LessonOccurrenceEntity recordedSecond = buildRuleOccurrence(7002L, request.getStartDate().plusWeeks(1), 2, "SCHEDULED");
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(existingRule);
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(4);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(List.of(recordedFirst, recordedSecond))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(
+                buildRecord(recordedFirst.getId(), 2),
+                buildRecord(recordedSecond.getId(), 2)));
+
+        ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
+
+        verify(lessonOccurrenceMapper, times(0)).insert(any(LessonOccurrenceEntity.class));
+        assertThat(result.generatedOccurrenceCount()).isEqualTo(0);
+        assertThat(result.firstGeneratedStartAt()).isNull();
+        assertThat(result.lastGeneratedEndAt()).isNull();
     }
 
     private void stubGeneratedIds(boolean includeOccurrenceInsert) {
@@ -188,6 +260,40 @@ class RecurringScheduleRuleServiceImplTest {
         return request;
     }
 
+    private RecurringScheduleRuleUpdateRequest buildUpdateRequest(int plannedUnits) {
+        LocalDate nextMonday = AppTime.nowLocalDateTime().toLocalDate().with(TemporalAdjusters.nextOrSame(DayOfWeek.MONDAY));
+        if (!nextMonday.isAfter(AppTime.nowLocalDateTime().toLocalDate())) {
+            nextMonday = nextMonday.plusWeeks(1);
+        }
+        RecurringScheduleSlotRequest slot = new RecurringScheduleSlotRequest();
+        slot.setWeekday(1);
+        slot.setStartTime(LocalTime.of(18, 0));
+        slot.setEndTime(LocalTime.of(18, 0).plusMinutes(plannedUnits * 30L));
+        slot.setPlannedUnits(plannedUnits);
+
+        RecurringScheduleRuleUpdateRequest request = new RecurringScheduleRuleUpdateRequest();
+        request.setPrimaryTeacherId(3001L);
+        request.setDefaultClassroomId(4001L);
+        request.setRuleStatus("ACTIVE");
+        request.setStartDate(nextMonday);
+        request.setGenerationHorizonDays(28);
+        request.setNotes("Updated schedule");
+        request.setSlots(List.of(slot));
+        return request;
+    }
+
+    private RecurringScheduleRuleEntity buildExistingRule() {
+        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
+        rule.setId(5001L);
+        rule.setPackageId(1001L);
+        rule.setPrimaryTeacherId(3001L);
+        rule.setDefaultClassroomId(4001L);
+        rule.setRuleStatus("ACTIVE");
+        rule.setStartDate(buildUpdateRequest(4).getStartDate());
+        rule.setGenerationHorizonDays(28);
+        return rule;
+    }
+
     private CoursePackageEntity buildPackage() {
         CoursePackageEntity coursePackage = new CoursePackageEntity();
         coursePackage.setId(1001L);
@@ -195,6 +301,7 @@ class RecurringScheduleRuleServiceImplTest {
         coursePackage.setPackageNo("PK-1001");
         coursePackage.setPackageName("SHSAT Math");
         coursePackage.setPackageStatus("ACTIVE");
+        coursePackage.setTotalUnits(8);
         return coursePackage;
     }
 
@@ -232,5 +339,29 @@ class RecurringScheduleRuleServiceImplTest {
         conflict.setPlannedEndAt(LocalDateTime.of(nextMonday, LocalTime.of(21, 0)));
         conflict.setPlanningStatus("SCHEDULED");
         return conflict;
+    }
+
+    private LessonOccurrenceEntity buildRuleOccurrence(Long id, LocalDate date, int units, String planningStatus) {
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(id);
+        occurrence.setLessonNo("LS-" + id);
+        occurrence.setPackageId(1001L);
+        occurrence.setStudentId(2001L);
+        occurrence.setScheduleRuleId(5001L);
+        occurrence.setPlannedStartAt(LocalDateTime.of(date, LocalTime.of(18, 0)));
+        occurrence.setPlannedEndAt(occurrence.getPlannedStartAt().plusMinutes(units * 30L));
+        occurrence.setPlannedUnits(units);
+        occurrence.setPlanningStatus(planningStatus);
+        return occurrence;
+    }
+
+    private LessonRecordEntity buildRecord(Long occurrenceId, int deductedUnits) {
+        LessonRecordEntity record = new LessonRecordEntity();
+        record.setId(8000L + occurrenceId);
+        record.setOccurrenceId(occurrenceId);
+        record.setShouldDeduct(deductedUnits > 0 ? 1 : 0);
+        record.setDeductedUnits(deductedUnits);
+        record.setConfirmStage("PENDING_ADMIN");
+        return record;
     }
 }

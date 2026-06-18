@@ -28,10 +28,19 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
-        <el-table-column label="Actions" min-width="180" fixed="right">
+        <el-table-column label="Actions" width="90" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button text type="primary" @click="openEditDialog(row, 'TEACHER')">Edit</el-button>
-            <el-button text type="danger" @click="openDeleteDialog(row, 'TEACHER')">Delete account</el-button>
+            <el-dropdown trigger="click" @command="(cmd: string) => handleAccountCommand(cmd, row, 'TEACHER')">
+              <el-button text class="actions-trigger">
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>Delete account</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -65,10 +74,19 @@
           </template>
         </el-table-column>
         <el-table-column label="Last login" min-width="160" prop="lastLoginAt" />
-        <el-table-column label="Actions" min-width="180" fixed="right">
+        <el-table-column label="Actions" width="90" align="center" fixed="right">
           <template #default="{ row }">
-            <el-button text type="primary" @click="openEditDialog(row, 'STUDENT')">Edit</el-button>
-            <el-button text type="danger" @click="openDeleteDialog(row, 'STUDENT')">Delete account</el-button>
+            <el-dropdown trigger="click" @command="(cmd: string) => handleAccountCommand(cmd, row, 'STUDENT')">
+              <el-button text class="actions-trigger">
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                  <el-dropdown-item command="delete" divided>Delete account</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -254,7 +272,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, Plus } from '@element-plus/icons-vue';
+import { Delete, MoreFilled, Plus } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { createStudentAccount, createTeacherAccount, deleteStudentAccount, deleteTeacherAccount, fetchDeletedStudentAccounts, fetchDeletedTeacherAccounts, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
@@ -277,6 +295,15 @@ const deleteCountdown = ref(0);
 const deleteSubmitting = ref(false);
 let deleteTimer: ReturnType<typeof setInterval> | null = null;
 const deleteProfileTypeLabel = computed(() => (deleteType.value === 'TEACHER' ? 'teacher' : 'student'));
+
+// 行操作下拉菜单分发：根据命令打开编辑或删除弹窗
+function handleAccountCommand(command: string, row: any, type: 'TEACHER' | 'STUDENT') {
+  if (command === 'edit') {
+    openEditDialog(row, type);
+  } else if (command === 'delete') {
+    openDeleteDialog(row, type);
+  }
+}
 
 function openDeleteDialog(row: any, type: 'TEACHER' | 'STUDENT') {
   deleteType.value = type;
@@ -562,6 +589,11 @@ async function handleCreate() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.actions-trigger {
+  padding: 4px;
+  font-size: 18px;
+  color: #909399;
 }
 .deleted-hint {
   margin: 0 0 12px;

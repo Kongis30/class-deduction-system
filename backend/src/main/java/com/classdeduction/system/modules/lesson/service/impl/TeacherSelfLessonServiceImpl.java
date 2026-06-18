@@ -50,7 +50,7 @@ public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
         delegateRequest.setActualEndAt(request.getActualEndAt());
         delegateRequest.setActualUnits(request.getActualUnits());
         delegateRequest.setNotes(request.getNotes());
-        return lessonRecordService.confirmLesson(delegateRequest, currentUser);
+        return lessonRecordService.initialConfirmLesson(delegateRequest, currentUser);
     }
 
     private LessonOccurrenceEntity requireOwnedOccurrence(Long occurrenceId, Long teacherId) {

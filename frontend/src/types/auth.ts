@@ -12,12 +12,12 @@ export interface AuthUser {
 
 export function isTeacherUser(user: AuthUser | null): boolean {
   if (!user) return false;
-  return user.userType === 'TEACHER' || user.roleCodes.includes('TEACHER');
+  return user.userType === 'TEACHER' || (user.roleCodes ?? []).includes('TEACHER');
 }
 
 export function isStudentUser(user: AuthUser | null): boolean {
   if (!user) return false;
-  return user.userType === 'STUDENT' || user.roleCodes.includes('STUDENT');
+  return user.userType === 'STUDENT' || (user.roleCodes ?? []).includes('STUDENT');
 }
 
 export interface LoginPayload {

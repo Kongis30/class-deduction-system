@@ -104,15 +104,9 @@ public class ClassroomServiceImpl implements ClassroomService {
      * Format: R + 3-digit sequence (R001, R002, ...)
      */
     private String generateUniqueRoomCode() {
-        ClassroomEntity maxClassroom = classroomMapper.selectOne(
-                new LambdaQueryWrapper<ClassroomEntity>()
-                        .eq(ClassroomEntity::getIsDeleted, 0)
-                        .orderByDesc(ClassroomEntity::getRoomCode)
-                        .last("LIMIT 1"));
-
         int nextSeq = 1;
-        if (maxClassroom != null && maxClassroom.getRoomCode() != null) {
-            String maxCode = maxClassroom.getRoomCode();
+        String maxCode = classroomMapper.selectMaxGeneratedRoomCodeIncludingDeleted();
+        if (StringUtils.hasText(maxCode)) {
             try {
                 String numPart = maxCode.replaceAll("[^0-9]", "");
                 if (!numPart.isEmpty()) {
@@ -173,11 +167,8 @@ public class ClassroomServiceImpl implements ClassroomService {
     }
 
     private void ensureRoomCodeUnique(Long currentId, String roomCode) {
-        ClassroomEntity existing = classroomMapper.selectOne(new LambdaQueryWrapper<ClassroomEntity>()
-                .eq(ClassroomEntity::getRoomCode, roomCode)
-                .eq(ClassroomEntity::getIsDeleted, 0)
-                .last("LIMIT 1"));
-        if (existing != null && !Objects.equals(existing.getId(), currentId)) {
+        Long existingCount = classroomMapper.countRoomCodeIncludingDeleted(currentId, roomCode);
+        if (existingCount != null && existingCount > 0) {
             throw new BusinessException("Room code already exists.");
         }
     }

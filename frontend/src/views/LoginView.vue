@@ -8,7 +8,7 @@
     <div class="login-page__dots"></div>
     <div class="login-card">
       <div class="login-card__brand">
-        <img src="/logo.jpg" alt="JIN BEST TUTORING" class="login-card__logo-img" />
+        <img :src="logoUrl" alt="JIN BEST TUTORING" class="login-card__logo-img" />
         <h1>JIN BEST TUTORING</h1>
       </div>
 
@@ -42,6 +42,7 @@ const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const formRef = ref<FormInstance>();
+const logoUrl = `${import.meta.env.BASE_URL}logo.jpg`;
 
 const form = reactive<LoginPayload>({
   username: '',

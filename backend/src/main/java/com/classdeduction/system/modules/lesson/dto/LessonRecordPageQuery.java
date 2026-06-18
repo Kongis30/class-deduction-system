@@ -33,6 +33,9 @@ public class LessonRecordPageQuery extends PageQuery {
     @Schema(description = "Record source: STAFF/TEACHER/SYSTEM", example = "STAFF")
     private String recordSource;
 
+    @Schema(description = "Confirm stage: PENDING_ADMIN/CONFIRMED/REJECTED", example = "CONFIRMED")
+    private String confirmStage;
+
     @Schema(description = "Confirmation start time", example = "2026-04-01T00:00:00")
     private LocalDateTime confirmedFrom;
 

@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.schedule.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
@@ -36,6 +37,13 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class ClassGroupServiceImpl implements ClassGroupService {
+
+    private static final String CONFIRM_STAGE_PENDING_ADMIN = "PENDING_ADMIN";
+    private static final String CONFIRM_STAGE_CONFIRMED = "CONFIRMED";
+    private static final String CONFIRM_STAGE_REJECTED = "REJECTED";
+    private static final Set<String> ALLOWED_TEACHER_CONFIRM_STATUSES = Set.of("COMPLETED", "NO_SHOW", "FORMAL_LEAVE");
+    private static final int TEACHER_PAST_CONFIRM_WINDOW_DAYS = 7;
+    private static final int TEACHER_FUTURE_CONFIRM_WINDOW_HOURS = 6;
 
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
@@ -172,36 +180,26 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             return Collections.emptyList();
         }
 
-        // 批量查询已核销记录（只需知道每个 occurrence 是否有核销）
+        // Return the latest confirmation record, including REJECTED, so the UI can show retry state.
         List<Long> occurrenceIds = occurrences.stream().map(LessonOccurrenceEntity::getId).toList();
-        Set<Long> confirmedOccurrenceIds = lessonRecordMapper.selectList(
+        List<LessonRecordEntity> activeRecords = lessonRecordMapper.selectList(
                 new LambdaQueryWrapper<LessonRecordEntity>()
-                        .select(LessonRecordEntity::getOccurrenceId)
                         .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
-                        .groupBy(LessonRecordEntity::getOccurrenceId)
-        ).stream().map(LessonRecordEntity::getOccurrenceId).collect(Collectors.toSet());
+                        .orderByAsc(LessonRecordEntity::getId));
+        Map<Long, LessonRecordEntity> recordByOccurrence = activeRecords.stream().collect(Collectors.toMap(
+                LessonRecordEntity::getOccurrenceId,
+                item -> item,
+                (a, b) -> b
+        ));
 
         // 批量加载教师和教室
         Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(occurrences, LessonOccurrenceEntity::getPlannedTeacherId);
         Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(occurrences, LessonOccurrenceEntity::getPlannedClassroomId);
 
-        // 取出现有的核销记录中第一条的 resultStatus（按 occurrence 分组）
-        Map<Long, String> resultStatusByOccurrence = Collections.emptyMap();
-        if (!confirmedOccurrenceIds.isEmpty()) {
-            resultStatusByOccurrence = lessonRecordMapper.selectList(
-                    new LambdaQueryWrapper<LessonRecordEntity>()
-                            .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
-                            .orderByAsc(LessonRecordEntity::getId)
-            ).stream().collect(Collectors.toMap(
-                    LessonRecordEntity::getOccurrenceId,
-                    LessonRecordEntity::getResultStatus,
-                    (a, b) -> a
-            ));
-        }
-
         List<Map<String, Object>> result = new ArrayList<>();
         for (LessonOccurrenceEntity occ : occurrences) {
-            boolean hasRecord = confirmedOccurrenceIds.contains(occ.getId());
+            LessonRecordEntity record = recordByOccurrence.get(occ.getId());
+            boolean hasRecord = record != null && CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage());
             String teacherName = resolveTeacherName(occ.getPlannedTeacherId(), teacherMap);
             String classroomName = resolveClassroomName(occ.getPlannedClassroomId(), classroomMap);
 
@@ -217,7 +215,23 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("plannedEndAt", occ.getPlannedEndAt());
             item.put("plannedUnits", occ.getPlannedUnits());
             item.put("planningStatus", occ.getPlanningStatus());
-            item.put("resultStatus", hasRecord ? resultStatusByOccurrence.get(occ.getId()) : null);
+            item.put("lessonRecordId", record == null ? null : record.getId());
+            item.put("recordId", record == null ? null : record.getId());
+            item.put("confirmStage", record == null ? null : record.getConfirmStage());
+            item.put("teacherConfirmedAt", record == null ? null : record.getTeacherConfirmedAt());
+            item.put("teacherConfirmedByUserId", record == null ? null : record.getTeacherConfirmedByUserId());
+            item.put("adminConfirmedAt", record == null ? null : record.getAdminConfirmedAt());
+            item.put("adminConfirmedByUserId", record == null ? null : record.getAdminConfirmedByUserId());
+            item.put("resultStatus", record == null ? null : record.getResultStatus());
+            item.put("rejectReason", record == null ? null : record.getRejectReason());
+            item.put("rejectedAt", record == null ? null : record.getRejectedAt());
+            item.put("rejectedByUserId", record == null ? null : record.getRejectedByUserId());
+            item.put("actualTeacherId", record == null ? null : record.getActualTeacherId());
+            item.put("actualClassroomId", record == null ? null : record.getActualClassroomId());
+            item.put("actualStartAt", record == null ? null : record.getActualStartAt());
+            item.put("actualEndAt", record == null ? null : record.getActualEndAt());
+            item.put("actualUnits", record == null ? null : record.getActualUnits());
+            item.put("notes", record == null ? null : record.getNotes());
             item.put("confirmed", hasRecord);
             result.add(item);
         }
@@ -226,7 +240,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Map<String, Object> confirmLesson(Long classId, Long occurrenceId, Map<String, Object> body) {
+    public Map<String, Object> confirmLesson(Long classId, Long occurrenceId, Map<String, Object> body, CurrentUserResponse currentUser) {
+        currentUser = defaultAdminIfMissing(currentUser);
         // 获取排课记录
         LessonOccurrenceEntity occ = lessonOccurrenceMapper.selectById(occurrenceId);
         if (occ == null || !classId.equals(occ.getClassGroupId())) {
@@ -257,22 +272,30 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         LocalDateTime actualEndAt = parseDateTimeParam(body, "actualEndAt");
         String notes = body != null && body.get("notes") instanceof String
                 ? (String) body.get("notes") : null;
+        String resultStatus = body != null && body.get("resultStatus") instanceof String s && !s.isBlank()
+                ? s : "COMPLETED";
+        boolean teacherConfirm = isTeacherUser(currentUser);
+        if (teacherConfirm) {
+            validateTeacherClassConfirm(occ, resultStatus, currentUser);
+        }
 
         for (ClassEnrollmentEntity enrollment : activeEnrollments) {
-            // 逐学生检查是否已核销（班课一个 occurrence 对应多条记录）
-            long existingCount = lessonRecordMapper.selectCount(
-                    new LambdaQueryWrapper<LessonRecordEntity>()
-                            .eq(LessonRecordEntity::getOccurrenceId, occurrenceId)
-                            .eq(LessonRecordEntity::getStudentId, enrollment.getStudentId())
-            );
-            if (existingCount > 0) {
-                continue; // 该学生已确认，跳过
+            LessonRecordEntity existing = findLatestClassRecord(occurrenceId, enrollment.getStudentId());
+            if (existing != null && !CONFIRM_STAGE_REJECTED.equals(existing.getConfirmStage())) {
+                if (teacherConfirm || CONFIRM_STAGE_CONFIRMED.equals(existing.getConfirmStage())) {
+                    continue;
+                }
+                applyClassActualValues(existing, occ, actualTeacherId, actualClassroomId, actualUnits, actualStartAt, actualEndAt, notes);
+                finalizeClassRecord(existing, currentUser);
+                lessonRecordMapper.updateById(existing);
+                confirmedCount++;
+                continue;
             }
-            LessonRecordEntity record = new LessonRecordEntity();
+            LessonRecordEntity record = existing == null ? new LessonRecordEntity() : existing;
             record.setOccurrenceId(occurrenceId);
             record.setStudentId(enrollment.getStudentId());
             record.setPackageId(null); // 班课不关联课包
-            record.setResultStatus("COMPLETED");
+            record.setResultStatus(resultStatus);
             record.setPlannedTeacherId(occ.getPlannedTeacherId()); // 保存原始安排，供审计
             record.setPlannedClassroomId(occ.getPlannedClassroomId());
             record.setActualTeacherId(actualTeacherId);
@@ -283,29 +306,80 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             record.setShouldDeduct(0); // 班课不扣课时
             record.setDeductedUnits(0);
             record.setShouldExtendEndDate(0);
-            record.setRecordSource("CLASS_CONFIRM");
             record.setNotes(notes);
-            record.setConfirmedAt(LocalDateTime.now());
-            lessonRecordMapper.insert(record);
+            record.setRecordSource(teacherConfirm ? "TEACHER" : "CLASS_CONFIRM");
+            record.setRejectReason(null);
+            record.setRejectedAt(null);
+            record.setRejectedByUserId(null);
+            if (teacherConfirm) {
+                record.setConfirmStage(CONFIRM_STAGE_PENDING_ADMIN);
+                record.setTeacherConfirmedAt(AppTime.nowLocalDateTime());
+                record.setTeacherConfirmedByUserId(currentUser.userId());
+                record.setConfirmedAt(null);
+                record.setConfirmedByUserId(null);
+                record.setAdminConfirmedAt(null);
+                record.setAdminConfirmedByUserId(null);
+            } else {
+                record.setConfirmStage(CONFIRM_STAGE_CONFIRMED);
+                record.setTeacherConfirmedAt(null);
+                record.setTeacherConfirmedByUserId(null);
+                finalizeClassRecord(record, currentUser);
+            }
+            if (record.getId() == null) {
+                lessonRecordMapper.insert(record);
+            } else {
+                lessonRecordMapper.updateById(record);
+            }
             confirmedCount++;
         }
 
-        // 同步更新 lesson_occurrence，使前端刷新后显示正确
-        occ.setPlannedTeacherId(actualTeacherId);
-        occ.setPlannedClassroomId(actualClassroomId);
-        if (actualUnits != null) {
-            occ.setPlannedUnits(actualUnits);
+        // 老师初确认只登记待复核记录；管理员终确认/兜底确认才同步最终实际值。
+        if (!teacherConfirm) {
+            occ.setPlannedTeacherId(actualTeacherId);
+            occ.setPlannedClassroomId(actualClassroomId);
+            if (actualUnits != null) {
+                occ.setPlannedUnits(actualUnits);
+            }
+            if (actualStartAt != null) {
+                occ.setPlannedStartAt(actualStartAt);
+                occ.setPlannedEndAt(actualEndAt);
+            }
+            occ.setPlanningStatus("MERGED");
+            lessonOccurrenceMapper.updateById(occ);
         }
-        if (actualStartAt != null) {
-            occ.setPlannedStartAt(actualStartAt);
-            occ.setPlannedEndAt(actualEndAt);
-        }
-        lessonOccurrenceMapper.updateById(occ);
 
         Map<String, Object> result = new HashMap<>();
         result.put("confirmedCount", confirmedCount);
         result.put("occurrenceId", occurrenceId);
+        result.put("confirmStage", teacherConfirm ? CONFIRM_STAGE_PENDING_ADMIN : CONFIRM_STAGE_CONFIRMED);
         return result;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void rejectLesson(Long classId, Long occurrenceId, String rejectReason, CurrentUserResponse currentUser) {
+        currentUser = defaultAdminIfMissing(currentUser);
+        if (rejectReason == null || rejectReason.isBlank()) {
+            throw new BusinessException("REJECT_REASON_REQUIRED", "Reject reason is required.");
+        }
+        LessonOccurrenceEntity occ = lessonOccurrenceMapper.selectById(occurrenceId);
+        if (occ == null || !classId.equals(occ.getClassGroupId())) {
+            throw new BusinessException("OCCURRENCE_NOT_FOUND", "Lesson occurrence not found for this class.");
+        }
+        List<LessonRecordEntity> pendingRecords = lessonRecordMapper.selectList(
+                new LambdaQueryWrapper<LessonRecordEntity>()
+                        .eq(LessonRecordEntity::getOccurrenceId, occurrenceId)
+                        .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_PENDING_ADMIN));
+        if (pendingRecords.isEmpty()) {
+            throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending class lesson records can be rejected.");
+        }
+        for (LessonRecordEntity record : pendingRecords) {
+            record.setConfirmStage(CONFIRM_STAGE_REJECTED);
+            record.setRejectReason(rejectReason);
+            record.setRejectedAt(AppTime.nowLocalDateTime());
+            record.setRejectedByUserId(currentUser.userId());
+            lessonRecordMapper.updateById(record);
+        }
     }
 
     @Override
@@ -517,6 +591,73 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (ids.isEmpty()) return Collections.emptyMap();
         return classroomMapper.selectBatchIds(ids).stream()
                 .collect(Collectors.toMap(ClassroomEntity::getId, c -> c));
+    }
+
+    private CurrentUserResponse defaultAdminIfMissing(CurrentUserResponse currentUser) {
+        if (currentUser != null) {
+            return currentUser;
+        }
+        return new CurrentUserResponse(2049011197944602625L, "admin", "System Administrator", "ADMIN", null, null, java.util.List.of("ADMIN"));
+    }
+
+    private boolean isTeacherUser(CurrentUserResponse currentUser) {
+        return currentUser.roleCodes() != null && currentUser.roleCodes().contains("TEACHER");
+    }
+
+    private void validateTeacherClassConfirm(LessonOccurrenceEntity occurrence, String resultStatus, CurrentUserResponse currentUser) {
+        if (currentUser.teacherId() == null) {
+            throw new BusinessException("FORBIDDEN", "Only linked teacher accounts can confirm class lessons as a teacher.");
+        }
+        if (!currentUser.teacherId().equals(occurrence.getPlannedTeacherId())) {
+            throw new BusinessException("FORBIDDEN", "Teachers can only confirm their own planned class lessons.");
+        }
+        if (!ALLOWED_TEACHER_CONFIRM_STATUSES.contains(resultStatus)) {
+            throw new BusinessException("TEACHER_STATUS_NOT_ALLOWED", "Teachers can only confirm completed, no-show, or formal-leave results.");
+        }
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        if (occurrence.getPlannedStartAt().isAfter(now.plusHours(TEACHER_FUTURE_CONFIRM_WINDOW_HOURS))) {
+            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Teachers can only confirm lessons that are happening now or have already happened.");
+        }
+        if (occurrence.getPlannedEndAt().isBefore(now.minusDays(TEACHER_PAST_CONFIRM_WINDOW_DAYS))) {
+            throw new BusinessException("TEACHER_CONFIRM_TOO_LATE", "This lesson is outside the teacher self-confirmation window.");
+        }
+    }
+
+    private LessonRecordEntity findLatestClassRecord(Long occurrenceId, Long studentId) {
+        return lessonRecordMapper.selectOne(new LambdaQueryWrapper<LessonRecordEntity>()
+                .eq(LessonRecordEntity::getOccurrenceId, occurrenceId)
+                .eq(LessonRecordEntity::getStudentId, studentId)
+                .orderByDesc(LessonRecordEntity::getCreatedAt)
+                .orderByDesc(LessonRecordEntity::getId)
+                .last("LIMIT 1"));
+    }
+
+    private void finalizeClassRecord(LessonRecordEntity record, CurrentUserResponse currentUser) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        record.setConfirmStage(CONFIRM_STAGE_CONFIRMED);
+        record.setConfirmedAt(now);
+        record.setConfirmedByUserId(currentUser.userId());
+        record.setAdminConfirmedAt(now);
+        record.setAdminConfirmedByUserId(currentUser.userId());
+        record.setRejectReason(null);
+        record.setRejectedAt(null);
+        record.setRejectedByUserId(null);
+    }
+
+    private void applyClassActualValues(LessonRecordEntity record,
+                                        LessonOccurrenceEntity occurrence,
+                                        Long actualTeacherId,
+                                        Long actualClassroomId,
+                                        Integer actualUnits,
+                                        LocalDateTime actualStartAt,
+                                        LocalDateTime actualEndAt,
+                                        String notes) {
+        record.setActualTeacherId(actualTeacherId);
+        record.setActualClassroomId(actualClassroomId);
+        record.setActualUnits(actualUnits != null ? actualUnits : occurrence.getPlannedUnits());
+        record.setActualStartAt(actualStartAt);
+        record.setActualEndAt(actualEndAt);
+        record.setNotes(notes);
     }
 
     /**

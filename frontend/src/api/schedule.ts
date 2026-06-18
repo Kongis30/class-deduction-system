@@ -125,6 +125,43 @@ export function createScheduleAdjustment(data: ScheduleAdjustmentPayload) {
   return http.post<ApiResponse<ScheduleAdjustmentResult>>('/v1/schedule/adjustments', data);
 }
 
+// 单条本周调整项：UPDATE 修改已有课次 / CREATE 新增课次 / DELETE 删除课次
+export interface WeeklyScheduleAdjustmentItemPayload {
+  action: 'UPDATE' | 'CREATE' | 'DELETE';
+  occurrenceId?: string | number; // UPDATE/DELETE 必填，CREATE 不传
+  plannedStartAt?: string;         // UPDATE/CREATE 必填
+  plannedEndAt?: string;           // UPDATE/CREATE 必填
+  plannedUnits?: number;           // UPDATE/CREATE 必填
+  plannedTeacherId?: string | number; // UPDATE/CREATE 必填
+  plannedClassroomId?: string | number; // UPDATE/CREATE 必填
+  itemReason?: string;             // CREATE/DELETE 必填
+}
+
+export interface WeeklyScheduleAdjustmentPayload {
+  packageId: string | number;
+  weekStartDate: string;
+  reason?: string;
+  items: WeeklyScheduleAdjustmentItemPayload[];
+}
+
+export interface WeeklyScheduleAdjustmentResult {
+  packageId: EntityId;
+  weekStartDate: string;
+  originalWeeklyUnits: number;
+  adjustedWeeklyUnits: number;
+  unitDelta: number;
+  adjustedOccurrenceCount?: number;
+  modifiedOccurrenceIds?: EntityId[];
+  // 本周增删改各自的数量统计
+  createdCount?: number;
+  updatedCount?: number;
+  deletedCount?: number;
+}
+
+export function adjustWeeklySchedule(data: WeeklyScheduleAdjustmentPayload) {
+  return http.post<ApiResponse<WeeklyScheduleAdjustmentResult>>('/v1/schedule/adjustments/weekly', data);
+}
+
 // ─── Classroom Occupancy ──────────────────────────────
 export interface ClassroomOccupancyQuery {
   classroomId?: string | number;
@@ -157,6 +194,7 @@ export function fetchActiveStudentSchedule(studentId: string | number) {
 
 // ─── Class Groups ──────────────────────────────────────
 export interface ClassGroupConfirmPayload {
+  resultStatus?: string;
   actualTeacherId?: string | number;
   actualClassroomId?: string | number;
   actualStartAt?: string;
@@ -183,6 +221,10 @@ export function fetchClassOccurrences(classId: string | number) {
 
 export function confirmClassLesson(classId: string | number, occurrenceId: string | number, data: ClassGroupConfirmPayload = {}) {
   return http.post<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/occurrences/${occurrenceId}/confirm`, data);
+}
+
+export function rejectClassLesson(classId: string | number, occurrenceId: string | number, data: { rejectReason: string }) {
+  return http.post<ApiResponse<null>>(`/v1/classes/${classId}/occurrences/${occurrenceId}/reject`, data);
 }
 
 export function sendClassExpiryReminders(classId: string | number) {

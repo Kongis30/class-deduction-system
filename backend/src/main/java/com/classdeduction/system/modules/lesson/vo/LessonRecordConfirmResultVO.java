@@ -12,8 +12,8 @@ public record LessonRecordConfirmResultVO(
         Long lessonRecordId,
         Long occurrenceId,
         Long ledgerId,
-        Integer deductedUnits,
-        Integer remainingUnits,
+        Double deductedUnits,
+        Double remainingUnits,
         Boolean packageCompleted
 ) {
 }

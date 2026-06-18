@@ -8,6 +8,8 @@ import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateReque
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
+import com.classdeduction.system.modules.enrollment.vo.GroupClassPackageProgressVO;
+import com.classdeduction.system.modules.enrollment.vo.GroupClassStudentProgressVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -16,6 +18,8 @@ import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * 课时包控制器：负责课时包查询和更新。
@@ -34,6 +38,18 @@ public class CoursePackageController {
     @Operation(summary = "分页查询课时包")
     public ApiResponse<PageResponse<CoursePackageListItemVO>> pagePackages(@ParameterObject CoursePackagePageQuery query) {
         return ApiResponse.success(coursePackageService.pagePackages(query));
+    }
+
+    @GetMapping("/group-classes")
+    @Operation(summary = "分页查询班课产品进度")
+    public ApiResponse<PageResponse<GroupClassPackageProgressVO>> pageGroupClassPackages(@ParameterObject CoursePackagePageQuery query) {
+        return ApiResponse.success(coursePackageService.pageGroupClassPackages(query));
+    }
+
+    @GetMapping("/group-classes/{classId}/students")
+    @Operation(summary = "查询班课内学生个人进度")
+    public ApiResponse<List<GroupClassStudentProgressVO>> listGroupClassStudentProgress(@PathVariable Long classId) {
+        return ApiResponse.success(coursePackageService.listGroupClassStudentProgress(classId));
     }
 
     @GetMapping("/{id}")

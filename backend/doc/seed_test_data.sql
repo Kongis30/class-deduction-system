@@ -353,7 +353,15 @@ VALUES (1, 'LESSON_CONFIRMED', 1, 1, 'GUARDIAN_EMAIL', NULL, NULL, 'Send email t
 ON DUPLICATE KEY UPDATE id=id;
 
 INSERT INTO notification_trigger_rule (id, trigger_type, template_id, enabled, recipient_type, custom_recipients, threshold_value, remark, created_at, created_by, updated_at, updated_by, is_deleted, version)
-VALUES (2, 'LOW_BALANCE', 2, 1, 'GUARDIAN_EMAIL', NULL, 4, 'Notify guardian when package balance drops below threshold', '2024-05-15 00:00:00.000', 1, '2024-05-15 00:00:00.000', 1, 0, 0)
+VALUES (2, 'LOW_BALANCE_HOUR', 2, 1, 'GUARDIAN_EMAIL', NULL, 4, 'Notify guardian when 1v1 remaining hour units drop below threshold (unit = 0.5h)', '2024-05-15 00:00:00.000', 1, '2024-05-15 00:00:00.000', 1, 0, 0)
+ON DUPLICATE KEY UPDATE id=id;
+
+INSERT INTO notification_trigger_rule (id, trigger_type, template_id, enabled, recipient_type, custom_recipients, threshold_value, remark, created_at, created_by, updated_at, updated_by, is_deleted, version)
+VALUES (3, 'LOW_BALANCE_SESSION', 2, 1, 'GUARDIAN_EMAIL', NULL, 2, 'Notify guardian when GROUP PER_SESSION remaining sessions drop below threshold (unit = session)', '2024-05-15 00:00:00.000', 1, '2024-05-15 00:00:00.000', 1, 0, 0)
+ON DUPLICATE KEY UPDATE id=id;
+
+INSERT INTO notification_trigger_rule (id, trigger_type, template_id, enabled, recipient_type, custom_recipients, threshold_value, remark, created_at, created_by, updated_at, updated_by, is_deleted, version)
+VALUES (4, 'LOW_BALANCE_MONTH', 2, 1, 'GUARDIAN_EMAIL', NULL, 1, 'Notify guardian when GROUP MONTHLY remaining months drop below threshold (unit = month)', '2024-05-15 00:00:00.000', 1, '2024-05-15 00:00:00.000', 1, 0, 0)
 ON DUPLICATE KEY UPDATE id=id;
 
 -- ── 19. User Accounts ───────────────────────────────────────────

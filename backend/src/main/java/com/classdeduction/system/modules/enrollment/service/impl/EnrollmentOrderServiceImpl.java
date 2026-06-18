@@ -23,6 +23,7 @@ import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateReq
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
+import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
@@ -42,6 +43,8 @@ import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
@@ -54,15 +57,18 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMa
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -79,6 +85,7 @@ import java.util.stream.Collectors;
  * 报名服务：负责报名开单，并同步生成支付记录、课时包、主老师分配和收据。
  */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
@@ -97,6 +104,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final LessonRecordMapper lessonRecordMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
@@ -856,9 +864,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .packageName(item.getPackageName())
                 .subjectName(item.getSubjectName())
                 .teachingMode(item.getTeachingMode())
-                .totalUnits(UnitConverter.toHours(item.getTotalUnits()))
-                .consumedUnits(UnitConverter.toHours(item.getConsumedUnits()))
-                .remainingUnits(UnitConverter.toHours(item.getRemainingUnits()))
+                .totalUnits(UnitConverter.toHoursDecimal(item.getTotalUnits()))
+                .consumedUnits(UnitConverter.toHoursDecimal(item.getConsumedUnits()))
+                .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
                 .receivedAmount(item.getReceivedAmount())
                 .packageStatus(item.getPackageStatus())
                 .startDate(item.getStartDate())
@@ -933,6 +941,60 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
         order.setOrderStatus("CANCELLED");
         enrollmentOrderMapper.updateById(order);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void refundOrder(Long id, RefundRequest request) {
+        EnrollmentOrderEntity order = requireOrder(id);
+
+        if ("REFUNDED".equals(order.getPaymentStatus())) {
+            throw new BusinessException("ORDER_ALREADY_REFUNDED", "Order has already been refunded.");
+        }
+        BigDecimal received = order.getReceivedAmount() != null ? order.getReceivedAmount() : BigDecimal.ZERO;
+        if (received.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("NO_PAYMENT_TO_REFUND", "There is no received payment to refund.");
+        }
+
+        // 退款即退课：复用取消逻辑（取消未来课次/停排课/关课包，或释放班课座位）。
+        if (!"CANCELLED".equals(order.getOrderStatus())) {
+            if (order.getClassId() != null) {
+                cancelClassEnrollment(order);
+            } else {
+                cancelOneOnOneEnrollment(order);
+            }
+            order.setOrderStatus("CANCELLED");
+        }
+
+        // 记录退款流水：金额为负，payment_type=REFUND。
+        PaymentRecordEntity refundRecord = new PaymentRecordEntity();
+        refundRecord.setEnrollmentOrderId(order.getId());
+        refundRecord.setPaymentNo(BusinessNoGenerator.generatePaymentNo());
+        refundRecord.setPaymentMethod(request.getPaymentMethod());
+        refundRecord.setPaymentType("REFUND");
+        refundRecord.setPaymentStatus("REFUNDED");
+        refundRecord.setAmount(received.negate());
+        refundRecord.setPaidAt(AppTime.nowLocalDateTime());
+        refundRecord.setHandledByUserId(request.getHandledByUserId());
+        refundRecord.setHandledByName(request.getHandledByName());
+        refundRecord.setRemark(request.getRemark());
+        paymentRecordMapper.insert(refundRecord);
+
+        // 订单已收归零、状态置为 REFUNDED；同步课包已收金额归零。
+        order.setReceivedAmount(BigDecimal.ZERO);
+        order.setPaymentStatus("REFUNDED");
+        int updated = enrollmentOrderMapper.updateById(order);
+        if (updated != 1) {
+            throw new BusinessException("ORDER_CONCURRENT_UPDATE", "The order was updated by another request. Please retry.");
+        }
+
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(
+                new LambdaQueryWrapper<CoursePackageEntity>()
+                        .eq(CoursePackageEntity::getEnrollmentOrderId, order.getId()));
+        for (CoursePackageEntity coursePackage : packages) {
+            coursePackage.setReceivedAmount(BigDecimal.ZERO);
+            coursePackageMapper.updateById(coursePackage);
+        }
     }
 
     private void cancelClassEnrollment(EnrollmentOrderEntity order) {
@@ -1013,13 +1075,140 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteOrder(Long id) {
         EnrollmentOrderEntity order = requireOrder(id);
+        validateOrderCanBeDeleted(order);
 
-        // Soft delete the order
+        // Deletion is reserved for mistaken unpaid orders. Release only future scheduling before hiding the order.
+        if (!"CANCELLED".equals(order.getOrderStatus())) {
+            if (order.getClassId() != null) {
+                cancelClassEnrollment(order);
+            } else {
+                cancelOneOnOneEnrollment(order);
+            }
+        }
         enrollmentOrderMapper.deleteById(id);
+    }
 
-        // Note: Related course_packages, payment_records, and receipt_records
-        // will be soft deleted via database cascade or should be handled explicitly
-        // For now, they remain but orphaned. Consider adding explicit handling if needed.
+    private void validateOrderCanBeDeleted(EnrollmentOrderEntity order) {
+        BigDecimal received = order.getReceivedAmount() != null ? order.getReceivedAmount() : BigDecimal.ZERO;
+        if (received.compareTo(BigDecimal.ZERO) != 0 || !"UNPAID".equals(order.getPaymentStatus())) {
+            throw new BusinessException("ORDER_DELETE_PAYMENT_EXISTS", "Only unpaid mistaken orders can be deleted. Use Refund for paid orders.");
+        }
+
+        Long paymentCount = paymentRecordMapper.selectCount(new LambdaQueryWrapper<PaymentRecordEntity>()
+                .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId()));
+        if (paymentCount != null && paymentCount > 0) {
+            throw new BusinessException("ORDER_DELETE_PAYMENT_RECORD_EXISTS", "This order has payment records and cannot be deleted.");
+        }
+
+        Long receiptCount = receiptRecordMapper.selectCount(new LambdaQueryWrapper<ReceiptRecordEntity>()
+                .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
+        if (receiptCount != null && receiptCount > 0) {
+            throw new BusinessException("ORDER_DELETE_RECEIPT_EXISTS", "This order has receipt records and cannot be deleted.");
+        }
+
+        if (order.getClassId() != null) {
+            validateClassOrderHasNoLessonRecords(order);
+            return;
+        }
+        validateOneOnOneOrderHasNoLessonActivity(order);
+    }
+
+    private void validateOneOnOneOrderHasNoLessonActivity(EnrollmentOrderEntity order) {
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(
+                new LambdaQueryWrapper<CoursePackageEntity>()
+                        .eq(CoursePackageEntity::getEnrollmentOrderId, order.getId())
+        );
+        if (packages.isEmpty()) {
+            return;
+        }
+
+        List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
+        Long lessonRecordCount = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
+                .in(LessonRecordEntity::getPackageId, packageIds));
+        if (lessonRecordCount != null && lessonRecordCount > 0) {
+            throw new BusinessException("ORDER_DELETE_LESSON_RECORD_EXISTS", "This order already has lesson records and cannot be deleted.");
+        }
+
+        Long pastOccurrenceCount = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPackageId, packageIds)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .le(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
+        if (pastOccurrenceCount != null && pastOccurrenceCount > 0) {
+            throw new BusinessException("ORDER_DELETE_PAST_LESSON_EXISTS", "This order has past scheduled lessons and cannot be deleted.");
+        }
+    }
+
+    private void validateClassOrderHasNoLessonRecords(EnrollmentOrderEntity order) {
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .select(LessonOccurrenceEntity::getId)
+                        .eq(LessonOccurrenceEntity::getClassGroupId, order.getClassId())
+        );
+        if (occurrences.isEmpty()) {
+            return;
+        }
+
+        Long lessonRecordCount = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
+                .eq(LessonRecordEntity::getStudentId, order.getStudentId())
+                .in(LessonRecordEntity::getOccurrenceId, occurrences.stream().map(LessonOccurrenceEntity::getId).toList()));
+        if (lessonRecordCount != null && lessonRecordCount > 0) {
+            throw new BusinessException("ORDER_DELETE_LESSON_RECORD_EXISTS", "This order already has lesson records and cannot be deleted.");
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int renewActiveClassOccurrences() {
+        List<ClassGroupEntity> activeGroups = classGroupMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupEntity>()
+                        .eq(ClassGroupEntity::getStatus, "ACTIVE")
+                        .isNotNull(ClassGroupEntity::getProductId));
+        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+        int inserted = 0;
+        for (ClassGroupEntity group : activeGroups) {
+            try {
+                CourseProductEntity product = courseProductMapper.selectById(group.getProductId());
+                if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
+                    continue;
+                }
+                LocalDate[] window = resolveProductOccurrenceWindow(product, today);
+                if (window == null) {
+                    continue;
+                }
+                inserted += ensureClassOccurrencesThrough(group, product, window[0], window[1]);
+            } catch (RuntimeException ex) {
+                log.warn("Failed to renew occurrences for class group id={}: {}", group.getId(), ex.getMessage());
+            }
+        }
+        return inserted;
+    }
+
+    /**
+     * 计算班课产品的课次生成窗口 [max(产品起始, 今天), 产品自然终点]；配置不全返回 null。
+     */
+    private LocalDate[] resolveProductOccurrenceWindow(CourseProductEntity product, LocalDate today) {
+        if ("PER_SESSION".equals(product.getBillingType())) {
+            if (product.getStartDate() == null || product.getTotalSessions() == null || product.getTotalSessions() < 1) {
+                return null;
+            }
+            List<CourseProductScheduleSlotEntity> slots = loadProductSlots(product.getId());
+            if (slots.isEmpty()) {
+                return null;
+            }
+            LocalDate start = product.getStartDate().isAfter(today) ? product.getStartDate() : today;
+            LocalDate end = computeNthSessionDate(product.getStartDate(), slots, product.getTotalSessions());
+            return end.isBefore(start) ? null : new LocalDate[]{start, end};
+        }
+        if ("MONTHLY".equals(product.getBillingType())) {
+            if (product.getStartMonth() == null || product.getEndMonth() == null) {
+                return null;
+            }
+            LocalDate productStartDay = YearMonth.from(product.getStartMonth()).atDay(1);
+            LocalDate start = productStartDay.isAfter(today) ? productStartDay : today;
+            LocalDate end = YearMonth.from(product.getEndMonth()).atEndOfMonth();
+            return end.isBefore(start) ? null : new LocalDate[]{start, end};
+        }
+        return null;
     }
 
     @Override
@@ -1027,22 +1216,16 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public void createClassEnrollmentOrder(ClassEnrollmentCreateRequest request) {
         // Validate student
         StudentEntity student = requireStudent(request.getStudentId());
-        LocalDate enrollmentDate = LocalDate.parse(request.getEnrollmentDate());
-        LocalDate expiryDate = LocalDate.parse(request.getExpiryDate());
-        if (expiryDate.isBefore(enrollmentDate)) {
-            throw new BusinessException("INVALID_ENROLLMENT_DATE_RANGE", "Expiry date cannot be earlier than enrollment date.");
-        }
 
-        // Resolve class_group from productId or classId
+        // Resolve class_group and its backing GROUP product
         ClassGroupEntity clz;
         Long resolvedClassId;
-        CourseProductEntity product = null;
+        CourseProductEntity product;
         if (request.getProductId() != null) {
             product = courseProductMapper.selectById(request.getProductId());
             if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
                 throw new BusinessException("PRODUCT_NOT_FOUND", "Group course product not found or not active.");
             }
-            // Check if a class_group already exists for this product
             ClassGroupEntity existingGroup = classGroupMapper.selectOne(
                     new LambdaQueryWrapper<ClassGroupEntity>()
                             .eq(ClassGroupEntity::getProductId, request.getProductId())
@@ -1063,7 +1246,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             }
             resolvedClassId = clz.getId();
         } else {
-            // Existing behavior: validate classId as class_group.id
             if (request.getClassId() == null) {
                 throw new BusinessException("CLASS_ID_REQUIRED", "Either classId or productId is required.");
             }
@@ -1072,16 +1254,16 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
             }
             resolvedClassId = request.getClassId();
-            if (clz.getProductId() != null) {
-                product = courseProductMapper.selectById(clz.getProductId());
-            }
+            product = clz.getProductId() != null ? courseProductMapper.selectById(clz.getProductId()) : null;
+        }
+        if (product == null || !"GROUP".equals(product.getTeachingMode())) {
+            throw new BusinessException("PRODUCT_NOT_FOUND", "Group course product not found for this class.");
         }
 
-        if (product != null && "GROUP".equals(product.getTeachingMode())) {
-            ensureClassOccurrencesThrough(clz, product, expiryDate);
-        }
+        // Compute pricing + enrollment window from the product's billing type (server-authoritative).
+        ClassBillingResult billing = computeClassBilling(product, request);
 
-        // Check duplicate enrollment (only active enrollments, not withdrawn)
+        // Check duplicate active enrollment
         Long existingCount = classEnrollmentMapper.selectCount(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .eq(ClassEnrollmentEntity::getClassId, resolvedClassId)
@@ -1093,14 +1275,17 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("ALREADY_ENROLLED", "Student is already enrolled in this class.");
         }
 
-        // Validate amounts
-        BigDecimal discountedAmount = request.getOriginalAmount().subtract(request.getDiscountAmount());
+        // Validate discount/received against the computed original amount
+        BigDecimal discountedAmount = billing.originalAmount.subtract(request.getDiscountAmount());
         if (discountedAmount.compareTo(BigDecimal.ZERO) < 0) {
             throw new BusinessException("DISCOUNT_EXCEEDS_AMOUNT", "Discount cannot exceed original amount.");
         }
         if (request.getReceivedAmount().compareTo(discountedAmount) > 0) {
             throw new BusinessException("RECEIVED_EXCEEDS_AMOUNT", "Received amount cannot exceed amount due.");
         }
+
+        // Generate shared class occurrences across the full product period (calendar completeness)
+        ensureClassOccurrencesThrough(clz, product, billing.occurrenceWindowStart, billing.occurrenceWindowEnd);
 
         // Create enrollment_order
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
@@ -1110,19 +1295,21 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         order.setOrderStatus("CONFIRMED");
         order.setHandledByName(request.getHandledByName());
         order.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
-        order.setOriginalAmount(request.getOriginalAmount());
+        order.setOriginalAmount(billing.originalAmount);
         order.setDiscountAmount(request.getDiscountAmount());
         order.setReceivedAmount(request.getReceivedAmount());
-        order.setPaymentStatus(resolvePaymentStatus(request.getOriginalAmount(), request.getDiscountAmount(), request.getReceivedAmount()));
+        order.setPaymentStatus(resolvePaymentStatus(billing.originalAmount, request.getDiscountAmount(), request.getReceivedAmount()));
         order.setRemark(request.getRemark());
         enrollmentOrderMapper.insert(order);
 
-        // Create class_enrollment
+        // Create class_enrollment (with billing snapshot)
         ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
         enrollment.setClassId(resolvedClassId);
         enrollment.setStudentId(student.getId());
-        enrollment.setEnrollmentDate(enrollmentDate);
-        enrollment.setExpiryDate(expiryDate);
+        enrollment.setEnrollmentDate(billing.enrollmentDate);
+        enrollment.setExpiryDate(billing.expiryDate);
+        enrollment.setBillingType(product.getBillingType());
+        enrollment.setPurchasedQuantity(billing.purchasedQuantity);
         enrollment.setStatus("ACTIVE");
         classEnrollmentMapper.insert(enrollment);
 
@@ -1141,36 +1328,160 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
     }
 
-    private void ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
-                                               CourseProductEntity product,
-                                               LocalDate requestedExpiryDate) {
-        List<CourseProductScheduleSlotEntity> slots = courseProductScheduleSlotMapper.selectList(
+    /**
+     * 班课定价结果：服务端根据产品 billingType 与学生选择量计算原价与报名/到期窗口。
+     * 注意：定价窗口（enrollmentDate/expiryDate，按学生所选）与日历课次生成窗口
+     * （occurrenceWindowStart/occurrenceWindowEnd，按产品完整周期）是解耦的——
+     * 班课课次是班级共享，应覆盖整个产品周期，与单个学生的购买量无关。
+     */
+    private static class ClassBillingResult {
+        final BigDecimal originalAmount;
+        final LocalDate enrollmentDate;
+        final LocalDate expiryDate;
+        final LocalDate occurrenceWindowStart;   // 课次生成起点 = max(产品起始, 今天)
+        final LocalDate occurrenceWindowEnd;     // 课次生成终点 = 产品自然终点
+        final Integer purchasedQuantity;
+
+        ClassBillingResult(BigDecimal originalAmount, LocalDate enrollmentDate, LocalDate expiryDate,
+                           LocalDate occurrenceWindowStart, LocalDate occurrenceWindowEnd, Integer purchasedQuantity) {
+            this.originalAmount = originalAmount;
+            this.enrollmentDate = enrollmentDate;
+            this.expiryDate = expiryDate;
+            this.occurrenceWindowStart = occurrenceWindowStart;
+            this.occurrenceWindowEnd = occurrenceWindowEnd;
+            this.purchasedQuantity = purchasedQuantity;
+        }
+    }
+
+    /**
+     * 按计费类型计算班课报名定价与时间窗口（按比例收费）。
+     * 定价/到期按学生所选量；日历课次生成窗口按产品完整周期（起点 max(产品起始, 今天)）。
+     * PER_SESSION: 原价 = listPrice × sessions / totalSessions；到期 = 第 sessions 次课日期；
+     *              课次窗口 = [max(产品起始, 今天), 第 totalSessions 次课日期]。
+     * MONTHLY:     原价 = listPrice × months / totalMonths；到期 = 所选结束月月末；
+     *              课次窗口 = [max(产品起始月1号, 今天), 产品结束月月末]。
+     */
+    private ClassBillingResult computeClassBilling(CourseProductEntity product, ClassEnrollmentCreateRequest request) {
+        String billingType = product.getBillingType();
+        BigDecimal listPrice = product.getListPrice() != null ? product.getListPrice() : BigDecimal.ZERO;
+        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+
+        if ("PER_SESSION".equals(billingType)) {
+            Integer totalSessions = product.getTotalSessions();
+            if (totalSessions == null || totalSessions < 1 || product.getStartDate() == null) {
+                throw new BusinessException("PRODUCT_BILLING_INCOMPLETE", "Per-session product is missing start date or total sessions.");
+            }
+            Integer sessions = request.getSessions();
+            if (sessions == null || sessions < 1) {
+                throw new BusinessException("INVALID_SESSIONS", "Please select the number of sessions.");
+            }
+            if (sessions > totalSessions) {
+                throw new BusinessException("SESSIONS_EXCEED_TOTAL", "Selected sessions exceed the product total sessions.");
+            }
+            BigDecimal original = listPrice.multiply(BigDecimal.valueOf(sessions))
+                    .divide(BigDecimal.valueOf(totalSessions), 2, RoundingMode.HALF_UP);
+            List<CourseProductScheduleSlotEntity> slots = loadProductSlots(product.getId());
+            if (slots.isEmpty()) {
+                throw new BusinessException("PRODUCT_NO_SLOTS", "Per-session product has no schedule slots.");
+            }
+            LocalDate expiry = computeNthSessionDate(product.getStartDate(), slots, sessions);
+            // 课次覆盖产品完整周期：从产品起始日到第 totalSessions 次课日期。
+            LocalDate windowStart = product.getStartDate().isAfter(today) ? product.getStartDate() : today;
+            LocalDate windowEnd = computeNthSessionDate(product.getStartDate(), slots, totalSessions);
+            return new ClassBillingResult(original, product.getStartDate(), expiry, windowStart, windowEnd, sessions);
+        } else if ("MONTHLY".equals(billingType)) {
+            if (product.getStartMonth() == null || product.getEndMonth() == null) {
+                throw new BusinessException("PRODUCT_BILLING_INCOMPLETE", "Monthly product is missing start or end month.");
+            }
+            YearMonth productStart = YearMonth.from(product.getStartMonth());
+            YearMonth productEnd = YearMonth.from(product.getEndMonth());
+            YearMonth selStart = parseRequestMonth(request.getStartMonth(), "start month");
+            YearMonth selEnd = parseRequestMonth(request.getEndMonth(), "end month");
+            if (selEnd.isBefore(selStart)) {
+                throw new BusinessException("INVALID_MONTH_RANGE", "End month cannot be earlier than start month.");
+            }
+            if (selStart.isBefore(productStart) || selEnd.isAfter(productEnd)) {
+                throw new BusinessException("MONTH_OUT_OF_RANGE", "Selected months must be within the product month range.");
+            }
+            int totalMonths = (int) ChronoUnit.MONTHS.between(productStart, productEnd) + 1;
+            int months = (int) ChronoUnit.MONTHS.between(selStart, selEnd) + 1;
+            BigDecimal original = listPrice.multiply(BigDecimal.valueOf(months))
+                    .divide(BigDecimal.valueOf(totalMonths), 2, RoundingMode.HALF_UP);
+            LocalDate enrollmentDate = selStart.atDay(1);
+            LocalDate expiry = selEnd.atEndOfMonth();
+            // 课次覆盖产品完整周期：从产品起始月到产品结束月月末。
+            LocalDate productStartDay = productStart.atDay(1);
+            LocalDate windowStart = productStartDay.isAfter(today) ? productStartDay : today;
+            LocalDate windowEnd = productEnd.atEndOfMonth();
+            return new ClassBillingResult(original, enrollmentDate, expiry, windowStart, windowEnd, months);
+        } else {
+            throw new BusinessException("INVALID_BILLING_TYPE", "Unknown billing type for group product.");
+        }
+    }
+
+    private List<CourseProductScheduleSlotEntity> loadProductSlots(Long productId) {
+        return courseProductScheduleSlotMapper.selectList(
                 new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
-                        .eq(CourseProductScheduleSlotEntity::getProductId, product.getId())
+                        .eq(CourseProductScheduleSlotEntity::getProductId, productId)
                         .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
+    }
+
+    private YearMonth parseRequestMonth(String value, String fieldName) {
+        if (!StringUtils.hasText(value)) {
+            throw new BusinessException("INVALID_MONTH", "Schedule " + fieldName + " is required.");
+        }
+        try {
+            return YearMonth.parse(value);
+        } catch (RuntimeException ex) {
+            throw new BusinessException("INVALID_MONTH", "Schedule " + fieldName + " must use yyyy-MM format.");
+        }
+    }
+
+    /**
+     * 从起始日期开始，按每周固定 slot 顺序数到第 n 次课，返回该次课的日期。
+     */
+    private LocalDate computeNthSessionDate(LocalDate startDate, List<CourseProductScheduleSlotEntity> slots, int n) {
+        Set<Integer> weekdays = slots.stream()
+                .map(CourseProductScheduleSlotEntity::getWeekday)
+                .collect(Collectors.toCollection(java.util.TreeSet::new));
+        int count = 0;
+        // 上限保护：最多扫描约 10 年，避免异常配置导致死循环。
+        LocalDate limit = startDate.plusYears(10);
+        for (LocalDate date = startDate; !date.isAfter(limit); date = date.plusDays(1)) {
+            if (weekdays.contains(date.getDayOfWeek().getValue())) {
+                count++;
+                if (count >= n) {
+                    return date;
+                }
+            }
+        }
+        throw new BusinessException("SESSION_DATE_UNRESOLVED", "Cannot resolve the date for the selected sessions.");
+    }
+
+    private int ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
+                                               CourseProductEntity product,
+                                               LocalDate windowStart,
+                                               LocalDate horizonEnd) {
+        List<CourseProductScheduleSlotEntity> slots = loadProductSlots(product.getId());
         if (slots.isEmpty()) {
-            return;
+            return 0;
         }
 
-        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
-        LocalDate horizonEnd = requestedExpiryDate.isAfter(today.plusDays(90))
-                ? requestedExpiryDate
-                : today.plusDays(90);
-        LocalDateTime windowStart = today.atStartOfDay();
+        LocalDateTime windowStartDt = windowStart.atStartOfDay();
         LocalDateTime windowEnd = horizonEnd.plusDays(1).atStartOfDay();
 
         Set<LocalDateTime> existingStarts = lessonOccurrenceMapper.selectList(
                         new LambdaQueryWrapper<LessonOccurrenceEntity>()
                                 .eq(LessonOccurrenceEntity::getClassGroupId, classGroup.getId())
                                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                                .ge(LessonOccurrenceEntity::getPlannedStartAt, windowStart)
+                                .ge(LessonOccurrenceEntity::getPlannedStartAt, windowStartDt)
                                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd))
                 .stream()
                 .map(LessonOccurrenceEntity::getPlannedStartAt)
                 .collect(Collectors.toSet());
 
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
-        for (LocalDate date = today; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
+        for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
             int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
             for (CourseProductScheduleSlotEntity slot : slots) {
                 if (slot.getWeekday() != weekday || !slot.getEndTime().isAfter(slot.getStartTime())) {
@@ -1206,6 +1517,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             classGroup.setScheduleDesc(scheduleDesc);
             classGroupMapper.updateById(classGroup);
         }
+        return occurrences.size();
     }
 
     /**

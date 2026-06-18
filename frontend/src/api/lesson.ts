@@ -47,6 +47,18 @@ export function confirmLesson(data: LessonConfirmPayload) {
   return http.post<ApiResponse<LessonRecordConfirmResult>>('/v1/lessons/records', data);
 }
 
+export function adminConfirmLessonRecord(id: string | number, data?: LessonConfirmPayload) {
+  return http.post<ApiResponse<LessonRecordConfirmResult>>(`/v1/lessons/records/${id}/admin-confirm`, data);
+}
+
+export interface LessonRejectPayload {
+  rejectReason: string;
+}
+
+export function rejectLessonRecord(id: string | number, data: LessonRejectPayload) {
+  return http.post<ApiResponse<null>>(`/v1/lessons/records/${id}/reject`, data);
+}
+
 // ─── Package Balance Snapshot ───────────────────────
 export function fetchPackageBalanceSnapshot(packageId: string | number) {
   return http.get<ApiResponse<PackageBalanceSnapshotItem>>(`/v1/lessons/balance-snapshots/${packageId}`);

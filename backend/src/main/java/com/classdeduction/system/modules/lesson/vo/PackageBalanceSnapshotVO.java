@@ -13,9 +13,9 @@ import java.time.LocalDateTime;
 public record PackageBalanceSnapshotVO(
         Long packageId,
         String packageNo,
-        Integer totalUnits,
-        Integer consumedUnits,
-        Integer remainingUnits,
+        Double totalUnits,
+        Double consumedUnits,
+        Double remainingUnits,
         Long lastLedgerId,
         LocalDateTime snapshotAt
 ) {

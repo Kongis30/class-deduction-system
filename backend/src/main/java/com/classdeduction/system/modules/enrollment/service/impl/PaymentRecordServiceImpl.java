@@ -60,6 +60,15 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         // 1. Validate enrollment order exists
         EnrollmentOrderEntity order = requireEnrollmentOrder(request.getEnrollmentOrderId());
 
+        // 1.1 Guard against payments on a non-collectable order (cancelled or refunded),
+        // otherwise a refunded/cancelled order could be "revived" and corrupt the books.
+        if ("CANCELLED".equals(order.getOrderStatus())) {
+            throw new BusinessException("ORDER_CANCELLED", "Cannot collect payment on a cancelled order.");
+        }
+        if ("REFUNDED".equals(order.getPaymentStatus())) {
+            throw new BusinessException("ORDER_REFUNDED", "Cannot collect payment on a refunded order.");
+        }
+
         // 2. Validate splits
         List<PaymentSplitDTO> splits = request.getSplits();
         if (splits == null || splits.isEmpty()) {
@@ -115,7 +124,10 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
 
         order.setReceivedAmount(newReceived);
         order.setPaymentStatus(resolvePaymentStatus(dueAmount, newReceived));
-        enrollmentOrderMapper.updateById(order);
+        int updated = enrollmentOrderMapper.updateById(order);
+        if (updated != 1) {
+            throw new BusinessException("ORDER_CONCURRENT_UPDATE", "The order was updated by another request. Please retry.");
+        }
         updatePackageReceivedAmount(order.getId(), newPaymentAmount);
     }
 
@@ -193,6 +205,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
                 .id(item.getId())
                 .paymentNo(item.getPaymentNo())
                 .paymentMethod(item.getPaymentMethod())
+                .paymentType(item.getPaymentType())
                 .paymentStatus(item.getPaymentStatus())
                 .amount(item.getAmount())
                 .paidAt(item.getPaidAt())

@@ -41,6 +41,26 @@ const routes: RouteRecordRaw[] = [
     redirect: '/dashboard',
     children: [
       {
+        path: 'base-data',
+        redirect: '/base-data/students',
+      },
+      {
+        path: 'enrollment',
+        redirect: '/enrollment/orders',
+      },
+      {
+        path: 'schedule',
+        redirect: '/schedule/recurring',
+      },
+      {
+        path: 'finance',
+        redirect: '/finance/pay-rates',
+      },
+      {
+        path: 'system',
+        redirect: '/system/notifications',
+      },
+      {
         path: 'dashboard',
         name: 'dashboard',
         component: DashboardView,
@@ -221,6 +241,10 @@ const routes: RouteRecordRaw[] = [
       },
     ],
   },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/dashboard',
+  },
 ];
 
 declare global {
@@ -232,7 +256,7 @@ declare global {
 const isElectron = typeof window !== 'undefined' && window.electronAPI?.platform !== undefined;
 
 const router = createRouter({
-  history: isElectron ? createWebHashHistory() : createWebHistory(),
+  history: isElectron ? createWebHashHistory() : createWebHistory(import.meta.env.BASE_URL),
   routes,
   scrollBehavior: () => ({
     top: 0,

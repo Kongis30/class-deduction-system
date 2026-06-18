@@ -60,7 +60,18 @@
             <el-table-column label="Product name" min-width="220">
               <template #default="{ row }">
                 <div class="cell-stack">
-                  <strong>{{ row.productName }}</strong>
+                  <strong class="product-title">
+                    {{ row.productName }}
+                    <el-tooltip
+                      :content="billingTypeDescription(row.billingType)"
+                      placement="top"
+                    >
+                      <span :class="['class-type-badge', classTypeClass(row.billingType)]">
+                        <span class="class-type-badge__icon">{{ classTypeInitial(row.billingType) }}</span>
+                        {{ classTypeLabel(row.billingType) }}
+                      </span>
+                    </el-tooltip>
+                  </strong>
                   <span v-if="row.subjectName">{{ row.subjectName }}</span>
                 </div>
               </template>
@@ -105,8 +116,8 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Expiry" min-width="100" align="center">
-              <template #default="{ row }">{{ row.expiryDurationDays ? row.expiryDurationDays + 'd' : '—' }}</template>
+            <el-table-column label="Billing" min-width="150" align="center">
+              <template #default="{ row }">{{ formatBilling(row) }}</template>
             </el-table-column>
             <el-table-column label="Schedule" min-width="240">
               <template #default="{ row }">
@@ -181,19 +192,55 @@
           </el-form-item>
         </div>
 
-        <!-- Group: Expiry date -->
-        <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
-          <el-form-item label="Expiry date" prop="expiryDate" class="product-form__full">
-            <el-date-picker
-              v-model="form.expiryDate"
-              type="date"
-              placeholder="Select expiry date (calculated from enrollment)"
-              style="width: 100%;"
-              value-format="YYYY-MM-DD"
-              :disabled-date="disabledPastDate"
-            />
-          </el-form-item>
-        </div>
+        <!-- Group: Billing type + conditional fields -->
+        <template v-if="form.teachingMode === 'GROUP'">
+          <div class="product-form__row">
+            <el-form-item label="Billing type" prop="billingType" class="product-form__full">
+              <el-radio-group v-model="form.billingType">
+                <el-radio-button label="PER_SESSION">Per session</el-radio-button>
+                <el-radio-button label="MONTHLY">Monthly</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+          </div>
+
+          <!-- Per-session: start date + total sessions -->
+          <div v-if="form.billingType === 'PER_SESSION'" class="product-form__row">
+            <el-form-item label="Start date" prop="startDate">
+              <el-date-picker
+                v-model="form.startDate"
+                type="date"
+                placeholder="Course start date"
+                style="width: 100%;"
+                value-format="YYYY-MM-DD"
+              />
+            </el-form-item>
+            <el-form-item label="Total sessions" prop="totalSessions">
+              <el-input-number v-model="form.totalSessions" :min="1" :step="1" :precision="0" :controls="false" style="width: 100%;" />
+            </el-form-item>
+          </div>
+
+          <!-- Monthly: start month + end month -->
+          <div v-if="form.billingType === 'MONTHLY'" class="product-form__row">
+            <el-form-item label="Start month" prop="startMonth">
+              <el-date-picker
+                v-model="form.startMonth"
+                type="month"
+                placeholder="Start month"
+                style="width: 100%;"
+                value-format="YYYY-MM"
+              />
+            </el-form-item>
+            <el-form-item label="End month" prop="endMonth">
+              <el-date-picker
+                v-model="form.endMonth"
+                type="month"
+                placeholder="End month"
+                style="width: 100%;"
+                value-format="YYYY-MM"
+              />
+            </el-form-item>
+          </div>
+        </template>
 
         <!-- Default classroom -->
         <div class="product-form__row">
@@ -336,7 +383,6 @@
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
-import dayjs from 'dayjs';
 
 import {
   createCourseProduct,
@@ -520,15 +566,18 @@ async function loadSubjects() {
 }
 
 // ─── 新建 / 编辑 ───────────────────────────────────────
-const form = reactive<CourseProductSavePayload & { expiryDate: string | undefined }>({
+const form = reactive<CourseProductSavePayload>({
   productCode: '',
   productName: '',
   subjectName: '',
   teachingMode: 'GROUP',
   defaultTotalUnits: 40,
   defaultLessonUnits: 2,
-  expiryDurationDays: undefined,
-  expiryDate: undefined,
+  billingType: 'PER_SESSION',
+  startDate: undefined,
+  totalSessions: undefined,
+  startMonth: undefined,
+  endMonth: undefined,
   defaultClassroomId: undefined,
   defaultTeacherId: undefined,
   listPrice: 0,
@@ -572,10 +621,52 @@ const formRules = {
       }
     }, trigger: 'change',
   }],
-  expiryDate: [{
+  billingType: [{
     validator: (rule: any, value: any, callback: any) => {
       if (form.teachingMode === 'GROUP' && !value) {
-        callback(new Error('Expiry date is required for group products'));
+        callback(new Error('Billing type is required for group products'));
+      } else {
+        callback();
+      }
+    }, trigger: 'change',
+  }],
+  startDate: [{
+    validator: (rule: any, value: any, callback: any) => {
+      if (form.teachingMode === 'GROUP' && form.billingType === 'PER_SESSION' && !value) {
+        callback(new Error('Start date is required'));
+      } else {
+        callback();
+      }
+    }, trigger: 'change',
+  }],
+  totalSessions: [{
+    validator: (rule: any, value: any, callback: any) => {
+      if (form.teachingMode === 'GROUP' && form.billingType === 'PER_SESSION' && (value === undefined || value === null)) {
+        callback(new Error('Total sessions is required'));
+      } else {
+        callback();
+      }
+    }, trigger: 'change',
+  }],
+  startMonth: [{
+    validator: (rule: any, value: any, callback: any) => {
+      if (form.teachingMode === 'GROUP' && form.billingType === 'MONTHLY' && !value) {
+        callback(new Error('Start month is required'));
+      } else {
+        callback();
+      }
+    }, trigger: 'change',
+  }],
+  endMonth: [{
+    validator: (rule: any, value: any, callback: any) => {
+      if (form.teachingMode === 'GROUP' && form.billingType === 'MONTHLY') {
+        if (!value) {
+          callback(new Error('End month is required'));
+        } else if (form.startMonth && value < form.startMonth) {
+          callback(new Error('End month cannot be earlier than start month'));
+        } else {
+          callback();
+        }
       } else {
         callback();
       }
@@ -627,21 +718,6 @@ watch(() => form.defaultClassroomId, async (classroomId) => {
   }
 });
 
-function calcExpiryDate(days: number | undefined): string | undefined {
-  if (days == null) return undefined;
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function calcExpiryDays(dateStr: string | undefined): number | undefined {
-  if (!dateStr) return undefined;
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const target = new Date(dateStr + 'T00:00:00');
-  return Math.round((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-}
-
 function openProductDialog(row?: CourseProductItem) {
   editingId.value = row?.id ?? null;
   if (row) {
@@ -652,8 +728,11 @@ function openProductDialog(row?: CourseProductItem) {
       teachingMode: row.teachingMode,
       defaultTotalUnits: row.defaultTotalUnits,
       defaultLessonUnits: row.defaultLessonUnits,
-      expiryDurationDays: row.expiryDurationDays ?? undefined,
-      expiryDate: calcExpiryDate(row.expiryDurationDays),
+      billingType: row.billingType ?? 'PER_SESSION',
+      startDate: row.startDate ?? undefined,
+      totalSessions: row.totalSessions ?? undefined,
+      startMonth: row.startMonth ?? undefined,
+      endMonth: row.endMonth ?? undefined,
       defaultClassroomId: row.defaultClassroomId ?? undefined,
       defaultTeacherId: row.defaultTeacherId ?? undefined,
       listPrice: row.listPrice,
@@ -684,8 +763,11 @@ function openProductDialog(row?: CourseProductItem) {
       teachingMode: 'GROUP',
       defaultTotalUnits: 40,
       defaultLessonUnits: 2,
-      expiryDurationDays: undefined,
-      expiryDate: undefined,
+      billingType: 'PER_SESSION',
+      startDate: undefined,
+      totalSessions: undefined,
+      startMonth: undefined,
+      endMonth: undefined,
       defaultClassroomId: undefined,
       defaultTeacherId: undefined,
       listPrice: 0,
@@ -727,9 +809,14 @@ async function handleSubmit() {
       payload.defaultTotalUnits = form.defaultTotalUnits;
       payload.defaultLessonUnits = form.defaultLessonUnits;
     } else {
-      payload.expiryDurationDays = editingId.value
-        ? form.expiryDurationDays
-        : calcExpiryDays(form.expiryDate);
+      payload.billingType = form.billingType;
+      if (form.billingType === 'PER_SESSION') {
+        payload.startDate = form.startDate;
+        payload.totalSessions = form.totalSessions;
+      } else {
+        payload.startMonth = form.startMonth;
+        payload.endMonth = form.endMonth;
+      }
       payload.slots = formSlots.value.map(s => ({
         weekday: s.weekday,
         startTime: s.startTime,
@@ -788,6 +875,35 @@ function formatPrice(price: number): string {
   return `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function formatBilling(row: CourseProductItem): string {
+  if (row.billingType === 'PER_SESSION') {
+    return row.totalSessions ? `${row.totalSessions} sessions` : 'Per session';
+  }
+  if (row.billingType === 'MONTHLY') {
+    return row.startMonth && row.endMonth ? `${row.startMonth} ~ ${row.endMonth}` : 'Monthly';
+  }
+  return '—';
+}
+
+function classTypeInitial(billingType?: string): string {
+  return billingType === 'MONTHLY' ? 'M' : 'S';
+}
+
+function classTypeLabel(billingType?: string): string {
+  return billingType === 'MONTHLY' ? 'Monthly' : 'Per session';
+}
+
+function classTypeClass(billingType?: string): string {
+  return billingType === 'MONTHLY' ? 'class-type-badge--monthly' : 'class-type-badge--session';
+}
+
+function billingTypeDescription(billingType?: string): string {
+  if (billingType === 'MONTHLY') {
+    return 'Monthly class: students enroll for a selected month range.';
+  }
+  return 'Per-session class: students buy a fixed number of class sessions.';
+}
+
 // ─── 教室列表 ──────────────────────────────────────────
 async function loadClassrooms() {
   try {
@@ -812,11 +928,6 @@ loadData();
 loadSubjects();
 loadClassrooms();
 loadTeachers();
-
-// ─── Date helpers ──────────────────────────────────────────
-function disabledPastDate(date: Date) {
-  return dayjs(date).startOf('day').isBefore(dayjs().startOf('day'));
-}
 </script>
 
 <style scoped>
@@ -881,6 +992,55 @@ function disabledPastDate(date: Date) {
 .cell-stack span {
   color: #909399;
   font-size: 12px;
+}
+
+.product-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.class-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 3px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  cursor: help;
+}
+
+.class-type-badge__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  color: #fff !important;
+  font-size: 10px !important;
+  font-weight: 600;
+}
+
+.class-type-badge--session {
+  color: #409eff;
+  background: #ecf5ff;
+}
+
+.class-type-badge--session .class-type-badge__icon {
+  background: #409eff;
+}
+
+.class-type-badge--monthly {
+  color: #67c23a;
+  background: #f0f9eb;
+}
+
+.class-type-badge--monthly .class-type-badge__icon {
+  background: #67c23a;
 }
 
 .table-actions {

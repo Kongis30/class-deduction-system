@@ -33,6 +33,9 @@ public class PaymentRecordEntity extends BaseEntity {
 
     private String paymentMethod;
 
+    /** 记录类型：PAYMENT（支付）/ REFUND（退款）。 */
+    private String paymentType;
+
     private String paymentStatus;
 
     private BigDecimal amount;

@@ -152,7 +152,7 @@ import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import dayjs from 'dayjs';
 import { fetchAllClassrooms } from '@/api/base-data';
-import { fetchClassroomOccupancy, fetchClassGroupsByClassroom, type ClassroomOccupancyQuery } from '@/api/schedule';
+import { fetchClassroomOccupancy, type ClassroomOccupancyQuery } from '@/api/schedule';
 import type { ClassroomOccupancyItem, EntityId } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
@@ -221,8 +221,6 @@ function jumpToDate(date: string | null) {
 const loading = ref(false);
 const occupancyItems = ref<ClassroomOccupancyItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
-const roomClassGroups = ref<any[]>([]);
-const roomClassGroupSlots = ref<OccupiedSlotDef[]>([]);
 
 const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
@@ -240,17 +238,12 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
       classroomName: o.classroomName,
     });
   }
-  // 添加班课占用
-  for (const slot of roomClassGroupSlots.value) {
-    result.push(slot);
-  }
   return result;
 });
 
 async function loadData() {
   if (!selectedClassroomId.value) return;
   loading.value = true;
-  roomClassGroupSlots.value = [];
   try {
     const monday = dayjs(weekMonday.value);
     const sunday = monday.add(6, 'day').endOf('day');
@@ -261,38 +254,16 @@ async function loadData() {
       pageNum: 1,
       pageSize: 200,
     };
+    // 教室占用按实际课次返回，班课课次同样带 plannedClassroomId，已包含在内，
+    // 无需再依赖班课的重复模板（scheduleSlots）。
     const res = await fetchClassroomOccupancy(params);
     occupancyItems.value = res.data.data.records;
-
-    // 班课占用
-    const clsRes = await fetchClassGroupsByClassroom(selectedClassroomId.value);
-    roomClassGroups.value = clsRes.data.data;
-    roomClassGroupSlots.value = parseClassGroupSlots(clsRes.data.data);
   } catch {
     ElMessage.error('Failed to load occupancy data.');
     occupancyItems.value = [];
-    roomClassGroupSlots.value = [];
   } finally {
     loading.value = false;
   }
-}
-
-function parseClassGroupSlots(classGroups: any[]): OccupiedSlotDef[] {
-  const slots: OccupiedSlotDef[] = [];
-  for (const cls of classGroups) {
-    const scheduleSlots = cls.scheduleSlots || [];
-    for (const s of scheduleSlots) {
-      slots.push({
-        weekday: s.weekday,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        courseLabel: cls.className,
-        teacherName: cls.teacherName,
-        classroomName: cls.classroomName,
-      });
-    }
-  }
-  return slots;
 }
 
 // ─── Cell click → detail dialog ────────────────

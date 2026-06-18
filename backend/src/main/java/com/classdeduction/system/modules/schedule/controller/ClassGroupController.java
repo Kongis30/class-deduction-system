@@ -1,7 +1,9 @@
 package com.classdeduction.system.modules.schedule.controller;
 
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
+import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -52,11 +54,25 @@ public class ClassGroupController {
     public ApiResponse<Map<String, Object>> confirmLesson(
             @PathVariable Long classId,
             @PathVariable Long occurrenceId,
-            @RequestBody(required = false) Map<String, Object> body) {
+            @RequestBody(required = false) Map<String, Object> body,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
         if (body == null) {
             body = Map.of();
         }
-        return ApiResponse.success("Class lesson confirmed.", classGroupService.confirmLesson(classId, occurrenceId, body));
+        return ApiResponse.success("Class lesson confirmed.", classGroupService.confirmLesson(classId, occurrenceId, body, currentUser));
+    }
+
+    @PostMapping("/{classId}/occurrences/{occurrenceId}/reject")
+    @RequireRoles({"ADMIN"})
+    @Operation(summary = "Reject pending class lesson confirmation")
+    public ApiResponse<Void> rejectLesson(
+            @PathVariable Long classId,
+            @PathVariable Long occurrenceId,
+            @RequestBody Map<String, Object> body,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
+        Object reason = body == null ? null : body.get("rejectReason");
+        classGroupService.rejectLesson(classId, occurrenceId, reason == null ? null : String.valueOf(reason), currentUser);
+        return ApiResponse.success("Rejected successfully.", null);
     }
 
     @PostMapping("/{classId}/enroll")

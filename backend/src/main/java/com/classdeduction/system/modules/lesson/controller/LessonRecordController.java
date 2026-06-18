@@ -7,6 +7,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
+import com.classdeduction.system.modules.lesson.dto.LessonRecordRejectRequest;
 import com.classdeduction.system.modules.lesson.service.LessonRecordService;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordDetailVO;
@@ -45,11 +46,44 @@ public class LessonRecordController {
     }
 
     @PostMapping
-    @Operation(summary = "Confirm an occurred lesson and write the deduction ledger")
+    @Operation(summary = "Confirm a lesson by current role")
     public ApiResponse<LessonRecordConfirmResultVO> confirmLesson(
             @Valid @RequestBody LessonRecordConfirmRequest request,
             @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser
     ) {
         return ApiResponse.success("Confirmed successfully.", lessonRecordService.confirmLesson(request, currentUser));
+    }
+
+    @PostMapping("/{id}/admin-confirm")
+    @RequireRoles({"ADMIN"})
+    @Operation(summary = "Admin finally confirms a pending lesson record")
+    public ApiResponse<LessonRecordConfirmResultVO> adminConfirmLesson(
+            @PathVariable Long id,
+            @RequestBody(required = false) LessonRecordConfirmRequest request,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser
+    ) {
+        return ApiResponse.success("Confirmed successfully.", lessonRecordService.adminConfirmLesson(id, request, currentUser));
+    }
+
+    @PostMapping("/{id}/reject")
+    @RequireRoles({"ADMIN"})
+    @Operation(summary = "Admin rejects a pending lesson record")
+    public ApiResponse<Void> rejectLesson(
+            @PathVariable Long id,
+            @Valid @RequestBody LessonRecordRejectRequest request,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser
+    ) {
+        lessonRecordService.rejectLesson(id, request.getRejectReason(), currentUser);
+        return ApiResponse.success("Rejected successfully.", null);
+    }
+
+    @PostMapping("/{id}/revoke")
+    @Operation(summary = "Revoke a confirmed lesson record and roll back the deducted units")
+    public ApiResponse<Void> revokeLesson(
+            @PathVariable Long id,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser
+    ) {
+        lessonRecordService.revokeLesson(id, currentUser);
+        return ApiResponse.success("Revoked successfully.", null);
     }
 }

@@ -16,6 +16,20 @@ public final class UnitConverter {
     }
 
     /**
+     * 将半课时单位转换为小时（保留0.5h精度）。
+     */
+    public static double toHoursDecimal(int halfHourUnits) {
+        return halfHourUnits / 2.0;
+    }
+
+    /**
+     * 将可空半课时单位转换为小时（保留0.5h精度）。
+     */
+    public static double toHoursDecimal(Integer halfHourUnits) {
+        return halfHourUnits == null ? 0.0 : halfHourUnits / 2.0;
+    }
+
+    /**
      * 将半课时单位转换为小时（保留0.5h精度，返回字符串如 "1.5"）。
      */
     public static String toHoursString(int halfHourUnits) {

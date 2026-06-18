@@ -139,10 +139,12 @@
 </template>
 
 <script setup lang="ts">
+import axios from 'axios';
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { reactive, ref } from 'vue';
 
+import { extractErrorMessage } from '@/api/http';
 import {
   createClassroom,
   deleteClassroom,
@@ -160,6 +162,7 @@ const classroomDialogVisible = ref(false);
 const editingId = ref<number | null>(null);
 const classroomFormRef = ref();
 const campuses = ref<CampusItem[]>([]);
+const CLASSROOM_IN_USE_MESSAGE = 'This classroom is still in use. Please reassign related classes or schedules first.';
 
 // ─── Filters & Pagination ───────────────────────────────
 const filters = reactive({
@@ -287,10 +290,27 @@ async function handleDelete(row: ClassroomItem) {
     );
     await deleteClassroom(row.id);
     ElMessage.success('Deleted.');
-    loadData();
-  } catch {
-    // User cancelled
+    await loadData();
+  } catch (error) {
+    if (isDeleteCancel(error)) {
+      return;
+    }
+    ElMessage.error(resolveDeleteErrorMessage(error));
   }
+}
+
+function isDeleteCancel(error: unknown): boolean {
+  return error === 'cancel' || error === 'close';
+}
+
+function resolveDeleteErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { code?: string; message?: string } | undefined;
+    if (data?.code === 'CLASSROOM_HAS_REFERENCES') {
+      return CLASSROOM_IN_USE_MESSAGE;
+    }
+  }
+  return extractErrorMessage(error);
 }
 
 // ─── Init ────────────────────────────────────────────────

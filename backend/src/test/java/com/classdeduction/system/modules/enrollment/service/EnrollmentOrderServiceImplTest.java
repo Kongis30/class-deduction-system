@@ -23,6 +23,8 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.EnrollmentOrderServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
@@ -43,6 +45,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -92,6 +95,9 @@ class EnrollmentOrderServiceImplTest {
     private com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper lessonOccurrenceMapper;
 
     @Mock
+    private LessonRecordMapper lessonRecordMapper;
+
+    @Mock
     private com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper classGroupMapper;
 
     @Mock
@@ -132,6 +138,7 @@ class EnrollmentOrderServiceImplTest {
                 recurringScheduleRuleMapper,
                 recurringScheduleSlotMapper,
                 lessonOccurrenceMapper,
+                lessonRecordMapper,
                 classGroupMapper,
                 classEnrollmentMapper,
                 courseProductScheduleSlotMapper
@@ -271,13 +278,130 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldExtendExistingClassOccurrencesToEnrollmentExpiryDate() {
-        LocalDate today = LocalDate.now();
-        LocalDate expiryDate = today.plusDays(180);
-        ClassEnrollmentCreateRequest request = buildClassEnrollmentRequest(expiryDate);
+    void shouldDeleteOneOnOneOrderAndReleaseFutureScheduling() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("UNPAID");
+        order.setReceivedAmount(BigDecimal.ZERO);
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setEnrollmentOrderId(2001L);
+        coursePackage.setPackageStatus("ACTIVE");
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
+
+        enrollmentOrderService.deleteOrder(2001L);
+
+        verify(lessonOccurrenceMapper).update(any());
+        verify(coursePackageMapper).updateById(packageCaptor.capture());
+        verify(enrollmentOrderMapper).deleteById(2001L);
+        assertThat(packageCaptor.getValue().getPackageStatus()).isEqualTo("CLOSED");
+    }
+
+    @Test
+    void shouldRejectDeleteWhenOrderHasReceivedPayment() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("1100.00"));
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+
+        assertThatThrownBy(() -> enrollmentOrderService.deleteOrder(2001L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Only unpaid mistaken orders can be deleted. Use Refund for paid orders.");
+
+        verify(enrollmentOrderMapper, never()).deleteById(2001L);
+    }
+
+    @Test
+    void shouldRefundOneOnOneOrderAndRecordNegativePayment() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("1100.00"));
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setEnrollmentOrderId(2001L);
+        coursePackage.setPackageStatus("ACTIVE");
+        coursePackage.setReceivedAmount(new BigDecimal("1100.00"));
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+        request.setRemark("Student withdrew");
+
+        enrollmentOrderService.refundOrder(2001L, request);
+
+        // Negative refund payment record persisted.
+        verify(paymentRecordMapper).insert(paymentCaptor.capture());
+        assertThat(paymentCaptor.getValue().getPaymentType()).isEqualTo("REFUND");
+        assertThat(paymentCaptor.getValue().getPaymentStatus()).isEqualTo("REFUNDED");
+        assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("-1100.00"));
+        assertThat(paymentCaptor.getValue().getHandledByName()).isEqualTo("Amy");
+
+        // Order set to REFUNDED + CANCELLED, received reset to 0.
+        verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
+        assertThat(orderCaptor.getValue().getPaymentStatus()).isEqualTo("REFUNDED");
+        assertThat(orderCaptor.getValue().getOrderStatus()).isEqualTo("CANCELLED");
+        assertThat(orderCaptor.getValue().getReceivedAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+
+        // Course package received amount zeroed.
+        verify(coursePackageMapper, atLeastOnce()).updateById(packageCaptor.capture());
+        assertThat(packageCaptor.getAllValues())
+                .anySatisfy(pkg -> assertThat(pkg.getReceivedAmount()).isEqualByComparingTo(BigDecimal.ZERO));
+    }
+
+    @Test
+    void shouldRejectRefundWhenNoPaymentReceived() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2002L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("UNPAID");
+        order.setReceivedAmount(BigDecimal.ZERO);
+        when(enrollmentOrderMapper.selectById(2002L)).thenReturn(order);
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+
+        assertThatThrownBy(() -> enrollmentOrderService.refundOrder(2002L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("There is no received payment to refund.");
+    }
+
+    @Test
+    void shouldComputeProratedPriceAndOccurrencesForPerSessionEnrollment() {
+        // Product: PER_SESSION, start Monday 2026-09-07, total 20 sessions, weekly Monday slot, list price 1200.
+        LocalDate startDate = LocalDate.of(2026, 9, 7); // Monday
         CourseProductEntity product = buildGroupCourseProduct();
-        CourseProductScheduleSlotEntity slot = buildClassSlot(expiryDate.getDayOfWeek().getValue());
+        product.setBillingType("PER_SESSION");
+        product.setStartDate(startDate);
+        product.setTotalSessions(20);
+        CourseProductScheduleSlotEntity slot = buildClassSlot(startDate.getDayOfWeek().getValue());
         ClassGroupEntity existingGroup = buildClassGroup(product.getId());
+
+        ClassEnrollmentCreateRequest request = new ClassEnrollmentCreateRequest();
+        request.setStudentId(101L);
+        request.setProductId(202L);
+        request.setSessions(10); // buy 10 of 20 sessions -> 1200 * 10/20 = 600.00
+        request.setHandledByName("Amy");
+        request.setCurrencyCode("USD");
+        request.setDiscountAmount(BigDecimal.ZERO);
+        request.setReceivedAmount(BigDecimal.ZERO);
 
         when(studentMapper.selectById(101L)).thenReturn(buildStudent());
         when(courseProductMapper.selectById(product.getId())).thenReturn(product);
@@ -285,18 +409,32 @@ class EnrollmentOrderServiceImplTest {
         when(courseProductScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
         when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        ArgumentCaptor<EnrollmentOrderEntity> orderInsertCaptor = ArgumentCaptor.forClass(EnrollmentOrderEntity.class);
         doAnswer(invocation -> {
             EnrollmentOrderEntity entity = invocation.getArgument(0);
             entity.setId(2001L);
             return 1;
         }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+        ArgumentCaptor<ClassEnrollmentEntity> enrollInsertCaptor = ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
 
         enrollmentOrderService.createClassEnrollmentOrder(request);
 
+        // Server computes original amount by proration (10/20 of 1200).
+        verify(enrollmentOrderMapper).insert(orderInsertCaptor.capture());
+        assertThat(orderInsertCaptor.getValue().getOriginalAmount()).isEqualByComparingTo(new BigDecimal("600.00"));
+
+        // Occurrences cover the FULL product period (20 weekly sessions), independent of purchased quantity.
         ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
-        verify(lessonOccurrenceMapper, times(26)).insert(occurrenceCaptor.capture());
+        verify(lessonOccurrenceMapper, times(20)).insert(occurrenceCaptor.capture());
+        LocalDate twentiethSession = startDate.plusWeeks(19);
         assertThat(occurrenceCaptor.getAllValues())
-                .anySatisfy(occ -> assertThat(occ.getPlannedStartAt().toLocalDate()).isEqualTo(expiryDate));
+                .anySatisfy(occ -> assertThat(occ.getPlannedStartAt().toLocalDate()).isEqualTo(twentiethSession));
+
+        // Enrollment snapshot carries billing type + purchased quantity; expiry = student's 10th session date.
+        verify(classEnrollmentMapper).insert(enrollInsertCaptor.capture());
+        assertThat(enrollInsertCaptor.getValue().getBillingType()).isEqualTo("PER_SESSION");
+        assertThat(enrollInsertCaptor.getValue().getPurchasedQuantity()).isEqualTo(10);
+        assertThat(enrollInsertCaptor.getValue().getExpiryDate()).isEqualTo(startDate.plusWeeks(9));
     }
 
     private void stubGeneratedIds(boolean includeAssignmentInsert, boolean includePaymentInsert) {
@@ -352,20 +490,6 @@ class EnrollmentOrderServiceImplTest {
         request.setTotalUnits(80);
         request.setDefaultLessonUnits(4);
         request.setRemark("first enrollment");
-        return request;
-    }
-
-    private ClassEnrollmentCreateRequest buildClassEnrollmentRequest(LocalDate expiryDate) {
-        ClassEnrollmentCreateRequest request = new ClassEnrollmentCreateRequest();
-        request.setStudentId(101L);
-        request.setProductId(202L);
-        request.setEnrollmentDate(LocalDate.now().toString());
-        request.setExpiryDate(expiryDate.toString());
-        request.setHandledByName("Amy");
-        request.setCurrencyCode("USD");
-        request.setOriginalAmount(new BigDecimal("1200.00"));
-        request.setDiscountAmount(BigDecimal.ZERO);
-        request.setReceivedAmount(BigDecimal.ZERO);
         return request;
     }
 

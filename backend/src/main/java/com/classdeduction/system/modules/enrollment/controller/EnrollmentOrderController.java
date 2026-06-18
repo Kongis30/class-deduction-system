@@ -7,6 +7,7 @@ import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateReq
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
+import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
@@ -67,6 +68,15 @@ public class EnrollmentOrderController {
         return ApiResponse.success("Cancelled successfully.", null);
     }
 
+    @PostMapping("/{id}/refund")
+    @Operation(summary = "报名单全额退款（退课 + 记录退款流水）")
+    public ApiResponse<Void> refundOrder(
+            @Parameter(description = "报名单ID") @PathVariable Long id,
+            @Valid @RequestBody RefundRequest request) {
+        enrollmentOrderService.refundOrder(id, request);
+        return ApiResponse.success("Refunded successfully.", null);
+    }
+
     @PostMapping("/class-enroll")
     @Operation(summary = "创建班课报名订单（同时创建 class_enrollment 记录）")
     public ApiResponse<Void> createClassEnrollmentOrder(@Valid @RequestBody ClassEnrollmentCreateRequest request) {
@@ -75,7 +85,7 @@ public class EnrollmentOrderController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "删除报名单（软删除）")
+    @Operation(summary = "删除误创建且未付款的报名单（软删除）")
     public ApiResponse<Void> deleteOrder(@Parameter(description = "报名单ID") @PathVariable Long id) {
         enrollmentOrderService.deleteOrder(id);
         return ApiResponse.success("Deleted successfully.", null);

@@ -97,6 +97,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         List<LessonRecordEntity> records = lessonRecordMapper.selectList(
                 new LambdaQueryWrapper<LessonRecordEntity>()
                         .eq(LessonRecordEntity::getActualTeacherId, query.getTeacherId())
+                        .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
                         .in(LessonRecordEntity::getResultStatus, PAYABLE_STATUSES)
                         .notIn(!paidRecordIds.isEmpty(), LessonRecordEntity::getId, paidRecordIds)
                         .notIn(!settledGroupOccurrenceIds.isEmpty(),

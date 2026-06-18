@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.schedule.service;
 
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 
 import java.time.LocalDate;
@@ -21,7 +22,10 @@ public interface ClassGroupService {
     List<Map<String, Object>> listClassOccurrences(Long classId);
 
     /** 统一核销：为班课所有在册学生确认某次课 */
-    Map<String, Object> confirmLesson(Long classId, Long occurrenceId, Map<String, Object> body);
+    Map<String, Object> confirmLesson(Long classId, Long occurrenceId, Map<String, Object> body, CurrentUserResponse currentUser);
+
+    /** 管理员驳回班课某次课的老师初确认 */
+    void rejectLesson(Long classId, Long occurrenceId, String rejectReason, CurrentUserResponse currentUser);
 
     /** 发送到期提醒邮件 */
     Map<String, Object> sendExpiryReminders(Long classId);

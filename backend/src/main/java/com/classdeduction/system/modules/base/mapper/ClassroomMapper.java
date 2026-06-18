@@ -24,4 +24,27 @@ public interface ClassroomMapper extends BaseMapper<ClassroomEntity> {
      */
     @Update("UPDATE classroom SET campus = #{campusName} WHERE campus_id = #{campusId}")
     int syncCampusName(@Param("campusId") Long campusId, @Param("campusName") String campusName);
+
+    /**
+     * 软删除记录仍受 room_code 唯一键约束，自动生成编码时必须把历史记录一并纳入计算。
+     */
+    @Select("""
+            SELECT room_code
+            FROM classroom
+            WHERE room_code REGEXP '^R[0-9]+$'
+            ORDER BY CAST(SUBSTRING(room_code, 2) AS UNSIGNED) DESC
+            LIMIT 1
+            """)
+    String selectMaxGeneratedRoomCodeIncludingDeleted();
+
+    /**
+     * 数据库唯一键不区分软删除，手动编码校验也需要覆盖历史记录，避免插入时抛 500。
+     */
+    @Select("""
+            SELECT COUNT(*)
+            FROM classroom
+            WHERE room_code = #{roomCode}
+              AND (#{currentId} IS NULL OR id <> #{currentId})
+            """)
+    Long countRoomCodeIncludingDeleted(@Param("currentId") Long currentId, @Param("roomCode") String roomCode);
 }

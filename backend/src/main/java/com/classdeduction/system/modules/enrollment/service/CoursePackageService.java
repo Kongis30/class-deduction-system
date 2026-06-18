@@ -5,6 +5,10 @@ import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
+import com.classdeduction.system.modules.enrollment.vo.GroupClassPackageProgressVO;
+import com.classdeduction.system.modules.enrollment.vo.GroupClassStudentProgressVO;
+
+import java.util.List;
 
 public interface CoursePackageService {
 
@@ -12,6 +16,16 @@ public interface CoursePackageService {
      * 分页查询课时包列表。
      */
     PageResponse<CoursePackageListItemVO> pagePackages(CoursePackagePageQuery query);
+
+    /**
+     * 分页查询班课产品进度。
+     */
+    PageResponse<GroupClassPackageProgressVO> pageGroupClassPackages(CoursePackagePageQuery query);
+
+    /**
+     * 查询班课内学生各自进度。
+     */
+    List<GroupClassStudentProgressVO> listGroupClassStudentProgress(Long classId);
 
     /**
      * 获取课时包详情。

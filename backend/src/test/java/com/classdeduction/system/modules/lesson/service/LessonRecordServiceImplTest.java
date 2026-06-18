@@ -35,6 +35,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -148,7 +149,7 @@ class LessonRecordServiceImplTest {
         assertThat(packageCaptor.getValue().getRemainingUnits()).isEqualTo(6);
         assertThat(snapshotCaptor.getValue().getRemainingUnits()).isEqualTo(6);
         assertThat(result.ledgerId()).isEqualTo(3001L);
-        assertThat(result.remainingUnits()).isEqualTo(3);
+        assertThat(result.remainingUnits()).isEqualTo(3.0);
         assertThat(result.packageCompleted()).isFalse();
     }
 
@@ -178,7 +179,7 @@ class LessonRecordServiceImplTest {
         assertThat(pendingRecord.getConfirmedAt()).isNull();
         assertThat(pendingRecord.getAdminConfirmedAt()).isNull();
         assertThat(result.ledgerId()).isNull();
-        assertThat(result.remainingUnits()).isEqualTo(5);
+        assertThat(result.remainingUnits()).isEqualTo(5.0);
 
         verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
         verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
@@ -202,7 +203,7 @@ class LessonRecordServiceImplTest {
 
         LessonRecordConfirmResultVO result = lessonRecordService.adminConfirmLesson(2001L, currentAdminUser());
 
-        verify(lessonRecordMapper).updateById(recordCaptor.capture());
+        verify(lessonRecordMapper, org.mockito.Mockito.atLeastOnce()).updateById(recordCaptor.capture());
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
         verify(coursePackageMapper).updateById(packageCaptor.capture());
         verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
@@ -213,6 +214,168 @@ class LessonRecordServiceImplTest {
         assertThat(packageCaptor.getValue().getRemainingUnits()).isEqualTo(6);
         assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("MERGED");
         assertThat(result.ledgerId()).isEqualTo(3001L);
+    }
+
+    @Test
+    void shouldApplyAdminReviewChangesWhenFinalConfirmingPendingRecord() {
+        LessonRecordEntity pendingRecord = buildPendingRecord();
+        LessonOccurrenceEntity occurrence = buildOccurrence();
+        LessonRecordConfirmRequest reviewRequest = new LessonRecordConfirmRequest();
+        reviewRequest.setOccurrenceId(1001L);
+        reviewRequest.setResultStatus("COMPLETED");
+        reviewRequest.setActualTeacherId(702L);
+        reviewRequest.setActualClassroomId(802L);
+        reviewRequest.setActualStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
+        reviewRequest.setActualEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
+        reviewRequest.setActualUnits(3);
+        reviewRequest.setNotes("Admin corrected actual duration and teacher.");
+
+        when(lessonRecordMapper.selectById(2001L)).thenReturn(pendingRecord);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(702L)).thenReturn(buildTeacher(702L));
+        when(classroomMapper.selectById(802L)).thenReturn(buildClassroom(802L));
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(buildFutureOccurrence(2001L, LocalDate.of(2026, 4, 20), 4)));
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubLedgerInsertedId(3001L);
+
+        LessonRecordConfirmResultVO result = lessonRecordService.adminConfirmLesson(2001L, reviewRequest, currentAdminUser());
+
+        verify(lessonRecordMapper, org.mockito.Mockito.atLeastOnce()).updateById(recordCaptor.capture());
+        verify(hourLedgerMapper).insert(ledgerCaptor.capture());
+        verify(coursePackageMapper).updateById(packageCaptor.capture());
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
+        LessonRecordEntity updatedRecord = recordCaptor.getAllValues().get(recordCaptor.getAllValues().size() - 1);
+        LessonOccurrenceEntity balancedFuture = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 2001L))
+                .findFirst()
+                .orElseThrow();
+        assertThat(updatedRecord.getActualTeacherId()).isEqualTo(702L);
+        assertThat(updatedRecord.getActualClassroomId()).isEqualTo(802L);
+        assertThat(updatedRecord.getActualUnits()).isEqualTo(3);
+        assertThat(updatedRecord.getDeductedUnits()).isEqualTo(3);
+        assertThat(updatedRecord.getNotes()).isEqualTo("Admin corrected actual duration and teacher.");
+        assertThat(balancedFuture.getPlannedUnits()).isEqualTo(5);
+        assertThat(balancedFuture.getPlannedEndAt()).isEqualTo(LocalDate.of(2026, 4, 20).atTime(20, 30));
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(-3);
+        assertThat(packageCaptor.getValue().getRemainingUnits()).isEqualTo(7);
+        assertThat(result.deductedUnits()).isEqualTo(1.5);
+    }
+
+    @Test
+    void shouldBalanceFutureOccurrencesWhenTeacherChangesHoursThenAdminFinalConfirms() {
+        LessonRecordEntity pendingRecord = buildPendingRecord();
+        pendingRecord.setActualEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
+        pendingRecord.setActualUnits(3);
+        pendingRecord.setDeductedUnits(3);
+        LessonOccurrenceEntity occurrence = buildOccurrence();
+        LessonOccurrenceEntity future = buildFutureOccurrence(2001L, LocalDate.of(2026, 4, 20), 4);
+        when(lessonRecordMapper.selectById(2001L)).thenReturn(pendingRecord);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(future));
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubLedgerInsertedId(3001L);
+
+        lessonRecordService.adminConfirmLesson(2001L, currentAdminUser());
+
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
+        LessonOccurrenceEntity mergedOccurrence = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 1001L))
+                .findFirst()
+                .orElseThrow();
+        LessonOccurrenceEntity balancedFuture = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 2001L))
+                .findFirst()
+                .orElseThrow();
+        assertThat(mergedOccurrence.getPlanningStatus()).isEqualTo("MERGED");
+        assertThat(mergedOccurrence.getPlannedUnits()).isEqualTo(3);
+        assertThat(mergedOccurrence.getPlannedEndAt()).isEqualTo(LocalDateTime.of(2026, 4, 12, 19, 30));
+        assertThat(balancedFuture.getPlannedUnits()).isEqualTo(5);
+        assertThat(balancedFuture.getPlannedEndAt()).isEqualTo(LocalDate.of(2026, 4, 20).atTime(20, 30));
+    }
+
+    @Test
+    void shouldShortenFutureOccurrenceWhenAdminDirectConfirmUsesMoreHours() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("COMPLETED");
+        request.setActualStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
+        request.setActualEndAt(LocalDateTime.of(2026, 4, 12, 21, 0));
+        request.setActualUnits(6);
+        LessonOccurrenceEntity future = buildFutureOccurrence(2001L, LocalDate.of(2026, 4, 20), 4);
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(701L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(801L)).thenReturn(buildClassroom());
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(future));
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubInsertedIds();
+
+        lessonRecordService.confirmLesson(request, currentAdminUser());
+
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
+        LessonOccurrenceEntity shortenedFuture = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 2001L))
+                .findFirst()
+                .orElseThrow();
+        assertThat(shortenedFuture.getPlannedUnits()).isEqualTo(2);
+        assertThat(shortenedFuture.getPlannedEndAt()).isEqualTo(LocalDate.of(2026, 4, 20).atTime(19, 0));
+    }
+
+    @Test
+    void shouldSkipFutureOccurrenceWithPendingRecordWhenAdminDirectConfirmBalancesHours() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("COMPLETED");
+        request.setActualStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
+        request.setActualEndAt(LocalDateTime.of(2026, 4, 12, 21, 0));
+        request.setActualUnits(6);
+        LessonOccurrenceEntity adjustableFuture = buildFutureOccurrence(2001L, LocalDate.of(2026, 4, 20), 4);
+        LessonOccurrenceEntity recordedFuture = buildFutureOccurrence(2002L, LocalDate.of(2026, 4, 27), 4);
+        LessonRecordEntity pendingFutureRecord = new LessonRecordEntity();
+        pendingFutureRecord.setId(3002L);
+        pendingFutureRecord.setOccurrenceId(2002L);
+        pendingFutureRecord.setConfirmStage("PENDING_ADMIN");
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(701L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(801L)).thenReturn(buildClassroom());
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(pendingFutureRecord));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(adjustableFuture, recordedFuture));
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubInsertedIds();
+
+        lessonRecordService.confirmLesson(request, currentAdminUser());
+
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
+        LessonOccurrenceEntity shortenedFuture = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 2001L))
+                .findFirst()
+                .orElseThrow();
+        boolean recordedFutureTouched = occurrenceCaptor.getAllValues().stream()
+                .anyMatch(item -> Objects.equals(item.getId(), 2002L));
+        assertThat(shortenedFuture.getPlannedUnits()).isEqualTo(2);
+        assertThat(recordedFutureTouched).isFalse();
     }
 
     @Test
@@ -262,6 +425,81 @@ class LessonRecordServiceImplTest {
         assertThat(recordCaptor.getValue().getRejectedByUserId()).isEqualTo(999L);
         assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("SCHEDULED");
         verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+    }
+
+    @Test
+    void shouldAllowTeacherToConfirmAgainAfterAdminRejects() {
+        LessonRecordEntity rejectedRecord = buildPendingRecord();
+        rejectedRecord.setConfirmStage("REJECTED");
+        rejectedRecord.setRejectReason("Actual time needs correction.");
+        rejectedRecord.setRejectedByUserId(999L);
+        rejectedRecord.setRejectedAt(LocalDateTime.of(2026, 4, 12, 20, 10));
+
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("COMPLETED");
+        request.setNotes("Teacher corrected and confirmed again.");
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildRecentOccurrence());
+        when(lessonRecordMapper.selectOne(any())).thenReturn(rejectedRecord);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(701L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(801L)).thenReturn(buildClassroom());
+
+        lessonRecordService.initialConfirmLesson(request, currentTeacherUser());
+
+        verify(lessonRecordMapper).updateById(recordCaptor.capture());
+        LessonRecordEntity updated = recordCaptor.getValue();
+        assertThat(updated.getId()).isEqualTo(2001L);
+        assertThat(updated.getConfirmStage()).isEqualTo("PENDING_ADMIN");
+        assertThat(updated.getTeacherConfirmedByUserId()).isEqualTo(1002L);
+        assertThat(updated.getRejectReason()).isNull();
+        assertThat(updated.getRejectedByUserId()).isNull();
+        assertThat(updated.getRejectedAt()).isNull();
+        verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+    }
+
+    @Test
+    void shouldReverseFutureBalanceAndRestorePlannedSnapshotWhenRevokingConfirmedRecord() {
+        LessonRecordEntity confirmedRecord = buildPendingRecord();
+        confirmedRecord.setConfirmStage("CONFIRMED");
+        confirmedRecord.setActualEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
+        confirmedRecord.setActualUnits(3);
+        confirmedRecord.setDeductedUnits(3);
+        confirmedRecord.setPlannedStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
+        confirmedRecord.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 20, 0));
+        confirmedRecord.setPlannedUnits(4);
+        LessonOccurrenceEntity mergedOccurrence = buildOccurrence();
+        mergedOccurrence.setPlanningStatus("MERGED");
+        mergedOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
+        mergedOccurrence.setPlannedUnits(3);
+        LessonOccurrenceEntity balancedFuture = buildFutureOccurrence(2002L, LocalDate.of(2026, 4, 20), 5);
+        when(lessonRecordMapper.selectById(2001L)).thenReturn(confirmedRecord);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 3));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(balancedFuture), List.of());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(mergedOccurrence);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubLedgerInsertedId(3001L);
+
+        lessonRecordService.revokeLesson(2001L, currentAdminUser());
+
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
+        LessonOccurrenceEntity shortenedFuture = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 2002L))
+                .findFirst()
+                .orElseThrow();
+        LessonOccurrenceEntity restoredOccurrence = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 1001L))
+                .findFirst()
+                .orElseThrow();
+        assertThat(shortenedFuture.getPlannedUnits()).isEqualTo(4);
+        assertThat(shortenedFuture.getPlannedEndAt()).isEqualTo(LocalDate.of(2026, 4, 20).atTime(20, 0));
+        assertThat(restoredOccurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
+        assertThat(restoredOccurrence.getPlannedUnits()).isEqualTo(4);
+        assertThat(restoredOccurrence.getPlannedEndAt()).isEqualTo(LocalDateTime.of(2026, 4, 12, 20, 0));
     }
 
     @Test
@@ -346,6 +584,9 @@ class LessonRecordServiceImplTest {
         record.setActualTeacherId(701L);
         record.setPlannedClassroomId(801L);
         record.setActualClassroomId(801L);
+        record.setPlannedStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
+        record.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 20, 0));
+        record.setPlannedUnits(4);
         record.setResultStatus("COMPLETED");
         record.setActualStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
         record.setActualEndAt(LocalDateTime.of(2026, 4, 12, 20, 0));
@@ -365,7 +606,7 @@ class LessonRecordServiceImplTest {
         occurrence.setId(id);
         occurrence.setPackageId(501L);
         occurrence.setPlannedStartAt(date.atTime(18, 0));
-        occurrence.setPlannedEndAt(date.atTime(20, 0));
+        occurrence.setPlannedEndAt(date.atTime(18, 0).plusMinutes(units * 30L));
         occurrence.setPlannedUnits(units);
         occurrence.setPlanningStatus("SCHEDULED");
         return occurrence;
@@ -390,15 +631,23 @@ class LessonRecordServiceImplTest {
     }
 
     private TeacherEntity buildTeacher() {
+        return buildTeacher(701L);
+    }
+
+    private TeacherEntity buildTeacher(Long id) {
         TeacherEntity teacher = new TeacherEntity();
-        teacher.setId(701L);
+        teacher.setId(id);
         teacher.setStatus("ACTIVE");
         return teacher;
     }
 
     private ClassroomEntity buildClassroom() {
+        return buildClassroom(801L);
+    }
+
+    private ClassroomEntity buildClassroom(Long id) {
         ClassroomEntity classroom = new ClassroomEntity();
-        classroom.setId(801L);
+        classroom.setId(id);
         classroom.setStatus("ACTIVE");
         return classroom;
     }

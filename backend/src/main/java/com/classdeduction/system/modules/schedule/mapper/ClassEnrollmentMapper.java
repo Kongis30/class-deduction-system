@@ -13,6 +13,17 @@ import java.util.Map;
 public interface ClassEnrollmentMapper extends BaseMapper<ClassEnrollmentEntity> {
 
     /**
+     * 查询班课下所有报名状态，包含已退出的软删除记录，用于进度页状态过滤。
+     */
+    @Select("""
+            SELECT *
+            FROM class_enrollment
+            WHERE class_id = #{classId}
+            ORDER BY enrollment_date ASC, id ASC
+            """)
+    List<ClassEnrollmentEntity> selectAllStatusesByClassId(@Param("classId") Long classId);
+
+    /**
      * 批量统计指定班级的活跃在册人数。
      */
     @Select({"<script>",

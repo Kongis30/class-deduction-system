@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -39,9 +40,21 @@ public class CourseProductSaveRequest {
     @Schema(description = "Default units per lesson (required for ONE_ON_ONE, null for GROUP)", example = "1")
     private Integer defaultLessonUnits;
 
-    @Min(value = 1, message = "Expiry duration days must be at least 1")
-    @Schema(description = "Default enrollment expiry duration in days (for GROUP)", example = "180")
-    private Integer expiryDurationDays;
+    @Schema(description = "GROUP billing type: PER_SESSION / MONTHLY", example = "PER_SESSION")
+    private String billingType;
+
+    @Schema(description = "GROUP PER_SESSION start date (ISO date)", example = "2026-09-01")
+    private LocalDate startDate;
+
+    @Min(value = 1, message = "Total sessions must be at least 1")
+    @Schema(description = "GROUP PER_SESSION total session count", example = "20")
+    private Integer totalSessions;
+
+    @Schema(description = "GROUP MONTHLY start month (yyyy-MM)", example = "2026-09")
+    private String startMonth;
+
+    @Schema(description = "GROUP MONTHLY end month (yyyy-MM)", example = "2027-06")
+    private String endMonth;
 
     @Schema(description = "Default classroom ID (for GROUP)", example = "6101")
     private Long defaultClassroomId;

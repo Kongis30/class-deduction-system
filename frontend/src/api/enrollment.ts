@@ -5,6 +5,8 @@ import type {
   EntityId,
   EnrollmentOrderDetailItem,
   EnrollmentOrderItem,
+  GroupClassPackageProgressItem,
+  GroupClassStudentProgressItem,
   PaymentMethodItem,
   PaymentRecordItem,
   ReceiptRecordItem,
@@ -72,6 +74,17 @@ export function cancelEnrollmentOrder(id: string | number) {
   return http.post(`/v1/enrollment/orders/${id}/cancel`);
 }
 
+export interface RefundPayload {
+  paymentMethod: string;
+  handledByName: string;
+  handledByUserId?: string | number;
+  remark?: string;
+}
+
+export function refundEnrollmentOrder(id: string | number, data: RefundPayload) {
+  return http.post(`/v1/enrollment/orders/${id}/refund`, data);
+}
+
 export function deleteEnrollmentOrder(id: string | number) {
   return http.delete(`/v1/enrollment/orders/${id}`);
 }
@@ -80,10 +93,10 @@ export interface ClassEnrollmentCreatePayload {
   studentId: string | number;
   classId?: string | number;
   productId?: string | number;
-  enrollmentDate: string;
-  expiryDate: string;
+  sessions?: number;
+  startMonth?: string;
+  endMonth?: string;
   handledByName?: string;
-  originalAmount: number;
   discountAmount: number;
   receivedAmount: number;
   remark?: string;
@@ -97,8 +110,10 @@ export function createClassEnrollmentOrder(data: ClassEnrollmentCreatePayload) {
 export interface CoursePackageQuery {
   keyword?: string;
   studentId?: string | number;
+  courseProductId?: string | number;
   packageStatus?: string;
   teacherId?: EntityId;
+  teachingMode?: string;
   sortBy?: string;
   sortOrder?: string;
   pageNum?: number;
@@ -107,6 +122,14 @@ export interface CoursePackageQuery {
 
 export function fetchCoursePackages(params: CoursePackageQuery = {}) {
   return http.get<ApiResponse<PageResult<CoursePackageItem>>>('/v1/enrollment/packages', { params });
+}
+
+export function fetchGroupClassPackageProgress(params: CoursePackageQuery = {}) {
+  return http.get<ApiResponse<PageResult<GroupClassPackageProgressItem>>>('/v1/enrollment/packages/group-classes', { params });
+}
+
+export function fetchGroupClassStudentProgress(classId: string | number) {
+  return http.get<ApiResponse<GroupClassStudentProgressItem[]>>(`/v1/enrollment/packages/group-classes/${classId}/students`);
 }
 
 export function fetchCoursePackage(id: string | number) {

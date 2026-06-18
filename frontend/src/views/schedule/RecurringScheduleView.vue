@@ -87,6 +87,15 @@
                       Edit Schedule
                     </el-button>
                     <el-button
+                      v-if="currentRule"
+                      type="warning"
+                      size="small"
+                      plain
+                      @click="openWeeklyAdjustmentDialog"
+                    >
+                      Adjust This Week
+                    </el-button>
+                    <el-button
                       v-else
                       type="primary"
                       size="small"
@@ -263,6 +272,272 @@
       </template>
     </el-dialog>
 
+    <!-- This week adjustment dialog -->
+    <el-dialog
+      v-model="weeklyDialogVisible"
+      :title="`Adjust This Week — ${selectedPackageName}`"
+      width="860px"
+      :close-on-click-modal="false"
+      class="schedule-dialog"
+    >
+      <div v-loading="weeklyLoading" class="weekly-adjustment">
+        <el-alert
+          title="Only this week's lesson occurrences will be changed. The recurring weekly schedule remains unchanged."
+          type="info"
+          show-icon
+          :closable="false"
+        />
+
+        <div class="weekly-summary">
+          <div class="weekly-summary__item">
+            <span>
+              Original plan
+              <el-tooltip
+                content="Total planned hours for this week before any change."
+                placement="top"
+              >
+                <el-icon class="weekly-summary__help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+            <strong>{{ formatUnitsAsHours(originalWeeklyUnits) }}</strong>
+          </div>
+          <div class="weekly-summary__item">
+            <span>
+              Adjusted
+              <el-tooltip
+                content="Total planned hours for this week after your changes (existing edits plus added lessons, minus removed ones)."
+                placement="top"
+              >
+                <el-icon class="weekly-summary__help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+            <strong>{{ formatUnitsAsHours(adjustedWeeklyUnits) }}</strong>
+          </div>
+          <div class="weekly-summary__item" :class="{ 'weekly-summary__item--changed': unitDelta !== 0 }">
+            <span>
+              Delta
+              <el-tooltip
+                content="Adjusted minus original hours. Positive = more hours used this week (package may run out sooner); negative = fewer hours used."
+                placement="top"
+              >
+                <el-icon class="weekly-summary__help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+            <strong>{{ formatSignedUnitsAsHours(unitDelta) }}</strong>
+          </div>
+          <div class="weekly-summary__item">
+            <span>
+              Added / Modified / Removed
+              <el-tooltip
+                content="Number of lessons added, lessons whose details were modified, and lessons removed in this adjustment."
+                placement="top"
+              >
+                <el-icon class="weekly-summary__help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </span>
+            <strong>{{ addedCount }} / {{ modifiedCount }} / {{ removedCount }}</strong>
+          </div>
+        </div>
+
+        <div class="weekly-cal__hint">
+          Drag on an empty area to add a lesson. Click a lesson block to edit, move, or remove it. Striped grey blocks are the student's other lessons this week.
+        </div>
+
+        <!-- Weekly calendar: 周六起算（Sat→Fri），拖拽新增、点击编辑 -->
+        <div class="weekly-cal">
+          <div class="weekly-cal__head">
+            <span class="weekly-cal__corner"></span>
+            <span
+              v-for="day in weekDays"
+              :key="day.date"
+              class="weekly-cal__day"
+              :class="{ 'weekly-cal__day--today': day.isToday }"
+            >
+              <span class="weekly-cal__day-name">{{ day.dayLabel }}</span>
+              <span class="weekly-cal__day-date">{{ day.dateLabel }}</span>
+            </span>
+          </div>
+          <div class="weekly-cal__body">
+            <!-- 时间刻度列 -->
+            <div class="weekly-cal__times">
+              <span v-for="r in calendarRows" :key="r.label" class="weekly-cal__time">{{ r.label }}</span>
+            </div>
+            <!-- 7 个日期列 -->
+            <div
+              v-for="(day, dayIndex) in weekDays"
+              :key="day.date"
+              class="weekly-cal__col"
+            >
+              <!-- 背景可拖拽格子 -->
+              <div
+                v-for="(r, slotIndex) in calendarRows"
+                :key="r.label"
+                class="weekly-cal__cell"
+                :class="{ 'weekly-cal__cell--preview': isDragPreview(dayIndex, slotIndex) }"
+                @mousedown.prevent="onCalMouseDown(dayIndex, slotIndex)"
+                @mouseenter="onCalMouseEnter(dayIndex, slotIndex)"
+              ></div>
+              <!-- 其他课占用（只读，置于课次块下层） -->
+              <div
+                v-for="busy in busyForDay(dayIndex)"
+                :key="`busy-${busy.id}`"
+                class="weekly-cal__busy"
+                :style="busyStyle(busy)"
+              >
+                <span class="weekly-cal__busy-label">{{ busyLabel(busy) }}</span>
+              </div>
+              <!-- 课次块 -->
+              <div
+                v-for="row in rowsForDay(dayIndex)"
+                :key="row.rowKey"
+                class="weekly-cal__event"
+                :class="{
+                  'weekly-cal__event--new': row.rowType === 'NEW',
+                  'weekly-cal__event--modified': row.rowType === 'EXISTING' && !row.markedForDelete && isWeeklyRowChanged(row),
+                  'weekly-cal__event--deleted': row.rowType === 'EXISTING' && row.markedForDelete,
+                  'weekly-cal__event--active': row.rowKey === selectedRowKey,
+                }"
+                :style="eventStyle(row)"
+                @mousedown.stop
+                @click="selectRow(row)"
+              >
+                <span class="weekly-cal__event-time">{{ eventTimeLabel(row) }}</span>
+                <span class="weekly-cal__event-meta">{{ eventTeacherLabel(row) }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 本周全部课次列表：含已有、新增、待删除，点击任意一条进入下方编辑 -->
+        <div v-if="sortedWeeklyRows.length > 0" class="weekly-list">
+          <div
+            v-for="row in sortedWeeklyRows"
+            :key="row.rowKey"
+            class="weekly-list__item"
+            :class="{
+              'weekly-list__item--new': row.rowType === 'NEW',
+              'weekly-list__item--modified': row.rowType === 'EXISTING' && !row.markedForDelete && isWeeklyRowChanged(row),
+              'weekly-list__item--deleted': row.rowType === 'EXISTING' && row.markedForDelete,
+              'weekly-list__item--active': row.rowKey === selectedRowKey,
+            }"
+            @click="selectRow(row)"
+          >
+            <span class="weekly-list__when">{{ rowDayLabel(row) }} · {{ eventTimeLabel(row) }}</span>
+            <span class="weekly-list__meta">{{ eventTeacherLabel(row) }} · {{ row.plannedHours }}h</span>
+            <el-tag
+              v-if="rowStatusTag(row)"
+              size="small"
+              :type="rowStatusTag(row)!.type"
+              effect="plain"
+            >{{ rowStatusTag(row)!.label }}</el-tag>
+          </div>
+        </div>
+
+        <!-- 选中课次的编辑面板 -->
+        <div v-if="selectedRow" class="weekly-editor" :class="{ 'weekly-editor--deleted': selectedRow.markedForDelete }">
+          <div class="weekly-editor__title">
+            <strong>{{ selectedRow.rowType === 'NEW' ? 'New lesson' : 'Edit lesson' }}</strong>
+            <span v-if="selectedRow.rowType === 'EXISTING'">{{ formatDate(selectedRow.original?.plannedStartAt) }}</span>
+          </div>
+          <div class="weekly-editor__grid">
+            <div class="weekly-editor__field">
+              <label>Day</label>
+              <el-select
+                :model-value="rowDate(selectedRow)"
+                :disabled="selectedRow.markedForDelete"
+                @update:model-value="(v: string) => setRowDay(selectedRow!, v)"
+              >
+                <el-option
+                  v-for="day in weekDays"
+                  :key="day.date"
+                  :label="`${day.dayLabel} ${day.dateLabel}`"
+                  :value="day.date"
+                />
+              </el-select>
+            </div>
+            <div class="weekly-editor__field">
+              <label>Start</label>
+              <el-time-select
+                :model-value="rowStartTime(selectedRow)"
+                start="08:00"
+                end="20:30"
+                step="00:30"
+                :disabled="selectedRow.markedForDelete"
+                @update:model-value="(v: string) => setRowStartTime(selectedRow!, v)"
+              />
+            </div>
+            <div class="weekly-editor__field">
+              <label>Hours</label>
+              <el-input-number
+                :model-value="selectedRow.plannedHours"
+                :min="0.5"
+                :step="0.5"
+                :step-strictly="true"
+                :precision="1"
+                :controls="false"
+                :disabled="selectedRow.markedForDelete"
+                @update:model-value="(v: number) => setRowHours(selectedRow!, v)"
+              />
+              <span class="weekly-editor__hint">Use 0.5h increments, for example 1.0h or 1.5h.</span>
+            </div>
+            <div class="weekly-editor__field">
+              <label>Teacher</label>
+              <el-select v-model="selectedRow.plannedTeacherId" clearable filterable placeholder="Teacher" :disabled="selectedRow.markedForDelete">
+                <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
+              </el-select>
+            </div>
+            <div class="weekly-editor__field">
+              <label>Classroom</label>
+              <el-select v-model="selectedRow.plannedClassroomId" clearable filterable placeholder="Classroom" :disabled="selectedRow.markedForDelete">
+                <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
+              </el-select>
+            </div>
+          </div>
+          <!-- 新增 / 删除的原因（选填） -->
+          <div v-if="selectedRow.rowType === 'NEW' || selectedRow.markedForDelete" class="weekly-editor__reason">
+            <el-input
+              v-model="selectedRow.itemReason"
+              size="small"
+              :placeholder="selectedRow.rowType === 'NEW' ? 'Reason for adding this lesson (optional)' : 'Reason for removing this lesson (optional)'"
+            />
+          </div>
+          <div class="weekly-editor__actions">
+            <el-button
+              v-if="selectedRow.rowType === 'EXISTING' && !selectedRow.markedForDelete"
+              type="danger" plain :icon="Delete"
+              @click="toggleWeeklyRowDelete(selectedRow)"
+            >Remove this lesson</el-button>
+            <el-button
+              v-else-if="selectedRow.rowType === 'EXISTING' && selectedRow.markedForDelete"
+              type="primary" plain :icon="RefreshLeft"
+              @click="toggleWeeklyRowDelete(selectedRow)"
+            >Restore</el-button>
+            <el-button
+              v-else
+              type="info" plain :icon="Close"
+              @click="removeWeeklyNewRow(selectedRow)"
+            >Discard new lesson</el-button>
+          </div>
+        </div>
+
+
+        <el-form label-width="80px" class="weekly-reason">
+          <el-form-item label="Reason">
+            <el-input v-model="weeklyReason" type="textarea" :rows="2" placeholder="Optional reason" />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="weeklyDialogVisible = false">Cancel</el-button>
+          <el-button type="primary" :loading="submitting" :disabled="!hasWeeklyChanges" @click="submitWeeklyAdjustment">
+            Save This Week
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <!-- Detail dialog -->
     <el-dialog
       v-model="detailDialogVisible"
@@ -350,9 +625,9 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Calendar, Search } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
-import { computed, reactive, ref } from 'vue';
+import { ArrowLeft, ArrowRight, Calendar, Search, QuestionFilled, Delete, RefreshLeft, Close } from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
 
@@ -365,14 +640,37 @@ import {
   fetchRecurringScheduleRules,
   fetchLessonOccurrences,
   fetchEnrolledClassGroups,
+  adjustWeeklySchedule,
 } from '@/api/schedule';
-import type { CoursePackageItem, EntityId, RecurringScheduleRuleItem } from '@/types/domain';
+import type { WeeklyScheduleAdjustmentItemPayload } from '@/api/schedule';
+import type { CoursePackageItem, EntityId, LessonOccurrenceItem, RecurringScheduleRuleItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
+
+interface WeeklyAdjustmentRow {
+  // 稳定的本地行标识，新增行没有 occurrenceId 时也能作为 v-for key
+  rowKey: string;
+  // EXISTING：本周已有课次；NEW：本次新增的课次
+  rowType: 'EXISTING' | 'NEW';
+  occurrenceId?: EntityId;
+  lessonNo: string;
+  plannedStartAt: string;
+  plannedEndAt: string;
+  plannedHours: number;
+  plannedTeacherId?: EntityId;
+  plannedClassroomId?: EntityId;
+  // 仅 EXISTING 行可标记删除；删除态下保留行以便保存前确认
+  markedForDelete: boolean;
+  // CREATE / DELETE 动作必填的原因
+  itemReason: string;
+  original?: LessonOccurrenceItem;
+}
 
 const loadingPackages = ref(false);
 const editDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
+const weeklyDialogVisible = ref(false);
+const weeklyLoading = ref(false);
 const submitting = ref(false);
 const isEditing = ref(false);
 const editingRuleId = ref<EntityId | null>(null);
@@ -390,11 +688,227 @@ const classGroupOccupiedSlots = ref<OccupiedSlotDef[]>([]);
 // ─── All package rules (preloaded per student) ──
 const allPackageRules = ref<Record<string, any>>({});
 
+// 本周（周一—周日）该学生的实际课次，主日历据此渲染，
+// 临时新增（ADHOC）/ 调整 / 删除都会真实反映出来。已含该学生班课课次。
+const currentWeekOccurrences = ref<LessonOccurrenceItem[]>([]);
+
 // ─── Selection state ────────────────────────────
 const studentSearch = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
 const emptySlots = ref<SlotDef[]>([]);
+const weeklyRows = ref<WeeklyAdjustmentRow[]>([]);
+const weeklyReason = ref('');
+
+// ─── Weekly adjustment calendar (Sat→Fri) ──────────────────
+// 日历几何配置：08:00–21:00，每 30 分钟一格，每格 28px。
+const CAL_START_HOUR = 8;
+const CAL_END_HOUR = 21;
+const CAL_SLOT_MINUTES = 30;
+const CAL_SLOT_HEIGHT = 28;
+
+const selectedRowKey = ref<string | null>(null);
+
+// 本周该学生在其他课包/班课上的已占用课次，仅用于日历只读展示，避免与其他课撞期。
+const weeklyBusyOccurrences = ref<LessonOccurrenceItem[]>([]);
+
+// 当前自然周的 7 天（周六起算），用于日历表头与列。
+const weekDays = computed(() => {
+  const { start } = currentNaturalWeekRange();
+  const todayStr = dayjs().format('YYYY-MM-DD');
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = start.add(i, 'day');
+    return {
+      date: d.format('YYYY-MM-DD'),
+      dayLabel: d.format('ddd'),
+      dateLabel: d.format('M/D'),
+      isToday: d.format('YYYY-MM-DD') === todayStr,
+    };
+  });
+});
+
+// 日历时间刻度行。
+const calendarRows = computed(() => {
+  const rows: { label: string; minutes: number }[] = [];
+  for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) {
+    rows.push({ label: `${String(h).padStart(2, '0')}:00`, minutes: h * 60 });
+    rows.push({ label: `${String(h).padStart(2, '0')}:30`, minutes: h * 60 + 30 });
+  }
+  return rows;
+});
+
+// 当前选中的课次行。
+const selectedRow = computed(() =>
+  weeklyRows.value.find(r => r.rowKey === selectedRowKey.value) ?? null
+);
+
+// 取某一天（列索引）下、未被删除丢弃的课次块。
+function rowsForDay(dayIndex: number): WeeklyAdjustmentRow[] {
+  const date = weekDays.value[dayIndex]?.date;
+  if (!date) return [];
+  return weeklyRows.value.filter(r => dayjs(r.plannedStartAt).format('YYYY-MM-DD') === date);
+}
+
+// 取某一天（列索引）下该学生在其他课包/班课上的占用块，用于只读展示。
+function busyForDay(dayIndex: number): LessonOccurrenceItem[] {
+  const date = weekDays.value[dayIndex]?.date;
+  if (!date) return [];
+  return weeklyBusyOccurrences.value.filter(o => dayjs(o.plannedStartAt).format('YYYY-MM-DD') === date);
+}
+
+// 占用块的绝对定位，与课次块共用几何换算。
+function busyStyle(occ: LessonOccurrenceItem) {
+  const start = dayjs(occ.plannedStartAt);
+  const end = dayjs(occ.plannedEndAt);
+  const startMin = start.hour() * 60 + start.minute();
+  const endMin = end.hour() * 60 + end.minute();
+  const top = ((startMin - CAL_START_HOUR * 60) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
+  const height = Math.max(((endMin - startMin) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
+  return { top: `${top}px`, height: `${height - 2}px` };
+}
+
+function busyLabel(occ: LessonOccurrenceItem): string {
+  return occ.packageName || occ.className || 'Busy';
+}
+
+// 根据起止时间计算课次块在列内的绝对定位。
+function eventStyle(row: WeeklyAdjustmentRow) {
+  const start = dayjs(row.plannedStartAt);
+  const end = dayjs(row.plannedEndAt);
+  const startMin = start.hour() * 60 + start.minute();
+  const endMin = end.hour() * 60 + end.minute();
+  const top = ((startMin - CAL_START_HOUR * 60) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
+  const height = Math.max(((endMin - startMin) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
+  return { top: `${top}px`, height: `${height - 2}px` };
+}
+
+function eventTimeLabel(row: WeeklyAdjustmentRow): string {
+  return `${dayjs(row.plannedStartAt).format('HH:mm')}–${dayjs(row.plannedEndAt).format('HH:mm')}`;
+}
+
+function eventTeacherLabel(row: WeeklyAdjustmentRow): string {
+  if (row.markedForDelete) return 'Removed';
+  const teacher = teachers.value.find(t => t.id === row.plannedTeacherId);
+  return teacher?.teacherName ?? `${row.plannedHours}h`;
+}
+
+function selectRow(row: WeeklyAdjustmentRow) {
+  selectedRowKey.value = row.rowKey;
+}
+
+// 本周全部课次按开始时间排序，供下方列表展示（含已有、新增、待删除）。
+const sortedWeeklyRows = computed(() =>
+  [...weeklyRows.value].sort((a, b) => dayjs(a.plannedStartAt).valueOf() - dayjs(b.plannedStartAt).valueOf())
+);
+
+// 列表项左侧的「星期 日期」标签。
+function rowDayLabel(row: WeeklyAdjustmentRow): string {
+  const d = dayjs(row.plannedStartAt);
+  return `${d.format('ddd')} ${d.format('M/D')}`;
+}
+
+// 列表项的状态标签：新增 / 修改 / 删除，无变化返回 null。
+function rowStatusTag(row: WeeklyAdjustmentRow): { label: string; type: 'success' | 'warning' | 'danger' } | null {
+  if (row.rowType === 'NEW') return { label: 'Added', type: 'success' };
+  if (row.markedForDelete) return { label: 'Removed', type: 'danger' };
+  if (isWeeklyRowChanged(row)) return { label: 'Modified', type: 'warning' };
+  return null;
+}
+
+// ─── Editor panel helpers ──────────────────
+function rowDate(row: WeeklyAdjustmentRow): string {
+  return dayjs(row.plannedStartAt).format('YYYY-MM-DD');
+}
+
+function rowStartTime(row: WeeklyAdjustmentRow): string {
+  return dayjs(row.plannedStartAt).format('HH:mm');
+}
+
+// 修改日期：保留时刻与时长，整体平移到目标日期。
+function setRowDay(row: WeeklyAdjustmentRow, date: string) {
+  const start = dayjs(row.plannedStartAt);
+  const target = dayjs(`${date}T${start.format('HH:mm:ss')}`);
+  row.plannedStartAt = target.format('YYYY-MM-DDTHH:mm:ss');
+  row.plannedEndAt = target.add(row.plannedHours, 'hour').format('YYYY-MM-DDTHH:mm:ss');
+}
+
+// 修改开始时刻：保留日期与时长。
+function setRowStartTime(row: WeeklyAdjustmentRow, time: string) {
+  const date = dayjs(row.plannedStartAt).format('YYYY-MM-DD');
+  const target = dayjs(`${date}T${time}:00`);
+  row.plannedStartAt = target.format('YYYY-MM-DDTHH:mm:ss');
+  row.plannedEndAt = target.add(row.plannedHours, 'hour').format('YYYY-MM-DDTHH:mm:ss');
+}
+
+// 修改时长：保留开始时间，同步结束时间。
+function setRowHours(row: WeeklyAdjustmentRow, hours: number) {
+  const normalizedHours = normalizeHalfHourHours(hours);
+  row.plannedHours = normalizedHours;
+  row.plannedEndAt = dayjs(row.plannedStartAt).add(normalizedHours, 'hour').format('YYYY-MM-DDTHH:mm:ss');
+}
+
+function normalizeHalfHourHours(hours: number): number {
+  if (!Number.isFinite(hours)) {
+    return 0.5;
+  }
+  return Math.max(0.5, Math.round(hours * 2) / 2);
+}
+
+function isHalfHourIncrement(hours: number): boolean {
+  return Number.isFinite(hours) && Math.abs(hours * 2 - Math.round(hours * 2)) < 0.0001;
+}
+
+// ─── Drag-to-create on the calendar ──────────────────
+const dragging = ref(false);
+const dragDayIndex = ref<number | null>(null);
+const dragStartSlot = ref<number | null>(null);
+const dragEndSlot = ref<number | null>(null);
+
+function onCalMouseDown(dayIndex: number, slotIndex: number) {
+  dragging.value = true;
+  dragDayIndex.value = dayIndex;
+  dragStartSlot.value = slotIndex;
+  dragEndSlot.value = slotIndex;
+}
+
+function onCalMouseEnter(dayIndex: number, slotIndex: number) {
+  if (!dragging.value || dragDayIndex.value !== dayIndex) return;
+  dragEndSlot.value = slotIndex;
+}
+
+// 拖拽预览高亮：判断格子是否落在当前选区内。
+function isDragPreview(dayIndex: number, slotIndex: number): boolean {
+  if (!dragging.value || dragDayIndex.value !== dayIndex) return false;
+  const lo = Math.min(dragStartSlot.value!, dragEndSlot.value!);
+  const hi = Math.max(dragStartSlot.value!, dragEndSlot.value!);
+  return slotIndex >= lo && slotIndex <= hi;
+}
+
+// 结束拖拽：根据选区生成一条新增课次并选中。
+function onCalMouseUp() {
+  if (!dragging.value || dragDayIndex.value === null) {
+    dragging.value = false;
+    return;
+  }
+  const lo = Math.min(dragStartSlot.value!, dragEndSlot.value!);
+  const hi = Math.max(dragStartSlot.value!, dragEndSlot.value!);
+  const slotCount = hi - lo + 1;
+  const hours = (slotCount * CAL_SLOT_MINUTES) / 60;
+  const date = weekDays.value[dragDayIndex.value].date;
+  const startMinutes = calendarRows.value[lo].minutes;
+  const startAt = dayjs(`${date}T00:00:00`).add(startMinutes, 'minute');
+  const row = addWeeklyNewRow(startAt, hours);
+  selectedRowKey.value = row.rowKey;
+
+  dragging.value = false;
+  dragDayIndex.value = null;
+  dragStartSlot.value = null;
+  dragEndSlot.value = null;
+}
+
+// 拖拽在格子外松开也能正常结束，因此监听全局 mouseup。
+onMounted(() => document.addEventListener('mouseup', onCalMouseUp));
+onUnmounted(() => document.removeEventListener('mouseup', onCalMouseUp));
 
 const displayMonday = computed(() => dayjs().startOf('day').day(1).format('YYYY-MM-DD'));
 
@@ -413,6 +927,44 @@ const selectedStudentName = computed(() => {
   const s = students.value.find(s => s.id === selectedStudentId.value);
   return s?.studentName ?? '';
 });
+
+// 原计划课时：仅统计已有课次的原始单位（含将被删除行的原值，不含新增行）
+const originalWeeklyUnits = computed(() =>
+  weeklyRows.value
+    .filter(row => row.rowType === 'EXISTING')
+    .reduce((sum, row) => sum + (row.original?.plannedUnits ?? 0), 0)
+);
+
+// 调整后课时：未删除的已有课次（改后单位）+ 新增课次单位，删除行不计入
+const adjustedWeeklyUnits = computed(() =>
+  weeklyRows.value
+    .filter(row => !(row.rowType === 'EXISTING' && row.markedForDelete))
+    .reduce((sum, row) => sum + Math.round((row.plannedHours ?? 0) * 2), 0)
+);
+
+const unitDelta = computed(() => adjustedWeeklyUnits.value - originalWeeklyUnits.value);
+
+// 新增课次数量
+const addedCount = computed(() =>
+  weeklyRows.value.filter(row => row.rowType === 'NEW').length
+);
+
+// 修改课次数量：未删除且字段确实发生变化的已有课次
+const modifiedCount = computed(() =>
+  weeklyRows.value.filter(
+    row => row.rowType === 'EXISTING' && !row.markedForDelete && isWeeklyRowChanged(row)
+  ).length
+);
+
+// 删除课次数量
+const removedCount = computed(() =>
+  weeklyRows.value.filter(row => row.rowType === 'EXISTING' && row.markedForDelete).length
+);
+
+// 是否存在可提交的变更
+const hasWeeklyChanges = computed(
+  () => addedCount.value > 0 || modifiedCount.value > 0 || removedCount.value > 0
+);
 
 // ─── Package name lookup ──────────────────────
 const packageNameMap = computed(() => {
@@ -447,39 +999,41 @@ function getPackageName(pkgId: EntityId): string {
 }
 
 // ─── All-student occupied slots (main calendar) ─
+// 主日历基于本周实际课次（occurrences）渲染，而非重复规则模板，
+// 这样本周临时新增 / 调整 / 删除都能真实反映出来。
 const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
 
-  for (const [pkgIdStr, rule] of Object.entries(allPackageRules.value)) {
-    const isCurrent = pkgIdStr === String(selectedPackageId.value);
+  for (const occ of currentWeekOccurrences.value) {
+    // 已取消的课次不展示
+    if (occ.planningStatus === 'CANCELLED') continue;
 
-    // Determine which slots to show for this package
-    let displaySlots: SlotDef[] = [];
+    const start = dayjs(occ.plannedStartAt);
+    // 主日历组件以周一为 1、周日为 7
+    const weekday = start.day() === 0 ? 7 : start.day();
+    const isCurrent = String(occ.packageId) === String(selectedPackageId.value);
 
-    if (editDialogVisible.value && isCurrent) {
-      // When edit dialog is open for this package, show the in-edit slots
-      displaySlots = editForm.slots;
-    } else {
-      // Show the saved slots from the rule
-      displaySlots = rule.slots || [];
+    // 标签：一对一课显示课包名，班课显示班级名；临时课 / 已调整课加标记区分。
+    const baseName = occ.packageName || occ.className || 'Lesson';
+    const hours = ((occ.plannedUnits ?? 0) * 0.5).toFixed(1);
+    let courseLabel = `${baseName} ${hours}h`;
+    if (occ.occurrenceType === 'ADHOC') {
+      courseLabel += ' (temp)';
+    } else if (occ.planningStatus === 'ADJUSTED') {
+      courseLabel += ' (adjusted)';
     }
 
-    const pkgName = rule.packageName || getPackageName(pkgIdStr);
+    result.push({
+      weekday,
+      startTime: start.format('HH:mm'),
+      endTime: dayjs(occ.plannedEndAt).format('HH:mm'),
+      courseLabel,
+      teacherName: occ.plannedTeacherName,
+      classroomName: occ.plannedClassroomName,
+      isCurrent,
+    });
+  }
 
-    for (const slot of displaySlots) {
-      result.push({
-        weekday: slot.weekday,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        courseLabel: `${pkgName} ${(slot.plannedUnits * 0.5).toFixed(1)}h`,
-        isCurrent,
-      });
-    }
-  }
-  // 添加班课占用
-  for (const slot of classGroupOccupiedSlots.value) {
-    result.push(slot);
-  }
   return result;
 });
 
@@ -525,6 +1079,7 @@ async function onStudentSelect(id: EntityId) {
   selectedPackageId.value = null;
   allPackageRules.value = {};
   classGroupOccupiedSlots.value = [];
+  currentWeekOccurrences.value = [];
   loadingPackages.value = true;
   try {
     const res = await fetchCoursePackages({ studentId: id, packageStatus: 'ACTIVE', pageSize: 50 });
@@ -536,6 +1091,24 @@ async function onStudentSelect(id: EntityId) {
     loadingPackages.value = false;
   }
   loadEnrolledClassGroups(id);
+  loadCurrentWeekOccurrences(id);
+}
+
+// ─── Load this week's actual occurrences (main calendar) ─
+// 拉取本周该学生的全部实际课次（含一对一课与班课），用于主日历渲染。
+async function loadCurrentWeekOccurrences(studentId: EntityId) {
+  const { start, end } = currentNaturalWeekRange();
+  try {
+    const res = await fetchLessonOccurrences({
+      studentId,
+      startAt: start.format('YYYY-MM-DDT00:00:00'),
+      endAt: end.format('YYYY-MM-DDT23:59:59'),
+      pageSize: 200,
+    });
+    currentWeekOccurrences.value = res.data.data.records;
+  } catch {
+    currentWeekOccurrences.value = [];
+  }
 }
 
 // ─── Package selection ─────────────────────────
@@ -711,6 +1284,7 @@ async function submitCreateForm() {
       ElMessage.success('Schedule created and lessons generated.');
       editDialogVisible.value = false;
       await loadAllPackageRules();
+      if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
     } catch (err: any) {
       ElMessage.error(err?.response?.data?.message ?? 'Failed to create schedule.');
     } finally {
@@ -749,6 +1323,7 @@ async function submitEditForm() {
       );
       editDialogVisible.value = false;
       await loadAllPackageRules();
+      if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
     } catch (err: any) {
       ElMessage.error(err?.response?.data?.message ?? 'Failed to update schedule.');
     } finally {
@@ -766,6 +1341,262 @@ async function openDetailDialog(row: RecurringScheduleRuleItem) {
   } catch {
     ElMessage.error('Failed to load rule detail.');
   }
+}
+
+// ─── This week temporary adjustment ─────────────
+async function openWeeklyAdjustmentDialog() {
+  if (!selectedPackageId.value) return;
+  weeklyReason.value = '';
+  weeklyRows.value = [];
+  weeklyBusyOccurrences.value = [];
+  weeklyDialogVisible.value = true;
+  weeklyLoading.value = true;
+  try {
+    const { start, end } = currentNaturalWeekRange();
+    const startAt = start.format('YYYY-MM-DDT00:00:00');
+    const endAt = end.format('YYYY-MM-DDT23:59:59');
+    // 本课包课次（可编辑）与该学生本周全部课次（用于展示其他课占用）并行拉取。
+    const [pkgRes, studentRes] = await Promise.all([
+      fetchLessonOccurrences({ packageId: selectedPackageId.value, startAt, endAt, pageSize: 100 }),
+      selectedStudentId.value
+        ? fetchLessonOccurrences({ studentId: selectedStudentId.value, startAt, endAt, pageSize: 200 })
+        : Promise.resolve(null),
+    ]);
+    weeklyRows.value = pkgRes.data.data.records
+      .filter(canEditWeeklyOccurrence)
+      .map(toWeeklyAdjustmentRow);
+    // 其他课占用：排除本课包自身的课次与已取消课次。
+    weeklyBusyOccurrences.value = (studentRes?.data.data.records ?? [])
+      .filter(o => String(o.packageId) !== String(selectedPackageId.value) && o.planningStatus !== 'CANCELLED');
+  } catch (err: any) {
+    weeklyRows.value = [];
+    weeklyBusyOccurrences.value = [];
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to load this week lessons.');
+  } finally {
+    weeklyLoading.value = false;
+  }
+}
+
+async function submitWeeklyAdjustment() {
+  if (!selectedPackageId.value) return;
+  const validationMessage = validateWeeklyRows();
+  if (validationMessage) {
+    ElMessage.error(validationMessage);
+    return;
+  }
+
+  // 组装提交项：未删除且变化的已有课次 -> UPDATE；标记删除 -> DELETE；新增 -> CREATE
+  const items = weeklyRows.value
+    .map(row => buildWeeklyItem(row))
+    .filter((item): item is WeeklyScheduleAdjustmentItemPayload => item !== null);
+
+  if (items.length === 0) {
+    ElMessage.warning('No changes to save.');
+    return;
+  }
+
+  try {
+    await ElMessageBox.confirm(weeklyImpactMessage.value, 'This Week Adjustment Impact', {
+      confirmButtonText: 'Save This Week',
+      cancelButtonText: 'Cancel',
+      type: unitDelta.value === 0 ? 'info' : 'warning',
+      dangerouslyUseHTMLString: true,
+    });
+  } catch {
+    return;
+  }
+
+  submitting.value = true;
+  try {
+    await adjustWeeklySchedule({
+      packageId: selectedPackageId.value,
+      weekStartDate: currentNaturalWeekRange().start.format('YYYY-MM-DD'),
+      reason: weeklyReason.value || undefined,
+      items,
+    });
+    ElMessage.success('This week adjustment saved.');
+    weeklyDialogVisible.value = false;
+    await loadAllPackageRules();
+    // 刷新主日历，使本周新增 / 删除 / 调整立即反映出来。
+    if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to save this week adjustment.');
+  } finally {
+    submitting.value = false;
+  }
+}
+
+// 将一行映射为提交项，无需提交的行返回 null
+function buildWeeklyItem(row: WeeklyAdjustmentRow): WeeklyScheduleAdjustmentItemPayload | null {
+  // 标记删除的已有课次
+  if (row.rowType === 'EXISTING' && row.markedForDelete) {
+    return {
+      action: 'DELETE',
+      occurrenceId: row.occurrenceId,
+      itemReason: row.itemReason.trim(),
+    };
+  }
+  // 新增课次
+  if (row.rowType === 'NEW') {
+    return {
+      action: 'CREATE',
+      plannedStartAt: row.plannedStartAt,
+      plannedEndAt: row.plannedEndAt,
+      plannedUnits: Math.round(row.plannedHours * 2),
+      plannedTeacherId: normalizeOptionalId(row.plannedTeacherId),
+      plannedClassroomId: normalizeOptionalId(row.plannedClassroomId),
+      itemReason: row.itemReason.trim(),
+    };
+  }
+  // 已有课次：仅在发生变化时提交修改
+  if (!isWeeklyRowChanged(row)) return null;
+  return {
+    action: 'UPDATE',
+    occurrenceId: row.occurrenceId,
+    plannedStartAt: row.plannedStartAt,
+    plannedEndAt: row.plannedEndAt,
+    plannedUnits: Math.round(row.plannedHours * 2),
+    plannedTeacherId: normalizeOptionalId(row.plannedTeacherId),
+    plannedClassroomId: normalizeOptionalId(row.plannedClassroomId),
+  };
+}
+
+const weeklyImpactMessage = computed(() => {
+  // 增删改数量摘要
+  const summary = `Added ${addedCount.value}, modified ${modifiedCount.value}, removed ${removedCount.value} lesson(s).`;
+  let impact: string;
+  if (unitDelta.value > 0) {
+    impact = 'This week will use more package hours. The package balance may run out earlier and the estimated end date may move up.';
+  } else if (unitDelta.value < 0) {
+    impact = 'This week will use fewer package hours. The student may need makeup lessons and the estimated end date may be extended.';
+  } else {
+    impact = 'This week timing changes only. The recurring weekly schedule and package consumption pace stay unchanged.';
+  }
+  return `${summary}<br/><br/>${impact}`;
+});
+
+function currentNaturalWeekRange() {
+  // 自然周以周六为起点（周六、周日 + 之后五个工作日），与后端保持一致。
+  const today = dayjs().startOf('day');
+  const daysFromSaturday = (today.day() + 1) % 7;
+  const start = today.subtract(daysFromSaturday, 'day');
+  return { start, end: start.add(6, 'day') };
+}
+
+function canEditWeeklyOccurrence(occ: LessonOccurrenceItem): boolean {
+  return occ.planningStatus !== 'CANCELLED' && !occ.resultStatus;
+}
+
+function toWeeklyAdjustmentRow(occ: LessonOccurrenceItem): WeeklyAdjustmentRow {
+  return {
+    rowKey: `existing-${occ.id}`,
+    rowType: 'EXISTING',
+    occurrenceId: occ.id,
+    lessonNo: occ.lessonNo,
+    plannedStartAt: occ.plannedStartAt,
+    plannedEndAt: occ.plannedEndAt,
+    plannedHours: (occ.plannedUnits ?? 0) * 0.5,
+    plannedTeacherId: occ.plannedTeacherId,
+    plannedClassroomId: occ.plannedClassroomId,
+    markedForDelete: false,
+    itemReason: '',
+    original: occ,
+  };
+}
+
+// 本地自增计数，保证新增行 rowKey 唯一
+let newRowSeq = 0;
+
+// 新增一行本周课次。默认落在本周起点 09:00、1 小时；日历拖拽时传入具体起点与时长。
+function addWeeklyNewRow(startAt?: dayjs.Dayjs, hours = 1): WeeklyAdjustmentRow {
+  const base = startAt ?? currentNaturalWeekRange().start.hour(9).minute(0).second(0);
+  const row: WeeklyAdjustmentRow = {
+    rowKey: `new-${++newRowSeq}`,
+    rowType: 'NEW',
+    lessonNo: 'New lesson',
+    plannedStartAt: base.format('YYYY-MM-DDTHH:mm:ss'),
+    plannedEndAt: base.add(hours, 'hour').format('YYYY-MM-DDTHH:mm:ss'),
+    plannedHours: hours,
+    plannedTeacherId: currentRule.value?.primaryTeacherId,
+    plannedClassroomId: currentRule.value?.defaultClassroomId,
+    markedForDelete: false,
+    itemReason: '',
+  };
+  weeklyRows.value.push(row);
+  return row;
+}
+
+// 切换已有课次的删除标记
+function toggleWeeklyRowDelete(row: WeeklyAdjustmentRow) {
+  row.markedForDelete = !row.markedForDelete;
+}
+
+// 移除一行新增课次（直接从列表删除，不进入提交）
+function removeWeeklyNewRow(row: WeeklyAdjustmentRow) {
+  weeklyRows.value = weeklyRows.value.filter(item => item.rowKey !== row.rowKey);
+  if (selectedRowKey.value === row.rowKey) selectedRowKey.value = null;
+}
+
+function validateWeeklyRows(): string {
+  const { start, end } = currentNaturalWeekRange();
+  for (const row of weeklyRows.value) {
+    // 标记删除的已有课次无需校验时间（原因选填）
+    if (row.rowType === 'EXISTING' && row.markedForDelete) {
+      continue;
+    }
+    const startAt = dayjs(row.plannedStartAt);
+    const endAt = dayjs(row.plannedEndAt);
+    if (!startAt.isValid() || !endAt.isValid()) {
+      return 'Please provide valid start and end times.';
+    }
+    if (startAt.isBefore(start) || startAt.isAfter(end.endOf('day'))) {
+      return 'Adjusted lessons must stay in the current natural week.';
+    }
+    if (!endAt.isAfter(startAt)) {
+      return 'End time must be later than start time.';
+    }
+    if (Math.round(row.plannedHours * 2) < 1) {
+      return 'Lesson hours must be at least 0.5h.';
+    }
+    if (!isHalfHourIncrement(row.plannedHours)) {
+      return 'Lesson hours must be in 0.5h increments.';
+    }
+    const minutes = endAt.diff(startAt, 'minute');
+    if (minutes !== Math.round(row.plannedHours * 2) * 30) {
+      return 'Lesson duration must match the selected hours.';
+    }
+  }
+  return '';
+}
+
+function isWeeklyRowChanged(row: WeeklyAdjustmentRow): boolean {
+  // 新增行始终视为有变更
+  if (row.rowType === 'NEW') return true;
+  const original = row.original;
+  if (!original) return false;
+  return row.plannedStartAt !== original.plannedStartAt
+    || row.plannedEndAt !== original.plannedEndAt
+    || Math.round(row.plannedHours * 2) !== original.plannedUnits
+    || normalizeOptionalId(row.plannedTeacherId) !== normalizeOptionalId(original.plannedTeacherId)
+    || normalizeOptionalId(row.plannedClassroomId) !== normalizeOptionalId(original.plannedClassroomId);
+}
+
+function normalizeOptionalId(id?: EntityId): EntityId | undefined {
+  return id === '' || id == null ? undefined : id;
+}
+
+function formatUnitsAsHours(units: number): string {
+  return `${(units * 0.5).toFixed(1)}h`;
+}
+
+// 带正负号的课时差额展示
+function formatSignedUnitsAsHours(units: number): string {
+  const sign = units > 0 ? '+' : '';
+  return `${sign}${(units * 0.5).toFixed(1)}h`;
+}
+
+function formatDate(value?: string): string {
+  return value ? dayjs(value).format('MMM D') : '—';
 }
 
 // ─── Helpers ────────────────────────────────────
@@ -1031,6 +1862,342 @@ function disabledPastDate(date: Date) {
   color: #409eff;
   font-size: 12px;
   font-weight: 500;
+}
+
+/* This week adjustment */
+.weekly-adjustment {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.weekly-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.weekly-summary__item {
+  padding: 10px 12px;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #fafbfc;
+}
+
+.weekly-summary__item span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #909399;
+}
+
+.weekly-summary__help {
+  font-size: 13px;
+  color: #c0c4cc;
+  cursor: help;
+}
+
+.weekly-summary__item strong {
+  font-size: 18px;
+  color: #303133;
+}
+
+.weekly-summary__item--changed {
+  border-color: #e6a23c;
+  background: #fdf6ec;
+}
+
+/* ── Weekly calendar (Sat→Fri) ─────────────────── */
+.weekly-cal__hint {
+  font-size: 12px;
+  color: #909399;
+}
+
+.weekly-cal {
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* 表头：左侧时间刻度占位 + 7 天 */
+.weekly-cal__head {
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  background: #f5f7fa;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.weekly-cal__corner {
+  border-right: 1px solid #e8edf2;
+}
+
+.weekly-cal__day {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 6px 0;
+  border-right: 1px solid #eef1f5;
+}
+
+.weekly-cal__day:last-child {
+  border-right: none;
+}
+
+.weekly-cal__day--today {
+  background: #ecf5ff;
+}
+
+.weekly-cal__day-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #606266;
+}
+
+.weekly-cal__day-date {
+  font-size: 11px;
+  color: #909399;
+}
+
+.weekly-cal__body {
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+/* 时间刻度列 */
+.weekly-cal__times {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #e8edf2;
+}
+
+.weekly-cal__time {
+  height: 28px;
+  font-size: 11px;
+  color: #909399;
+  text-align: right;
+  padding-right: 6px;
+  transform: translateY(-6px);
+}
+
+/* 单日列：相对定位作为课次块的定位上下文 */
+.weekly-cal__col {
+  position: relative;
+  border-right: 1px solid #eef1f5;
+}
+
+.weekly-cal__col:last-child {
+  border-right: none;
+}
+
+.weekly-cal__cell {
+  height: 28px;
+  border-bottom: 1px solid #f5f7fa;
+  cursor: pointer;
+}
+
+.weekly-cal__cell--preview {
+  background: #d9ecff;
+}
+
+/* 其他课占用块：只读，灰色斜纹底，置于课次块下层 */
+.weekly-cal__busy {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  overflow: hidden;
+  background: repeating-linear-gradient(
+    45deg,
+    #f0f2f5,
+    #f0f2f5 6px,
+    #e6e9ee 6px,
+    #e6e9ee 12px
+  );
+  border: 1px dashed #c0c4cc;
+  color: #909399;
+  cursor: not-allowed;
+  z-index: 1;
+}
+
+.weekly-cal__busy-label {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 课次块：在所属列内绝对定位 */
+.weekly-cal__event {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  overflow: hidden;
+  cursor: pointer;
+  background: #ecf5ff;
+  border: 1px solid #409eff;
+  color: #303133;
+}
+
+.weekly-cal__event-time {
+  display: block;
+  font-weight: 600;
+}
+
+.weekly-cal__event-meta {
+  display: block;
+  color: #606266;
+}
+
+/* 新增=绿色 */
+.weekly-cal__event--new {
+  background: #f0f9eb;
+  border-color: #67c23a;
+}
+
+/* 修改=橙色 */
+.weekly-cal__event--modified {
+  background: #fdf6ec;
+  border-color: #e6a23c;
+}
+
+/* 删除=划线置灰 */
+.weekly-cal__event--deleted {
+  background: #f4f4f5;
+  border-color: #c0c4cc;
+  opacity: 0.7;
+}
+
+.weekly-cal__event--deleted .weekly-cal__event-time {
+  text-decoration: line-through;
+}
+
+/* 选中=高亮加粗边框 */
+.weekly-cal__event--active {
+  box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.5);
+  z-index: 2;
+}
+
+/* ── Weekly lessons list ─────────────────── */
+.weekly-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.weekly-list__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid #eef1f5;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.weekly-list__item:first-child {
+  border-top: none;
+}
+
+.weekly-list__item:hover {
+  background: #f5f7fa;
+}
+
+.weekly-list__when {
+  font-weight: 600;
+  color: #303133;
+  min-width: 150px;
+}
+
+.weekly-list__meta {
+  flex: 1;
+  color: #606266;
+}
+
+/* 选中=高亮 */
+.weekly-list__item--active {
+  background: #ecf5ff;
+}
+
+/* 删除=划线置灰 */
+.weekly-list__item--deleted .weekly-list__when {
+  text-decoration: line-through;
+  color: #909399;
+}
+
+/* ── Weekly editor panel ─────────────────── */
+.weekly-editor {
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: #fafbfc;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.weekly-editor--deleted {
+  background: #fef0f0;
+}
+
+.weekly-editor__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: #303133;
+}
+
+.weekly-editor__grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+.weekly-editor__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.weekly-editor__field label {
+  font-size: 12px;
+  color: #909399;
+}
+
+.weekly-editor__hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.weekly-editor__field :deep(.el-select),
+.weekly-editor__field :deep(.el-input-number),
+.weekly-editor__field :deep(.el-date-editor) {
+  width: 100%;
+}
+
+.weekly-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.weekly-reason {
+  margin-top: 4px;
 }
 
 /* ── Dialog ─────────────────────────────────── */

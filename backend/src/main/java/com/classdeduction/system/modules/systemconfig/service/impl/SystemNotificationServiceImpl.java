@@ -916,7 +916,9 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     private NotificationTriggerRuleVO toTriggerRuleVO(NotificationTriggerRuleEntity entity) {
         String triggerName = switch (entity.getTriggerType()) {
             case "LESSON_CONFIRMED" -> "Lesson Confirmed";
-            case "LOW_BALANCE" -> "Low Balance Warning";
+            case "LOW_BALANCE_HOUR" -> "Low Balance (Hours)";
+            case "LOW_BALANCE_SESSION" -> "Low Balance (Sessions)";
+            case "LOW_BALANCE_MONTH" -> "Low Balance (Months)";
             default -> entity.getTriggerType();
         };
         NotificationTemplateEntity template = entity.getTemplateId() != null

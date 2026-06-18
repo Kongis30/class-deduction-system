@@ -1,7 +1,7 @@
 <template>
   <aside class="sidebar" :class="{ 'sidebar--collapsed': appStore.sidebarCollapsed }">
     <div class="sidebar__brand">
-      <img v-if="!appStore.sidebarCollapsed" src="/logo.jpg" alt="logo" class="sidebar__logo-img" />
+      <img v-if="!appStore.sidebarCollapsed" :src="logoUrl" alt="logo" class="sidebar__logo-img" />
       <div v-else class="sidebar__logo sidebar__logo--collapsed">J</div>
       <div v-if="!appStore.sidebarCollapsed" class="sidebar__brand-copy">
         <strong>{{ APP_SHORT_NAME }}</strong>
@@ -56,6 +56,7 @@ import { getMenusForUser } from '@/utils/menu';
 const appStore = useAppStore();
 const route = useRoute();
 const authStore = useAuthStore();
+const logoUrl = `${import.meta.env.BASE_URL}logo.jpg`;
 
 const resolvedMenus = computed(() => getMenusForUser(authStore.currentUser));
 

@@ -92,6 +92,7 @@ class PaymentRecordServiceImplTest {
             request.setHandledByName("Admin");
 
             when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
             when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(i -> {
                 PaymentRecordEntity entity = i.getArgument(0);
                 entity.setId(1L);
@@ -128,6 +129,7 @@ class PaymentRecordServiceImplTest {
             request.setHandledByName("Admin");
 
             when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
             when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(i -> {
                 PaymentRecordEntity entity = i.getArgument(0);
                 entity.setId(1L);
@@ -143,6 +145,38 @@ class PaymentRecordServiceImplTest {
             EnrollmentOrderEntity updatedOrder = orderCaptor.getValue();
             assertThat(updatedOrder.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("1200.00")); // 1000 + 200
             assertThat(updatedOrder.getPaymentStatus()).isEqualTo("PARTIAL");
+        }
+
+        @Test
+        @DisplayName("Should reject payment on a cancelled order")
+        void shouldRejectPaymentOnCancelledOrder() {
+            testOrder.setOrderStatus("CANCELLED");
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("100.00"))));
+            request.setHandledByName("Admin");
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+
+            assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Cannot collect payment on a cancelled order.");
+            verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+        }
+
+        @Test
+        @DisplayName("Should reject payment on a refunded order")
+        void shouldRejectPaymentOnRefundedOrder() {
+            testOrder.setPaymentStatus("REFUNDED");
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("100.00"))));
+            request.setHandledByName("Admin");
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+
+            assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Cannot collect payment on a refunded order.");
+            verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
         }
 
         @Test

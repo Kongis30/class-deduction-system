@@ -11,6 +11,7 @@ import lombok.Setter;
 import lombok.ToString;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 /**
  * Course product entity defining default units and pricing templates.
@@ -38,7 +39,20 @@ public class CourseProductEntity extends BaseEntity {
 
     private Integer defaultLessonUnits;
 
-    private Integer expiryDurationDays;
+    /** GROUP 计费类型：PER_SESSION（课次收费）/ MONTHLY（月收费）。 */
+    private String billingType;
+
+    /** PER_SESSION：起始日期。 */
+    private LocalDate startDate;
+
+    /** PER_SESSION：总课次。 */
+    private Integer totalSessions;
+
+    /** MONTHLY：起始月份（存当月 1 号）。 */
+    private LocalDate startMonth;
+
+    /** MONTHLY：结束月份（存当月 1 号）。 */
+    private LocalDate endMonth;
 
     private Long defaultClassroomId;
 

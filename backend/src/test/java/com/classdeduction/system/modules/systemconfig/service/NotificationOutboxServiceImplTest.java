@@ -28,6 +28,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -83,6 +84,78 @@ class NotificationOutboxServiceImplTest {
         assertThat(logCaptor.getValue().getSendStatus()).isEqualTo("PENDING");
         assertThat(logCaptor.getValue().getRequestPayload()).contains("Olivia Lin");
         assertThat(logCaptor.getValue().getRequestPayload()).contains("JIN BEST TUTORING");
+    }
+
+    @Test
+    void shouldQueueLowBalanceHourEmailWhenEnabled() {
+        when(notificationTriggerRuleMapper.selectOne(any())).thenReturn(buildLowBalanceRule("LOW_BALANCE_HOUR"));
+        when(notificationTemplateMapper.selectOne(any())).thenReturn(buildTemplate());
+        when(brandConfigMapper.selectOne(any())).thenReturn(buildBrandConfig());
+        when(studentMapper.selectById(601L)).thenReturn(buildStudentWithGuardianEmail());
+
+        notificationOutboxService.queueLowBalanceWarning(buildCoursePackage(), buildStudent());
+
+        verify(notificationLogMapper).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().getSendStatus()).isEqualTo("PENDING");
+        assertThat(logCaptor.getValue().getPackageId()).isEqualTo(501L);
+        assertThat(logCaptor.getValue().getStudentId()).isEqualTo(601L);
+    }
+
+    @Test
+    void shouldQueueLowBalanceSessionEmailWhenEnabled() {
+        when(notificationTriggerRuleMapper.selectOne(any())).thenReturn(buildLowBalanceRule("LOW_BALANCE_SESSION"));
+        when(notificationTemplateMapper.selectOne(any())).thenReturn(buildTemplate());
+        when(brandConfigMapper.selectOne(any())).thenReturn(buildBrandConfig());
+        when(studentMapper.selectById(601L)).thenReturn(buildStudentWithGuardianEmail());
+
+        notificationOutboxService.queueLowBalanceSessionWarning(601L, 800L, "SHSAT Group A", 1);
+
+        verify(notificationLogMapper).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().getSendStatus()).isEqualTo("PENDING");
+        assertThat(logCaptor.getValue().getStudentId()).isEqualTo(601L);
+        assertThat(logCaptor.getValue().getPackageId()).isNull();
+        assertThat(logCaptor.getValue().getRequestPayload()).contains("remainingSessions");
+    }
+
+    @Test
+    void shouldQueueLowBalanceMonthEmailWhenEnabled() {
+        when(notificationTriggerRuleMapper.selectOne(any())).thenReturn(buildLowBalanceRule("LOW_BALANCE_MONTH"));
+        when(notificationTemplateMapper.selectOne(any())).thenReturn(buildTemplate());
+        when(brandConfigMapper.selectOne(any())).thenReturn(buildBrandConfig());
+        when(studentMapper.selectById(601L)).thenReturn(buildStudentWithGuardianEmail());
+
+        notificationOutboxService.queueLowBalanceMonthWarning(601L, 800L, "SHSAT Group A", 1,
+                LocalDate.of(2026, 7, 31));
+
+        verify(notificationLogMapper).insert(logCaptor.capture());
+        assertThat(logCaptor.getValue().getSendStatus()).isEqualTo("PENDING");
+        assertThat(logCaptor.getValue().getStudentId()).isEqualTo(601L);
+        assertThat(logCaptor.getValue().getRequestPayload()).contains("remainingMonths");
+        assertThat(logCaptor.getValue().getRequestPayload()).contains("2026-07-31");
+    }
+
+    @Test
+    void shouldSkipLowBalanceWhenRecentlyNotified() {
+        when(notificationTriggerRuleMapper.selectOne(any())).thenReturn(buildLowBalanceRule("LOW_BALANCE_HOUR"));
+        when(notificationTemplateMapper.selectOne(any())).thenReturn(buildTemplate());
+        when(brandConfigMapper.selectOne(any())).thenReturn(buildBrandConfig());
+        when(studentMapper.selectById(601L)).thenReturn(buildStudentWithGuardianEmail());
+        // 模拟去重命中：近期已存在同维度未失效日志
+        when(notificationLogMapper.selectCount(any())).thenReturn(1L);
+
+        notificationOutboxService.queueLowBalanceWarning(buildCoursePackage(), buildStudent());
+
+        verify(notificationLogMapper, never()).insert(any(NotificationLogEntity.class));
+    }
+
+    private NotificationTriggerRuleEntity buildLowBalanceRule(String triggerType) {
+        NotificationTriggerRuleEntity entity = new NotificationTriggerRuleEntity();
+        entity.setId(70002L);
+        entity.setTriggerType(triggerType);
+        entity.setEnabled(1);
+        entity.setRecipientType("GUARDIAN_EMAIL");
+        entity.setThresholdValue(4);
+        return entity;
     }
 
     private NotificationTriggerRuleEntity buildEnabledLessonConfirmedRule() {

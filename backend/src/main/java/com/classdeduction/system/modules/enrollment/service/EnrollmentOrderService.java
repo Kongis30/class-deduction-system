@@ -5,6 +5,7 @@ import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateReq
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
+import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO;
@@ -37,12 +38,22 @@ public interface EnrollmentOrderService {
     void cancelOrder(Long id);
 
     /**
+     * 全额退款：退课 + 记录退款流水 + 订单状态置为 REFUNDED。
+     */
+    void refundOrder(Long id, RefundRequest request);
+
+    /**
      * 创建班课报名订单。
      */
     void createClassEnrollmentOrder(ClassEnrollmentCreateRequest request);
 
     /**
-     * 删除报名订单（软删除）。
+     * 删除误创建且未付款、未上课的报名订单（软删除）。
      */
     void deleteOrder(Long id);
+
+    /**
+     * 滚动续期：为所有 ACTIVE 班级按产品完整周期补足共享课次，幂等去重。返回新增课次数。
+     */
+    int renewActiveClassOccurrences();
 }

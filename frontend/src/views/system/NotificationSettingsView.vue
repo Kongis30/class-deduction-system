@@ -8,51 +8,90 @@
             <span class="panel__hint">Turn notification events on or off and configure the email template used for each event.</span>
           </div>
 
-          <el-table v-loading="eventsLoading" :data="eventRows" row-key="id" class="data-table">
-            <el-table-column label="Event" min-width="220">
-              <template #default="{ row }">
-                <div class="event-cell">
-                  <div class="event-cell__title">{{ row.eventName }}</div>
-                  <div class="event-cell__desc">{{ row.description }}</div>
+          <!-- Low Balance 大类：可折叠分组，展开后是三个可独立配置的子事件 -->
+          <div class="event-group">
+            <div class="event-group__header" @click="lowBalanceExpanded = !lowBalanceExpanded">
+              <div class="event-group__title-wrap">
+                <el-icon class="event-group__arrow" :class="{ 'is-expanded': lowBalanceExpanded }"><ArrowRight /></el-icon>
+                <div>
+                  <div class="event-group__title">Low Balance</div>
+                  <div class="event-group__desc">
+                    Renewal reminders triggered when a student's remaining balance runs low. Each billing scenario is configured independently.
+                  </div>
                 </div>
-              </template>
-            </el-table-column>
+              </div>
+              <el-tag size="small" type="info">{{ lowBalanceRows.length }} events</el-tag>
+            </div>
 
-            <el-table-column label="Template" min-width="200">
-              <template #default="{ row }">
-                <div class="event-template-cell">
-                  <div>{{ row.templateName }}</div>
-                  <div class="event-template-cell__hint">{{ row.templateHint }}</div>
-                </div>
-              </template>
-            </el-table-column>
+            <el-collapse-transition>
+              <div v-show="lowBalanceExpanded" class="event-group__body">
+                <el-table v-loading="eventsLoading" :data="lowBalanceRows" row-key="key" class="data-table">
+                  <el-table-column label="Event" min-width="240">
+                    <template #default="{ row }">
+                      <div class="event-cell">
+                        <div class="event-cell__title">{{ row.eventName }}</div>
+                        <div class="event-cell__desc">{{ row.scene }}</div>
+                      </div>
+                    </template>
+                  </el-table-column>
 
-            <el-table-column label="Status" min-width="140" align="center">
-              <template #default="{ row }">
-                <div class="event-status-cell">
-                  <el-switch
-                    :model-value="row.enabled"
-                    :loading="eventToggleLoading"
-                    @change="(val: boolean) => handleLowBalanceToggle(val)"
-                  />
-                  <el-tag size="small" :type="row.enabled ? 'success' : 'info'">
-                    {{ row.enabled ? 'Enabled' : 'Disabled' }}
-                  </el-tag>
-                </div>
-              </template>
-            </el-table-column>
+                  <el-table-column label="Template" min-width="180">
+                    <template #default="{ row }">
+                      <div class="event-template-cell">
+                        <div>{{ row.templateName }}</div>
+                        <div class="event-template-cell__hint">{{ row.templateHint }}</div>
+                      </div>
+                    </template>
+                  </el-table-column>
 
-            <el-table-column label="Actions" min-width="180" align="right">
-              <template #default>
-                <el-button type="primary" plain @click="openLowBalanceTemplateDialog">Set Email Template</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+                  <el-table-column label="Threshold" min-width="220">
+                    <template #default="{ row }">
+                      <div class="threshold-cell">
+                        <!-- 默认只读展示，避免误触；点击编辑图标后弹窗设置 -->
+                        <div class="threshold-cell__display">
+                          <span class="threshold-cell__value">{{ thresholdInputs[row.triggerType] }} {{ row.unit }}</span>
+                          <el-button
+                            class="threshold-cell__edit-btn"
+                            link
+                            type="primary"
+                            :icon="EditPen"
+                            @click="openThresholdDialog(row)"
+                          />
+                        </div>
+                        <div class="threshold-cell__hint">{{ row.thresholdHint }}</div>
+                      </div>
+                    </template>
+                  </el-table-column>
 
-          <el-empty
-            v-if="!eventsLoading && eventRows.length === 0"
-            description="No notification events are available right now."
-          />
+                  <el-table-column label="Status" min-width="140" align="center">
+                    <template #default="{ row }">
+                      <div class="event-status-cell">
+                        <el-switch
+                          :model-value="row.enabled"
+                          :loading="togglingType === row.triggerType"
+                          @change="(val: boolean) => handleToggle(row, val)"
+                        />
+                        <el-tag size="small" :type="row.enabled ? 'success' : 'info'">
+                          {{ row.enabled ? 'Enabled' : 'Disabled' }}
+                        </el-tag>
+                      </div>
+                    </template>
+                  </el-table-column>
+
+                  <el-table-column label="Actions" min-width="170" align="right">
+                    <template #default="{ row }">
+                      <el-button type="primary" plain @click="openTemplateDialog(row)">Set Email Template</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+
+                <el-empty
+                  v-if="!eventsLoading && lowBalanceRows.length === 0"
+                  description="No low balance events are available right now."
+                />
+              </div>
+            </el-collapse-transition>
+          </div>
         </div>
       </el-tab-pane>
 
@@ -205,13 +244,36 @@
       </el-tab-pane>
     </el-tabs>
 
+    <!-- 阈值设置弹窗：避免行内编辑在窄屏下显示不全 -->
+    <el-dialog v-model="thresholdDialogVisible" width="420px" :close-on-click-modal="false" class="edit-dialog">
+      <template #header><h3>{{ thresholdDialogLabel }} Threshold</h3></template>
+      <div class="threshold-dialog">
+        <div class="threshold-dialog__input">
+          <el-input-number
+            v-model="thresholdDialogValue"
+            :min="thresholdDialogDef?.min ?? 0"
+            :step="thresholdDialogDef?.step ?? 1"
+            :precision="thresholdDialogDef?.precision ?? 0"
+            controls-position="right"
+            style="width: 180px"
+          />
+          <span class="threshold-dialog__unit">{{ thresholdDialogDef?.unit }}</span>
+        </div>
+        <div class="threshold-dialog__hint">{{ thresholdDialogDef?.thresholdHint }}</div>
+      </div>
+      <template #footer>
+        <el-button @click="thresholdDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="savingThresholdType === thresholdDialogType" @click="handleThresholdSave">Save</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="templateDialogVisible" width="720px" :close-on-click-modal="false" class="edit-dialog">
-      <template #header><h3>Low Balance Renewal Reminder Template</h3></template>
+      <template #header><h3>{{ editingEventLabel }} Template</h3></template>
 
       <div class="template-dialog__intro">
         <div class="template-dialog__intro-title">Insert placeholders by clicking</div>
         <div class="template-dialog__intro-text">
-          Use the buttons below to insert student name, course name, remaining hours and other placeholders into the email subject or body.
+          Use the buttons below to insert student name, course name, remaining balance and other placeholders into the email subject or body.
         </div>
       </div>
 
@@ -227,7 +289,7 @@
           <div class="placeholder-panel__title">Click to insert into subject</div>
           <div class="placeholder-panel__list">
             <el-button
-              v-for="placeholder in lowBalancePlaceholders"
+              v-for="placeholder in activePlaceholders"
               :key="`subject-${placeholder.token}`"
               size="small"
               @click="insertPlaceholder('subjectTemplate', placeholder.token)"
@@ -250,7 +312,7 @@
           <div class="placeholder-panel__title">Click to insert into body</div>
           <div class="placeholder-panel__list">
             <el-button
-              v-for="placeholder in lowBalancePlaceholders"
+              v-for="placeholder in activePlaceholders"
               :key="`body-${placeholder.token}`"
               size="small"
               @click="insertPlaceholder('bodyTemplate', placeholder.token)"
@@ -259,7 +321,7 @@
             </el-button>
           </div>
           <div class="placeholder-panel__descriptions">
-            <div v-for="placeholder in lowBalancePlaceholders" :key="placeholder.token" class="placeholder-panel__description-item">
+            <div v-for="placeholder in activePlaceholders" :key="placeholder.token" class="placeholder-panel__description-item">
               <span class="placeholder-panel__description-label">{{ placeholder.label }}</span>
               <span class="placeholder-panel__description-text">{{ placeholder.description }}</span>
             </div>
@@ -308,6 +370,7 @@
 </template>
 
 <script setup lang="ts">
+import { ArrowRight, EditPen } from '@element-plus/icons-vue';
 import { ElMessage, type InputInstance } from 'element-plus';
 import { computed, nextTick, reactive, ref } from 'vue';
 
@@ -322,77 +385,156 @@ import {
 } from '@/api/system';
 import type { EntityId, NotificationConfigItem, NotificationTemplateItem, NotificationTriggerRuleItem } from '@/types/domain';
 
-const LOW_BALANCE_TRIGGER = 'LOW_BALANCE';
-
 const activeTab = ref('events');
 
-const lowBalancePlaceholders = [
-  { label: 'Student Name', token: '${studentName}', description: 'The student name tied to the low-balance package.' },
-  { label: 'Course Name', token: '${packageName}', description: 'The package or course name that needs renewal.' },
-  { label: 'Remaining Hours', token: '${remainingHours}', description: 'The current remaining lesson hours.' },
-  { label: 'Estimated End Date', token: '${estimatedEndDate}', description: 'The estimated package completion date.' },
-  { label: 'Brand Name', token: '${brandName}', description: 'Your configured school or brand name.' },
+// 占位符定义：用于模板对话框按事件类型展示可插入的占位符
+interface PlaceholderItem {
+  label: string;
+  token: string;
+  description: string;
+  preview: string;
+}
+
+// 通用占位符（三个子事件共享）
+const COMMON_PLACEHOLDERS: PlaceholderItem[] = [
+  { label: 'Student Name', token: '${studentName}', description: 'The student name tied to the low-balance package.', preview: 'Jack' },
+  { label: 'Course Name', token: '${packageName}', description: 'The package or course name that needs renewal.', preview: 'SHSAT lesson' },
+  { label: 'Estimated End Date', token: '${estimatedEndDate}', description: 'The estimated package completion date.', preview: '2026-07-15' },
+  { label: 'Brand Name', token: '${brandName}', description: 'Your configured school or brand name.', preview: 'JIN BEST TUTORING' },
 ];
 
-const previewPlaceholderMap: Record<string, string> = {
-  '${studentName}': 'Jack',
-  '${packageName}': 'SHSAT lesson',
-  '${remainingHours}': '2.0',
-  '${estimatedEndDate}': '2026-07-15',
-  '${brandName}': 'JIN BEST TUTORING',
-};
+// Low Balance 大类下三个子事件的配置，driven 渲染避免重复代码
+interface LowBalanceEventDef {
+  triggerType: string;
+  label: string; // 友好事件名
+  scene: string; // 计费场景说明
+  unit: string; // 阈值单位展示文案
+  thresholdHint: string; // 阈值输入提示
+  min: number;
+  step: number;
+  precision: number;
+  // 阈值在 UI 与后端 thresholdValue 之间的换算
+  toDisplay: (raw: number | null) => number;
+  toRaw: (display: number) => number;
+  placeholders: PlaceholderItem[];
+}
 
-const previewPlaceholderEntries = lowBalancePlaceholders.map((item) => ({
-  ...item,
-  value: previewPlaceholderMap[item.token] ?? item.token,
-}));
+const LOW_BALANCE_EVENTS: LowBalanceEventDef[] = [
+  {
+    triggerType: 'LOW_BALANCE_HOUR',
+    label: 'Low Balance (Hours)',
+    scene: '1 on 1 lessons billed by hours',
+    unit: 'hours',
+    thresholdHint: 'Notify when remaining hours ≤ this value',
+    min: 0.5,
+    step: 0.5,
+    precision: 1,
+    // 后端单位为 0.5h units：显示 = units × 0.5，回传 = hours × 2（取整）
+    toDisplay: (raw) => (raw == null ? 0 : raw * 0.5),
+    toRaw: (display) => Math.round(display * 2),
+    placeholders: [
+      ...COMMON_PLACEHOLDERS,
+      { label: 'Remaining Hours', token: '${remainingHours}', description: 'The current remaining lesson hours.', preview: '2.0' },
+    ],
+  },
+  {
+    triggerType: 'LOW_BALANCE_SESSION',
+    label: 'Low Balance (Sessions)',
+    scene: 'Group class billed by sessions',
+    unit: 'sessions',
+    thresholdHint: 'Notify when remaining sessions ≤ this value',
+    min: 1,
+    step: 1,
+    precision: 0,
+    toDisplay: (raw) => (raw == null ? 0 : raw),
+    toRaw: (display) => Math.round(display),
+    placeholders: [
+      ...COMMON_PLACEHOLDERS,
+      { label: 'Remaining Sessions', token: '${remainingSessions}', description: 'The current remaining lesson sessions.', preview: '3' },
+    ],
+  },
+  {
+    triggerType: 'LOW_BALANCE_MONTH',
+    label: 'Low Balance (Months)',
+    scene: 'Group class billed by months',
+    unit: 'months',
+    thresholdHint: 'Notify when remaining months ≤ this value',
+    min: 1,
+    step: 1,
+    precision: 0,
+    toDisplay: (raw) => (raw == null ? 0 : raw),
+    toRaw: (display) => Math.round(display),
+    placeholders: [
+      ...COMMON_PLACEHOLDERS,
+      { label: 'Remaining Months', token: '${remainingMonths}', description: 'The current remaining membership months.', preview: '1' },
+      { label: 'Expiry Month', token: '${expiryMonth}', description: 'The month when the package expires.', preview: '2026-07' },
+    ],
+  },
+];
+
+const lowBalanceExpanded = ref(true);
 
 const eventsLoading = ref(false);
-const eventToggleLoading = ref(false);
+const togglingType = ref<string | null>(null);
+const savingThresholdType = ref<string | null>(null);
+// 阈值设置弹窗状态：默认只读展示，点击编辑图标后在弹窗内修改保存，避免误触与窄屏显示不全
+const thresholdDialogVisible = ref(false);
+const thresholdDialogType = ref<string | null>(null);
+const thresholdDialogValue = ref<number>(0);
 const triggerRules = ref<NotificationTriggerRuleItem[]>([]);
 const notificationTemplates = ref<NotificationTemplateItem[]>([]);
 
-const lowBalanceRule = computed(() =>
-  triggerRules.value.find((rule) => rule.triggerType === LOW_BALANCE_TRIGGER) ?? null,
-);
+// 各子事件阈值输入框的当前值（以友好单位展示），按 triggerType 索引
+const thresholdInputs = reactive<Record<string, number>>({});
 
-const lowBalanceTemplate = computed(() => {
-  const rule = lowBalanceRule.value;
+// 按 triggerType 找到对应的后端规则
+function findRule(triggerType: string): NotificationTriggerRuleItem | null {
+  return triggerRules.value.find((rule) => rule.triggerType === triggerType) ?? null;
+}
+
+// 找到某条规则关联的模板（优先 templateId，其次按名称兜底）
+function resolveTemplate(rule: NotificationTriggerRuleItem | null): NotificationTemplateItem | null {
   if (rule?.templateId != null) {
     const assigned = notificationTemplates.value.find((template) => String(template.id) === String(rule.templateId));
     if (assigned) {
       return assigned;
     }
   }
+  return null;
+}
 
-  return notificationTemplates.value.find((template) =>
-    template.templateCode === 'LOW_BALANCE_DEFAULT'
-    || template.templateCode.includes('LOW_BALANCE')
-    || template.templateName.toLowerCase().includes('low balance'),
-  ) ?? null;
-});
-
-const eventRows = computed(() => {
-  const rule = lowBalanceRule.value;
-  if (!rule) {
-    return [];
-  }
-  return [
-    {
-      id: rule.id,
-      eventName: 'Low Balance Renewal Reminder',
-      description: 'Send an email reminder when a student package balance becomes low and renewal follow-up is needed.',
+// computed 行数据：把三种 triggerType 的规则组合成可渲染的子事件行
+const lowBalanceRows = computed(() =>
+  LOW_BALANCE_EVENTS.flatMap((def) => {
+    const rule = findRule(def.triggerType);
+    // 后端未返回该规则时不渲染该子行，避免报错
+    if (!rule) {
+      return [];
+    }
+    const template = resolveTemplate(rule);
+    return [{
+      key: def.triggerType,
+      triggerType: def.triggerType,
+      ruleId: rule.id,
+      eventName: def.label,
+      scene: def.scene,
       enabled: rule.enabled,
-      templateName: lowBalanceTemplate.value?.templateName ?? 'No template selected',
-      templateHint: lowBalanceTemplate.value?.subjectTemplate ?? 'Open template settings to choose and edit the email content.',
-    },
-  ];
-});
+      unit: def.unit,
+      min: def.min,
+      step: def.step,
+      precision: def.precision,
+      thresholdHint: def.thresholdHint,
+      templateName: template?.templateName ?? rule.templateName ?? 'No template selected',
+      templateHint: template?.subjectTemplate ?? 'Open template settings to choose and edit the email content.',
+    }];
+  }),
+);
 
 const templateDialogVisible = ref(false);
 const templateSaving = ref(false);
 const templateFormRef = ref();
 const editingTemplateId = ref<EntityId | null>(null);
+const editingTriggerType = ref<string | null>(null);
 const subjectInputRef = ref<InputInstance>();
 const bodyInputRef = ref<InputInstance>();
 const templateForm = reactive({
@@ -401,6 +543,29 @@ const templateForm = reactive({
   bodyTemplate: '',
   status: 'ACTIVE',
 });
+
+// 当前编辑事件的定义、标题与占位符集合
+const editingEventDef = computed(() =>
+  LOW_BALANCE_EVENTS.find((def) => def.triggerType === editingTriggerType.value) ?? null,
+);
+const editingEventLabel = computed(() => editingEventDef.value?.label ?? 'Low Balance');
+const activePlaceholders = computed(() => editingEventDef.value?.placeholders ?? COMMON_PLACEHOLDERS);
+
+// 预览样例值 map：取自当前事件占位符的 preview
+const previewPlaceholderMap = computed<Record<string, string>>(() => {
+  const map: Record<string, string> = {};
+  for (const placeholder of activePlaceholders.value) {
+    map[placeholder.token] = placeholder.preview;
+  }
+  return map;
+});
+
+const previewPlaceholderEntries = computed(() =>
+  activePlaceholders.value.map((item) => ({
+    ...item,
+    value: previewPlaceholderMap.value[item.token] ?? item.token,
+  })),
+);
 
 const previewSubject = computed(() => renderPreviewTemplate(templateForm.subjectTemplate));
 const previewBody = computed(() => renderPreviewTemplate(templateForm.bodyTemplate));
@@ -434,6 +599,8 @@ async function loadEventData() {
     ]);
     triggerRules.value = rulesRes.data.data;
     notificationTemplates.value = templatesRes.data.data.records;
+    // 同步各子事件阈值输入框（以友好单位展示）
+    syncThresholdInputs();
   } catch {
     ElMessage.error('Failed to load notification events.');
   } finally {
@@ -441,40 +608,104 @@ async function loadEventData() {
   }
 }
 
-function buildLowBalanceRulePayload(rule: NotificationTriggerRuleItem, overrides: Partial<Record<'enabled' | 'templateId', unknown>> = {}) {
+// 把后端阈值换算为友好单位填入各输入框
+function syncThresholdInputs() {
+  for (const def of LOW_BALANCE_EVENTS) {
+    const rule = findRule(def.triggerType);
+    thresholdInputs[def.triggerType] = def.toDisplay(rule?.thresholdValue ?? null);
+  }
+}
+
+// 泛化的 payload 构造：对任意一条 rule 工作，可覆盖 enabled/templateId/thresholdValue
+function buildRulePayload(
+  rule: NotificationTriggerRuleItem,
+  overrides: Partial<Record<'enabled' | 'templateId' | 'thresholdValue', unknown>> = {},
+) {
   return {
     enabled: (overrides.enabled as boolean | undefined) ?? rule.enabled,
-    templateId: (overrides.templateId as EntityId | null | undefined) ?? rule.templateId ?? lowBalanceTemplate.value?.id ?? null,
+    templateId: (overrides.templateId as EntityId | null | undefined) ?? rule.templateId ?? null,
     recipientType: rule.recipientType ?? 'GUARDIAN_EMAIL',
     customRecipients: rule.customRecipients ?? '',
-    thresholdValue: rule.thresholdValue ?? null,
+    thresholdValue: (overrides.thresholdValue as number | null | undefined) ?? rule.thresholdValue ?? null,
     remark: rule.remark ?? '',
   };
 }
 
-async function handleLowBalanceToggle(enabled: boolean) {
-  if (!lowBalanceRule.value) {
-    ElMessage.error('Low balance event is not configured yet.');
+// 独立开关：仅修改对应规则的 enabled
+async function handleToggle(row: { triggerType: string; ruleId: EntityId }, enabled: boolean) {
+  const rule = findRule(row.triggerType);
+  if (!rule) {
+    ElMessage.error('This event is not configured yet.');
     return;
   }
-  eventToggleLoading.value = true;
+  togglingType.value = row.triggerType;
   try {
-    await updateNotificationTriggerRule(lowBalanceRule.value.id, buildLowBalanceRulePayload(lowBalanceRule.value, { enabled }));
-    lowBalanceRule.value.enabled = enabled;
+    await updateNotificationTriggerRule(rule.id, buildRulePayload(rule, { enabled }));
+    rule.enabled = enabled;
     ElMessage.success(enabled ? 'Event enabled.' : 'Event disabled.');
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Update failed.');
   } finally {
-    eventToggleLoading.value = false;
+    togglingType.value = null;
   }
 }
 
-function openLowBalanceTemplateDialog() {
-  const template = lowBalanceTemplate.value;
-  if (!template) {
-    ElMessage.error('No low balance reminder template was found. Please initialize a default template first.');
+// 当前阈值弹窗对应的事件定义与标题
+const thresholdDialogDef = computed(() =>
+  LOW_BALANCE_EVENTS.find((item) => item.triggerType === thresholdDialogType.value) ?? null,
+);
+const thresholdDialogLabel = computed(() => thresholdDialogDef.value?.label ?? 'Low Balance');
+
+// 打开阈值设置弹窗：以友好单位载入当前后端值
+function openThresholdDialog(row: { triggerType: string }) {
+  const def = LOW_BALANCE_EVENTS.find((item) => item.triggerType === row.triggerType);
+  const rule = findRule(row.triggerType);
+  if (!def || !rule) {
+    ElMessage.error('This event is not configured yet.');
     return;
   }
+  thresholdDialogType.value = row.triggerType;
+  thresholdDialogValue.value = def.toDisplay(rule.thresholdValue ?? null);
+  thresholdDialogVisible.value = true;
+}
+
+// 阈值保存：把弹窗内的友好单位换算为后端 thresholdValue 后回传
+async function handleThresholdSave() {
+  const triggerType = thresholdDialogType.value;
+  const def = LOW_BALANCE_EVENTS.find((item) => item.triggerType === triggerType);
+  const rule = triggerType ? findRule(triggerType) : null;
+  if (!def || !rule) {
+    ElMessage.error('This event is not configured yet.');
+    return;
+  }
+  const display = thresholdDialogValue.value;
+  if (display == null || display < def.min) {
+    ElMessage.error(`Threshold must be at least ${def.min} ${def.unit}.`);
+    return;
+  }
+  const rawValue = def.toRaw(display);
+  savingThresholdType.value = def.triggerType;
+  try {
+    await updateNotificationTriggerRule(rule.id, buildRulePayload(rule, { thresholdValue: rawValue }));
+    ElMessage.success('Threshold saved.');
+    thresholdDialogVisible.value = false;
+    await loadEventData();
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Save failed.');
+  } finally {
+    savingThresholdType.value = null;
+  }
+}
+
+// 打开模板对话框：针对当前子事件的规则与其关联模板
+function openTemplateDialog(row: { triggerType: string }) {
+  const rule = findRule(row.triggerType);
+  const template = resolveTemplate(rule);
+  if (!template) {
+    ElMessage.error('No reminder template was found for this event. Please initialize a default template first.');
+    return;
+  }
+  editingTriggerType.value = row.triggerType;
   editingTemplateId.value = template.id;
   Object.assign(templateForm, {
     templateName: template.templateName,
@@ -499,11 +730,10 @@ async function handleTemplateSave() {
       status: templateForm.status,
     });
 
-    if (lowBalanceRule.value && String(lowBalanceRule.value.templateId ?? '') !== String(editingTemplateId.value)) {
-      await updateNotificationTriggerRule(
-        lowBalanceRule.value.id,
-        buildLowBalanceRulePayload(lowBalanceRule.value, { templateId: editingTemplateId.value }),
-      );
+    // 若所编辑模板与当前事件规则的 templateId 不一致，则同步更新规则
+    const rule = editingTriggerType.value ? findRule(editingTriggerType.value) : null;
+    if (rule && String(rule.templateId ?? '') !== String(editingTemplateId.value)) {
+      await updateNotificationTriggerRule(rule.id, buildRulePayload(rule, { templateId: editingTemplateId.value }));
     }
 
     ElMessage.success('Template saved.');
@@ -538,7 +768,7 @@ async function insertPlaceholder(field: 'subjectTemplate' | 'bodyTemplate', toke
 
 function renderPreviewTemplate(template: string) {
   let preview = template || '';
-  for (const [token, sampleValue] of Object.entries(previewPlaceholderMap)) {
+  for (const [token, sampleValue] of Object.entries(previewPlaceholderMap.value)) {
     preview = preview.split(token).join(sampleValue);
   }
   return preview;
@@ -678,6 +908,128 @@ async function handleTestEmail() {
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+}
+
+/* Low Balance 大类分组：可折叠标题 + 子事件表格容器 */
+.event-group {
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.event-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  background: #f7f9fc;
+  cursor: pointer;
+  user-select: none;
+}
+
+.event-group__header:hover {
+  background: #f0f4f9;
+}
+
+.event-group__title-wrap {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.event-group__arrow {
+  margin-top: 3px;
+  font-size: 14px;
+  color: #909399;
+  transition: transform 0.2s ease;
+}
+
+.event-group__arrow.is-expanded {
+  transform: rotate(90deg);
+}
+
+.event-group__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+
+.event-group__desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #909399;
+  max-width: 640px;
+}
+
+.event-group__body {
+  padding: 12px;
+  background: #fff;
+}
+
+/* 阈值编辑单元格 */
+.threshold-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.threshold-cell__input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.threshold-cell__display {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.threshold-cell__value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.threshold-cell__edit-btn {
+  padding: 0;
+  height: auto;
+}
+
+.threshold-cell__unit {
+  font-size: 12px;
+  color: #606266;
+}
+
+.threshold-cell__hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
+}
+
+.threshold-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.threshold-dialog__input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.threshold-dialog__unit {
+  font-size: 13px;
+  color: #606266;
+}
+
+.threshold-dialog__hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #909399;
 }
 
 .event-cell {

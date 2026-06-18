@@ -18,4 +18,9 @@ public interface RecurringScheduleRuleService {
     ScheduleRuleCreateResultVO createRule(RecurringScheduleRuleCreateRequest request);
 
     ScheduleRuleUpdateResultVO updateRule(Long id, RecurringScheduleRuleUpdateRequest request);
+
+    /**
+     * 滚动续期：为所有 ACTIVE 规则补足到 horizon 的未来课次，幂等去重。返回新增课次数。
+     */
+    int renewActiveRuleOccurrences();
 }

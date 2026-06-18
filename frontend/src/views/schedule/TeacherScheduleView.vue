@@ -165,7 +165,6 @@ import { fetchAllTeachers } from '@/api/base-data';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
-  fetchClassGroupsByTeacher,
 } from '@/api/schedule';
 import type { EntityId, LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
@@ -235,8 +234,6 @@ function jumpToDate(date: string | null) {
 const loading = ref(false);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
-const teacherClassGroups = ref<any[]>([]);
-const teacherClassGroupSlots = ref<OccupiedSlotDef[]>([]);
 
 const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
@@ -254,58 +251,30 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
       classroomName: o.plannedClassroomName,
     });
   }
-  // 添加班课占用
-  for (const slot of teacherClassGroupSlots.value) {
-    result.push(slot);
-  }
   return result;
 });
 
 async function loadSchedule() {
   if (!selectedTeacherId.value) return;
   loading.value = true;
-  teacherClassGroupSlots.value = [];
   try {
     const monday = dayjs(weekMonday.value);
     const sunday = monday.add(6, 'day').endOf('day');
-    // 1v1 课次
+    // 按教师拉取本周实际课次：班课课次同样带 plannedTeacherId，已包含在内，
+    // 无需再依赖班课的重复模板（scheduleSlots）。
     const res = await fetchLessonOccurrences({
       teacherId: selectedTeacherId.value,
       startAt: monday.format('YYYY-MM-DDTHH:mm:ss'),
       endAt: sunday.format('YYYY-MM-DDTHH:mm:ss'),
-      pageSize: 100,
+      pageSize: 200,
     });
     occurrences.value = res.data.data.records;
-
-    // 班课占用（解析 scheduleDesc）
-    const clsRes = await fetchClassGroupsByTeacher(selectedTeacherId.value);
-    teacherClassGroups.value = clsRes.data.data;
-    teacherClassGroupSlots.value = parseClassGroupSlots(clsRes.data.data);
   } catch {
     ElMessage.error('Failed to load schedule.');
     occurrences.value = [];
-    teacherClassGroupSlots.value = [];
   } finally {
     loading.value = false;
   }
-}
-
-function parseClassGroupSlots(classGroups: any[]): OccupiedSlotDef[] {
-  const slots: OccupiedSlotDef[] = [];
-  for (const cls of classGroups) {
-    const scheduleSlots = cls.scheduleSlots || [];
-    for (const s of scheduleSlots) {
-      slots.push({
-        weekday: s.weekday,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        courseLabel: cls.className,
-        teacherName: cls.teacherName,
-        classroomName: cls.classroomName,
-      });
-    }
-  }
-  return slots;
 }
 
 // ─── Cell click → detail dialog ────────────────

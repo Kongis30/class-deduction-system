@@ -202,6 +202,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         slots.forEach(recurringScheduleSlotMapper::insert);
 
         List<LessonOccurrenceEntity> generatedOccurrences = buildOccurrences(rule, slots, coursePackage, student.getId());
+        List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(coursePackage.getId());
+        Map<Long, LessonRecordEntity> recordByOccurrenceId = listActiveRecordsByOccurrenceId(existingOccurrences);
+        generatedOccurrences = removeOccurrencesOverlappingPreserved(generatedOccurrences, existingOccurrences);
+        generatedOccurrences = capGeneratedOccurrencesToPackageBalance(generatedOccurrences, existingOccurrences, recordByOccurrenceId, coursePackage);
         ensureNoConflicts(generatedOccurrences, student.getId(), rule.getPrimaryTeacherId(), rule.getDefaultClassroomId());
         generatedOccurrences.forEach(lessonOccurrenceMapper::insert);
 
@@ -214,6 +218,66 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .firstGeneratedStartAt(firstStart)
                 .lastGeneratedEndAt(lastEnd)
                 .build();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int renewActiveRuleOccurrences() {
+        List<RecurringScheduleRuleEntity> activeRules = recurringScheduleRuleMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE"));
+        int inserted = 0;
+        for (RecurringScheduleRuleEntity rule : activeRules) {
+            try {
+                inserted += renewOneRule(rule);
+            } catch (RuntimeException ex) {
+                // 单条规则续期失败不应阻断其它规则（如冲突），记录后继续。
+                log.warn("Failed to renew occurrences for schedule rule id={}: {}", rule.getId(), ex.getMessage());
+            }
+        }
+        return inserted;
+    }
+
+    private int renewOneRule(RecurringScheduleRuleEntity rule) {
+        CoursePackageEntity coursePackage = coursePackageMapper.selectById(rule.getPackageId());
+        if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
+            return 0;
+        }
+        List<RecurringScheduleSlotEntity> slots = recurringScheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .eq(RecurringScheduleSlotEntity::getRuleId, rule.getId())
+                        .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"));
+        if (slots.isEmpty()) {
+            return 0;
+        }
+
+        List<LessonOccurrenceEntity> candidates = buildOccurrences(rule, slots, coursePackage, coursePackage.getStudentId());
+        if (candidates.isEmpty()) {
+            return 0;
+        }
+
+        // 幂等去重：跳过该规则下已存在（非取消）的相同开始时间课次。
+        Set<LocalDateTime> existingStarts = lessonOccurrenceMapper.selectList(
+                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                                .eq(LessonOccurrenceEntity::getScheduleRuleId, rule.getId())
+                                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"))
+                .stream()
+                .map(LessonOccurrenceEntity::getPlannedStartAt)
+                .collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> toInsert = candidates.stream()
+                .filter(occ -> !existingStarts.contains(occ.getPlannedStartAt()))
+                .toList();
+        List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(coursePackage.getId());
+        Map<Long, LessonRecordEntity> recordByOccurrenceId = listActiveRecordsByOccurrenceId(existingOccurrences);
+        toInsert = removeOccurrencesOverlappingPreserved(toInsert, existingOccurrences);
+        toInsert = capGeneratedOccurrencesToPackageBalance(toInsert, existingOccurrences, recordByOccurrenceId, coursePackage);
+        if (toInsert.isEmpty()) {
+            return 0;
+        }
+
+        ensureNoConflicts(toInsert, coursePackage.getStudentId(), rule.getPrimaryTeacherId(), rule.getDefaultClassroomId());
+        toInsert.forEach(lessonOccurrenceMapper::insert);
+        return toInsert.size();
     }
 
     @Override
@@ -266,10 +330,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getScheduleRuleId, id));
         Set<Long> occIds = allOccurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
-        Set<Long> confirmedOccIds = !occIds.isEmpty() ? lessonRecordMapper.selectList(
-                        new LambdaQueryWrapper<LessonRecordEntity>().in(LessonRecordEntity::getOccurrenceId, occIds))
-                .stream().map(LessonRecordEntity::getOccurrenceId).collect(Collectors.toSet())
-                : Collections.emptySet();
+        List<LessonRecordEntity> activeRecords = !occIds.isEmpty() ? lessonRecordMapper.selectList(
+                new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occIds)
+                        .ne(LessonRecordEntity::getConfirmStage, "REJECTED")) : Collections.emptyList();
+        Map<Long, LessonRecordEntity> recordByOccurrenceId = activeRecords.stream()
+                .collect(Collectors.toMap(LessonRecordEntity::getOccurrenceId, item -> item, (left, right) -> left));
+        Set<Long> recordedOccIds = recordByOccurrenceId.keySet();
 
         // Delete all unconfirmed, non-adjusted/cancelled occurrences from today's start onward.
         // Using startOfDay ensures we clean up the entire current day, not just future instants.
@@ -277,7 +344,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         List<LessonOccurrenceEntity> toDelete = new ArrayList<>();
         List<LessonOccurrenceEntity> toPreserve = new ArrayList<>();
         for (LessonOccurrenceEntity occ : allOccurrences) {
-            boolean isConfirmed = confirmedOccIds.contains(occ.getId());
+            boolean isConfirmed = recordedOccIds.contains(occ.getId());
             boolean isAdjustedOrCancelled = "ADJUSTED".equals(occ.getPlanningStatus()) || "CANCELLED".equals(occ.getPlanningStatus());
             boolean isFromTodayOnward = !occ.getPlannedStartAt().isBefore(todayStart) && "SCHEDULED".equals(occ.getPlanningStatus());
             if (isConfirmed || isAdjustedOrCancelled || !isFromTodayOnward) {
@@ -288,7 +355,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
 
         // g) Delete classified occurrences FIRST (before slot FK cleanup)
-        int confirmedCount = (int) toPreserve.stream().filter(o -> confirmedOccIds.contains(o.getId())).count();
+        int confirmedCount = (int) toPreserve.stream().filter(o -> recordedOccIds.contains(o.getId())).count();
         if (!toDelete.isEmpty()) {
             lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                     .in(LessonOccurrenceEntity::getId, toDelete.stream().map(LessonOccurrenceEntity::getId).toList()));
@@ -314,6 +381,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
         // i) Build and insert new occurrences
         List<LessonOccurrenceEntity> newOccurrences = buildOccurrences(existingRule, newSlots, coursePackage, student.getId());
+        newOccurrences = removeOccurrencesOverlappingPreserved(newOccurrences, toPreserve);
+        newOccurrences = capGeneratedOccurrencesToPackageBalance(newOccurrences, toPreserve, recordByOccurrenceId, coursePackage);
 
         // j) Conflict check excluding this rule's preserved occurrences
         ensureNoConflictsExcludingRule(newOccurrences, student.getId(),
@@ -510,6 +579,91 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
         }
         return occurrences;
+    }
+
+    private List<LessonOccurrenceEntity> listActivePackageOccurrences(Long packageId) {
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
+    }
+
+    private Map<Long, LessonRecordEntity> listActiveRecordsByOccurrenceId(List<LessonOccurrenceEntity> occurrences) {
+        if (occurrences.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<Long> occurrenceIds = occurrences.stream()
+                .map(LessonOccurrenceEntity::getId)
+                .collect(Collectors.toSet());
+        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                        .ne(LessonRecordEntity::getConfirmStage, "REJECTED"))
+                .stream()
+                .collect(Collectors.toMap(LessonRecordEntity::getOccurrenceId, item -> item, (left, right) -> left));
+    }
+
+    private List<LessonOccurrenceEntity> removeOccurrencesOverlappingPreserved(List<LessonOccurrenceEntity> candidates,
+                                                                               List<LessonOccurrenceEntity> preservedOccurrences) {
+        if (candidates.isEmpty() || preservedOccurrences.isEmpty()) {
+            return candidates;
+        }
+        List<LessonOccurrenceEntity> activePreserved = preservedOccurrences.stream()
+                .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
+                .toList();
+        return candidates.stream()
+                .filter(candidate -> !hasOverlap(candidate, activePreserved))
+                .toList();
+    }
+
+    private List<LessonOccurrenceEntity> capGeneratedOccurrencesToPackageBalance(List<LessonOccurrenceEntity> candidates,
+                                                                                 List<LessonOccurrenceEntity> preservedOccurrences,
+                                                                                 Map<Long, LessonRecordEntity> recordByOccurrenceId,
+                                                                                 CoursePackageEntity coursePackage) {
+        if (candidates.isEmpty()) {
+            return candidates;
+        }
+        int usedUnits = preservedOccurrences.stream()
+                .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
+                .mapToInt(occurrence -> reservedUnitsForOccurrence(occurrence, recordByOccurrenceId.get(occurrence.getId())))
+                .sum();
+        int remainingUnits = Math.max(0, coursePackage.getTotalUnits() - usedUnits);
+        if (remainingUnits == 0) {
+            return Collections.emptyList();
+        }
+
+        List<LessonOccurrenceEntity> capped = new ArrayList<>();
+        int remaining = remainingUnits;
+        for (LessonOccurrenceEntity candidate : candidates.stream()
+                .sorted(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt))
+                .toList()) {
+            int plannedUnits = candidate.getPlannedUnits() == null ? 0 : candidate.getPlannedUnits();
+            if (plannedUnits <= 0 || remaining <= 0) {
+                break;
+            }
+            if (plannedUnits <= remaining) {
+                capped.add(candidate);
+                remaining -= plannedUnits;
+                continue;
+            }
+            updateCandidatePlannedUnits(candidate, remaining);
+            capped.add(candidate);
+            break;
+        }
+        return capped;
+    }
+
+    private int reservedUnitsForOccurrence(LessonOccurrenceEntity occurrence, LessonRecordEntity record) {
+        if (record != null) {
+            return record.getShouldDeduct() != null && record.getShouldDeduct() == 1
+                    ? (record.getDeductedUnits() == null ? 0 : record.getDeductedUnits())
+                    : 0;
+        }
+        return occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits();
+    }
+
+    private void updateCandidatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {
+        occurrence.setPlannedUnits(plannedUnits);
+        occurrence.setPlannedEndAt(occurrence.getPlannedStartAt().plusMinutes(plannedUnits * 30L));
     }
 
     /**

@@ -2,7 +2,6 @@ package com.classdeduction.system.modules.enrollment.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.DecimalMin;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -25,24 +24,20 @@ public class ClassEnrollmentCreateRequest {
     @Schema(description = "课程产品ID（GROUP 类型，与 classId 二选一）", example = "1880000000000000003")
     private Long productId;
 
-    @NotBlank(message = "Enrollment date is required")
-    @Schema(description = "报名日期 (ISO date)", example = "2026-05-17")
-    private String enrollmentDate;
+    @Schema(description = "课次收费：购买课次数（PER_SESSION 必填）", example = "10")
+    private Integer sessions;
 
-    @NotBlank(message = "Expiry date is required")
-    @Schema(description = "到期日期 (ISO date)", example = "2026-08-17")
-    private String expiryDate;
+    @Schema(description = "月收费：起始月份 yyyy-MM（MONTHLY 必填）", example = "2026-09")
+    private String startMonth;
+
+    @Schema(description = "月收费：结束月份 yyyy-MM（MONTHLY 必填）", example = "2026-12")
+    private String endMonth;
 
     @Schema(description = "经手人姓名快照", example = "Amy")
     private String handledByName;
 
     @Schema(description = "币种", example = "USD")
     private String currencyCode;
-
-    @NotNull(message = "Original amount is required")
-    @DecimalMin(value = "0.00", message = "Original amount cannot be negative")
-    @Schema(description = "原价", example = "2699.00")
-    private BigDecimal originalAmount;
 
     @NotNull(message = "Discount amount is required")
     @DecimalMin(value = "0.00", message = "Discount amount cannot be negative")

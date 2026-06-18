@@ -3,8 +3,10 @@ package com.classdeduction.system.modules.schedule.controller;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest;
+import com.classdeduction.system.modules.schedule.dto.WeeklyScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.service.ScheduleAdjustmentService;
 import com.classdeduction.system.modules.schedule.vo.ScheduleAdjustmentResultVO;
+import com.classdeduction.system.modules.schedule.vo.WeeklyScheduleAdjustmentResultVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -29,5 +31,12 @@ public class ScheduleAdjustmentController {
     @Operation(summary = "Adjust an existing planned lesson or create a makeup lesson")
     public ApiResponse<ScheduleAdjustmentResultVO> adjust(@Valid @RequestBody ScheduleAdjustmentRequest request) {
         return ApiResponse.success("Adjusted successfully.", scheduleAdjustmentService.adjust(request));
+    }
+
+    @PostMapping("/weekly")
+    @Operation(summary = "Temporarily adjust planned lessons in one natural week")
+    public ApiResponse<WeeklyScheduleAdjustmentResultVO> adjustWeekly(
+            @Valid @RequestBody WeeklyScheduleAdjustmentRequest request) {
+        return ApiResponse.success("Weekly schedule adjusted successfully.", scheduleAdjustmentService.adjustWeekly(request));
     }
 }

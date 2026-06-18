@@ -15,6 +15,7 @@ public record PaymentRecordVO(
         Long id,
         String paymentNo,
         String paymentMethod,
+        String paymentType,
         String paymentStatus,
         BigDecimal amount,
         LocalDateTime paidAt,

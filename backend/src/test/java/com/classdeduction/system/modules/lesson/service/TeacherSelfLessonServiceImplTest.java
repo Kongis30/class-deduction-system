@@ -57,18 +57,18 @@ class TeacherSelfLessonServiceImplTest {
         request.setActualEndAt(now.minusHours(3));
         request.setActualUnits(2);
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence(9001L, now));
-        when(lessonRecordService.confirmLesson(any(), any())).thenReturn(LessonRecordConfirmResultVO.builder()
+        when(lessonRecordService.initialConfirmLesson(any(), any())).thenReturn(LessonRecordConfirmResultVO.builder()
                 .lessonRecordId(5001L)
                 .occurrenceId(1001L)
                 .ledgerId(7001L)
-                .deductedUnits(2)
-                .remainingUnits(10)
+                .deductedUnits(2.0)
+                .remainingUnits(10.0)
                 .packageCompleted(false)
                 .build());
 
         LessonRecordConfirmResultVO result = teacherSelfLessonService.confirmOwnLesson(request, currentTeacherUser());
 
-        verify(lessonRecordService).confirmLesson(requestCaptor.capture(), any());
+        verify(lessonRecordService).initialConfirmLesson(requestCaptor.capture(), any());
         assertThat(requestCaptor.getValue().getActualTeacherId()).isEqualTo(9001L);
         assertThat(requestCaptor.getValue().getActualClassroomId()).isEqualTo(801L);
         assertThat(result.lessonRecordId()).isEqualTo(5001L);

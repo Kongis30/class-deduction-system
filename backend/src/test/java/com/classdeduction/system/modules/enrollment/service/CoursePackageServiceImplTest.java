@@ -9,6 +9,10 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.CoursePackageServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -44,6 +48,18 @@ class CoursePackageServiceImplTest {
     @Mock
     private CourseProductMapper courseProductMapper;
 
+    @Mock
+    private ClassGroupMapper classGroupMapper;
+
+    @Mock
+    private ClassEnrollmentMapper classEnrollmentMapper;
+
+    @Mock
+    private LessonOccurrenceMapper lessonOccurrenceMapper;
+
+    @Mock
+    private LessonRecordMapper lessonRecordMapper;
+
     private CoursePackageServiceImpl coursePackageService;
 
     @BeforeEach
@@ -53,7 +69,11 @@ class CoursePackageServiceImplTest {
                 packageTeacherAssignmentMapper,
                 studentMapper,
                 teacherMapper,
-                courseProductMapper
+                courseProductMapper,
+                classGroupMapper,
+                classEnrollmentMapper,
+                lessonOccurrenceMapper,
+                lessonRecordMapper
         );
     }
 

@@ -32,5 +32,11 @@ public class ClassEnrollmentEntity extends BaseEntity {
 
     private LocalDate expiryDate;
 
+    /** 报名时的计费类型快照：PER_SESSION / MONTHLY。 */
+    private String billingType;
+
+    /** 购买数量快照：课次数（PER_SESSION）或月数（MONTHLY）。 */
+    private Integer purchasedQuantity;
+
     private String status;
 }

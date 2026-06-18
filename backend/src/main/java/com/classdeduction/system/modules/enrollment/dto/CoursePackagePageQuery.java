@@ -19,11 +19,17 @@ public class CoursePackagePageQuery extends PageQuery {
     @Schema(description = "学生ID", example = "1880000000000000001")
     private Long studentId;
 
+    @Schema(description = "课程产品ID", example = "1880000000000000003")
+    private Long courseProductId;
+
     @Schema(description = "课时包状态", example = "ACTIVE")
     private String packageStatus;
 
     @Schema(description = "主老师ID", example = "1880000000000000002")
     private Long teacherId;
+
+    @Schema(description = "教学模式：ONE_ON_ONE / GROUP", example = "ONE_ON_ONE")
+    private String teachingMode;
 
     @Schema(description = "排序字段：subjectName | progress", example = "subjectName")
     private String sortBy;

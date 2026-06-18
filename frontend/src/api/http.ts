@@ -14,6 +14,11 @@ function preprocessLargeIds(jsonString: string): string {
   return jsonString.replace(ID_FIELD_REGEX, '"$1":"$2"');
 }
 
+function resolveAppPath(path: string): string {
+  const base = import.meta.env.BASE_URL;
+  return `${base}${path.replace(/^\//, '')}`;
+}
+
 const apiBaseURL =
   import.meta.env.VITE_API_BASE_URL ??
   (window.location.protocol === 'file:' ? 'http://127.0.0.1:8084/api' : '/api');
@@ -63,8 +68,9 @@ http.interceptors.response.use(
     const status = error.response?.status;
     if (status === 401) {
       clearStoredAuthSession();
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login';
+      const loginPath = resolveAppPath('/login');
+      if (window.location.pathname !== loginPath) {
+        window.location.href = loginPath;
       }
     }
     // Log 5xx errors for observability (do not surface to user — retry already handled)
@@ -89,24 +95,24 @@ export function extractErrorMessage(error: unknown): string {
     }
     switch (error.code) {
       case 'ECONNABORTED':
-        return '请求超时，请检查网络后重试。';
+        return 'Request timed out. Please check your network and try again.';
       case 'ERR_NETWORK':
-        return '网络连接失败，请检查网络是否正常。';
+        return 'Network connection failed. Please check your connection.';
       default:
         break;
     }
     switch (error.response?.status) {
-      case 400: return '请求参数有误，请检查输入。';
-      case 401: return '登录已过期，请重新登录。';
-      case 403: return '无权限执行此操作。';
-      case 404: return '请求的资源不存在。';
-      case 429: return '请求过于频繁，请稍后重试。';
+      case 400: return 'Invalid request. Please check your input.';
+      case 401: return 'Your session has expired. Please log in again.';
+      case 403: return 'You do not have permission to perform this action.';
+      case 404: return 'The requested resource was not found.';
+      case 429: return 'Too many requests. Please try again later.';
       default:
         break;
     }
   }
   if (error instanceof Error) {
-    return error.message || '操作失败，请稍后重试。';
+    return error.message || 'Operation failed. Please try again later.';
   }
-  return '操作失败，请稍后重试。';
+  return 'Operation failed. Please try again later.';
 }

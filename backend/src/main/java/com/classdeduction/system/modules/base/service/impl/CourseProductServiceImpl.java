@@ -30,6 +30,7 @@ import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -149,17 +150,47 @@ public class CourseProductServiceImpl implements CourseProductService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteCourseProduct(Long id) {
-        requireCourseProduct(id);
-        // 检查是否有课包引用了该产品（学生已报名缴费，不能删）
-        if (coursePackageMapper.countByCourseProductId(id) > 0) {
-            throw new BusinessException("PRODUCT_HAS_PACKAGES",
-                    "Cannot delete course product: there are active course packages. "
-                            + "Set the product status to INACTIVE instead.");
+        CourseProductEntity product = requireCourseProduct(id);
+        if ("ONE_ON_ONE".equals(product.getTeachingMode())) {
+            // 1对1 产品在报名时会被快照拷贝为课包，删除后会导致历史订单/收据的产品名悬挂。
+            // 因此只要被任何课包引用过（不分 DRAFT/ACTIVE/CLOSED），就禁止删除，引导改为 INACTIVE 停售。
+            if (hasAnyPackageReference(id)) {
+                throw new BusinessException("PRODUCT_HAS_PACKAGES",
+                        "Cannot delete course product: it has been used by course packages. "
+                                + "Set the product status to INACTIVE instead.");
+            }
+        } else {
+            // 班课产品是班级的活数据源：slots/计费窗口会被续排任务持续回读，class_group 也与产品 1:1 绑定。
+            // 一旦开过班就不能删，否则会中断在读班级并悬挂排课/报名/财务数据。
+            // 想停止招生改为 INACTIVE，想退役班级请走"删除班级"流程。
+            if (hasAnyClassGroupReference(id)) {
+                throw new BusinessException("PRODUCT_HAS_CLASSES",
+                        "Cannot delete course product: a class has been opened for it. "
+                                + "Set the product status to INACTIVE, or delete the class instead.");
+            }
         }
         // 级联删除排课时段
         scheduleSlotMapper.delete(new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
                 .eq(CourseProductScheduleSlotEntity::getProductId, id));
         courseProductMapper.deleteById(id);
+    }
+
+    /**
+     * 判断 1对1 产品是否被任意课包引用过（不分课包状态），用于删除保护。
+     */
+    private boolean hasAnyPackageReference(Long productId) {
+        return coursePackageMapper.selectCount(new LambdaQueryWrapper<CoursePackageEntity>()
+                .eq(CoursePackageEntity::getCourseProductId, productId)
+                .eq(CoursePackageEntity::getIsDeleted, 0)) > 0;
+    }
+
+    /**
+     * 判断班课产品是否已被任意班级引用（即已开班），用于删除保护。
+     */
+    private boolean hasAnyClassGroupReference(Long productId) {
+        return classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, productId)
+                .eq(ClassGroupEntity::getIsDeleted, 0)) > 0;
     }
 
     /**
@@ -179,12 +210,10 @@ public class CourseProductServiceImpl implements CourseProductService {
             if (request.getDefaultLessonUnits() != null) {
                 throw new BusinessException("GROUP product should not have lesson units.");
             }
-            if (request.getExpiryDurationDays() == null) {
-                throw new BusinessException("Expiry duration days is required for GROUP products.");
-            }
             if (request.getSlots() == null || request.getSlots().isEmpty()) {
                 throw new BusinessException("At least one schedule slot is required for GROUP products.");
             }
+            validateGroupBilling(request);
         } else {
             // ONE_ON_ONE
             if (request.getDefaultTotalUnits() == null) {
@@ -193,13 +222,91 @@ public class CourseProductServiceImpl implements CourseProductService {
             if (request.getDefaultLessonUnits() == null) {
                 throw new BusinessException("Default lesson units is required for ONE_ON_ONE products.");
             }
-            if (request.getExpiryDurationDays() != null) {
-                throw new BusinessException("ONE_ON_ONE product should not have expiry duration days.");
+            if (request.getBillingType() != null || request.getStartDate() != null || request.getTotalSessions() != null
+                    || StringUtils.hasText(request.getStartMonth()) || StringUtils.hasText(request.getEndMonth())) {
+                throw new BusinessException("ONE_ON_ONE product should not have class billing fields.");
             }
             if (request.getSlots() != null && !request.getSlots().isEmpty()) {
                 throw new BusinessException("ONE_ON_ONE product should not have schedule slots.");
             }
         }
+    }
+
+    /**
+     * 校验班课计费字段：PER_SESSION 需要 startDate + totalSessions；MONTHLY 需要 startMonth + endMonth。
+     */
+    private void validateGroupBilling(CourseProductSaveRequest request) {
+        String billingType = request.getBillingType();
+        if (!Set.of("PER_SESSION", "MONTHLY").contains(billingType)) {
+            throw new BusinessException("INVALID_BILLING_TYPE", "Billing type must be PER_SESSION or MONTHLY for GROUP products.");
+        }
+        if ("PER_SESSION".equals(billingType)) {
+            if (request.getStartDate() == null) {
+                throw new BusinessException("Start date is required for per-session billing.");
+            }
+            if (request.getTotalSessions() == null || request.getTotalSessions() < 1) {
+                throw new BusinessException("Total sessions must be at least 1 for per-session billing.");
+            }
+            if (StringUtils.hasText(request.getStartMonth()) || StringUtils.hasText(request.getEndMonth())) {
+                throw new BusinessException("Per-session billing should not have start/end month.");
+            }
+        } else {
+            // MONTHLY
+            LocalDate startMonth = parseMonth(request.getStartMonth(), "start month");
+            LocalDate endMonth = parseMonth(request.getEndMonth(), "end month");
+            if (endMonth.isBefore(startMonth)) {
+                throw new BusinessException("End month cannot be earlier than start month.");
+            }
+            if (request.getStartDate() != null || request.getTotalSessions() != null) {
+                throw new BusinessException("Monthly billing should not have start date or total sessions.");
+            }
+        }
+    }
+
+    /**
+     * 解析 yyyy-MM 为当月 1 号；非法格式抛业务异常。
+     */
+    private LocalDate parseMonth(String value, String fieldName) {
+        if (!StringUtils.hasText(value)) {
+            throw new BusinessException("INVALID_MONTH", "Schedule " + fieldName + " is required for monthly billing.");
+        }
+        try {
+            return java.time.YearMonth.parse(value).atDay(1);
+        } catch (RuntimeException ex) {
+            throw new BusinessException("INVALID_MONTH", "Schedule " + fieldName + " must use yyyy-MM format.");
+        }
+    }
+
+    /**
+     * 宽松解析 yyyy-MM 为当月 1 号；空值返回 null，非法格式也返回 null（仅用于字段比对）。
+     */
+    private LocalDate parseMonthOrNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        try {
+            return java.time.YearMonth.parse(value).atDay(1);
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    /**
+     * 将存储的月份（当月 1 号）格式化为 yyyy-MM 返回前端。
+     */
+    private String formatMonth(LocalDate month) {
+        return month != null ? java.time.YearMonth.from(month).toString() : null;
+    }
+
+    /**
+     * 计算含端点的月数；任一为空返回 null。
+     */
+    private Integer monthsBetweenInclusive(LocalDate startMonth, LocalDate endMonth) {
+        if (startMonth == null || endMonth == null) {
+            return null;
+        }
+        return (int) java.time.temporal.ChronoUnit.MONTHS.between(
+                java.time.YearMonth.from(startMonth), java.time.YearMonth.from(endMonth)) + 1;
     }
 
      private void validateSlots(List<CourseProductSaveRequest.ProductScheduleSlotDTO> slots) {
@@ -242,7 +349,11 @@ public class CourseProductServiceImpl implements CourseProductService {
          addIfChanged(changedFields, "teaching format", existing.getTeachingMode(), request.getTeachingMode());
          addIfChanged(changedFields, "default total hours", existing.getDefaultTotalUnits(), request.getDefaultTotalUnits());
          addIfChanged(changedFields, "default lesson units", existing.getDefaultLessonUnits(), request.getDefaultLessonUnits());
-         addIfChanged(changedFields, "expiry duration", existing.getExpiryDurationDays(), request.getExpiryDurationDays());
+         addIfChanged(changedFields, "billing type", existing.getBillingType(), request.getBillingType());
+         addIfChanged(changedFields, "start date", existing.getStartDate(), request.getStartDate());
+         addIfChanged(changedFields, "total sessions", existing.getTotalSessions(), request.getTotalSessions());
+         addIfChanged(changedFields, "start month", existing.getStartMonth(), parseMonthOrNull(request.getStartMonth()));
+         addIfChanged(changedFields, "end month", existing.getEndMonth(), parseMonthOrNull(request.getEndMonth()));
          addIfChanged(changedFields, "default classroom", existing.getDefaultClassroomId(), request.getDefaultClassroomId());
          addIfChanged(changedFields, "default teacher", existing.getDefaultTeacherId(), request.getDefaultTeacherId());
          if ("GROUP".equals(existing.getTeachingMode()) && slotsChanged(existing.getId(), request.getSlots())) {
@@ -370,7 +481,11 @@ public class CourseProductServiceImpl implements CourseProductService {
         entity.setTeachingMode(request.getTeachingMode());
         entity.setDefaultTotalUnits(request.getDefaultTotalUnits());
         entity.setDefaultLessonUnits(request.getDefaultLessonUnits());
-        entity.setExpiryDurationDays(request.getExpiryDurationDays());
+        entity.setBillingType(request.getBillingType());
+        entity.setStartDate(request.getStartDate());
+        entity.setTotalSessions(request.getTotalSessions());
+        entity.setStartMonth(parseMonthOrNull(request.getStartMonth()));
+        entity.setEndMonth(parseMonthOrNull(request.getEndMonth()));
         entity.setListPrice(request.getListPrice());
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : DEFAULT_STATUS);
         entity.setDefaultClassroomId(request.getDefaultClassroomId());
@@ -434,7 +549,12 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .teachingMode(entity.getTeachingMode())
                 .defaultTotalUnits(entity.getDefaultTotalUnits())
                 .defaultLessonUnits(entity.getDefaultLessonUnits())
-                .expiryDurationDays(entity.getExpiryDurationDays())
+                .billingType(entity.getBillingType())
+                .startDate(entity.getStartDate() != null ? entity.getStartDate().toString() : null)
+                .totalSessions(entity.getTotalSessions())
+                .startMonth(formatMonth(entity.getStartMonth()))
+                .endMonth(formatMonth(entity.getEndMonth()))
+                .totalMonths(monthsBetweenInclusive(entity.getStartMonth(), entity.getEndMonth()))
                 .defaultClassroomId(entity.getDefaultClassroomId())
                 .defaultClassroomName(defaultClassroomName)
                 .defaultTeacherId(entity.getDefaultTeacherId())

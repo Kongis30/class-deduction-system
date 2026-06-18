@@ -37,7 +37,13 @@ import java.util.stream.Collectors;
 public class NotificationOutboxServiceImpl implements NotificationOutboxService {
 
     private static final String TRIGGER_LESSON_CONFIRMED = "LESSON_CONFIRMED";
-    private static final String TRIGGER_LOW_BALANCE = "LOW_BALANCE";
+    // 低额度提醒按计费口径拆分：1v1 课时 / 班课课次 / 班课月份
+    private static final String TRIGGER_LOW_BALANCE_HOUR = "LOW_BALANCE_HOUR";
+    private static final String TRIGGER_LOW_BALANCE_SESSION = "LOW_BALANCE_SESSION";
+    private static final String TRIGGER_LOW_BALANCE_MONTH = "LOW_BALANCE_MONTH";
+
+    /** 去重窗口：同一维度的低额度提醒在该天数内只发送一次，避免每轮扫描重复打扰。 */
+    private static final int DEDUP_WINDOW_DAYS = 7;
 
     private final NotificationTemplateMapper notificationTemplateMapper;
     private final NotificationLogMapper notificationLogMapper;
@@ -201,19 +207,13 @@ public class NotificationOutboxServiceImpl implements NotificationOutboxService 
         }
     }
 
-    // ── LOW_BALANCE 通知 ───────────────────────────────────────────────────────
+    // ── LOW_BALANCE 通知（按计费口径：课时 / 课次 / 月份）───────────────────────
 
     @Override
     public void queueLowBalanceWarning(CoursePackageEntity coursePackage, StudentEntity student) {
-        NotificationTriggerRuleEntity rule = notificationTriggerRuleMapper.selectOne(
-                new LambdaQueryWrapper<NotificationTriggerRuleEntity>()
-                        .eq(NotificationTriggerRuleEntity::getTriggerType, TRIGGER_LOW_BALANCE)
-                        .eq(NotificationTriggerRuleEntity::getEnabled, 1)
-                        .eq(NotificationTriggerRuleEntity::getIsDeleted, 0)
-                        .last("LIMIT 1"));
-
+        NotificationTriggerRuleEntity rule = findEnabledRule(TRIGGER_LOW_BALANCE_HOUR);
         if (rule == null) {
-            log.debug("LOW_BALANCE trigger rule disabled, skipping notification for packageId={}",
+            log.debug("LOW_BALANCE_HOUR trigger rule disabled, skipping notification for packageId={}",
                     coursePackage.getId());
             return;
         }
@@ -224,36 +224,156 @@ public class NotificationOutboxServiceImpl implements NotificationOutboxService 
             List<String> recipients = resolveRecipients(rule, student.getId());
 
             if (template == null || brandConfig == null || recipients.isEmpty()) {
-                log.warn("Cannot send LOW_BALANCE notification: template={}, brand={}, recipients={}",
+                log.warn("Cannot send LOW_BALANCE_HOUR notification: template={}, brand={}, recipients={}",
                         template != null, brandConfig != null, recipients.size());
                 return;
             }
 
-            Map<String, String> variables = buildLowBalanceVariables(coursePackage, student, brandConfig);
-            String subject = renderTemplate(template.getSubjectTemplate(), variables);
-            String body = renderTemplate(template.getBodyTemplate(), variables);
-            LocalDateTime scheduledAt = AppTime.nowLocalDateTime();
-
-            for (String recipient : recipients) {
-                NotificationLogEntity logEntity = new NotificationLogEntity();
-                logEntity.setChannelType(template.getChannelType());
-                logEntity.setTemplateId(template.getId());
-                logEntity.setStudentId(student.getId());
-                logEntity.setPackageId(coursePackage.getId());
-                logEntity.setRecipient(recipient);
-                logEntity.setSendStatus("PENDING");
-                logEntity.setScheduledAt(scheduledAt);
-                logEntity.setRetryCount(0);
-                logEntity.setRequestPayload(jsonHelper.toJson(Map.of(
-                        "templateCode", template.getTemplateCode(),
-                        "subject", subject,
-                        "body", body,
-                        "variables", variables
-                )));
-                notificationLogMapper.insert(logEntity);
+            // 去重维度：studentId + packageId + templateId（近期未失效）
+            if (isRecentlyNotified(student.getId(), coursePackage.getId(), template.getId())) {
+                log.debug("LOW_BALANCE_HOUR notification skipped (deduplicated) for studentId={}, packageId={}",
+                        student.getId(), coursePackage.getId());
+                return;
             }
+
+            Map<String, String> variables = buildLowBalanceVariables(coursePackage, student, brandConfig);
+            insertLowBalanceLogs(template, recipients, student.getId(), coursePackage.getId(), variables);
         } catch (Exception exception) {
-            log.warn("Failed to queue LOW_BALANCE warning email for packageId={}", coursePackage.getId(), exception);
+            log.warn("Failed to queue LOW_BALANCE_HOUR warning email for packageId={}", coursePackage.getId(), exception);
+        }
+    }
+
+    @Override
+    public void queueLowBalanceSessionWarning(Long studentId, Long classId, String className, int remainingSessions) {
+        NotificationTriggerRuleEntity rule = findEnabledRule(TRIGGER_LOW_BALANCE_SESSION);
+        if (rule == null) {
+            log.debug("LOW_BALANCE_SESSION trigger rule disabled, skipping notification for classId={}", classId);
+            return;
+        }
+
+        try {
+            NotificationTemplateEntity template = findTemplate(rule.getTemplateId());
+            BrandConfigEntity brandConfig = findActiveBrand();
+            List<String> recipients = resolveRecipients(rule, studentId);
+            StudentEntity student = studentMapper.selectById(studentId);
+
+            if (template == null || brandConfig == null || student == null || recipients.isEmpty()) {
+                log.warn("Cannot send LOW_BALANCE_SESSION notification: template={}, brand={}, student={}, recipients={}",
+                        template != null, brandConfig != null, student != null, recipients.size());
+                return;
+            }
+
+            // 去重维度：班课 notification_log 无 classId 字段，故用 studentId + templateId + 时间窗口去重
+            if (isRecentlyNotified(studentId, null, template.getId())) {
+                log.debug("LOW_BALANCE_SESSION notification skipped (deduplicated) for studentId={}, classId={}",
+                        studentId, classId);
+                return;
+            }
+
+            Map<String, String> variables = buildClassLowBalanceVariables(student, brandConfig, className,
+                    remainingSessions, 0, null);
+            insertLowBalanceLogs(template, recipients, studentId, null, variables);
+        } catch (Exception exception) {
+            log.warn("Failed to queue LOW_BALANCE_SESSION warning email for classId={}, studentId={}",
+                    classId, studentId, exception);
+        }
+    }
+
+    @Override
+    public void queueLowBalanceMonthWarning(Long studentId, Long classId, String className,
+                                            int remainingMonths, LocalDate expiryDate) {
+        NotificationTriggerRuleEntity rule = findEnabledRule(TRIGGER_LOW_BALANCE_MONTH);
+        if (rule == null) {
+            log.debug("LOW_BALANCE_MONTH trigger rule disabled, skipping notification for classId={}", classId);
+            return;
+        }
+
+        try {
+            NotificationTemplateEntity template = findTemplate(rule.getTemplateId());
+            BrandConfigEntity brandConfig = findActiveBrand();
+            List<String> recipients = resolveRecipients(rule, studentId);
+            StudentEntity student = studentMapper.selectById(studentId);
+
+            if (template == null || brandConfig == null || student == null || recipients.isEmpty()) {
+                log.warn("Cannot send LOW_BALANCE_MONTH notification: template={}, brand={}, student={}, recipients={}",
+                        template != null, brandConfig != null, student != null, recipients.size());
+                return;
+            }
+
+            // 去重维度：同 SESSION，使用 studentId + templateId + 时间窗口
+            if (isRecentlyNotified(studentId, null, template.getId())) {
+                log.debug("LOW_BALANCE_MONTH notification skipped (deduplicated) for studentId={}, classId={}",
+                        studentId, classId);
+                return;
+            }
+
+            Map<String, String> variables = buildClassLowBalanceVariables(student, brandConfig, className,
+                    0, remainingMonths, expiryDate);
+            insertLowBalanceLogs(template, recipients, studentId, null, variables);
+        } catch (Exception exception) {
+            log.warn("Failed to queue LOW_BALANCE_MONTH warning email for classId={}, studentId={}",
+                    classId, studentId, exception);
+        }
+    }
+
+    /**
+     * 查询指定类型且 enabled=1 的触发规则，未启用返回 null。
+     */
+    private NotificationTriggerRuleEntity findEnabledRule(String triggerType) {
+        return notificationTriggerRuleMapper.selectOne(
+                new LambdaQueryWrapper<NotificationTriggerRuleEntity>()
+                        .eq(NotificationTriggerRuleEntity::getTriggerType, triggerType)
+                        .eq(NotificationTriggerRuleEntity::getEnabled, 1)
+                        .eq(NotificationTriggerRuleEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+    }
+
+    /**
+     * 去重判断：是否存在「近期未失效」的同类低额度提醒。
+     * 维度为 studentId（必填）+ packageId（1v1 课包用，班课传 null）+ templateId，
+     * 且 sendStatus in (PENDING, SUCCESS)，scheduledAt 落在最近 DEDUP_WINDOW_DAYS 天内。
+     */
+    private boolean isRecentlyNotified(Long studentId, Long packageId, Long templateId) {
+        LocalDateTime windowStart = AppTime.nowLocalDateTime().minusDays(DEDUP_WINDOW_DAYS);
+        Long count = notificationLogMapper.selectCount(
+                new LambdaQueryWrapper<NotificationLogEntity>()
+                        .eq(NotificationLogEntity::getStudentId, studentId)
+                        .eq(NotificationLogEntity::getTemplateId, templateId)
+                        .eq(packageId != null, NotificationLogEntity::getPackageId, packageId)
+                        .in(NotificationLogEntity::getSendStatus, "PENDING", "SUCCESS")
+                        .ge(NotificationLogEntity::getScheduledAt, windowStart));
+        return count != null && count > 0;
+    }
+
+    /**
+     * 渲染模板并按收件人逐条写入 notification_log（PENDING）。
+     */
+    private void insertLowBalanceLogs(NotificationTemplateEntity template,
+                                      List<String> recipients,
+                                      Long studentId,
+                                      Long packageId,
+                                      Map<String, String> variables) {
+        String subject = renderTemplate(template.getSubjectTemplate(), variables);
+        String body = renderTemplate(template.getBodyTemplate(), variables);
+        LocalDateTime scheduledAt = AppTime.nowLocalDateTime();
+
+        for (String recipient : recipients) {
+            NotificationLogEntity logEntity = new NotificationLogEntity();
+            logEntity.setChannelType(template.getChannelType());
+            logEntity.setTemplateId(template.getId());
+            logEntity.setStudentId(studentId);
+            logEntity.setPackageId(packageId);
+            logEntity.setRecipient(recipient);
+            logEntity.setSendStatus("PENDING");
+            logEntity.setScheduledAt(scheduledAt);
+            logEntity.setRetryCount(0);
+            logEntity.setRequestPayload(jsonHelper.toJson(Map.of(
+                    "templateCode", template.getTemplateCode(),
+                    "subject", subject,
+                    "body", body,
+                    "variables", variables
+            )));
+            notificationLogMapper.insert(logEntity);
         }
     }
 
@@ -267,6 +387,33 @@ public class NotificationOutboxServiceImpl implements NotificationOutboxService 
         variables.put("remainingHours", formatHours(coursePackage.getRemainingUnits()));
         variables.put("deductHours", "0");
         variables.put("estimatedEndDate", formatDate(coursePackage.getEstimatedEndDate()));
+        // 班课口径变量在 1v1 场景给安全默认值，保证三类模板都能渲染
+        variables.put("remainingSessions", "-");
+        variables.put("remainingMonths", "-");
+        variables.put("expiryMonth", "-");
+        return variables;
+    }
+
+    /**
+     * 构造班课低额度提醒变量：根据计费口径填充课次或月份，其余字段给安全默认值，
+     * 使三类模板（HOUR/SESSION/MONTH）均可复用同一套变量渲染。
+     */
+    private Map<String, String> buildClassLowBalanceVariables(StudentEntity student,
+                                                              BrandConfigEntity brandConfig,
+                                                              String className,
+                                                              int remainingSessions,
+                                                              int remainingMonths,
+                                                              LocalDate expiryDate) {
+        Map<String, String> variables = new LinkedHashMap<>();
+        variables.put("brandName", defaultString(brandConfig.getBrandName(), "Training Center"));
+        variables.put("studentName", defaultString(student.getStudentName(), "Student"));
+        variables.put("packageName", defaultString(className, "Group Class"));
+        variables.put("remainingHours", "-");
+        variables.put("deductHours", "0");
+        variables.put("remainingSessions", String.valueOf(Math.max(remainingSessions, 0)));
+        variables.put("remainingMonths", String.valueOf(Math.max(remainingMonths, 0)));
+        variables.put("expiryMonth", expiryDate == null ? "-" : expiryDate.toString());
+        variables.put("estimatedEndDate", expiryDate == null ? "TBD" : expiryDate.toString());
         return variables;
     }
 }

@@ -90,7 +90,9 @@ class CourseProductServiceImplTest {
         product.setProductName("Group Math");
         product.setSubjectName("Math");
         product.setTeachingMode("GROUP");
-        product.setExpiryDurationDays(90);
+        product.setBillingType("PER_SESSION");
+        product.setStartDate(java.time.LocalDate.of(2026, 9, 1));
+        product.setTotalSessions(20);
         product.setDefaultClassroomId(401L);
         product.setDefaultTeacherId(301L);
         product.setListPrice(new BigDecimal("600.00"));
@@ -104,7 +106,9 @@ class CourseProductServiceImplTest {
         request.setProductName("Group Math");
         request.setSubjectName("Math");
         request.setTeachingMode("GROUP");
-        request.setExpiryDurationDays(90);
+        request.setBillingType("PER_SESSION");
+        request.setStartDate(java.time.LocalDate.of(2026, 9, 1));
+        request.setTotalSessions(20);
         request.setDefaultClassroomId(401L);
         request.setDefaultTeacherId(301L);
         request.setListPrice(new BigDecimal("600.00"));

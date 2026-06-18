@@ -131,7 +131,7 @@ public class DashboardServiceImpl implements DashboardService {
     private Integer getLowBalanceThreshold() {
         NotificationTriggerRuleEntity rule = notificationTriggerRuleMapper.selectOne(
                 new LambdaQueryWrapper<NotificationTriggerRuleEntity>()
-                        .eq(NotificationTriggerRuleEntity::getTriggerType, "LOW_BALANCE")
+                        .eq(NotificationTriggerRuleEntity::getTriggerType, "LOW_BALANCE_HOUR")
                         .eq(NotificationTriggerRuleEntity::getEnabled, 1)
                         .eq(NotificationTriggerRuleEntity::getIsDeleted, 0)
                         .last("LIMIT 1")

@@ -24,11 +24,22 @@ public record LessonRecordListItemVO(
         String actualTeacherName,
         Long actualClassroomId,
         String actualClassroomName,
-        Integer actualUnits,
+        LocalDateTime actualStartAt,
+        LocalDateTime actualEndAt,
+        Double actualUnits,
         Boolean shouldDeduct,
-        Integer deductedUnits,
+        Double deductedUnits,
         Boolean shouldExtendEndDate,
+        String confirmStage,
+        LocalDateTime teacherConfirmedAt,
+        Long teacherConfirmedByUserId,
+        LocalDateTime adminConfirmedAt,
+        Long adminConfirmedByUserId,
+        String rejectReason,
+        LocalDateTime rejectedAt,
+        Long rejectedByUserId,
         String recordSource,
-        LocalDateTime confirmedAt
+        LocalDateTime confirmedAt,
+        String notes
 ) {
 }

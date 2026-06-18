@@ -40,6 +40,12 @@ public class LessonRecordEntity extends BaseEntity {
 
     private Long actualClassroomId;
 
+    private LocalDateTime plannedStartAt;
+
+    private LocalDateTime plannedEndAt;
+
+    private Integer plannedUnits;
+
     private String resultStatus;
 
     private LocalDateTime actualStartAt;
@@ -54,9 +60,25 @@ public class LessonRecordEntity extends BaseEntity {
 
     private Integer shouldExtendEndDate;
 
+    private String confirmStage;
+
     private Long confirmedByUserId;
 
     private LocalDateTime confirmedAt;
+
+    private LocalDateTime teacherConfirmedAt;
+
+    private Long teacherConfirmedByUserId;
+
+    private LocalDateTime adminConfirmedAt;
+
+    private Long adminConfirmedByUserId;
+
+    private String rejectReason;
+
+    private LocalDateTime rejectedAt;
+
+    private Long rejectedByUserId;
 
     private String recordSource;
 

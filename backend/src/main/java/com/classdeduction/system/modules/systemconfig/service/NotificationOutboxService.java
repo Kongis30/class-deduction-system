@@ -15,8 +15,21 @@ public interface NotificationOutboxService {
                                  String lessonStatusName);
 
     /**
-     * 余额不足通知：当套餐剩余课时低于阈值时，向对应学生家长发送余额预警邮件。
-     * 仅当对应的 LOW_BALANCE 触发规则 enabled=1 时才发送。
+     * 余额不足通知（1v1 按课时）：当课包剩余课时低于阈值时，向对应学生家长发送余额预警邮件。
+     * 仅当 LOW_BALANCE_HOUR 触发规则 enabled=1 时才发送。
      */
     void queueLowBalanceWarning(CoursePackageEntity coursePackage, StudentEntity student);
+
+    /**
+     * 余额不足通知（班课 PER_SESSION）：当班课报名剩余课次低于阈值时，向学生家长发送预警邮件。
+     * 仅当 LOW_BALANCE_SESSION 触发规则 enabled=1 时才发送。
+     */
+    void queueLowBalanceSessionWarning(Long studentId, Long classId, String className, int remainingSessions);
+
+    /**
+     * 余额不足通知（班课 MONTHLY）：当班课报名剩余月份低于阈值时，向学生家长发送预警邮件。
+     * 仅当 LOW_BALANCE_MONTH 触发规则 enabled=1 时才发送。
+     */
+    void queueLowBalanceMonthWarning(Long studentId, Long classId, String className,
+                                     int remainingMonths, java.time.LocalDate expiryDate);
 }

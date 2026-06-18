@@ -103,7 +103,12 @@ export interface CourseProductItem {
   teachingMode: string;
   defaultTotalUnits: number;
   defaultLessonUnits: number;
-  expiryDurationDays?: number;
+  billingType?: string;
+  startDate?: string;
+  totalSessions?: number;
+  startMonth?: string;
+  endMonth?: string;
+  totalMonths?: number;
   defaultClassroomId?: EntityId;
   defaultClassroomName?: string;
   defaultTeacherId?: EntityId;
@@ -173,6 +178,7 @@ export interface CoursePackageItem {
   studentId: EntityId;
   studentName: string;
   courseProductId: EntityId;
+  courseProductName?: string;
   packageName: string;
   subjectName?: string;
   teachingMode?: string;
@@ -187,6 +193,38 @@ export interface CoursePackageItem {
   createdAt: string;
 }
 
+export interface GroupClassPackageProgressItem {
+  classId: EntityId;
+  productId?: EntityId;
+  className: string;
+  productName?: string;
+  subjectName?: string;
+  billingType?: string;
+  scheduleDesc?: string;
+  teacherName?: string;
+  totalUnits: number;
+  consumedUnits: number;
+  remainingUnits: number;
+  activeStudentCount: number;
+  status: string;
+  startDate?: string;
+  estimatedEndDate?: string;
+}
+
+export interface GroupClassStudentProgressItem {
+  enrollmentId: EntityId;
+  classId: EntityId;
+  studentId: EntityId;
+  studentName: string;
+  billingType?: string;
+  totalUnits: number;
+  consumedUnits: number;
+  remainingUnits: number;
+  enrollmentDate?: string;
+  expiryDate?: string;
+  enrollmentStatus: string;
+}
+
 export interface PaymentMethodItem {
   id: EntityId;
   methodCode: string;
@@ -199,6 +237,7 @@ export interface PaymentRecordItem {
   id: EntityId;
   paymentNo: string;
   paymentMethod: string;
+  paymentType?: string;
   paymentStatus: string;
   amount: number;
   paidAt: string;
@@ -258,6 +297,8 @@ export interface RecurringScheduleRuleDetailItem extends RecurringScheduleRuleIt
 
 export interface LessonOccurrenceItem {
   id: EntityId;
+  lessonRecordId?: EntityId;
+  recordId?: EntityId;
   lessonNo: string;
   packageId: EntityId;
   packageNo: string;
@@ -282,6 +323,23 @@ export interface LessonOccurrenceItem {
   notes?: string;
   resultStatus?: string;
   resultStatusName?: string;
+  confirmStage?: 'PENDING_ADMIN' | 'CONFIRMED' | 'REJECTED' | string;
+  confirmedAt?: string;
+  confirmedByUserId?: EntityId;
+  teacherConfirmedAt?: string;
+  teacherConfirmedByUserId?: EntityId;
+  adminConfirmedAt?: string;
+  adminConfirmedByUserId?: EntityId;
+  rejectReason?: string;
+  rejectedAt?: string;
+  rejectedByUserId?: EntityId;
+  actualTeacherId?: EntityId;
+  actualTeacherName?: string;
+  actualClassroomId?: EntityId;
+  actualClassroomName?: string;
+  actualStartAt?: string;
+  actualEndAt?: string;
+  actualUnits?: number;
 }
 
 export interface ClassroomOccupancyItem {
@@ -329,6 +387,8 @@ export interface ClassEnrolledStudentItem {
 
 export interface ClassOccurrenceItem {
   id: EntityId;
+  lessonRecordId?: EntityId;
+  recordId?: EntityId;
   lessonNo: string;
   occurrenceType: string;
   plannedTeacherId?: EntityId;
@@ -341,6 +401,24 @@ export interface ClassOccurrenceItem {
   planningStatus: string;
   resultStatus?: string;
   confirmed: boolean;
+  confirmStage?: 'PENDING_ADMIN' | 'CONFIRMED' | 'REJECTED' | string;
+  confirmedAt?: string;
+  confirmedByUserId?: EntityId;
+  teacherConfirmedAt?: string;
+  teacherConfirmedByUserId?: EntityId;
+  adminConfirmedAt?: string;
+  adminConfirmedByUserId?: EntityId;
+  rejectReason?: string;
+  rejectedAt?: string;
+  rejectedByUserId?: EntityId;
+  actualTeacherId?: EntityId;
+  actualTeacherName?: string;
+  actualClassroomId?: EntityId;
+  actualClassroomName?: string;
+  actualStartAt?: string;
+  actualEndAt?: string;
+  actualUnits?: number;
+  notes?: string;
 }
 
 // ─── Lesson ─────────────────────────────────────────────
@@ -359,12 +437,23 @@ export interface LessonRecordItem {
   actualTeacherName?: string;
   actualClassroomId?: EntityId;
   actualClassroomName?: string;
+  actualStartAt?: string;
+  actualEndAt?: string;
   actualUnits: number;
   shouldDeduct: boolean;
   deductedUnits: number;
   shouldExtendEndDate: boolean;
+  confirmStage?: 'PENDING_ADMIN' | 'CONFIRMED' | 'REJECTED' | string;
+  teacherConfirmedAt?: string;
+  teacherConfirmedByUserId?: EntityId;
+  adminConfirmedAt?: string;
+  adminConfirmedByUserId?: EntityId;
+  rejectReason?: string;
+  rejectedAt?: string;
+  rejectedByUserId?: EntityId;
   recordSource?: string;
   confirmedAt?: string;
+  notes?: string;
 }
 
 export interface LessonRecordDetailItem extends LessonRecordItem {
@@ -372,10 +461,7 @@ export interface LessonRecordDetailItem extends LessonRecordItem {
   plannedTeacherName?: string;
   plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
-  actualStartAt?: string;
-  actualEndAt?: string;
   confirmedByUserId?: EntityId;
-  notes?: string;
 }
 
 export interface LessonRecordConfirmResult {

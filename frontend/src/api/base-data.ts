@@ -197,7 +197,11 @@ export interface CourseProductSavePayload {
   teachingMode: string;
   defaultTotalUnits?: number;
   defaultLessonUnits?: number;
-  expiryDurationDays?: number;
+  billingType?: string;
+  startDate?: string;
+  totalSessions?: number;
+  startMonth?: string;
+  endMonth?: string;
   defaultClassroomId?: EntityId;
   defaultTeacherId?: EntityId;
   listPrice: number;
