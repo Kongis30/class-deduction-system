@@ -17,6 +17,7 @@ public record ReceiptRecordVO(
         Long studentId,
         String studentName,
         String templateCode,
+        String receiptPayload,
         String fileUrl,
         LocalDateTime issuedAt
 ) {

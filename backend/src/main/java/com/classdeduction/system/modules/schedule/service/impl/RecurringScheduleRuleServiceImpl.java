@@ -32,6 +32,7 @@ import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleS
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleDetailVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleListItemVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleSlotVO;
+import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleUpdateResultVO;
 import lombok.RequiredArgsConstructor;
@@ -440,22 +441,29 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
 
         List<String> conflicts = new ArrayList<>();
+        List<ScheduleConflictDetailVO> details = new ArrayList<>();
         for (LessonOccurrenceEntity candidate : candidates) {
-            if (hasOverlap(candidate, studentOccurrences)) {
+            LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
+            if (studentConflict != null) {
                 conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
+                details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), studentConflict));
             }
-            if (teacherId != null && hasOverlap(candidate, teacherOccurrences)) {
+            LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences);
+            if (teacherId != null && teacherConflict != null) {
                 conflicts.add("Teacher conflict at " + candidate.getPlannedStartAt());
+                details.add(buildConflictDetail("TEACHER", teacherId, resolveTeacherName(teacherId), teacherConflict));
             }
-            if (classroomId != null && hasOverlap(candidate, classroomOccurrences)) {
+            LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
+            if (classroomId != null && classroomConflict != null) {
                 conflicts.add("Classroom conflict at " + candidate.getPlannedStartAt());
+                details.add(buildConflictDetail("CLASSROOM", classroomId, resolveClassroomName(classroomId), classroomConflict));
             }
             if (conflicts.size() >= 3) {
                 break;
             }
         }
         if (!conflicts.isEmpty()) {
-            throw new BusinessException("SCHEDULE_CONFLICT", String.join("; ", conflicts));
+            throw new BusinessException("SCHEDULE_CONFLICT", String.join("; ", conflicts), details);
         }
     }
 
@@ -696,22 +704,29 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
 
         List<String> conflicts = new ArrayList<>();
+        List<ScheduleConflictDetailVO> details = new ArrayList<>();
         for (LessonOccurrenceEntity candidate : generatedOccurrences) {
-            if (hasOverlap(candidate, studentOccurrences)) {
+            LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
+            if (studentConflict != null) {
                 conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
+                details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), studentConflict));
             }
-            if (teacherId != null && hasOverlap(candidate, teacherOccurrences)) {
+            LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences);
+            if (teacherId != null && teacherConflict != null) {
                 conflicts.add("Teacher conflict at " + candidate.getPlannedStartAt());
+                details.add(buildConflictDetail("TEACHER", teacherId, resolveTeacherName(teacherId), teacherConflict));
             }
-            if (classroomId != null && hasOverlap(candidate, classroomOccurrences)) {
+            LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
+            if (classroomId != null && classroomConflict != null) {
                 conflicts.add("Classroom conflict at " + candidate.getPlannedStartAt());
+                details.add(buildConflictDetail("CLASSROOM", classroomId, resolveClassroomName(classroomId), classroomConflict));
             }
             if (conflicts.size() >= 3) {
                 break;
             }
         }
         if (!conflicts.isEmpty()) {
-            throw new BusinessException("SCHEDULE_CONFLICT", String.join("; ", conflicts));
+            throw new BusinessException("SCHEDULE_CONFLICT", String.join("; ", conflicts), details);
         }
     }
 
@@ -722,6 +737,44 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 existing.getPlannedStartAt(),
                 existing.getPlannedEndAt()
         ));
+    }
+
+    private LessonOccurrenceEntity firstOverlap(LessonOccurrenceEntity candidate, List<LessonOccurrenceEntity> existingOccurrences) {
+        return existingOccurrences.stream()
+                .filter(existing -> overlaps(candidate.getPlannedStartAt(), candidate.getPlannedEndAt(),
+                        existing.getPlannedStartAt(), existing.getPlannedEndAt()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private ScheduleConflictDetailVO buildConflictDetail(String resourceType,
+                                                         Long resourceId,
+                                                         String resourceName,
+                                                         LessonOccurrenceEntity existing) {
+        return ScheduleConflictDetailVO.builder()
+                .resourceType(resourceType)
+                .resourceId(resourceId)
+                .resourceName(resourceName)
+                .conflictStartAt(existing.getPlannedStartAt())
+                .conflictEndAt(existing.getPlannedEndAt())
+                .existingOccurrenceId(existing.getId())
+                .existingLessonNo(existing.getLessonNo())
+                .build();
+    }
+
+    private String resolveStudentName(Long studentId) {
+        StudentEntity student = studentId == null ? null : studentMapper.selectById(studentId);
+        return student == null ? null : student.getStudentName();
+    }
+
+    private String resolveTeacherName(Long teacherId) {
+        TeacherEntity teacher = teacherId == null ? null : teacherMapper.selectById(teacherId);
+        return teacher == null ? null : teacher.getTeacherName();
+    }
+
+    private String resolveClassroomName(Long classroomId) {
+        ClassroomEntity classroom = classroomId == null ? null : classroomMapper.selectById(classroomId);
+        return classroom == null ? null : classroom.getRoomName();
     }
 
     private boolean overlaps(LocalDateTime startA, LocalDateTime endA, LocalDateTime startB, LocalDateTime endB) {

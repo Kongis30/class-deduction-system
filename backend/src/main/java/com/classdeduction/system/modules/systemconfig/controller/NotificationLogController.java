@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 通知日志控制器：查看邮件日志、手动重试，并由管理员手动触发安全分发。
+ * 通知日志控制器：查看邮件日志与失败记录。
  */
 @Validated
 @RestController
@@ -61,13 +61,12 @@ public class NotificationLogController {
     }
 
     @PostMapping("/dispatch")
-    @Operation(summary = "Dispatch one batch of pending email logs manually")
+    @Operation(summary = "Deprecated: direct batch dispatch is blocked until each email is previewed")
     @RequireRoles({"ADMIN"})
     public ApiResponse<NotificationDispatchResultVO> dispatchPendingEmails(
             @Valid @RequestBody NotificationDispatchRequest request,
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser
     ) {
-        return ApiResponse.success("Dispatch completed.",
-                systemNotificationService.dispatchPendingEmails(request, currentUser.userId()));
+        return ApiResponse.success(systemNotificationService.dispatchPendingEmails(request, currentUser.userId()));
     }
 }

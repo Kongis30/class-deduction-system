@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.lesson.service;
 
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
@@ -24,6 +25,9 @@ import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,8 +38,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -102,6 +108,13 @@ class LessonRecordServiceImplTest {
 
     private LessonRecordServiceImpl lessonRecordService;
 
+    @BeforeAll
+    static void initMybatisPlusLambdaCache() {
+        // 单元测试不启动 MyBatis 上下文，手动初始化 LambdaQueryWrapper 字段缓存。
+        Configuration configuration = new Configuration();
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
+    }
+
     @BeforeEach
     void setUp() {
         lessonRecordService = new LessonRecordServiceImpl(
@@ -140,7 +153,7 @@ class LessonRecordServiceImplTest {
 
         verify(lessonRecordMapper).insert(recordCaptor.capture());
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
-        verify(coursePackageMapper).updateById(packageCaptor.capture());
+        verify(coursePackageMapper, org.mockito.Mockito.atLeastOnce()).updateById(packageCaptor.capture());
         verify(packageBalanceSnapshotMapper).insert(snapshotCaptor.capture());
         verify(notificationOutboxService).queueLessonBalanceEmail(any(LessonRecordEntity.class), any(CoursePackageEntity.class), any(StudentEntity.class), eq("Completed"));
 
@@ -248,7 +261,7 @@ class LessonRecordServiceImplTest {
 
         verify(lessonRecordMapper, org.mockito.Mockito.atLeastOnce()).updateById(recordCaptor.capture());
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
-        verify(coursePackageMapper).updateById(packageCaptor.capture());
+        verify(coursePackageMapper, org.mockito.Mockito.atLeastOnce()).updateById(packageCaptor.capture());
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
         LessonRecordEntity updatedRecord = recordCaptor.getAllValues().get(recordCaptor.getAllValues().size() - 1);
         LessonOccurrenceEntity balancedFuture = occurrenceCaptor.getAllValues().stream()
@@ -264,7 +277,38 @@ class LessonRecordServiceImplTest {
         assertThat(balancedFuture.getPlannedEndAt()).isEqualTo(LocalDate.of(2026, 4, 20).atTime(20, 30));
         assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(-3);
         assertThat(packageCaptor.getValue().getRemainingUnits()).isEqualTo(7);
+        assertThat(packageCaptor.getValue().getEstimatedEndDate()).isEqualTo(LocalDate.of(2026, 4, 20));
         assertThat(result.deductedUnits()).isEqualTo(1.5);
+    }
+
+    @Test
+    void shouldRejectAdminConfirmationWhenActualLessonConflicts() {
+        LessonRecordEntity pendingRecord = buildPendingRecord();
+        LessonOccurrenceEntity occurrence = buildOccurrence();
+        LessonRecordConfirmRequest reviewRequest = new LessonRecordConfirmRequest();
+        reviewRequest.setOccurrenceId(1001L);
+        reviewRequest.setResultStatus("COMPLETED");
+        reviewRequest.setActualStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
+        reviewRequest.setActualEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
+        reviewRequest.setActualUnits(3);
+
+        when(lessonRecordMapper.selectById(2001L)).thenReturn(pendingRecord);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(any())).thenReturn(buildTeacher(701L));
+        when(classroomMapper.selectById(any())).thenReturn(buildClassroom(801L));
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(1L);
+
+        assertThatThrownBy(() -> lessonRecordService.adminConfirmLesson(
+                2001L, reviewRequest, currentAdminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("SCHEDULE_CONFLICT");
+
+        verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
     }
 
     @Test
@@ -336,6 +380,103 @@ class LessonRecordServiceImplTest {
                 .orElseThrow();
         assertThat(shortenedFuture.getPlannedUnits()).isEqualTo(2);
         assertThat(shortenedFuture.getPlannedEndAt()).isEqualTo(LocalDate.of(2026, 4, 20).atTime(19, 0));
+    }
+
+    @Test
+    void shouldRequireScheduleReconciliationWhenLongerLessonHasNoFutureOccurrence() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("COMPLETED");
+        request.setActualStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
+        request.setActualEndAt(LocalDateTime.of(2026, 4, 12, 21, 0));
+        request.setActualUnits(6);
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(701L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(801L)).thenReturn(buildClassroom());
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubInsertedIds();
+
+        assertThatThrownBy(() -> lessonRecordService.confirmLesson(request, currentAdminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("FUTURE_SCHEDULE_RECONCILIATION_REQUIRED");
+    }
+
+    @Test
+    void shouldCreateMakeupWithoutDeductionForFormalLeave() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("FORMAL_LEAVE");
+        LessonOccurrenceEntity future = buildFutureOccurrence(2001L, LocalDate.of(2026, 4, 20), 4);
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildFormalLeaveRule());
+        when(lessonOccurrenceMapper.selectOne(any())).thenReturn(future);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of(future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubInsertedIds();
+
+        LessonRecordConfirmResultVO result = lessonRecordService.confirmLesson(request, currentAdminUser());
+
+        verify(hourLedgerMapper).insert(ledgerCaptor.capture());
+        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
+        assertThat(ledgerCaptor.getValue().getLedgerType()).isEqualTo("NO_DEDUCT_AUDIT");
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isZero();
+        assertThat(occurrenceCaptor.getValue().getOccurrenceType()).isEqualTo("MAKEUP");
+        assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(4);
+        assertThat(result.deductedUnits()).isZero();
+    }
+
+    @Test
+    void shouldRejectFormalLeaveMakeupWhenStudentScheduleConflicts() {
+        assertFormalLeaveMakeupConflictRejected(List.of(1L), "Student conflict");
+    }
+
+    @Test
+    void shouldRejectFormalLeaveMakeupWhenTeacherScheduleConflicts() {
+        assertFormalLeaveMakeupConflictRejected(List.of(0L, 1L), "Teacher conflict");
+    }
+
+    @Test
+    void shouldRejectFormalLeaveMakeupWhenClassroomScheduleConflicts() {
+        assertFormalLeaveMakeupConflictRejected(List.of(0L, 0L, 1L), "Classroom conflict");
+    }
+
+    @Test
+    void shouldDeductPlannedHoursForNoShowWithoutChangingFutureSchedule() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("NO_SHOW");
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildNoShowRule());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubInsertedIds();
+
+        LessonRecordConfirmResultVO result = lessonRecordService.confirmLesson(request, currentAdminUser());
+
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        verify(hourLedgerMapper).insert(ledgerCaptor.capture());
+        assertThat(recordCaptor.getValue().getActualUnits()).isZero();
+        assertThat(recordCaptor.getValue().getDeductedUnits()).isEqualTo(4);
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(-4);
+        assertThat(result.remainingUnits()).isEqualTo(3.0);
     }
 
     @Test
@@ -475,6 +616,9 @@ class LessonRecordServiceImplTest {
         mergedOccurrence.setPlanningStatus("MERGED");
         mergedOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
         mergedOccurrence.setPlannedUnits(3);
+        // 确认阶段已把课次改成实际老师/教室（与原计划 701/801 不同），撤销后应恢复原计划。
+        mergedOccurrence.setPlannedTeacherId(702L);
+        mergedOccurrence.setPlannedClassroomId(802L);
         LessonOccurrenceEntity balancedFuture = buildFutureOccurrence(2002L, LocalDate.of(2026, 4, 20), 5);
         when(lessonRecordMapper.selectById(2001L)).thenReturn(confirmedRecord);
         when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 3));
@@ -500,6 +644,9 @@ class LessonRecordServiceImplTest {
         assertThat(restoredOccurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
         assertThat(restoredOccurrence.getPlannedUnits()).isEqualTo(4);
         assertThat(restoredOccurrence.getPlannedEndAt()).isEqualTo(LocalDateTime.of(2026, 4, 12, 20, 0));
+        // 撤销确认必须把课次的老师/教室恢复为确认前的原计划，避免日历与后续冲突检测错误占用。
+        assertThat(restoredOccurrence.getPlannedTeacherId()).isEqualTo(701L);
+        assertThat(restoredOccurrence.getPlannedClassroomId()).isEqualTo(801L);
     }
 
     @Test
@@ -516,6 +663,44 @@ class LessonRecordServiceImplTest {
         assertThatThrownBy(() -> lessonRecordService.confirmLesson(request, currentStaffUser()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("The package does not have enough remaining units for this confirmation.");
+    }
+
+    private void assertFormalLeaveMakeupConflictRejected(List<Long> conflictCounts, String expectedMessage) {
+        LessonRecordEntity pendingRecord = buildPendingRecord();
+        pendingRecord.setResultStatus("FORMAL_LEAVE");
+        pendingRecord.setShouldDeduct(0);
+        pendingRecord.setDeductedUnits(0);
+        pendingRecord.setShouldExtendEndDate(1);
+        LessonOccurrenceEntity occurrence = buildOccurrence();
+        LessonOccurrenceEntity lastOccurrence = buildFutureOccurrence(2001L, LocalDate.of(2026, 4, 20), 4);
+        lastOccurrence.setStudentId(601L);
+        lastOccurrence.setPlannedTeacherId(701L);
+        lastOccurrence.setPlannedClassroomId(801L);
+        CoursePackageEntity coursePackage = buildPackage(10, 2);
+        AtomicInteger conflictCheckIndex = new AtomicInteger();
+        List<Long> allConflictCounts = new ArrayList<>(List.of(0L, 0L, 0L));
+        allConflictCounts.addAll(conflictCounts);
+
+        when(lessonRecordMapper.selectById(2001L)).thenReturn(pendingRecord);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(coursePackageMapper.selectById(501L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildFormalLeaveRule());
+        when(lessonOccurrenceMapper.selectOne(any())).thenReturn(lastOccurrence);
+        when(lessonOccurrenceMapper.selectCount(any())).thenAnswer(invocation ->
+                allConflictCounts.get(conflictCheckIndex.getAndIncrement()));
+
+        assertThatThrownBy(() -> lessonRecordService.adminConfirmLesson(2001L, currentAdminUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining(expectedMessage);
+
+        verify(lessonRecordMapper, never()).updateById(any(LessonRecordEntity.class));
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+        verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
+        assertThat(pendingRecord.getConfirmStage()).isEqualTo("PENDING_ADMIN");
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(10);
     }
 
     private void stubInsertedIds() {
@@ -674,6 +859,19 @@ class LessonRecordServiceImplTest {
         rule.setDeductMode("PLANNED_UNITS");
         rule.setDefaultShouldExtend(0);
         rule.setAllowManualOverride(1);
+        rule.setStatus("ACTIVE");
+        return rule;
+    }
+
+    private LessonStatusRuleEntity buildFormalLeaveRule() {
+        LessonStatusRuleEntity rule = new LessonStatusRuleEntity();
+        rule.setId(3L);
+        rule.setStatusCode("FORMAL_LEAVE");
+        rule.setStatusName("Formal Leave");
+        rule.setDefaultShouldDeduct(0);
+        rule.setDeductMode("NONE");
+        rule.setDefaultShouldExtend(1);
+        rule.setAllowManualOverride(0);
         rule.setStatus("ACTIVE");
         return rule;
     }

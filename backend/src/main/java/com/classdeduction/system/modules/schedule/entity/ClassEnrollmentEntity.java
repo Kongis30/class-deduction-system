@@ -28,6 +28,8 @@ public class ClassEnrollmentEntity extends BaseEntity {
 
     private Long studentId;
 
+    private Long enrollmentOrderItemId;
+
     private LocalDate enrollmentDate;
 
     private LocalDate expiryDate;

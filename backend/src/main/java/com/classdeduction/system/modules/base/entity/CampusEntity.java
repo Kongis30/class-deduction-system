@@ -8,6 +8,8 @@ import com.classdeduction.system.common.model.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.math.BigDecimal;
+
 /**
  * Campus entity.
  */
@@ -27,6 +29,12 @@ public class CampusEntity extends BaseEntity {
 
     @TableField("status")
     private String status;
+
+    @TableField("default_pickup_fee_amount")
+    private BigDecimal defaultPickupFeeAmount;
+
+    @TableField("default_dropoff_fee_amount")
+    private BigDecimal defaultDropoffFeeAmount;
 
     @TableField("notes")
     private String notes;

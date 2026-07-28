@@ -130,6 +130,7 @@ export async function cleanupE2EData(connection: Connection, marker: string): Pr
   await deleteIn(connection, 'enrollment_order', 'id', orderIds);
   await deleteIn(connection, 'class_group', 'id', classIds);
   await deleteIn(connection, 'course_product_schedule_slot', 'product_id', productIds);
+  await connection.execute('DELETE FROM course_price_option WHERE option_code LIKE ? OR detail_text LIKE ? OR notes LIKE ?', [like, like, like]);
   await deleteIn(connection, 'course_product', 'id', productIds);
   await connection.execute('DELETE FROM payment_method WHERE method_name LIKE ? OR method_code LIKE ?', [like, like]);
   await connection.execute('DELETE FROM discount_preset WHERE preset_name LIKE ?', [like]);
@@ -224,6 +225,7 @@ export async function cleanupBusinessFlowE2EData(connection: Connection, marker:
     await deleteIn(connection, 'enrollment_order', 'id', orderIds);
     await deleteIn(connection, 'class_group', 'id', classIds);
     await deleteIn(connection, 'course_product_schedule_slot', 'product_id', productIds);
+    await connection.execute('DELETE FROM course_price_option WHERE option_code LIKE ? OR detail_text LIKE ? OR notes LIKE ?', [like, like, like]);
     await deleteIn(connection, 'course_product', 'id', productIds);
     await connection.execute('DELETE FROM payment_method WHERE method_name LIKE ? OR method_code LIKE ?', [like, like]);
     await connection.execute('DELETE FROM discount_preset WHERE preset_name LIKE ?', [like]);

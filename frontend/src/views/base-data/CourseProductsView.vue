@@ -1,19 +1,27 @@
 <template>
   <div class="page-stack">
     <section class="course-product-panel">
-      <!-- 工具栏：标题 + 操作按钮 -->
+      <el-tabs v-model="activeTab" class="product-tabs product-tabs--top">
+        <el-tab-pane label="1:1 Private" name="ONE_ON_ONE" />
+        <el-tab-pane label="Group Class" name="GROUP" />
+      </el-tabs>
+
       <div class="panel-header">
-        <span class="panel-header__title">Course Products</span>
+        <div>
+          <span class="panel-header__eyebrow">Course setup</span>
+          <h2 class="panel-header__title">Course Products</h2>
+          <p class="panel-header__desc">Create the parent course first. Grade, duration, time slot, and price are maintained in the price matrix.</p>
+        </div>
         <div class="panel-header__actions">
           <el-button @click="openSubjectDialog()">Manage subjects</el-button>
+          <el-button @click="$router.push('/admin/config/course-prices')">Open price matrix</el-button>
           <el-button type="primary" @click="openProductDialog()">
             <el-icon><Plus /></el-icon>
-            Add course product
+            {{ createCourseButtonLabel }}
           </el-button>
         </div>
       </div>
 
-      <!-- 筛选表单 -->
       <el-form class="filters" :model="filters" inline>
         <el-form-item label="Product name" class="filters__item">
           <el-input
@@ -47,9 +55,8 @@
         </el-form-item>
       </el-form>
 
-      <!-- Tabs: 1v1 / Group -->
-      <el-tabs v-model="activeTab" class="product-tabs">
-        <el-tab-pane label="1:1 Private" name="ONE_ON_ONE">
+      <div class="product-tab-content">
+        <template v-if="activeTab === 'ONE_ON_ONE'">
           <el-table
             v-loading="loading"
             :data="oneOnOneData"
@@ -72,15 +79,12 @@
                       </span>
                     </el-tooltip>
                   </strong>
-                  <span v-if="row.subjectName">{{ row.subjectName }}</span>
+                  <span>{{ formatCourseType(row.courseType) }} · {{ row.registerClass || row.subjectName || 'No display label' }}</span>
                 </div>
               </template>
             </el-table-column>
             <el-table-column label="Total hours" min-width="100" align="center">
               <template #default="{ row }">{{ row.defaultTotalUnits }}</template>
-            </el-table-column>
-            <el-table-column label="Original price" min-width="110" align="right">
-              <template #default="{ row }">{{ formatPrice(row.listPrice) }}</template>
             </el-table-column>
             <el-table-column label="Status" min-width="90" align="center">
               <template #default="{ row }">
@@ -89,18 +93,19 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" min-width="140" fixed="right">
+            <el-table-column label="Actions" min-width="220" fixed="right">
               <template #default="{ row }">
                 <div class="table-actions">
+                  <el-button text type="primary" @click="openProductPrices(row)">Prices</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
               </template>
             </el-table-column>
           </el-table>
-        </el-tab-pane>
+        </template>
 
-        <el-tab-pane label="Group Class" name="GROUP">
+        <template v-else>
           <el-table
             v-loading="loading"
             :data="groupData"
@@ -112,7 +117,7 @@
               <template #default="{ row }">
                 <div class="cell-stack">
                   <strong>{{ row.productName }}</strong>
-                  <span v-if="row.subjectName">{{ row.subjectName }}</span>
+                  <span>{{ formatCourseType(row.courseType) }} · {{ row.registerClass || row.subjectName || 'No display label' }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -130,9 +135,6 @@
                 {{ row.defaultTeacherName || '—' }}
               </template>
             </el-table-column>
-            <el-table-column label="Original price" min-width="110" align="right">
-              <template #default="{ row }">{{ formatPrice(row.listPrice) }}</template>
-            </el-table-column>
             <el-table-column label="Status" min-width="90" align="center">
               <template #default="{ row }">
                 <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
@@ -140,159 +142,103 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" min-width="140" fixed="right">
+            <el-table-column label="Actions" min-width="260" fixed="right">
               <template #default="{ row }">
                 <div class="table-actions">
+                  <el-button text type="primary" @click="openProductPrices(row)">Grade classes / Prices</el-button>
+                  <el-tooltip
+                    :content="hasGradeClasses(row) ? 'Open grade class schedules' : 'Create grade classes in Price Matrix first'"
+                    placement="top"
+                  >
+                    <span>
+                      <el-button
+                        text
+                        type="success"
+                        :disabled="!hasGradeClasses(row)"
+                        @click="openClassSchedules(row)"
+                      >Class schedules</el-button>
+                    </span>
+                  </el-tooltip>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
               </template>
             </el-table-column>
           </el-table>
-        </el-tab-pane>
-      </el-tabs>
+        </template>
+      </div>
     </section>
 
-    <!-- 新建/编辑弹窗 -->
+
     <el-dialog
       v-model="dialogVisible"
-      width="780px"
+      width="720px"
       :close-on-click-modal="false"
       class="product-dialog"
     >
       <template #header>
-        <h3>{{ editingId ? 'Edit course product' : 'New course product' }}</h3>
+        <div class="product-dialog__title">
+          <h3>{{ productDialogTitle }}</h3>
+          <span>{{ productDialogSubtitle }}</span>
+        </div>
       </template>
 
       <el-form ref="formRef" label-position="top" :model="form" :rules="formRules" class="product-form">
-        <div class="product-form__row">
-          <el-form-item label="Product name" prop="productName" class="product-form__full">
-            <el-input v-model="form.productName" placeholder="e.g. Math Standard Package" />
-          </el-form-item>
-        </div>
-
-        <div class="product-form__row">
-          <el-form-item label="Subject" prop="subjectName">
-            <el-select v-model="form.subjectName" placeholder="Select subject" filterable style="width: 100%;">
-              <el-option v-for="subj in subjects" :key="subj.subjectName" :label="subj.subjectName" :value="subj.subjectName" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Teaching format" prop="teachingMode">
-            <el-select v-model="form.teachingMode" placeholder="Select format" style="width: 100%;">
-              <el-option label="1:1 private" value="ONE_ON_ONE" />
-              <el-option label="Group" value="GROUP" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <!-- 1v1: Total hours -->
-        <div v-if="form.teachingMode === 'ONE_ON_ONE'" class="product-form__row">
-          <el-form-item label="Total hours" prop="defaultTotalUnits">
-            <el-input-number v-model="form.defaultTotalUnits" :min="1" :step="1" :precision="0" :controls="false" style="width: 100%;" />
-          </el-form-item>
-        </div>
-
-        <!-- Group: Billing type + conditional fields -->
-        <template v-if="form.teachingMode === 'GROUP'">
+        <section class="product-step">
+          <div class="product-step__head">
+            <strong>Course details</strong>
+          </div>
           <div class="product-form__row">
-            <el-form-item label="Billing type" prop="billingType" class="product-form__full">
-              <el-radio-group v-model="form.billingType">
-                <el-radio-button label="PER_SESSION">Per session</el-radio-button>
-                <el-radio-button label="MONTHLY">Monthly</el-radio-button>
-              </el-radio-group>
+            <el-form-item label="Product name" prop="productName" class="product-form__full">
+              <el-input v-model="form.productName" placeholder="e.g. Saturday Class / 1-on-1 Private" />
+            </el-form-item>
+            <el-form-item label="Registration label" prop="registerClass">
+              <el-input v-model="form.registerClass" placeholder="Shown on registration" />
+            </el-form-item>
+            <el-form-item label="Subject" prop="subjectName">
+              <el-select v-model="form.subjectName" placeholder="Select subject" filterable style="width: 100%;">
+                <el-option v-for="subj in subjects" :key="subj.subjectName" :label="subj.subjectName" :value="subj.subjectName" />
+              </el-select>
             </el-form-item>
           </div>
+        </section>
 
-          <!-- Per-session: start date + total sessions -->
-          <div v-if="form.billingType === 'PER_SESSION'" class="product-form__row">
-            <el-form-item label="Start date" prop="startDate">
-              <el-date-picker
-                v-model="form.startDate"
-                type="date"
-                placeholder="Course start date"
-                style="width: 100%;"
-                value-format="YYYY-MM-DD"
-              />
+        <section class="product-step">
+          <div class="product-step__head">
+            <strong>Private lesson defaults</strong>
+          </div>
+          <div v-if="form.teachingMode === 'ONE_ON_ONE'" class="product-form__row">
+            <el-form-item label="Total hours" prop="defaultTotalUnits">
+              <el-input-number v-model="form.defaultTotalUnits" :min="1" :step="1" :precision="0" :controls="false" style="width: 100%;" />
             </el-form-item>
-            <el-form-item label="Total sessions" prop="totalSessions">
-              <el-input-number v-model="form.totalSessions" :min="1" :step="1" :precision="0" :controls="false" style="width: 100%;" />
+            <el-form-item label="Default lesson hours">
+              <el-input-number v-model="defaultLessonHours" :min="0.5" :step="0.5" :precision="1" :controls="false" style="width: 100%;" />
             </el-form-item>
           </div>
+        </section>
 
-          <!-- Monthly: start month + end month -->
-          <div v-if="form.billingType === 'MONTHLY'" class="product-form__row">
-            <el-form-item label="Start month" prop="startMonth">
-              <el-date-picker
-                v-model="form.startMonth"
-                type="month"
-                placeholder="Start month"
-                style="width: 100%;"
-                value-format="YYYY-MM"
-              />
+        <el-alert
+          v-if="form.teachingMode === 'GROUP'"
+          type="info"
+          :closable="false"
+          show-icon
+          title="Set the grade, class run, teacher, classroom, and weekly schedule in Price Matrix after creating this product."
+        />
+
+        <section class="product-step product-step--settings">
+          <div class="product-form__row">
+            <el-form-item label="Status" prop="status">
+              <el-select v-model="form.status" style="width: 100%;">
+                <el-option label="Active" value="ACTIVE" />
+                <el-option label="Inactive" value="INACTIVE" />
+              </el-select>
             </el-form-item>
-            <el-form-item label="End month" prop="endMonth">
-              <el-date-picker
-                v-model="form.endMonth"
-                type="month"
-                placeholder="End month"
-                style="width: 100%;"
-                value-format="YYYY-MM"
-              />
+            <el-form-item label="Notes">
+              <el-input v-model="form.notes" placeholder="Optional notes" />
             </el-form-item>
           </div>
-        </template>
+        </section>
 
-        <!-- Default classroom -->
-        <div class="product-form__row">
-          <el-form-item label="Default classroom" prop="defaultClassroomId" class="product-form__full">
-            <el-select v-model="form.defaultClassroomId" placeholder="Select classroom" filterable style="width: 100%;">
-              <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <!-- Default teacher -->
-        <div class="product-form__row">
-          <el-form-item label="Teacher" prop="defaultTeacherId" class="product-form__full">
-            <el-select v-model="form.defaultTeacherId" placeholder="Select teacher" filterable style="width: 100%;">
-              <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <!-- Group: Weekly schedule calendar -->
-        <div v-if="form.teachingMode === 'GROUP'" class="product-form__row">
-          <el-form-item label="Weekly schedule" class="product-form__full">
-            <WeeklyTimeSelector
-              v-model="formSlots"
-              :occupied-slots="occupiedSlots"
-            />
-          </el-form-item>
-        </div>
-
-        <div class="product-form__row">
-          <el-form-item label="Original price ($)" prop="listPrice">
-            <el-input-number v-model="form.listPrice" :min="0" :precision="2" :controls="false" style="width: 100%;" />
-          </el-form-item>
-          <el-form-item label="Status" prop="status">
-            <el-select v-model="form.status" placeholder="Select status" style="width: 100%;">
-              <el-option label="Active" value="ACTIVE" />
-              <el-option label="Inactive" value="INACTIVE" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <div class="product-form__row">
-          <el-form-item label="Product code" class="product-form__full">
-            <el-input v-model="form.productCode" disabled placeholder="Auto-generated by system" />
-          </el-form-item>
-        </div>
-
-        <div class="product-form__row">
-          <el-form-item label="Notes" class="product-form__full">
-            <el-input v-model="form.notes" type="textarea" :rows="2" placeholder="Optional notes" />
-          </el-form-item>
-        </div>
       </el-form>
 
       <template #footer>
@@ -303,7 +249,7 @@
       </template>
     </el-dialog>
 
-    <!-- Subject 管理弹窗 -->
+
     <el-dialog
       v-model="subjectDialogVisible"
       width="720px"
@@ -314,7 +260,7 @@
         <h3>Manage subjects</h3>
       </template>
 
-      <!-- Subject 列表 -->
+
       <el-table :data="subjectTableData" row-key="id" size="small" class="subject-table">
         <el-table-column label="Display order" width="110" align="center">
           <template #default="{ row }">{{ row.displayOrder }}</template>
@@ -344,7 +290,7 @@
         </el-table-column>
       </el-table>
 
-      <!-- 新建 / 编辑 Subject 表单 -->
+
       <div class="subject-form">
         <h4 class="subject-form__title">
           {{ subjectEditingId ? 'Edit subject' : 'Add new subject' }}
@@ -383,6 +329,7 @@
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 
 import {
   createCourseProduct,
@@ -398,11 +345,12 @@ import {
   type CourseProductQuery,
   type CourseProductSavePayload,
 } from '@/api/base-data';
-import { fetchClassroomOccupancy } from '@/api/schedule';
+import { fetchClassGroups, fetchClassroomOccupancy } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
-import type { CourseProductItem, EntityId, SubjectItem } from '@/types/domain';
+import type { ClassGroupItem, CourseProductItem, EntityId, SubjectItem } from '@/types/domain';
 
+const router = useRouter();
 const loading = ref(false);
 const submitting = ref(false);
 const dialogVisible = ref(false);
@@ -411,10 +359,12 @@ const formRef = ref();
 
 const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
+const classGroups = ref<ClassGroupItem[]>([]);
 const formSlots = ref<SlotDef[]>([]);
 const occupiedSlots = ref<OccupiedSlotDef[]>([]);
+const planningDefaultsOpen = ref<string[]>([]);
 
-// ─── Subject 管理弹窗 ───────────────────────────────────
+
 const subjectDialogVisible = ref(false);
 const subjectTableData = ref<SubjectItem[]>([]);
 const subjectFormRef = ref();
@@ -487,17 +437,17 @@ async function handleSubjectDelete(row: SubjectItem) {
     await deleteSubject(row.id);
     ElMessage.success('Deleted.');
     await loadSubjectsForDialog();
-    // 如果当前正在编辑的被删了，重置表单
+
     if (subjectEditingId.value === row.id) {
       subjectEditingId.value = null;
       Object.assign(subjectForm, { subjectName: '', displayOrder: 99, status: 'ACTIVE', notes: '' });
     }
   } catch {
-    // 用户取消
+
   }
 }
 
-// ─── 筛选 & 分页 ───────────────────────────────────────
+
 const filters = reactive({
   productName: '',
   subjectName: '',
@@ -519,6 +469,14 @@ const pagination = reactive({
 const tableData = ref<CourseProductItem[]>([]);
 const activeTab = ref('ONE_ON_ONE');
 
+const courseTypeOptions = [
+  { value: 'AFTER_SCHOOL', label: 'After School', hint: 'Group course. Add grade/month price rows later.', mode: 'GROUP', registerClass: 'After School' },
+  { value: 'SATURDAY', label: 'Saturday Class', hint: 'Group course. Add season and half/full day rows later.', mode: 'GROUP', registerClass: 'Saturday Class' },
+  { value: 'SUMMER', label: 'Summer Class', hint: 'Group course. Add 7-week and time-slot rows later.', mode: 'GROUP', registerClass: 'Summer Class' },
+  { value: 'SPRINT', label: 'Sprint Class', hint: 'Group course. Matrix still needs product confirmation.', mode: 'GROUP', registerClass: 'Sprint Class' },
+  { value: 'ONE_ON_ONE', label: '1-on-1', hint: 'Private course. Add 40/60/120 hour price rows later.', mode: 'ONE_ON_ONE', registerClass: '1 on 1' },
+] as const;
+
 const oneOnOneData = computed(() =>
   tableData.value.filter(p => p.teachingMode === 'ONE_ON_ONE')
 );
@@ -527,12 +485,49 @@ const groupData = computed(() =>
   tableData.value.filter(p => p.teachingMode === 'GROUP')
 );
 
+const createCourseButtonLabel = computed(() =>
+  activeTab.value === 'ONE_ON_ONE' ? 'Create 1-on-1 product' : 'Create group class product'
+);
+
+const productDialogTitle = computed(() => {
+  if (editingId.value) return 'Edit course product';
+  return form.teachingMode === 'ONE_ON_ONE' ? 'New 1-on-1 product' : 'New group class product';
+});
+
+const productDialogSubtitle = computed(() =>
+  form.teachingMode === 'ONE_ON_ONE'
+    ? 'Private tutoring products define the saleable package family. Prices are configured by grade and package hours.'
+    : 'Group class products define course families. Grade classes, prices, rooms, teachers, and schedules are configured next.'
+);
+
+function openProductPrices(product: CourseProductItem) {
+  router.push({
+    name: 'admin-config-course-prices',
+    query: {
+      ...(product.courseType ? { courseType: product.courseType } : {}),
+      courseProductId: product.id,
+    },
+  });
+}
+
+function openClassSchedules(product: CourseProductItem) {
+  if (!hasGradeClasses(product)) return;
+  router.push({
+    name: 'class-schedule',
+    query: { productId: product.id },
+  });
+}
+
+function hasGradeClasses(product: CourseProductItem) {
+  return classGroups.value.some(item => String(item.productId) === String(product.id));
+}
+
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
 }
 
-// ─── 加载数据 ──────────────────────────────────────────
+
 async function loadData() {
   loading.value = true;
   try {
@@ -546,6 +541,7 @@ async function loadData() {
     const data = res.data.data;
     tableData.value = data.records;
     pagination.total = data.total;
+    await loadClassGroups();
   } catch {
     ElMessage.error('Failed to load course products.');
   } finally {
@@ -553,7 +549,7 @@ async function loadData() {
   }
 }
 
-// ─── Subjects 列表 ─────────────────────────────────────
+
 const subjects = ref<SubjectItem[]>([]);
 
 async function loadSubjects() {
@@ -565,14 +561,25 @@ async function loadSubjects() {
   }
 }
 
-// ─── 新建 / 编辑 ───────────────────────────────────────
+async function loadClassGroups() {
+  try {
+    const res = await fetchClassGroups();
+    classGroups.value = res.data.data ?? [];
+  } catch {
+    classGroups.value = [];
+  }
+}
+
+
 const form = reactive<CourseProductSavePayload>({
   productCode: '',
   productName: '',
+  courseType: undefined,
+  registerClass: 'Group Class',
   subjectName: '',
   teachingMode: 'GROUP',
   defaultTotalUnits: 40,
-  defaultLessonUnits: 2,
+  defaultLessonUnits: 4,
   billingType: 'PER_SESSION',
   startDate: undefined,
   totalSessions: undefined,
@@ -580,14 +587,21 @@ const form = reactive<CourseProductSavePayload>({
   endMonth: undefined,
   defaultClassroomId: undefined,
   defaultTeacherId: undefined,
-  listPrice: 0,
   status: 'ACTIVE',
   notes: '',
   slots: [],
 });
 
+const defaultLessonHours = computed({
+  get: () => (form.defaultLessonUnits ?? 4) / 2,
+  set: (hours: number) => {
+    form.defaultLessonUnits = Math.round(hours * 2);
+  },
+});
+
 const formRules = {
   productName: [{ required: true, message: 'Product name is required' }],
+  registerClass: [{ required: true, message: 'Registration label is required' }],
   teachingMode: [{ required: true, message: 'Teaching format is required' }],
   defaultTotalUnits: [
     {
@@ -602,121 +616,7 @@ const formRules = {
       }, trigger: 'change',
     },
   ],
-  listPrice: [{ required: true, message: 'List price is required' }],
-  defaultClassroomId: [{
-    validator: (rule: any, value: any, callback: any) => {
-      if (value === undefined || value === null || value === '') {
-        callback(new Error('Classroom is required'));
-      } else {
-        callback();
-      }
-    }, trigger: 'change',
-  }],
-  defaultTeacherId: [{
-    validator: (rule: any, value: any, callback: any) => {
-      if (value === undefined || value === null || value === '') {
-        callback(new Error('Teacher is required'));
-      } else {
-        callback();
-      }
-    }, trigger: 'change',
-  }],
-  billingType: [{
-    validator: (rule: any, value: any, callback: any) => {
-      if (form.teachingMode === 'GROUP' && !value) {
-        callback(new Error('Billing type is required for group products'));
-      } else {
-        callback();
-      }
-    }, trigger: 'change',
-  }],
-  startDate: [{
-    validator: (rule: any, value: any, callback: any) => {
-      if (form.teachingMode === 'GROUP' && form.billingType === 'PER_SESSION' && !value) {
-        callback(new Error('Start date is required'));
-      } else {
-        callback();
-      }
-    }, trigger: 'change',
-  }],
-  totalSessions: [{
-    validator: (rule: any, value: any, callback: any) => {
-      if (form.teachingMode === 'GROUP' && form.billingType === 'PER_SESSION' && (value === undefined || value === null)) {
-        callback(new Error('Total sessions is required'));
-      } else {
-        callback();
-      }
-    }, trigger: 'change',
-  }],
-  startMonth: [{
-    validator: (rule: any, value: any, callback: any) => {
-      if (form.teachingMode === 'GROUP' && form.billingType === 'MONTHLY' && !value) {
-        callback(new Error('Start month is required'));
-      } else {
-        callback();
-      }
-    }, trigger: 'change',
-  }],
-  endMonth: [{
-    validator: (rule: any, value: any, callback: any) => {
-      if (form.teachingMode === 'GROUP' && form.billingType === 'MONTHLY') {
-        if (!value) {
-          callback(new Error('End month is required'));
-        } else if (form.startMonth && value < form.startMonth) {
-          callback(new Error('End month cannot be earlier than start month'));
-        } else {
-          callback();
-        }
-      } else {
-        callback();
-      }
-    }, trigger: 'change',
-  }],
 };
-
-// 监听教室选择，加载该教室的占用情况
-watch(() => form.defaultClassroomId, async (classroomId) => {
-  if (!classroomId || form.teachingMode !== 'GROUP') {
-    occupiedSlots.value = [];
-    return;
-  }
-  try {
-    const now = new Date();
-    const dayOfWeek = now.getDay();
-    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    const monday = new Date(now);
-    monday.setDate(now.getDate() + mondayOffset);
-    monday.setHours(0, 0, 0, 0);
-    const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    sunday.setHours(23, 59, 59, 999);
-
-    const res = await fetchClassroomOccupancy({
-      classroomId,
-      startAt: monday.toISOString(),
-      endAt: sunday.toISOString(),
-      pageSize: 200,
-    });
-    occupiedSlots.value = res.data.data.records.map(item => {
-      const start = new Date(item.plannedStartAt);
-      const end = new Date(item.plannedEndAt);
-      const weekday = start.getDay() === 0 ? 7 : start.getDay();
-      const fmt = (d: Date) =>
-        `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      return {
-        weekday,
-        startTime: fmt(start),
-        endTime: fmt(end),
-        courseLabel: item.packageName || item.lessonNo,
-        studentName: item.studentName,
-        teacherName: item.teacherName,
-        classroomName: item.classroomName,
-      };
-    });
-  } catch {
-    occupiedSlots.value = [];
-  }
-});
 
 function openProductDialog(row?: CourseProductItem) {
   editingId.value = row?.id ?? null;
@@ -724,6 +624,8 @@ function openProductDialog(row?: CourseProductItem) {
     Object.assign(form, {
       productCode: row.productCode,
       productName: row.productName,
+      courseType: row.courseType ?? (row.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL'),
+      registerClass: row.registerClass ?? row.productName,
       subjectName: row.subjectName ?? '',
       teachingMode: row.teachingMode,
       defaultTotalUnits: row.defaultTotalUnits,
@@ -735,12 +637,11 @@ function openProductDialog(row?: CourseProductItem) {
       endMonth: row.endMonth ?? undefined,
       defaultClassroomId: row.defaultClassroomId ?? undefined,
       defaultTeacherId: row.defaultTeacherId ?? undefined,
-      listPrice: row.listPrice,
       status: row.status,
       notes: row.notes ?? '',
       slots: row.slots ? row.slots.map(s => ({ weekday: s.weekday, startTime: s.startTime, endTime: s.endTime })) : [],
     });
-    // 回显排课时段到日历组件
+
     formSlots.value = row.slots
       ? row.slots.map(s => {
           const startM = parseInt(s.startTime.split(':')[0]) * 60 + parseInt(s.startTime.split(':')[1]);
@@ -753,16 +654,19 @@ function openProductDialog(row?: CourseProductItem) {
           };
         })
       : [];
-    // 编辑时如果已选了教室，触发占用加载
+
     occupiedSlots.value = [];
   } else {
+    const mode = activeTab.value === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'GROUP';
     Object.assign(form, {
       productCode: '',
       productName: '',
+      courseType: mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : undefined,
+      registerClass: mode === 'ONE_ON_ONE' ? '1-on-1' : 'Group Class',
       subjectName: '',
-      teachingMode: 'GROUP',
+      teachingMode: mode,
       defaultTotalUnits: 40,
-      defaultLessonUnits: 2,
+      defaultLessonUnits: 4,
       billingType: 'PER_SESSION',
       startDate: undefined,
       totalSessions: undefined,
@@ -770,7 +674,6 @@ function openProductDialog(row?: CourseProductItem) {
       endMonth: undefined,
       defaultClassroomId: undefined,
       defaultTeacherId: undefined,
-      listPrice: 0,
       status: 'ACTIVE',
       notes: '',
       slots: [],
@@ -785,54 +688,46 @@ async function handleSubmit() {
   const valid = await formRef.value?.validate().catch(() => false);
   if (!valid) return;
 
-  // GROUP 产品至少需要一个排课时段
-  if (form.teachingMode === 'GROUP' && formSlots.value.length === 0) {
-    ElMessage.warning('At least one schedule slot is required for group products.');
-    return;
-  }
 
   submitting.value = true;
   try {
-    // 构建提交数据：不同类型传不同字段
+
     const payload: any = {
       productCode: form.productCode,
       productName: form.productName,
+      courseType: form.courseType,
+      registerClass: form.registerClass,
       subjectName: form.subjectName,
       teachingMode: form.teachingMode,
-      listPrice: form.listPrice,
       status: form.status,
       notes: form.notes,
-      defaultClassroomId: form.defaultClassroomId,
-      defaultTeacherId: form.defaultTeacherId || undefined,
+      // Older local servers still validate this legacy field. Pricing remains
+      // exclusively controlled by the price matrix, so send its neutral value.
+      listPrice: 0,
     };
     if (form.teachingMode === 'ONE_ON_ONE') {
       payload.defaultTotalUnits = form.defaultTotalUnits;
       payload.defaultLessonUnits = form.defaultLessonUnits;
-    } else {
-      payload.billingType = form.billingType;
-      if (form.billingType === 'PER_SESSION') {
-        payload.startDate = form.startDate;
-        payload.totalSessions = form.totalSessions;
-      } else {
-        payload.startMonth = form.startMonth;
-        payload.endMonth = form.endMonth;
-      }
-      payload.slots = formSlots.value.map(s => ({
-        weekday: s.weekday,
-        startTime: s.startTime,
-        endTime: s.endTime,
-      }));
     }
 
     if (editingId.value) {
       await updateCourseProduct(editingId.value, payload);
       ElMessage.success('Course product updated.');
+      dialogVisible.value = false;
+      await loadData();
     } else {
-      await createCourseProduct(payload);
-      ElMessage.success('Course product created.');
+      const response = await createCourseProduct(payload);
+      ElMessage.success('Course created. Add its registration prices next.');
+      dialogVisible.value = false;
+      await router.push({
+        name: 'admin-config-course-prices',
+        query: {
+          ...(form.courseType ? { courseType: form.courseType } : {}),
+          courseProductId: String(response.data.data),
+          create: '1',
+        },
+      });
     }
-    dialogVisible.value = false;
-    loadData();
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
   } finally {
@@ -840,7 +735,7 @@ async function handleSubmit() {
   }
 }
 
-// ─── 删除 ──────────────────────────────────────────────
+
 async function handleDelete(row: CourseProductItem) {
   try {
     await ElMessageBox.confirm(
@@ -849,7 +744,7 @@ async function handleDelete(row: CourseProductItem) {
       { type: 'warning' },
     );
   } catch {
-    return; // 用户取消
+    return;
   }
   try {
     await deleteCourseProduct(row.id);
@@ -860,19 +755,19 @@ async function handleDelete(row: CourseProductItem) {
   }
 }
 
-// ─── 排课时段格式化（仅用于表格展示） ─────────────────────
+
 function formatSlots(slots: { weekday: number; startTime: string; endTime: string }[]): string {
   const weekdays = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   return slots.map(s => `${weekdays[s.weekday]} ${s.startTime}-${s.endTime}`).join(', ');
 }
 
-// ─── 辅助函数 ──────────────────────────────────────────
+
 function formatTeachingMode(mode: string): string {
   return mode === 'ONE_ON_ONE' ? '1:1' : mode === 'GROUP' ? 'Group' : mode;
 }
 
-function formatPrice(price: number): string {
-  return `$${price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatCourseType(type?: string): string {
+  return type ? courseTypeOptions.find(item => item.value === type)?.label ?? 'Unclassified' : 'Any group type';
 }
 
 function formatBilling(row: CourseProductItem): string {
@@ -904,7 +799,7 @@ function billingTypeDescription(billingType?: string): string {
   return 'Per-session class: students buy a fixed number of class sessions.';
 }
 
-// ─── 教室列表 ──────────────────────────────────────────
+
 async function loadClassrooms() {
   try {
     const res = await fetchAllClassrooms();
@@ -923,7 +818,7 @@ async function loadTeachers() {
   }
 }
 
-// ─── 初始化 ────────────────────────────────────────────
+
 loadData();
 loadSubjects();
 loadClassrooms();
@@ -947,14 +842,41 @@ loadTeachers();
 }
 
 .panel-header__title {
+  margin: 2px 0 0;
   font-size: 15px;
   font-weight: 600;
   color: #1a1a1a;
 }
 
+.panel-header__eyebrow {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.panel-header__desc {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
 .panel-header__actions {
   display: flex;
   gap: 8px;
+}
+
+.product-tabs--top {
+  margin-bottom: 12px;
+}
+
+.product-tabs--top :deep(.el-tabs__header) {
+  margin-bottom: 0;
+}
+
+.product-tabs--top :deep(.el-tabs__content) {
+  display: none;
 }
 
 .filters {
@@ -1075,11 +997,90 @@ loadTeachers();
   gap: 8px;
 }
 
-/* 弹窗样式 */
+.product-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  margin: 5vh auto;
+}
+
 .product-dialog :deep(.el-dialog__body) {
-  max-height: 65vh;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: 12px 18px;
+}
+
+.product-dialog__title h3,
+.product-dialog__title span {
+  display: block;
+}
+
+.product-dialog__title h3 {
+  margin: 0;
+}
+
+.product-dialog__title span {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.product-step {
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.product-step__head {
+  margin-bottom: 8px;
+}
+
+.product-step__head strong {
+  color: #102a43;
+  font-size: 14px;
+}
+
+.planning-defaults {
+  margin: 0 2px 10px;
+}
+
+.planning-defaults :deep(.el-collapse) {
+  border-top: 1px solid #e8edf2;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.planning-defaults :deep(.el-collapse-item__header) {
+  height: auto;
+  min-height: 42px;
+  padding: 7px 0;
+  line-height: 1.25;
+}
+
+.planning-defaults :deep(.el-collapse-item__header strong),
+.planning-defaults :deep(.el-collapse-item__header span) {
+  display: block;
+}
+
+.planning-defaults :deep(.el-collapse-item__header strong) {
+  color: #334155;
+  font-size: 13px;
+}
+
+.planning-defaults :deep(.el-collapse-item__header span) {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.planning-defaults :deep(.el-collapse-item__content) {
+  padding-bottom: 0;
+}
+
+.product-step--settings {
+  margin-bottom: 0;
 }
 
 .product-form__row {
@@ -1093,6 +1094,7 @@ loadTeachers();
 }
 
 .product-dialog :deep(.el-dialog__header) {
+  flex: none;
   border-bottom: 1px solid #ebeef5;
   padding: 16px 20px;
 }
@@ -1105,6 +1107,7 @@ loadTeachers();
 }
 
 .product-dialog :deep(.el-dialog__footer) {
+  flex: none;
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
 }

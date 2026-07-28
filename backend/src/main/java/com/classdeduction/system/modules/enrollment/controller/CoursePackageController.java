@@ -1,8 +1,11 @@
 package com.classdeduction.system.modules.enrollment.controller;
 
+import com.classdeduction.system.common.dto.CurrentUserResponse;
+import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
+import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
@@ -29,7 +32,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/packages")
 @Tag(name = "Enrollment - Course Packages")
-@RequireRoles({"ADMIN", "STAFF", "TEACHER", "STUDENT"})
+@RequireRoles({"ADMIN", "STAFF"})
 public class CoursePackageController {
 
     private final CoursePackageService coursePackageService;
@@ -37,6 +40,20 @@ public class CoursePackageController {
     @GetMapping
     @Operation(summary = "分页查询课时包")
     public ApiResponse<PageResponse<CoursePackageListItemVO>> pagePackages(@ParameterObject CoursePackagePageQuery query) {
+        return ApiResponse.success(coursePackageService.pagePackages(query));
+    }
+
+    @GetMapping("/my")
+    @RequireRoles({"STUDENT"})
+    @Operation(summary = "List current student's own course packages")
+    public ApiResponse<PageResponse<CoursePackageListItemVO>> pageMyPackages(
+            @ParameterObject CoursePackagePageQuery query,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        if (currentUser.studentId() == null) {
+            throw new BusinessException("STUDENT_BINDING_REQUIRED",
+                    "Student account is not linked to a student profile.");
+        }
+        query.setStudentId(currentUser.studentId());
         return ApiResponse.success(coursePackageService.pagePackages(query));
     }
 

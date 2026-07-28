@@ -16,6 +16,7 @@ public record CoursePackageListItemVO(
         Long id,
         String packageNo,
         Long enrollmentOrderId,
+        Long enrollmentOrderItemId,
         Long studentId,
         String studentName,
         Long courseProductId,

@@ -7,6 +7,7 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.util.StudentNoGenerator;
 import com.classdeduction.system.modules.base.dto.StudentPageQuery;
+import com.classdeduction.system.modules.base.dto.StudentReuseQuery;
 import com.classdeduction.system.modules.base.dto.StudentSaveRequest;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
@@ -24,6 +25,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.sql.Timestamp;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -62,25 +67,16 @@ public class StudentServiceImpl implements StudentService {
 
     @Override
     public PageResponse<StudentListItemVO> pageStudents(StudentPageQuery query) {
-        Page<StudentEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
-        LambdaQueryWrapper<StudentEntity> wrapper = new LambdaQueryWrapper<StudentEntity>()
-                .and(StringUtils.hasText(query.getKeyword()), w -> w
-                        .like(StudentEntity::getStudentName, query.getKeyword())
-                        .or()
-                        .like(StudentEntity::getStudentNo, query.getKeyword()))
-                .eq(StringUtils.hasText(query.getStatus()), StudentEntity::getStatus, query.getStatus())
-                .like(StringUtils.hasText(query.getGuardian()), StudentEntity::getGuardianName, query.getGuardian())
-                .eq(StudentEntity::getIsDeleted, 0)
-                .orderByDesc(StudentEntity::getCreatedAt);
-        IPage<StudentEntity> result = studentMapper.selectPage(page, wrapper);
+        normalizePageQuery(query);
+        Page<Map<String, Object>> page = new Page<>(query.getPageNum(), query.getPageSize());
+        IPage<Map<String, Object>> result = studentMapper.selectStudentOperationPage(page, query);
         if (result.getRecords().isEmpty()) {
             return PageResponse.empty(query.getPageNum(), query.getPageSize());
         }
 
-        Map<Long, String> campusNameMap = buildCampusNameMap(result.getRecords());
         List<StudentListItemVO> list = result.getRecords()
                 .stream()
-                .map(s -> toListItem(s, campusNameMap))
+                .map(this::toListItem)
                 .toList();
         return PageResponse.of(list, result.getTotal(), result.getCurrent(), result.getSize());
     }
@@ -89,6 +85,14 @@ public class StudentServiceImpl implements StudentService {
     public StudentDetailVO getStudent(Long id) {
         StudentEntity student = requireStudent(id);
         return toDetail(student);
+    }
+
+    @Override
+    public StudentDetailVO findReusableStudent(StudentReuseQuery query) {
+        StudentEntity student = studentMapper.selectReusableStudent(
+                query.getStudentName().trim(),
+                query.getGuardianPhone().trim());
+        return student == null ? null : toDetail(student);
     }
 
     @Override
@@ -176,14 +180,32 @@ public class StudentServiceImpl implements StudentService {
         entity.setEnglishName(request.getEnglishName());
         entity.setGender(request.getGender());
         entity.setBirthDate(request.getBirthDate());
+        entity.setGrade(request.getGrade());
+        entity.setSchool(request.getSchool());
         entity.setSourceChannel(request.getSourceChannel());
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : DEFAULT_STATUS);
         entity.setNotes(request.getNotes());
         entity.setGuardianName(request.getGuardianName());
         entity.setGuardianPhone(request.getGuardianPhone());
+        entity.setGuardianPhone2(request.getGuardianPhone2());
         entity.setGuardianEmail(request.getGuardianEmail());
         entity.setGuardianRelationType(request.getGuardianRelationType());
+        entity.setPickupRequired(Boolean.TRUE.equals(request.getPickupRequired()));
+        entity.setPickupAddress(request.getPickupAddress());
+        entity.setDropoffRequired(Boolean.TRUE.equals(request.getDropoffRequired()));
+        entity.setDropoffAddress(request.getDropoffAddress());
         entity.setCampusId(request.getCampusId());
+    }
+
+    private void normalizePageQuery(StudentPageQuery query) {
+        query.setKeyword(trimToNull(query.getKeyword()));
+        query.setStatus(trimToNull(query.getStatus()));
+        query.setGuardian(trimToNull(query.getGuardian()));
+        query.setPaymentStatus(trimToNull(query.getPaymentStatus()));
+    }
+
+    private String trimToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
     }
 
     /**
@@ -213,18 +235,147 @@ public class StudentServiceImpl implements StudentService {
                 .englishName(student.getEnglishName())
                 .gender(student.getGender())
                 .birthDate(student.getBirthDate())
+                .grade(student.getGrade())
+                .school(student.getSchool())
                 .sourceChannel(student.getSourceChannel())
                 .status(student.getStatus())
                 .notes(student.getNotes())
                 .guardianName(student.getGuardianName())
                 .phone(student.getGuardianPhone())
+                .guardianPhone2(student.getGuardianPhone2())
                 .guardianEmail(student.getGuardianEmail())
                 .guardianRelationType(student.getGuardianRelationType())
+                .pickupRequired(Boolean.TRUE.equals(student.getPickupRequired()))
+                .pickupAddress(student.getPickupAddress())
+                .dropoffRequired(Boolean.TRUE.equals(student.getDropoffRequired()))
+                .dropoffAddress(student.getDropoffAddress())
                 .campusId(student.getCampusId())
                 .campusName(student.getCampusId() != null ? campusNameMap.get(student.getCampusId()) : null)
                 .createdAt(student.getCreatedAt())
                 .updatedAt(student.getUpdatedAt())
                 .build();
+    }
+
+    private StudentListItemVO toListItem(Map<String, Object> row) {
+        return StudentListItemVO.builder()
+                .id(longValue(row.get("id")))
+                .studentNo(stringValue(row.get("studentNo")))
+                .studentName(stringValue(row.get("studentName")))
+                .englishName(stringValue(row.get("englishName")))
+                .gender(stringValue(row.get("gender")))
+                .birthDate(localDateValue(row.get("birthDate")))
+                .grade(stringValue(row.get("grade")))
+                .school(stringValue(row.get("school")))
+                .sourceChannel(stringValue(row.get("sourceChannel")))
+                .status(stringValue(row.get("status")))
+                .notes(stringValue(row.get("notes")))
+                .guardianName(stringValue(row.get("guardianName")))
+                .phone(stringValue(row.get("phone")))
+                .guardianPhone2(stringValue(row.get("guardianPhone2")))
+                .guardianEmail(stringValue(row.get("guardianEmail")))
+                .guardianRelationType(stringValue(row.get("guardianRelationType")))
+                .pickupRequired(booleanValue(row.get("pickupRequired")))
+                .pickupAddress(stringValue(row.get("pickupAddress")))
+                .dropoffRequired(booleanValue(row.get("dropoffRequired")))
+                .dropoffAddress(stringValue(row.get("dropoffAddress")))
+                .campusId(longValue(row.get("campusId")))
+                .campusName(stringValue(row.get("campusName")))
+                .latestSignupDate(localDateValue(row.get("latestSignupDate")))
+                .enrollmentCount(longValue(row.get("enrollmentCount")))
+                .enrollmentAmountDue(decimalValue(row.get("enrollmentAmountDue")))
+                .enrollmentPaidAmount(decimalValue(row.get("enrollmentPaidAmount")))
+                .enrollmentBalanceAmount(decimalValue(row.get("enrollmentBalanceAmount")))
+                .aggregatePaymentStatus(stringValue(row.get("aggregatePaymentStatus")))
+                .hasEnrollmentOrder(booleanValue(row.get("hasEnrollmentOrder")))
+                .createdAt(localDateTimeValue(row.get("createdAt")))
+                .updatedAt(localDateTimeValue(row.get("updatedAt")))
+                .build();
+    }
+
+    private String stringValue(Object value) {
+        return value == null ? null : value.toString();
+    }
+
+    private Long longValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        return Long.valueOf(value.toString());
+    }
+
+    private BigDecimal decimalValue(Object value) {
+        if (value == null) {
+            return BigDecimal.ZERO;
+        }
+        if (value instanceof BigDecimal amount) {
+            return amount;
+        }
+        if (value instanceof Number number) {
+            return new BigDecimal(number.toString());
+        }
+        return new BigDecimal(value.toString());
+    }
+
+    private Boolean booleanValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean bool) {
+            return bool;
+        }
+        if (value instanceof Number number) {
+            return number.intValue() != 0;
+        }
+        String text = value.toString();
+        if ("1".equals(text)) {
+            return true;
+        }
+        if ("0".equals(text)) {
+            return false;
+        }
+        return Boolean.valueOf(text);
+    }
+
+    private LocalDate localDateValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof LocalDate date) {
+            return date;
+        }
+        if (value instanceof LocalDateTime dateTime) {
+            return dateTime.toLocalDate();
+        }
+        if (value instanceof java.sql.Date date) {
+            return date.toLocalDate();
+        }
+        if (value instanceof Timestamp timestamp) {
+            return timestamp.toLocalDateTime().toLocalDate();
+        }
+        String text = value.toString();
+        return LocalDate.parse(text.length() > 10 ? text.substring(0, 10) : text);
+    }
+
+    private LocalDateTime localDateTimeValue(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof LocalDateTime dateTime) {
+            return dateTime;
+        }
+        if (value instanceof Timestamp timestamp) {
+            return timestamp.toLocalDateTime();
+        }
+        if (value instanceof LocalDate date) {
+            return date.atStartOfDay();
+        }
+        if (value instanceof java.sql.Date date) {
+            return date.toLocalDate().atStartOfDay();
+        }
+        return LocalDateTime.parse(value.toString().replace(' ', 'T'));
     }
 
     private StudentDetailVO toDetail(StudentEntity student) {
@@ -240,13 +391,20 @@ public class StudentServiceImpl implements StudentService {
                 .englishName(student.getEnglishName())
                 .gender(student.getGender())
                 .birthDate(student.getBirthDate())
+                .grade(student.getGrade())
+                .school(student.getSchool())
                 .sourceChannel(student.getSourceChannel())
                 .status(student.getStatus())
                 .notes(student.getNotes())
                 .guardianName(student.getGuardianName())
                 .guardianPhone(student.getGuardianPhone())
+                .guardianPhone2(student.getGuardianPhone2())
                 .guardianEmail(student.getGuardianEmail())
                 .guardianRelationType(student.getGuardianRelationType())
+                .pickupRequired(Boolean.TRUE.equals(student.getPickupRequired()))
+                .pickupAddress(student.getPickupAddress())
+                .dropoffRequired(Boolean.TRUE.equals(student.getDropoffRequired()))
+                .dropoffAddress(student.getDropoffAddress())
                 .campusId(student.getCampusId())
                 .campusName(campusName)
                 .createdAt(student.getCreatedAt())

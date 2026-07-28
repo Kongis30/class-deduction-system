@@ -13,6 +13,11 @@ class-deduction-desktop/node_modules
 backend/target
 backend/.mvn/wrapper/maven-wrapper.jar
 
+# Local runtime artifacts
+.run/
+backend/.run/
+dump.rdb
+
 # IDE
 .idea
 .vscode

@@ -1,39 +1,6 @@
 import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
-import type { BrandConfigItem, EntityId, LessonStatusRuleItem, NotificationTemplateItem, NotificationConfigItem, NotificationTriggerRuleItem } from '@/types/domain';
-
-// ─── Lesson Status Rules ────────────────────────────
-
-export interface LessonStatusRuleQuery {
-  statusCode?: string;
-  statusName?: string;
-  status?: string;
-  pageNum?: number;
-  pageSize?: number;
-}
-
-export function fetchLessonStatusRules(params: LessonStatusRuleQuery = {}) {
-  return http.get<ApiResponse<PageResult<LessonStatusRuleItem>>>('/v1/system/lesson-status-rules', { params });
-}
-
-export function fetchLessonStatusRule(id: EntityId) {
-  return http.get<ApiResponse<LessonStatusRuleItem>>(`/v1/system/lesson-status-rules/${id}`);
-}
-
-export interface LessonStatusRuleUpdatePayload {
-  statusName: string;
-  defaultShouldDeduct: boolean;
-  deductMode: string;
-  fixedUnits?: number;
-  defaultShouldExtend: boolean;
-  allowManualOverride: boolean;
-  status?: string;
-  remark?: string;
-}
-
-export function updateLessonStatusRule(id: EntityId, data: LessonStatusRuleUpdatePayload) {
-  return http.put<ApiResponse<LessonStatusRuleItem>>(`/v1/system/lesson-status-rules/${id}`, data);
-}
+import type { BrandConfigItem, EntityId, NotificationTemplateItem, NotificationConfigItem, NotificationTriggerRuleItem } from '@/types/domain';
 
 // ─── Brand Config ───────────────────────────────────
 
@@ -66,10 +33,6 @@ export interface NotificationTemplateQuery {
 
 export function fetchNotificationTemplates(params: NotificationTemplateQuery = {}) {
   return http.get<ApiResponse<PageResult<NotificationTemplateItem>>>('/v1/system/notification-templates', { params });
-}
-
-export function fetchNotificationTemplate(id: EntityId) {
-  return http.get<ApiResponse<NotificationTemplateItem>>(`/v1/system/notification-templates/${id}`);
 }
 
 export interface NotificationTemplateUpdatePayload {
@@ -128,26 +91,4 @@ export function fetchNotificationTriggerRules() {
 
 export function updateNotificationTriggerRule(id: EntityId, data: NotificationTriggerRuleUpdatePayload) {
   return http.put<ApiResponse<NotificationTriggerRuleItem>>(`/v1/system/notification-trigger-rules/${id}`, data);
-}
-
-// ─── Broadcast ──────────────────────────────────────────
-
-export type NotificationRecipientPreset = 'ALL_STUDENTS' | 'ALL_ENROLLED_STUDENTS' | 'ALL_TEACHERS' | 'ALL_ADMIN_USERS' | 'CUSTOM';
-
-export interface NotificationBroadcastPayload {
-  subject: string;
-  body: string;
-  recipients?: string[];
-  recipientPreset?: NotificationRecipientPreset;
-  studentKeyword?: string;
-}
-
-export interface BroadcastResult {
-  totalRecipients: number;
-  queuedCount: number;
-  recipientPreview: string[];
-}
-
-export function broadcastNotification(data: NotificationBroadcastPayload) {
-  return http.post<ApiResponse<BroadcastResult>>('/v1/system/notifications/broadcast', data);
 }

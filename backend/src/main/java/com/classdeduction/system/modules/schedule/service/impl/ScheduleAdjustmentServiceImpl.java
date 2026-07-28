@@ -5,19 +5,24 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.dto.WeeklyScheduleAdjustmentRequest;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ScheduleAdjustmentService;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
+import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleAdjustmentResultVO;
 import com.classdeduction.system.modules.schedule.vo.WeeklyScheduleAdjustmentResultVO;
 import lombok.RequiredArgsConstructor;
@@ -59,6 +64,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
     private final LessonRecordMapper lessonRecordMapper;
+    private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final JsonHelper jsonHelper;
@@ -69,6 +76,12 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         LessonOccurrenceEntity source = requireOccurrence(request.getOccurrenceId());
         Map<String, Object> beforeSnapshot = toSnapshot(source);
         validateAdjustmentType(request.getAdjustmentType());
+        validateResourceAssignment(request);
+        // Lock the involved student/teacher/classroom before checking conflicts so that
+        // concurrent adjustments touching the same resource are serialized (no check-then-write race).
+        Long targetTeacherId = request.getPlannedTeacherId() != null ? request.getPlannedTeacherId() : source.getPlannedTeacherId();
+        Long targetClassroomId = request.getPlannedClassroomId() != null ? request.getPlannedClassroomId() : source.getPlannedClassroomId();
+        lockAdjustmentResources(studentIdsForOccurrence(source), setOf(targetTeacherId), setOf(targetClassroomId));
         boolean createsMakeup = "MAKEUP_CREATE".equals(request.getAdjustmentType());
         if (!createsMakeup) {
             validateOccurrenceAdjustable(source);
@@ -82,10 +95,10 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
             createdOccurrenceId = targetOccurrence.getId();
         } else {
             targetOccurrence = applyUpdate(source, request);
-            lessonOccurrenceMapper.updateById(targetOccurrence);
+            requireOccurrenceUpdate(lessonOccurrenceMapper.updateById(targetOccurrence));
             int unitDelta = (targetOccurrence.getPlannedUnits() == null ? 0 : targetOccurrence.getPlannedUnits())
                     - (source.getPlannedUnits() == null ? 0 : source.getPlannedUnits());
-            if (unitDelta != 0) {
+            if (unitDelta != 0 && source.getPackageId() != null) {
                 adjustFutureOccurrences(source.getPackageId(), targetOccurrence.getPlannedEndAt(), -unitDelta);
             }
         }
@@ -163,6 +176,10 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
         // 忽略本批次涉及的原课次（UPDATE/DELETE），避免旧时间占用造成误报。
         Set<Long> ignoredOccurrenceIds = new HashSet<>(sourceIds);
+        // 冲突检查前先锁定本批次涉及的学生/老师/教室，串行化并发调课，避免检查后写入被穿透。
+        lockAdjustmentResources(setOf(studentId),
+                collectResourceIds(effectiveOccurrences, LessonOccurrenceEntity::getPlannedTeacherId),
+                collectResourceIds(effectiveOccurrences, LessonOccurrenceEntity::getPlannedClassroomId));
         ensureNoConflicts(effectiveOccurrences, ignoredOccurrenceIds);
 
         // 6. 事务内依次写入：新增、修改、删除（取消）并落库调整日志。
@@ -176,7 +193,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
             LessonOccurrenceEntity updated = updatedOccurrences.get(i);
             LessonOccurrenceEntity source = sourceById.get(updated.getId());
             Map<String, Object> beforeSnapshot = toSnapshot(source);
-            lessonOccurrenceMapper.updateById(updated);
+            requireOccurrenceUpdate(lessonOccurrenceMapper.updateById(updated));
             insertAdjustmentLog(source.getId(), "WEEKLY_TEMP_UPDATE",
                     beforeSnapshot, toSnapshot(updated), resolveItemReason(updateItems.get(i), request), request.getAdjustedBy());
         }
@@ -185,7 +202,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
             LessonOccurrenceEntity source = sourceById.get(item.getOccurrenceId());
             Map<String, Object> beforeSnapshot = toSnapshot(source);
             source.setPlanningStatus("CANCELLED");
-            lessonOccurrenceMapper.updateById(source);
+            requireOccurrenceUpdate(lessonOccurrenceMapper.updateById(source));
             deletedIds.add(source.getId());
             insertAdjustmentLog(source.getId(), "WEEKLY_TEMP_DELETE",
                     beforeSnapshot, toSnapshot(source), resolveItemReason(item, request), request.getAdjustedBy());
@@ -216,6 +233,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         LessonOccurrenceEntity newOccurrence = new LessonOccurrenceEntity();
         newOccurrence.setLessonNo(generateLessonNo());
         newOccurrence.setPackageId(source.getPackageId());
+        newOccurrence.setClassGroupId(source.getClassGroupId());
         newOccurrence.setStudentId(source.getStudentId());
         newOccurrence.setScheduleRuleId(source.getScheduleRuleId());
         newOccurrence.setScheduleSlotId(source.getScheduleSlotId());
@@ -237,6 +255,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         updated.setId(source.getId());
         updated.setLessonNo(source.getLessonNo());
         updated.setPackageId(source.getPackageId());
+        updated.setClassGroupId(source.getClassGroupId());
         updated.setStudentId(source.getStudentId());
         updated.setScheduleRuleId(source.getScheduleRuleId());
         updated.setScheduleSlotId(source.getScheduleSlotId());
@@ -630,9 +649,24 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     }
 
     private void validateAdjustmentType(String adjustmentType) {
-        List<String> allowed = List.of("RESCHEDULE", "CHANGE_ROOM", "CHANGE_TEACHER", "MAKEUP_CREATE");
+        List<String> allowed = List.of(
+                "RESCHEDULE",
+                "CHANGE_ROOM",
+                "CHANGE_TEACHER",
+                "ASSIGN_RESOURCES",
+                "MAKEUP_CREATE");
         if (!allowed.contains(adjustmentType)) {
             throw new BusinessException("UNSUPPORTED_ADJUSTMENT_TYPE", "Unsupported adjustment type.");
+        }
+    }
+
+    private void validateResourceAssignment(ScheduleAdjustmentRequest request) {
+        if (!"ASSIGN_RESOURCES".equals(request.getAdjustmentType())) {
+            return;
+        }
+        if (request.getPlannedTeacherId() == null || request.getPlannedClassroomId() == null) {
+            throw new BusinessException("RESOURCE_ASSIGNMENT_INCOMPLETE",
+                    "Assigning a lesson requires both a teacher and a classroom.");
         }
     }
 
@@ -669,17 +703,86 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         }
     }
 
+    /**
+     * 以固定顺序（学生 -> 老师 -> 教室，且各自按 ID 升序）加行锁，避免并发调课交叉加锁产生死锁，
+     * 同时把"冲突检查 + 写入"串行化到锁范围内。忽略空 ID（如未分配老师/教室的课次）。
+     */
+    private void lockAdjustmentResources(Set<Long> studentIds, Set<Long> teacherIds, Set<Long> classroomIds) {
+        sortedNonNull(studentIds).forEach(studentMapper::selectByIdForUpdate);
+        sortedNonNull(teacherIds).forEach(teacherMapper::selectByIdForUpdate);
+        sortedNonNull(classroomIds).forEach(classroomMapper::selectByIdForUpdate);
+    }
+
+    private List<Long> sortedNonNull(Set<Long> ids) {
+        return ids.stream().filter(Objects::nonNull).sorted().toList();
+    }
+
+    private Set<Long> setOf(Long id) {
+        return id == null ? Set.of() : Set.of(id);
+    }
+
+    private Set<Long> studentIdsForOccurrence(LessonOccurrenceEntity occurrence) {
+        if (occurrence.getStudentId() != null) {
+            return setOf(occurrence.getStudentId());
+        }
+        if (occurrence.getClassGroupId() == null) {
+            return Set.of();
+        }
+        return activeStudentIdsByClass(occurrence.getClassGroupId());
+    }
+
+    private Set<Long> activeStudentIdsByClass(Long classGroupId) {
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classGroupId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream()
+                .map(ClassEnrollmentEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private Set<Long> collectResourceIds(List<LessonOccurrenceEntity> occurrences,
+                                         Function<LessonOccurrenceEntity, Long> extractor) {
+        return occurrences.stream()
+                .map(extractor)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private void requireOccurrenceUpdate(int updated) {
+        if (updated != 1) {
+            throw new BusinessException("OCCURRENCE_CONCURRENT_UPDATE",
+                    "The lesson occurrence was updated by another request. Please retry.");
+        }
+    }
+
     private void ensureNoConflicts(LessonOccurrenceEntity target, Long ignoredOccurrenceId) {
         if (hasConflict(target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceId)) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted lesson.");
+            throwConflict("STUDENT", target.getStudentId(), "Student conflict detected for the adjusted lesson.",
+                    target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceId);
         }
+        ensureNoClassStudentConflicts(target, ignoredOccurrenceId);
         if (target.getPlannedTeacherId() != null
                 && hasConflict(target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceId)) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected for the adjusted lesson.");
+            throwConflict("TEACHER", target.getPlannedTeacherId(), "Teacher conflict detected for the adjusted lesson.",
+                    target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceId);
         }
         if (target.getPlannedClassroomId() != null
                 && hasConflict(target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceId)) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the adjusted lesson.");
+            throwConflict("CLASSROOM", target.getPlannedClassroomId(), "Classroom conflict detected for the adjusted lesson.",
+                    target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceId);
+        }
+    }
+
+    private void ensureNoClassStudentConflicts(LessonOccurrenceEntity target, Long ignoredOccurrenceId) {
+        if (target.getClassGroupId() == null) {
+            return;
+        }
+        for (Long studentId : activeStudentIdsByClass(target.getClassGroupId())) {
+            if (hasStudentConflict(target, studentId, ignoredOccurrenceId)) {
+                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted class occurrence.");
+            }
         }
     }
 
@@ -690,15 +793,18 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         ensureNoInternalConflicts(targets);
         for (LessonOccurrenceEntity target : targets) {
             if (hasConflict(target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceIds)) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted lesson.");
+                throwConflict("STUDENT", target.getStudentId(), "Student conflict detected for the adjusted lesson.",
+                        target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceIds);
             }
             if (target.getPlannedTeacherId() != null
                     && hasConflict(target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceIds)) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected for the adjusted lesson.");
+                throwConflict("TEACHER", target.getPlannedTeacherId(), "Teacher conflict detected for the adjusted lesson.",
+                        target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceIds);
             }
             if (target.getPlannedClassroomId() != null
                     && hasConflict(target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceIds)) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the adjusted lesson.");
+                throwConflict("CLASSROOM", target.getPlannedClassroomId(), "Classroom conflict detected for the adjusted lesson.",
+                        target, LessonOccurrenceEntity::getPlannedClassroomId, target.getPlannedClassroomId(), ignoredOccurrenceIds);
             }
         }
     }
@@ -744,6 +850,28 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         return lessonOccurrenceMapper.selectCount(wrapper) > 0;
     }
 
+    private boolean hasStudentConflict(LessonOccurrenceEntity target, Long studentId, Long ignoredOccurrenceId) {
+        List<Long> classIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream()
+                .map(ClassEnrollmentEntity::getClassId)
+                .filter(Objects::nonNull)
+                .toList();
+        LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, target.getPlannedEndAt())
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, target.getPlannedStartAt())
+                .and(nested -> nested
+                        .eq(LessonOccurrenceEntity::getStudentId, studentId)
+                        .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds)));
+        if (ignoredOccurrenceId != null) {
+            wrapper.ne(LessonOccurrenceEntity::getId, ignoredOccurrenceId);
+        }
+        return lessonOccurrenceMapper.selectCount(wrapper) > 0;
+    }
+
     private boolean hasConflict(LessonOccurrenceEntity target,
                                 com.baomidou.mybatisplus.core.toolkit.support.SFunction<LessonOccurrenceEntity, Long> field,
                                 Long fieldValue,
@@ -757,6 +885,83 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
             wrapper.notIn(LessonOccurrenceEntity::getId, ignoredOccurrenceIds);
         }
         return lessonOccurrenceMapper.selectCount(wrapper) > 0;
+    }
+
+    private void throwConflict(String resourceType,
+                               Long resourceId,
+                               String message,
+                               LessonOccurrenceEntity target,
+                               com.baomidou.mybatisplus.core.toolkit.support.SFunction<LessonOccurrenceEntity, Long> field,
+                               Long fieldValue,
+                               Long ignoredOccurrenceId) {
+        LessonOccurrenceEntity existing = findFirstConflict(target, field, fieldValue, ignoredOccurrenceId, null);
+        throw new BusinessException("SCHEDULE_CONFLICT", message,
+                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, existing)));
+    }
+
+    private void throwConflict(String resourceType,
+                               Long resourceId,
+                               String message,
+                               LessonOccurrenceEntity target,
+                               com.baomidou.mybatisplus.core.toolkit.support.SFunction<LessonOccurrenceEntity, Long> field,
+                               Long fieldValue,
+                               Set<Long> ignoredOccurrenceIds) {
+        LessonOccurrenceEntity existing = findFirstConflict(target, field, fieldValue, null, ignoredOccurrenceIds);
+        throw new BusinessException("SCHEDULE_CONFLICT", message,
+                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, existing)));
+    }
+
+    private LessonOccurrenceEntity findFirstConflict(LessonOccurrenceEntity target,
+                                                     com.baomidou.mybatisplus.core.toolkit.support.SFunction<LessonOccurrenceEntity, Long> field,
+                                                     Long fieldValue,
+                                                     Long ignoredOccurrenceId,
+                                                     Set<Long> ignoredOccurrenceIds) {
+        LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(field, fieldValue)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, target.getPlannedEndAt())
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, target.getPlannedStartAt())
+                .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt)
+                .last("LIMIT 1");
+        if (ignoredOccurrenceId != null) {
+            wrapper.ne(LessonOccurrenceEntity::getId, ignoredOccurrenceId);
+        }
+        if (ignoredOccurrenceIds != null && !ignoredOccurrenceIds.isEmpty()) {
+            wrapper.notIn(LessonOccurrenceEntity::getId, ignoredOccurrenceIds);
+        }
+        List<LessonOccurrenceEntity> conflicts = lessonOccurrenceMapper.selectList(wrapper);
+        return conflicts == null || conflicts.isEmpty() ? null : conflicts.get(0);
+    }
+
+    private ScheduleConflictDetailVO buildConflictDetail(String resourceType, Long resourceId, LessonOccurrenceEntity existing) {
+        return ScheduleConflictDetailVO.builder()
+                .resourceType(resourceType)
+                .resourceId(resourceId)
+                .resourceName(resolveResourceName(resourceType, resourceId))
+                .conflictStartAt(existing.getPlannedStartAt())
+                .conflictEndAt(existing.getPlannedEndAt())
+                .existingOccurrenceId(existing.getId())
+                .existingLessonNo(existing.getLessonNo())
+                .build();
+    }
+
+    private String resolveResourceName(String resourceType, Long resourceId) {
+        if (resourceId == null) {
+            return null;
+        }
+        if ("STUDENT".equals(resourceType)) {
+            StudentEntity student = studentMapper.selectById(resourceId);
+            return student == null ? null : student.getStudentName();
+        }
+        if ("TEACHER".equals(resourceType)) {
+            TeacherEntity teacher = teacherMapper.selectById(resourceId);
+            return teacher == null ? null : teacher.getTeacherName();
+        }
+        if ("CLASSROOM".equals(resourceType)) {
+            ClassroomEntity classroom = classroomMapper.selectById(resourceId);
+            return classroom == null ? null : classroom.getRoomName();
+        }
+        return null;
     }
 
     private LessonOccurrenceEntity requireOccurrence(Long occurrenceId) {
@@ -775,6 +980,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         snapshot.put("id", occurrence.getId());
         snapshot.put("lessonNo", occurrence.getLessonNo());
         snapshot.put("packageId", occurrence.getPackageId());
+        snapshot.put("classGroupId", occurrence.getClassGroupId());
         snapshot.put("studentId", occurrence.getStudentId());
         snapshot.put("occurrenceType", occurrence.getOccurrenceType());
         snapshot.put("plannedTeacherId", occurrence.getPlannedTeacherId());

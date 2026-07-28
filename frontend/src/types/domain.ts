@@ -43,15 +43,32 @@ export interface StudentItem {
   englishName?: string;
   gender: string;
   birthDate?: string;
+  grade?: string;
+  school?: string;
   sourceChannel?: string;
   guardianName: string;
   phone: string;
+  guardianPhone?: string;
+  guardianPhone2?: string;
   guardianEmail?: string;
   guardianRelationType?: string;
+  pickupRequired?: boolean;
+  pickupAddress?: string;
+  dropoffRequired?: boolean;
+  dropoffAddress?: string;
   status: string;
   campusId?: EntityId;
   campusName?: string;
+  latestSignupDate?: string;
+  enrollmentCount?: number;
+  enrollmentAmountDue?: number;
+  enrollmentPaidAmount?: number;
+  enrollmentBalanceAmount?: number;
+  aggregatePaymentStatus?: string;
+  hasEnrollmentOrder?: boolean;
   notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface TeacherItem {
@@ -92,13 +109,50 @@ export interface CampusItem {
   campusName: string;
   displayOrder: number;
   status: string;
+  defaultPickupFeeAmount?: number;
+  defaultDropoffFeeAmount?: number;
   notes?: string;
+}
+
+export interface CoursePriceOptionItem {
+  id: EntityId;
+  optionCode: string;
+  courseType: string;
+  registerClass: string;
+  gradeBand?: string;
+  periodLabel?: string;
+  durationLabel?: string;
+  timeSlotLabel?: string;
+  detailText: string;
+  oneOnOneHours?: number;
+  priceAmount: number;
+  currencyCode: string;
+  courseProductId?: EntityId;
+  classId?: EntityId;
+  groupTeacherId?: EntityId;
+  groupClassroomId?: EntityId;
+  groupScheduleSlots?: Array<{ weekday: number; startTime: string; endTime: string }>;
+  groupBillingType?: string;
+  groupStartDate?: string;
+  groupTotalSessions?: number;
+  groupStartMonth?: string;
+  groupEndMonth?: string;
+  sortOrder: number;
+  status: string;
+  notes?: string;
+  referenced?: boolean;
+  referenceCount?: number;
+  referenceSources?: string[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CourseProductItem {
   id: EntityId;
   productCode: string;
   productName: string;
+  courseType?: string;
+  registerClass?: string;
   subjectName?: string;
   teachingMode: string;
   defaultTotalUnits: number;
@@ -116,6 +170,9 @@ export interface CourseProductItem {
   listPrice: number;
   status: string;
   notes?: string;
+  referenced?: boolean;
+  referenceCount?: number;
+  referenceSources?: string[];
   slots?: ProductScheduleSlotItem[];
 }
 
@@ -137,14 +194,35 @@ export interface EnrollmentOrderItem {
   className?: string;
   courseProductId?: EntityId;
   courseProductName?: string;
+  campusId?: EntityId;
+  campusNameSnapshot?: string;
   handledByName?: string;
+  signupDate?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  studentNameSnapshot?: string;
+  gradeSnapshot?: string;
+  schoolSnapshot?: string;
+  parentPhoneSnapshot?: string;
+  parentPhone2Snapshot?: string;
+  pickupRequiredSnapshot?: boolean;
+  pickupAddressSnapshot?: string;
+  dropoffRequiredSnapshot?: boolean;
+  dropoffAddressSnapshot?: string;
   currencyCode?: string;
+  tuitionSubtotalAmount?: number;
+  pickupFeeAmount?: number;
+  dropoffFeeAmount?: number;
+  extraFeeAmount?: number;
   originalAmount: number;
   discountAmount: number;
   receivedAmount: number;
+  amountDue?: number;
+  balanceAmount?: number;
   paymentStatus: string;
   orderStatus: string;
   packageCount?: number;
+  items?: EnrollmentOrderLineItem[];
   createdAt: string;
 }
 
@@ -156,18 +234,69 @@ export interface EnrollmentOrderDetailItem {
   studentName: string;
   classId?: EntityId;
   className?: string;
+  campusId?: EntityId;
+  campusNameSnapshot?: string;
   orderStatus: string;
   cashierUserId?: EntityId;
   handledByName?: string;
+  signupDate?: string;
+  periodStartDate?: string;
+  periodEndDate?: string;
+  studentNameSnapshot?: string;
+  gradeSnapshot?: string;
+  schoolSnapshot?: string;
+  parentPhoneSnapshot?: string;
+  parentPhone2Snapshot?: string;
+  pickupRequiredSnapshot?: boolean;
+  pickupAddressSnapshot?: string;
+  dropoffRequiredSnapshot?: boolean;
+  dropoffAddressSnapshot?: string;
   currencyCode?: string;
+  tuitionSubtotalAmount?: number;
+  pickupFeeAmount?: number;
+  dropoffFeeAmount?: number;
+  extraFeeAmount?: number;
+  extraFeeDetail?: string;
   originalAmount: number;
   discountAmount: number;
+  discountDetail?: string;
   receivedAmount: number;
+  amountDue?: number;
+  balanceAmount?: number;
   paymentStatus: string;
   remark?: string;
+  items: EnrollmentOrderLineItem[];
   payments: PaymentRecordItem[];
   packages: CoursePackageItem[];
+  receipts: ReceiptRecordItem[];
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface EnrollmentOrderLineItem {
+  id: EntityId;
+  enrollmentOrderId: EntityId;
+  lineNo: number;
+  registerClass?: string;
+  courseType?: string;
+  courseProductId?: EntityId;
+  coursePriceOptionId?: EntityId;
+  classId?: EntityId;
+  detail?: string;
+  gradeBand?: string;
+  periodLabel?: string;
+  timeSlotLabel?: string;
+  priceAmount?: number;
+  originalPriceAmount?: number;
+  manualPriceOverride?: boolean;
+  oneOnOneHours?: number;
+  oneOnOneUnits?: number;
+  initialLessonStartAt?: string;
+  initialLessonEndAt?: string;
+  teacherId?: EntityId;
+  itemStatus?: string;
+  remark?: string;
+  createdAt?: string;
   updatedAt?: string;
 }
 
@@ -252,6 +381,7 @@ export interface ReceiptRecordItem {
   studentId: EntityId;
   studentName: string;
   templateCode?: string;
+  receiptPayload?: Record<string, unknown> | string | null;
   fileUrl?: string;
   issuedAt: string;
 }
@@ -362,18 +492,39 @@ export interface ClassroomOccupancyItem {
   className?: string;
 }
 
+export interface PendingClassroomAssignmentItem {
+  targetType: 'CLASS_GROUP' | 'OCCURRENCE' | string;
+  targetId: EntityId;
+  occurrenceId?: EntityId;
+  lessonNo?: string;
+  classGroupId?: EntityId;
+  className?: string;
+  packageId?: EntityId;
+  packageName?: string;
+  studentId?: EntityId;
+  studentName?: string;
+  teacherId?: EntityId;
+  teacherName?: string;
+  plannedStartAt?: string;
+  plannedEndAt?: string;
+  plannedUnits?: number;
+  scheduleDesc?: string;
+}
+
 // ─── Class Group ─────────────────────────────────────────
 
 export interface ClassGroupItem {
   id: EntityId;
   className: string;
   description?: string;
+  productId?: EntityId;
   scheduleDesc?: string;
   teacherId?: EntityId;
   teacherName?: string;
   classroomId?: EntityId;
   classroomName?: string;
   activeStudentCount: number;
+  scheduleSlots?: Array<{ weekday: number; startTime: string; endTime: string; plannedUnits?: number }>;
 }
 
 export interface ClassEnrolledStudentItem {
@@ -473,29 +624,6 @@ export interface LessonRecordConfirmResult {
   packageCompleted: boolean;
 }
 
-export interface PackageBalanceSnapshotItem {
-  packageId: EntityId;
-  packageNo: string;
-  totalUnits: number;
-  consumedUnits: number;
-  remainingUnits: number;
-  lastLedgerId?: EntityId;
-  snapshotAt?: string;
-}
-
-export interface LessonStatusRuleItem {
-  id: EntityId;
-  statusCode: string;
-  statusName: string;
-  defaultShouldDeduct: boolean;
-  deductMode: string;
-  fixedUnits?: number;
-  defaultShouldExtend: boolean;
-  allowManualOverride: boolean;
-  status: string;
-  remark?: string;
-}
-
 // ─── System Config ─────────────────────────────────────
 
 export interface BrandConfigItem {
@@ -587,6 +715,8 @@ export interface TeacherPayRateItem {
   productCode: string;
   productName: string;
   subjectName: string;
+  studentId?: EntityId;
+  studentName?: string;
   hourlyRate: number;
   notes?: string;
 }

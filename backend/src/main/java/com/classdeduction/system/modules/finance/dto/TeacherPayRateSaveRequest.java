@@ -20,6 +20,9 @@ public class TeacherPayRateSaveRequest {
     @NotNull(message = "Course product ID is required")
     private Long courseProductId;
 
+    @Schema(description = "Optional student ID for a one-on-one rate override")
+    private Long studentId;
+
     @NotNull(message = "Hourly rate is required")
     @DecimalMin(value = "0.01", message = "Hourly rate must be greater than 0")
     private BigDecimal hourlyRate;

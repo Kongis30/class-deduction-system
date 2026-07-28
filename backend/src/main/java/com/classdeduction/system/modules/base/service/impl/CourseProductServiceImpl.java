@@ -30,6 +30,7 @@ import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.*;
@@ -43,6 +44,8 @@ import java.util.stream.Collectors;
 public class CourseProductServiceImpl implements CourseProductService {
 
     private static final String DEFAULT_STATUS = "ACTIVE";
+    private static final Set<String> VALID_COURSE_TYPES = Set.of(
+            "AFTER_SCHOOL", "SATURDAY", "SUMMER", "SPRINT", "ONE_ON_ONE");
     private final Object createProductLock = new Object();
 
     private final CourseProductMapper courseProductMapper;
@@ -62,9 +65,14 @@ public class CourseProductServiceImpl implements CourseProductService {
                         .or()
                         .like(CourseProductEntity::getProductName, query.getKeyword())
                         .or()
+                        .like(CourseProductEntity::getRegisterClass, query.getKeyword())
+                        .or()
+                        .like(CourseProductEntity::getCourseType, query.getKeyword())
+                        .or()
                         .like(CourseProductEntity::getSubjectName, query.getKeyword()))
                 .eq(StringUtils.hasText(query.getStatus()), CourseProductEntity::getStatus, query.getStatus())
                 .eq(StringUtils.hasText(query.getTeachingMode()), CourseProductEntity::getTeachingMode, query.getTeachingMode())
+                .eq(StringUtils.hasText(query.getCourseType()), CourseProductEntity::getCourseType, query.getCourseType())
                 .orderByDesc(CourseProductEntity::getCreatedAt);
         IPage<CourseProductEntity> result = courseProductMapper.selectPage(page, wrapper);
 
@@ -120,11 +128,9 @@ public class CourseProductServiceImpl implements CourseProductService {
                 ensureProductCodeUnique(null, request.getProductCode());
                 ensureProductNameUnique(null, request.getProductName());
                 validateByTeachingMode(request);
-                  validateSlots(request.getSlots());
                 CourseProductEntity entity = new CourseProductEntity();
                 applyCourseProduct(entity, request);
                 courseProductMapper.insert(entity);
-                saveSlots(entity.getId(), request.getSlots());
                 return entity.getId();
             });
         }
@@ -140,11 +146,9 @@ public class CourseProductServiceImpl implements CourseProductService {
         ensureProductCodeUnique(id, request.getProductCode());
         ensureProductNameUnique(id, request.getProductName());
         validateByTeachingMode(request);
-          validateSlots(request.getSlots());
-          protectReferencedProductCriticalFields(entity, request);
+        protectReferencedProductCriticalFields(entity, request);
         applyCourseProduct(entity, request);
         courseProductMapper.updateById(entity);
-        saveSlots(entity.getId(), request.getSlots());
     }
 
     @Override
@@ -203,6 +207,16 @@ public class CourseProductServiceImpl implements CourseProductService {
          if (StringUtils.hasText(request.getStatus()) && !Set.of("ACTIVE", "INACTIVE").contains(request.getStatus())) {
              throw new BusinessException("INVALID_PRODUCT_STATUS", "Course product status must be ACTIVE or INACTIVE.");
          }
+         if (StringUtils.hasText(request.getCourseType()) && !VALID_COURSE_TYPES.contains(request.getCourseType())) {
+             throw new BusinessException("INVALID_COURSE_TYPE", "Course type is not supported.");
+         }
+         if ("ONE_ON_ONE".equals(request.getTeachingMode()) && StringUtils.hasText(request.getCourseType())
+                 && !"ONE_ON_ONE".equals(request.getCourseType())) {
+             throw new BusinessException("COURSE_TYPE_MODE_MISMATCH", "One-on-one products must use ONE_ON_ONE course type.");
+         }
+         if ("GROUP".equals(request.getTeachingMode()) && "ONE_ON_ONE".equals(request.getCourseType())) {
+             throw new BusinessException("COURSE_TYPE_MODE_MISMATCH", "Group products cannot use ONE_ON_ONE course type.");
+         }
         if ("GROUP".equals(request.getTeachingMode())) {
             if (request.getDefaultTotalUnits() != null) {
                 throw new BusinessException("GROUP product should not have total units.");
@@ -210,10 +224,6 @@ public class CourseProductServiceImpl implements CourseProductService {
             if (request.getDefaultLessonUnits() != null) {
                 throw new BusinessException("GROUP product should not have lesson units.");
             }
-            if (request.getSlots() == null || request.getSlots().isEmpty()) {
-                throw new BusinessException("At least one schedule slot is required for GROUP products.");
-            }
-            validateGroupBilling(request);
         } else {
             // ONE_ON_ONE
             if (request.getDefaultTotalUnits() == null) {
@@ -221,6 +231,12 @@ public class CourseProductServiceImpl implements CourseProductService {
             }
             if (request.getDefaultLessonUnits() == null) {
                 throw new BusinessException("Default lesson units is required for ONE_ON_ONE products.");
+            }
+            if (request.getDefaultTotalUnits() <= 0
+                    || request.getDefaultLessonUnits() <= 0
+                    || request.getDefaultLessonUnits() > request.getDefaultTotalUnits() * 2) {
+                throw new BusinessException("INVALID_LESSON_UNITS",
+                        "Default lesson hours must be greater than zero and cannot exceed total hours.");
             }
             if (request.getBillingType() != null || request.getStartDate() != null || request.getTotalSessions() != null
                     || StringUtils.hasText(request.getStartMonth()) || StringUtils.hasText(request.getEndMonth())) {
@@ -314,6 +330,7 @@ public class CourseProductServiceImpl implements CourseProductService {
              return;
          }
          Set<String> seen = new HashSet<>();
+         List<SlotWindow> windows = new ArrayList<>();
          for (CourseProductSaveRequest.ProductScheduleSlotDTO slot : slots) {
              if (slot.getWeekday() == null || slot.getWeekday() < 1 || slot.getWeekday() > 7) {
                  throw new BusinessException("INVALID_SLOT_WEEKDAY", "Schedule slot weekday must be between 1 and 7.");
@@ -323,11 +340,28 @@ public class CourseProductServiceImpl implements CourseProductService {
              if (!endTime.isAfter(startTime)) {
                  throw new BusinessException("INVALID_SLOT_TIME_RANGE", "Schedule slot end time must be after start time.");
              }
+             long minutes = java.time.Duration.between(startTime, endTime).toMinutes();
+             if (minutes % 30 != 0) {
+                 throw new BusinessException("INVALID_SLOT_DURATION",
+                         "Schedule slot duration must use 0.5-hour increments.");
+             }
              String key = slot.getWeekday() + "|" + startTime + "|" + endTime;
              if (!seen.add(key)) {
                  throw new BusinessException("DUPLICATE_SLOT", "Duplicate schedule slots are not allowed.");
              }
+             boolean overlaps = windows.stream().anyMatch(existing ->
+                     Objects.equals(existing.weekday(), slot.getWeekday())
+                             && startTime.isBefore(existing.endTime())
+                             && endTime.isAfter(existing.startTime()));
+             if (overlaps) {
+                 throw new BusinessException("OVERLAPPING_SLOT",
+                         "Schedule slots on the same weekday cannot overlap.");
+             }
+             windows.add(new SlotWindow(slot.getWeekday(), startTime, endTime));
          }
+     }
+
+     private record SlotWindow(Integer weekday, LocalTime startTime, LocalTime endTime) {
      }
 
      private LocalTime parseSlotTime(String value, String fieldName) {
@@ -346,18 +380,14 @@ public class CourseProductServiceImpl implements CourseProductService {
              return;
          }
          List<String> changedFields = new ArrayList<>();
+         addIfChanged(changedFields, "course type", existing.getCourseType(), normalizeCourseType(request));
+         addIfChanged(changedFields, "register class", existing.getRegisterClass(), normalizeRegisterClass(request));
          addIfChanged(changedFields, "teaching format", existing.getTeachingMode(), request.getTeachingMode());
          addIfChanged(changedFields, "default total hours", existing.getDefaultTotalUnits(), request.getDefaultTotalUnits());
          addIfChanged(changedFields, "default lesson units", existing.getDefaultLessonUnits(), request.getDefaultLessonUnits());
-         addIfChanged(changedFields, "billing type", existing.getBillingType(), request.getBillingType());
-         addIfChanged(changedFields, "start date", existing.getStartDate(), request.getStartDate());
-         addIfChanged(changedFields, "total sessions", existing.getTotalSessions(), request.getTotalSessions());
-         addIfChanged(changedFields, "start month", existing.getStartMonth(), parseMonthOrNull(request.getStartMonth()));
-         addIfChanged(changedFields, "end month", existing.getEndMonth(), parseMonthOrNull(request.getEndMonth()));
-         addIfChanged(changedFields, "default classroom", existing.getDefaultClassroomId(), request.getDefaultClassroomId());
-         addIfChanged(changedFields, "default teacher", existing.getDefaultTeacherId(), request.getDefaultTeacherId());
-         if ("GROUP".equals(existing.getTeachingMode()) && slotsChanged(existing.getId(), request.getSlots())) {
-             changedFields.add("weekly schedule");
+         if (!"GROUP".equals(existing.getTeachingMode())) {
+             addIfChanged(changedFields, "default classroom", existing.getDefaultClassroomId(), request.getDefaultClassroomId());
+             addIfChanged(changedFields, "default teacher", existing.getDefaultTeacherId(), request.getDefaultTeacherId());
          }
          if (!changedFields.isEmpty()) {
              throw new BusinessException("PRODUCT_ALREADY_REFERENCED",
@@ -367,13 +397,36 @@ public class CourseProductServiceImpl implements CourseProductService {
      }
 
      private boolean isProductReferenced(Long productId) {
+         return countProductReferences(productId) > 0;
+     }
+
+     private long countProductReferences(Long productId) {
+         return countCoursePackageReferences(productId) + countClassGroupReferences(productId);
+     }
+
+     private long countCoursePackageReferences(Long productId) {
          Long packageCount = coursePackageMapper.selectCount(new LambdaQueryWrapper<CoursePackageEntity>()
                  .eq(CoursePackageEntity::getCourseProductId, productId)
                  .eq(CoursePackageEntity::getIsDeleted, 0));
+         return packageCount == null ? 0L : packageCount;
+     }
+
+     private long countClassGroupReferences(Long productId) {
          Long classCount = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
                  .eq(ClassGroupEntity::getProductId, productId)
                  .eq(ClassGroupEntity::getIsDeleted, 0));
-         return packageCount > 0 || classCount > 0;
+         return classCount == null ? 0L : classCount;
+     }
+
+     private List<String> resolveProductReferenceSources(Long productId) {
+         List<String> sources = new ArrayList<>();
+         if (countCoursePackageReferences(productId) > 0) {
+             sources.add("Course packages");
+         }
+         if (countClassGroupReferences(productId) > 0) {
+             sources.add("Class groups");
+         }
+         return sources;
      }
 
      private void addIfChanged(List<String> changedFields, String label, Object oldValue, Object newValue) {
@@ -477,19 +530,23 @@ public class CourseProductServiceImpl implements CourseProductService {
     private void applyCourseProduct(CourseProductEntity entity, CourseProductSaveRequest request) {
         entity.setProductCode(request.getProductCode());
         entity.setProductName(request.getProductName());
+        entity.setCourseType(normalizeCourseType(request));
+        entity.setRegisterClass(normalizeRegisterClass(request));
         entity.setSubjectName(request.getSubjectName());
         entity.setTeachingMode(request.getTeachingMode());
         entity.setDefaultTotalUnits(request.getDefaultTotalUnits());
         entity.setDefaultLessonUnits(request.getDefaultLessonUnits());
-        entity.setBillingType(request.getBillingType());
-        entity.setStartDate(request.getStartDate());
-        entity.setTotalSessions(request.getTotalSessions());
-        entity.setStartMonth(parseMonthOrNull(request.getStartMonth()));
-        entity.setEndMonth(parseMonthOrNull(request.getEndMonth()));
-        entity.setListPrice(request.getListPrice());
+        boolean groupProduct = "GROUP".equals(request.getTeachingMode());
+        entity.setBillingType(groupProduct ? null : request.getBillingType());
+        entity.setStartDate(groupProduct ? null : request.getStartDate());
+        entity.setTotalSessions(groupProduct ? null : request.getTotalSessions());
+        entity.setStartMonth(groupProduct ? null : parseMonthOrNull(request.getStartMonth()));
+        entity.setEndMonth(groupProduct ? null : parseMonthOrNull(request.getEndMonth()));
+        // Product prices depend on grade and duration, so the legacy field is never user-configured.
+        entity.setListPrice(request.getListPrice() == null ? BigDecimal.ZERO : request.getListPrice());
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : DEFAULT_STATUS);
-        entity.setDefaultClassroomId(request.getDefaultClassroomId());
-        entity.setDefaultTeacherId(request.getDefaultTeacherId());
+        entity.setDefaultClassroomId(groupProduct ? null : request.getDefaultClassroomId());
+        entity.setDefaultTeacherId(groupProduct ? null : request.getDefaultTeacherId());
         entity.setNotes(request.getNotes());
     }
 
@@ -545,6 +602,8 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .id(entity.getId())
                 .productCode(entity.getProductCode())
                 .productName(entity.getProductName())
+                .courseType(entity.getCourseType())
+                .registerClass(entity.getRegisterClass())
                 .subjectName(entity.getSubjectName())
                 .teachingMode(entity.getTeachingMode())
                 .defaultTotalUnits(entity.getDefaultTotalUnits())
@@ -562,9 +621,26 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .listPrice(entity.getListPrice())
                 .status(entity.getStatus())
                 .notes(entity.getNotes())
+                .referenced(countProductReferences(entity.getId()) > 0)
+                .referenceCount(countProductReferences(entity.getId()))
+                .referenceSources(resolveProductReferenceSources(entity.getId()))
                 .slots(slotVOs)
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();
+    }
+
+    private String normalizeCourseType(CourseProductSaveRequest request) {
+        if (StringUtils.hasText(request.getCourseType())) {
+            return request.getCourseType().trim();
+        }
+        return "ONE_ON_ONE".equals(request.getTeachingMode()) ? "ONE_ON_ONE" : null;
+    }
+
+    private String normalizeRegisterClass(CourseProductSaveRequest request) {
+        if (StringUtils.hasText(request.getRegisterClass())) {
+            return request.getRegisterClass().trim();
+        }
+        return "ONE_ON_ONE".equals(request.getTeachingMode()) ? "1 on 1" : request.getProductName();
     }
 }

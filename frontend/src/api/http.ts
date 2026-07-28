@@ -3,6 +3,14 @@ import axiosRetry from 'axios-retry';
 
 import { clearStoredAuthSession, getStoredAuthToken } from '@/utils/auth-storage';
 
+interface ScheduleConflictDetail {
+  resourceType?: string;
+  resourceName?: string;
+  conflictStartAt?: string;
+  conflictEndAt?: string;
+  existingLessonNo?: string;
+}
+
 /**
  * Safely converts JSON id fields to strings BEFORE JSON.parse.
  * MyBatis-Plus Snowflake IDs exceed JavaScript's safe integer range; converting
@@ -35,14 +43,25 @@ const http = axios.create({
   ],
 });
 
+// Methods safe to auto-retry: only idempotent reads.
+// Write operations (POST/PUT/PATCH/DELETE) are NOT retried automatically —
+// enrollment, payment, refund and lesson confirmation have no idempotency key,
+// so a lost response after a successful write could cause duplicate side effects.
+const IDEMPOTENT_METHODS = new Set(['get', 'head', 'options']);
+
 // Retry strategy: retry on 5xx and network errors (ECONNABORTED, ERR_NETWORK)
-// Retry up to 2 times with exponential backoff (200ms, 400ms)
+// only for idempotent methods. Retry up to 2 times with backoff (200ms, 400ms).
 axiosRetry(http, {
   retries: 2,
   retryDelay: (retryCount) => retryCount * 200,
   retryCondition: (error) => {
+    const method = error.config?.method?.toLowerCase();
+    // Never auto-retry write operations to avoid duplicate enrollment/payment/refund.
+    if (!method || !IDEMPOTENT_METHODS.has(method)) {
+      return false;
+    }
     if (!error.response) {
-      // Network error or timeout — always retry
+      // Network error or timeout — retry is safe for idempotent reads
       return true;
     }
     // Retry server-side errors only
@@ -91,7 +110,7 @@ export function extractErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const data = error.response?.data as Record<string, unknown> | undefined;
     if (typeof data?.message === 'string' && data.message) {
-      return data.message;
+      return formatStructuredErrorMessage(data);
     }
     switch (error.code) {
       case 'ECONNABORTED':
@@ -115,4 +134,33 @@ export function extractErrorMessage(error: unknown): string {
     return error.message || 'Operation failed. Please try again later.';
   }
   return 'Operation failed. Please try again later.';
+}
+
+function formatStructuredErrorMessage(data: Record<string, unknown>): string {
+  const message = String(data.message);
+  if (data.code !== 'SCHEDULE_CONFLICT' || !Array.isArray(data.data)) {
+    return message;
+  }
+  const details = data.data
+    .map(formatScheduleConflictDetail)
+    .filter((line): line is string => Boolean(line));
+  return details.length > 0 ? `${message} ${details.join('; ')}` : message;
+}
+
+function formatScheduleConflictDetail(detail: unknown): string | null {
+  if (!detail || typeof detail !== 'object') {
+    return null;
+  }
+  const conflict = detail as ScheduleConflictDetail;
+  const resource = [conflict.resourceType, conflict.resourceName].filter(Boolean).join(' ');
+  const time = formatConflictTimeRange(conflict.conflictStartAt, conflict.conflictEndAt);
+  const lesson = conflict.existingLessonNo ? `existing lesson ${conflict.existingLessonNo}` : 'existing lesson';
+  return [resource || 'Resource', time, lesson].filter(Boolean).join(' · ');
+}
+
+function formatConflictTimeRange(startAt?: string, endAt?: string): string {
+  if (!startAt || !endAt) {
+    return '';
+  }
+  return `${startAt.replace('T', ' ')}-${endAt.replace('T', ' ')}`;
 }

@@ -2,7 +2,7 @@
   <div class="page-stack">
     <section class="course-product-panel">
       <div class="panel-header">
-        <span class="panel-header__title">Instructors</span>
+        <span class="panel-header__title">Teachers</span>
         <div class="panel-header__actions">
           <el-button text size="small" @click="openDeletedDialog">
             <el-icon><Delete /></el-icon>
@@ -156,10 +156,10 @@
       </template>
     </el-dialog>
 
-    <!-- Deleted Instructors Dialog -->
+    <!-- Deleted Teachers Dialog -->
     <el-dialog
       v-model="deletedDialogVisible"
-      title="Deleted Instructors"
+      title="Deleted Teachers"
       width="720px"
     >
       <p class="deleted-hint">These instructor profiles have been deleted. This view is read-only.</p>
@@ -208,7 +208,7 @@ const teacherDialogVisible = ref(false);
 const editingId = ref<number | null>(null);
 const teacherFormRef = ref();
 
-// ─── 筛选 & 分页 ───────────────────────────────────────
+
 const filters = reactive({
   keyword: '',
   subject: '',
@@ -234,7 +234,7 @@ function handleFilterChange() {
   loadData();
 }
 
-// ─── 加载数据 ──────────────────────────────────────────
+
 async function loadData() {
   loading.value = true;
   try {
@@ -257,10 +257,10 @@ async function loadData() {
 
 watch(() => filters.status, handleFilterChange);
 
-// ─── Subjects 列表 ─────────────────────────────────────
+
 const subjectOptions = ['Math', 'English', 'Science', 'SAT', 'Music', 'Reading'];
 
-// ─── 新建 / 编辑 ───────────────────────────────────────
+
 const teacherForm = reactive<TeacherSavePayload>({
   teacherName: '',
   mobile: '',
@@ -308,7 +308,7 @@ async function handleTeacherSubmit() {
   submitting.value = true;
   try {
     await updateTeacher(editingId.value!, payload);
-    ElMessage.success('Instructor updated.');
+    ElMessage.success('Teacher updated.');
     teacherDialogVisible.value = false;
     loadData();
   } catch (err: any) {
@@ -318,7 +318,7 @@ async function handleTeacherSubmit() {
   }
 }
 
-// ─── Deleted Instructors Dialog ────────────────────────
+// ─── Deleted Teachers Dialog ───────────────────────────
 const deletedDialogVisible = ref(false);
 const deletedLoading = ref(false);
 const deletedRows = ref<TeacherItem[]>([]);
@@ -337,7 +337,7 @@ async function openDeletedDialog() {
   }
 }
 
-// ─── 初始化 ────────────────────────────────────────────
+
 loadData();
 </script>
 

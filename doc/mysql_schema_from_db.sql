@@ -88,6 +88,8 @@ CREATE TABLE `campus` (
   `campus_name` varchar(64) NOT NULL COMMENT 'Campus name',
   `display_order` int NOT NULL DEFAULT '99' COMMENT 'Display order for sorting',
   `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
+  `default_pickup_fee_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Default pickup service fee for new registrations',
+  `default_dropoff_fee_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Default drop-off service fee for new registrations',
   `notes` varchar(500) DEFAULT NULL COMMENT 'Notes',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
   `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
@@ -114,6 +116,7 @@ CREATE TABLE `class_enrollment` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `class_id` bigint NOT NULL COMMENT 'Class group ID',
   `student_id` bigint NOT NULL COMMENT 'Student ID',
+  `enrollment_order_item_id` bigint DEFAULT NULL COMMENT 'Source enrollment order item ID',
   `enrollment_date` date NOT NULL COMMENT 'Enrollment date',
   `expiry_date` date NOT NULL COMMENT 'Expiry date',
   `billing_type` varchar(32) DEFAULT NULL COMMENT 'Snapshot of product billing type: PER_SESSION/MONTHLY',
@@ -131,6 +134,8 @@ CREATE TABLE `class_enrollment` (
   UNIQUE KEY `uk_enrollment_class_student` (`class_id`,`student_id`,`is_deleted`),
   KEY `idx_enrollment_class` (`class_id`,`status`),
   KEY `idx_enrollment_student` (`student_id`),
+  KEY `idx_enrollment_order_item` (`enrollment_order_item_id`),
+  CONSTRAINT `fk_class_enrollment_order_item` FOREIGN KEY (`enrollment_order_item_id`) REFERENCES `enrollment_order_item` (`id`),
   CONSTRAINT `fk_enrollment_class_group` FOREIGN KEY (`class_id`) REFERENCES `class_group` (`id`),
   CONSTRAINT `fk_enrollment_student_user` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Class enrollment records';
@@ -214,6 +219,7 @@ CREATE TABLE `course_package` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `package_no` varchar(32) NOT NULL COMMENT 'Course package number',
   `enrollment_order_id` bigint NOT NULL COMMENT 'Source enrollment order ID',
+  `enrollment_order_item_id` bigint DEFAULT NULL COMMENT 'Source enrollment order item ID',
   `student_id` bigint NOT NULL COMMENT 'Student ID',
   `course_product_id` bigint DEFAULT NULL COMMENT 'Source course product ID',
   `package_name` varchar(128) NOT NULL COMMENT 'Course package name snapshot',
@@ -245,7 +251,9 @@ CREATE TABLE `course_package` (
   KEY `idx_package_estimated_end` (`estimated_end_date`),
   KEY `idx_package_product` (`course_product_id`),
   KEY `idx_package_enrollment` (`enrollment_order_id`),
+  KEY `idx_package_order_item` (`enrollment_order_item_id`),
   CONSTRAINT `fk_package_enrollment` FOREIGN KEY (`enrollment_order_id`) REFERENCES `enrollment_order` (`id`),
+  CONSTRAINT `fk_package_order_item` FOREIGN KEY (`enrollment_order_item_id`) REFERENCES `enrollment_order_item` (`id`),
   CONSTRAINT `fk_package_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`),
   CONSTRAINT `fk_package_student` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`),
   CONSTRAINT `chk_course_package_units` CHECK (((`total_units` >= 0) and (`default_lesson_units` > 0) and (`consumed_units` >= 0) and (`remaining_units` >= 0)))
@@ -262,6 +270,8 @@ CREATE TABLE `course_product` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `product_code` varchar(32) NOT NULL COMMENT 'Course product code',
   `product_name` varchar(128) NOT NULL COMMENT 'Course product name',
+  `course_type` varchar(32) DEFAULT NULL COMMENT 'Parent course type: AFTER_SCHOOL/SATURDAY/SUMMER/SPRINT/ONE_ON_ONE',
+  `register_class` varchar(64) DEFAULT NULL COMMENT 'Register Class label shown on registration',
   `subject_name` varchar(64) DEFAULT NULL COMMENT 'Subject name',
   `teaching_mode` varchar(32) NOT NULL COMMENT 'Teaching mode: ONE_ON_ONE/GROUP',
   `default_total_units` int DEFAULT NULL COMMENT 'Default total units, null for class group',
@@ -273,7 +283,7 @@ CREATE TABLE `course_product` (
   `end_month` date DEFAULT NULL COMMENT 'GROUP MONTHLY end month (1st day of month)',
   `default_classroom_id` bigint DEFAULT NULL COMMENT 'Default classroom for class group products',
   `default_teacher_id` bigint DEFAULT NULL COMMENT 'Default teacher ID (for class group products)',
-  `list_price` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'List price',
+  `list_price` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Reference list price; sale price comes from course_price_option',
   `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
   `notes` varchar(500) DEFAULT NULL COMMENT 'Notes',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
@@ -286,6 +296,7 @@ CREATE TABLE `course_product` (
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_course_product_code` (`product_code`),
+  KEY `idx_course_product_type` (`course_type`,`status`),
   KEY `idx_course_product_name` (`product_name`),
   KEY `idx_course_product_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Course product templates';
@@ -315,6 +326,48 @@ CREATE TABLE `course_product_schedule_slot` (
   KEY `idx_cpss_product` (`product_id`),
   CONSTRAINT `fk_cpss_product` FOREIGN KEY (`product_id`) REFERENCES `course_product` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Course product schedule slots for class group products';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `course_price_option`
+--
+
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `course_price_option` (
+  `id` bigint NOT NULL COMMENT 'Primary key ID',
+  `option_code` varchar(64) NOT NULL COMMENT 'Unique price option code',
+  `course_type` varchar(32) NOT NULL COMMENT 'Course type: AFTER_SCHOOL/SATURDAY/SUMMER/SPRINT/ONE_ON_ONE',
+  `register_class` varchar(64) NOT NULL COMMENT 'Register Class display label',
+  `grade_band` varchar(64) DEFAULT NULL COMMENT 'Grade or level option label',
+  `period_label` varchar(128) DEFAULT NULL COMMENT 'Period or package option label',
+  `duration_label` varchar(128) DEFAULT NULL COMMENT 'Duration option label',
+  `time_slot_label` varchar(128) DEFAULT NULL COMMENT 'Time slot option label',
+  `detail_text` varchar(500) NOT NULL COMMENT 'Generated detail text used on registration and receipt',
+  `one_on_one_hours` decimal(6,2) DEFAULT NULL COMMENT 'One-on-one purchased hours, null for group options',
+  `price_amount` decimal(12,2) NOT NULL COMMENT 'Configured sale price for this matrix row',
+  `currency_code` varchar(16) NOT NULL DEFAULT 'USD' COMMENT 'Currency code',
+  `course_product_id` bigint NOT NULL COMMENT 'Linked parent course product ID',
+  `sort_order` int NOT NULL DEFAULT '0' COMMENT 'Sort order',
+  `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
+  `notes` varchar(500) DEFAULT NULL COMMENT 'Internal notes',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
+  `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
+  `updated_by` bigint DEFAULT NULL COMMENT 'Updated by user ID',
+  `is_deleted` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Soft delete flag: 0=no, 1=yes',
+  `deleted_at` datetime(3) DEFAULT NULL COMMENT 'Deleted at',
+  `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
+  `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_course_price_option_code` (`option_code`),
+  KEY `idx_course_price_option_type` (`course_type`,`status`,`sort_order`),
+  KEY `idx_course_price_option_product` (`course_product_id`),
+  CONSTRAINT `fk_course_price_option_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`),
+  CONSTRAINT `chk_course_price_option_active_product` CHECK (((`status` <> 'ACTIVE') or (`course_product_id` is not null))),
+  CONSTRAINT `chk_course_price_option_amount` CHECK ((`price_amount` >= 0)),
+  CONSTRAINT `chk_course_price_option_hours` CHECK (((`one_on_one_hours` is null) or (`one_on_one_hours` >= 0)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Structured course price options for registration intake';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -354,13 +407,35 @@ CREATE TABLE `enrollment_order` (
   `enrollment_no` varchar(32) NOT NULL COMMENT 'Enrollment order number',
   `student_id` bigint NOT NULL COMMENT 'Student ID',
   `class_id` bigint DEFAULT NULL COMMENT 'Class group ID (for group class enrollments)',
+  `campus_id` bigint DEFAULT NULL COMMENT 'Campus ID selected during registration',
+  `campus_name_snapshot` varchar(128) DEFAULT NULL COMMENT 'Campus name snapshot',
   `order_status` varchar(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'Order status: DRAFT/CONFIRMED/CANCELLED',
   `cashier_user_id` bigint DEFAULT NULL COMMENT 'Cashier user ID',
   `handled_by_name` varchar(64) DEFAULT NULL COMMENT 'Handler name snapshot',
+  `signup_date` date DEFAULT NULL COMMENT 'Registration signup date',
+  `period_start_date` date DEFAULT NULL COMMENT 'Registration period start date',
+  `period_end_date` date DEFAULT NULL COMMENT 'Registration period end date',
+  `student_name_snapshot` varchar(64) DEFAULT NULL COMMENT 'Student name snapshot',
+  `grade_snapshot` varchar(32) DEFAULT NULL COMMENT 'Student grade snapshot',
+  `school_snapshot` varchar(128) DEFAULT NULL COMMENT 'Student school snapshot',
+  `parent_phone_snapshot` varchar(32) DEFAULT NULL COMMENT 'Primary guardian phone snapshot',
+  `parent_phone_2_snapshot` varchar(32) DEFAULT NULL COMMENT 'Secondary guardian phone snapshot',
+  `pickup_required_snapshot` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Pickup flag snapshot: 0=no, 1=yes',
+  `pickup_address_snapshot` varchar(255) DEFAULT NULL COMMENT 'Pickup address snapshot',
+  `dropoff_required_snapshot` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Dropoff flag snapshot: 0=no, 1=yes',
+  `dropoff_address_snapshot` varchar(255) DEFAULT NULL COMMENT 'Dropoff address snapshot',
   `currency_code` varchar(16) NOT NULL DEFAULT 'USD' COMMENT 'Currency code',
+  `tuition_subtotal_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Subtotal of course line prices',
+  `pickup_fee_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Pickup service fee amount',
+  `dropoff_fee_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Drop-off service fee amount',
+  `extra_fee_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Total extra fee amount',
+  `extra_fee_detail` json DEFAULT NULL COMMENT 'Extra fee detail snapshot JSON',
   `original_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Original amount',
   `discount_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Discount amount',
+  `discount_detail` json DEFAULT NULL COMMENT 'Discount detail snapshot JSON',
   `received_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Received amount',
+  `amount_due` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Amount due after fees and discounts',
+  `balance_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Outstanding balance snapshot',
   `payment_status` varchar(32) NOT NULL DEFAULT 'UNPAID' COMMENT 'Payment status: UNPAID/PARTIAL/PAID/REFUNDED',
   `remark` varchar(500) DEFAULT NULL COMMENT 'Notes',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
@@ -377,9 +452,67 @@ CREATE TABLE `enrollment_order` (
   KEY `idx_enrollment_status` (`order_status`,`payment_status`),
   KEY `idx_enrollment_cashier` (`cashier_user_id`),
   KEY `idx_enrollment_order_class_id` (`class_id`),
+  KEY `idx_enrollment_campus_signup` (`campus_id`,`signup_date`),
+  KEY `idx_enrollment_period_end` (`period_end_date`),
+  CONSTRAINT `fk_enrollment_campus` FOREIGN KEY (`campus_id`) REFERENCES `campus` (`id`),
   CONSTRAINT `fk_enrollment_cashier` FOREIGN KEY (`cashier_user_id`) REFERENCES `sys_user` (`id`),
   CONSTRAINT `fk_enrollment_student` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Enrollment orders';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `enrollment_order_item`
+--
+
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `enrollment_order_item` (
+  `id` bigint NOT NULL COMMENT 'Primary key ID',
+  `enrollment_order_id` bigint NOT NULL COMMENT 'Enrollment order ID',
+  `line_no` int NOT NULL DEFAULT '1' COMMENT 'Line number inside the enrollment order',
+  `register_class` varchar(64) NOT NULL COMMENT 'Register Class label snapshot',
+  `course_type` varchar(32) DEFAULT NULL COMMENT 'Structured course type snapshot',
+  `course_product_id` bigint DEFAULT NULL COMMENT 'Selected course product ID',
+  `course_price_option_id` bigint DEFAULT NULL COMMENT 'Selected price option ID',
+  `class_id` bigint DEFAULT NULL COMMENT 'Generated or selected class group ID',
+  `detail` varchar(500) NOT NULL COMMENT 'Course detail snapshot for receipt printing',
+  `grade_band` varchar(64) DEFAULT NULL COMMENT 'Grade or level option snapshot',
+  `period_label` varchar(128) DEFAULT NULL COMMENT 'Period or package option snapshot',
+  `time_slot_label` varchar(128) DEFAULT NULL COMMENT 'Time slot option snapshot',
+  `price_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Final line price amount',
+  `original_price_amount` decimal(12,2) DEFAULT NULL COMMENT 'Original configured price before manual override',
+  `manual_price_override` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Manual price override flag: 0=no, 1=yes',
+  `one_on_one_hours` decimal(6,2) DEFAULT NULL COMMENT 'One-on-one purchased hours',
+  `one_on_one_units` int DEFAULT NULL COMMENT 'One-on-one units snapshot, 1 unit = 0.5 hour',
+  `initial_lesson_start_at` datetime(3) DEFAULT NULL COMMENT 'Structured first one-on-one lesson start time',
+  `initial_lesson_end_at` datetime(3) DEFAULT NULL COMMENT 'Structured first one-on-one lesson end time',
+  `teacher_id` bigint DEFAULT NULL COMMENT 'Required one-on-one teacher ID',
+  `item_status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Item status: ACTIVE/CANCELLED',
+  `remark` varchar(500) DEFAULT NULL COMMENT 'Notes',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
+  `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
+  `updated_by` bigint DEFAULT NULL COMMENT 'Updated by user ID',
+  `is_deleted` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Soft delete flag: 0=no, 1=yes',
+  `deleted_at` datetime(3) DEFAULT NULL COMMENT 'Deleted at',
+  `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
+  `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_enrollment_order_item_line` (`enrollment_order_id`,`line_no`,`is_deleted`),
+  KEY `idx_enrollment_order_item_type` (`course_type`,`item_status`),
+  KEY `idx_enrollment_order_item_product` (`course_product_id`),
+  KEY `idx_enrollment_order_item_option` (`course_price_option_id`),
+  KEY `idx_enrollment_order_item_class` (`class_id`),
+  KEY `idx_enrollment_order_item_teacher` (`teacher_id`),
+  CONSTRAINT `fk_enrollment_order_item_class` FOREIGN KEY (`class_id`) REFERENCES `class_group` (`id`),
+  CONSTRAINT `fk_enrollment_order_item_option` FOREIGN KEY (`course_price_option_id`) REFERENCES `course_price_option` (`id`),
+  CONSTRAINT `fk_enrollment_order_item_order` FOREIGN KEY (`enrollment_order_id`) REFERENCES `enrollment_order` (`id`),
+  CONSTRAINT `fk_enrollment_order_item_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`),
+  CONSTRAINT `fk_enrollment_order_item_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`),
+  CONSTRAINT `chk_enrollment_order_item_amount` CHECK (((`price_amount` >= 0) and ((`original_price_amount` is null) or (`original_price_amount` >= 0)))),
+  CONSTRAINT `chk_enrollment_order_item_hours` CHECK (((`one_on_one_hours` is null) or (`one_on_one_hours` >= 0))),
+  CONSTRAINT `chk_enrollment_order_item_units` CHECK (((`one_on_one_units` is null) or (`one_on_one_units` >= 0)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Enrollment order line items for multi-course registration intake';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -954,14 +1087,21 @@ CREATE TABLE `student` (
   `english_name` varchar(64) DEFAULT NULL COMMENT 'English name',
   `gender` varchar(16) DEFAULT NULL COMMENT 'Gender',
   `birth_date` date DEFAULT NULL COMMENT 'Birth date',
+  `grade` varchar(32) DEFAULT NULL COMMENT 'Current student grade',
+  `school` varchar(128) DEFAULT NULL COMMENT 'Current school name',
   `source_channel` varchar(64) DEFAULT NULL COMMENT 'Lead source',
   `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
   `campus_id` bigint DEFAULT NULL COMMENT 'Campus ID',
   `notes` varchar(500) DEFAULT NULL COMMENT 'Notes',
   `guardian_name` varchar(64) DEFAULT NULL COMMENT 'Primary guardian name',
   `guardian_phone` varchar(32) DEFAULT NULL COMMENT 'Primary guardian phone',
+  `guardian_phone_2` varchar(32) DEFAULT NULL COMMENT 'Secondary guardian phone',
   `guardian_email` varchar(128) DEFAULT NULL COMMENT 'Primary guardian email',
   `guardian_relation_type` varchar(32) DEFAULT NULL COMMENT 'Primary guardian relation type',
+  `pickup_required` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Default pickup flag: 0=no, 1=yes',
+  `pickup_address` varchar(255) DEFAULT NULL COMMENT 'Default pickup address',
+  `dropoff_required` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Default dropoff flag: 0=no, 1=yes',
+  `dropoff_address` varchar(255) DEFAULT NULL COMMENT 'Default dropoff address',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
   `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
@@ -975,6 +1115,7 @@ CREATE TABLE `student` (
   KEY `idx_student_name` (`student_name`),
   KEY `idx_student_status` (`status`),
   KEY `idx_student_campus` (`campus_id`),
+  KEY `idx_student_name_phone` (`student_name`,`guardian_phone`,`is_deleted`),
   CONSTRAINT `fk_student_campus` FOREIGN KEY (`campus_id`) REFERENCES `campus` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Student master';
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1284,6 +1425,7 @@ CREATE TABLE `teacher_pay_rate` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `teacher_id` bigint NOT NULL COMMENT 'Teacher ID',
   `course_product_id` bigint NOT NULL COMMENT 'Course product ID',
+  `student_id` bigint DEFAULT NULL COMMENT 'Optional student-specific pay-rate override',
   `hourly_rate` decimal(10,2) NOT NULL COMMENT 'Per-hour rate in dollars',
   `notes` varchar(500) DEFAULT NULL COMMENT 'Notes',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
@@ -1295,10 +1437,12 @@ CREATE TABLE `teacher_pay_rate` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_teacher_product` (`teacher_id`,`course_product_id`),
+  UNIQUE KEY `uk_teacher_product_student` (`teacher_id`,`course_product_id`,`student_id`,`is_deleted`),
   KEY `idx_pay_rate_teacher` (`teacher_id`),
   KEY `idx_pay_rate_product` (`course_product_id`),
+  KEY `idx_pay_rate_student` (`student_id`),
   CONSTRAINT `fk_pay_rate_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`),
+  CONSTRAINT `fk_pay_rate_student` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`),
   CONSTRAINT `fk_pay_rate_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Teacher hourly pay rate configuration';
 /*!40101 SET character_set_client = @saved_cs_client */;

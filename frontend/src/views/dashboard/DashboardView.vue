@@ -8,7 +8,7 @@
       </div>
     </section>
 
-    <!-- 系统级统计 -->
+
     <section class="stat-grid">
       <article v-for="card in cards" :key="card.label" class="stat-card">
         <span>{{ card.label }}</span>
@@ -17,7 +17,7 @@
       </article>
     </section>
 
-    <!-- 各校区明细 -->
+
     <section v-if="summary.campusDetails?.length" class="campus-section">
       <div class="campus-section__header">
         <span class="campus-section__title">Per-Campus Breakdown</span>

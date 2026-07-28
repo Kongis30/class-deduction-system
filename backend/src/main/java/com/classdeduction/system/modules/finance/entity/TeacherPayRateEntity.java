@@ -30,6 +30,11 @@ public class TeacherPayRateEntity extends BaseEntity {
 
     private Long courseProductId;
 
+    /**
+     * Optional student-specific override. A null value is the default product rate.
+     */
+    private Long studentId;
+
     private BigDecimal hourlyRate;
 
     private String notes;

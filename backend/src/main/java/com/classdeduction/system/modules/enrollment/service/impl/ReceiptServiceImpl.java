@@ -93,6 +93,7 @@ public class ReceiptServiceImpl implements ReceiptService {
                 .studentId(item.getStudentId())
                 .studentName(student == null ? null : student.getStudentName())
                 .templateCode(item.getTemplateCode())
+                .receiptPayload(item.getReceiptPayload())
                 .fileUrl(item.getFileUrl())
                 .issuedAt(item.getIssuedAt())
                 .build();

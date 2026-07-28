@@ -14,7 +14,10 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 支付记录实体：第一阶段固定为现金支付。
+ * Immutable order-level payment ledger entry.
+ *
+ * <p>Entries record a payment or refund for the whole enrollment order; they do not allocate
+ * money to an order item or course package.</p>
  */
 @Getter
 @Setter

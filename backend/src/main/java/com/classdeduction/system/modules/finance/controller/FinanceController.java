@@ -21,7 +21,6 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 @Validated
 @RestController
@@ -63,12 +62,6 @@ public class FinanceController {
     @Operation(summary = "Query unpaid lessons for a teacher in a period")
     public ApiResponse<List<UnpaidLessonVO>> queryUnpaidLessons(@Valid UnpaidLessonQuery query) {
         return ApiResponse.success(paymentService.queryUnpaidLessons(query));
-    }
-
-    @PostMapping("/payments/preview")
-    @Operation(summary = "Preview payment calculation for selected lesson records")
-    public ApiResponse<Map<String, Object>> previewPayment(@RequestBody List<Long> lessonRecordIds) {
-        return ApiResponse.success(paymentService.previewPayment(lessonRecordIds));
     }
 
     @PostMapping("/payments")

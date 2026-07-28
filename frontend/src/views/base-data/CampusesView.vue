@@ -30,6 +30,12 @@
             </el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="Pickup fee" min-width="110" align="right">
+          <template #default="{ row }">${{ (row.defaultPickupFeeAmount ?? 0).toFixed(2) }}</template>
+        </el-table-column>
+        <el-table-column label="Drop-off fee" min-width="110" align="right">
+          <template #default="{ row }">${{ (row.defaultDropoffFeeAmount ?? 0).toFixed(2) }}</template>
+        </el-table-column>
         <el-table-column label="Notes" min-width="200" prop="notes" show-overflow-tooltip />
         <el-table-column label="Actions" min-width="140" fixed="right">
           <template #default="{ row }">
@@ -45,7 +51,7 @@
     <!-- Campus dialog -->
     <el-dialog
       v-model="campusDialogVisible"
-      width="480px"
+      width="540px"
       :close-on-click-modal="false"
       class="campus-dialog"
     >
@@ -65,6 +71,12 @@
             <el-option label="Active" value="ACTIVE" />
             <el-option label="Inactive" value="INACTIVE" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="Default pickup fee">
+          <el-input-number v-model="campusForm.defaultPickupFeeAmount" :min="0" :precision="2" :controls="false" />
+        </el-form-item>
+        <el-form-item label="Default drop-off fee">
+          <el-input-number v-model="campusForm.defaultDropoffFeeAmount" :min="0" :precision="2" :controls="false" />
         </el-form-item>
         <el-form-item label="Notes">
           <el-input v-model="campusForm.notes" type="textarea" :rows="2" placeholder="Optional notes" />
@@ -107,6 +119,8 @@ const campusForm = reactive<CampusSavePayload>({
   campusName: '',
   displayOrder: 99,
   status: 'ACTIVE',
+  defaultPickupFeeAmount: 0,
+  defaultDropoffFeeAmount: 0,
   notes: '',
 });
 
@@ -135,6 +149,8 @@ function openCampusDialog(row?: CampusItem) {
       campusName: row.campusName,
       displayOrder: row.displayOrder,
       status: row.status,
+      defaultPickupFeeAmount: row.defaultPickupFeeAmount ?? 0,
+      defaultDropoffFeeAmount: row.defaultDropoffFeeAmount ?? 0,
       notes: row.notes ?? '',
     });
   } else {
@@ -142,6 +158,8 @@ function openCampusDialog(row?: CampusItem) {
       campusName: '',
       displayOrder: 99,
       status: 'ACTIVE',
+      defaultPickupFeeAmount: 0,
+      defaultDropoffFeeAmount: 0,
       notes: '',
     });
   }

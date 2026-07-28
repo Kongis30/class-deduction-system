@@ -1,0 +1,394 @@
+<template>
+  <div class="my-lessons-page">
+    <section class="my-lessons-page__header">
+      <div>
+        <h2>My Lessons</h2>
+        <p>Review your scheduled lessons and submit attendance for admin review.</p>
+      </div>
+      <el-button type="primary" :loading="loading" @click="loadLessons">Refresh</el-button>
+    </section>
+
+    <section v-if="!teacherId" class="my-lessons-empty">
+      This account is not linked to a teacher profile.
+    </section>
+
+    <template v-else>
+      <section class="my-lessons-toolbar">
+        <el-radio-group v-model="period" @change="loadLessons">
+          <el-radio-button label="future">Future</el-radio-button>
+          <el-radio-button label="history">History</el-radio-button>
+        </el-radio-group>
+        <span>{{ periodHint }}</span>
+      </section>
+
+      <el-table
+        v-loading="loading"
+        :data="lessons"
+        border
+        stripe
+        size="small"
+        max-height="520"
+        class="my-lessons-table"
+        empty-text="No lessons found for this period."
+      >
+        <el-table-column label="Type" width="110" align="center" header-align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.classGroupId ? 'primary' : 'success'">
+              {{ row.classGroupId ? 'Group class' : '1-on-1' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Course / Class" min-width="180" align="center" header-align="center">
+          <template #default="{ row }">
+            {{ row.className || row.packageName || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="Student" min-width="160" align="center" header-align="center">
+          <template #default="{ row }">
+            {{ row.studentName || 'Group lesson' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="Time" min-width="180" align="center" header-align="center">
+          <template #default="{ row }">
+            <div class="my-lessons-time">
+              <strong>{{ formatDate(row.plannedStartAt) }}</strong>
+              <span>{{ formatTimeRange(row.plannedStartAt, row.plannedEndAt) }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Classroom" min-width="130" align="center" header-align="center">
+          <template #default="{ row }">
+            {{ row.actualClassroomName || row.plannedClassroomName || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="Status" min-width="165" align="center" header-align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="statusTag(row)">
+              {{ statusLabel(row) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Action" width="190" fixed="right" align="center" header-align="center">
+          <template #default="{ row }">
+            <el-button
+              v-if="canSubmitAttendance(row)"
+              type="primary"
+              size="small"
+              @click="openConfirmDialog(row)"
+            >
+              Submit attendance
+            </el-button>
+            <span v-else class="my-lessons-no-action">{{ actionLabel(row) }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </template>
+
+    <el-dialog
+      v-model="confirmDialogVisible"
+      title="Submit Attendance"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="130px">
+        <el-form-item label="Result status">
+          <el-select v-model="confirmForm.resultStatus" style="width: 100%">
+            <el-option label="Completed" value="COMPLETED" />
+            <el-option label="Formal Leave" value="FORMAL_LEAVE" />
+            <el-option label="No Show" value="NO_SHOW" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Actual start">
+          <el-date-picker
+            v-model="confirmForm.actualStartAt"
+            type="datetime"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            format="YYYY-MM-DD HH:mm"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="Actual duration">
+          <el-input-number
+            v-model="confirmForm.actualHours"
+            :min="0"
+            :max="10"
+            :precision="1"
+            :step="0.5"
+          />
+          <span class="my-lessons-form-hint">Use 0.5-hour increments.</span>
+        </el-form-item>
+        <el-form-item label="Notes">
+          <el-input v-model="confirmForm.notes" type="textarea" :rows="3" placeholder="Optional notes" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="confirmDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitAttendance">Submit for review</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ElMessage } from 'element-plus';
+import { computed, onMounted, reactive, ref } from 'vue';
+import dayjs from 'dayjs';
+
+import { extractErrorMessage } from '@/api/http';
+import { confirmLesson } from '@/api/lesson';
+import { confirmClassLesson, fetchLessonOccurrences } from '@/api/schedule';
+import { useAuthStore } from '@/stores/auth';
+import type { LessonOccurrenceItem } from '@/types/domain';
+
+type LessonPeriod = 'future' | 'history';
+
+const authStore = useAuthStore();
+const teacherId = computed(() => authStore.currentUser?.teacherId);
+const period = ref<LessonPeriod>('future');
+const loading = ref(false);
+const submitting = ref(false);
+const lessons = ref<LessonOccurrenceItem[]>([]);
+const selectedLesson = ref<LessonOccurrenceItem | null>(null);
+const confirmDialogVisible = ref(false);
+
+const confirmForm = reactive({
+  resultStatus: 'COMPLETED',
+  actualStartAt: '',
+  actualHours: 0,
+  notes: '',
+});
+
+const periodHint = computed(() =>
+  period.value === 'future'
+    ? 'Showing the next 30 days and lessons awaiting admin review.'
+    : 'Showing the previous 30 days.',
+);
+
+onMounted(loadLessons);
+
+async function loadLessons() {
+  if (!teacherId.value) {
+    lessons.value = [];
+    return;
+  }
+
+  const now = dayjs();
+  const startAt = period.value === 'future'
+    ? now.startOf('day')
+    : now.subtract(30, 'day').startOf('day');
+  const endAt = period.value === 'future'
+    ? now.add(30, 'day').endOf('day')
+    : now.endOf('day');
+
+  loading.value = true;
+  try {
+    const lessonRequest = fetchLessonOccurrences({
+      startAt: startAt.format('YYYY-MM-DDTHH:mm:ss'),
+      endAt: endAt.format('YYYY-MM-DDTHH:mm:ss'),
+      pageSize: 200,
+    });
+    const pendingRequest = period.value === 'future'
+      ? fetchLessonOccurrences({
+        startAt: now.subtract(30, 'day').startOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+        endAt: now.format('YYYY-MM-DDTHH:mm:ss'),
+        pageSize: 200,
+      })
+      : null;
+    const [response, pendingResponse] = await Promise.all([lessonRequest, pendingRequest]);
+    const pendingLessons = pendingResponse?.data.data.records
+      .filter(lesson => lesson.confirmStage === 'PENDING_ADMIN') || [];
+    lessons.value = [...response.data.data.records, ...pendingLessons]
+      .filter((lesson, index, list) => list.findIndex(item => item.id === lesson.id) === index);
+  } catch (error) {
+    lessons.value = [];
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    loading.value = false;
+  }
+}
+
+function openConfirmDialog(lesson: LessonOccurrenceItem) {
+  selectedLesson.value = lesson;
+  Object.assign(confirmForm, {
+    resultStatus: lesson.resultStatus || 'COMPLETED',
+    actualStartAt: lesson.actualStartAt || lesson.plannedStartAt,
+    actualHours: lesson.actualUnits != null ? lesson.actualUnits * 0.5 : lesson.plannedUnits * 0.5,
+    notes: lesson.notes || '',
+  });
+  confirmDialogVisible.value = true;
+}
+
+async function submitAttendance() {
+  const lesson = selectedLesson.value;
+  if (!lesson) return;
+
+  const isNonAttendance = confirmForm.resultStatus === 'FORMAL_LEAVE' || confirmForm.resultStatus === 'NO_SHOW';
+  if (!isNonAttendance && !confirmForm.actualStartAt) {
+    ElMessage.error('Actual start time is required for a completed lesson.');
+    return;
+  }
+  if (!isNonAttendance && (confirmForm.actualHours <= 0 || !Number.isInteger(confirmForm.actualHours * 2))) {
+    ElMessage.error('Actual duration must be greater than zero and use 0.5-hour increments.');
+    return;
+  }
+
+  const actualEndAt = !isNonAttendance && confirmForm.actualStartAt
+    ? dayjs(confirmForm.actualStartAt).add(confirmForm.actualHours, 'hour').format('YYYY-MM-DDTHH:mm:ss')
+    : undefined;
+  const payload = {
+    resultStatus: confirmForm.resultStatus,
+    actualTeacherId: isNonAttendance ? undefined : lesson.actualTeacherId || lesson.plannedTeacherId,
+    actualClassroomId: isNonAttendance ? undefined : lesson.actualClassroomId || lesson.plannedClassroomId,
+    actualStartAt: isNonAttendance ? undefined : confirmForm.actualStartAt,
+    actualEndAt,
+    actualUnits: isNonAttendance ? 0 : Math.round(confirmForm.actualHours * 2),
+    notes: confirmForm.notes || undefined,
+  };
+
+  submitting.value = true;
+  try {
+    if (lesson.classGroupId) {
+      await confirmClassLesson(lesson.classGroupId, lesson.id, payload);
+    } else {
+      await confirmLesson({ occurrenceId: lesson.id, ...payload });
+    }
+    ElMessage.success('Attendance submitted for admin review.');
+    confirmDialogVisible.value = false;
+    await loadLessons();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function canSubmitAttendance(lesson: LessonOccurrenceItem) {
+  const now = dayjs();
+  return lesson.planningStatus !== 'CANCELLED'
+    && lesson.confirmStage !== 'PENDING_ADMIN'
+    && lesson.confirmStage !== 'CONFIRMED'
+    && !(lesson.resultStatus && lesson.confirmStage !== 'REJECTED')
+    && !dayjs(lesson.plannedStartAt).isAfter(now.add(6, 'hour'))
+    && !dayjs(lesson.plannedEndAt).isBefore(now.subtract(7, 'day'));
+}
+
+function actionLabel(lesson: LessonOccurrenceItem) {
+  if (lesson.confirmStage === 'PENDING_ADMIN') return 'Awaiting admin review';
+  if (lesson.confirmStage === 'CONFIRMED') return 'Confirmed';
+  if (lesson.planningStatus === 'CANCELLED') return 'Cancelled';
+  if (lesson.confirmStage === 'REJECTED') return 'Outside resubmission window';
+  if (dayjs(lesson.plannedStartAt).isAfter(dayjs().add(6, 'hour'))) return 'Available near lesson time';
+  if (dayjs(lesson.plannedEndAt).isBefore(dayjs().subtract(7, 'day'))) return 'Confirmation window closed';
+  return 'No action';
+}
+
+function statusLabel(lesson: LessonOccurrenceItem) {
+  if (lesson.confirmStage === 'PENDING_ADMIN') return 'Awaiting admin review';
+  if (lesson.confirmStage === 'REJECTED') {
+    return lesson.rejectReason ? `Rejected: ${lesson.rejectReason}` : 'Rejected - resubmit';
+  }
+  if (lesson.confirmStage === 'CONFIRMED') return lesson.resultStatusName || resultStatusLabel(lesson.resultStatus);
+  if (lesson.resultStatus) return lesson.resultStatusName || resultStatusLabel(lesson.resultStatus);
+  if (lesson.planningStatus === 'CANCELLED') return 'Cancelled';
+  return 'Scheduled';
+}
+
+function statusTag(lesson: LessonOccurrenceItem) {
+  if (lesson.confirmStage === 'PENDING_ADMIN') return 'warning';
+  if (lesson.confirmStage === 'REJECTED' || lesson.planningStatus === 'CANCELLED') return 'danger';
+  if (lesson.confirmStage === 'CONFIRMED' || lesson.resultStatus === 'COMPLETED') return 'success';
+  return 'info';
+}
+
+function resultStatusLabel(status?: string) {
+  return {
+    COMPLETED: 'Completed',
+    FORMAL_LEAVE: 'Formal Leave',
+    NO_SHOW: 'No Show',
+  }[status || ''] || status || 'Confirmed';
+}
+
+function formatDate(value: string) {
+  return dayjs(value).format('MMM D, YYYY');
+}
+
+function formatTimeRange(startAt: string, endAt: string) {
+  return `${dayjs(startAt).format('HH:mm')} - ${dayjs(endAt).format('HH:mm')}`;
+}
+</script>
+
+<style scoped>
+.my-lessons-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.my-lessons-page__header,
+.my-lessons-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.my-lessons-page__header h2 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 22px;
+}
+
+.my-lessons-page__header p,
+.my-lessons-toolbar span,
+.my-lessons-form-hint,
+.my-lessons-no-action {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.my-lessons-page__header p {
+  margin: 4px 0 0;
+}
+
+.my-lessons-toolbar {
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.my-lessons-empty {
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  padding: 28px;
+  text-align: center;
+}
+
+.my-lessons-time {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.my-lessons-time span {
+  color: var(--text-secondary);
+}
+
+.my-lessons-form-hint {
+  margin-left: 10px;
+}
+
+.my-lessons-no-action {
+  line-height: 1.35;
+}
+
+@media (max-width: 720px) {
+  .my-lessons-page__header,
+  .my-lessons-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+</style>

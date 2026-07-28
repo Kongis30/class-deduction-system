@@ -47,4 +47,11 @@ public interface ClassroomMapper extends BaseMapper<ClassroomEntity> {
               AND (#{currentId} IS NULL OR id <> #{currentId})
             """)
     Long countRoomCodeIncludingDeleted(@Param("currentId") Long currentId, @Param("roomCode") String roomCode);
+
+    /**
+     * Locks a classroom row while assigning pending lesson occurrences so that
+     * overlapping backfill requests for the same room are serialized.
+     */
+    @Select("SELECT * FROM classroom WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
+    ClassroomEntity selectByIdForUpdate(@Param("id") Long id);
 }

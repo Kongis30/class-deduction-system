@@ -4,6 +4,7 @@ import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.base.dto.StudentPageQuery;
+import com.classdeduction.system.modules.base.dto.StudentReuseQuery;
 import com.classdeduction.system.modules.base.dto.StudentSaveRequest;
 import com.classdeduction.system.modules.base.service.StudentService;
 import com.classdeduction.system.modules.base.vo.StudentDetailVO;
@@ -13,7 +14,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
-import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -26,7 +27,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/students")
 @Tag(name = "Base Data - Students")
-@RequireRoles({"ADMIN", "STAFF", "TEACHER"})
+@RequireRoles({"ADMIN", "STAFF"})
 public class StudentController {
 
     private final StudentService studentService;
@@ -49,10 +50,16 @@ public class StudentController {
         return ApiResponse.success(studentService.pageStudents(query));
     }
 
+    @GetMapping("/reuse")
+    @Operation(summary = "Find reusable student by name and guardian phone")
+    public ApiResponse<StudentDetailVO> findReusableStudent(@ParameterObject @Valid StudentReuseQuery query) {
+        return ApiResponse.success(studentService.findReusableStudent(query));
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get student detail")
-    public ApiResponse<StudentDetailVO> getStudent(@PathVariable Long id) {
-        return ApiResponse.success(studentService.getStudent(id));
+    public ResponseEntity<ApiResponse<StudentDetailVO>> getStudent(@PathVariable Long id) {
+        return noStore(ApiResponse.success(studentService.getStudent(id)));
     }
 
     @PostMapping
@@ -73,5 +80,13 @@ public class StudentController {
     public ResponseEntity<Void> deleteStudent(@PathVariable Long id) {
         studentService.deleteStudent(id);
         return ResponseEntity.noContent().build();
+    }
+
+    private static <T> ResponseEntity<ApiResponse<T>> noStore(ApiResponse<T> body) {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store, no-cache, max-age=0, must-revalidate")
+                .header(HttpHeaders.PRAGMA, "no-cache")
+                .header(HttpHeaders.EXPIRES, "0")
+                .body(body);
     }
 }

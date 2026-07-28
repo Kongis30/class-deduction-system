@@ -4,12 +4,27 @@
       <div class="panel-header">
         <span class="panel-header__title">Classrooms</span>
         <div class="panel-header__actions">
+          <el-button @click="openBackfillSchedule()">
+            Assign rooms
+          </el-button>
+          <el-button @click="openRoomCalendar()">
+            Room calendar
+          </el-button>
           <el-button type="primary" @click="openClassroomDialog()">
             <el-icon><Plus /></el-icon>
             Add classroom
           </el-button>
         </div>
       </div>
+
+      <el-alert
+        class="workflow-note"
+        type="info"
+        :closable="false"
+        show-icon
+        title="Registration does not require room assignment; rooms can be backfilled later."
+        description="Use Room calendar to assign pending rooms and verify occupancy in one place."
+      />
 
       <el-form class="filters" :model="filters" inline>
         <el-form-item label="Name" class="filters__item">
@@ -53,6 +68,12 @@
         class="product-table"
         :show-empty="true"
       >
+        <template #empty>
+          <div class="classroom-empty empty-state">
+            <strong>{{ filters.keyword || filters.campus || filters.status ? 'No classrooms match the current filters.' : 'No classrooms yet.' }}</strong>
+            <span>{{ filters.keyword || filters.campus || filters.status ? 'Clear filters or add a classroom for future schedule backfill.' : 'Registration can continue without rooms. Add rooms when schedules are ready to backfill.' }}</span>
+          </div>
+        </template>
         <el-table-column label="Room name" min-width="180">
           <template #default="{ row }">
             <div class="cell-stack">
@@ -69,9 +90,11 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" min-width="140" fixed="right">
+        <el-table-column label="Actions" min-width="250" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
+              <el-button text type="primary" @click="openRoomCalendar(row)">Calendar</el-button>
+              <el-button text type="primary" @click="openBackfillSchedule(row)">Assign room</el-button>
               <el-button text type="primary" @click="openClassroomDialog(row)">Edit</el-button>
               <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
             </div>
@@ -143,6 +166,7 @@ import axios from 'axios';
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import {
@@ -154,15 +178,16 @@ import {
   type ClassroomQuery,
   type ClassroomSavePayload,
 } from '@/api/base-data';
-import type { CampusItem, ClassroomItem } from '@/types/domain';
+import type { CampusItem, ClassroomItem, EntityId } from '@/types/domain';
 
 const loading = ref(false);
 const submitting = ref(false);
 const classroomDialogVisible = ref(false);
-const editingId = ref<number | null>(null);
+const editingId = ref<EntityId | null>(null);
 const classroomFormRef = ref();
 const campuses = ref<CampusItem[]>([]);
 const CLASSROOM_IN_USE_MESSAGE = 'This classroom is still in use. Please reassign related classes or schedules first.';
+const router = useRouter();
 
 // ─── Filters & Pagination ───────────────────────────────
 const filters = reactive({
@@ -188,6 +213,20 @@ const tableData = ref<ClassroomItem[]>([]);
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
+}
+
+function openRoomCalendar(row?: ClassroomItem) {
+  router.push({
+    path: '/classrooms/occupancy',
+    query: row ? { classroomId: row.id } : undefined,
+  });
+}
+
+function openBackfillSchedule(row?: ClassroomItem) {
+  router.push({
+    path: '/classrooms/occupancy',
+    query: row ? { classroomId: row.id } : undefined,
+  });
 }
 
 // ─── Load Data ──────────────────────────────────────────
@@ -349,6 +388,10 @@ loadData();
   margin-bottom: 12px;
 }
 
+.workflow-note {
+  margin-bottom: 12px;
+}
+
 .filters__item {
   margin-right: 16px;
   margin-bottom: 0;
@@ -363,6 +406,22 @@ loadData();
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+}
+
+.classroom-empty {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: min(520px, 100%);
+}
+
+.classroom-empty strong {
+  color: #303133;
+  font-weight: 600;
+}
+
+.classroom-empty span {
+  color: #606266;
 }
 
 .cell-stack {

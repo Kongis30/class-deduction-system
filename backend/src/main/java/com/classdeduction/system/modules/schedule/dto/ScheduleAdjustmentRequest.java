@@ -20,7 +20,8 @@ public class ScheduleAdjustmentRequest {
     private Long occurrenceId;
 
     @NotBlank(message = "Adjustment type is required")
-    @Schema(description = "Adjustment type: RESCHEDULE/CHANGE_ROOM/CHANGE_TEACHER/MAKEUP_CREATE", example = "RESCHEDULE")
+    @Schema(description = "Adjustment type: RESCHEDULE/CHANGE_ROOM/CHANGE_TEACHER/ASSIGN_RESOURCES/MAKEUP_CREATE",
+            example = "ASSIGN_RESOURCES")
     private String adjustmentType;
 
     @Schema(description = "New planned teacher ID", example = "1880000000000000002")

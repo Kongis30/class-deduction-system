@@ -12,9 +12,3 @@ export interface PageResult<T> {
   pageNum: number;
   pageSize: number;
 }
-
-export interface SelectOption {
-  label: string;
-  value: string | number;
-}
-

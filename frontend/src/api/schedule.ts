@@ -4,6 +4,7 @@ import type {
   ClassroomOccupancyItem,
   EntityId,
   LessonOccurrenceItem,
+  PendingClassroomAssignmentItem,
   RecurringScheduleRuleDetailItem,
   RecurringScheduleRuleItem,
 } from '@/types/domain';
@@ -95,7 +96,12 @@ export interface LessonOccurrenceQuery {
 }
 
 export function fetchLessonOccurrences(params: LessonOccurrenceQuery = {}) {
-  return http.get<ApiResponse<PageResult<LessonOccurrenceItem>>>('/v1/schedule/occurrences', { params });
+  return http.get<ApiResponse<PageResult<LessonOccurrenceItem>>>('/v1/schedule/occurrences', {
+    params: {
+      ...params,
+      pageSize: params.pageSize ? Math.min(params.pageSize, 200) : params.pageSize,
+    },
+  });
 }
 
 export function fetchLessonOccurrence(id: EntityId) {
@@ -105,7 +111,7 @@ export function fetchLessonOccurrence(id: EntityId) {
 // ─── Schedule Adjustments ──────────────────────────────
 export interface ScheduleAdjustmentPayload {
   occurrenceId: string | number;
-  adjustmentType: string;
+  adjustmentType: 'RESCHEDULE' | 'CHANGE_ROOM' | 'CHANGE_TEACHER' | 'ASSIGN_RESOURCES' | 'MAKEUP_CREATE';
   plannedTeacherId?: string | number;
   plannedClassroomId?: string | number;
   plannedStartAt?: string;
@@ -125,16 +131,16 @@ export function createScheduleAdjustment(data: ScheduleAdjustmentPayload) {
   return http.post<ApiResponse<ScheduleAdjustmentResult>>('/v1/schedule/adjustments', data);
 }
 
-// 单条本周调整项：UPDATE 修改已有课次 / CREATE 新增课次 / DELETE 删除课次
+
 export interface WeeklyScheduleAdjustmentItemPayload {
   action: 'UPDATE' | 'CREATE' | 'DELETE';
-  occurrenceId?: string | number; // UPDATE/DELETE 必填，CREATE 不传
-  plannedStartAt?: string;         // UPDATE/CREATE 必填
-  plannedEndAt?: string;           // UPDATE/CREATE 必填
-  plannedUnits?: number;           // UPDATE/CREATE 必填
-  plannedTeacherId?: string | number; // UPDATE/CREATE 必填
-  plannedClassroomId?: string | number; // UPDATE/CREATE 必填
-  itemReason?: string;             // CREATE/DELETE 必填
+  occurrenceId?: string | number;
+  plannedStartAt?: string;
+  plannedEndAt?: string;
+  plannedUnits?: number;
+  plannedTeacherId?: string | number;
+  plannedClassroomId?: string | number;
+  itemReason?: string;
 }
 
 export interface WeeklyScheduleAdjustmentPayload {
@@ -152,7 +158,7 @@ export interface WeeklyScheduleAdjustmentResult {
   unitDelta: number;
   adjustedOccurrenceCount?: number;
   modifiedOccurrenceIds?: EntityId[];
-  // 本周增删改各自的数量统计
+
   createdCount?: number;
   updatedCount?: number;
   deletedCount?: number;
@@ -176,20 +182,18 @@ export function fetchClassroomOccupancy(params: ClassroomOccupancyQuery = {}) {
   return http.get<ApiResponse<PageResult<ClassroomOccupancyItem>>>('/v1/schedule/classrooms/occupancy', { params });
 }
 
-// ─── Student Schedule ─────────────────────────────────
-export interface StudentScheduleSlot {
-  occurrenceId: EntityId;
-  weekday: number;
-  startTime: string;
-  endTime: string;
-  plannedUnits: number;
-  courseLabel: string;
-  packageId: EntityId;
-  planningStatus: string;
+export interface PendingClassroomBackfillPayload {
+  targetType: string;
+  targetId: string | number;
+  classroomId: string | number;
 }
 
-export function fetchActiveStudentSchedule(studentId: string | number) {
-  return http.get<ApiResponse<StudentScheduleSlot[]>>(`/v1/schedule/occurrences/student/${studentId}/active`);
+export function fetchPendingClassroomAssignments() {
+  return http.get<ApiResponse<PendingClassroomAssignmentItem[]>>('/v1/schedule/classrooms/pending');
+}
+
+export function backfillPendingClassroom(data: PendingClassroomBackfillPayload) {
+  return http.put<ApiResponse<PendingClassroomAssignmentItem>>('/v1/schedule/classrooms/pending', data);
 }
 
 // ─── Class Groups ──────────────────────────────────────
@@ -207,16 +211,28 @@ export function fetchClassGroups() {
   return http.get<ApiResponse<import('@/types/domain').ClassGroupItem[]>>('/v1/classes');
 }
 
-export function fetchClassDetail(classId: string | number) {
-  return http.get<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}`);
-}
-
 export function fetchClassStudents(classId: string | number) {
   return http.get<ApiResponse<import('@/types/domain').ClassEnrolledStudentItem[]>>(`/v1/classes/${classId}/students`);
 }
 
 export function fetchClassOccurrences(classId: string | number) {
   return http.get<ApiResponse<import('@/types/domain').ClassOccurrenceItem[]>>(`/v1/classes/${classId}/occurrences`);
+}
+
+export interface ClassScheduleSlotPayload {
+  weekday: number;
+  startTime: string;
+  endTime: string;
+}
+
+export interface ClassScheduleUpdatePayload {
+  teacherId?: string | number;
+  classroomId?: string | number;
+  slots: ClassScheduleSlotPayload[];
+}
+
+export function updateClassSchedule(classId: string | number, data: ClassScheduleUpdatePayload) {
+  return http.put<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/schedule`, data);
 }
 
 export function confirmClassLesson(classId: string | number, occurrenceId: string | number, data: ClassGroupConfirmPayload = {}) {
@@ -231,20 +247,8 @@ export function sendClassExpiryReminders(classId: string | number) {
   return http.post<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/send-expiry-reminders`);
 }
 
-export function enrollClassStudent(classId: string | number, data: {
-  studentId: string | number;
-  enrollmentDate: string;
-  expiryDate: string;
-}) {
-  return http.post<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/enroll`, data);
-}
-
 export function fetchEnrolledClassGroups(studentId: string | number) {
   return http.get<ApiResponse<any[]>>(`/v1/classes/enrolled/${studentId}`);
-}
-
-export function fetchClassGroupsByTeacher(teacherId: EntityId) {
-  return http.get<ApiResponse<any[]>>(`/v1/classes/teacher/${teacherId}`);
 }
 
 export function fetchClassGroupsByClassroom(classroomId: string | number) {

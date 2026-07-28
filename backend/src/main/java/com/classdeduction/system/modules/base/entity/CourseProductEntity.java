@@ -31,6 +31,10 @@ public class CourseProductEntity extends BaseEntity {
 
     private String productName;
 
+    private String courseType;
+
+    private String registerClass;
+
     private String subjectName;
 
     private String teachingMode;

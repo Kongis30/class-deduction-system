@@ -19,6 +19,8 @@ public record TeacherPayRateVO(
         String productCode,
         String productName,
         String subjectName,
+        Long studentId,
+        String studentName,
         BigDecimal hourlyRate,
         String notes
 ) {}

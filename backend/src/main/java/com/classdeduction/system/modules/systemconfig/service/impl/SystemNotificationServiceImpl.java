@@ -10,6 +10,7 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.systemconfig.config.NotificationEmailProperties;
 import com.classdeduction.system.modules.systemconfig.dto.BrandConfigUpdateRequest;
+import com.classdeduction.system.modules.systemconfig.dto.ApprovedEmailRequest;
 import com.classdeduction.system.modules.systemconfig.vo.BalanceConsistencyVO;
 import com.classdeduction.system.modules.systemconfig.dto.NotificationBroadcastRequest;
 import com.classdeduction.system.modules.systemconfig.dto.NotificationConfigUpdateRequest;
@@ -30,6 +31,7 @@ import com.classdeduction.system.modules.systemconfig.mapper.NotificationTemplat
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import com.classdeduction.system.modules.systemconfig.service.SystemNotificationService;
 import com.classdeduction.system.modules.systemconfig.vo.BroadcastResultVO;
+import com.classdeduction.system.modules.systemconfig.vo.ApprovedEmailResultVO;
 import com.classdeduction.system.modules.systemconfig.vo.BrandConfigVO;
 import com.classdeduction.system.modules.systemconfig.vo.NotificationConfigVO;
 import com.classdeduction.system.modules.systemconfig.vo.NotificationDispatchResultVO;
@@ -217,46 +219,12 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
     public NotificationDispatchResultVO dispatchPendingEmails(NotificationDispatchRequest request, Long operatorId) {
-        ensureDispatchEnabled();
-        int batchSize = Math.min(Optional.ofNullable(request.getBatchSize()).orElse(notificationEmailProperties.getMaxBatchSize()),
-                notificationEmailProperties.getMaxBatchSize());
-        List<NotificationLogEntity> pendingLogs = notificationLogMapper.selectList(new LambdaQueryWrapper<NotificationLogEntity>()
-                .eq(NotificationLogEntity::getChannelType, "EMAIL")
-                .eq(NotificationLogEntity::getSendStatus, "PENDING")
-                .lt(NotificationLogEntity::getRetryCount, notificationEmailProperties.getMaxRetries())
-                .orderByAsc(NotificationLogEntity::getScheduledAt)
-                .orderByAsc(NotificationLogEntity::getId)
-                .last("LIMIT " + batchSize));
-
-        List<Long> successLogIds = new ArrayList<>();
-        List<Long> failedLogIds = new ArrayList<>();
-        int claimedCount = 0;
-
-        for (NotificationLogEntity logEntity : pendingLogs) {
-            if (!claimForProcessing(logEntity.getId(), operatorId)) {
-                continue;
-            }
-            claimedCount++;
-            try {
-                sendOne(logEntity, resolveFromAddress(), resolveFromName());
-                markSendSuccess(logEntity.getId(), operatorId);
-                successLogIds.add(logEntity.getId());
-            } catch (Exception exception) {
-                markSendFailed(logEntity, operatorId, exception);
-                failedLogIds.add(logEntity.getId());
-            }
-        }
-
-        return NotificationDispatchResultVO.builder()
-                .requestedBatchSize(batchSize)
-                .claimedCount(claimedCount)
-                .successCount(successLogIds.size())
-                .failedCount(failedLogIds.size())
-                .successLogIds(successLogIds)
-                .failedLogIds(failedLogIds)
-                .build();
+        // A raw pending-email batch cannot show the administrator the actual
+        // recipient-specific content. Keep the API surface for compatibility,
+        // but block it so no email can bypass the preview-and-confirm workflow.
+        throw new BusinessException("EMAIL_PREVIEW_REQUIRED",
+                "Use the relevant business workflow to preview and confirm each email before sending.");
     }
 
     @Override
@@ -356,6 +324,52 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         sendDirect(config.getFromAddress(), config.getFromAddress(), subject, body);
 
         log.info("Test email sent to {} by operator {}", config.getFromAddress(), operatorId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public ApprovedEmailResultVO sendApprovedEmail(ApprovedEmailRequest request, Long operatorId) {
+        if (!StringUtils.hasText(request.recipient())
+                || !StringUtils.hasText(request.subject())
+                || !StringUtils.hasText(request.body())) {
+            return new ApprovedEmailResultVO(false, "Prepared email is incomplete.");
+        }
+        try {
+            ensureDispatchEnabled();
+        } catch (BusinessException exception) {
+            return new ApprovedEmailResultVO(false, exception.getMessage());
+        }
+
+        NotificationLogEntity logEntity = new NotificationLogEntity();
+        logEntity.setChannelType("EMAIL");
+        logEntity.setStudentId(request.studentId());
+        logEntity.setPackageId(request.packageId());
+        logEntity.setRecipient(normalizeRecipient(request.recipient()));
+        logEntity.setSendStatus("PROCESSING");
+        logEntity.setRetryCount(0);
+        logEntity.setScheduledAt(AppTime.nowLocalDateTime());
+        logEntity.setCreatedBy(operatorId);
+        logEntity.setUpdatedBy(operatorId);
+        try {
+            logEntity.setRequestPayload(objectMapper.writeValueAsString(Map.of(
+                    "subject", request.subject(),
+                    "body", request.body(),
+                    "source", StringUtils.hasText(request.source()) ? request.source() : "ADMIN_CONFIRMED"
+            )));
+        } catch (JsonProcessingException exception) {
+            return new ApprovedEmailResultVO(false, "Unable to prepare the email payload.");
+        }
+        notificationLogMapper.insert(logEntity);
+
+        try {
+            sendOne(logEntity, resolveFromAddress(), resolveFromName());
+            markSendSuccess(logEntity.getId(), operatorId);
+            return new ApprovedEmailResultVO(true, "Sent.");
+        } catch (Exception exception) {
+            markSendFailed(logEntity, operatorId, exception);
+            log.warn("Administrator-confirmed email failed for recipient {}", request.recipient(), exception);
+            return new ApprovedEmailResultVO(false, "Failed to send: " + abbreviate(exception.getMessage(), 180));
+        }
     }
 
     // ── Trigger Rules ──────────────────────────────────────────────────────────
@@ -738,14 +752,6 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         return notificationConfigMapper.selectById(1L);
     }
 
-    private boolean claimForProcessing(Long id, Long operatorId) {
-        return notificationLogMapper.update(null, new UpdateWrapper<NotificationLogEntity>()
-                .eq("id", id)
-                .eq("send_status", "PENDING")
-                .set("send_status", "PROCESSING")
-                .set("updated_by", operatorId)) == 1;
-    }
-
     private RenderedMessage parseRenderedMessage(String requestPayload) throws JsonProcessingException {
         Map<String, Object> payload = objectMapper.readValue(requestPayload, new TypeReference<>() {});
         String subject = Objects.toString(payload.get("subject"), null);
@@ -919,6 +925,8 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
             case "LOW_BALANCE_HOUR" -> "Low Balance (Hours)";
             case "LOW_BALANCE_SESSION" -> "Low Balance (Sessions)";
             case "LOW_BALANCE_MONTH" -> "Low Balance (Months)";
+            case "RENEWAL_EXPIRY_DAYS" -> "Renewal Reminder Window";
+            case "RENEWAL_ONE_ON_ONE_LESSONS" -> "Renewal Reminder Lessons";
             default -> entity.getTriggerType();
         };
         NotificationTemplateEntity template = entity.getTemplateId() != null

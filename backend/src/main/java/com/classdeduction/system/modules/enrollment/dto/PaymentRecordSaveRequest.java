@@ -2,7 +2,6 @@ package com.classdeduction.system.modules.enrollment.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PastOrPresent;
@@ -34,8 +33,7 @@ public class PaymentRecordSaveRequest {
     @Schema(description = "收银员用户ID", example = "1880000000000000002")
     private Long handledByUserId;
 
-    @NotBlank(message = "Handler name is required")
-    @Schema(description = "经手人姓名", example = "Amy")
+    @Schema(description = "默认经手人姓名；分项未填写时使用", example = "Amy")
     private String handledByName;
 
     @Schema(description = "备注", example = "Notes")

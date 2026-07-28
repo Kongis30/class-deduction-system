@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.systemconfig.service;
 
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.systemconfig.dto.BrandConfigUpdateRequest;
+import com.classdeduction.system.modules.systemconfig.dto.ApprovedEmailRequest;
 import com.classdeduction.system.modules.systemconfig.dto.NotificationBroadcastRequest;
 import com.classdeduction.system.modules.systemconfig.dto.NotificationConfigUpdateRequest;
 import com.classdeduction.system.modules.systemconfig.dto.NotificationDispatchRequest;
@@ -10,6 +11,7 @@ import com.classdeduction.system.modules.systemconfig.dto.NotificationTemplatePa
 import com.classdeduction.system.modules.systemconfig.dto.NotificationTemplateUpdateRequest;
 import com.classdeduction.system.modules.systemconfig.dto.NotificationTriggerRuleUpdateRequest;
 import com.classdeduction.system.modules.systemconfig.vo.BalanceConsistencyVO;
+import com.classdeduction.system.modules.systemconfig.vo.ApprovedEmailResultVO;
 import com.classdeduction.system.modules.systemconfig.vo.BroadcastResultVO;
 import com.classdeduction.system.modules.systemconfig.vo.BrandConfigVO;
 import com.classdeduction.system.modules.systemconfig.vo.NotificationConfigVO;
@@ -49,6 +51,12 @@ public interface SystemNotificationService {
     NotificationConfigVO updateNotificationConfig(NotificationConfigUpdateRequest request, Long operatorId);
 
     void sendTestEmail(Long operatorId);
+
+    /**
+     * Sends exactly one email which has already been reviewed and confirmed by an administrator.
+     * This deliberately bypasses the deferred automatic-dispatch queue.
+     */
+    ApprovedEmailResultVO sendApprovedEmail(ApprovedEmailRequest request, Long operatorId);
 
     // ── Trigger Rules ───────────────────────────────────
 

@@ -18,6 +18,8 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -36,14 +38,14 @@ public class EnrollmentOrderController {
 
     @GetMapping
     @Operation(summary = "分页查询报名单")
-    public ApiResponse<PageResponse<EnrollmentOrderListItemVO>> pageOrders(@ParameterObject @Valid EnrollmentOrderPageQuery query) {
-        return ApiResponse.success(enrollmentOrderService.pageOrders(query));
+    public ResponseEntity<ApiResponse<PageResponse<EnrollmentOrderListItemVO>>> pageOrders(@ParameterObject @Valid EnrollmentOrderPageQuery query) {
+        return noStore(ApiResponse.success(enrollmentOrderService.pageOrders(query)));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "查询报名单详情")
-    public ApiResponse<EnrollmentOrderDetailVO> getOrder(@PathVariable Long id) {
-        return ApiResponse.success(enrollmentOrderService.getOrder(id));
+    public ResponseEntity<ApiResponse<EnrollmentOrderDetailVO>> getOrder(@PathVariable Long id) {
+        return noStore(ApiResponse.success(enrollmentOrderService.getOrder(id)));
     }
 
     @PostMapping
@@ -69,7 +71,7 @@ public class EnrollmentOrderController {
     }
 
     @PostMapping("/{id}/refund")
-    @Operation(summary = "报名单全额退款（退课 + 记录退款流水）")
+    @Operation(summary = "报名单退款（部分退款仅更新财务，全额退款同时退课）")
     public ApiResponse<Void> refundOrder(
             @Parameter(description = "报名单ID") @PathVariable Long id,
             @Valid @RequestBody RefundRequest request) {
@@ -89,5 +91,13 @@ public class EnrollmentOrderController {
     public ApiResponse<Void> deleteOrder(@Parameter(description = "报名单ID") @PathVariable Long id) {
         enrollmentOrderService.deleteOrder(id);
         return ApiResponse.success("Deleted successfully.", null);
+    }
+
+    private static <T> ResponseEntity<ApiResponse<T>> noStore(ApiResponse<T> body) {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store, no-cache, max-age=0, must-revalidate")
+                .header(HttpHeaders.PRAGMA, "no-cache")
+                .header(HttpHeaders.EXPIRES, "0")
+                .body(body);
     }
 }

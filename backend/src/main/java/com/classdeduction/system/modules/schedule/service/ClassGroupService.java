@@ -9,23 +9,26 @@ import java.util.Map;
 
 public interface ClassGroupService {
 
-    /** 获取所有班课列表 */
-    List<Map<String, Object>> listClasses();
+    /** 获取当前用户有权查看的班课列表 */
+    List<Map<String, Object>> listClasses(CurrentUserResponse currentUser);
 
     /** 获取班课详情 */
-    Map<String, Object> getClassDetail(Long classId);
+    Map<String, Object> getClassDetail(Long classId, CurrentUserResponse currentUser);
 
     /** 获取班课在读学生 */
-    List<Map<String, Object>> listEnrolledStudents(Long classId);
+    List<Map<String, Object>> listEnrolledStudents(Long classId, CurrentUserResponse currentUser);
 
     /** 获取班课排课记录 */
-    List<Map<String, Object>> listClassOccurrences(Long classId);
+    List<Map<String, Object>> listClassOccurrences(Long classId, CurrentUserResponse currentUser);
 
     /** 统一核销：为班课所有在册学生确认某次课 */
     Map<String, Object> confirmLesson(Long classId, Long occurrenceId, Map<String, Object> body, CurrentUserResponse currentUser);
 
     /** 管理员驳回班课某次课的老师初确认 */
     void rejectLesson(Long classId, Long occurrenceId, String rejectReason, CurrentUserResponse currentUser);
+
+    /** 更新班课固定周课表，并重建未来未确认课次 */
+    Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body);
 
     /** 发送到期提醒邮件 */
     Map<String, Object> sendExpiryReminders(Long classId);

@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.enrollment.util;
 
+import com.classdeduction.system.common.time.AppTime;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +18,10 @@ class BusinessNoGeneratorTest {
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
 
+    private static String todayInAppZone() {
+        return LocalDate.now(AppTime.APP_ZONE_ID).format(DATE_FORMATTER);
+    }
+
     @Test
     @DisplayName("Should generate enrollment number with correct format")
     void shouldGenerateEnrollmentNumberWithCorrectFormat() {
@@ -27,7 +32,7 @@ class BusinessNoGeneratorTest {
         assertThat(enrollmentNo).isNotNull();
         assertThat(enrollmentNo).startsWith("EO");
         assertThat(enrollmentNo).hasSize(2 + 8 + 4); // EO + yyyyMMdd + 4 digits
-        assertThat(enrollmentNo.substring(2, 10)).isEqualTo(LocalDate.now().format(DATE_FORMATTER));
+        assertThat(enrollmentNo.substring(2, 10)).isEqualTo(todayInAppZone());
     }
 
     @Test
@@ -40,7 +45,7 @@ class BusinessNoGeneratorTest {
         assertThat(packageNo).isNotNull();
         assertThat(packageNo).startsWith("PK");
         assertThat(packageNo).hasSize(2 + 8 + 4); // PK + yyyyMMdd + 4 digits
-        assertThat(packageNo.substring(2, 10)).isEqualTo(LocalDate.now().format(DATE_FORMATTER));
+        assertThat(packageNo.substring(2, 10)).isEqualTo(todayInAppZone());
     }
 
     @Test
@@ -53,7 +58,7 @@ class BusinessNoGeneratorTest {
         assertThat(paymentNo).isNotNull();
         assertThat(paymentNo).startsWith("PMT");
         assertThat(paymentNo).hasSize(3 + 8 + 4); // PMT + yyyyMMdd + 4 digits
-        assertThat(paymentNo.substring(3, 11)).isEqualTo(LocalDate.now().format(DATE_FORMATTER));
+        assertThat(paymentNo.substring(3, 11)).isEqualTo(todayInAppZone());
     }
 
     @Test
@@ -66,7 +71,7 @@ class BusinessNoGeneratorTest {
         assertThat(receiptNo).isNotNull();
         assertThat(receiptNo).startsWith("RCP");
         assertThat(receiptNo).hasSize(3 + 8 + 4); // RCP + yyyyMMdd + 4 digits
-        assertThat(receiptNo.substring(3, 11)).isEqualTo(LocalDate.now().format(DATE_FORMATTER));
+        assertThat(receiptNo.substring(3, 11)).isEqualTo(todayInAppZone());
     }
 
     @Test

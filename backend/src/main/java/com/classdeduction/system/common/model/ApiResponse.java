@@ -33,4 +33,8 @@ public record ApiResponse<T>(
     public static <T> ApiResponse<T> failure(String code, String message) {
         return new ApiResponse<>(false, code, message, null, AppTime.nowOffsetDateTime());
     }
+
+    public static <T> ApiResponse<T> failure(String code, String message, T data) {
+        return new ApiResponse<>(false, code, message, data, AppTime.nowOffsetDateTime());
+    }
 }

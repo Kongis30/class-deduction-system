@@ -1,7 +1,15 @@
 <template>
-  <div class="tp-page">
-    <!-- 左侧老师列表 -->
-    <aside class="tp-sidebar">
+  <div class="tp-view">
+    <section class="table-page-header">
+      <div>
+        <span class="table-page-header__eyebrow">Finance</span>
+        <h2>Teacher Payments</h2>
+        <p>Select a teacher, review confirmed unpaid lessons, then create and confirm the payment.</p>
+      </div>
+    </section>
+
+    <div class="tp-page">
+      <aside class="tp-sidebar">
       <div class="tp-sidebar__search">
         <el-input v-model="teacherKeyword" placeholder="Search teacher..." clearable size="small" />
       </div>
@@ -20,10 +28,10 @@
           No teachers found.
         </div>
       </div>
-    </aside>
+      </aside>
 
-    <!-- 右侧内容 -->
-    <main class="tp-content">
+
+      <main class="tp-content">
       <div v-if="!selectedTeacherId" class="tp-content__placeholder">
         Select a teacher from the left panel to view their payment records.
       </div>
@@ -63,6 +71,21 @@
           </div>
         </section>
 
+        <el-alert
+          v-if="missingRateCount > 0"
+          type="warning"
+          :closable="false"
+          show-icon
+          class="tp-rate-alert"
+        >
+          <template #title>
+            {{ missingRateCount }} lesson(s) cannot be paid because the teacher pay rate is not configured.
+          </template>
+          <el-button text type="primary" @click="router.push('/admin/config/teacher-pay-rates')">
+            Configure rates
+          </el-button>
+        </el-alert>
+
         <!-- ─── 2. Unpaid 1:1 Lessons ────────────────── -->
         <section v-if="individualLessons.length > 0" class="tp-section tp-section--card">
           <div class="tp-section__header">
@@ -79,7 +102,7 @@
             class="tp-table"
             @selection-change="individualSelections = $event; updateMergedSelection()"
           >
-            <el-table-column type="selection" width="36" />
+            <el-table-column type="selection" width="36" :selectable="canSelectLesson" />
             <el-table-column label="Date" min-width="105">
               <template #default="{ row }">{{ row.lessonDate }}</template>
             </el-table-column>
@@ -92,7 +115,10 @@
             <el-table-column label="Product" min-width="120" prop="productName" show-overflow-tooltip />
             <el-table-column label="Hours" width="65" align="center" prop="hours" />
             <el-table-column label="Rate" width="90" align="right">
-              <template #default="{ row }">${{ row.hourlyRate?.toFixed(2) }}</template>
+              <template #default="{ row }">
+                <span v-if="hasPayRate(row)">${{ row.hourlyRate.toFixed(2) }}</span>
+                <el-tag v-else type="danger" size="small">Not set</el-tag>
+              </template>
             </el-table-column>
             <el-table-column label="Amount" width="100" align="right">
               <template #default="{ row }">
@@ -118,7 +144,7 @@
             class="tp-table"
             @selection-change="groupSelections = $event; updateMergedSelection()"
           >
-            <el-table-column type="selection" width="36" />
+            <el-table-column type="selection" width="36" :selectable="canSelectLesson" />
             <el-table-column label="Date" min-width="105">
               <template #default="{ row }">{{ row.lessonDate }}</template>
             </el-table-column>
@@ -131,7 +157,10 @@
             <el-table-column label="Product" min-width="120" prop="productName" show-overflow-tooltip />
             <el-table-column label="Hours" width="65" align="center" prop="hours" />
             <el-table-column label="Rate" width="90" align="right">
-              <template #default="{ row }">${{ row.hourlyRate?.toFixed(2) }}</template>
+              <template #default="{ row }">
+                <span v-if="hasPayRate(row)">${{ row.hourlyRate.toFixed(2) }}</span>
+                <el-tag v-else type="danger" size="small">Not set</el-tag>
+              </template>
             </el-table-column>
             <el-table-column label="Amount" width="100" align="right">
               <template #default="{ row }">
@@ -246,9 +275,10 @@
 
         <!-- ─── 7. Pending payment banner ────────────── -->
       </template>
-    </main>
+      </main>
+    </div>
 
-    <!-- ─── 详情弹窗 ────────────────────────────────── -->
+
     <el-dialog
       v-model="detailVisible"
       width="750px"
@@ -329,6 +359,7 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRouter } from 'vue-router';
 
 import {
   confirmPayment,
@@ -340,7 +371,7 @@ import {
 import { fetchAllTeachers } from '@/api/base-data';
 import type { EntityId, TeacherPaymentItem, UnpaidLessonItem } from '@/types/domain';
 
-// ─── 老师列表 ──────────────────────────────────────────
+const router = useRouter();
 
 const teacherKeyword = ref('');
 const teachersLoading = ref(false);
@@ -362,7 +393,7 @@ const selectedTeacher = computed(() =>
 
 async function selectTeacher(id: EntityId) {
   selectedTeacherId.value = id;
-  // 默认当前月份
+
   dateRange.value = currentMonthRange();
   searched.value = false;
   unpaidLessons.value = [];
@@ -373,7 +404,7 @@ async function selectTeacher(id: EntityId) {
   loadUnpaidLessons();
 }
 
-// ─── 日期范围 ─────────────────────────────────────────
+
 
 const dateRange = ref<[string, string] | null>(null);
 
@@ -385,7 +416,7 @@ function currentMonthRange(): [string, string] {
   return [`${y}-${m}-01`, `${y}-${m}-${String(lastDay).padStart(2, '0')}`];
 }
 
-// ─── 未结算课次 ────────────────────────────────────
+
 
 const unpaidLoading = ref(false);
 const searched = ref(false);
@@ -401,6 +432,18 @@ const individualLessons = computed(() =>
 const groupLessons = computed(() =>
   unpaidLessons.value.filter(r => !!r.className),
 );
+
+const missingRateCount = computed(() =>
+  unpaidLessons.value.filter(row => !hasPayRate(row)).length,
+);
+
+function hasPayRate(row: UnpaidLessonItem) {
+  return typeof row.hourlyRate === 'number' && row.hourlyRate > 0;
+}
+
+function canSelectLesson(row: UnpaidLessonItem) {
+  return hasPayRate(row);
+}
 
 const individualTotal = computed(() => {
   if (!individualLessons.value.length) return '';
@@ -450,27 +493,15 @@ async function loadUnpaidLessons() {
   }
 }
 
-// ─── 创建结算 ──────────────────────────────────────
+
 
 const creatingPayment = ref(false);
 
 async function handleCreatePayment() {
   if (!selectedTeacherId.value || selectedIds.value.length === 0) return;
 
-  // 检查是否有 rate 为 0 的课次
   const allSelected = [...individualSelections.value, ...groupSelections.value];
-  const zeroRateItems = allSelected.filter(r => !r.hourlyRate || r.hourlyRate === 0);
-  if (zeroRateItems.length > 0) {
-    try {
-      await ElMessageBox.confirm(
-        `<b style="color:#f56c6c;">${zeroRateItems.length} lesson(s) have no pay rate (hourly rate = $0). Pay anyway?</b>`,
-        'Zero Rate Warning',
-        { type: 'warning', confirmButtonText: 'Pay Anyway', cancelButtonText: 'Cancel', dangerouslyUseHTMLString: true },
-      );
-    } catch {
-      return;
-    }
-  }
+  if (allSelected.some(row => !hasPayRate(row))) return;
 
   try {
     await ElMessageBox.confirm(
@@ -504,7 +535,7 @@ async function handleCreatePayment() {
   }
 }
 
-// ─── 结算历史 ──────────────────────────────────────
+
 
 const historyFilter = reactive({ status: undefined as string | undefined });
 
@@ -533,7 +564,7 @@ async function loadHistory(pageNum?: number) {
   }
 }
 
-// ─── 详情 ──────────────────────────────────────────
+
 
 const detailVisible = ref(false);
 const detailData = ref<TeacherPaymentItem | null>(null);
@@ -548,7 +579,7 @@ async function viewDetail(row: TeacherPaymentItem) {
   }
 }
 
-// ─── 确认付款 ──────────────────────────────────────
+
 
 async function handleConfirm(row: TeacherPaymentItem) {
   try {
@@ -563,14 +594,14 @@ async function handleConfirm(row: TeacherPaymentItem) {
   } catch { /* cancelled */ }
 }
 
-// ─── 工具函数 ──────────────────────────────────────
+
 
 function formatDateTime(dateStr: string) {
   if (!dateStr) return '—';
   return dateStr.substring(0, 19).replace('T', ' ');
 }
 
-// ─── 初始化 ────────────────────────────────────────
+
 
 onMounted(async () => {
   teachersLoading.value = true;
@@ -583,6 +614,12 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.tp-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .tp-page {
   display: flex;
   gap: 16px;

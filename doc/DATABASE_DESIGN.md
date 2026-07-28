@@ -40,16 +40,19 @@ Main tables:
 - `teacher`
 - `classroom`
 - `course_product`
+- `course_price_option`
 
 Purpose:
 
 - maintain the master data needed by enrollment, scheduling, and lesson confirmation
+- expose structured registration price options by course type, grade or level, period, duration, time slot, and price
 
 ### 3. Enrollment and Course Packages
 
 Main tables:
 
 - `enrollment_order`
+- `enrollment_order_item`
 - `course_package`
 - `package_teacher_assignment`
 - `payment_record`
@@ -58,6 +61,7 @@ Main tables:
 Purpose:
 
 - capture the commercial side of tutoring enrollment
+- preserve multi-course registration line snapshots for receipt printing and reporting
 - create student-specific package balance accounts
 - preserve pricing and assignment snapshots
 
@@ -109,9 +113,11 @@ Purpose:
 
 ## Relationship Summary
 
-- A student can have many guardian contacts.
+- A student stores current profile data, guardian contacts, and default pickup/dropoff preferences.
 - A student can have many enrollment orders.
+- An enrollment order can have many enrollment order items.
 - An enrollment order can create one or more course packages.
+- An enrollment order item can create one course package for one-on-one lessons or one class enrollment for group classes.
 - A course package can have many primary teacher assignment records over time.
 - A course package can have recurring schedule rules and many lesson occurrences.
 - A lesson occurrence can produce exactly one lesson record when confirmed.
@@ -132,6 +138,14 @@ This separation is required so the system can safely support leave, reschedules,
 
 `course_package` stores pricing and descriptive snapshots rather than depending entirely on the current `course_product` row. That prevents later edits to product templates from rewriting historical sales context.
 
+`enrollment_order` stores registration-level snapshots such as campus, signup date, period dates, student profile fields, pickup/dropoff information, fee details, and balance. This keeps historical registration records stable when the current student profile changes.
+
+`enrollment_order_item` stores the line-level snapshot from the registration form, including Register Class, Detail, final price, original configured price, manual price override flag, one-on-one hours, and teacher. This supports the new requirement that one registration form can contain multiple course rows.
+
+### Structured Course Price Options
+
+`course_price_option` is the registration selector source for course type, grade or level, period, duration, time slot, price, and active status. It can optionally link back to `course_product` so the backend can still create existing course packages or class enrollments without forcing the price matrix into the product template table.
+
 ### Ledger-Based Deduction Logic
 
 `hour_ledger` is the source of truth for unit changes. Balance snapshots are derived conveniences, not the primary historical record.
@@ -149,4 +163,4 @@ This separation is required so the system can safely support leave, reschedules,
 
 ## Source of Truth
 
-Use [`doc/mysql_schema.sql`](./mysql_schema.sql) as the implementation-facing schema source. This document is the narrative companion, not the executable definition.
+Use [`doc/mysql_schema_from_db.sql`](./mysql_schema_from_db.sql) as the implementation-facing schema snapshot. Migration scripts live in [`doc/migrations/`](./migrations/). Historical `mysql_schema_export_*.sql` files are dated exports and should be regenerated after applying migrations instead of being hand-maintained as current schema.

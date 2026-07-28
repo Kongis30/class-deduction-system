@@ -1,10 +1,10 @@
 import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
 import type {
+  EntityId,
   LessonRecordConfirmResult,
   LessonRecordDetailItem,
   LessonRecordItem,
-  PackageBalanceSnapshotItem,
 } from '@/types/domain';
 
 // ─── Lesson Records ─────────────────────────────────
@@ -22,7 +22,12 @@ export interface LessonRecordQuery {
 }
 
 export function fetchLessonRecords(params: LessonRecordQuery = {}) {
-  return http.get<ApiResponse<PageResult<LessonRecordItem>>>('/v1/lessons/records', { params });
+  return http.get<ApiResponse<PageResult<LessonRecordItem>>>('/v1/lessons/records', {
+    params: {
+      ...params,
+      pageSize: params.pageSize ? Math.min(params.pageSize, 200) : params.pageSize,
+    },
+  });
 }
 
 export function fetchLessonRecord(id: string | number) {
@@ -59,7 +64,25 @@ export function rejectLessonRecord(id: string | number, data: LessonRejectPayloa
   return http.post<ApiResponse<null>>(`/v1/lessons/records/${id}/reject`, data);
 }
 
-// ─── Package Balance Snapshot ───────────────────────
-export function fetchPackageBalanceSnapshot(packageId: string | number) {
-  return http.get<ApiResponse<PackageBalanceSnapshotItem>>(`/v1/lessons/balance-snapshots/${packageId}`);
+// ─── Hour Ledger ────────────────────────────────────
+export interface HourLedgerItem {
+  id: EntityId;
+  packageId: EntityId;
+  packageNo?: string;
+  lessonRecordId?: EntityId;
+  occurrenceId?: EntityId;
+  lessonNo?: string;
+  ledgerType: string;
+  changeUnits: number;
+  balanceAfterUnits: number;
+  businessDate?: string;
+  reasonCode?: string;
+  reasonDesc?: string;
+  operatedAt?: string;
+}
+
+export function fetchHourLedger(packageId: EntityId) {
+  return http.get<ApiResponse<PageResult<HourLedgerItem>>>('/v1/lessons/ledger', {
+    params: { packageId, pageNum: 1, pageSize: 100 },
+  });
 }

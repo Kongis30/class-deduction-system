@@ -38,7 +38,7 @@ public interface EnrollmentOrderService {
     void cancelOrder(Long id);
 
     /**
-     * 全额退款：退课 + 记录退款流水 + 订单状态置为 REFUNDED。
+     * 退款：记录退款流水并更新订单财务快照；全额退款会同时取消报名产物。
      */
     void refundOrder(Long id, RefundRequest request);
 

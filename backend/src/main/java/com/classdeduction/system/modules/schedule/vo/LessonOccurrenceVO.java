@@ -35,6 +35,23 @@ public record LessonOccurrenceVO(
         Boolean conflictChecked,
         String notes,
         String resultStatus,
-        String resultStatusName
+        String resultStatusName,
+        Long lessonRecordId,
+        Long recordId,
+        String confirmStage,
+        LocalDateTime confirmedAt,
+        Long confirmedByUserId,
+        LocalDateTime teacherConfirmedAt,
+        Long teacherConfirmedByUserId,
+        LocalDateTime adminConfirmedAt,
+        Long adminConfirmedByUserId,
+        String rejectReason,
+        LocalDateTime rejectedAt,
+        Long rejectedByUserId,
+        Long actualTeacherId,
+        Long actualClassroomId,
+        LocalDateTime actualStartAt,
+        LocalDateTime actualEndAt,
+        Integer actualUnits
 ) {
 }

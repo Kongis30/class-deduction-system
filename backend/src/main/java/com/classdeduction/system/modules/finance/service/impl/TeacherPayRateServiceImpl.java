@@ -5,6 +5,7 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.finance.dto.TeacherPayRateSaveRequest;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
@@ -28,6 +29,7 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
     private final TeacherPayRateMapper payRateMapper;
     private final TeacherMapper teacherMapper;
     private final CourseProductMapper courseProductMapper;
+    private final StudentMapper studentMapper;
 
     @Override
     public List<TeacherPayRateVO> listPayRates(Long teacherId, Long courseProductId) {
@@ -43,11 +45,17 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
 
         Set<Long> teacherIds = rates.stream().map(TeacherPayRateEntity::getTeacherId).collect(Collectors.toSet());
         Set<Long> productIds = rates.stream().map(TeacherPayRateEntity::getCourseProductId).collect(Collectors.toSet());
+        Set<Long> studentIds = rates.stream().map(TeacherPayRateEntity::getStudentId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
 
         Map<Long, TeacherEntity> teacherMap = teacherMapper.selectBatchIds(teacherIds).stream()
                 .collect(Collectors.toMap(TeacherEntity::getId, t -> t));
         Map<Long, CourseProductEntity> productMap = courseProductMapper.selectBatchIds(productIds).stream()
                 .collect(Collectors.toMap(CourseProductEntity::getId, p -> p));
+        Map<Long, String> studentNameMap = studentIds.isEmpty() ? Collections.emptyMap()
+                : studentMapper.selectBatchIds(studentIds).stream()
+                        .collect(Collectors.toMap(item -> item.getId(), item -> item.getStudentName()));
 
         return rates.stream().map(rate -> {
             TeacherEntity teacher = teacherMap.get(rate.getTeacherId());
@@ -61,6 +69,8 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
                     .productCode(product == null ? null : product.getProductCode())
                     .productName(product == null ? null : product.getProductName())
                     .subjectName(product == null ? null : product.getSubjectName())
+                    .studentId(rate.getStudentId())
+                    .studentName(studentNameMap.get(rate.getStudentId()))
                     .hourlyRate(rate.getHourlyRate())
                     .notes(rate.getNotes())
                     .build();
@@ -78,12 +88,17 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
         if (courseProductMapper.selectById(request.getCourseProductId()) == null) {
             throw new BusinessException("PRODUCT_NOT_FOUND", "Course product not found.");
         }
+        if (request.getStudentId() != null && studentMapper.selectById(request.getStudentId()) == null) {
+            throw new BusinessException("STUDENT_NOT_FOUND", "Student not found.");
+        }
 
         // Upsert: 存在则更新，不存在则创建
         TeacherPayRateEntity existing = payRateMapper.selectOne(
                 new LambdaQueryWrapper<TeacherPayRateEntity>()
                         .eq(TeacherPayRateEntity::getTeacherId, request.getTeacherId())
                         .eq(TeacherPayRateEntity::getCourseProductId, request.getCourseProductId())
+                        .eq(request.getStudentId() != null, TeacherPayRateEntity::getStudentId, request.getStudentId())
+                        .isNull(request.getStudentId() == null, TeacherPayRateEntity::getStudentId)
                         .last("LIMIT 1"));
 
         if (existing != null) {
@@ -96,6 +111,7 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
         TeacherPayRateEntity entity = new TeacherPayRateEntity();
         entity.setTeacherId(request.getTeacherId());
         entity.setCourseProductId(request.getCourseProductId());
+        entity.setStudentId(request.getStudentId());
         entity.setHourlyRate(request.getHourlyRate());
         entity.setNotes(request.getNotes());
         payRateMapper.insert(entity);

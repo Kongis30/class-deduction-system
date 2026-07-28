@@ -30,11 +30,40 @@ public class AuthBootstrapInitializer implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        ensureDefaultUser("admin", "Jin2025", "System Administrator", "ADMIN", "ADMIN");
-        ensureDefaultUser("staff", "Staff@123456", "Front Desk Staff", "STAFF", "STAFF");
+        RoleEntity adminRole = ensureDefaultRole(100L, "ADMIN", "Administrator",
+                "System administrator with full permissions");
+        RoleEntity staffRole = ensureDefaultRole(110L, "STAFF", "Staff",
+                "Internal staff responsible for day-to-day operations");
+        ensureDefaultRole(120L, "TEACHER", "Teacher",
+                "Teacher role for personal timetable and lesson confirmation");
+        ensureDefaultRole(130L, "STUDENT", "Student",
+                "Student role for learning portal access");
+
+        ensureDefaultUser("admin", "Jin2025", "System Administrator", "ADMIN", adminRole);
+        ensureDefaultUser("staff", "Staff@123456", "Front Desk Staff", "STAFF", staffRole);
     }
 
-    private void ensureDefaultUser(String username, String rawPassword, String displayName, String userType, String roleCode) {
+    private RoleEntity ensureDefaultRole(Long id, String roleCode, String roleName, String remark) {
+        RoleEntity role = roleMapper.selectOne(new LambdaQueryWrapper<RoleEntity>()
+                .eq(RoleEntity::getRoleCode, roleCode)
+                .eq(RoleEntity::getIsDeleted, 0)
+                .last("LIMIT 1"));
+        if (role != null) {
+            return role;
+        }
+
+        role = new RoleEntity();
+        role.setId(id);
+        role.setRoleCode(roleCode);
+        role.setRoleName(roleName);
+        role.setStatus("ACTIVE");
+        role.setRemark(remark);
+        roleMapper.insert(role);
+        log.info("Bootstrapped default auth role: {}", roleCode);
+        return role;
+    }
+
+    private void ensureDefaultUser(String username, String rawPassword, String displayName, String userType, RoleEntity role) {
         // 默认账号初始化：仅在账号不存在时插入，并补齐账号和角色的绑定关系。
         UserAccountEntity user = userAccountMapper.selectOne(new LambdaQueryWrapper<UserAccountEntity>()
                 .eq(UserAccountEntity::getUsername, username)
@@ -50,15 +79,6 @@ public class AuthBootstrapInitializer implements ApplicationRunner {
             user.setRemark("Bootstrapped development account");
             userAccountMapper.insert(user);
             log.info("Bootstrapped default auth account: {}", username);
-        }
-
-        RoleEntity role = roleMapper.selectOne(new LambdaQueryWrapper<RoleEntity>()
-                .eq(RoleEntity::getRoleCode, roleCode)
-                .eq(RoleEntity::getIsDeleted, 0)
-                .last("LIMIT 1"));
-        if (role == null) {
-            log.warn("Skipped auth bootstrap for {} because role {} does not exist.", username, roleCode);
-            return;
         }
 
         Long existingCount = userRoleMapper.selectCount(new LambdaQueryWrapper<UserRoleEntity>()

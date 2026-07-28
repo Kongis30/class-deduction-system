@@ -2,11 +2,19 @@
   <div class="page-stack">
     <section class="settings-panel">
       <div class="settings-panel__header">
-        <span class="settings-panel__title">Brand Settings</span>
+        <span class="settings-panel__title">Brand & receipts</span>
         <el-button type="primary" :loading="saving" @click="handleSave">Save</el-button>
       </div>
 
       <div v-loading="loading" class="brand-form">
+        <el-alert
+          class="receipt-rule-alert"
+          type="info"
+          :closable="false"
+          show-icon
+          title="Receipt configuration scope"
+          description="The current backend stores the receipt footer here. EIN is resolved from the selected campus in the registration receipt snapshot and can be shown or hidden by the Show EIN switch on the same receipt. Policy text and print layout are currently provided by the receipt preview template."
+        />
         <el-form ref="formRef" label-position="top" :model="form">
           <div class="form-row">
             <el-form-item label="Business name" prop="brandName" :rules="[{ required: true, message: 'Required' }]">
@@ -113,6 +121,9 @@ async function handleSave() {
 }
 .brand-form {
   max-width: 720px;
+}
+.receipt-rule-alert {
+  margin-bottom: 14px;
 }
 .form-row {
   display: grid;

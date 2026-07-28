@@ -10,6 +10,8 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,16 +32,16 @@ public class PaymentRecordController {
 
     @GetMapping("/order/{enrollmentOrderId}")
     @Operation(summary = "根据报名订单ID查询支付记录")
-    public ApiResponse<List<PaymentRecordVO>> listByEnrollmentOrderId(
+    public ResponseEntity<ApiResponse<List<PaymentRecordVO>>> listByEnrollmentOrderId(
             @Parameter(description = "报名订单ID") @PathVariable Long enrollmentOrderId) {
-        return ApiResponse.success(paymentRecordService.listByEnrollmentOrderId(enrollmentOrderId));
+        return noStore(ApiResponse.success(paymentRecordService.listByEnrollmentOrderId(enrollmentOrderId)));
     }
 
     @GetMapping("/{id}")
     @Operation(summary = "获取支付记录详情")
-    public ApiResponse<PaymentRecordVO> getPaymentRecord(
+    public ResponseEntity<ApiResponse<PaymentRecordVO>> getPaymentRecord(
             @Parameter(description = "支付记录ID") @PathVariable Long id) {
-        return ApiResponse.success(paymentRecordService.getPaymentRecord(id));
+        return noStore(ApiResponse.success(paymentRecordService.getPaymentRecord(id)));
     }
 
     @PostMapping
@@ -54,5 +56,13 @@ public class PaymentRecordController {
     public ApiResponse<Integer> getPackageBalance(
             @Parameter(description = "课时包ID") @PathVariable Long packageId) {
         return ApiResponse.success(paymentRecordService.getPackageBalance(packageId));
+    }
+
+    private static <T> ResponseEntity<ApiResponse<T>> noStore(ApiResponse<T> body) {
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store, no-cache, max-age=0, must-revalidate")
+                .header(HttpHeaders.PRAGMA, "no-cache")
+                .header(HttpHeaders.EXPIRES, "0")
+                .body(body);
     }
 }

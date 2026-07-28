@@ -7,13 +7,10 @@ import com.classdeduction.system.modules.finance.vo.TeacherPaymentVO;
 import com.classdeduction.system.modules.finance.vo.UnpaidLessonVO;
 
 import java.util.List;
-import java.util.Map;
 
 public interface TeacherPaymentService {
 
     List<UnpaidLessonVO> queryUnpaidLessons(UnpaidLessonQuery query);
-
-    Map<String, Object> previewPayment(List<Long> lessonRecordIds);
 
     Long createPayment(TeacherPaymentCreateRequest request, Long userId);
 

@@ -8,6 +8,7 @@ import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.PaymentRecordServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
@@ -22,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 
@@ -45,6 +47,9 @@ class PaymentRecordServiceImplTest {
     @Mock
     private CoursePackageMapper coursePackageMapper;
 
+    @Mock
+    private PaymentMethodMapper paymentMethodMapper;
+
     @InjectMocks
     private PaymentRecordServiceImpl paymentRecordService;
 
@@ -59,7 +64,9 @@ class PaymentRecordServiceImplTest {
         testOrder.setEnrollmentNo("EO202604280001");
         testOrder.setOriginalAmount(new BigDecimal("2699.00"));
         testOrder.setDiscountAmount(new BigDecimal("100.00"));
+        testOrder.setAmountDue(new BigDecimal("2599.00"));
         testOrder.setReceivedAmount(new BigDecimal("1000.00"));
+        testOrder.setBalanceAmount(new BigDecimal("1599.00"));
         testOrder.setPaymentStatus("PARTIAL");
 
         testPayment = new PaymentRecordEntity();
@@ -74,6 +81,7 @@ class PaymentRecordServiceImplTest {
         testPackage.setId(1L);
         testPackage.setPackageNo("PK202604280001");
         testPackage.setRemainingUnits(40);
+        lenient().when(paymentMethodMapper.selectCount(any())).thenReturn(1L);
     }
 
     @Nested
@@ -85,6 +93,7 @@ class PaymentRecordServiceImplTest {
         void shouldCreatePaymentRecordAndUpdateOrderStatusToPaid() {
             // Given
             testOrder.setReceivedAmount(new BigDecimal("2099.00")); // Will reach total
+            testOrder.setBalanceAmount(new BigDecimal("500.00"));
 
             PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
             request.setEnrollmentOrderId(1L);
@@ -109,6 +118,7 @@ class PaymentRecordServiceImplTest {
             PaymentRecordEntity savedPayment = paymentCaptor.getValue();
             assertThat(savedPayment.getAmount()).isEqualByComparingTo(new BigDecimal("500.00"));
             assertThat(savedPayment.getPaymentMethod()).isEqualTo("CASH");
+            assertThat(savedPayment.getPaymentType()).isEqualTo("PAYMENT");
             assertThat(savedPayment.getPaymentStatus()).isEqualTo("PAID");
 
             // Verify order was updated
@@ -116,6 +126,7 @@ class PaymentRecordServiceImplTest {
             verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
             EnrollmentOrderEntity updatedOrder = orderCaptor.getValue();
             assertThat(updatedOrder.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("2599.00")); // 2099 + 500
+            assertThat(updatedOrder.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("0.00"));
             assertThat(updatedOrder.getPaymentStatus()).isEqualTo("PAID");
         }
 
@@ -144,7 +155,86 @@ class PaymentRecordServiceImplTest {
             verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
             EnrollmentOrderEntity updatedOrder = orderCaptor.getValue();
             assertThat(updatedOrder.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("1200.00")); // 1000 + 200
+            assertThat(updatedOrder.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("1399.00"));
             assertThat(updatedOrder.getPaymentStatus()).isEqualTo("PARTIAL");
+        }
+
+        @Test
+        @DisplayName("Should persist split-level payment details in one order update")
+        void shouldPersistSplitLevelPaymentDetailsInOneOrderUpdate() {
+            PaymentSplitDTO cash = new PaymentSplitDTO("CASH", new BigDecimal("200.00"));
+            cash.setPaidAt(LocalDateTime.of(2026, 4, 20, 0, 0));
+            cash.setHandledByName("Amy");
+            cash.setRemark("First installment");
+            PaymentSplitDTO check = new PaymentSplitDTO("CHECK", new BigDecimal("300.00"));
+            check.setPaidAt(LocalDateTime.of(2026, 4, 21, 0, 0));
+            check.setHandledByName("Ben");
+            check.setRemark("Second installment");
+
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(cash, check));
+
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+
+            paymentRecordService.createPaymentRecord(request);
+
+            ArgumentCaptor<PaymentRecordEntity> paymentCaptor =
+                    ArgumentCaptor.forClass(PaymentRecordEntity.class);
+            verify(paymentRecordMapper, times(2)).insert(paymentCaptor.capture());
+            assertThat(paymentCaptor.getAllValues())
+                    .extracting(PaymentRecordEntity::getHandledByName)
+                    .containsExactly("Amy", "Ben");
+            assertThat(paymentCaptor.getAllValues())
+                    .extracting(PaymentRecordEntity::getRemark)
+                    .containsExactly("First installment", "Second installment");
+            assertThat(paymentCaptor.getAllValues())
+                    .extracting(PaymentRecordEntity::getPaidAt)
+                    .containsExactly(cash.getPaidAt(), check.getPaidAt());
+            verify(enrollmentOrderMapper).updateById(any(EnrollmentOrderEntity.class));
+            assertThat(testOrder.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("1500.00"));
+            assertThat(testOrder.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("1099.00"));
+        }
+
+        @Test
+        @DisplayName("Should retain package allocations across multiple subsequent order payments")
+        void shouldRetainPackageAllocationsAcrossMultipleSubsequentOrderPayments() {
+            CoursePackageEntity firstPackage = new CoursePackageEntity();
+            firstPackage.setId(11L);
+            firstPackage.setReceivedAmount(new BigDecimal("600.00"));
+            CoursePackageEntity secondPackage = new CoursePackageEntity();
+            secondPackage.setId(12L);
+            secondPackage.setReceivedAmount(new BigDecimal("400.00"));
+
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+            when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenReturn(1);
+
+            PaymentRecordSaveRequest firstPayment = new PaymentRecordSaveRequest();
+            firstPayment.setEnrollmentOrderId(1L);
+            firstPayment.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("200.00"))));
+            firstPayment.setHandledByName("Admin");
+            paymentRecordService.createPaymentRecord(firstPayment);
+
+            assertThat(testOrder.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("1200.00"));
+            assertThat(testOrder.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("1399.00"));
+            assertThat(testOrder.getPaymentStatus()).isEqualTo("PARTIAL");
+
+            PaymentRecordSaveRequest secondPayment = new PaymentRecordSaveRequest();
+            secondPayment.setEnrollmentOrderId(1L);
+            secondPayment.setSplits(List.of(new PaymentSplitDTO("CARD", new BigDecimal("300.00"))));
+            secondPayment.setHandledByName("Admin");
+            paymentRecordService.createPaymentRecord(secondPayment);
+
+            assertThat(testOrder.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("1500.00"));
+            assertThat(testOrder.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("1099.00"));
+            assertThat(testOrder.getPaymentStatus()).isEqualTo("PARTIAL");
+            assertThat(firstPackage.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("600.00"));
+            assertThat(secondPackage.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("400.00"));
+            verify(paymentRecordMapper, times(2)).insert(any(PaymentRecordEntity.class));
+            verify(coursePackageMapper, never()).selectList(any());
+            verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
         }
 
         @Test
@@ -213,22 +303,74 @@ class PaymentRecordServiceImplTest {
                     .hasMessageContaining("Each split amount must be greater than 0");
         }
 
-          @Test
-          @DisplayName("Should reject payment when amount exceeds remaining due")
-          void shouldRejectPaymentWhenAmountExceedsRemainingDue() {
-              PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
-              request.setEnrollmentOrderId(1L);
-              request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("2000.00"))));
-              request.setHandledByName("Admin");
+        @Test
+        @DisplayName("Should reject payment amounts with more than two decimal places")
+        void shouldRejectPaymentAmountWithExcessDecimalPlaces() {
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("0.015"))));
+            request.setHandledByName("Admin");
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
 
-              when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                    .isInstanceOf(BusinessException.class)
+                    .extracting("code")
+                    .isEqualTo("INVALID_AMOUNT_SCALE");
+            verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+        }
 
-              assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
-                      .isInstanceOf(BusinessException.class)
-                      .hasMessage("Payment amount cannot exceed the remaining amount due.");
-              verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
-              verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
-          }
+        @Test
+        @DisplayName("Should require payment method details when using Other")
+        void shouldRequirePaymentMethodDetailsForOther() {
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("OTHER", new BigDecimal("100.00"))));
+            request.setHandledByName("Admin");
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+
+            assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                    .isInstanceOf(BusinessException.class)
+                    .extracting("code")
+                    .isEqualTo("PAYMENT_METHOD_DETAIL_REQUIRED");
+            verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+        }
+
+        @Test
+        @DisplayName("Should reject payment when amount exceeds remaining due")
+        void shouldRejectPaymentWhenAmountExceedsRemainingDue() {
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("2000.00"))));
+            request.setHandledByName("Admin");
+
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+
+            assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Payment amount cannot exceed the remaining amount due.");
+            verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+            verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
+        }
+
+        @Test
+        @DisplayName("Should reject payment that exceeds current balance amount")
+        void shouldRejectPaymentThatExceedsCurrentBalanceAmount() {
+            testOrder.setAmountDue(new BigDecimal("2599.00"));
+            testOrder.setReceivedAmount(new BigDecimal("1000.00"));
+            testOrder.setBalanceAmount(new BigDecimal("300.00"));
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("300.01"))));
+            request.setHandledByName("Admin");
+
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+
+            assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("Payment amount cannot exceed the remaining amount due.");
+            verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+            verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
+        }
     }
 
     @Nested

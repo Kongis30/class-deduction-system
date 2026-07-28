@@ -37,6 +37,10 @@ public class StudentEntity extends BaseEntity {
 
     private LocalDate birthDate;
 
+    private String grade;
+
+    private String school;
+
     private String sourceChannel;
 
     private String status;
@@ -50,7 +54,18 @@ public class StudentEntity extends BaseEntity {
 
     private String guardianPhone;
 
+    @TableField("guardian_phone_2")
+    private String guardianPhone2;
+
     private String guardianEmail;
 
     private String guardianRelationType;
+
+    private Boolean pickupRequired;
+
+    private String pickupAddress;
+
+    private Boolean dropoffRequired;
+
+    private String dropoffAddress;
 }

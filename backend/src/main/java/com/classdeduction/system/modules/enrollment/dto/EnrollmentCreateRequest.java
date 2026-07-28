@@ -28,6 +28,9 @@ public class EnrollmentCreateRequest {
     @Schema(description = "课程产品ID", example = "1880000000000000002")
     private Long courseProductId;
 
+    @Schema(description = "来源报名订单明细ID", example = "1880000000000000003")
+    private Long enrollmentOrderItemId;
+
     @Schema(description = "主老师ID", example = "1880000000000000003")
     private Long primaryTeacherId;
 

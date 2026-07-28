@@ -29,6 +29,12 @@ public class StudentSaveRequest {
     @Schema(description = "Birth date", example = "2012-08-16")
     private LocalDate birthDate;
 
+    @Schema(description = "Current grade", example = "Grade 6")
+    private String grade;
+
+    @Schema(description = "Current school", example = "PS 101")
+    private String school;
+
     @Schema(description = "Lead source", example = "REFERRAL")
     private String sourceChannel;
 
@@ -45,11 +51,26 @@ public class StudentSaveRequest {
     @Schema(description = "Guardian phone", example = "917-555-0101")
     private String guardianPhone;
 
+    @Schema(description = "Secondary guardian phone", example = "917-555-0102")
+    private String guardianPhone2;
+
     @Schema(description = "Guardian email", example = "parent@example.com")
     private String guardianEmail;
 
     @Schema(description = "Guardian relation type", example = "MOTHER")
     private String guardianRelationType;
+
+    @Schema(description = "Whether pickup is required", example = "true")
+    private Boolean pickupRequired;
+
+    @Schema(description = "Default pickup address", example = "123 Main St")
+    private String pickupAddress;
+
+    @Schema(description = "Whether dropoff is required", example = "true")
+    private Boolean dropoffRequired;
+
+    @Schema(description = "Default dropoff address", example = "456 Center Ave")
+    private String dropoffAddress;
 
     @Schema(description = "Campus ID", example = "1")
     private Long campusId;

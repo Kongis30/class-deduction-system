@@ -35,7 +35,7 @@ import { AxiosError } from 'axios';
 import { useRoute, useRouter } from 'vue-router';
 
 import { useAuthStore } from '@/stores/auth';
-import { isStudentUser, isTeacherUser, type LoginPayload } from '@/types/auth';
+import { getDefaultLandingPath, type LoginPayload } from '@/types/auth';
 import type { ApiResponse } from '@/types/http';
 
 const router = useRouter();
@@ -75,9 +75,7 @@ async function submitLogin() {
   try {
     await authStore.signIn(form);
     ElMessage.success('Signed in successfully.');
-    const fallbackPath = isTeacherUser(authStore.currentUser) ? '/schedule/teacher'
-      : isStudentUser(authStore.currentUser) ? '/schedule/student'
-      : '/dashboard';
+    const fallbackPath = getDefaultLandingPath(authStore.currentUser);
     const redirectPath = typeof route.query.redirect === 'string' ? route.query.redirect : fallbackPath;
     await router.push(redirectPath);
   } catch (error) {

@@ -16,6 +16,8 @@ public record CourseProductVO(
         Long id,
         String productCode,
         String productName,
+        String courseType,
+        String registerClass,
         String subjectName,
         String teachingMode,
         Integer defaultTotalUnits,
@@ -33,6 +35,9 @@ public record CourseProductVO(
         BigDecimal listPrice,
         String status,
         String notes,
+        Boolean referenced,
+        Long referenceCount,
+        List<String> referenceSources,
         List<ProductScheduleSlotVO> slots,
         LocalDateTime createdAt,
         LocalDateTime updatedAt

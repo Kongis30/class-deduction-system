@@ -48,7 +48,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class TeacherPaymentServiceImpl implements TeacherPaymentService {
 
-    private static final Set<String> PAYABLE_STATUSES = Set.of("COMPLETED", "MAKEUP_COMPLETED", "SUBSTITUTED_COMPLETED");
+    private static final Set<String> PAYABLE_STATUSES = Set.of("COMPLETED", "MAKEUP_COMPLETED", "SUBSTITUTED");
 
     private final LessonRecordMapper lessonRecordMapper;
     private final CoursePackageMapper coursePackageMapper;
@@ -63,6 +63,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
 
     @Override
     public List<UnpaidLessonVO> queryUnpaidLessons(UnpaidLessonQuery query) {
+        validatePeriod(query.getStartDate(), query.getEndDate());
         // 1. 查询已结算的 lesson_record_id
         List<Long> paidRecordIds = paymentItemMapper.selectList(
                         new LambdaQueryWrapper<TeacherPaymentItemEntity>()
@@ -155,32 +156,35 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         List<TeacherPayRateEntity> rates = payRateMapper.selectList(
                 new LambdaQueryWrapper<TeacherPayRateEntity>()
                         .eq(TeacherPayRateEntity::getTeacherId, query.getTeacherId()));
-        Map<String, BigDecimal> rateMap = new HashMap<>();
-        for (TeacherPayRateEntity rate : rates) {
-            rateMap.put(rate.getTeacherId() + ":" + rate.getCourseProductId(), rate.getHourlyRate());
-        }
+        Map<String, BigDecimal> rateMap = toRateMap(rates);
 
         // 6. 组装结果
         // 班课按 occurrence 聚合成一条记录（用第一条的课时数，不叠加学生数）
         // 非班课一条记录一行
         List<UnpaidLessonVO> result = new ArrayList<>();
-        Set<Long> groupedOccurrenceIds = new HashSet<>();
+        Map<Long, Long> representativeRecordByOccurrence = records.stream()
+                .filter(record -> {
+                    LessonOccurrenceEntity occurrence = occurrenceMap.get(record.getOccurrenceId());
+                    return occurrence != null && occurrence.getClassGroupId() != null;
+                })
+                .collect(Collectors.toMap(
+                        LessonRecordEntity::getOccurrenceId,
+                        LessonRecordEntity::getId,
+                        Math::min));
 
         for (LessonRecordEntity rec : records) {
             LessonOccurrenceEntity occurrence = occurrenceMap.get(rec.getOccurrenceId());
 
-            // 班课：同一 occurrence 只取第一条记录
+            // 班课：同一 occurrence 固定使用最小 lesson_record_id，确保列表和结算使用同一代表记录。
             if (occurrence != null && occurrence.getClassGroupId() != null) {
-                if (groupedOccurrenceIds.contains(rec.getOccurrenceId())) {
-                    continue; // 该 occurrence 已处理过
+                if (!Objects.equals(rec.getId(), representativeRecordByOccurrence.get(rec.getOccurrenceId()))) {
+                    continue;
                 }
-                groupedOccurrenceIds.add(rec.getOccurrenceId());
 
                 // 班课没有 packageId，从 class_group 获取 productId
                 ClassGroupEntity cg = classGroupMap.get(occurrence.getClassGroupId());
                 Long productId = cg != null ? cg.getProductId() : null;
-                String rateKey = query.getTeacherId() + ":" + productId;
-                BigDecimal hourlyRate = rateMap.getOrDefault(rateKey, BigDecimal.ZERO);
+                BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, null);
 
                 BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                         .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
@@ -214,9 +218,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             // 非班课：一条记录一行
             CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
             Long productId = pkg != null ? pkg.getCourseProductId() : null;
-            String rateKey = query.getTeacherId() + ":" + productId;
-            BigDecimal hourlyRate = rateMap.getOrDefault(rateKey, BigDecimal.ZERO);
-
+            BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, rec.getStudentId());
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                     .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
             BigDecimal amount = hours.multiply(hourlyRate).setScale(2, RoundingMode.HALF_UP);
@@ -248,63 +250,12 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
     }
 
     @Override
-    public Map<String, Object> previewPayment(List<Long> lessonRecordIds) {
-        if (lessonRecordIds == null || lessonRecordIds.isEmpty()) {
-            throw new BusinessException("INVALID_PARAM", "At least one lesson record is required.");
-        }
-        // 直接从 unpaid lessons 查询逻辑复用 — 简化处理
-        // 这里直接统计传入的 lessonRecordId 的总和
-        List<LessonRecordEntity> records = lessonRecordMapper.selectBatchIds(lessonRecordIds);
-        int totalUnits = records.stream().mapToInt(LessonRecordEntity::getActualUnits).sum();
-        BigDecimal totalHours = BigDecimal.valueOf(totalUnits)
-                .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
-        BigDecimal totalAmount = records.stream()
-                .map(r -> BigDecimal.valueOf(r.getActualUnits())
-                        .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP)
-                        .multiply(BigDecimal.ZERO)) // placeholder, 实际需要查 rate
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
-
-        // 重新计算金额（需要 rate）
-        Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).collect(Collectors.toSet());
-        Map<Long, CoursePackageEntity> packageMap = coursePackageMapper.selectBatchIds(packageIds).stream()
-                .collect(Collectors.toMap(CoursePackageEntity::getId, p -> p));
-
-        // 取第一个记录的 teacherId
-        Long teacherId = records.isEmpty() ? null : records.get(0).getActualTeacherId();
-        List<TeacherPayRateEntity> rates = teacherId != null
-                ? payRateMapper.selectList(new LambdaQueryWrapper<TeacherPayRateEntity>()
-                .eq(TeacherPayRateEntity::getTeacherId, teacherId))
-                : Collections.emptyList();
-        Map<String, BigDecimal> rateMap = new HashMap<>();
-        for (TeacherPayRateEntity rate : rates) {
-            rateMap.put(rate.getTeacherId() + ":" + rate.getCourseProductId(), rate.getHourlyRate());
-        }
-
-        BigDecimal actualAmount = BigDecimal.ZERO;
-        for (LessonRecordEntity rec : records) {
-            CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
-            Long productId = pkg != null ? pkg.getCourseProductId() : null;
-            BigDecimal hr = rateMap.getOrDefault(teacherId + ":" + productId, BigDecimal.ZERO);
-            BigDecimal h = BigDecimal.valueOf(rec.getActualUnits())
-                    .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
-            actualAmount = actualAmount.add(h.multiply(hr));
-        }
-
-        Map<String, Object> result = new HashMap<>();
-        result.put("lessonCount", records.size());
-        result.put("totalUnits", totalUnits);
-        result.put("totalHours", totalHours);
-        result.put("totalAmount", actualAmount.setScale(2, RoundingMode.HALF_UP));
-        return result;
-    }
-
-    @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createPayment(TeacherPaymentCreateRequest request, Long userId) {
         // 1. 校验老师和课次
         TeacherEntity teacher = teacherMapper.selectById(request.getTeacherId());
-        if (teacher == null) {
-            throw new BusinessException("TEACHER_NOT_FOUND", "Teacher not found.");
+        if (teacher == null || !"ACTIVE".equals(teacher.getStatus())) {
+            throw new BusinessException("TEACHER_NOT_AVAILABLE", "Teacher not found or inactive.");
         }
 
         List<LessonRecordEntity> records = lessonRecordMapper.selectBatchIds(request.getLessonRecordIds());
@@ -312,7 +263,10 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             throw new BusinessException("LESSON_RECORD_NOT_FOUND", "Some lesson records not found.");
         }
 
-        // 检查是否有已结算的课次
+        validatePayableLessonRecords(records, request.getTeacherId());
+        validatePaymentPeriod(request, records);
+
+        // Recheck settlement status immediately before creating any payment rows.
         List<Long> paidIds = paymentItemMapper.selectList(
                         new LambdaQueryWrapper<TeacherPaymentItemEntity>()
                                 .in(TeacherPaymentItemEntity::getLessonRecordId, request.getLessonRecordIds()))
@@ -338,6 +292,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ? classGroupMapper.selectBatchIds(classGroupIds).stream()
                 .collect(Collectors.toMap(ClassGroupEntity::getId, cg -> cg))
                 : Collections.emptyMap();
+        validateRepresentativeClassRecords(records, occurrenceMap);
 
         Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, CoursePackageEntity> packageMap = coursePackageMapper.selectBatchIds(packageIds).stream()
@@ -346,10 +301,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         List<TeacherPayRateEntity> rates = payRateMapper.selectList(
                 new LambdaQueryWrapper<TeacherPayRateEntity>()
                         .eq(TeacherPayRateEntity::getTeacherId, request.getTeacherId()));
-        Map<String, BigDecimal> rateMap = new HashMap<>();
-        for (TeacherPayRateEntity rate : rates) {
-            rateMap.put(rate.getTeacherId() + ":" + rate.getCourseProductId(), rate.getHourlyRate());
-        }
+        Map<String, BigDecimal> rateMap = toRateMap(rates);
 
         int totalUnits = 0;
         BigDecimal totalAmount = BigDecimal.ZERO;
@@ -367,7 +319,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ClassGroupEntity cg = occ != null ? classGroupMap.get(occ.getClassGroupId()) : null;
                 productId = cg != null ? cg.getProductId() : null;
             }
-            BigDecimal hr = rateMap.getOrDefault(request.getTeacherId() + ":" + productId, BigDecimal.ZERO);
+            BigDecimal hr = requirePayRate(rateMap, request.getTeacherId(), productId,
+                    rec.getPackageId() == null ? null : rec.getStudentId());
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                     .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
             BigDecimal amount = hours.multiply(hr).setScale(2, RoundingMode.HALF_UP);
@@ -413,6 +366,112 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         }
 
         return payment.getId();
+    }
+
+    private void validatePayableLessonRecords(List<LessonRecordEntity> records, Long teacherId) {
+        for (LessonRecordEntity record : records) {
+            if (!Objects.equals(record.getActualTeacherId(), teacherId)) {
+                throw new BusinessException("LESSON_RECORD_TEACHER_MISMATCH",
+                        "Selected lesson record does not belong to the requested teacher.");
+            }
+            if (!"CONFIRMED".equals(record.getConfirmStage())) {
+                throw new BusinessException("LESSON_RECORD_NOT_CONFIRMED",
+                        "Selected lesson record must be finally confirmed before payment.");
+            }
+            if (!PAYABLE_STATUSES.contains(record.getResultStatus())) {
+                throw new BusinessException("LESSON_RECORD_NOT_PAYABLE",
+                        "Selected lesson record result status is not eligible for teacher payment.");
+            }
+        }
+    }
+
+    private void validateRepresentativeClassRecords(List<LessonRecordEntity> selectedRecords,
+                                                    Map<Long, LessonOccurrenceEntity> occurrenceMap) {
+        Map<Long, List<LessonRecordEntity>> selectedByOccurrence = selectedRecords.stream()
+                .filter(record -> {
+                    LessonOccurrenceEntity occurrence = occurrenceMap.get(record.getOccurrenceId());
+                    return occurrence != null && occurrence.getClassGroupId() != null;
+                })
+                .collect(Collectors.groupingBy(LessonRecordEntity::getOccurrenceId));
+        if (selectedByOccurrence.isEmpty()) {
+            return;
+        }
+        if (selectedByOccurrence.values().stream().anyMatch(records -> records.size() > 1)) {
+            throw new BusinessException("DUPLICATE_CLASS_LESSON_PAYMENT",
+                    "A group class occurrence can only be included once in a teacher payment.");
+        }
+
+        List<LessonRecordEntity> classRecords = lessonRecordMapper.selectList(
+                new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, selectedByOccurrence.keySet())
+                        .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
+                        .eq(LessonRecordEntity::getIsDeleted, 0));
+        Map<Long, Long> representativeRecordByOccurrence = classRecords.stream()
+                .collect(Collectors.toMap(
+                        LessonRecordEntity::getOccurrenceId,
+                        LessonRecordEntity::getId,
+                        Math::min));
+        for (Map.Entry<Long, List<LessonRecordEntity>> entry : selectedByOccurrence.entrySet()) {
+            Long selectedRecordId = entry.getValue().get(0).getId();
+            if (!Objects.equals(selectedRecordId, representativeRecordByOccurrence.get(entry.getKey()))) {
+                throw new BusinessException("CLASS_LESSON_RECORD_NOT_REPRESENTATIVE",
+                        "Refresh unpaid lessons before creating the teacher payment.");
+            }
+        }
+    }
+
+    private Map<String, BigDecimal> toRateMap(List<TeacherPayRateEntity> rates) {
+        Map<String, BigDecimal> rateMap = new HashMap<>();
+        for (TeacherPayRateEntity rate : rates) {
+            rateMap.put(rateKey(rate.getTeacherId(), rate.getCourseProductId(), rate.getStudentId()), rate.getHourlyRate());
+        }
+        return rateMap;
+    }
+
+    private BigDecimal requirePayRate(Map<String, BigDecimal> rateMap, Long teacherId, Long productId, Long studentId) {
+        BigDecimal rate = resolvePayRate(rateMap, teacherId, productId, studentId);
+        if (productId == null || rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("TEACHER_PAY_RATE_REQUIRED",
+                    "Configure a positive teacher pay rate for every selected course before creating payment.");
+        }
+        return rate;
+    }
+
+    private BigDecimal resolvePayRate(Map<String, BigDecimal> rateMap, Long teacherId, Long productId, Long studentId) {
+        if (studentId != null) {
+            BigDecimal studentOverride = rateMap.get(rateKey(teacherId, productId, studentId));
+            if (studentOverride != null) {
+                return studentOverride;
+            }
+        }
+        return rateMap.getOrDefault(rateKey(teacherId, productId, null), BigDecimal.ZERO);
+    }
+
+    private String rateKey(Long teacherId, Long productId, Long studentId) {
+        return teacherId + ":" + productId + ":" + (studentId == null ? "DEFAULT" : studentId);
+    }
+
+    private void validatePaymentPeriod(TeacherPaymentCreateRequest request, List<LessonRecordEntity> records) {
+        if (request.getPeriodStart() == null || request.getPeriodEnd() == null) {
+            throw new BusinessException("PAYMENT_PERIOD_REQUIRED",
+                    "Payment period start and end dates are required.");
+        }
+        validatePeriod(request.getPeriodStart(), request.getPeriodEnd());
+        for (LessonRecordEntity record : records) {
+            if (record.getConfirmedAt() == null
+                    || record.getConfirmedAt().toLocalDate().isBefore(request.getPeriodStart())
+                    || record.getConfirmedAt().toLocalDate().isAfter(request.getPeriodEnd())) {
+                throw new BusinessException("LESSON_OUTSIDE_PAYMENT_PERIOD",
+                        "Every selected lesson must be finally confirmed within the payment period.");
+            }
+        }
+    }
+
+    private void validatePeriod(LocalDate startDate, LocalDate endDate) {
+        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
+            throw new BusinessException("INVALID_PAYMENT_PERIOD",
+                    "Payment period end date cannot be earlier than start date.");
+        }
     }
 
     @Override

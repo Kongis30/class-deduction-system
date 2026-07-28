@@ -24,6 +24,9 @@ public class ClassEnrollmentCreateRequest {
     @Schema(description = "课程产品ID（GROUP 类型，与 classId 二选一）", example = "1880000000000000003")
     private Long productId;
 
+    @Schema(description = "来源报名订单明细ID", example = "1880000000000000004")
+    private Long enrollmentOrderItemId;
+
     @Schema(description = "课次收费：购买课次数（PER_SESSION 必填）", example = "10")
     private Integer sessions;
 

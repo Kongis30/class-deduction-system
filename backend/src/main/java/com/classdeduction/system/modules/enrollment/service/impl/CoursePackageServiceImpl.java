@@ -373,7 +373,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         Map<Long, Long> occurrenceClassMap = occurrences.stream()
                 .collect(Collectors.toMap(LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getClassGroupId));
         List<LessonRecordEntity> records = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                .in(LessonRecordEntity::getOccurrenceId, occurrenceClassMap.keySet()));
+                .in(LessonRecordEntity::getOccurrenceId, occurrenceClassMap.keySet())
+                .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
+                .eq(LessonRecordEntity::getIsDeleted, 0));
         return records.stream()
                 .map(LessonRecordEntity::getOccurrenceId)
                 .filter(occurrenceClassMap::containsKey)
@@ -418,7 +420,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 ? 0
                 : (int) lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
                                 .eq(LessonRecordEntity::getStudentId, enrollment.getStudentId())
-                                .in(LessonRecordEntity::getOccurrenceId, occurrenceById.keySet()))
+                                .in(LessonRecordEntity::getOccurrenceId, occurrenceById.keySet())
+                                .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
+                                .eq(LessonRecordEntity::getIsDeleted, 0))
                         .stream()
                         .filter(record -> isOccurrenceInEnrollmentWindow(occurrenceById.get(record.getOccurrenceId()), enrollment))
                         .count();

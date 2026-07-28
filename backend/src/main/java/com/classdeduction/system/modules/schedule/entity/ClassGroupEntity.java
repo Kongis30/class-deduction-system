@@ -10,6 +10,7 @@ import lombok.Setter;
 import lombok.ToString;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 
 /**
  * 班课实体 — 对应 class_group 表。
@@ -39,4 +40,17 @@ public class ClassGroupEntity extends BaseEntity {
     private String status;
 
     private Long productId;
+
+    private String gradeBand;
+
+    /** Group-course billing window configured for this grade class. */
+    private String billingType;
+
+    private LocalDate startDate;
+
+    private Integer totalSessions;
+
+    private LocalDate startMonth;
+
+    private LocalDate endMonth;
 }

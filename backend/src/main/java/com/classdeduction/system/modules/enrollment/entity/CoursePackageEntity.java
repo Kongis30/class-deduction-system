@@ -33,6 +33,8 @@ public class CoursePackageEntity extends BaseEntity {
 
     private Long enrollmentOrderId;
 
+    private Long enrollmentOrderItemId;
+
     private Long studentId;
 
     @TableField("course_product_id")
@@ -56,6 +58,11 @@ public class CoursePackageEntity extends BaseEntity {
 
     private BigDecimal discountAmount;
 
+    /**
+     * Explicit payment allocation captured when the package is created.
+     *
+     * <p>Later order-level payments do not change this value without an explicit package allocation.</p>
+     */
     private BigDecimal receivedAmount;
 
     private String packageStatus;

@@ -2,12 +2,12 @@
   <div class="page-stack">
     <section class="teacher-calendar">
       <div class="teacher-calendar__header">
-        <span class="teacher-calendar__title">Teacher Calendar</span>
+        <span class="teacher-calendar__title">{{ isTeacher ? 'My Calendar' : 'Teacher Calendar' }}</span>
       </div>
 
       <div class="teacher-calendar__body">
         <!-- Left: Teacher list -->
-        <aside class="teacher-list-panel">
+        <aside v-if="!isTeacher" class="teacher-list-panel">
           <div class="teacher-list-panel__header">
             <el-input
               v-model="searchText"
@@ -38,7 +38,7 @@
           <!-- No teacher selected -->
           <div v-if="!selectedTeacherId" class="calendar-empty">
             <el-icon :size="40" color="#c0c4cc"><Calendar /></el-icon>
-            <p>Select a teacher on the left to view their weekly class schedule.</p>
+            <p>{{ isTeacher ? 'No lessons are assigned to your account.' : 'Select a teacher to view their weekly schedule.' }}</p>
           </div>
 
           <!-- Loading -->
@@ -166,14 +166,22 @@ import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
 } from '@/api/schedule';
+import { useAuthStore } from '@/stores/auth';
+import { isTeacherUser } from '@/types/auth';
 import type { EntityId, LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
+
+const authStore = useAuthStore();
+const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 
 // ─── Teachers ───────────────────────────────────
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const searchText = ref('');
 const selectedTeacherId = ref<EntityId | null>(null);
+
+// Monotonic token guarding against stale responses when switching teachers/weeks quickly.
+let scheduleRequestSeq = 0;
 
 const filteredTeachers = computed(() => {
   const q = searchText.value.trim().toLowerCase();
@@ -183,7 +191,7 @@ const filteredTeachers = computed(() => {
 
 const selectedTeacherName = computed(() => {
   const t = teachers.value.find(t => t.id === selectedTeacherId.value);
-  return t?.teacherName ?? '';
+  return t?.teacherName ?? authStore.currentUser?.displayName ?? '';
 });
 
 function onTeacherSelect(id: EntityId) {
@@ -256,24 +264,31 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
 
 async function loadSchedule() {
   if (!selectedTeacherId.value) return;
+  const requestId = ++scheduleRequestSeq;
+  const teacherId = selectedTeacherId.value;
   loading.value = true;
   try {
     const monday = dayjs(weekMonday.value);
     const sunday = monday.add(6, 'day').endOf('day');
-    // 按教师拉取本周实际课次：班课课次同样带 plannedTeacherId，已包含在内，
-    // 无需再依赖班课的重复模板（scheduleSlots）。
+
+
     const res = await fetchLessonOccurrences({
-      teacherId: selectedTeacherId.value,
+      teacherId,
       startAt: monday.format('YYYY-MM-DDTHH:mm:ss'),
       endAt: sunday.format('YYYY-MM-DDTHH:mm:ss'),
       pageSize: 200,
     });
+    // Discard if a newer selection/week has superseded this request.
+    if (requestId !== scheduleRequestSeq) return;
     occurrences.value = res.data.data.records;
   } catch {
+    if (requestId !== scheduleRequestSeq) return;
     ElMessage.error('Failed to load schedule.');
     occurrences.value = [];
   } finally {
-    loading.value = false;
+    if (requestId === scheduleRequestSeq) {
+      loading.value = false;
+    }
   }
 }
 
@@ -336,6 +351,15 @@ function planningStatusLabel(status: string) {
 
 // ─── Init ──────────────────────────────────────
 onMounted(async () => {
+  if (isTeacher.value) {
+    const teacherId = authStore.currentUser?.teacherId;
+    if (teacherId) {
+      selectedTeacherId.value = teacherId;
+      teachers.value = [{ id: teacherId, teacherName: authStore.currentUser?.displayName || 'Me' }];
+      loadSchedule();
+    }
+    return;
+  }
   try {
     const res = await fetchAllTeachers();
     teachers.value = res.data.data.map(t => ({ id: t.id, teacherName: t.teacherName }));

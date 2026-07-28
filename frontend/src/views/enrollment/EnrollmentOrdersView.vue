@@ -2,14 +2,12 @@
   <div class="page-stack">
     <section class="course-product-panel">
       <div class="panel-header">
-        <span class="panel-header__title">Enrollment Orders</span>
+        <div>
+          <span class="panel-header__title">Enrollment history</span>
+          <p class="panel-header__hint">New registrations are created from Registration or a student's profile. Use this page to review orders, payments, and historical forms.</p>
+        </div>
         <div class="panel-header__actions">
-          <el-button type="primary" @click="openCreateDialog()">
-            1 on 1 enrollment
-          </el-button>
-          <el-button type="success" @click="openClassEnrollDialog()">
-            group class enrollment
-          </el-button>
+          <el-button type="primary" @click="router.push({ name: 'registration' })">New registration</el-button>
           <el-button size="small" @click="discountPresetDialogVisible = true">
             Discount presets
           </el-button>
@@ -115,6 +113,7 @@
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="detail">Detail</el-dropdown-item>
+                      <el-dropdown-item command="form">View form</el-dropdown-item>
                       <el-dropdown-item v-if="canPayOrder(row)" command="pay">Pay</el-dropdown-item>
                       <el-dropdown-item v-if="canRefundOrder(row)" command="refund">Refund</el-dropdown-item>
                       <el-dropdown-item v-if="canCancelOrder(row)" command="cancel">Cancel</el-dropdown-item>
@@ -202,6 +201,7 @@
                           <template #dropdown>
                             <el-dropdown-menu>
                               <el-dropdown-item command="detail">Detail</el-dropdown-item>
+                              <el-dropdown-item command="form">View form</el-dropdown-item>
                               <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
                               <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
                               <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
@@ -311,13 +311,17 @@
               <span class="discount-text">-${{ detailData.discountAmount?.toFixed(2) }}</span>
             </div>
             <div class="detail-field">
+              <label>Amount due</label>
+              <strong>${{ detailData.amountDue?.toFixed(2) }}</strong>
+            </div>
+            <div class="detail-field">
               <label>Received</label>
               <strong>${{ detailData.receivedAmount?.toFixed(2) }}</strong>
             </div>
             <div class="detail-field">
-              <label>Outstanding</label>
+              <label>Balance</label>
               <strong class="outstanding-badge">
-                ${{ Math.max(0, (detailData.originalAmount ?? 0) - (detailData.discountAmount ?? 0) - (detailData.receivedAmount ?? 0)).toFixed(2) }}
+                ${{ detailData.balanceAmount?.toFixed(2) }}
               </strong>
             </div>
           </div>
@@ -344,10 +348,16 @@
         <!-- Payment records -->
         <div class="detail-section">
           <h4 class="detail-section__title">Payment records</h4>
+          <p class="payment-records-hint">
+            This is the order-level payment timeline. Package received amounts only show allocations captured at enrollment; later payments update the order balance only.
+          </p>
           <el-table v-if="paymentRecords.length > 0" :data="paymentRecords" size="small" class="nested-table">
             <el-table-column label="Payment no." min-width="140" prop="paymentNo" />
             <el-table-column label="Method" min-width="100">
               <template #default="{ row }">{{ getPaymentMethodName(row.paymentMethod) }}</template>
+            </el-table-column>
+            <el-table-column label="Type" min-width="90" align="center">
+              <template #default="{ row }">{{ paymentTypeLabel(row.paymentType) }}</template>
             </el-table-column>
             <el-table-column label="Handler" min-width="110" prop="handledByName" />
             <el-table-column label="Amount" min-width="90" align="right">
@@ -361,6 +371,9 @@
               </template>
             </el-table-column>
             <el-table-column label="Paid at" min-width="140" prop="paidAt" />
+            <el-table-column label="Notes" min-width="160">
+              <template #default="{ row }">{{ row.remark || '-' }}</template>
+            </el-table-column>
             <el-table-column label="Actions" min-width="110" align="center">
               <template #default="{ row: payRow }">
                 <el-button text type="primary" size="small" @click="showPaymentReceipt(detailData!)">
@@ -375,6 +388,10 @@
 
       <template #footer>
         <div class="dialog-footer">
+          <el-button v-if="detailData" @click="openHistoricalForm(detailData)">View form</el-button>
+          <el-button v-if="detailData && canPayOrder(detailData)" type="primary" @click="openPayDialog(detailData)">
+            Record payment
+          </el-button>
           <el-button @click="detailDialogVisible = false">Close</el-button>
         </div>
       </template>
@@ -383,7 +400,7 @@
     <!-- Payment dialog -->
     <el-dialog
       v-model="payDialogVisible"
-      width="560px"
+      width="760px"
       :close-on-click-modal="false"
       class="enrollment-dialog"
     >
@@ -415,6 +432,10 @@
         </div>
         <div class="payment-summary__row payment-summary__row--due">
           <span class="payment-summary__label">Amount Due</span>
+          <strong class="payment-summary__value">${{ payOrder.amountDue?.toFixed(2) }}</strong>
+        </div>
+        <div class="payment-summary__row payment-summary__row--due">
+          <span class="payment-summary__label">Outstanding Balance</span>
           <strong class="payment-summary__value">${{ payAmountDue.toFixed(2) }}</strong>
         </div>
         <div v-if="payOrder.receivedAmount > 0" class="payment-summary__row">
@@ -430,7 +451,7 @@
         class="enrollment-form"
       >
         <!-- Payment splits -->
-        <el-form-item label="Payment splits">
+        <el-form-item label="New payments">
           <div style="width: 100%;">
             <div
               v-for="(split, index) in payForm.splits"
@@ -457,6 +478,15 @@
                 style="flex: 1;"
                 placeholder="Amount"
               />
+              <el-date-picker
+                v-model="split.paidAt"
+                type="date"
+                value-format="YYYY-MM-DD"
+                placeholder="Date"
+                style="flex: 1;"
+              />
+              <el-input v-model="split.handledByName" placeholder="Handler" style="flex: 1;" />
+              <el-input v-model="split.remark" placeholder="Notes" style="flex: 1;" />
               <el-button
                 v-if="payForm.splits.length > 1"
                 type="danger"
@@ -481,20 +511,13 @@
           <span v-else-if="paySplitRemaining < 0" class="payment-split-over">
             Over by: ${{ Math.abs(paySplitRemaining).toFixed(2) }}
           </span>
-          <span v-else class="payment-split-balanced">Balanced</span>
         </div>
 
         <div class="enrollment-form__row">
-          <el-form-item label="Handler" prop="handledByName">
-            <el-input v-model="payForm.handledByName" placeholder="Your name" />
-          </el-form-item>
           <el-form-item label="Issue receipt">
             <el-switch v-model="payForm.issueReceipt" />
           </el-form-item>
         </div>
-        <el-form-item label="Notes">
-          <el-input v-model="payForm.remark" type="textarea" :rows="2" placeholder="Optional notes" />
-        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -503,7 +526,7 @@
           <el-button
             type="primary"
             :loading="paying"
-            :disabled="paySplitRemaining !== 0"
+            :disabled="paySplitTotal <= 0 || paySplitRemaining < 0"
             @click="handlePaySubmit"
           >Record Payment</el-button>
         </div>
@@ -530,14 +553,24 @@
       >
         <div class="product-info-card" style="margin-bottom: 12px;">
           <div class="product-info-card__item">
-            <span class="product-info-card__label">Refund amount</span>
+            <span class="product-info-card__label">Currently received</span>
             <span class="product-info-card__value">${{ (refundOrder?.receivedAmount ?? 0).toFixed(2) }}</span>
           </div>
         </div>
         <p class="refund-hint">
-          Full refund. The order will be marked as Refunded, the enrollment/future lessons will be cancelled, and a refund record will be created.
+          A partial refund keeps the enrollment and schedule active, then updates received and outstanding amounts. Refunding the full currently received amount cancels the enrollment, future lessons, and class eligibility. Every refund creates a separate payment record.
         </p>
 
+        <el-form-item label="Refund amount" prop="refundAmount">
+          <el-input-number
+            v-model="refundForm.refundAmount"
+            :min="0.01"
+            :max="refundOrder?.receivedAmount ?? 0"
+            :precision="2"
+            :controls="false"
+            style="width: 100%;"
+          />
+        </el-form-item>
         <el-form-item label="Refund method" prop="paymentMethod">
           <el-select v-model="refundForm.paymentMethod" placeholder="Select method" style="width: 100%;">
             <el-option v-for="m in paymentMethods" :key="m.methodCode" :label="m.methodName" :value="m.methodCode" />
@@ -758,8 +791,6 @@
 
           <div class="enrollment-form__row">
             <el-form-item class="enrollment-form__full">
-              <!-- 该日历表达的是“每周固定课表”排课规则，而非某一具体周。
-                   故不传 week-start-date，仅显示星期几，避免用户误以为选的是某个具体日期。 -->
               <WeeklyTimeSelector
                 v-model="createForm.slots"
                 :occupied-slots="occupiedSlots"
@@ -1137,6 +1168,7 @@
 import { InfoFilled, Plus, WarningFilled } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
 import { createEnrollmentOrder, cancelEnrollmentOrder, deleteEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, createClassEnrollmentOrder, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
@@ -1148,6 +1180,8 @@ import type { SlotDef, OccupiedSlotDef } from '@/components/WeeklyTimeSelector.v
 
 const loading = ref(false);
 const submitting = ref(false);
+const route = useRoute();
+const router = useRouter();
 const detailDialogVisible = ref(false);
 const createDialogVisible = ref(false);
 const createFormRef = ref();
@@ -1231,6 +1265,16 @@ const presetFormRules = {
     { type: 'number', min: 0.01, message: 'Must be greater than 0' },
   ],
 };
+
+watch(
+  () => route.query.manageDiscountPresets,
+  (value) => {
+    if (value === '1') {
+      discountPresetDialogVisible.value = true;
+    }
+  },
+  { immediate: true },
+);
 
 // ─── Discount preset selection for dialogs ──────────
 type DiscountSelectionId = EntityId | '__none__' | '__custom__' | null;
@@ -1431,20 +1475,20 @@ const payOrder = ref<EnrollmentOrderItem | null>(null);
 interface PaySplit {
   paymentMethod: string;
   amount: number;
+  paidAt: string;
+  handledByName: string;
+  remark: string;
 }
 
 const paymentMethods = ref<PaymentMethodItem[]>([]);
 const payForm = reactive({
   splits: [] as PaySplit[],
-  handledByName: '',
   issueReceipt: true,
-  remark: '',
 });
 
 const payAmountDue = computed(() => {
   if (!payOrder.value) return 0;
-  const due = (payOrder.value.originalAmount ?? 0) - (payOrder.value.discountAmount ?? 0) - (payOrder.value.receivedAmount ?? 0);
-  return Math.max(0, due);
+  return Math.max(0, payOrder.value.balanceAmount ?? 0);
 });
 
 const paySplitTotal = computed(() => {
@@ -1456,11 +1500,21 @@ const paySplitRemaining = computed(() => {
 });
 
 function addPaySplit() {
-  payForm.splits.push({ paymentMethod: '', amount: 0 });
+  payForm.splits.push(createPaySplit());
 }
 
 function removePaySplit(index: number) {
   payForm.splits.splice(index, 1);
+}
+
+function createPaySplit(amount = 0): PaySplit {
+  return {
+    paymentMethod: paymentMethods.value[0]?.methodCode ?? 'CASH',
+    amount,
+    paidAt: dayjs().format('YYYY-MM-DD'),
+    handledByName: '',
+    remark: '',
+  };
 }
 
 // ─── Payment method management state ──────────────
@@ -1522,6 +1576,10 @@ function orderStatusLabel(status: string) {
     CLOSED: 'Closed',
   };
   return map[status] ?? status;
+}
+
+function paymentTypeLabel(type?: string) {
+  return type === 'REFUND' ? 'REFUND' : 'PAYMENT';
 }
 
 function paymentStatusType(status: string) {
@@ -1669,10 +1727,12 @@ async function handleCancel(row: EnrollmentOrderItem) {
 }
 
 // ─── Row Action Menu ────────────────────────────────
-type OrderAction = 'detail' | 'pay' | 'refund' | 'cancel' | 'delete';
+type OrderAction = 'detail' | 'form' | 'pay' | 'refund' | 'cancel' | 'delete';
 
 function canPayOrder(row: EnrollmentOrderItem) {
-  return row.orderStatus === 'CONFIRMED' && row.paymentStatus !== 'PAID';
+  return row.orderStatus === 'CONFIRMED'
+    && row.paymentStatus !== 'PAID'
+    && (row.balanceAmount ?? 0) > 0;
 }
 
 function canRefundOrder(row: EnrollmentOrderItem) {
@@ -1680,7 +1740,7 @@ function canRefundOrder(row: EnrollmentOrderItem) {
 }
 
 function canCancelOrder(row: EnrollmentOrderItem) {
-  return row.orderStatus === 'CONFIRMED';
+  return row.orderStatus === 'CONFIRMED' && (row.receivedAmount ?? 0) === 0;
 }
 
 function canDeleteOrder(row: EnrollmentOrderItem) {
@@ -1690,12 +1750,17 @@ function canDeleteOrder(row: EnrollmentOrderItem) {
 function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
   const actions: Record<OrderAction, () => void> = {
     detail: () => openDetailDialog(row),
+    form: () => openHistoricalForm(row),
     pay: () => openPayDialog(row),
     refund: () => openRefundDialog(row),
     cancel: () => handleCancel(row),
     delete: () => openDeleteDialog(row),
   };
   actions[command]?.();
+}
+
+function openHistoricalForm(row: EnrollmentOrderItem) {
+  router.push({ name: 'registration', query: { orderId: row.id } });
 }
 
 // ─── Delete Dialog ──────────────────────────────────
@@ -1770,11 +1835,16 @@ const refunding = ref(false);
 const refundFormRef = ref();
 const refundOrder = ref<EnrollmentOrderItem | null>(null);
 const refundForm = reactive({
+  refundAmount: 0,
   paymentMethod: 'CASH',
   handledByName: '',
   remark: '',
 });
 const refundFormRules = {
+  refundAmount: [
+    { required: true, message: 'Refund amount is required' },
+    { type: 'number', min: 0.01, message: 'Refund amount must be greater than zero' },
+  ],
   paymentMethod: [{ required: true, message: 'Refund method is required' }],
   handledByName: [{ required: true, message: 'Handler name is required' }],
 };
@@ -1782,7 +1852,12 @@ const refundFormRules = {
 function openRefundDialog(row: EnrollmentOrderItem) {
   refundOrder.value = row;
   refundFormRef.value?.resetFields();
-  Object.assign(refundForm, { paymentMethod: 'CASH', handledByName: '', remark: '' });
+  Object.assign(refundForm, {
+    refundAmount: row.receivedAmount ?? 0,
+    paymentMethod: 'CASH',
+    handledByName: '',
+    remark: '',
+  });
   refundDialogVisible.value = true;
 }
 
@@ -1792,6 +1867,7 @@ async function handleRefundSubmit() {
   refunding.value = true;
   try {
     await refundEnrollmentOrder(refundOrder.value.id, {
+      refundAmount: refundForm.refundAmount,
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName,
       remark: refundForm.remark || undefined,
@@ -1814,24 +1890,29 @@ async function handleRefundSubmit() {
 // ─── Payment Dialog ──────────────────────────────────
 function openPayDialog(row: EnrollmentOrderItem) {
   payOrder.value = row;
-  payForm.splits = [{ paymentMethod: 'CASH', amount: payAmountDue.value }];
-  payForm.handledByName = '';
+  payForm.splits = [createPaySplit(payAmountDue.value)];
   payForm.issueReceipt = true;
-  payForm.remark = '';
   payDialogVisible.value = true;
 }
 
 async function handlePaySubmit() {
-  if (!payForm.handledByName.trim()) {
-    ElMessage.warning('Please enter the handler name.');
-    return;
-  }
-  if (payForm.splits.length === 0 || payForm.splits.every(s => !s.amount || s.amount <= 0)) {
+  const rows = payForm.splits
+    .map((row) => ({
+      ...row,
+      handledByName: row.handledByName.trim(),
+      remark: row.remark.trim(),
+    }))
+    .filter((row) => row.amount > 0);
+  if (rows.length === 0) {
     ElMessage.warning('Please add at least one payment split with an amount.');
     return;
   }
-  if (paySplitRemaining.value !== 0) {
-    ElMessage.warning('Payment splits must total the amount due.');
+  if (rows.some((row) => !row.paymentMethod || !row.paidAt || !row.handledByName)) {
+    ElMessage.warning('Payment method, date, and handler are required for every payment.');
+    return;
+  }
+  if (paySplitRemaining.value < 0) {
+    ElMessage.warning('Payment splits cannot exceed the current balance.');
     return;
   }
   if (!payOrder.value) return;
@@ -1840,13 +1921,13 @@ async function handlePaySubmit() {
   try {
     await createPaymentRecord({
       enrollmentOrderId: payOrder.value.id,
-      splits: payForm.splits.map(s => ({
-        paymentMethod: s.paymentMethod,
-        amount: s.amount,
+      splits: rows.map((row) => ({
+        paymentMethod: row.paymentMethod,
+        amount: row.amount,
+        paidAt: `${row.paidAt}T00:00:00`,
+        handledByName: row.handledByName,
+        remark: row.remark || undefined,
       })),
-      paidAt: dayjs().format('YYYY-MM-DDTHH:mm:ss'),
-      handledByName: payForm.handledByName,
-      remark: payForm.remark || undefined,
     });
 
     // If receipt requested, show receipt preview
@@ -1856,11 +1937,23 @@ async function handlePaySubmit() {
 
     ElMessage.success('Payment recorded successfully.');
     payDialogVisible.value = false;
-    loadData();
+    await refreshAfterPayment(payOrder.value);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Payment failed.');
   } finally {
     paying.value = false;
+  }
+}
+
+async function refreshAfterPayment(order: EnrollmentOrderItem) {
+  if (order.classId) {
+    await loadExpandedClassOrders(order.classId, expandedClassPagination[order.classId]?.page ?? 1);
+  } else {
+    await loadData();
+  }
+  if (detailData.value?.id === order.id) {
+    const res = await fetchEnrollmentOrder(order.id);
+    detailData.value = res.data.data;
   }
 }
 
@@ -1873,7 +1966,7 @@ function openReceiptWindow(html: string) {
 }
 
 function showReceiptPreview(order: EnrollmentOrderItem, paidAmount: number) {
-  const dueAmount = (order.originalAmount ?? 0) - (order.discountAmount ?? 0);
+  const dueAmount = order.amountDue ?? 0;
   const newReceived = (order.receivedAmount ?? 0) + paidAmount;
   const html = receiptHtml({
     title: 'Payment Receipt',
@@ -1881,7 +1974,7 @@ function showReceiptPreview(order: EnrollmentOrderItem, paidAmount: number) {
       ['Order No.', order.enrollmentNo],
       ['Student', order.studentName],
       ['Payment Date', dayjs().format('YYYY-MM-DD')],
-      ['Handler', payForm.handledByName],
+      ['Handler', getPaymentHandlerSummary()],
       ['Payment Method', getPaymentSplitSummary()],
     ],
     tableRows: [
@@ -1892,9 +1985,17 @@ function showReceiptPreview(order: EnrollmentOrderItem, paidAmount: number) {
       ['This Payment', `$${paidAmount.toFixed(2)}`],
       ['Total Paid', `$${newReceived.toFixed(2)}`, true],
     ],
-    remark: payForm.remark || undefined,
+    remark: getPaymentRemarkSummary() || undefined,
   });
   openReceiptWindow(html);
+}
+
+function getPaymentHandlerSummary() {
+  return [...new Set(payForm.splits.map((item) => item.handledByName).filter(Boolean))].join(', ');
+}
+
+function getPaymentRemarkSummary() {
+  return payForm.splits.map((item) => item.remark).filter(Boolean).join('; ');
 }
 
 function showPaymentReceipt(order: EnrollmentOrderDetailItem) {
@@ -1907,7 +2008,7 @@ function showPaymentReceipt(order: EnrollmentOrderDetailItem) {
     ['Total Paid', `$${totalPaid.toFixed(2)}`],
   ];
   const tableRows: [string, string, boolean?][] = order.payments.map(p => [
-    getPaymentMethodName(p.paymentMethod),
+    `${paymentTypeLabel(p.paymentType)} · ${getPaymentMethodName(p.paymentMethod)}`,
     `$${(p.amount ?? 0).toFixed(2)}`,
   ]);
   tableRows.push(['Total', `$${totalPaid.toFixed(2)}`, true]);
@@ -1996,9 +2097,9 @@ function receiptHtml(cfg: ReceiptConfig): string {
     ${remarkHtml}
     <div class="policies">
       <h4>Refund Policy</h4>
-      <p>Before class starts: 50% refund; remaining becomes tuition credit. After class starts: No refund; remaining becomes credit for future courses.</p>
+      <p>Partial refunds create a separate refund record and update the order balance without changing active courses. Refunding the full currently received amount cancels the enrollment, future lessons, and class eligibility.</p>
       <h4>Course Suspension Policy</h4>
-      <p>Mid-course suspension: $50 fee; remaining tuition becomes credit.</p>
+      <p>Mid-course suspension and tuition credit require staff review.</p>
       <h4>Material Policy</h4>
       <p>Materials included. If lost, each item requires a $10 reprint fee.</p>
       <h4>Discipline Policy</h4>
@@ -2203,8 +2304,8 @@ const schedulePreview = computed(() => {
   const weeklySessions = slots.length;
   const weeklyUnits = slots.reduce((s, slot) => s + slot.plannedUnits, 0);
 
-  const totalUnits = selectedProduct.value?.defaultTotalUnits ?? 40;     // 总课时（小时）
-  const totalHalfHourUnits = totalUnits * 2;                              // 转为半课时单位（1单位=0.5h）
+  const totalUnits = selectedProduct.value?.defaultTotalUnits ?? 40;
+  const totalHalfHourUnits = totalUnits * 2;
   const weeks = Math.ceil(totalHalfHourUnits / weeklyUnits);
 
   let endDate = '';
@@ -2320,7 +2421,7 @@ async function loadClassroomOccupancyData() {
     const startAt = monday.format('YYYY-MM-DDTHH:mm:ss');
     const endAt = sunday.format('YYYY-MM-DDTHH:mm:ss');
 
-    // 1. 加载教室的课次占用
+
     const occRes = await fetchClassroomOccupancy({
       classroomId,
       startAt,
@@ -2329,11 +2430,11 @@ async function loadClassroomOccupancyData() {
     });
     const items: ClassroomOccupancyItem[] = occRes.data.data.records || [];
 
-    // 2. 加载班课排课时段
+
     const clsRes = await fetchClassGroupsByClassroom(classroomId);
     const classGroups: any[] = clsRes.data.data || [];
 
-    // 合并
+
     const slots: OccupiedSlotDef[] = [];
 
     for (const o of items) {
@@ -2351,7 +2452,7 @@ async function loadClassroomOccupancyData() {
       });
     }
 
-    // 班课周期时段
+
     for (const cls of classGroups) {
       const scheduleSlots = cls.scheduleSlots || [];
       for (const s of scheduleSlots) {
@@ -2473,6 +2574,14 @@ loadActivePaymentMethods();
   font-size: 15px;
   font-weight: 600;
   color: #1a1a1a;
+}
+
+.panel-header__hint {
+  max-width: 680px;
+  margin: 3px 0 0;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .panel-header__actions {
@@ -2622,6 +2731,13 @@ loadActivePaymentMethods();
   border-radius: 4px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+}
+
+.payment-records-hint {
+  margin: 0;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* Payment summary */
@@ -2854,9 +2970,10 @@ loadActivePaymentMethods();
 
 /* Payment split rows */
 .payment-split-row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(110px, 0.8fr) 110px 140px minmax(110px, 0.8fr) minmax(130px, 1fr) auto;
   gap: 8px;
+  align-items: center;
   margin-bottom: 4px;
 }
 .payment-split-row > * {

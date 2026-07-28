@@ -317,7 +317,14 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (decision.shouldDeduct() && decision.deductedUnits() > coursePackage.getRemainingUnits()) {
             throw new BusinessException("INSUFFICIENT_REMAINING_UNITS", "The package does not have enough remaining units for this confirmation.");
         }
+        ensureNoConflictForConfirmedOccurrence(occurrence, decision);
         int originalPlannedUnits = occurrence.getPlannedUnits();
+        LessonOccurrenceEntity makeup = buildMakeupIfNeeded(
+                coursePackage, student, occurrence, originalPlannedUnits, decision);
+        if (makeup != null) {
+            ensureNoConflictForMakeupOccurrence(makeup);
+        }
+
         LocalDateTime confirmedAt = AppTime.nowLocalDateTime();
         record.setConfirmStage(CONFIRM_STAGE_CONFIRMED);
         record.setConfirmedByUserId(currentUser.userId());
@@ -334,8 +341,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         lessonOccurrenceMapper.updateById(occurrence);
 
         PackageUpdateResult packageUpdate = applyPackageAndLedgerChanges(coursePackage, occurrence, rule, record, currentUser.userId(), decision);
-        createMakeupIfNeeded(coursePackage, student, occurrence, originalPlannedUnits, decision, packageUpdate);
+        if (makeup != null) {
+            lessonOccurrenceMapper.insert(makeup);
+        }
         adjustFutureOccurrencesIfNeeded(coursePackage.getId(), originalPlannedUnits, decision);
+        refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision, packageUpdate);
 
         notificationOutboxService.queueLessonBalanceEmail(record, coursePackage, student, rule.getStatusName());
         queueLowBalanceWarningIfNeeded(coursePackage, student, packageUpdate);
@@ -348,6 +358,22 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .remainingUnits(UnitConverter.toHoursDecimal(packageUpdate.remainingUnits()))
                 .packageCompleted(packageUpdate.packageCompleted())
                 .build();
+    }
+
+    private void ensureNoConflictForConfirmedOccurrence(LessonOccurrenceEntity occurrence,
+                                                        ConfirmationDecision decision) {
+        LessonOccurrenceEntity confirmed = new LessonOccurrenceEntity();
+        confirmed.setId(occurrence.getId());
+        confirmed.setStudentId(occurrence.getStudentId());
+        confirmed.setPlannedTeacherId(decision.actualTeacherId() != null
+                ? decision.actualTeacherId() : occurrence.getPlannedTeacherId());
+        confirmed.setPlannedClassroomId(decision.actualClassroomId() != null
+                ? decision.actualClassroomId() : occurrence.getPlannedClassroomId());
+        confirmed.setPlannedStartAt(decision.actualStartAt() != null
+                ? decision.actualStartAt() : occurrence.getPlannedStartAt());
+        confirmed.setPlannedEndAt(decision.actualEndAt() != null
+                ? decision.actualEndAt() : occurrence.getPlannedEndAt());
+        ensureNoConflictForOccurrence(confirmed, "for the confirmed lesson");
     }
 
     private void queueLowBalanceWarningIfNeeded(CoursePackageEntity coursePackage,
@@ -365,14 +391,13 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
     }
 
-    private void createMakeupIfNeeded(CoursePackageEntity coursePackage,
-                                      StudentEntity student,
-                                      LessonOccurrenceEntity occurrence,
-                                      int originalPlannedUnits,
-                                      ConfirmationDecision decision,
-                                      PackageUpdateResult packageUpdate) {
+    private LessonOccurrenceEntity buildMakeupIfNeeded(CoursePackageEntity coursePackage,
+                                                       StudentEntity student,
+                                                       LessonOccurrenceEntity occurrence,
+                                                       int originalPlannedUnits,
+                                                       ConfirmationDecision decision) {
         if (!decision.shouldExtendEndDate()) {
-            return;
+            return null;
         }
         LessonOccurrenceEntity lastOccurrence = lessonOccurrenceMapper.selectOne(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .eq(LessonOccurrenceEntity::getPackageId, coursePackage.getId())
@@ -380,7 +405,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .orderByDesc(LessonOccurrenceEntity::getPlannedStartAt)
                 .last("LIMIT 1"));
         if (lastOccurrence == null) {
-            return;
+            return null;
         }
         LessonOccurrenceEntity makeup = new LessonOccurrenceEntity();
         makeup.setLessonNo(generateLessonNo());
@@ -397,10 +422,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         makeup.setPlanningStatus("SCHEDULED");
         makeup.setSourceOccurrenceId(occurrence.getId());
         makeup.setConflictChecked(1);
-        lessonOccurrenceMapper.insert(makeup);
-
-        coursePackage.setEstimatedEndDate(recomputeEstimatedEndDate(coursePackage.getId(), packageUpdate.remainingUnits()));
-        coursePackageMapper.updateById(coursePackage);
+        return makeup;
     }
 
     @Override
@@ -629,6 +651,21 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
     }
 
+    private void refreshEstimatedEndDateAfterScheduleChange(CoursePackageEntity coursePackage,
+                                                            int originalPlannedUnits,
+                                                            ConfirmationDecision decision,
+                                                            PackageUpdateResult packageUpdate) {
+        boolean futureScheduleChanged = decision.shouldExtendEndDate()
+                || (decision.shouldDeduct() && originalPlannedUnits != decision.deductedUnits());
+        if (!futureScheduleChanged) {
+            return;
+        }
+        coursePackage.setEstimatedEndDate(recomputeEstimatedEndDate(coursePackage.getId(), packageUpdate.remainingUnits()));
+        if (coursePackageMapper.updateById(coursePackage) != 1) {
+            throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
+        }
+    }
+
     private void reverseFutureBalanceForRevokedRecord(Long packageId, LessonRecordEntity record) {
         if (record.getShouldDeduct() == null || record.getShouldDeduct() != 1) {
             return;
@@ -677,6 +714,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (record.getPlannedUnits() != null && record.getPlannedUnits() > 0) {
             occurrence.setPlannedUnits(record.getPlannedUnits());
         }
+        // Confirmation may have overwritten the occurrence's teacher/classroom with the
+        // actual ones; revoking must restore the original plan so the calendar and later
+        // conflict detection no longer reflect the confirmed (and now cancelled) values.
+        occurrence.setPlannedTeacherId(record.getPlannedTeacherId());
+        occurrence.setPlannedClassroomId(record.getPlannedClassroomId());
         lessonOccurrenceMapper.updateById(occurrence);
     }
 
@@ -787,7 +829,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         futureOccurrences = excludeRecordedOccurrences(futureOccurrences);
 
         if (futureOccurrences.isEmpty()) {
-            throw new BusinessException("FUTURE_SCHEDULE_NOT_ENOUGH", "No future lesson occurrences are available to keep the package schedule balanced.");
+            throw futureScheduleReconciliationRequired("no future scheduled lesson is available");
         }
 
         if (delta > 0) {
@@ -810,9 +852,17 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 toReduce = 0;
             }
             if (toReduce > 0) {
-                throw new BusinessException("FUTURE_SCHEDULE_NOT_ENOUGH", "Future lesson occurrences are not enough to keep the package schedule balanced.");
+                throw futureScheduleReconciliationRequired("future scheduled lessons do not have enough hours");
             }
         }
+    }
+
+    private BusinessException futureScheduleReconciliationRequired(String reason) {
+        return new BusinessException(
+                "FUTURE_SCHEDULE_RECONCILIATION_REQUIRED",
+                "Actual lesson duration cannot be confirmed because " + reason
+                        + " to rebalance the package. Adjust the future schedule, renew the package, or reject this change."
+        );
     }
 
     private void updatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {
@@ -858,16 +908,24 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     }
 
     private void ensureNoConflictForAdjustedOccurrence(LessonOccurrenceEntity occurrence) {
+        ensureNoConflictForOccurrence(occurrence, "after adjusting future lesson duration");
+    }
+
+    private void ensureNoConflictForMakeupOccurrence(LessonOccurrenceEntity occurrence) {
+        ensureNoConflictForOccurrence(occurrence, "for the automatic makeup lesson");
+    }
+
+    private void ensureNoConflictForOccurrence(LessonOccurrenceEntity occurrence, String conflictContext) {
         if (hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getStudentId, occurrence.getStudentId())) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected after adjusting future lesson duration.");
+            throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected " + conflictContext + ".");
         }
         if (occurrence.getPlannedTeacherId() != null
                 && hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId())) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected after adjusting future lesson duration.");
+            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected " + conflictContext + ".");
         }
         if (occurrence.getPlannedClassroomId() != null
                 && hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId())) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected after adjusting future lesson duration.");
+            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected " + conflictContext + ".");
         }
     }
 
@@ -885,7 +943,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         Long count = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .eq(field, fieldValue)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .ne(LessonOccurrenceEntity::getId, occurrence.getId())
+                .ne(occurrence.getId() != null, LessonOccurrenceEntity::getId, occurrence.getId())
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, occurrence.getPlannedEndAt())
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt()));
         return count != null && count > 0;

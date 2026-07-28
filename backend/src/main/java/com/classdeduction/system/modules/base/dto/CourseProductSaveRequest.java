@@ -1,7 +1,6 @@
 package com.classdeduction.system.modules.base.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
-import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -25,6 +24,12 @@ public class CourseProductSaveRequest {
     @Schema(description = "Course product name", example = "Math 1:1 - 24 units")
     private String productName;
 
+    @Schema(description = "Parent course type: AFTER_SCHOOL/SATURDAY/SUMMER/SPRINT/ONE_ON_ONE", example = "SATURDAY")
+    private String courseType;
+
+    @Schema(description = "Register Class label shown on registration", example = "Saturday Class")
+    private String registerClass;
+
     @Schema(description = "Subject name", example = "Math")
     private String subjectName;
 
@@ -37,7 +42,7 @@ public class CourseProductSaveRequest {
     private Integer defaultTotalUnits;
 
     @Min(value = 1, message = "Default lesson units must be at least 1")
-    @Schema(description = "Default units per lesson (required for ONE_ON_ONE, null for GROUP)", example = "1")
+    @Schema(description = "Default 30-minute units per lesson (required for ONE_ON_ONE, null for GROUP)", example = "4")
     private Integer defaultLessonUnits;
 
     @Schema(description = "GROUP billing type: PER_SESSION / MONTHLY", example = "PER_SESSION")
@@ -62,9 +67,7 @@ public class CourseProductSaveRequest {
     @Schema(description = "Default teacher ID (for GROUP)", example = "7001")
     private Long defaultTeacherId;
 
-    @NotNull(message = "Original price is required")
-    @DecimalMin(value = "0.00", message = "Original price must be 0 or greater")
-    @Schema(description = "Original price", example = "2699.00")
+    @Schema(description = "Legacy reference price. Registration prices are defined by course price rows.", example = "0.00")
     private BigDecimal listPrice;
 
     @Schema(description = "Course product status", example = "ACTIVE")

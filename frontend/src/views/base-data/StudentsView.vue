@@ -11,38 +11,45 @@
         </div>
       </div>
 
-      <el-form class="filters" :model="filters" inline>
-        <el-form-item label="Name" class="filters__item">
-          <el-input
-            v-model="filters.keyword"
-            placeholder="Search by name"
-            clearable
-            style="width: 180px;"
-            @input="handleFilterChange"
-          />
-        </el-form-item>
-        <el-form-item label="Guardian" class="filters__item">
-          <el-input
-            v-model="filters.guardian"
-            placeholder="Search by guardian"
-            clearable
-            style="width: 140px;"
-            @input="handleFilterChange"
-          />
-        </el-form-item>
-        <el-form-item label="Status" class="filters__item">
-          <el-select
-            v-model="filters.status"
-            placeholder="All"
-            clearable
-            style="width: 140px;"
-            @change="handleFilterChange"
-          >
-            <el-option label="Active" value="ACTIVE" />
-            <el-option label="Inactive" value="INACTIVE" />
-          </el-select>
-        </el-form-item>
-      </el-form>
+      <div class="student-search-bar">
+        <el-input
+          v-model="filters.keyword"
+          clearable
+          placeholder="Search student, guardian, phone, or student number"
+          @keyup.enter="handleFilterChange"
+          @clear="handleFilterChange"
+        />
+        <el-button class="student-search-bar__button" type="primary" @click="handleFilterChange">Search</el-button>
+        <el-button class="student-search-bar__filters" text @click="advancedFiltersVisible = !advancedFiltersVisible">
+          <el-icon><Filter /></el-icon>
+          Filters
+          <span v-if="activeAdvancedFilterCount" class="student-search-bar__filter-count">
+            {{ activeAdvancedFilterCount }}
+          </span>
+        </el-button>
+      </div>
+
+      <div v-if="advancedFiltersVisible" class="student-advanced-filters">
+        <el-select
+          v-model="filters.campusId"
+          clearable
+          placeholder="All campuses"
+          @change="handleFilterChange"
+        >
+          <el-option v-for="campus in campusOptions" :key="campus.id" :label="campus.campusName" :value="campus.id" />
+        </el-select>
+        <el-select
+          v-model="filters.paymentStatus"
+          clearable
+          placeholder="All payment statuses"
+          @change="handleFilterChange"
+        >
+          <el-option label="Unpaid" value="UNPAID" />
+          <el-option label="Partial payment" value="PARTIAL" />
+          <el-option label="Paid in full" value="PAID" />
+        </el-select>
+        <el-button v-if="activeAdvancedFilterCount" text @click="clearAdvancedFilters">Clear filters</el-button>
+      </div>
 
       <el-table
         v-loading="loading"
@@ -50,44 +57,50 @@
         row-key="id"
         class="product-table"
         :show-empty="true"
+        @row-click="openStudentDetail"
       >
-        <el-table-column label="Student name" min-width="140">
+        <el-table-column label="Student" min-width="190">
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.studentName }}</strong>
-              <span>{{ row.gender }}</span>
+              <span>{{ row.studentNo }} · {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Guardian" min-width="140">
+        <el-table-column label="Guardian contact" min-width="180">
           <template #default="{ row }">
             <div class="cell-stack">
-              <strong>{{ row.guardianName }}</strong>
-              <span>{{ row.phone }}</span>
+              <strong>{{ row.guardianName || '-' }}</strong>
+              <span>{{ row.guardianPhone || row.phone || '-' }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Guardian Email" min-width="160">
+        <el-table-column label="Registrations" min-width="150">
           <template #default="{ row }">
-            {{ row.guardianEmail || '-' }}
+            <div class="cell-stack">
+              <strong>{{ row.enrollmentCount ?? 0 }} order{{ (row.enrollmentCount ?? 0) === 1 ? '' : 's' }}</strong>
+              <span>Latest {{ formatDate(row.latestSignupDate) }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="Campus" min-width="120">
+        <el-table-column label="Payment follow-up" min-width="180">
           <template #default="{ row }">
-            {{ row.campusName || '-' }}
+            <div class="cell-stack">
+              <strong :class="{ 'balance-due': numeric(row.enrollmentBalanceAmount) > 0 }">
+                {{ numeric(row.enrollmentBalanceAmount) > 0 ? `${formatMoney(row.enrollmentBalanceAmount)} due` : 'No balance' }}
+              </strong>
+              <el-tag size="small" :type="paymentStatusType(row.aggregatePaymentStatus)">
+                {{ paymentStatusLabel(row.aggregatePaymentStatus) }}
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="Status" min-width="90" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
-              {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Actions" min-width="140" fixed="right">
+        <el-table-column label="Actions" width="190" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
-              <el-button text type="primary" @click="openStudentDialog(row)">Edit</el-button>
+              <el-button text type="primary" @click.stop="openStudentDetail(row)">Details</el-button>
+              <el-button text type="primary" @click.stop="openStudentDialog(row)">Edit</el-button>
+              <el-button text type="danger" @click.stop="handleDeleteStudent(row)">Delete</el-button>
             </div>
           </template>
         </el-table-column>
@@ -111,95 +124,114 @@
     <!-- Student Form Dialog -->
     <el-dialog
       v-model="studentDialogVisible"
-      width="580px"
+      width="760px"
       :close-on-click-modal="false"
       class="student-dialog"
     >
       <template #header>
         <div class="dialog-header">
           <h3 class="dialog-header__title">Edit student</h3>
-          <el-button
-            text
-            size="small"
-            class="dialog-header__settings"
-            @click="openFieldConfig"
-            title="Customize form fields"
-          >
-            <el-icon><Setting /></el-icon>
-          </el-button>
         </div>
       </template>
 
       <el-form ref="studentFormRef" label-position="top" :model="studentForm" :rules="studentFormRules" :validate-on-rule-change="false" class="student-form">
-        <!-- Required: Student name -->
+        <h4 class="student-form__section-title">Student profile</h4>
         <div class="student-form__row">
-          <el-form-item label="Student name" prop="studentName" class="student-form__full">
+          <el-form-item label="Student name" prop="studentName" class="student-form__half">
             <el-input v-model="studentForm.studentName" placeholder="e.g. Sophia Lin" />
           </el-form-item>
+          <el-form-item label="English name" class="student-form__half">
+            <el-input v-model="studentForm.englishName" placeholder="Optional English name" />
+          </el-form-item>
         </div>
-
-        <!-- Gender - configurable -->
-        <div v-if="fieldConfig.gender.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.gender.customLabel" prop="gender" class="student-form__half">
+        <div class="student-form__row student-form__row--three">
+          <el-form-item label="Gender" prop="gender" class="student-form__third">
             <el-select v-model="studentForm.gender" placeholder="Select gender" style="width: 100%;">
               <el-option label="Male" value="Male" />
               <el-option label="Female" value="Female" />
             </el-select>
           </el-form-item>
-        </div>
-
-        <!-- Guardian info - required -->
-        <div class="student-form__row">
-          <el-form-item label="Guardian name" prop="guardianName" class="student-form__half">
-            <el-input v-model="studentForm.guardianName" placeholder="Primary guardian" />
+          <el-form-item label="Birth date" class="student-form__third">
+            <el-date-picker
+              v-model="studentForm.birthDate"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="Select date"
+              style="width: 100%;"
+            />
           </el-form-item>
-          <el-form-item label="Phone" prop="guardianPhone" class="student-form__half">
-            <el-input v-model="studentForm.guardianPhone" placeholder="(626) 555-0101" />
-          </el-form-item>
-        </div>
-
-        <!-- Guardian email - configurable -->
-        <div v-if="fieldConfig.email.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.email.customLabel" class="student-form__half">
-            <el-input v-model="studentForm.guardianEmail" placeholder="Optional email" />
-          </el-form-item>
-        </div>
-
-        <!-- Status - configurable -->
-        <div v-if="fieldConfig.status.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.status.customLabel" prop="status" class="student-form__half">
-            <el-select v-model="studentForm.status" placeholder="Select status" style="width: 100%;">
-              <el-option label="Active" value="ACTIVE" />
-              <el-option label="Inactive" value="INACTIVE" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <!-- Notes - configurable -->
-        <div v-if="fieldConfig.notes.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.notes.customLabel" class="student-form__full">
-            <el-input v-model="studentForm.notes" type="textarea" :rows="2" placeholder="Optional notes" />
-          </el-form-item>
-        </div>
-
-        <!-- Campus - configurable -->
-        <div v-if="fieldConfig.campusId.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.campusId.customLabel" class="student-form__half">
+          <el-form-item label="Campus" class="student-form__third">
             <el-select v-model="studentForm.campusId" placeholder="Select campus" clearable style="width: 100%;">
               <el-option v-for="c in campusOptions" :key="c.id" :label="c.campusName" :value="c.id" />
             </el-select>
           </el-form-item>
         </div>
+        <div class="student-form__row">
+          <el-form-item label="Grade" class="student-form__half">
+            <el-input v-model="studentForm.grade" placeholder="e.g. Grade 6" />
+          </el-form-item>
+          <el-form-item label="School" class="student-form__half">
+            <el-input v-model="studentForm.school" placeholder="Current school" />
+          </el-form-item>
+        </div>
 
-        <!-- Guardian Relation - configurable -->
-        <div v-if="fieldConfig.guardianRelationType.visible" class="student-form__row">
-          <el-form-item :label="fieldConfig.guardianRelationType.customLabel" class="student-form__half">
+        <h4 class="student-form__section-title">Guardian contact</h4>
+        <div class="student-form__row student-form__row--three">
+          <el-form-item label="Guardian name" prop="guardianName" class="student-form__third">
+            <el-input v-model="studentForm.guardianName" placeholder="Primary guardian" />
+          </el-form-item>
+          <el-form-item label="Relation" class="student-form__third">
             <el-select v-model="studentForm.guardianRelationType" placeholder="Select relation" clearable style="width: 100%;">
               <el-option label="Mother" value="MOTHER" />
               <el-option label="Father" value="FATHER" />
               <el-option label="Grandparent" value="GRANDPARENT" />
               <el-option label="Other" value="OTHER" />
             </el-select>
+          </el-form-item>
+          <el-form-item label="Email" class="student-form__third">
+            <el-input v-model="studentForm.guardianEmail" placeholder="Optional email" />
+          </el-form-item>
+        </div>
+        <div class="student-form__row">
+          <el-form-item label="Phone" prop="guardianPhone" class="student-form__half">
+            <el-input v-model="studentForm.guardianPhone" placeholder="(626) 555-0101" />
+          </el-form-item>
+          <el-form-item label="Phone #2" class="student-form__half">
+            <el-input v-model="studentForm.guardianPhone2" placeholder="Optional second phone" />
+          </el-form-item>
+        </div>
+
+        <h4 class="student-form__section-title">Pickup and drop-off</h4>
+        <div class="student-form__row">
+          <el-form-item label="Pickup service" class="student-form__half">
+            <el-switch v-model="studentForm.pickupRequired" active-text="Required" inactive-text="Not required" />
+          </el-form-item>
+          <el-form-item label="Drop-off service" class="student-form__half">
+            <el-switch v-model="studentForm.dropoffRequired" active-text="Required" inactive-text="Not required" />
+          </el-form-item>
+        </div>
+        <div class="student-form__row">
+          <el-form-item label="Pickup address" class="student-form__half">
+            <el-input v-model="studentForm.pickupAddress" :disabled="!studentForm.pickupRequired" placeholder="Pickup address" />
+          </el-form-item>
+          <el-form-item label="Drop-off address" class="student-form__half">
+            <el-input v-model="studentForm.dropoffAddress" :disabled="!studentForm.dropoffRequired" placeholder="Drop-off address" />
+          </el-form-item>
+        </div>
+
+        <h4 class="student-form__section-title">Administration</h4>
+        <div class="student-form__row student-form__row--three">
+          <el-form-item label="Status" prop="status" class="student-form__third">
+            <el-select v-model="studentForm.status" placeholder="Select status" style="width: 100%;">
+              <el-option label="Active" value="ACTIVE" />
+              <el-option label="Inactive" value="INACTIVE" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Source" class="student-form__third">
+            <el-input v-model="studentForm.sourceChannel" placeholder="e.g. Referral" />
+          </el-form-item>
+          <el-form-item label="Notes" class="student-form__full">
+            <el-input v-model="studentForm.notes" type="textarea" :rows="2" placeholder="Optional internal notes" />
           </el-form-item>
         </div>
       </el-form>
@@ -212,14 +244,286 @@
       </template>
     </el-dialog>
 
-    <!-- Field Config Dialog -->
-    <FieldConfigDialog
-      v-model="fieldConfigVisible"
-      config-key="studentForm"
-      :fields="configurableFields"
-      :default-fields="defaultFields"
-      @change="handleFieldConfigChange"
-    />
+    <!-- Student operation drawer -->
+    <el-drawer
+      v-model="detailDrawerVisible"
+      size="72%"
+      :with-header="false"
+      class="student-detail-drawer"
+    >
+      <div v-loading="detailLoading" class="student-detail">
+        <div class="detail-header">
+          <div>
+            <h2>{{ selectedStudentForDisplay?.studentName || 'Student detail' }}</h2>
+            <p>
+              {{ selectedStudentForDisplay?.studentNo || '-' }}
+              <span v-if="selectedStudentForDisplay?.campusName"> · {{ selectedStudentForDisplay?.campusName }}</span>
+            </p>
+          </div>
+          <div class="detail-header__actions">
+            <el-button type="primary" @click="startNewRegistration">New registration</el-button>
+            <el-button @click="detailDrawerVisible = false">Close</el-button>
+          </div>
+        </div>
+
+        <section class="detail-card">
+          <h3>Profile</h3>
+          <div class="detail-grid">
+            <div>
+              <label>Status</label>
+              <strong>{{ selectedStudentForDisplay?.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</strong>
+            </div>
+            <div>
+              <label>Campus</label>
+              <strong>{{ selectedStudentForDisplay?.campusName || '-' }}</strong>
+            </div>
+            <div>
+              <label>Gender</label>
+              <strong>{{ selectedStudentForDisplay?.gender || '-' }}</strong>
+            </div>
+            <div>
+              <label>Guardian</label>
+              <strong>{{ selectedStudentForDisplay?.guardianName || '-' }}</strong>
+            </div>
+            <div>
+              <label>Phone</label>
+              <strong>{{ selectedStudentForDisplay?.guardianPhone || selectedStudentForDisplay?.phone || '-' }}</strong>
+            </div>
+            <div>
+              <label>Phone #2</label>
+              <strong>{{ selectedStudentForDisplay?.guardianPhone2 || '-' }}</strong>
+            </div>
+            <div>
+              <label>Email</label>
+              <strong>{{ selectedStudentForDisplay?.guardianEmail || '-' }}</strong>
+            </div>
+            <div>
+              <label>Grade</label>
+              <strong>{{ selectedStudentForDisplay?.grade || '-' }}</strong>
+            </div>
+            <div>
+              <label>School</label>
+              <strong>{{ selectedStudentForDisplay?.school || '-' }}</strong>
+            </div>
+            <div>
+              <label>Guardian email</label>
+              <strong>{{ selectedStudentForDisplay?.guardianEmail || '-' }}</strong>
+            </div>
+            <div>
+              <label>Relation</label>
+              <strong>{{ guardianRelationLabel(selectedStudentForDisplay?.guardianRelationType) }}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="detail-card">
+          <h3>Pickup / dropoff</h3>
+          <div class="detail-grid">
+            <div>
+              <label>Pickup</label>
+              <strong>{{ selectedStudentForDisplay?.pickupRequired ? 'Required' : 'Not required' }}</strong>
+            </div>
+            <div class="detail-grid__wide">
+              <label>Pickup address</label>
+              <strong>{{ selectedStudentForDisplay?.pickupRequired ? selectedStudentForDisplay?.pickupAddress || '-' : '-' }}</strong>
+            </div>
+            <div>
+              <label>Dropoff</label>
+              <strong>{{ selectedStudentForDisplay?.dropoffRequired ? 'Required' : 'Not required' }}</strong>
+            </div>
+            <div class="detail-grid__wide">
+              <label>Dropoff address</label>
+              <strong>{{ selectedStudentForDisplay?.dropoffRequired ? selectedStudentForDisplay?.dropoffAddress || '-' : '-' }}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="detail-card">
+          <h3>Payment progress</h3>
+          <div class="metric-grid">
+            <div>
+              <label>Latest signup</label>
+              <strong>{{ formatDate(selectedStudent?.latestSignupDate) }}</strong>
+            </div>
+            <div>
+              <label>Enrollment count</label>
+              <strong>{{ selectedStudent?.enrollmentCount ?? 0 }}</strong>
+            </div>
+            <div>
+              <label>Amount due</label>
+              <strong>{{ formatMoney(selectedStudent?.enrollmentAmountDue) }}</strong>
+            </div>
+            <div>
+              <label>Paid</label>
+              <strong>{{ formatMoney(selectedStudent?.enrollmentPaidAmount) }}</strong>
+            </div>
+            <div>
+              <label>Balance</label>
+              <strong :class="{ 'balance-due': numeric(selectedStudent?.enrollmentBalanceAmount) > 0 }">
+                {{ formatMoney(selectedStudent?.enrollmentBalanceAmount) }}
+              </strong>
+            </div>
+            <div>
+              <label>Status</label>
+              <el-tag size="small" :type="paymentStatusType(selectedStudent?.aggregatePaymentStatus)">
+                {{ paymentStatusLabel(selectedStudent?.aggregatePaymentStatus) }}
+              </el-tag>
+            </div>
+          </div>
+        </section>
+
+        <section class="detail-card">
+          <div class="section-title-row">
+            <h3>Registration history</h3>
+            <span>{{ studentOrders.length }} order(s)</span>
+          </div>
+          <el-table :data="studentOrders" row-key="id" class="product-table" empty-text="No enrollment orders.">
+            <el-table-column label="Order no." min-width="150" prop="enrollmentNo" />
+            <el-table-column label="Signup date" min-width="110">
+              <template #default="{ row }">{{ formatDate(row.signupDate) }}</template>
+            </el-table-column>
+            <el-table-column label="Courses" min-width="220">
+              <template #default="{ row }">{{ summarizeOrderItems(row) }}</template>
+            </el-table-column>
+            <el-table-column label="Amount due" min-width="100" align="right">
+              <template #default="{ row }">{{ formatMoney(row.amountDue) }}</template>
+            </el-table-column>
+            <el-table-column label="Paid" min-width="90" align="right">
+              <template #default="{ row }">{{ formatMoney(row.receivedAmount) }}</template>
+            </el-table-column>
+            <el-table-column label="Balance" min-width="90" align="right">
+              <template #default="{ row }">
+                <strong :class="{ 'balance-due': numeric(row.balanceAmount) > 0 }">
+                  {{ formatMoney(row.balanceAmount) }}
+                </strong>
+              </template>
+            </el-table-column>
+            <el-table-column label="Payment" min-width="110" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="paymentStatusType(row.paymentStatus)">
+                  {{ paymentStatusLabel(row.paymentStatus) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Payment timeline" min-width="520">
+              <template #default="{ row }">
+                <div v-if="paymentTimeline(row).length > 0" class="payment-timeline">
+                  <div class="payment-timeline__header">
+                    <span>Date</span>
+                    <span>Method</span>
+                    <span>Type</span>
+                    <span>Amount</span>
+                    <span>Handler</span>
+                    <span>Notes</span>
+                  </div>
+                  <div v-for="payment in paymentTimeline(row)" :key="payment.id" class="payment-timeline__row">
+                    <span>{{ formatDateTime(payment.paidAt) }}</span>
+                    <span>{{ paymentMethodName(payment.paymentMethod) }}</span>
+                    <span>{{ paymentTypeLabel(payment.paymentType) }}</span>
+                    <strong>{{ formatMoney(payment.amount) }}</strong>
+                    <span>{{ payment.handledByName || '-' }}</span>
+                    <span>{{ payment.remark || '-' }}</span>
+                  </div>
+                </div>
+                <span v-else class="muted-text">No payment records.</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Status" min-width="100" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="orderStatusType(row.orderStatus)">
+                  {{ orderStatusLabel(row.orderStatus) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Actions" min-width="210" fixed="right">
+              <template #default="{ row }">
+                <div class="table-actions">
+                  <el-button text type="primary" @click="openHistoricalForm(row)">View & print form</el-button>
+                  <el-button text type="primary" :disabled="!canRecordPayment(row)" @click="openPaymentDialog(row)">Record payment</el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+      </div>
+    </el-drawer>
+
+    <!-- Record payment dialog -->
+    <el-dialog
+      v-model="paymentDialogVisible"
+      width="760px"
+      :close-on-click-modal="false"
+      class="student-dialog"
+    >
+      <template #header>
+        <div class="dialog-header">
+          <h3 class="dialog-header__title">Record payment</h3>
+        </div>
+      </template>
+
+      <div v-if="paymentOrder" class="payment-detail">
+        <div class="metric-grid">
+          <div>
+            <label>Order no.</label>
+            <strong>{{ paymentOrder.enrollmentNo }}</strong>
+          </div>
+          <div>
+            <label>Amount due</label>
+            <strong>{{ formatMoney(paymentOrder.amountDue) }}</strong>
+          </div>
+          <div>
+            <label>Paid</label>
+            <strong>{{ formatMoney(paymentOrder.receivedAmount) }}</strong>
+          </div>
+          <div>
+            <label>Balance</label>
+            <strong class="balance-due">{{ formatMoney(paymentOrder.balanceAmount) }}</strong>
+          </div>
+        </div>
+
+        <h4>Existing payments</h4>
+        <el-table :data="paymentOrder.payments" size="small" class="product-table" empty-text="No payment records.">
+          <el-table-column label="Paid at" min-width="150">
+            <template #default="{ row }">{{ formatDateTime(row.paidAt) }}</template>
+          </el-table-column>
+          <el-table-column label="Method" min-width="120">
+            <template #default="{ row }">{{ paymentMethodName(row.paymentMethod) }}</template>
+          </el-table-column>
+          <el-table-column label="Amount" min-width="90" align="right">
+            <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
+          </el-table-column>
+          <el-table-column label="Handler" min-width="120" prop="handledByName" />
+          <el-table-column label="Notes" min-width="160" prop="remark" />
+        </el-table>
+
+        <h4>New payments</h4>
+        <div class="payment-rows">
+          <div v-for="(row, index) in paymentRows" :key="row.rowKey" class="payment-row">
+            <el-select v-model="row.paymentMethod" placeholder="Method">
+              <el-option v-for="method in paymentMethods" :key="method.methodCode" :label="method.methodName" :value="method.methodCode" />
+            </el-select>
+            <el-input-number v-model="row.amount" :min="0.01" :precision="2" :controls="false" placeholder="Amount" />
+            <el-date-picker v-model="row.paidAt" type="date" value-format="YYYY-MM-DD" placeholder="Date" />
+            <el-input v-model="row.handledByName" placeholder="Handler" />
+            <el-input v-model="row.remark" placeholder="Notes" />
+            <el-button v-if="paymentRows.length > 1" text type="danger" @click="removePaymentRow(index)">Remove</el-button>
+          </div>
+          <el-button text type="primary" @click="addPaymentRow">Add payment</el-button>
+        </div>
+        <div class="payment-total">
+          <span>Total {{ formatMoney(paymentDraftTotal) }}</span>
+          <span v-if="paymentDraftRemaining >= 0">Remaining {{ formatMoney(paymentDraftRemaining) }}</span>
+          <span v-else class="balance-due">Over by {{ formatMoney(Math.abs(paymentDraftRemaining)) }}</span>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="paymentDialogVisible = false">Cancel</el-button>
+          <el-button type="primary" :loading="paymentSubmitting" @click="submitPayments">Record payment</el-button>
+        </div>
+      </template>
+    </el-dialog>
 
     <!-- Deleted Students Dialog -->
     <el-dialog
@@ -249,101 +553,36 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, Setting } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
-import { reactive, ref, watch } from 'vue';
+import { Delete, Filter } from '@element-plus/icons-vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { computed, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 
-import FieldConfigDialog, { type FieldConfig } from '@/components/shared/FieldConfigDialog.vue';
 import {
   fetchCampuses,
   fetchDeletedStudents,
+  fetchStudent,
   fetchStudents,
+  deleteStudent,
   updateStudent,
   type StudentQuery,
   type StudentSavePayload,
 } from '@/api/base-data';
-import type { CampusItem, StudentItem } from '@/types/domain';
+import { createPaymentRecord, fetchActivePaymentMethods, fetchEnrollmentOrder, fetchEnrollmentOrders } from '@/api/enrollment';
+import { extractErrorMessage } from '@/api/http';
+import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, StudentItem } from '@/types/domain';
 
 const loading = ref(false);
 const submitting = ref(false);
 const studentDialogVisible = ref(false);
-const fieldConfigVisible = ref(false);
 const editingId = ref<string | null>(null);
 const studentFormRef = ref();
-
-// ─── Field Configuration ──────────────────────────────
-interface FieldConfigMap {
-  [key: string]: FieldConfig;
-}
-
-const defaultFieldConfig: FieldConfigMap = {
-  gender: { key: 'gender', defaultLabel: 'Gender', visible: true, customLabel: 'Gender' },
-  email: { key: 'email', defaultLabel: 'Guardian email', visible: true, customLabel: 'Guardian email' },
-  status: { key: 'status', defaultLabel: 'Status', visible: true, customLabel: 'Status' },
-  notes: { key: 'notes', defaultLabel: 'Notes', visible: false, customLabel: 'Notes' },
-  campusId: { key: 'campusId', defaultLabel: 'Campus', visible: true, customLabel: 'Campus' },
-  guardianRelationType: { key: 'guardianRelationType', defaultLabel: 'Relation', visible: false, customLabel: 'Relation' },
-};
-
-function loadFieldConfig(): FieldConfigMap {
-  try {
-    const saved = localStorage.getItem('fieldConfig:studentForm');
-    if (saved) {
-      const parsed = JSON.parse(saved) as FieldConfig[];
-      // Filter out stale keys that no longer exist in defaultFieldConfig (e.g. "grade")
-      const validKeys = new Set(Object.keys(defaultFieldConfig));
-      const map: FieldConfigMap = {};
-      parsed.forEach((f) => {
-        if (validKeys.has(f.key)) {
-          map[f.key] = f;
-        }
-      });
-      // Merge with defaults so any new default fields not yet saved are included
-      for (const key of Object.keys(defaultFieldConfig)) {
-        if (!map[key]) {
-          map[key] = { ...defaultFieldConfig[key] };
-        }
-      }
-      return map;
-    }
-  } catch {
-    // ignore
-  }
-  // Deep clone to avoid mutating the original
-  const cloned: FieldConfigMap = {};
-  for (const key of Object.keys(defaultFieldConfig)) {
-    cloned[key] = { ...defaultFieldConfig[key] };
-  }
-  return cloned;
-}
-
-const fieldConfig = reactive<FieldConfigMap>(loadFieldConfig());
-
-const configurableFields = ref<FieldConfig[]>(Object.values(fieldConfig));
-const defaultFields = ref<FieldConfig[]>(Object.values(defaultFieldConfig));
-
-watch(
-  () => fieldConfigVisible.value,
-  (val) => {
-    if (val) {
-      configurableFields.value = Object.values(fieldConfig);
-    }
-  }
-);
-
-function openFieldConfig() {
-  fieldConfigVisible.value = true;
-}
-
-function handleFieldConfigChange(fields: FieldConfig[]) {
-  fields.forEach((f) => {
-    fieldConfig[f.key].visible = f.visible;
-    fieldConfig[f.key].customLabel = f.customLabel;
-  });
-}
+const router = useRouter();
+const route = useRoute();
 
 // ─── Campus options for dropdown ────────────────────
 const campusOptions = ref<CampusItem[]>([]);
+const paymentMethods = ref<PaymentMethodItem[]>([]);
 
 async function loadCampuses() {
   try {
@@ -355,12 +594,26 @@ async function loadCampuses() {
 }
 loadCampuses();
 
+async function loadPaymentMethods() {
+  try {
+    const res = await fetchActivePaymentMethods();
+    paymentMethods.value = res.data.data ?? [];
+  } catch {
+    paymentMethods.value = [];
+  }
+}
+loadPaymentMethods();
+
 // ─── Filters & Pagination ───────────────────────────
 const filters = reactive({
   keyword: '',
-  guardian: '',
-  status: '',
+  campusId: '',
+  paymentStatus: '',
 });
+const advancedFiltersVisible = ref(false);
+const activeAdvancedFilterCount = computed(() =>
+  Number(Boolean(filters.campusId)) + Number(Boolean(filters.paymentStatus))
+);
 
 const pagination = reactive({
   page: 1,
@@ -375,10 +628,57 @@ const pagination = reactive({
 });
 
 const tableData = ref<StudentItem[]>([]);
+const selectedStudent = ref<StudentItem | null>(null);
+const studentDetail = ref<StudentItem | null>(null);
+const detailDrawerVisible = ref(false);
+const detailLoading = ref(false);
+const studentOrders = ref<EnrollmentOrderItem[]>([]);
+const studentOrderPayments = ref<Record<string, PaymentRecordItem[]>>({});
+
+const paymentDialogVisible = ref(false);
+const paymentSubmitting = ref(false);
+const paymentOrder = ref<EnrollmentOrderDetailItem | null>(null);
+const paymentRows = ref<PaymentDraft[]>([]);
+
+interface PaymentDraft {
+  rowKey: string;
+  paymentMethod: string;
+  amount: number;
+  paidAt: string;
+  handledByName: string;
+  remark: string;
+}
+
+const selectedStudentForDisplay = computed(() => studentDetail.value ?? selectedStudent.value);
+const paymentBalance = computed(() => roundMoney(paymentOrder.value?.balanceAmount ?? 0));
+const paymentDraftTotal = computed(() => roundMoney(paymentRows.value.reduce((sum, row) => sum + numeric(row.amount), 0)));
+const paymentDraftRemaining = computed(() => roundMoney(paymentBalance.value - paymentDraftTotal.value));
 
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
+}
+
+function applyRouteFilters() {
+  const keyword = getQueryValue(route.query.keyword);
+  const guardian = getQueryValue(route.query.guardian);
+  const paymentStatus = getQueryValue(route.query.paymentStatus);
+  if (keyword !== undefined) {
+    filters.keyword = keyword;
+  }
+  if (guardian !== undefined) {
+    filters.keyword = guardian;
+  }
+  if (paymentStatus !== undefined) {
+    filters.paymentStatus = paymentStatus;
+    advancedFiltersVisible.value = true;
+  }
+}
+
+function clearAdvancedFilters() {
+  filters.campusId = '';
+  filters.paymentStatus = '';
+  handleFilterChange();
 }
 
 // ─── Load Data ────────────────────────────────────
@@ -387,8 +687,8 @@ async function loadData() {
   try {
     const params: StudentQuery = {
       keyword: filters.keyword || undefined,
-      guardian: filters.guardian || undefined,
-      status: filters.status || undefined,
+      campusId: filters.campusId || undefined,
+      paymentStatus: filters.paymentStatus || undefined,
       pageNum: pagination.page,
       pageSize: pagination.size,
     };
@@ -409,14 +709,21 @@ const studentForm = reactive<StudentSavePayload>({
   gender: 'Female',
   guardianName: '',
   guardianPhone: '',
+  guardianPhone2: '',
   guardianEmail: '',
   guardianRelationType: '',
+  grade: '',
+  school: '',
   status: 'ACTIVE',
   notes: '',
   englishName: '',
   birthDate: '',
   sourceChannel: '',
   campusId: undefined,
+  pickupRequired: false,
+  pickupAddress: '',
+  dropoffRequired: false,
+  dropoffAddress: '',
 });
 
 const studentFormRules = {
@@ -431,15 +738,22 @@ function openStudentDialog(row: StudentItem) {
     studentName: row.studentName,
     gender: row.gender,
     guardianName: row.guardianName,
-    guardianPhone: row.phone ?? '',
+    guardianPhone: row.guardianPhone ?? row.phone ?? '',
+    guardianPhone2: row.guardianPhone2 ?? '',
     guardianEmail: row.guardianEmail ?? '',
     guardianRelationType: row.guardianRelationType ?? '',
+    grade: row.grade ?? '',
+    school: row.school ?? '',
     status: row.status,
     notes: row.notes ?? '',
     englishName: row.englishName ?? '',
     birthDate: row.birthDate ?? '',
     sourceChannel: row.sourceChannel ?? '',
     campusId: row.campusId ?? undefined,
+    pickupRequired: Boolean(row.pickupRequired),
+    pickupAddress: row.pickupAddress ?? '',
+    dropoffRequired: Boolean(row.dropoffRequired),
+    dropoffAddress: row.dropoffAddress ?? '',
   });
   // Clear any previous validation errors when opening dialog
   studentFormRef.value?.clearValidate();
@@ -463,6 +777,321 @@ async function handleStudentSubmit() {
   }
 }
 
+async function handleDeleteStudent(row: StudentItem) {
+  try {
+    await ElMessageBox.confirm(
+      `Delete student "${row.studentName}"? This keeps their historical records in the Deleted list.`,
+      'Confirm delete',
+      { type: 'warning' },
+    );
+    await deleteStudent(row.id);
+    ElMessage.success('Student deleted.');
+    await loadData();
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') {
+      return;
+    }
+    ElMessage.error(extractErrorMessage(error));
+  }
+}
+
+// ─── Student detail and enrollment history ─────────
+async function openStudentDetail(row: StudentItem) {
+  selectedStudent.value = row;
+  studentDetail.value = null;
+  studentOrders.value = [];
+  studentOrderPayments.value = {};
+  detailDrawerVisible.value = true;
+  detailLoading.value = true;
+  try {
+    const [studentRes] = await Promise.all([
+      fetchStudent(row.id),
+      loadStudentOrderHistory(row.id),
+    ]);
+    studentDetail.value = studentRes.data.data;
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    detailLoading.value = false;
+  }
+}
+
+async function openStudentFromRoute() {
+  const studentId = getQueryValue(route.query.studentId);
+  if (!studentId) {
+    return;
+  }
+  try {
+    const row = tableData.value.find((item) => String(item.id) === studentId);
+    if (row) {
+      await openStudentDetail(row);
+    } else {
+      const res = await fetchStudent(studentId);
+      await openStudentDetail(res.data.data);
+    }
+    await openPaymentFromRouteAction();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  }
+}
+
+async function openPaymentFromRouteAction() {
+  if (getQueryValue(route.query.action) !== 'payment') {
+    return;
+  }
+  const payableOrder = studentOrders.value.find(canRecordPayment);
+  if (!payableOrder) {
+    ElMessage.info('No unpaid confirmed order is available for this student.');
+    return;
+  }
+  await openPaymentDialog(payableOrder);
+}
+
+async function reloadCurrentStudentContext() {
+  await loadData();
+  if (!selectedStudent.value) {
+    return;
+  }
+  const latest = tableData.value.find((item) => item.id === selectedStudent.value?.id);
+  if (latest) {
+    selectedStudent.value = latest;
+  }
+  await loadStudentOrderHistory(selectedStudent.value.id);
+}
+
+async function loadStudentOrderHistory(studentId: StudentItem['id']) {
+  const ordersRes = await fetchEnrollmentOrders({ studentId, pageNum: 1, pageSize: 100 });
+  const orders = ordersRes.data.data.records ?? [];
+  studentOrders.value = orders;
+  if (orders.length === 0) {
+    studentOrderPayments.value = {};
+    return;
+  }
+
+  const detailResponses = await Promise.all(orders.map((order) => fetchEnrollmentOrder(order.id)));
+  studentOrderPayments.value = Object.fromEntries(
+    detailResponses.map((res, index) => [String(orders[index].id), res.data.data.payments ?? []])
+  );
+}
+
+function openHistoricalForm(row: EnrollmentOrderItem) {
+  router.push({ name: 'registration', query: { orderId: row.id } });
+}
+
+function startNewRegistration() {
+  if (!selectedStudent.value) {
+    return;
+  }
+  detailDrawerVisible.value = false;
+  router.push({
+    name: 'registration',
+    query: { studentId: selectedStudent.value.id },
+  });
+}
+
+function canRecordPayment(row: EnrollmentOrderItem) {
+  return row.orderStatus === 'CONFIRMED'
+    && row.paymentStatus !== 'PAID'
+    && row.paymentStatus !== 'REFUNDED'
+    && numeric(row.balanceAmount) > 0;
+}
+
+async function openPaymentDialog(row: EnrollmentOrderItem) {
+  try {
+    const res = await fetchEnrollmentOrder(row.id);
+    paymentOrder.value = res.data.data;
+    paymentRows.value = [createPaymentDraft(Math.max(0, numeric(paymentOrder.value.balanceAmount)))];
+    paymentDialogVisible.value = true;
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  }
+}
+
+function createPaymentDraft(amount = 0): PaymentDraft {
+  return {
+    rowKey: `payment-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    paymentMethod: paymentMethods.value[0]?.methodCode ?? 'CASH',
+    amount: roundMoney(amount),
+    paidAt: currentDate(),
+    handledByName: '',
+    remark: '',
+  };
+}
+
+function addPaymentRow() {
+  paymentRows.value.push(createPaymentDraft());
+}
+
+function removePaymentRow(index: number) {
+  paymentRows.value.splice(index, 1);
+}
+
+async function submitPayments() {
+  if (!paymentOrder.value) {
+    return;
+  }
+  const rows = paymentRows.value
+    .map((row) => ({
+      ...row,
+      amount: roundMoney(row.amount),
+      handledByName: row.handledByName.trim(),
+      remark: row.remark.trim(),
+    }))
+    .filter((row) => row.amount > 0);
+  if (rows.length === 0) {
+    ElMessage.warning('Add at least one payment amount.');
+    return;
+  }
+  const missing = rows.find((row) => !row.paymentMethod || !row.paidAt || !row.handledByName);
+  if (missing) {
+    ElMessage.warning('Payment method, date, and handler are required for every payment.');
+    return;
+  }
+  if (paymentDraftTotal.value > paymentBalance.value) {
+    ElMessage.warning('New payments cannot exceed the current balance.');
+    return;
+  }
+
+  paymentSubmitting.value = true;
+  try {
+    await createPaymentRecord({
+      enrollmentOrderId: paymentOrder.value.id,
+      splits: rows.map((row) => ({
+        paymentMethod: row.paymentMethod,
+        amount: row.amount,
+        paidAt: toLocalDateTime(row.paidAt),
+        handledByName: row.handledByName,
+        remark: row.remark || undefined,
+      })),
+    });
+    ElMessage.success('Payment recorded.');
+    const orderId = paymentOrder.value.id;
+    const updatedOrder = await fetchEnrollmentOrder(orderId);
+    paymentOrder.value = updatedOrder.data.data;
+    await reloadCurrentStudentContext();
+    paymentDialogVisible.value = false;
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    paymentSubmitting.value = false;
+  }
+}
+
+function summarizeOrderItems(row: EnrollmentOrderItem) {
+  const items = row.items ?? [];
+  if (items.length === 0) {
+    return row.courseProductName ?? row.className ?? '-';
+  }
+  return items
+    .slice(0, 2)
+    .map((item) => item.detail || item.registerClass || item.courseType || 'Course')
+    .join('; ')
+    + (items.length > 2 ? ` +${items.length - 2}` : '');
+}
+
+function paymentMethodName(code: string) {
+  return paymentMethods.value.find((item) => item.methodCode === code)?.methodName ?? code;
+}
+
+function paymentTypeLabel(type?: string) {
+  return type === 'REFUND' ? 'REFUND' : 'PAYMENT';
+}
+
+function paymentTimeline(row: EnrollmentOrderItem) {
+  return studentOrderPayments.value[String(row.id)] ?? [];
+}
+
+function paymentStatusType(status?: string) {
+  if (status === 'PAID') return 'success';
+  if (status === 'PARTIAL') return 'warning';
+  if (status === 'REFUNDED') return 'danger';
+  if (status === 'NO_ENROLLMENT' || !status) return 'info';
+  return 'info';
+}
+
+function paymentStatusLabel(status?: string) {
+  const map: Record<string, string> = {
+    UNPAID: 'Unpaid',
+    PARTIAL: 'Partial',
+    PAID: 'Paid',
+    REFUNDED: 'Refunded',
+    NO_ENROLLMENT: 'No enrollment',
+  };
+  return map[status ?? 'NO_ENROLLMENT'] ?? status ?? 'No enrollment';
+}
+
+function guardianRelationLabel(value?: string) {
+  const map: Record<string, string> = {
+    MOTHER: 'Mother',
+    FATHER: 'Father',
+    GRANDPARENT: 'Grandparent',
+    OTHER: 'Other',
+  };
+  return value ? map[value] ?? value : '-';
+}
+
+function orderStatusType(status?: string) {
+  if (status === 'CONFIRMED') return 'success';
+  if (status === 'CANCELLED') return 'danger';
+  if (status === 'CLOSED') return 'info';
+  return 'warning';
+}
+
+function orderStatusLabel(status?: string) {
+  const map: Record<string, string> = {
+    DRAFT: 'Draft',
+    CONFIRMED: 'Confirmed',
+    CANCELLED: 'Cancelled',
+    CLOSED: 'Closed',
+  };
+  return status ? map[status] ?? status : '-';
+}
+
+function numeric(value: unknown) {
+  const result = Number(value);
+  return Number.isFinite(result) ? result : 0;
+}
+
+function roundMoney(value: number) {
+  return Math.round((numeric(value) + Number.EPSILON) * 100) / 100;
+}
+
+function formatMoney(value: unknown) {
+  return `$${roundMoney(numeric(value)).toFixed(2)}`;
+}
+
+function formatDate(value?: string) {
+  if (!value) {
+    return '-';
+  }
+  return value.includes('T') ? value.slice(0, 10) : value;
+}
+
+function formatDateTime(value?: string) {
+  if (!value) {
+    return '-';
+  }
+  return value.replace('T', ' ').slice(0, 16);
+}
+
+function currentDate() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
+function toLocalDateTime(date: string) {
+  return `${date}T00:00:00`;
+}
+
+function getQueryValue(value: unknown) {
+  if (Array.isArray(value)) {
+    return typeof value[0] === 'string' ? value[0] : undefined;
+  }
+  return typeof value === 'string' ? value : undefined;
+}
+
 // ─── Deleted Students Dialog ───────────────────────
 const deletedDialogVisible = ref(false);
 const deletedLoading = ref(false);
@@ -483,7 +1112,20 @@ async function openDeletedDialog() {
 }
 
 // ─── Init ──────────────────────────────────────────
-loadData();
+async function initializeStudentPage() {
+  applyRouteFilters();
+  await loadData();
+  await openStudentFromRoute();
+}
+
+watch(
+  () => route.query,
+  () => {
+    void initializeStudentPage();
+  }
+);
+
+void initializeStudentPage();
 </script>
 
 <style scoped>
@@ -513,18 +1155,66 @@ loadData();
   gap: 8px;
 }
 
-.filters {
+.student-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-bottom: 12px;
 }
 
-.filters__item {
-  margin-right: 16px;
-  margin-bottom: 0;
+.student-search-bar :deep(.el-input) {
+  width: min(440px, 100%);
 }
 
-.filters__item :deep(.el-form-item__label) {
+.student-search-bar__filters {
   color: #606266;
-  font-size: 13px;
+}
+
+.student-search-bar__filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 2px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #ecf5ff;
+  color: #409eff;
+  font-size: 11px;
+}
+
+.student-advanced-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fafcff;
+}
+
+.student-advanced-filters :deep(.el-select) {
+  width: 190px;
+}
+
+@media (max-width: 640px) {
+  .student-search-bar,
+  .student-advanced-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .student-search-bar :deep(.el-input),
+  .student-advanced-filters :deep(.el-select) {
+    width: 100%;
+  }
+
+  .student-search-bar__button,
+  .student-search-bar__filters {
+    align-self: flex-start;
+  }
 }
 
 .product-table {
@@ -553,6 +1243,7 @@ loadData();
 .table-actions {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
 .table-footer {
@@ -574,6 +1265,149 @@ loadData();
   margin: 0 0 12px;
   font-size: 12px;
   color: #909399;
+}
+
+.balance-due {
+  color: var(--el-color-danger);
+}
+
+.student-detail {
+  display: grid;
+  gap: 16px;
+  min-height: 100%;
+}
+
+.detail-header,
+.section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.detail-header__actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.detail-header h2 {
+  margin: 0;
+  color: #303133;
+  font-size: 22px;
+}
+
+.detail-header p {
+  margin: 5px 0 0;
+  color: #909399;
+  font-size: 13px;
+}
+
+.detail-card {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.detail-card h3,
+.payment-detail h4 {
+  margin: 0;
+  color: #303133;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.detail-grid,
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.detail-grid__wide {
+  grid-column: span 2;
+}
+
+.detail-grid label,
+.metric-grid label {
+  display: block;
+  margin-bottom: 4px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.detail-grid strong,
+.metric-grid strong {
+  color: #303133;
+  font-size: 13px;
+}
+
+.section-title-row span {
+  color: #909399;
+  font-size: 12px;
+}
+
+.muted-text {
+  color: #909399;
+  font-size: 12px;
+}
+
+.payment-timeline {
+  display: grid;
+  gap: 4px;
+  min-width: 480px;
+  font-size: 12px;
+}
+
+.payment-timeline__header,
+.payment-timeline__row {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.7fr 0.8fr 1fr 1.3fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.payment-timeline__header {
+  color: #909399;
+  font-weight: 600;
+}
+
+.payment-timeline__row {
+  color: #606266;
+}
+
+.payment-timeline__row strong {
+  color: #303133;
+  font-weight: 600;
+}
+
+.payment-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.payment-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.payment-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.8fr) 110px 140px minmax(110px, 0.8fr) minmax(130px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.payment-total {
+  display: flex;
+  justify-content: flex-end;
+  gap: 18px;
+  color: #606266;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 /* Student dialog */
@@ -608,36 +1442,38 @@ loadData();
   color: #303133;
 }
 
-.dialog-header__settings {
-  color: #909399;
-}
-
-.dialog-header__settings:hover {
-  color: #409eff;
-}
-
 .student-form__row {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px 14px;
 }
 
+.student-form__section-title {
+  margin: 18px 0 10px;
+  color: #303133;
+  font-size: 13px;
+}
+
+.student-form__section-title:first-child {
+  margin-top: 0;
+}
+
 .student-form__full {
   grid-column: 1 / -1;
 }
 
-.student-form__half {
-  /* each item takes one column */
+.student-form__third {
+  grid-column: span 1;
 }
 
-/* Field Config dialog */
-.field-config-dialog :deep(.el-dialog__header) {
-  border-bottom: 1px solid #ebeef5;
-  padding: 14px 20px;
+.student-form__row--three {
+  grid-template-columns: repeat(3, 1fr);
 }
 
-.field-config-dialog :deep(.el-dialog__footer) {
-  border-top: 1px solid #ebeef5;
-  padding: 12px 20px;
+@media (max-width: 640px) {
+  .student-form__row,
+  .student-form__row--three {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

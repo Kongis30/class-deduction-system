@@ -2,8 +2,26 @@
   <div class="page-stack">
     <section class="classroom-calendar">
       <div class="classroom-calendar__header">
-        <span class="classroom-calendar__title">Classroom Occupancy</span>
+        <div>
+          <span class="classroom-calendar__title">Room Calendar</span>
+          <p class="classroom-calendar__note">Select a classroom to review its weekly occupancy. Missing rooms can be assigned from the queue below.</p>
+        </div>
+        <div class="classroom-calendar__actions">
+          <el-button @click="goClassrooms">Manage rooms</el-button>
+        </div>
       </div>
+
+      <details class="classroom-help">
+        <summary>How to use this page</summary>
+        <div class="classroom-help__content">
+          <ol>
+            <li>Select a room from the left list to see its weekly occupancy calendar.</li>
+            <li>Use the arrows or date picker to check another week. Marked slots show occupied or conflicting times.</li>
+            <li>Open <strong>Room assignment queue</strong> only when scheduled classes or lessons still need a room.</li>
+            <li>Click a timetable slot to view the lesson details. Use <strong>Manage rooms</strong> only to add, edit, or deactivate room records.</li>
+          </ol>
+        </div>
+      </details>
 
       <div class="classroom-calendar__body">
         <!-- Left: Classroom list -->
@@ -18,7 +36,7 @@
           </div>
           <div class="classroom-list-panel__body">
             <div v-if="filteredClassrooms.length === 0" class="classroom-list-panel__empty">
-              {{ classrooms.length === 0 ? 'Loading...' : 'No classrooms found' }}
+              {{ classroomListEmptyText }}
             </div>
             <div
               v-for="c in filteredClassrooms"
@@ -70,17 +88,140 @@
                 {{ selectedClassroomName }}
               </span>
             </div>
-            <WeeklyTimeSelector
-              v-model="emptySlots"
-              :occupied-slots="occupiedSlots"
-              :week-start-date="weekMonday"
-              :readonly="true"
-              :hide-hint="true"
-              @cell-click="onCellClick"
+            <el-alert
+              v-if="occupancyError"
+              class="calendar-alert"
+              type="error"
+              :closable="false"
+              show-icon
+              :title="occupancyError"
             />
+            <div class="room-occupancy-scroll">
+              <div class="calendar-help">
+                <span><i class="calendar-help__mark calendar-help__mark--occupied" />Occupied or conflicting slots</span>
+                <span>Open the room assignment queue below only for lessons that still need a room.</span>
+              </div>
+              <WeeklyTimeSelector
+                v-model="emptySlots"
+                :occupied-slots="occupiedSlots"
+                :week-start-date="weekMonday"
+                :readonly="true"
+                :hide-hint="true"
+                @cell-click="onCellClick"
+              />
+              <div v-if="occupancyRows.length === 0 && !occupancyError" class="calendar-empty-state empty-state">
+                <strong>No room occupancy for this week.</strong>
+                <span>This is expected when no lessons use this room this week. Check the room assignment queue for lessons that still need a room.</span>
+              </div>
+              <el-table
+                :data="occupancyRows"
+                size="small"
+                class="occupancy-table"
+                empty-text="No occupancy rows for this week."
+              >
+                <el-table-column label="Start" min-width="145" prop="startLabel" />
+                <el-table-column label="End" min-width="145" prop="endLabel" />
+                <el-table-column label="Course / Student" min-width="180">
+                  <template #default="{ row }">
+                    <div class="cell-stack">
+                      <strong>{{ row.courseLabel }}</strong>
+                      <span>{{ row.studentName || '—' }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Teacher" min-width="120" prop="teacherName" />
+                <el-table-column label="Status" min-width="110">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="planningStatusTag(row.planningStatus)">
+                      {{ planningStatusLabel(row.planningStatus) }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
           </template>
         </main>
       </div>
+
+      <details class="pending-panel">
+        <summary class="pending-panel__summary">
+          <div>
+            <strong>Room assignment queue</strong>
+            <span>Open only when scheduled classes or lessons still need a classroom.</span>
+          </div>
+          <el-tag size="small" :type="pendingRows.length ? 'warning' : 'info'">
+            {{ pendingRows.length }} pending
+          </el-tag>
+        </summary>
+        <div class="pending-panel__content">
+          <div class="pending-panel__toolbar">
+            <el-button size="small" :loading="pendingLoading" @click="loadPendingAssignments">Refresh</el-button>
+          </div>
+          <el-alert
+            v-if="pendingError"
+            class="pending-panel__alert"
+            type="error"
+            :closable="false"
+            show-icon
+            :title="pendingError"
+          />
+          <el-table
+            v-loading="pendingLoading"
+            :data="pendingRows"
+            size="small"
+            class="pending-table"
+            empty-text="No pending classroom assignments."
+          >
+            <el-table-column label="Type" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.targetType === 'CLASS_GROUP' ? 'warning' : 'info'">
+                  {{ row.targetType === 'CLASS_GROUP' ? 'Class' : 'Lesson' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Course / Student" min-width="220">
+              <template #default="{ row }">
+                <div class="cell-stack">
+                  <strong>{{ row.courseLabel }}</strong>
+                  <span>{{ row.studentName || row.scheduleDesc || '—' }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="Teacher" min-width="120" prop="teacherName" />
+            <el-table-column label="Next time" min-width="150" prop="timeLabel" />
+            <el-table-column label="Classroom" min-width="190">
+              <template #default="{ row }">
+                <el-select
+                  v-model="pendingClassroomSelections[row.rowKey]"
+                  placeholder="Select room"
+                  filterable
+                  style="width: 170px;"
+                >
+                  <el-option
+                    v-for="room in classrooms"
+                    :key="room.id"
+                    :label="room.roomName"
+                    :value="room.id"
+                  />
+                </el-select>
+              </template>
+            </el-table-column>
+            <el-table-column label="Action" width="110" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="savingPendingKey === row.rowKey"
+                  :disabled="!pendingClassroomSelections[row.rowKey]"
+                  @click="savePendingAssignment(row)"
+                >
+                  Save
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </details>
     </section>
 
     <!-- Detail dialog -->
@@ -150,17 +291,32 @@
 import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
+import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms } from '@/api/base-data';
-import { fetchClassroomOccupancy, type ClassroomOccupancyQuery } from '@/api/schedule';
-import type { ClassroomOccupancyItem, EntityId } from '@/types/domain';
+import {
+  backfillPendingClassroom,
+  fetchClassroomOccupancy,
+  fetchPendingClassroomAssignments,
+  type ClassroomOccupancyQuery,
+} from '@/api/schedule';
+import type { ClassroomOccupancyItem, EntityId, PendingClassroomAssignmentItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 
+const route = useRoute();
+const router = useRouter();
+
 // ─── Classrooms ────────────────────────────────
 const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
+const classroomsLoading = ref(false);
+const classroomLoadError = ref('');
 const searchText = ref('');
 const selectedClassroomId = ref<EntityId | null>(null);
+
+// Monotonic token guarding against stale responses when switching classrooms/weeks quickly.
+let occupancyRequestSeq = 0;
 
 const filteredClassrooms = computed(() => {
   const q = searchText.value.trim().toLowerCase();
@@ -168,15 +324,96 @@ const filteredClassrooms = computed(() => {
   return classrooms.value.filter(c => c.roomName.toLowerCase().includes(q));
 });
 
+const classroomListEmptyText = computed(() => {
+  if (classroomsLoading.value) return 'Loading classrooms...';
+  if (classroomLoadError.value) return classroomLoadError.value;
+  if (classrooms.value.length === 0) return 'No classrooms yet. Add rooms when schedules are ready to backfill.';
+  return 'No classrooms match this search.';
+});
+
 const selectedClassroomName = computed(() => {
   const c = classrooms.value.find(c => c.id === selectedClassroomId.value);
   return c?.roomName ?? '';
 });
 
+// ─── Pending classroom assignments ────────────
+const pendingLoading = ref(false);
+const pendingError = ref('');
+const pendingAssignments = ref<PendingClassroomAssignmentItem[]>([]);
+const pendingClassroomSelections = ref<Record<string, EntityId>>({});
+const savingPendingKey = ref('');
+
+const pendingRows = computed(() => pendingAssignments.value.map(item => {
+  const courseLabel = item.className || item.packageName || item.lessonNo || 'Pending assignment';
+  const timeLabel = item.plannedStartAt
+    ? dayjs(item.plannedStartAt).format('MMM D HH:mm')
+    : 'No generated lesson yet';
+  return {
+    ...item,
+    rowKey: pendingRowKey(item),
+    courseLabel,
+    teacherName: item.teacherName || '—',
+    timeLabel,
+  };
+}));
+
+function pendingRowKey(item: Pick<PendingClassroomAssignmentItem, 'targetType' | 'targetId'>) {
+  return `${item.targetType}:${item.targetId}`;
+}
+
+async function loadPendingAssignments() {
+  pendingLoading.value = true;
+  pendingError.value = '';
+  try {
+    const res = await fetchPendingClassroomAssignments();
+    pendingAssignments.value = res.data.data ?? [];
+    const nextSelections: Record<string, EntityId> = {};
+    for (const item of pendingAssignments.value) {
+      const key = pendingRowKey(item);
+      if (pendingClassroomSelections.value[key]) {
+        nextSelections[key] = pendingClassroomSelections.value[key];
+      }
+    }
+    pendingClassroomSelections.value = nextSelections;
+  } catch (error) {
+    pendingError.value = `Failed to load pending assignments: ${extractErrorMessage(error)}`;
+    ElMessage.error(pendingError.value);
+  } finally {
+    pendingLoading.value = false;
+  }
+}
+
+async function savePendingAssignment(row: PendingClassroomAssignmentItem & { rowKey: string }) {
+  const classroomId = pendingClassroomSelections.value[row.rowKey];
+  if (!classroomId) return;
+  savingPendingKey.value = row.rowKey;
+  try {
+    await backfillPendingClassroom({
+      targetType: row.targetType,
+      targetId: row.targetId,
+      classroomId,
+    });
+    ElMessage.success('Classroom assigned.');
+    await loadPendingAssignments();
+    if (selectedClassroomId.value === classroomId) {
+      await loadData();
+    }
+  } catch (error) {
+    ElMessage.error(`Failed to assign classroom: ${extractErrorMessage(error)}`);
+  } finally {
+    savingPendingKey.value = '';
+  }
+}
+
 function onClassroomSelect(id: EntityId) {
   selectedClassroomId.value = id;
   weekOffset.value = 0;
+  router.replace({ path: route.path, query: { ...route.query, classroomId: id } });
   loadData();
+}
+
+function goClassrooms() {
+  router.push('/classrooms');
 }
 
 // ─── Week navigation ───────────────────────────
@@ -219,6 +456,7 @@ function jumpToDate(date: string | null) {
 
 // ─── Occupancy data ────────────────────────────
 const loading = ref(false);
+const occupancyError = ref('');
 const occupancyItems = ref<ClassroomOccupancyItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
 
@@ -241,28 +479,49 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
   return result;
 });
 
+const occupancyRows = computed(() => occupancyItems.value
+  .filter(o => o.planningStatus !== 'CANCELLED')
+  .slice()
+  .sort((a, b) => dayjs(a.plannedStartAt).valueOf() - dayjs(b.plannedStartAt).valueOf())
+  .map(o => ({
+    occurrenceId: o.occurrenceId,
+    courseLabel: o.className || o.packageName || o.lessonNo || 'Lesson',
+    studentName: o.studentName,
+    teacherName: o.teacherName || '—',
+    planningStatus: o.planningStatus,
+    startLabel: dayjs(o.plannedStartAt).format('MMM D HH:mm'),
+    endLabel: dayjs(o.plannedEndAt).format('MMM D HH:mm'),
+  })));
+
 async function loadData() {
   if (!selectedClassroomId.value) return;
+  const requestId = ++occupancyRequestSeq;
+  const classroomId = selectedClassroomId.value;
   loading.value = true;
+  occupancyError.value = '';
   try {
     const monday = dayjs(weekMonday.value);
     const sunday = monday.add(6, 'day').endOf('day');
     const params: ClassroomOccupancyQuery = {
-      classroomId: selectedClassroomId.value,
+      classroomId,
       startAt: monday.format('YYYY-MM-DDTHH:mm:ss'),
       endAt: sunday.format('YYYY-MM-DDTHH:mm:ss'),
       pageNum: 1,
       pageSize: 200,
     };
-    // 教室占用按实际课次返回，班课课次同样带 plannedClassroomId，已包含在内，
-    // 无需再依赖班课的重复模板（scheduleSlots）。
     const res = await fetchClassroomOccupancy(params);
+    // Discard if a newer selection/week has superseded this request.
+    if (requestId !== occupancyRequestSeq) return;
     occupancyItems.value = res.data.data.records;
-  } catch {
-    ElMessage.error('Failed to load occupancy data.');
+  } catch (error) {
+    if (requestId !== occupancyRequestSeq) return;
+    occupancyError.value = `Failed to load occupancy data: ${extractErrorMessage(error)}`;
+    ElMessage.error(occupancyError.value);
     occupancyItems.value = [];
   } finally {
-    loading.value = false;
+    if (requestId === occupancyRequestSeq) {
+      loading.value = false;
+    }
   }
 }
 
@@ -301,11 +560,36 @@ function planningStatusLabel(status: string) {
 
 // ─── Init ──────────────────────────────────────
 onMounted(async () => {
+  classroomsLoading.value = true;
+  classroomLoadError.value = '';
   try {
     const res = await fetchAllClassrooms();
     classrooms.value = (res.data.data as any[]).map(c => ({ id: c.id, roomName: c.roomName }));
-  } catch { /* silent */ }
+    selectInitialClassroom();
+    await loadPendingAssignments();
+  } catch (error) {
+    classroomLoadError.value = `Failed to load classrooms: ${extractErrorMessage(error)}`;
+    ElMessage.error(classroomLoadError.value);
+  } finally {
+    classroomsLoading.value = false;
+  }
 });
+
+function selectInitialClassroom() {
+  const queryId = resolveQueryId(route.query.classroomId);
+  if (!queryId) return;
+  const match = classrooms.value.find(c => c.id === queryId);
+  if (!match) return;
+  selectedClassroomId.value = match.id;
+  loadData();
+}
+
+function resolveQueryId(value: unknown): EntityId | null {
+  if (Array.isArray(value)) {
+    return typeof value[0] === 'string' ? value[0] : null;
+  }
+  return typeof value === 'string' ? value : null;
+}
 </script>
 
 <style scoped>
@@ -317,8 +601,19 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  height: calc(100vh - 120px);
-  min-height: 600px;
+  height: max(calc(100vh - 120px), 760px);
+  min-height: 760px;
+  overflow: hidden;
+}
+
+@media (max-width: 1080px) {
+  .page-stack {
+    overflow-x: auto;
+  }
+
+  .classroom-calendar {
+    min-width: 1020px;
+  }
 }
 
 .classroom-calendar__header {
@@ -335,11 +630,116 @@ onMounted(async () => {
   color: #1a1a1a;
 }
 
+.classroom-calendar__note {
+  margin: 3px 0 0;
+  color: #606266;
+  font-size: 12px;
+}
+
+.classroom-calendar__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.classroom-help {
+  flex-shrink: 0;
+  border: 1px solid #d9e2ec;
+  border-radius: 6px;
+  background: #fafcff;
+}
+
+.classroom-help summary {
+  padding: 9px 12px;
+  color: #334155;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.classroom-help__content {
+  padding: 0 14px 10px 32px;
+  border-top: 1px solid #eef2f7;
+  color: #606266;
+  font-size: 12px;
+}
+
+.classroom-help__content ol {
+  margin: 9px 0 0;
+  padding-left: 16px;
+}
+
+.classroom-help__content li {
+  margin: 4px 0;
+}
+
+.classroom-help__content strong {
+  color: #303133;
+}
+
+.pending-panel {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  background: #fafcff;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.pending-panel__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pending-panel__summary div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pending-panel__summary strong {
+  color: #303133;
+  font-size: 13px;
+}
+
+.pending-panel__summary div > span {
+  color: #606266;
+  font-size: 12px;
+}
+
+.pending-panel__content {
+  padding: 0 12px 12px;
+  overflow-x: auto;
+}
+
+.pending-panel__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.pending-panel__alert {
+  margin-bottom: 10px;
+}
+
+.pending-table {
+  min-width: 960px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
 .classroom-calendar__body {
   display: flex;
   gap: 16px;
   flex: 1;
   min-height: 0;
+  min-width: 980px;
+  overflow: hidden;
 }
 
 /* ── Left panel: Classroom list ─────────────── */
@@ -409,9 +809,12 @@ onMounted(async () => {
 
 /* ── Right panel: Calendar ──────────────────── */
 .calendar-panel {
+  display: flex;
+  flex-direction: column;
   flex: 1;
   min-width: 0;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .calendar-empty,
@@ -433,6 +836,7 @@ onMounted(async () => {
   gap: 12px;
   margin-bottom: 10px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .calendar-controls__nav {
@@ -452,6 +856,93 @@ onMounted(async () => {
   font-size: 13px;
   font-weight: 500;
   color: #409eff;
+}
+
+.calendar-alert {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.room-occupancy-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.room-occupancy-scroll :deep(.weekly-time-selector),
+.occupancy-table {
+  min-width: 760px;
+}
+
+.calendar-help {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: #606266;
+  font-size: 12px;
+}
+
+.calendar-help span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.calendar-help__mark {
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border: 1px solid #ffd0cc;
+  border-radius: 2px;
+}
+
+.calendar-help__mark--occupied {
+  background: repeating-linear-gradient(
+    -45deg,
+    #fff1f0,
+    #fff1f0 4px,
+    #ffe8e6 4px,
+    #ffe8e6 8px
+  );
+}
+
+.calendar-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.calendar-empty-state span {
+  color: #606266;
+}
+
+.occupancy-table {
+  margin-top: 14px;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.cell-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cell-stack strong {
+  color: #303133;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.cell-stack span {
+  color: #909399;
+  font-size: 12px;
 }
 
 /* ── Dialog ─────────────────────────────────── */

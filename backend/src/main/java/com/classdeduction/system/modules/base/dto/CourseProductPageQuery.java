@@ -21,4 +21,7 @@ public class CourseProductPageQuery extends PageQuery {
 
     @Schema(description = "Teaching mode", example = "ONE_ON_ONE")
     private String teachingMode;
+
+    @Schema(description = "Course type", example = "SATURDAY")
+    private String courseType;
 }

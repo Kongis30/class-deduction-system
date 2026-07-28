@@ -1,6 +1,6 @@
 <template>
   <div class="pr-page">
-    <!-- 左侧老师列表 -->
+
     <aside class="pr-sidebar">
       <div class="pr-sidebar__search">
         <el-input v-model="teacherKeyword" placeholder="Search teacher..." clearable size="small" />
@@ -22,7 +22,7 @@
       </div>
     </aside>
 
-    <!-- 右侧内容 -->
+
     <main class="pr-content">
       <div v-if="!selectedTeacherId" class="pr-content__placeholder">
         Select a teacher from the left panel to set their hourly rates.
@@ -35,7 +35,7 @@
             <span class="pr-content__no">{{ selectedTeacher.teacherNo }}</span>
           </div>
           <div class="pr-content__hint">
-            Set hourly rate for each course product. Only products with a rate &gt; $0 will be used in payment calculation.
+            Set a default hourly rate by course, then add a student override only when a one-on-one student has a different rate.
           </div>
         </div>
 
@@ -90,10 +90,29 @@
             </template>
           </el-table-column>
         </el-table>
+
+        <section class="pr-overrides">
+          <div class="pr-overrides__heading">
+            <strong>Student-specific overrides</strong>
+            <span>Overrides take precedence over the default course rate during 1-on-1 settlement.</span>
+          </div>
+          <el-table :data="studentOverrideRows" size="small" class="pr-table" empty-text="No student-specific overrides.">
+            <el-table-column label="Student" min-width="160" prop="studentName" />
+            <el-table-column label="Course product" min-width="180" prop="productName" />
+            <el-table-column label="Hourly rate" width="130" align="right">
+              <template #default="{ row }">${{ row.hourlyRate.toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="Action" width="90" fixed="right">
+              <template #default="{ row }">
+                <el-button text type="primary" size="small" @click="openOverrideDialog(row)">Edit</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
       </template>
     </main>
 
-    <!-- ─── 编辑单价弹窗 ──────────────────────────── -->
+
     <el-dialog
       v-model="editDialogVisible"
       width="400px"
@@ -110,6 +129,18 @@
           <span>{{ editingRow.subjectName }}</span>
         </div>
         <el-form label-position="top" class="pr-dialog__form">
+          <el-form-item label="Rate scope">
+            <el-select v-model="editingStudentId" clearable placeholder="Default for all students" style="width: 100%;">
+              <el-option label="Default for all students" :value="undefined" />
+              <el-option
+                v-for="student in allStudents"
+                :key="student.id"
+                :label="student.studentName"
+                :value="student.id"
+              />
+            </el-select>
+            <div class="pr-dialog__hint">Choose a student only to create a 1-on-1 override.</div>
+          </el-form-item>
           <el-form-item label="Hourly Rate ($)">
             <el-input-number
               v-model="editingRate"
@@ -147,7 +178,7 @@ import { InfoFilled } from '@element-plus/icons-vue';
 import { computed, onMounted, ref } from 'vue';
 
 import { fetchPayRates, savePayRate, type TeacherPayRateSavePayload } from '@/api/finance';
-import { fetchAllTeachers } from '@/api/base-data';
+import { fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
 import { fetchCourseProducts } from '@/api/base-data';
 import type { EntityId } from '@/types/domain';
 
@@ -157,6 +188,7 @@ const loading = ref(false);
 
 const allTeachers = ref<{ id: EntityId; teacherName: string; teacherNo: string }[]>([]);
 const allProducts = ref<{ id: EntityId; productCode: string; productName: string; subjectName: string }[]>([]);
+const allStudents = ref<{ id: EntityId; studentName: string }[]>([]);
 
 const selectedTeacherId = ref<EntityId | null>(null);
 
@@ -170,20 +202,32 @@ interface RateRow {
   hourlyRate: number;
   originalRate: number; // for change detection
   notes?: string;
+  studentId?: EntityId;
+  studentName?: string;
 }
 
 const rateRows = ref<RateRow[]>([]);
+const studentOverrideRows = ref<RateRow[]>([]);
 const savingProductId = ref<EntityId | null>(null);
 
-// ─── 编辑弹窗 ──────────────────────────────────────────
+
 
 const editDialogVisible = ref(false);
 const editingRow = ref<RateRow | null>(null);
 const editingRate = ref(0);
+const editingStudentId = ref<EntityId | undefined>();
 
 function openEditDialog(row: RateRow) {
   editingRow.value = row;
   editingRate.value = row.hourlyRate;
+  editingStudentId.value = undefined;
+  editDialogVisible.value = true;
+}
+
+function openOverrideDialog(row: RateRow) {
+  editingRow.value = row;
+  editingRate.value = row.hourlyRate;
+  editingStudentId.value = row.studentId;
   editDialogVisible.value = true;
 }
 
@@ -196,13 +240,12 @@ async function handleEditSave() {
     const payload: TeacherPayRateSavePayload = {
       teacherId: selectedTeacherId.value,
       courseProductId: row.productId,
+      studentId: editingStudentId.value,
       hourlyRate: newRate,
-        notes: undefined,
+      notes: undefined,
     };
     const res = await savePayRate(payload);
-    row.rateId = res.data.data;
-    row.hourlyRate = newRate;
-    row.originalRate = newRate;
+    await loadRates();
     editDialogVisible.value = false;
     ElMessage.success(`Rate saved for ${row.productName}.`);
   } catch (err: any) {
@@ -225,7 +268,7 @@ const selectedTeacher = computed(() =>
   allTeachers.value.find(t => t.id === selectedTeacherId.value),
 );
 
-// ─── 选中老师 ───────────────────────────────────────────
+
 
 async function selectTeacher(id: EntityId) {
   selectedTeacherId.value = id;
@@ -236,21 +279,22 @@ async function loadRates() {
   if (!selectedTeacherId.value) return;
   loading.value = true;
   try {
-    // 获取该老师已有的单价配置
+
     const [ratesRes] = await Promise.all([
       fetchPayRates(selectedTeacherId.value),
     ]);
     const existingRates = ratesRes.data.data;
 
-    // 构建 rate lookup: productId → rate info
-      const rateMap = new Map<string, any>();
+
+    const rateMap = new Map<string, any>();
     for (const r of existingRates) {
+      if (r.studentId == null) {
         rateMap.set(String(r.courseProductId), r);
+      }
     }
 
-    // 组装所有产品 + 已有单价
     rateRows.value = allProducts.value.map(p => {
-        const existing = rateMap.get(String(p.id));
+      const existing = rateMap.get(String(p.id));
       return {
         productId: p.id,
         productCode: p.productCode,
@@ -262,6 +306,20 @@ async function loadRates() {
         notes: existing?.notes,
       };
     });
+    studentOverrideRows.value = existingRates
+      .filter(rate => rate.studentId != null)
+      .map(rate => ({
+        productId: rate.courseProductId,
+        productCode: rate.productCode,
+        productName: rate.productName,
+        subjectName: rate.subjectName || '',
+        rateId: rate.id,
+        hourlyRate: rate.hourlyRate,
+        originalRate: rate.hourlyRate,
+        notes: rate.notes,
+        studentId: rate.studentId,
+        studentName: rate.studentName,
+      }));
   } catch {
     ElMessage.error('Failed to load pay rates.');
   } finally {
@@ -269,14 +327,15 @@ async function loadRates() {
   }
 }
 
-// ─── 初始化 ────────────────────────────────────────────
+
 
 onMounted(async () => {
   teachersLoading.value = true;
   try {
-    const [teachersRes, productsRes] = await Promise.all([
+    const [teachersRes, productsRes, studentsRes] = await Promise.all([
       fetchAllTeachers(),
       fetchCourseProducts({ pageSize: 200 }),
+      fetchAllStudents(),
     ]);
     allTeachers.value = teachersRes.data.data;
     allProducts.value = productsRes.data.data.records.map((p: any) => ({
@@ -285,6 +344,7 @@ onMounted(async () => {
       productName: p.productName,
       subjectName: p.subjectName || '',
     }));
+    allStudents.value = studentsRes.data.data.map(student => ({ id: student.id, studentName: student.studentName }));
   } catch {
     ElMessage.error('Failed to load initial data.');
   } finally {
@@ -407,6 +467,27 @@ onMounted(async () => {
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+}
+
+.pr-overrides {
+  margin-top: 20px;
+}
+
+.pr-overrides__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+}
+
+.pr-overrides__heading strong {
+  color: #303133;
+  font-size: 13px;
+}
+
+.pr-overrides__heading span {
+  color: #909399;
+  font-size: 12px;
 }
 
 .pr-product-cell {

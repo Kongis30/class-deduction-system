@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Objects;
 
@@ -126,7 +127,13 @@ public class CampusServiceImpl implements CampusService {
         entity.setCampusName(request.getCampusName());
         entity.setDisplayOrder(request.getDisplayOrder() != null ? request.getDisplayOrder() : 99);
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : DEFAULT_STATUS);
+        entity.setDefaultPickupFeeAmount(defaultFee(request.getDefaultPickupFeeAmount()));
+        entity.setDefaultDropoffFeeAmount(defaultFee(request.getDefaultDropoffFeeAmount()));
         entity.setNotes(request.getNotes());
+    }
+
+    private BigDecimal defaultFee(BigDecimal amount) {
+        return amount == null ? BigDecimal.ZERO : amount;
     }
 
     private CampusVO toVO(CampusEntity entity) {
@@ -135,6 +142,8 @@ public class CampusServiceImpl implements CampusService {
                 .campusName(entity.getCampusName())
                 .displayOrder(entity.getDisplayOrder())
                 .status(entity.getStatus())
+                .defaultPickupFeeAmount(defaultFee(entity.getDefaultPickupFeeAmount()))
+                .defaultDropoffFeeAmount(defaultFee(entity.getDefaultDropoffFeeAmount()))
                 .notes(entity.getNotes())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())

@@ -1,12 +1,15 @@
 import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
-import type { CampusItem, ClassroomItem, CourseProductItem, DiscountPresetItem, EntityId, StudentItem, SubjectItem, TeacherItem } from '@/types/domain';
+import type { CampusItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EntityId, StudentItem, SubjectItem, TeacherItem } from '@/types/domain';
 
 // ─── Students ──────────────────────────────────────��─
 export interface StudentQuery {
   keyword?: string;
   guardian?: string;
   status?: string;
+  campusId?: EntityId;
+  paymentStatus?: string;
+  hasEnrollmentOrder?: boolean;
   pageNum?: number;
   pageSize?: number;
 }
@@ -19,30 +22,46 @@ export function fetchAllStudents() {
   return http.get<ApiResponse<StudentItem[]>>('/v1/base/students/all');
 }
 
+export interface StudentReuseQuery {
+  studentName: string;
+  guardianPhone: string;
+}
+
+export function fetchReusableStudent(params: StudentReuseQuery) {
+  return http.get<ApiResponse<StudentItem | null>>('/v1/base/students/reuse', { params });
+}
+
 export interface StudentSavePayload {
   studentName: string;
   gender?: string;
   guardianName?: string;
   guardianPhone?: string;
+  guardianPhone2?: string;
   guardianEmail?: string;
   guardianRelationType?: string;
   status?: string;
   notes?: string;
   englishName?: string;
   birthDate?: string;
+  grade?: string;
+  school?: string;
   sourceChannel?: string;
   campusId?: EntityId;
+  pickupRequired?: boolean;
+  pickupAddress?: string;
+  dropoffRequired?: boolean;
+  dropoffAddress?: string;
 }
 
-export function createStudent(data: StudentSavePayload) {
-  return http.post('/v1/base/students', data);
+export function fetchStudent(id: EntityId) {
+  return http.get<ApiResponse<StudentItem>>(`/v1/base/students/${id}`);
 }
 
 export function updateStudent(id: string, data: StudentSavePayload) {
   return http.put(`/v1/base/students/${id}`, data);
 }
 
-export function deleteStudent(id: string) {
+export function deleteStudent(id: EntityId) {
   return http.delete(`/v1/base/students/${id}`);
 }
 
@@ -76,16 +95,8 @@ export interface TeacherSavePayload {
   notes?: string | null;
 }
 
-export function createTeacher(data: TeacherSavePayload) {
-  return http.post('/v1/base/teachers', data);
-}
-
 export function updateTeacher(id: EntityId, data: TeacherSavePayload) {
   return http.put(`/v1/base/teachers/${id}`, data);
-}
-
-export function deleteTeacher(id: EntityId) {
-  return http.delete(`/v1/base/teachers/${id}`);
 }
 
 export function fetchDeletedTeachers() {
@@ -162,6 +173,8 @@ export interface CampusSavePayload {
   campusName: string;
   displayOrder?: number;
   status?: string;
+  defaultPickupFeeAmount?: number;
+  defaultDropoffFeeAmount?: number;
   notes?: string;
 }
 
@@ -177,6 +190,65 @@ export function deleteCampus(id: EntityId) {
   return http.delete(`/v1/base/campuses/${id}`);
 }
 
+// ─── Course Price Options ──────────────────────────────
+export interface CoursePriceOptionQuery {
+  keyword?: string;
+  courseType?: string;
+  courseProductId?: EntityId;
+  status?: string;
+  pageNum?: number;
+  pageSize?: number;
+}
+
+export function fetchActiveCoursePriceOptions(courseType?: string) {
+  return http.get<ApiResponse<CoursePriceOptionItem[]>>('/v1/base/course-price-options/active', {
+    params: courseType ? { courseType } : undefined,
+  });
+}
+
+export function fetchCoursePriceOptions(params: CoursePriceOptionQuery = {}) {
+  return http.get<ApiResponse<PageResult<CoursePriceOptionItem>>>('/v1/base/course-price-options', { params });
+}
+
+export interface CoursePriceOptionSavePayload {
+  optionCode?: string;
+  courseType: string;
+  registerClass: string;
+  gradeBand?: string;
+  periodLabel?: string;
+  durationLabel?: string;
+  timeSlotLabel?: string;
+  detailText: string;
+  oneOnOneHours?: number;
+  priceAmount: number;
+  currencyCode?: string;
+  courseProductId?: EntityId;
+  classId?: EntityId;
+  groupTeacherId?: EntityId;
+  groupClassroomId?: EntityId;
+  groupScheduleSlots?: { weekday: number; startTime: string; endTime: string }[];
+  groupBillingType?: string;
+  groupStartDate?: string;
+  groupTotalSessions?: number;
+  groupStartMonth?: string;
+  groupEndMonth?: string;
+  sortOrder?: number;
+  status?: string;
+  notes?: string;
+}
+
+export function createCoursePriceOption(data: CoursePriceOptionSavePayload) {
+  return http.post('/v1/base/course-price-options', data);
+}
+
+export function updateCoursePriceOption(id: EntityId, data: CoursePriceOptionSavePayload) {
+  return http.put(`/v1/base/course-price-options/${id}`, data);
+}
+
+export function deleteCoursePriceOption(id: EntityId) {
+  return http.delete(`/v1/base/course-price-options/${id}`);
+}
+
 // ─── Course Products ─────────────────────────────────
 export interface CourseProductQuery {
   keyword?: string;
@@ -187,12 +259,19 @@ export interface CourseProductQuery {
 }
 
 export function fetchCourseProducts(params: CourseProductQuery = {}) {
-  return http.get<ApiResponse<PageResult<CourseProductItem>>>('/v1/base/course-products', { params });
+  return http.get<ApiResponse<PageResult<CourseProductItem>>>('/v1/base/course-products', {
+    params: {
+      ...params,
+      pageSize: params.pageSize ? Math.min(params.pageSize, 200) : params.pageSize,
+    },
+  });
 }
 
 export interface CourseProductSavePayload {
   productCode: string;
   productName: string;
+  courseType?: string;
+  registerClass?: string;
   subjectName?: string;
   teachingMode: string;
   defaultTotalUnits?: number;
@@ -204,14 +283,14 @@ export interface CourseProductSavePayload {
   endMonth?: string;
   defaultClassroomId?: EntityId;
   defaultTeacherId?: EntityId;
-  listPrice: number;
+  listPrice?: number;
   status?: string;
   notes?: string;
   slots?: { weekday: number; startTime: string; endTime: string }[];
 }
 
 export function createCourseProduct(data: CourseProductSavePayload) {
-  return http.post('/v1/base/course-products', data);
+  return http.post<ApiResponse<EntityId>>('/v1/base/course-products', data);
 }
 
 export function updateCourseProduct(id: EntityId, data: CourseProductSavePayload) {

@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.base.vo;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -15,6 +16,8 @@ public record CampusVO(
         String campusName,
         Integer displayOrder,
         String status,
+        BigDecimal defaultPickupFeeAmount,
+        BigDecimal defaultDropoffFeeAmount,
         String notes,
         LocalDateTime createdAt,
         LocalDateTime updatedAt

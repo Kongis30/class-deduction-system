@@ -1,22 +1,28 @@
 <template>
-  <div class="adj-page">
-    <!-- Tab 切换 -->
-    <div class="adj-tabs">
+  <div class="adj-page" :class="{ 'adj-page--group-lessons': isGroupClassLessonsPage, 'adj-page--embedded': embedded }">
+    <section v-if="isGroupClassLessonsPage && !embedded" class="adj-group-header">
+      <div>
+        <h2>Group Class Lessons</h2>
+        <p>Select a class, then confirm each lesson to record attendance and deduct the lesson for eligible students.</p>
+      </div>
+    </section>
+
+    <div v-if="!isGroupClassLessonsPage" class="adj-tabs">
       <button
         class="adj-tab"
         :class="{ 'adj-tab--active': activeTab === 'one-on-one' }"
         @click="activeTab = 'one-on-one'"
-      >1v1 Lesson Write-off</button>
+      >1-on-1 Lessons</button>
       <button
         class="adj-tab"
         :class="{ 'adj-tab--active': activeTab === 'class' }"
         @click="activeTab = 'class'"
-      >Class Management</button>
+      >Group Classes</button>
     </div>
 
     <!-- ====== 1v1 Tab ====== -->
     <div v-if="activeTab === 'one-on-one'" class="adj-workspace">
-      <!-- 左侧学生列表 -->
+
       <aside class="adj-sidebar">
         <div class="adj-sidebar__search">
           <el-input v-model="studentKeyword" placeholder="Search student..." clearable size="small" />
@@ -40,7 +46,7 @@
         </div>
       </aside>
 
-      <!-- 右侧内容 -->
+
       <main class="adj-content">
         <div v-if="!selectedStudentId" class="adj-content__placeholder">
           Select a student from the left panel to view their packages.
@@ -52,7 +58,7 @@
           No 1v1 course packages for this student.
         </div>
 
-        <!-- 课包列表 -->
+
         <div v-else class="adj-packages">
           <div
             v-for="pkg in packages"
@@ -60,7 +66,7 @@
             class="pkg-card"
             :class="{ 'pkg-card--expanded': selectedPackageId === String(pkg.id) }"
           >
-            <!-- 课包头部 — 点击展开/收起 -->
+
             <div class="pkg-card__header" @click="selectPackage(pkg.id)">
               <div class="pkg-card__info">
                 <span class="pkg-card__name">{{ pkg.packageName }}</span>
@@ -77,7 +83,7 @@
               </div>
             </div>
 
-            <!-- 课包排课记录 -->
+
             <div v-if="selectedPackageId === String(pkg.id)" class="pkg-card__body">
               <div class="pkg-card__toolbar">
                 <div>
@@ -87,25 +93,27 @@
               </div>
               <div v-loading="occurrencesLoading" class="pkg-occ-list">
                 <div v-for="occ in occurrences" :key="occ.id" class="pkg-occ-row" :class="dayMarkerClass(occ.plannedStartAt)">
-                  <!-- 日期标记 -->
+
                   <div class="pkg-occ__marker">
                     <el-tag v-if="isToday(occ.plannedStartAt)" size="small" type="success" effect="dark">today</el-tag>
                     <el-tag v-else-if="isPast(occ.plannedStartAt)" size="small" type="info">prev</el-tag>
                     <el-tag v-else size="small">next</el-tag>
                   </div>
-                  <!-- 日期时间 -->
+
                   <div class="pkg-occ__time">
                     <div class="pkg-occ__date">{{ formatDate(occ.plannedStartAt) }}</div>
                     <div class="pkg-occ__range">{{ formatTimeRange(occ.plannedStartAt, occ.plannedEndAt) }}</div>
                   </div>
-                  <!-- 教师 & 教室 -->
-                  <div class="pkg-occ__people">
-                    <div>{{ occ.plannedTeacherName || '—' }}</div>
+
+                  <el-tooltip :content="occ.plannedTeacherName || 'No teacher assigned'" placement="top" :show-after="300">
+                    <div class="pkg-occ__teacher">{{ occ.plannedTeacherName || '—' }}</div>
+                  </el-tooltip>
+                  <el-tooltip :content="occ.plannedClassroomName || 'No classroom assigned'" placement="top" :show-after="300">
                     <div class="pkg-occ__room">{{ occ.plannedClassroomName || '—' }}</div>
-                  </div>
-                  <!-- 时长 -->
+                  </el-tooltip>
+
                   <div class="pkg-occ__hours">{{ (occ.plannedUnits * 0.5).toFixed(1) }}h</div>
-                  <!-- 状态 -->
+
                   <div class="pkg-occ__status">
                     <el-tag v-if="isPendingAdmin(occ)" size="small" type="warning">
                       Pending Admin Review
@@ -117,17 +125,19 @@
                     >
                       <el-tag size="small" type="danger">Rejected - Teacher Action Required</el-tag>
                     </el-tooltip>
-                    <el-tag v-else-if="occ.resultStatus" size="small" :type="resultStatusTag(occ.resultStatus)">
-                      {{ resultStatusLabel(occ.resultStatus) }}
-                    </el-tag>
+                    <el-tooltip v-else-if="occ.resultStatus" :content="resultStatusLabel(occ.resultStatus)" placement="top" :show-after="300">
+                      <el-tag size="small" :type="resultStatusTag(occ.resultStatus)">
+                        {{ resultStatusLabel(occ.resultStatus) }}
+                      </el-tag>
+                    </el-tooltip>
                     <el-tag v-else-if="occ.planningStatus === 'CANCELLED'" size="small" type="danger">Cancelled</el-tag>
                     <el-tag v-else size="small" type="warning">Pending</el-tag>
                   </div>
-                  <!-- 操作 -->
+
                   <div class="pkg-occ__actions">
                     <el-tooltip
                       v-if="canAdminReviewOccurrence(occ)"
-                      content="Teacher confirmed. Pending admin review."
+                      :content="adminConfirmTooltip(occ)"
                       placement="top"
                     >
                       <el-button
@@ -174,7 +184,7 @@
 
     <!-- ====== Class Tab ====== -->
     <div v-if="activeTab === 'class'" class="adj-workspace">
-      <!-- 左侧班课列表 -->
+
       <aside class="adj-sidebar">
         <div class="adj-sidebar__search">
           <el-input v-model="classKeyword" placeholder="Search class..." clearable size="small" />
@@ -196,17 +206,26 @@
         </div>
       </aside>
 
-      <!-- 右侧内容 -->
+
       <main class="adj-content">
         <div v-if="!selectedClassId" class="adj-content__placeholder">
           Select a class from the left panel to manage.
         </div>
 
         <div v-else class="class-detail">
-          <!-- 班课基本信息 -->
+
           <div class="class-detail__header">
             <div class="class-detail__title-row">
               <div class="class-detail__title">{{ selectedClass?.className }}</div>
+              <el-button
+                v-if="isNonTeacherRole"
+                type="primary"
+                size="small"
+                plain
+                @click="openClassScheduleDialog"
+              >
+                Edit Schedule
+              </el-button>
             </div>
             <div class="class-detail__info-grid">
               <div class="class-detail__info-item" v-if="selectedClass?.teacherName">
@@ -225,12 +244,12 @@
             <div v-if="selectedClass?.description" class="class-detail__desc">{{ selectedClass.description }}</div>
           </div>
 
-          <!-- 在册学生 + 到期管理 -->
+
           <div class="class-section">
             <div class="class-section__header">
               <h3>Enrolled Students</h3>
-              <el-button size="small" plain :disabled="!hasExpiringStudents" :loading="reminding" @click="sendReminders">
-                Send Expiry Reminders
+              <el-button size="small" plain :disabled="!hasExpiringStudents" @click="openRenewalReminders">
+                Review Renewal Reminders
               </el-button>
             </div>
             <el-table :data="enrolledStudents" v-loading="classStudentsLoading" size="small" max-height="220" stripe>
@@ -255,7 +274,7 @@
             </el-table>
           </div>
 
-          <!-- 排课记录 + 统一核销 -->
+
           <div class="class-section">
             <div class="class-section__header">
               <h3>Lesson Occurrences</h3>
@@ -274,10 +293,12 @@
                   <div class="pkg-occ__date">{{ formatDate(occ.plannedStartAt) }}</div>
                   <div class="pkg-occ__range">{{ formatTimeRange(occ.plannedStartAt, occ.plannedEndAt) }}</div>
                 </div>
-                <div class="pkg-occ__people">
-                  <div>{{ occ.plannedTeacherName || '—' }}</div>
+                <el-tooltip :content="occ.plannedTeacherName || 'No teacher assigned'" placement="top" :show-after="300">
+                  <div class="pkg-occ__teacher">{{ occ.plannedTeacherName || '—' }}</div>
+                </el-tooltip>
+                <el-tooltip :content="occ.plannedClassroomName || 'No classroom assigned'" placement="top" :show-after="300">
                   <div class="pkg-occ__room">{{ occ.plannedClassroomName || '—' }}</div>
-                </div>
+                </el-tooltip>
                 <div class="pkg-occ__hours">{{ (occ.plannedUnits * 0.5).toFixed(1) }}h</div>
                 <div class="pkg-occ__status">
                   <el-tag v-if="isPendingAdmin(occ)" size="small" type="warning">
@@ -290,16 +311,25 @@
                   >
                     <el-tag size="small" type="danger">Rejected - Teacher Action Required</el-tag>
                   </el-tooltip>
-                  <el-tag v-else-if="occ.resultStatus" size="small" :type="resultStatusTag(occ.resultStatus)">
-                    {{ resultStatusLabel(occ.resultStatus) }}
-                  </el-tag>
+                  <el-tooltip v-else-if="occ.resultStatus" :content="resultStatusLabel(occ.resultStatus)" placement="top" :show-after="300">
+                    <el-tag size="small" :type="resultStatusTag(occ.resultStatus)">
+                      {{ resultStatusLabel(occ.resultStatus) }}
+                    </el-tag>
+                  </el-tooltip>
                   <el-tag v-else-if="occ.planningStatus === 'CANCELLED'" size="small" type="danger">Cancelled</el-tag>
                   <el-tag v-else size="small" type="warning">Pending</el-tag>
                 </div>
                 <div class="pkg-occ__actions">
+                  <el-button
+                    v-if="canAdjustClassOccurrence(occ)"
+                    type="primary"
+                    size="small"
+                    plain
+                    @click="openClassAdjustDialog(occ)"
+                  >Adjust</el-button>
                   <el-tooltip
                     v-if="canAdminReviewOccurrence(occ)"
-                    content="Teacher confirmed. Pending admin review."
+                    :content="adminConfirmTooltip(occ)"
                     placement="top"
                   >
                     <el-button
@@ -329,6 +359,93 @@
       </main>
     </div>
 
+    <!-- ====== Class Weekly Schedule Dialog ====== -->
+    <el-dialog
+      v-model="classScheduleDialogVisible"
+      title="Edit Class Schedule"
+      width="920px"
+      :close-on-click-modal="false"
+      class="adj-dialog class-schedule-dialog"
+    >
+      <el-alert
+        title="Saving will rebuild future unconfirmed lessons. Confirmed lessons stay unchanged."
+        type="info"
+        :closable="false"
+        show-icon
+        class="class-schedule-alert"
+      />
+      <el-form ref="classScheduleFormRef" :model="classScheduleForm" :rules="classScheduleFormRules" label-width="110px">
+        <div class="class-schedule-form-grid">
+          <el-form-item label="Teacher">
+            <el-select v-model="classScheduleForm.teacherId" placeholder="No default teacher" clearable filterable style="width: 100%;">
+              <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Classroom">
+            <el-select v-model="classScheduleForm.classroomId" placeholder="No default classroom" clearable filterable style="width: 100%;">
+              <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <el-form-item label="Weekly Times" prop="slots">
+          <WeeklyTimeSelector v-model="classScheduleForm.slots" hide-hint />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="classScheduleDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitClassSchedule">Save Schedule</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ====== Class Schedule Adjustment Dialog ====== -->
+    <el-dialog
+      v-model="classAdjustDialogVisible"
+      :title="`Adjust Class Lesson — ${selectedOcc?.lessonNo}`"
+      width="560px"
+      :close-on-click-modal="false"
+      class="adj-dialog"
+    >
+      <el-form ref="classAdjustFormRef" :model="classAdjustForm" :rules="classAdjustFormRules" label-width="130px">
+        <el-form-item label="Teacher">
+          <el-select v-model="classAdjustForm.plannedTeacherId" placeholder="Keep current teacher" clearable filterable style="width: 100%;">
+            <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Classroom">
+          <el-select v-model="classAdjustForm.plannedClassroomId" placeholder="Keep current classroom" clearable filterable style="width: 100%;">
+            <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Start Time" prop="plannedStartAt">
+          <el-date-picker
+            v-model="classAdjustForm.plannedStartAt"
+            type="datetime"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            format="YYYY-MM-DD HH:mm"
+            placeholder="Select start time"
+            style="width: 100%;"
+          />
+        </el-form-item>
+        <el-form-item label="End Time" prop="plannedEndAt">
+          <el-date-picker
+            v-model="classAdjustForm.plannedEndAt"
+            type="datetime"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            format="YYYY-MM-DD HH:mm"
+            placeholder="Select end time"
+            style="width: 100%;"
+          />
+        </el-form-item>
+        <el-form-item label="Reason" prop="reason">
+          <el-input v-model="classAdjustForm.reason" type="textarea" :rows="2" placeholder="Why is this class lesson adjusted?" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="classAdjustDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitClassAdjustment">Save Adjustment</el-button>
+      </template>
+    </el-dialog>
+
     <!-- ====== Confirm Dialog ====== -->
     <el-dialog
       v-model="confirmDialogVisible"
@@ -339,6 +456,13 @@
       @close="classConfirmMode = false"
     >
       <el-form ref="confirmFormRef" :model="confirmForm" :rules="confirmFormRules" label-width="160px">
+        <el-alert
+          v-if="showAdminDirectConfirmWarning"
+          title="Teacher has not submitted attendance for this lesson. If you continue, admin will finally confirm and deduct it directly."
+          type="warning"
+          :closable="false"
+          show-icon
+        />
         <el-form-item label="Result Status" prop="resultStatus">
           <el-select v-model="confirmForm.resultStatus" placeholder="Select status" style="width: 100%;">
             <el-option label="Completed" value="COMPLETED" />
@@ -506,43 +630,61 @@
 import { ArrowDown } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
 
+import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
-import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, rejectClassLesson, sendClassExpiryReminders, deleteClassGroup } from '@/api/schedule';
+import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, rejectClassLesson, deleteClassGroup, updateClassSchedule } from '@/api/schedule';
 import { fetchCoursePackages } from '@/api/enrollment';
 import { adminConfirmLessonRecord, confirmLesson, fetchLessonRecords, rejectLessonRecord, type LessonConfirmPayload } from '@/api/lesson';
 import { useAuthStore } from '@/stores/auth';
 import { isTeacherUser } from '@/types/auth';
 import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem, LessonRecordItem } from '@/types/domain';
+import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
+import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { ElMessageBox } from 'element-plus';
 
-// ─── State ──────────────────────────────────────────────
-const activeTab = ref<'one-on-one' | 'class'>('one-on-one');
+const props = withDefaults(defineProps<{
+  mode?: 'auto' | 'all' | 'one-on-one' | 'class';
+  embedded?: boolean;
+}>(), {
+  mode: 'auto',
+  embedded: false,
+});
 
-// 学生列表
+// ─── State ──────────────────────────────────────────────
+const router = useRouter();
+const route = useRoute();
+const embedded = computed(() => props.embedded);
+const isGroupClassLessonsPage = computed(() => props.mode === 'class' || route.path === '/group-class-lessons');
+const activeTab = ref<'one-on-one' | 'class'>(
+  props.mode === 'class' || isGroupClassLessonsPage.value ? 'class' : 'one-on-one'
+);
+
+
 const studentsLoading = ref(false);
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const studentKeyword = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
 
-// 课包
+
 const packagesLoading = ref(false);
 const packages = ref<CoursePackageItem[]>([]);
 const selectedPackageId = ref<EntityId | null>(null);
 
-// 排课记录
+
 const occurrencesLoading = ref(false);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 
-// 缓存：学生/课包的最后课程日期
+
 const studentLastDates = reactive<Record<string, string>>({});
 const packageLastDates = reactive<Record<string, string>>({});
-// 缓存：课包的排课记录数
+
 const occurrenceCounts = reactive<Record<string, number>>({});
 
-// 班课管理
+
 const classKeyword = ref('');
 const classesLoading = ref(false);
 const classes = ref<ClassGroupItem[]>([]);
@@ -551,14 +693,13 @@ const selectedClass = computed(() => classes.value.find(c => String(c.id) === se
 const enrolledStudents = ref<ClassEnrolledStudentItem[]>([]);
 const classOccurrences = ref<ClassOccurrenceItem[]>([]);
 const classStudentsLoading = ref(false);
-const reminding = ref(false);
 const deleting = ref(false);
 
-// 教师/教室（弹窗用）
+
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
 
-// 弹窗
+
 const authStore = useAuthStore();
 const submitting = ref(false);
 const selectedOcc = ref<ConfirmableOccurrence | null>(null);
@@ -569,22 +710,26 @@ const detailLoading = ref(false);
 const detailData = ref<LessonOccurrenceItem | null>(null);
 const makeupDialogVisible = ref(false);
 const rejectDialogVisible = ref(false);
+const classScheduleDialogVisible = ref(false);
+const classAdjustDialogVisible = ref(false);
 const confirmFormRef = ref<FormInstance>();
 const rejectFormRef = ref<FormInstance>();
 const makeupFormRef = ref<FormInstance>();
+const classScheduleFormRef = ref<FormInstance>();
+const classAdjustFormRef = ref<FormInstance>();
 
 const isTeacherRole = computed(() => isTeacherUser(authStore.currentUser));
 const isAdminRole = computed(() => Boolean(authStore.currentUser?.userType === 'ADMIN' || (authStore.currentUser?.roleCodes ?? []).includes('ADMIN')));
 const isNonTeacherRole = computed(() => !isTeacherRole.value);
 
-// ─── 学生过滤 ─────────────────────────
+
 const filteredStudents = computed(() => {
   if (!studentKeyword.value) return students.value;
   const kw = studentKeyword.value.toLowerCase();
   return students.value.filter(s => s.studentName.toLowerCase().includes(kw));
 });
 
-// ─── 班课过滤 ─────────────────────────
+
 const filteredClasses = computed(() => {
   if (!classKeyword.value) return classes.value;
   const kw = classKeyword.value.toLowerCase();
@@ -606,18 +751,37 @@ function getLessonRecordId(occ: ConfirmableOccurrence): EntityId | undefined {
 }
 
 function canAdminReviewOccurrence(occ: ConfirmableOccurrence): boolean {
-  return isAdminRole.value && isPendingAdmin(occ) && Boolean(getLessonRecordId(occ));
+  if (!isAdminRole.value || occ.planningStatus === 'CANCELLED') return false;
+  if (occ.confirmStage === 'CONFIRMED' || isRejected(occ)) return false;
+  if (isPendingAdmin(occ)) return Boolean(getLessonRecordId(occ));
+  return isAwaitingTeacherConfirmation(occ);
 }
 
 function canAdminRejectOccurrence(occ: ConfirmableOccurrence): boolean {
-  return canAdminReviewOccurrence(occ);
+  return isAdminRole.value && isPendingAdmin(occ) && Boolean(getLessonRecordId(occ));
 }
 
 function canOpenNormalConfirm(occ: ConfirmableOccurrence): boolean {
+  if (isAdminRole.value) return false;
   if (occ.planningStatus === 'CANCELLED' || isPendingAdmin(occ)) return false;
   if (isRejected(occ)) return isTeacherRole.value;
   if ('confirmed' in occ && occ.confirmed) return false;
   return !occ.resultStatus && (isTeacherRole.value || isNonTeacherRole.value);
+}
+
+function isAwaitingTeacherConfirmation(occ: ConfirmableOccurrence): boolean {
+  return occ.planningStatus !== 'CANCELLED'
+    && occ.confirmStage !== 'PENDING_ADMIN'
+    && occ.confirmStage !== 'CONFIRMED'
+    && occ.confirmStage !== 'REJECTED'
+    && !occ.resultStatus
+    && (!('confirmed' in occ) || !occ.confirmed);
+}
+
+function adminConfirmTooltip(occ: ConfirmableOccurrence): string {
+  return isAwaitingTeacherConfirmation(occ)
+    ? 'Teacher has not confirmed. Admin can confirm directly.'
+    : 'Teacher confirmed. Pending admin review.';
 }
 
 function mergeRecordIntoOccurrence<T extends ConfirmableOccurrence>(occ: T, record?: LessonRecordItem): T {
@@ -660,7 +824,7 @@ function latestActiveRecordByOccurrence(records: LessonRecordItem[]) {
 
 async function enrichPackageOccurrences(pkgId: EntityId, items: LessonOccurrenceItem[]) {
   try {
-    const recordsRes = await fetchLessonRecords({ packageId: pkgId, pageSize: 500 });
+    const recordsRes = await fetchLessonRecords({ packageId: pkgId, pageSize: 200 });
     const recordMap = latestActiveRecordByOccurrence(recordsRes.data.data.records);
     return items.map(item => mergeRecordIntoOccurrence(item, recordMap.get(String(item.id))));
   } catch {
@@ -678,7 +842,7 @@ async function enrichClassOccurrences(items: ClassOccurrenceItem[]) {
     const recordsRes = await fetchLessonRecords({
       confirmedFrom: dayjs(sorted[0].plannedStartAt).subtract(1, 'day').format('YYYY-MM-DDT00:00:00'),
       confirmedTo: dayjs(sorted[sorted.length - 1].plannedStartAt).add(1, 'day').format('YYYY-MM-DDT23:59:59'),
-      pageSize: 500,
+      pageSize: 200,
     });
     const occurrenceIds = new Set(items.map(item => String(item.id)));
     const recordMap = latestActiveRecordByOccurrence(
@@ -686,7 +850,7 @@ async function enrichClassOccurrences(items: ClassOccurrenceItem[]) {
     );
     return items.map(item => mergeRecordIntoOccurrence(item, recordMap.get(String(item.id))));
   } catch {
-    // 班课旧接口可能尚未携带 confirmStage，保留既有 confirmed/resultStatus 交互。
+
     return items;
   }
 }
@@ -699,9 +863,9 @@ async function refreshCurrentOccurrences() {
   if (selectedPackageId.value) await loadPackageOccurrences(selectedPackageId.value);
 }
 
-// ─── 方法 ──────────────────────────────
 
-// 选中学生 → 加载课包
+
+
 async function selectStudent(id: EntityId) {
   selectedStudentId.value = id;
   selectedPackageId.value = null;
@@ -716,7 +880,7 @@ async function selectStudent(id: EntityId) {
     packages.value = res.data.data.records.filter(pkg =>
       (!pkg.teachingMode || pkg.teachingMode === 'ONE_ON_ONE') && pkg.packageStatus === 'ACTIVE'
     );
-    // 计算每个课包的最后课程日期
+
     await computeLastDates(id);
   } catch {
     packages.value = [];
@@ -725,11 +889,11 @@ async function selectStudent(id: EntityId) {
   }
 }
 
-// 选中课包 → 加载排课记录
+
 async function selectPackage(pkgId: string | number) {
   const packageKey = String(pkgId);
   if (selectedPackageId.value === packageKey) {
-    // 已展开则收起
+
     selectedPackageId.value = null;
     occurrences.value = [];
     return;
@@ -742,7 +906,7 @@ async function loadPackageOccurrences(pkgId: EntityId) {
   const packageKey = String(pkgId);
   occurrencesLoading.value = true;
   try {
-    // 以课包起止时间为查询范围，确保拉取所有排课记录
+
     const pkg = packages.value.find(p => String(p.id) === packageKey);
     const pkgStart = pkg?.startDate ? dayjs(pkg.startDate).format('YYYY-MM-DDT00:00:00') : null;
     const pkgEnd = pkg?.estimatedEndDate ? dayjs(pkg.estimatedEndDate).format('YYYY-MM-DDT23:59:59') : null;
@@ -753,7 +917,7 @@ async function loadPackageOccurrences(pkgId: EntityId) {
       pageSize: 200,
     });
     occurrences.value = await enrichPackageOccurrences(packageKey, res.data.data.records);
-    // 用实际返回的记录数更新课包排课计数（比 computeLastDates 的 ±89 天精确）
+
     occurrenceCounts[packageKey] = res.data.data.records.length;
   } catch {
     occurrences.value = [];
@@ -762,10 +926,10 @@ async function loadPackageOccurrences(pkgId: EntityId) {
   }
 }
 
-// 计算学生每个课包的最后课程日期和排课记录数
+
 async function computeLastDates(studentId: EntityId) {
   try {
-    // ±89 天（共 178 天），安全低于后端 180 天限制；23:59:59 已被后端忽略时分秒
+
     const startAt = dayjs().subtract(89, 'day').format('YYYY-MM-DDT00:00:00');
     const endAt = dayjs().add(89, 'day').format('YYYY-MM-DDT23:59:59');
     const res = await fetchLessonOccurrences({
@@ -775,7 +939,7 @@ async function computeLastDates(studentId: EntityId) {
       pageSize: 200,
     });
     const allOccs = res.data.data.records;
-    // 按 packageId 分组：记录最后日期和记录数
+
     const byPkg = new Map<string, string>();
     const counts = new Map<string, number>();
     let studentLast = '';
@@ -799,7 +963,7 @@ async function computeLastDates(studentId: EntityId) {
   }
 }
 
-// ─── 班课管理方法 ──────────────────────
+
 const hasExpiringStudents = computed(() =>
   enrolledStudents.value.some(s => s.expiryStatus === 'EXPIRING_SOON' || s.expiryStatus === 'EXPIRED')
 );
@@ -860,7 +1024,7 @@ function openClassConfirmDialog(occ: ClassOccurrenceItem) {
     notes: '',
   });
   confirmDialogVisible.value = true;
-  // 覆写 submitConfirm 判断 — 如果是班课模式走班课确认
+
   classConfirmMode.value = true;
 }
 
@@ -880,26 +1044,16 @@ async function submitClassConfirm(occId: string | number) {
       classConfirmMode.value = false;
         confirmSubmitMode.value = 'normal';
       await loadClassOccurrences(selectedClassId.value!);
-    } catch (err: any) {
-      ElMessage.error(err?.response?.data?.message ?? 'Confirmation failed.');
+    } catch (err) {
+      ElMessage.error(extractErrorMessage(err));
     } finally {
       submitting.value = false;
     }
   });
 }
 
-async function sendReminders() {
-  if (!selectedClassId.value) return;
-  reminding.value = true;
-  try {
-    const res = await sendClassExpiryReminders(selectedClassId.value);
-    const count = res.data.data?.sentCount ?? 0;
-    ElMessage.success(`${count} expiry reminder(s) sent.`);
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Failed to send reminders.');
-  } finally {
-    reminding.value = false;
-  }
+function openRenewalReminders() {
+  router.push({ name: 'renewal-reminders' });
 }
 
 async function handleDeleteClass() {
@@ -944,7 +1098,7 @@ function formatDateShort(dt: string): string {
   return dt ? dayjs(dt).format('MM/DD/YYYY') : '—';
 }
 
-// ─── 日期工具 ─────────────────────────
+
 function isToday(dt: string): boolean {
   return dayjs(dt).format('YYYY-MM-DD') === dayjs().format('YYYY-MM-DD');
 }
@@ -965,7 +1119,7 @@ function formatTimeRange(startAt: string, endAt: string): string {
   const e = endAt.includes('T') ? endAt.split('T')[1].slice(0, 5) : endAt.slice(0, 5);
   return `${s} – ${e}`;
 }
-// ─── 状态工具 ─────────────────────────
+
 function resultStatusTag(status: string) {
   return { COMPLETED: 'success', FORMAL_LEAVE: 'warning', NO_SHOW: 'danger', CANCELLED: 'info' }[status] ?? '';
 }
@@ -973,7 +1127,153 @@ function resultStatusLabel(status: string) {
   return { COMPLETED: 'Completed', FORMAL_LEAVE: 'Leave', NO_SHOW: 'No Show', CANCELLED: 'Cancelled' }[status] ?? status;
 }
 
-// ─── Confirm 弹窗 ─────────────────────
+const classAdjustForm = reactive({
+  plannedTeacherId: undefined as string | number | undefined,
+  plannedClassroomId: undefined as string | number | undefined,
+  plannedStartAt: '',
+  plannedEndAt: '',
+  reason: '',
+});
+
+const classScheduleForm = reactive({
+  teacherId: undefined as string | number | undefined,
+  classroomId: undefined as string | number | undefined,
+  slots: [] as SlotDef[],
+});
+
+const classScheduleFormRules: FormRules = {
+  slots: [
+    {
+      validator: (_rule: unknown, value: SlotDef[], callback: (error?: Error) => void) => {
+        if (value?.length) {
+          callback();
+          return;
+        }
+        callback(new Error('Add at least one weekly class time.'));
+      },
+      trigger: 'change',
+    },
+  ],
+};
+
+const classAdjustFormRules: FormRules = {
+  plannedStartAt: [{ required: true, message: 'Start time is required', trigger: 'change' }],
+  plannedEndAt: [
+    { required: true, message: 'End time is required', trigger: 'change' },
+    {
+      validator: (_rule: unknown, value: string, callback: (error?: Error) => void) => {
+        if (!classAdjustForm.plannedStartAt || !value || dayjs(value).isAfter(dayjs(classAdjustForm.plannedStartAt))) {
+          callback();
+          return;
+        }
+        callback(new Error('End time must be later than start time.'));
+      },
+      trigger: 'change',
+    },
+  ],
+  reason: [{ required: true, message: 'Reason is required', trigger: 'blur' }],
+};
+
+function canAdjustClassOccurrence(occ: ClassOccurrenceItem) {
+  return isNonTeacherRole.value
+    && occ.planningStatus !== 'CANCELLED'
+    && !occ.resultStatus
+    && !isPendingAdmin(occ)
+    && !getLessonRecordId(occ);
+}
+
+function normalizeClassScheduleSlots(slots: ClassGroupItem['scheduleSlots']): SlotDef[] {
+  return (slots ?? []).map(slot => {
+    const start = slot.startTime.slice(0, 5);
+    const end = slot.endTime.slice(0, 5);
+    return {
+      weekday: slot.weekday,
+      startTime: start,
+      endTime: end,
+      plannedUnits: slot.plannedUnits ?? Math.max(1, dayjs(`2026-01-01T${end}`).diff(dayjs(`2026-01-01T${start}`), 'minute') / 30),
+    };
+  });
+}
+
+function openClassScheduleDialog() {
+  if (!selectedClass.value) return;
+  classScheduleFormRef.value?.resetFields();
+  Object.assign(classScheduleForm, {
+    teacherId: selectedClass.value.teacherId,
+    classroomId: selectedClass.value.classroomId,
+    slots: normalizeClassScheduleSlots(selectedClass.value.scheduleSlots),
+  });
+  classScheduleDialogVisible.value = true;
+}
+
+async function submitClassSchedule() {
+  if (!classScheduleFormRef.value || !selectedClassId.value) return;
+  await classScheduleFormRef.value.validate(async (valid) => {
+    if (!valid) return;
+    submitting.value = true;
+    try {
+      await updateClassSchedule(selectedClassId.value!, {
+        teacherId: classScheduleForm.teacherId,
+        classroomId: classScheduleForm.classroomId,
+        slots: classScheduleForm.slots.map(({ weekday, startTime, endTime }) => ({ weekday, startTime, endTime })),
+      });
+      ElMessage.success('Class schedule updated.');
+      classScheduleDialogVisible.value = false;
+      await loadClasses();
+      if (selectedClassId.value) {
+        await loadClassOccurrences(selectedClassId.value);
+      }
+    } catch (err) {
+      ElMessage.error(extractErrorMessage(err));
+    } finally {
+      submitting.value = false;
+    }
+  });
+}
+
+function openClassAdjustDialog(occ: ClassOccurrenceItem) {
+  selectedOcc.value = occ;
+  classAdjustFormRef.value?.resetFields();
+  Object.assign(classAdjustForm, {
+    plannedTeacherId: occ.plannedTeacherId ?? selectedClass.value?.teacherId,
+    plannedClassroomId: occ.plannedClassroomId ?? selectedClass.value?.classroomId,
+    plannedStartAt: occ.plannedStartAt || '',
+    plannedEndAt: occ.plannedEndAt || '',
+    reason: '',
+  });
+  classAdjustDialogVisible.value = true;
+}
+
+async function submitClassAdjustment() {
+  if (!classAdjustFormRef.value || !selectedOcc.value || !selectedClassId.value) return;
+  await classAdjustFormRef.value.validate(async (valid) => {
+    if (!valid) return;
+    submitting.value = true;
+    try {
+      const startAt = dayjs(classAdjustForm.plannedStartAt);
+      const endAt = dayjs(classAdjustForm.plannedEndAt);
+      const plannedUnits = Math.max(1, Math.round(endAt.diff(startAt, 'minute') / 30));
+      await createScheduleAdjustment({
+        occurrenceId: selectedOcc.value!.id,
+        adjustmentType: 'RESCHEDULE',
+        plannedTeacherId: classAdjustForm.plannedTeacherId,
+        plannedClassroomId: classAdjustForm.plannedClassroomId,
+        plannedStartAt: classAdjustForm.plannedStartAt,
+        plannedEndAt: classAdjustForm.plannedEndAt,
+        plannedUnits,
+        reason: classAdjustForm.reason.trim(),
+      });
+      ElMessage.success('Class lesson schedule adjusted.');
+      classAdjustDialogVisible.value = false;
+      await loadClassOccurrences(selectedClassId.value);
+    } catch (err) {
+      ElMessage.error(extractErrorMessage(err));
+    } finally {
+      submitting.value = false;
+    }
+  });
+}
+
 const confirmForm = reactive({
   resultStatus: 'COMPLETED',
   actualTeacherId: undefined as string | number | undefined,
@@ -987,15 +1287,21 @@ const confirmFormRules: FormRules = {
   actualTeacherId: [{ required: true, message: 'Teacher is required for payment', trigger: 'change' }],
 };
 
-// 管理员复核时记录课次原计划课时，用于对比老师是否改动了 hours。
+
 const plannedHoursForReview = ref<number | null>(null);
-// 仅在管理员终确认场景下，老师提交的 hours 与原计划不一致时高亮提示。
+
 const hoursChangedByTeacher = computed(() => {
   if (confirmSubmitMode.value !== 'admin-final' || plannedHoursForReview.value == null) {
     return false;
   }
   return (confirmForm.actualHours ?? 0) !== plannedHoursForReview.value;
 });
+
+const showAdminDirectConfirmWarning = computed(() =>
+  confirmSubmitMode.value === 'admin-final'
+  && Boolean(selectedOcc.value)
+  && isAwaitingTeacherConfirmation(selectedOcc.value!)
+);
 
 const deductionPreview = computed(() => {
   const status = confirmForm.resultStatus;
@@ -1025,7 +1331,7 @@ function openConfirmDialog(occ: LessonOccurrenceItem) {
     notes: '',
   });
 
-  // 老师代其他老师确认 — 提示
+
   if (authStore.currentUser?.userType === 'TEACHER' && occ.plannedTeacherId && authStore.currentUser.teacherId != null && occ.plannedTeacherId !== authStore.currentUser.teacherId) {
     ElMessageBox.confirm(
       'This lesson is assigned to another teacher. Are you sure you want to confirm it?',
@@ -1038,21 +1344,16 @@ function openConfirmDialog(occ: LessonOccurrenceItem) {
 }
 
 function openAdminConfirmDialog(occ: ConfirmableOccurrence) {
-  const recordId = getLessonRecordId(occ);
-  if (!recordId) {
-    ElMessage.warning('Missing pending lesson record id.');
-    return;
-  }
   selectedOcc.value = occ;
   confirmSubmitMode.value = 'admin-final';
   classConfirmMode.value = activeTab.value === 'class';
   confirmFormRef.value?.resetFields();
-  // 记录原计划课时，便于对比老师确认时是否改动了 hours。
+
   plannedHoursForReview.value = (occ.plannedUnits ?? 0) * 0.5;
   Object.assign(confirmForm, {
     resultStatus: occ.resultStatus || 'COMPLETED',
-    actualTeacherId: occ.actualTeacherId ?? occ.plannedTeacherId,
-    actualClassroomId: occ.actualClassroomId ?? occ.plannedClassroomId,
+    actualTeacherId: occ.actualTeacherId ?? occ.plannedTeacherId ?? (isClassOccurrence(occ) ? selectedClass.value?.teacherId : undefined),
+    actualClassroomId: occ.actualClassroomId ?? occ.plannedClassroomId ?? (isClassOccurrence(occ) ? selectedClass.value?.classroomId : undefined),
     actualStartAt: occ.actualStartAt || occ.plannedStartAt || '',
     actualHours: resolveActualHours(occ),
     notes: occ.notes || '',
@@ -1099,7 +1400,7 @@ function buildConfirmPayload(occ: ConfirmableOccurrence): LessonConfirmPayload {
 }
 
 async function submitConfirm() {
-  // 班课模式 → 走批量确认
+
   if (classConfirmMode.value && selectedClassId.value) {
     await submitClassConfirm(selectedOcc.value!.id);
     return;
@@ -1111,8 +1412,9 @@ async function submitConfirm() {
     try {
       if (confirmSubmitMode.value === 'admin-final') {
         const recordId = getLessonRecordId(selectedOcc.value!);
-        if (!recordId) throw new Error('Missing pending lesson record id.');
-          const result = await adminConfirmLessonRecord(recordId, buildConfirmPayload(selectedOcc.value!));
+        const result = recordId
+          ? await adminConfirmLessonRecord(recordId, buildConfirmPayload(selectedOcc.value!))
+          : await confirmLesson(buildConfirmPayload(selectedOcc.value!));
         const data = result.data.data;
         ElMessage.success(`Lesson finally confirmed. Deducted ${data.deductedUnits.toFixed(1)}h, remaining ${data.remainingUnits.toFixed(1)}h.`);
         confirmDialogVisible.value = false;
@@ -1125,10 +1427,10 @@ async function submitConfirm() {
       ElMessage.success(`Lesson confirmed. Deducted ${data.deductedUnits.toFixed(1)}h, remaining ${data.remainingUnits.toFixed(1)}h.`);
       confirmDialogVisible.value = false;
       confirmSubmitMode.value = 'normal';
-      // 刷新当前课包的排课记录
+
       if (selectedPackageId.value) await loadPackageOccurrences(selectedPackageId.value);
-    } catch (err: any) {
-      ElMessage.error(err?.response?.data?.message ?? 'Confirmation failed.');
+    } catch (err) {
+      ElMessage.error(extractErrorMessage(err));
     } finally {
       submitting.value = false;
     }
@@ -1181,13 +1483,13 @@ async function submitReject() {
   });
 }
 
-// ─── Detail 弹窗 ──────────────────────
+
 async function openDetailDialog(occ: LessonOccurrenceItem) {
   detailData.value = occ;
   detailDialogVisible.value = true;
 }
 
-// ─── Makeup 弹窗 ──────────────────────
+
 const makeupForm = reactive({
   plannedTeacherId: undefined as string | number | undefined,
   plannedClassroomId: undefined as string | number | undefined,
@@ -1230,10 +1532,10 @@ async function submitMakeup() {
       });
       ElMessage.success('Makeup lesson created.');
       makeupDialogVisible.value = false;
-      // 刷新排课记录
+
       if (selectedPackageId.value) await loadPackageOccurrences(selectedPackageId.value);
-    } catch (err: any) {
-      ElMessage.error(err?.response?.data?.message ?? 'Failed to create makeup.');
+    } catch (err) {
+      ElMessage.error(extractErrorMessage(err));
     } finally {
       submitting.value = false;
     }
@@ -1276,6 +1578,37 @@ function disabledPastDatetime(date: Date) {
   flex-direction: column;
   gap: 0;
   height: calc(100vh - 120px);
+}
+
+.adj-page--embedded {
+  height: 100%;
+  min-height: 0;
+}
+
+.adj-page--group-lessons {
+  gap: 10px;
+}
+
+.adj-group-header {
+  flex-shrink: 0;
+  padding: 2px 2px 0;
+}
+
+.adj-group-header h2 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 18px;
+}
+
+.adj-group-header p {
+  margin: 3px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.adj-page--group-lessons .adj-workspace {
+  border-top: 1px solid #e8edf2;
+  border-radius: 8px;
 }
 
 /* ── Tab bar ──────────────────────────── */
@@ -1478,11 +1811,15 @@ function disabledPastDatetime(date: Date) {
 .pkg-occ-list {
   display: flex;
   flex-direction: column;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .pkg-occ-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 54px 150px 130px 120px 58px 130px 190px;
   align-items: center;
   gap: 12px;
+  min-width: 900px;
   padding: 10px 16px;
   border-bottom: 1px solid #f5f5f5;
   font-size: 13px;
@@ -1494,17 +1831,36 @@ function disabledPastDatetime(date: Date) {
 .pkg-occ-row--future { background: #fafbfc; }
 .pkg-occ-row:hover { background: #f8f9fc; }
 
-.pkg-occ__marker { width: 52px; flex-shrink: 0; }
+.pkg-occ__marker {
+  min-width: 0;
+}
+
 .pkg-occ__marker .el-tag { width: 100%; text-align: center; }
-.pkg-occ__time { width: 130px; flex-shrink: 0; }
+
+.pkg-occ__time,
+.pkg-occ__teacher,
+.pkg-occ__room,
+.pkg-occ__hours,
+.pkg-occ__status {
+  min-width: 0;
+}
+
+.pkg-occ__date,
+.pkg-occ__range,
+.pkg-occ__teacher,
+.pkg-occ__room {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pkg-occ__date { font-weight: 500; color: #303133; }
 .pkg-occ__range { font-size: 12px; color: #909399; }
-.pkg-occ__people { flex: 1; min-width: 0; }
-.pkg-occ__room { font-size: 11px; color: #909399; }
-.pkg-occ__hours { width: 50px; text-align: center; color: #606266; }
+.pkg-occ__teacher { color: #303133; font-weight: 500; }
+.pkg-occ__room { font-size: 12px; color: #606266; }
+.pkg-occ__hours { text-align: center; color: #606266; }
+
 .pkg-occ__status {
-  width: 180px;
-  flex-shrink: 0;
   text-align: center;
 }
 .pkg-occ__status :deep(.el-tag) {
@@ -1515,16 +1871,31 @@ function disabledPastDatetime(date: Date) {
   white-space: nowrap;
 }
 .pkg-occ__actions {
-  width: 230px;
   text-align: right;
-  flex-shrink: 0;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
   justify-content: flex-end;
 }
 .pkg-occ__actions :deep(.el-button) {
   margin-left: 0;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .pkg-occ-row {
+    grid-template-columns: 54px 150px 130px 120px 58px 130px 190px;
+  }
+
+  .pkg-occ__room {
+    display: block;
+  }
+
+  .pkg-occ__actions {
+    justify-content: flex-end;
+    text-align: right;
+  }
 }
 
 .pkg-occ-empty {
@@ -1625,6 +1996,17 @@ function disabledPastDatetime(date: Date) {
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
 }
+.class-schedule-alert {
+  margin-bottom: 14px;
+}
+.class-schedule-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.class-schedule-dialog :deep(.weekly-time-selector) {
+  min-width: 760px;
+}
 .makeup-hint {
   margin: 0 0 12px;
   color: #606266;
@@ -1640,12 +2022,12 @@ function disabledPastDatetime(date: Date) {
   color: #909399;
   font-size: 12px;
 }
-/* 老师改动课时时的警示提示 */
+
 .form-hint--warning {
   color: #f56c6c;
   font-weight: 500;
 }
-/* 老师改动课时时高亮 Hours 输入框 */
+
 .hours-input--changed :deep(.el-input__wrapper) {
   box-shadow: 0 0 0 1px #f56c6c inset;
 }

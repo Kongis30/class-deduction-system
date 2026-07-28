@@ -7,45 +7,57 @@
         <strong>{{ APP_SHORT_NAME }}</strong>
         <span>JIN BEST TUTORING</span>
       </div>
+      <el-button
+        v-if="!appStore.sidebarCollapsed"
+        text
+        class="sidebar__hide-button"
+        aria-label="Hide navigation"
+        @click="appStore.toggleSidebar"
+      >
+        <el-icon><Fold /></el-icon>
+      </el-button>
     </div>
 
-    <el-menu
-      :default-active="route.path"
-      :collapse="appStore.sidebarCollapsed"
-      background-color="transparent"
-      text-color="rgba(255,255,255,0.78)"
-      active-text-color="#ffffff"
-      unique-opened
-      router
-    >
-      <template v-for="menu in resolvedMenus" :key="menu.key">
-        <el-menu-item v-if="menu.path" :index="menu.path">
-          <el-icon><component :is="resolveIcon(menu.icon)" /></el-icon>
-          <span>{{ menu.title }}</span>
-        </el-menu-item>
-
-        <el-sub-menu v-else :index="menu.key">
-          <template #title>
+    <div class="sidebar__menu-area">
+      <el-menu
+        class="sidebar__daily-menu"
+        :default-active="route.path"
+        :collapse="appStore.sidebarCollapsed"
+        background-color="transparent"
+        text-color="rgba(255,255,255,0.78)"
+        active-text-color="#ffffff"
+        unique-opened
+        router
+      >
+        <template v-for="menu in resolvedMenus" :key="menu.key">
+          <el-menu-item v-if="menu.path" :index="menu.path">
             <el-icon><component :is="resolveIcon(menu.icon)" /></el-icon>
             <span>{{ menu.title }}</span>
-          </template>
-
-          <el-menu-item
-            v-for="child in menu.children"
-            :key="child.key"
-            :index="child.path ?? child.key"
-          >
-            <span>{{ child.title }}</span>
           </el-menu-item>
-        </el-sub-menu>
-      </template>
-    </el-menu>
+
+          <el-sub-menu v-else :index="menu.key">
+            <template #title>
+              <el-icon><component :is="resolveIcon(menu.icon)" /></el-icon>
+              <span>{{ menu.title }}</span>
+            </template>
+
+            <el-menu-item
+              v-for="child in menu.children"
+              :key="child.key"
+              :index="child.path ?? child.key"
+            >
+              <span>{{ child.title }}</span>
+            </el-menu-item>
+          </el-sub-menu>
+        </template>
+      </el-menu>
+    </div>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Calendar, DataAnalysis, Files, HomeFilled, Money, Setting, Tickets } from '@element-plus/icons-vue';
+import { Calendar, DataAnalysis, Files, Fold, Tickets } from '@element-plus/icons-vue';
 import { useRoute } from 'vue-router';
 
 import { APP_SHORT_NAME } from '@/config/app-config';
@@ -61,13 +73,10 @@ const logoUrl = `${import.meta.env.BASE_URL}logo.jpg`;
 const resolvedMenus = computed(() => getMenusForUser(authStore.currentUser));
 
 const iconMap = {
-  HomeFilled,
   Files,
   Tickets,
   Calendar,
   DataAnalysis,
-  Money,
-  Setting,
 };
 
 function resolveIcon(icon?: keyof typeof iconMap) {
@@ -91,5 +100,19 @@ function resolveIcon(icon?: keyof typeof iconMap) {
   color: #18b58a;
   font-size: 16px;
   font-weight: 700;
+}
+
+.sidebar__hide-button {
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.sidebar__hide-button:hover,
+.sidebar__hide-button:focus {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
 }
 </style>

@@ -7,6 +7,7 @@ import type { EntityId, TeacherPayRateItem, TeacherPaymentItem, UnpaidLessonItem
 export interface TeacherPayRateSavePayload {
   teacherId: EntityId;
   courseProductId: EntityId;
+  studentId?: EntityId;
   hourlyRate: number;
   notes?: string;
 }
@@ -19,10 +20,6 @@ export function fetchPayRates(teacherId?: EntityId, courseProductId?: EntityId) 
 
 export function savePayRate(data: TeacherPayRateSavePayload) {
   return http.post<ApiResponse<EntityId>>('/v1/finance/pay-rates', data);
-}
-
-export function deletePayRate(id: EntityId) {
-  return http.delete<ApiResponse<string>>(`/v1/finance/pay-rates/${id}`);
 }
 
 // ─── Teacher Payments ───────────────────────────────────
@@ -43,10 +40,6 @@ export interface PaymentCreatePayload {
   periodEnd: string;
   lessonRecordIds: EntityId[];
   notes?: string;
-}
-
-export function previewPayment(lessonRecordIds: EntityId[]) {
-  return http.post<ApiResponse<Record<string, any>>>('/v1/finance/payments/preview', lessonRecordIds);
 }
 
 export function createPayment(data: PaymentCreatePayload) {

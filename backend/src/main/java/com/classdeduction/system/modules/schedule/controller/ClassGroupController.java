@@ -20,36 +20,48 @@ import java.util.Map;
 @RequiredArgsConstructor
 @RequestMapping("/v1/classes")
 @Tag(name = "Schedule - Class Groups")
-@RequireRoles({"ADMIN", "STAFF", "TEACHER", "STUDENT"})
+@RequireRoles({"ADMIN", "STAFF"})
 public class ClassGroupController {
 
     private final ClassGroupService classGroupService;
 
     @GetMapping
+    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
     @Operation(summary = "List all active class groups")
-    public ApiResponse<List<Map<String, Object>>> listClasses() {
-        return ApiResponse.success(classGroupService.listClasses());
+    public ApiResponse<List<Map<String, Object>>> listClasses(
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
+        return ApiResponse.success(classGroupService.listClasses(currentUser));
     }
 
     @GetMapping("/{classId}")
+    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
     @Operation(summary = "Get class group detail")
-    public ApiResponse<Map<String, Object>> getClassDetail(@PathVariable Long classId) {
-        return ApiResponse.success(classGroupService.getClassDetail(classId));
+    public ApiResponse<Map<String, Object>> getClassDetail(
+            @PathVariable Long classId,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
+        return ApiResponse.success(classGroupService.getClassDetail(classId, currentUser));
     }
 
     @GetMapping("/{classId}/students")
+    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
     @Operation(summary = "List enrolled students in a class")
-    public ApiResponse<List<Map<String, Object>>> listEnrolledStudents(@PathVariable Long classId) {
-        return ApiResponse.success(classGroupService.listEnrolledStudents(classId));
+    public ApiResponse<List<Map<String, Object>>> listEnrolledStudents(
+            @PathVariable Long classId,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
+        return ApiResponse.success(classGroupService.listEnrolledStudents(classId, currentUser));
     }
 
     @GetMapping("/{classId}/occurrences")
+    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
     @Operation(summary = "List planned lesson occurrences for a class")
-    public ApiResponse<List<Map<String, Object>>> listClassOccurrences(@PathVariable Long classId) {
-        return ApiResponse.success(classGroupService.listClassOccurrences(classId));
+    public ApiResponse<List<Map<String, Object>>> listClassOccurrences(
+            @PathVariable Long classId,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
+        return ApiResponse.success(classGroupService.listClassOccurrences(classId, currentUser));
     }
 
     @PostMapping("/{classId}/occurrences/{occurrenceId}/confirm")
+    @RequireRoles({"ADMIN", "TEACHER"})
     @Operation(summary = "Unified confirmation for all active students in a class")
     public ApiResponse<Map<String, Object>> confirmLesson(
             @PathVariable Long classId,
@@ -75,7 +87,17 @@ public class ClassGroupController {
         return ApiResponse.success("Rejected successfully.", null);
     }
 
+    @PutMapping("/{classId}/schedule")
+    @RequireRoles({"ADMIN", "STAFF"})
+    @Operation(summary = "Update class weekly schedule and rebuild future planned lessons")
+    public ApiResponse<Map<String, Object>> updateClassSchedule(
+            @PathVariable Long classId,
+            @RequestBody Map<String, Object> body) {
+        return ApiResponse.success("Class schedule updated.", classGroupService.updateClassSchedule(classId, body == null ? Map.of() : body));
+    }
+
     @PostMapping("/{classId}/enroll")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Enroll a student in a class")
     public ApiResponse<Map<String, Object>> enrollStudent(
             @PathVariable Long classId,
@@ -94,18 +116,21 @@ public class ClassGroupController {
     }
 
     @PostMapping("/{classId}/send-expiry-reminders")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Send expiry reminders for expiring students in a class")
     public ApiResponse<Map<String, Object>> sendExpiryReminders(@PathVariable Long classId) {
         return ApiResponse.success("Reminders sent.", classGroupService.sendExpiryReminders(classId));
     }
 
     @GetMapping("/enrolled/{studentId}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "List class groups enrolled by a student")
     public ApiResponse<List<Map<String, Object>>> listEnrolledByStudent(@PathVariable Long studentId) {
         return ApiResponse.success(classGroupService.listEnrolledByStudent(studentId));
     }
 
     @GetMapping("/teacher/{teacherId}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "List active class groups taught by a teacher")
     public ApiResponse<List<Map<String, Object>>> listByTeacher(@PathVariable Long teacherId) {
         return ApiResponse.success(classGroupService.listByTeacher(teacherId));
@@ -120,6 +145,7 @@ public class ClassGroupController {
     }
 
     @GetMapping("/classroom/{classroomId}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "List active class groups using a classroom")
     public ApiResponse<List<Map<String, Object>>> listByClassroom(@PathVariable Long classroomId) {
         return ApiResponse.success(classGroupService.listByClassroom(classroomId));

@@ -41,4 +41,10 @@ public interface TeacherMapper extends BaseMapper<TeacherEntity> {
     @Select("SELECT teacher_no FROM teacher WHERE teacher_no LIKE CONCAT(#{prefix}, '%') "
             + "ORDER BY teacher_no DESC LIMIT 1")
     String selectMaxTeacherNoByPrefix(@Param("prefix") String prefix);
+
+    /**
+     * 锁定教师行以串行化对同一教师排课时间段的并发调整，避免冲突检查被并发穿透。
+     */
+    @Select("SELECT * FROM teacher WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
+    TeacherEntity selectByIdForUpdate(@Param("id") Long id);
 }

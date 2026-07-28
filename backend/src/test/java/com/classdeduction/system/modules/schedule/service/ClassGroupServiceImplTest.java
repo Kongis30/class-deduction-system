@@ -1,6 +1,8 @@
 package com.classdeduction.system.modules.schedule.service;
 
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
+import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
@@ -8,11 +10,17 @@ import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.ClassGroupServiceImpl;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -21,12 +29,15 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -50,6 +61,9 @@ class ClassGroupServiceImplTest {
     private LessonRecordMapper lessonRecordMapper;
 
     @Mock
+    private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+
+    @Mock
     private StudentMapper studentMapper;
 
     @Mock
@@ -69,6 +83,14 @@ class ClassGroupServiceImplTest {
 
     private ClassGroupServiceImpl classGroupService;
 
+    @BeforeAll
+    static void initMybatisPlusLambdaCache() {
+        Configuration configuration = new Configuration();
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonRecordEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupScheduleSlotEntity.class);
+    }
+
     @BeforeEach
     void setUp() {
         classGroupService = new ClassGroupServiceImpl(
@@ -76,6 +98,7 @@ class ClassGroupServiceImplTest {
                 classEnrollmentMapper,
                 lessonOccurrenceMapper,
                 lessonRecordMapper,
+                classGroupScheduleSlotMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
@@ -144,6 +167,303 @@ class ClassGroupServiceImplTest {
         assertThat(result.get("confirmStage")).isEqualTo("CONFIRMED");
     }
 
+    @Test
+    void shouldPreserveTeacherActualValuesWhenAdminConfirmsWithoutOverrides() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 9, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        LessonRecordEntity pending = pendingClassRecord(2001L, 601L);
+        pending.setActualTeacherId(702L);
+        pending.setActualClassroomId(802L);
+        pending.setActualUnits(2);
+        pending.setActualStartAt(LocalDateTime.of(2026, 4, 12, 10, 0));
+        pending.setActualEndAt(LocalDateTime.of(2026, 4, 12, 11, 0));
+        pending.setNotes("Teacher submitted actual values.");
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(pending);
+
+        classGroupService.confirmLesson(501L, 1001L, Map.of(), adminUser());
+
+        verify(lessonRecordMapper).updateById(recordCaptor.capture());
+        LessonRecordEntity confirmed = recordCaptor.getValue();
+        assertThat(confirmed.getActualTeacherId()).isEqualTo(702L);
+        assertThat(confirmed.getActualClassroomId()).isEqualTo(802L);
+        assertThat(confirmed.getActualUnits()).isEqualTo(2);
+        assertThat(confirmed.getActualStartAt()).isEqualTo(LocalDateTime.of(2026, 4, 12, 10, 0));
+        assertThat(confirmed.getActualEndAt()).isEqualTo(LocalDateTime.of(2026, 4, 12, 11, 0));
+        assertThat(confirmed.getNotes()).isEqualTo("Teacher submitted actual values.");
+    }
+
+    @Test
+    void shouldRejectClassConfirmationWhenActualTeacherConflicts() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(lessonOccurrenceMapper.selectCount(any())).thenAnswer(invocation ->
+                invocation.<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<LessonOccurrenceEntity>>
+                        getArgument(0).getSqlSegment().contains("plannedTeacherId") ? 1L : 0L);
+
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L, Map.of(
+                "actualTeacherId", 702L,
+                "actualStartAt", "2026-04-12T10:00:00",
+                "actualEndAt", "2026-04-12T11:30:00",
+                "actualUnits", 3
+        ), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("SCHEDULE_CONFLICT");
+
+        verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldSkipExpiredClassEnrollmentWhenConfirmingClassLesson() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity expired = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 11));
+        ClassEnrollmentEntity eligible = activeEnrollment(602L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(expired, eligible));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+
+        Map<String, Object> result = classGroupService.confirmLesson(501L, 1001L, Map.of(), adminUser());
+
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().getStudentId()).isEqualTo(602L);
+        assertThat(recordCaptor.getValue().getConfirmStage()).isEqualTo("CONFIRMED");
+        assertThat(result.get("confirmedCount")).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRejectPerSessionClassEnrollmentWhenPurchasedQuantityIsAlreadyUsed() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity usedUp = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        usedUp.setBillingType("PER_SESSION");
+        usedUp.setPurchasedQuantity(1);
+        LessonRecordEntity confirmed = new LessonRecordEntity();
+        confirmed.setOccurrenceId(9001L);
+        confirmed.setStudentId(601L);
+        LessonOccurrenceEntity previousOccurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 5, 10, 0));
+        previousOccurrence.setId(9001L);
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(usedUp));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(previousOccurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(confirmed));
+
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L, Map.of(), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("No active eligible students in this class lesson.");
+        verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldIgnoreConfirmedLessonsBeforeTheCurrentEnrollmentWindow() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity renewedEnrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 4, 10),
+                LocalDate.of(2026, 5, 31));
+        renewedEnrollment.setBillingType("PER_SESSION");
+        renewedEnrollment.setPurchasedQuantity(1);
+
+        LessonOccurrenceEntity oldOccurrence = scheduledOccurrence(LocalDateTime.of(2026, 3, 5, 10, 0));
+        oldOccurrence.setId(9001L);
+        LessonRecordEntity oldConfirmed = new LessonRecordEntity();
+        oldConfirmed.setOccurrenceId(9001L);
+        oldConfirmed.setStudentId(601L);
+        oldConfirmed.setConfirmStage("CONFIRMED");
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(renewedEnrollment));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(oldOccurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(oldConfirmed));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+
+        Map<String, Object> result = classGroupService.confirmLesson(501L, 1001L, Map.of(), adminUser());
+
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().getStudentId()).isEqualTo(601L);
+        assertThat(result.get("confirmedCount")).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRejectUnsupportedClassResultStatusBeforeWritingRecords() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L,
+                Map.of("resultStatus", "UNKNOWN"), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CLASS_RESULT_STATUS_NOT_ALLOWED");
+        verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
+    }
+
+    @Test
+    void shouldRequireTeacherButAllowMissingClassroomWhenConfirmingClassLesson() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        occurrence.setPlannedTeacherId(null);
+        occurrence.setPlannedClassroomId(null);
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L, Map.of(), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CLASS_TEACHER_REQUIRED");
+
+        verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldRejectClassActualHoursThatDoNotMatchTimeRange() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L, Map.of(
+                "actualStartAt", "2026-04-12T10:00:00",
+                "actualEndAt", "2026-04-12T11:30:00",
+                "actualUnits", 4
+        ), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("ACTUAL_TIME_UNITS_MISMATCH");
+        verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
+    }
+
+    @Test
+    void shouldRejectTeacherReadingAnotherClass() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setTeacherId(702L);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        assertThatThrownBy(() -> classGroupService.getClassDetail(501L, teacherUser(701L)))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("FORBIDDEN");
+    }
+
+    @Test
+    void shouldRejectUnlinkedTeacherBeforeListingClasses() {
+        CurrentUserResponse unlinkedTeacher = new CurrentUserResponse(
+                1002L, "teacher", "Teacher", "TEACHER", null, null, List.of("TEACHER"));
+
+        assertThatThrownBy(() -> classGroupService.listClasses(unlinkedTeacher))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("TEACHER_BINDING_REQUIRED");
+        verify(classGroupMapper, never()).selectList(any());
+    }
+
+    @Test
+    void shouldUpdateClassWeeklyScheduleAndGenerateFutureOccurrences() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
+                activeEnrollment(601L, LocalDate.now(), LocalDate.now())));
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+
+        int weekday = LocalDate.now().getDayOfWeek().getValue();
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of(
+                        "weekday", weekday,
+                        "startTime", "10:00",
+                        "endTime", "11:30"))
+        ));
+
+        ArgumentCaptor<ClassGroupScheduleSlotEntity> slotCaptor = ArgumentCaptor.forClass(ClassGroupScheduleSlotEntity.class);
+        verify(classGroupMapper).updateById(classGroup);
+        verify(classGroupScheduleSlotMapper).insert(slotCaptor.capture());
+        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
+        assertThat(classGroup.getScheduleDesc()).isEqualTo(weekdayShortLabel(weekday) + " 10:00-11:30");
+        assertThat(slotCaptor.getValue().getClassGroupId()).isEqualTo(501L);
+        assertThat(slotCaptor.getValue().getWeekday()).isEqualTo(weekday);
+        assertThat(occurrenceCaptor.getValue().getClassGroupId()).isEqualTo(501L);
+        assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(3);
+        assertThat(result.get("generatedOccurrences")).isEqualTo(1);
+    }
+
+    @Test
+    void shouldRejectOverlappingClassWeeklyScheduleSlots() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(
+                        Map.of("weekday", 1, "startTime", "10:00", "endTime", "11:00"),
+                        Map.of("weekday", 1, "startTime", "10:30", "endTime", "11:30"))
+        )))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("INVALID_CLASS_SCHEDULE");
+        verify(classGroupMapper, never()).updateById(any(ClassGroupEntity.class));
+        verify(classGroupScheduleSlotMapper, never()).insert(any(ClassGroupScheduleSlotEntity.class));
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldPreserveRecordedFutureClassOccurrenceWithoutDuplicatingTheSameDate() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        LocalDate preservedDate = LocalDate.now();
+        LessonOccurrenceEntity preserved = scheduledOccurrence(preservedDate.atTime(10, 0));
+        preserved.setId(2001L);
+        LessonRecordEntity record = new LessonRecordEntity();
+        record.setOccurrenceId(2001L);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
+                activeEnrollment(601L, preservedDate, preservedDate)));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(preserved), List.of(preserved));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
+
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of(
+                        "weekday", preservedDate.getDayOfWeek().getValue(),
+                        "startTime", "10:00",
+                        "endTime", "11:30"))
+        ));
+
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+        assertThat(result.get("cancelledFutureOccurrences")).isEqualTo(0);
+        assertThat(result.get("generatedOccurrences")).isEqualTo(0);
+    }
+
     private LessonRecordEntity pendingClassRecord(Long id, Long studentId) {
         LessonRecordEntity record = new LessonRecordEntity();
         record.setId(id);
@@ -163,7 +483,47 @@ class ClassGroupServiceImplTest {
         return record;
     }
 
+    private LessonOccurrenceEntity scheduledOccurrence(LocalDateTime startAt) {
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(1001L);
+        occurrence.setClassGroupId(501L);
+        occurrence.setPlannedTeacherId(701L);
+        occurrence.setPlannedClassroomId(801L);
+        occurrence.setPlannedStartAt(startAt);
+        occurrence.setPlannedEndAt(startAt.plusMinutes(90));
+        occurrence.setPlannedUnits(3);
+        occurrence.setPlanningStatus("SCHEDULED");
+        return occurrence;
+    }
+
+    private ClassEnrollmentEntity activeEnrollment(Long studentId, LocalDate enrollmentDate, LocalDate expiryDate) {
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setClassId(501L);
+        enrollment.setStudentId(studentId);
+        enrollment.setEnrollmentDate(enrollmentDate);
+        enrollment.setExpiryDate(expiryDate);
+        enrollment.setStatus("ACTIVE");
+        return enrollment;
+    }
+
     private CurrentUserResponse adminUser() {
         return new CurrentUserResponse(999L, "admin", "Admin", "ADMIN", null, null, List.of("ADMIN"));
+    }
+
+    private CurrentUserResponse teacherUser(Long teacherId) {
+        return new CurrentUserResponse(1002L, "teacher", "Teacher", "TEACHER", teacherId, null, List.of("TEACHER"));
+    }
+
+    private String weekdayShortLabel(int weekday) {
+        return switch (weekday) {
+            case 1 -> "Mon";
+            case 2 -> "Tue";
+            case 3 -> "Wed";
+            case 4 -> "Thu";
+            case 5 -> "Fri";
+            case 6 -> "Sat";
+            case 7 -> "Sun";
+            default -> "?";
+        };
     }
 }

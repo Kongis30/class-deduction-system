@@ -17,9 +17,11 @@ import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
@@ -49,19 +51,22 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
+    private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
 
     @Override
-    public List<Map<String, Object>> listClasses() {
-        List<ClassGroupEntity> classes = classGroupMapper.selectList(
-                new LambdaQueryWrapper<ClassGroupEntity>()
-                        .eq(ClassGroupEntity::getStatus, "ACTIVE")
-                        .isNotNull(ClassGroupEntity::getProductId)
-                        .orderByAsc(ClassGroupEntity::getClassName)
-        );
+    public List<Map<String, Object>> listClasses(CurrentUserResponse currentUser) {
+        LambdaQueryWrapper<ClassGroupEntity> query = new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getStatus, "ACTIVE")
+                .isNotNull(ClassGroupEntity::getProductId)
+                .orderByAsc(ClassGroupEntity::getClassName);
+        if (isTeacherUser(currentUser)) {
+            query.eq(ClassGroupEntity::getTeacherId, requireTeacherId(currentUser));
+        }
+        List<ClassGroupEntity> classes = classGroupMapper.selectList(query);
         if (classes.isEmpty()) {
             return Collections.emptyList();
         }
@@ -90,6 +95,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("listPrice", clz.getListPrice());
             item.put("productId", clz.getProductId());
             item.put("status", clz.getStatus());
+            item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc(), clz.getProductId()));
             item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
             result.add(item);
         }
@@ -97,9 +103,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     @Override
-    public Map<String, Object> getClassDetail(Long classId) {
+    public Map<String, Object> getClassDetail(Long classId, CurrentUserResponse currentUser) {
         ClassGroupEntity clz = classGroupMapper.selectById(classId);
         if (clz == null) throw new BusinessException("CLASS_NOT_FOUND", "Class not found.");
+        validateTeacherClassAccess(clz, currentUser);
         TeacherEntity teacher = clz.getTeacherId() != null
                 ? teacherMapper.selectById(clz.getTeacherId()) : null;
         ClassroomEntity classroom = clz.getClassroomId() != null
@@ -116,7 +123,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     @Override
-    public List<Map<String, Object>> listEnrolledStudents(Long classId) {
+    public List<Map<String, Object>> listEnrolledStudents(Long classId, CurrentUserResponse currentUser) {
+        requireClassForRead(classId, currentUser);
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .eq(ClassEnrollmentEntity::getClassId, classId)
@@ -170,7 +178,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     @Override
-    public List<Map<String, Object>> listClassOccurrences(Long classId) {
+    public List<Map<String, Object>> listClassOccurrences(Long classId, CurrentUserResponse currentUser) {
+        requireClassForRead(classId, currentUser);
         List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
@@ -257,30 +266,83 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
         );
+        Map<Long, List<LocalDate>> confirmedLessonDatesByStudent = loadConfirmedLessonDatesByStudent(classId);
+        activeEnrollments = activeEnrollments.stream()
+                .filter(enrollment -> isEnrollmentEligibleForOccurrence(
+                        enrollment, occ, confirmedLessonDatesByStudent))
+                .toList();
         if (activeEnrollments.isEmpty()) {
-            throw new BusinessException("NO_ACTIVE_STUDENTS", "No active students in this class.");
+            throw new BusinessException("NO_ACTIVE_STUDENTS", "No active eligible students in this class lesson.");
         }
         // 为每个在册学生创建 lesson_record（班课确认频率低，无需批量优化）
         int confirmedCount = 0;
+        boolean teacherConfirm = isTeacherUser(currentUser);
+        Map<Long, LessonRecordEntity> existingRecordsByStudent = new LinkedHashMap<>();
+        for (ClassEnrollmentEntity enrollment : activeEnrollments) {
+            existingRecordsByStudent.put(enrollment.getStudentId(),
+                    findLatestClassRecord(occurrenceId, enrollment.getStudentId()));
+        }
+        LessonRecordEntity pendingRecord = teacherConfirm ? null : existingRecordsByStudent.values().stream()
+                .filter(Objects::nonNull)
+                .filter(record -> CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage()))
+                .findFirst()
+                .orElse(null);
 
         // 解析 body 参数（支持 Number 和 String，因为前端 transformResponse 会将大数字 ID 转为字符串防止精度丢失）
-        Long actualTeacherId = parseLongParam(body, "actualTeacherId", occ.getPlannedTeacherId());
-        Long actualClassroomId = parseLongParam(body, "actualClassroomId", occ.getPlannedClassroomId());
+        Long actualTeacherId = parseLongParam(body, "actualTeacherId",
+                pendingRecord == null ? occ.getPlannedTeacherId() : pendingRecord.getActualTeacherId());
+        Long actualClassroomId = parseLongParam(body, "actualClassroomId",
+                pendingRecord == null ? occ.getPlannedClassroomId() : pendingRecord.getActualClassroomId());
+        if (actualTeacherId == null) {
+            throw new BusinessException("CLASS_TEACHER_REQUIRED",
+                    "Assign a teacher before confirming this class lesson.");
+        }
         Integer actualUnits = body != null && body.get("actualUnits") instanceof Number
-                ? Integer.valueOf(((Number) body.get("actualUnits")).intValue()) : null;
+                ? Integer.valueOf(((Number) body.get("actualUnits")).intValue())
+                : pendingRecord == null ? null : pendingRecord.getActualUnits();
         LocalDateTime actualStartAt = parseDateTimeParam(body, "actualStartAt");
         LocalDateTime actualEndAt = parseDateTimeParam(body, "actualEndAt");
+        if (pendingRecord != null) {
+            actualStartAt = actualStartAt == null ? pendingRecord.getActualStartAt() : actualStartAt;
+            actualEndAt = actualEndAt == null ? pendingRecord.getActualEndAt() : actualEndAt;
+        }
         String notes = body != null && body.get("notes") instanceof String
-                ? (String) body.get("notes") : null;
+                ? (String) body.get("notes") : pendingRecord == null ? null : pendingRecord.getNotes();
         String resultStatus = body != null && body.get("resultStatus") instanceof String s && !s.isBlank()
-                ? s : "COMPLETED";
-        boolean teacherConfirm = isTeacherUser(currentUser);
+                ? s : pendingRecord == null ? "COMPLETED" : pendingRecord.getResultStatus();
+        if (!ALLOWED_TEACHER_CONFIRM_STATUSES.contains(resultStatus)) {
+            throw new BusinessException("CLASS_RESULT_STATUS_NOT_ALLOWED",
+                    "Class lessons only support completed, no-show, or formal-leave results.");
+        }
+        if (actualUnits != null && actualUnits <= 0) {
+            throw new BusinessException("INVALID_ACTUAL_UNITS", "Actual lesson hours must be greater than zero.");
+        }
+        if (actualStartAt != null || actualEndAt != null) {
+            if (actualStartAt == null || actualEndAt == null || !actualEndAt.isAfter(actualStartAt)) {
+                throw new BusinessException("INVALID_ACTUAL_TIME",
+                        "Actual lesson start and end time must form a valid time range.");
+            }
+            long actualMinutes = ChronoUnit.MINUTES.between(actualStartAt, actualEndAt);
+            if (actualMinutes % 30 != 0) {
+                throw new BusinessException("INVALID_ACTUAL_TIME",
+                        "Actual lesson duration must use 0.5-hour increments.");
+            }
+            int unitsFromTime = (int) (actualMinutes / 30);
+            if (actualUnits != null && !actualUnits.equals(unitsFromTime)) {
+                throw new BusinessException("ACTUAL_TIME_UNITS_MISMATCH",
+                        "Actual lesson hours must match the selected start and end time.");
+            }
+            actualUnits = unitsFromTime;
+        }
         if (teacherConfirm) {
             validateTeacherClassConfirm(occ, resultStatus, currentUser);
+        } else {
+            ensureNoClassConfirmConflicts(occ, activeEnrollments, actualTeacherId,
+                    actualClassroomId, actualStartAt, actualEndAt);
         }
 
         for (ClassEnrollmentEntity enrollment : activeEnrollments) {
-            LessonRecordEntity existing = findLatestClassRecord(occurrenceId, enrollment.getStudentId());
+            LessonRecordEntity existing = existingRecordsByStudent.get(enrollment.getStudentId());
             if (existing != null && !CONFIRM_STAGE_REJECTED.equals(existing.getConfirmStage())) {
                 if (teacherConfirm || CONFIRM_STAGE_CONFIRMED.equals(existing.getConfirmStage())) {
                     continue;
@@ -355,6 +417,62 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return result;
     }
 
+    private boolean isEnrollmentEligibleForOccurrence(ClassEnrollmentEntity enrollment,
+                                                       LessonOccurrenceEntity occurrence,
+                                                       Map<Long, List<LocalDate>> confirmedLessonDatesByStudent) {
+        if (occurrence.getPlannedStartAt() == null) {
+            return true;
+        }
+        LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
+        if (enrollment.getEnrollmentDate() != null && lessonDate.isBefore(enrollment.getEnrollmentDate())) {
+            return false;
+        }
+        if (enrollment.getExpiryDate() != null && lessonDate.isAfter(enrollment.getExpiryDate())) {
+            return false;
+        }
+        if (!"PER_SESSION".equals(enrollment.getBillingType()) || enrollment.getPurchasedQuantity() == null) {
+            return true;
+        }
+        long usedSessions = confirmedLessonDatesByStudent
+                .getOrDefault(enrollment.getStudentId(), Collections.emptyList())
+                .stream()
+                .filter(date -> enrollment.getEnrollmentDate() == null || !date.isBefore(enrollment.getEnrollmentDate()))
+                .filter(date -> enrollment.getExpiryDate() == null || !date.isAfter(enrollment.getExpiryDate()))
+                .count();
+        return usedSessions < enrollment.getPurchasedQuantity();
+    }
+
+    private Map<Long, List<LocalDate>> loadConfirmedLessonDatesByStudent(Long classGroupId) {
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .select(LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getPlannedStartAt)
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classGroupId));
+        if (occurrences.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, LocalDate> lessonDateByOccurrenceId = occurrences.stream()
+                .filter(occurrence -> occurrence.getPlannedStartAt() != null)
+                .collect(Collectors.toMap(
+                        LessonOccurrenceEntity::getId,
+                        occurrence -> occurrence.getPlannedStartAt().toLocalDate()));
+        if (lessonDateByOccurrenceId.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, lessonDateByOccurrenceId.keySet())
+                        .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_CONFIRMED)
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .filter(record -> record.getStudentId() != null
+                        && lessonDateByOccurrenceId.containsKey(record.getOccurrenceId()))
+                .collect(Collectors.groupingBy(
+                        LessonRecordEntity::getStudentId,
+                        Collectors.mapping(
+                                record -> lessonDateByOccurrenceId.get(record.getOccurrenceId()),
+                                Collectors.toList())
+                ));
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void rejectLesson(Long classId, Long occurrenceId, String rejectReason, CurrentUserResponse currentUser) {
@@ -380,6 +498,42 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             record.setRejectedByUserId(currentUser.userId());
             lessonRecordMapper.updateById(record);
         }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body) {
+        ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
+        if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+        }
+        Long teacherId = parseLongFromBody(body, "teacherId");
+        Long classroomId = parseLongFromBody(body, "classroomId");
+        List<ClassGroupScheduleSlotEntity> slots = parseClassScheduleSlots(body.get("slots"));
+        if (slots.isEmpty()) {
+            throw new BusinessException("CLASS_SCHEDULE_REQUIRED", "Add at least one weekly class time.");
+        }
+        validateClassScheduleSlots(slots);
+        validateTeacher(teacherId);
+        validateClassroom(classroomId);
+        lockClassScheduleResources(classId, teacherId, classroomId);
+
+        classGroup.setTeacherId(teacherId);
+        classGroup.setClassroomId(classroomId);
+        classGroup.setScheduleDesc(buildScheduleDesc(slots));
+        classGroupMapper.updateById(classGroup);
+
+        classGroupScheduleSlotMapper.delete(new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId));
+        for (ClassGroupScheduleSlotEntity slot : slots) {
+            slot.setClassGroupId(classId);
+            classGroupScheduleSlotMapper.insert(slot);
+        }
+
+        int cancelledCount = removeFutureUnconfirmedOccurrences(classId);
+        Set<LocalDate> preservedDates = futurePreservedClassOccurrenceDates(classId);
+        int generatedCount = generateFutureClassOccurrences(classGroup, slots, preservedDates);
+        return Map.of("classId", classId, "cancelledFutureOccurrences", cancelledCount, "generatedOccurrences", generatedCount);
     }
 
     @Override
@@ -487,7 +641,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("scheduleDesc", clz.getScheduleDesc());
             item.put("teacherName", teacherName);
             item.put("classroomName", classroomName);
-            item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc(), clz.getProductId()));
+            item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc(), clz.getProductId()));
             result.add(item);
         }
         return result;
@@ -601,7 +755,33 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     private boolean isTeacherUser(CurrentUserResponse currentUser) {
-        return currentUser.roleCodes() != null && currentUser.roleCodes().contains("TEACHER");
+        return currentUser != null
+                && (Objects.equals("TEACHER", currentUser.userType())
+                || (currentUser.roleCodes() != null && currentUser.roleCodes().contains("TEACHER")));
+    }
+
+    private Long requireTeacherId(CurrentUserResponse currentUser) {
+        if (currentUser == null || currentUser.teacherId() == null) {
+            throw new BusinessException("TEACHER_BINDING_REQUIRED",
+                    "This teacher account is not linked to a teacher profile.");
+        }
+        return currentUser.teacherId();
+    }
+
+    private void validateTeacherClassAccess(ClassGroupEntity classGroup, CurrentUserResponse currentUser) {
+        if (isTeacherUser(currentUser)
+                && !Objects.equals(classGroup.getTeacherId(), requireTeacherId(currentUser))) {
+            throw new BusinessException("FORBIDDEN", "Teachers can only view their own classes.");
+        }
+    }
+
+    private ClassGroupEntity requireClassForRead(Long classId, CurrentUserResponse currentUser) {
+        ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
+        if (classGroup == null) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found.");
+        }
+        validateTeacherClassAccess(classGroup, currentUser);
+        return classGroup;
     }
 
     private void validateTeacherClassConfirm(LessonOccurrenceEntity occurrence, String resultStatus, CurrentUserResponse currentUser) {
@@ -694,6 +874,355 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return null;
     }
 
+    private void ensureNoClassConfirmConflicts(LessonOccurrenceEntity source,
+                                               List<ClassEnrollmentEntity> enrollments,
+                                               Long actualTeacherId,
+                                               Long actualClassroomId,
+                                               LocalDateTime actualStartAt,
+                                               LocalDateTime actualEndAt) {
+        LocalDateTime targetStartAt = actualStartAt != null ? actualStartAt : source.getPlannedStartAt();
+        LocalDateTime targetEndAt = actualEndAt != null ? actualEndAt : source.getPlannedEndAt();
+        if (actualTeacherId != null && hasOccurrenceConflict(source, targetStartAt, targetEndAt,
+                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedTeacherId, actualTeacherId))) {
+            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected for the adjusted class occurrence.");
+        }
+        if (actualClassroomId != null && hasOccurrenceConflict(source, targetStartAt, targetEndAt,
+                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId, actualClassroomId))) {
+            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the adjusted class occurrence.");
+        }
+
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            if (hasStudentConflict(source, enrollment.getStudentId(), targetStartAt, targetEndAt)) {
+                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted class occurrence.");
+            }
+        }
+    }
+
+    private boolean hasStudentConflict(LessonOccurrenceEntity source,
+                                       Long studentId,
+                                       LocalDateTime targetStartAt,
+                                       LocalDateTime targetEndAt) {
+        List<Long> classIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream()
+                .map(ClassEnrollmentEntity::getClassId)
+                .filter(Objects::nonNull)
+                .toList();
+        return hasOccurrenceConflict(source, targetStartAt, targetEndAt, wrapper -> wrapper
+                .and(nested -> nested
+                        .eq(LessonOccurrenceEntity::getStudentId, studentId)
+                        .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds))));
+    }
+
+    private boolean hasOccurrenceConflict(LessonOccurrenceEntity source,
+                                          LocalDateTime targetStartAt,
+                                          LocalDateTime targetEndAt,
+                                          java.util.function.Consumer<LambdaQueryWrapper<LessonOccurrenceEntity>> condition) {
+        LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .ne(LessonOccurrenceEntity::getId, source.getId())
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, targetEndAt)
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, targetStartAt);
+        condition.accept(wrapper);
+        Long conflictCount = lessonOccurrenceMapper.selectCount(wrapper);
+        return conflictCount != null && conflictCount > 0;
+    }
+
+    private List<ClassGroupScheduleSlotEntity> parseClassScheduleSlots(Object value) {
+        if (!(value instanceof List<?> rawSlots)) {
+            return Collections.emptyList();
+        }
+        List<ClassGroupScheduleSlotEntity> result = new ArrayList<>();
+        for (Object rawSlot : rawSlots) {
+            if (!(rawSlot instanceof Map<?, ?> map)) {
+                continue;
+            }
+            Integer weekday = parseInteger(map.get("weekday"));
+            LocalTime start = parseTime(map.get("startTime"));
+            LocalTime end = parseTime(map.get("endTime"));
+            if (weekday == null || start == null || end == null) {
+                continue;
+            }
+            ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+            slot.setWeekday(weekday);
+            slot.setStartTime(start);
+            slot.setEndTime(end);
+            result.add(slot);
+        }
+        return result;
+    }
+
+    private void validateClassScheduleSlots(List<ClassGroupScheduleSlotEntity> slots) {
+        Set<String> seen = new HashSet<>();
+        for (ClassGroupScheduleSlotEntity slot : slots) {
+            if (slot.getWeekday() == null || slot.getWeekday() < 1 || slot.getWeekday() > 7) {
+                throw new BusinessException("INVALID_CLASS_SCHEDULE", "Weekday must be between 1 and 7.");
+            }
+            if (slot.getStartTime() == null || slot.getEndTime() == null || !slot.getEndTime().isAfter(slot.getStartTime())) {
+                throw new BusinessException("INVALID_CLASS_SCHEDULE", "Schedule end time must be after start time.");
+            }
+            String key = slot.getWeekday() + "|" + slot.getStartTime() + "|" + slot.getEndTime();
+            if (!seen.add(key)) {
+                throw new BusinessException("INVALID_CLASS_SCHEDULE", "Duplicate class schedule slots are not allowed.");
+            }
+        }
+        for (int i = 0; i < slots.size(); i++) {
+            ClassGroupScheduleSlotEntity left = slots.get(i);
+            for (int j = i + 1; j < slots.size(); j++) {
+                ClassGroupScheduleSlotEntity right = slots.get(j);
+                if (Objects.equals(left.getWeekday(), right.getWeekday())
+                        && left.getStartTime().isBefore(right.getEndTime())
+                        && left.getEndTime().isAfter(right.getStartTime())) {
+                    throw new BusinessException("INVALID_CLASS_SCHEDULE", "Class schedule slots cannot overlap on the same day.");
+                }
+            }
+        }
+    }
+
+    private int removeFutureUnconfirmedOccurrences(Long classId) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now));
+        if (futureOccurrences.isEmpty()) {
+            return 0;
+        }
+        Set<Long> occurrenceIds = futureOccurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
+        Set<Long> recordedOccurrenceIds = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .map(LessonRecordEntity::getOccurrenceId)
+                .collect(Collectors.toSet());
+
+        List<Long> removableIds = futureOccurrences.stream()
+                .map(LessonOccurrenceEntity::getId)
+                .filter(id -> !recordedOccurrenceIds.contains(id))
+                .toList();
+        if (removableIds.isEmpty()) {
+            return 0;
+        }
+        return lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getId, removableIds));
+    }
+
+    private Set<LocalDate> futurePreservedClassOccurrenceDates(Long classId) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now))
+                .stream()
+                .map(LessonOccurrenceEntity::getPlannedStartAt)
+                .filter(Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .collect(Collectors.toSet());
+    }
+
+    private int generateFutureClassOccurrences(ClassGroupEntity classGroup,
+                                               List<ClassGroupScheduleSlotEntity> slots,
+                                               Set<LocalDate> preservedDates) {
+        LocalDate startDate = AppTime.nowLocalDateTime().toLocalDate();
+        LocalDate endDate = resolveClassScheduleHorizon(classGroup.getId(), startDate);
+        int count = 0;
+        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            if (preservedDates.contains(date)) {
+                continue;
+            }
+            int weekday = date.getDayOfWeek().getValue();
+            for (ClassGroupScheduleSlotEntity slot : slots) {
+                if (!Objects.equals(slot.getWeekday(), weekday)) {
+                    continue;
+                }
+                LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+                occurrence.setLessonNo(generateClassLessonNo());
+                occurrence.setClassGroupId(classGroup.getId());
+                occurrence.setOccurrenceType("REGULAR");
+                occurrence.setPlannedTeacherId(classGroup.getTeacherId());
+                occurrence.setPlannedClassroomId(classGroup.getClassroomId());
+                occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
+                occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
+                occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                occurrence.setPlanningStatus("SCHEDULED");
+                ensureNoGeneratedClassOccurrenceConflicts(occurrence);
+                occurrence.setConflictChecked(1);
+                lessonOccurrenceMapper.insert(occurrence);
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private void ensureNoGeneratedClassOccurrenceConflicts(LessonOccurrenceEntity occurrence) {
+        LocalDateTime startAt = occurrence.getPlannedStartAt();
+        LocalDateTime endAt = occurrence.getPlannedEndAt();
+        if (occurrence.getPlannedTeacherId() != null && hasClassScheduleConflict(startAt, endAt,
+                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId()))) {
+            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected for the new class schedule.");
+        }
+        if (occurrence.getPlannedClassroomId() != null && hasClassScheduleConflict(startAt, endAt,
+                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId()))) {
+            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the new class schedule.");
+        }
+        for (Long studentId : activeStudentIdsByClass(occurrence.getClassGroupId())) {
+            if (hasStudentConflictForClassSchedule(studentId, startAt, endAt)) {
+                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the new class schedule.");
+            }
+        }
+    }
+
+    private boolean hasStudentConflictForClassSchedule(Long studentId, LocalDateTime startAt, LocalDateTime endAt) {
+        List<Long> classIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream()
+                .map(ClassEnrollmentEntity::getClassId)
+                .filter(Objects::nonNull)
+                .toList();
+        return hasClassScheduleConflict(startAt, endAt, wrapper -> wrapper
+                .and(nested -> nested
+                        .eq(LessonOccurrenceEntity::getStudentId, studentId)
+                        .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds))));
+    }
+
+    private boolean hasClassScheduleConflict(LocalDateTime startAt,
+                                             LocalDateTime endAt,
+                                             java.util.function.Consumer<LambdaQueryWrapper<LessonOccurrenceEntity>> condition) {
+        LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, endAt)
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, startAt);
+        condition.accept(wrapper);
+        Long conflictCount = lessonOccurrenceMapper.selectCount(wrapper);
+        return conflictCount != null && conflictCount > 0;
+    }
+
+    private List<Long> activeStudentIdsByClass(Long classId) {
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream()
+                .map(ClassEnrollmentEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    private void lockClassScheduleResources(Long classId, Long teacherId, Long classroomId) {
+        activeStudentIdsByClass(classId).stream()
+                .sorted()
+                .forEach(studentMapper::selectByIdForUpdate);
+        if (teacherId != null) {
+            teacherMapper.selectByIdForUpdate(teacherId);
+        }
+        if (classroomId != null) {
+            classroomMapper.selectByIdForUpdate(classroomId);
+        }
+    }
+
+    private LocalDate resolveClassScheduleHorizon(Long classId, LocalDate fallbackStart) {
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream()
+                .map(ClassEnrollmentEntity::getExpiryDate)
+                .filter(Objects::nonNull)
+                .max(LocalDate::compareTo)
+                .orElse(fallbackStart.plusDays(60));
+    }
+
+    private Integer parseInteger(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private Long parseLongFromBody(Map<String, Object> body, String key) {
+        Object value = body == null ? null : body.get(key);
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    private LocalTime parseTime(Object value) {
+        if (value instanceof String text && !text.isBlank()) {
+            return LocalTime.parse(text.length() > 5 ? text.substring(0, 5) : text);
+        }
+        return null;
+    }
+
+    private void validateTeacher(Long teacherId) {
+        if (teacherId == null) {
+            return;
+        }
+        TeacherEntity teacher = teacherMapper.selectById(teacherId);
+        if (teacher == null || !"ACTIVE".equals(teacher.getStatus())) {
+            throw new BusinessException("TEACHER_NOT_AVAILABLE", "The selected teacher does not exist or is not active.");
+        }
+    }
+
+    private void validateClassroom(Long classroomId) {
+        if (classroomId == null) {
+            return;
+        }
+        ClassroomEntity classroom = classroomMapper.selectById(classroomId);
+        if (classroom == null || !"ACTIVE".equals(classroom.getStatus())) {
+            throw new BusinessException("CLASSROOM_NOT_AVAILABLE", "The selected classroom does not exist or is not active.");
+        }
+    }
+
+    private String buildScheduleDesc(List<ClassGroupScheduleSlotEntity> slots) {
+        return slots.stream()
+                .sorted(Comparator.comparing(ClassGroupScheduleSlotEntity::getWeekday)
+                        .thenComparing(ClassGroupScheduleSlotEntity::getStartTime))
+                .map(slot -> weekdayShortLabel(slot.getWeekday()) + " "
+                        + slot.getStartTime().toString().substring(0, 5)
+                        + "-"
+                        + slot.getEndTime().toString().substring(0, 5))
+                .collect(Collectors.joining("; "));
+    }
+
+    private String weekdayShortLabel(Integer weekday) {
+        return switch (weekday == null ? 0 : weekday) {
+            case 1 -> "Mon";
+            case 2 -> "Tue";
+            case 3 -> "Wed";
+            case 4 -> "Thu";
+            case 5 -> "Fri";
+            case 6 -> "Sat";
+            case 7 -> "Sun";
+            default -> "?";
+        };
+    }
+
+    private String generateClassLessonNo() {
+        return "CLS" + AppTime.nowLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + String.format("%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 10000));
+    }
+
     private String resolveTeacherName(Long teacherId, Map<Long, TeacherEntity> teacherMap) {
         if (teacherId == null) return null;
         TeacherEntity t = teacherMap.get(teacherId);
@@ -739,7 +1268,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("listPrice", clz.getListPrice());
         item.put("productId", clz.getProductId());
         item.put("status", clz.getStatus());
-        item.put("scheduleSlots", toScheduleSlotList(clz.getScheduleDesc(), clz.getProductId()));
+        item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc(), clz.getProductId()));
         return item;
     }
 
@@ -747,8 +1276,25 @@ public class ClassGroupServiceImpl implements ClassGroupService {
      * 解析 scheduleDesc 为前端可用的 slot 列表。
      * 优先从产品排课时段表加载（更准确），降级到解析 scheduleDesc 文本。
      */
-    private List<Map<String, Object>> toScheduleSlotList(String scheduleDesc, Long productId) {
-        // Prefer product schedule slots when productId is available (authoritative data)
+    private List<Map<String, Object>> toScheduleSlotList(Long classGroupId, String scheduleDesc, Long productId) {
+        if (classGroupId != null) {
+            List<ClassGroupScheduleSlotEntity> classSlots = classGroupScheduleSlotMapper.selectList(
+                    new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                            .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroupId)
+                            .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
+            if (!classSlots.isEmpty()) {
+                return classSlots.stream()
+                        .map(slot -> {
+                            int minutes = (int) ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                            return toSlotMap(slot.getWeekday(),
+                                    slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
+                                    slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
+                                    minutes > 0 ? minutes / 30 : 0);
+                        })
+                        .toList();
+            }
+        }
+        // Fallback to product slots for legacy data.
         if (productId != null) {
             List<CourseProductScheduleSlotEntity> slots = courseProductScheduleSlotMapper.selectList(
                     new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()

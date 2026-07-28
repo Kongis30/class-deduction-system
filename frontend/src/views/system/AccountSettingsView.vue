@@ -296,7 +296,7 @@ const deleteSubmitting = ref(false);
 let deleteTimer: ReturnType<typeof setInterval> | null = null;
 const deleteProfileTypeLabel = computed(() => (deleteType.value === 'TEACHER' ? 'teacher' : 'student'));
 
-// 行操作下拉菜单分发：根据命令打开编辑或删除弹窗
+
 function handleAccountCommand(command: string, row: any, type: 'TEACHER' | 'STUDENT') {
   if (command === 'edit') {
     openEditDialog(row, type);

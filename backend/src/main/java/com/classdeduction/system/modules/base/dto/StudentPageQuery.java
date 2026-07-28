@@ -19,6 +19,15 @@ public class StudentPageQuery extends PageQuery {
     @Schema(description = "Student status", example = "ACTIVE")
     private String status;
 
-    @Schema(description = "Guardian name keyword", example = "Mei Lin")
+    @Schema(description = "Guardian name or phone keyword", example = "Mei Lin")
     private String guardian;
+
+    @Schema(description = "Campus ID", example = "1001")
+    private Long campusId;
+
+    @Schema(description = "Aggregated enrollment payment status", example = "PARTIAL")
+    private String paymentStatus;
+
+    @Schema(description = "Whether the student has at least one enrollment order", example = "true")
+    private Boolean hasEnrollmentOrder;
 }

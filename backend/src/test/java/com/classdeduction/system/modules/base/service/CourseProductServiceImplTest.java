@@ -1,6 +1,5 @@
 package com.classdeduction.system.modules.base.service;
 
-import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
@@ -9,6 +8,7 @@ import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMa
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.impl.CourseProductServiceImpl;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,13 +16,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionStatus;
 
-import java.math.BigDecimal;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class CourseProductServiceImplTest {
@@ -58,29 +57,30 @@ class CourseProductServiceImplTest {
     }
 
     @Test
-    void shouldRejectInvalidScheduleSlotTimeRange() {
-        CourseProductEntity existing = buildGroupProduct();
+    void shouldCreateGroupProductWithoutOriginalPriceOrDefaultResources() {
         CourseProductSaveRequest request = buildGroupRequest();
-        request.getSlots().get(0).setEndTime("08:30");
-        when(courseProductMapper.selectById(201L)).thenReturn(existing);
+        request.setListPrice(null);
+        request.setDefaultTeacherId(null);
+        request.setDefaultClassroomId(null);
+        TransactionStatus transactionStatus = mock(TransactionStatus.class);
+        when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+        doAnswer(invocation -> {
+            CourseProductEntity product = invocation.getArgument(0);
+            product.setId(201L);
+            return 1;
+        }).when(courseProductMapper).insert(any(CourseProductEntity.class));
 
-        assertThatThrownBy(() -> courseProductService.updateCourseProduct(201L, request))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Schedule slot end time must be after start time.");
-    }
+        courseProductService.createCourseProduct(request);
 
-    @Test
-    void shouldBlockCriticalFieldChangesWhenProductIsReferenced() {
-        CourseProductEntity existing = buildGroupProduct();
-        CourseProductSaveRequest request = buildGroupRequest();
-        request.setDefaultTeacherId(302L);
-        when(courseProductMapper.selectById(201L)).thenReturn(existing);
-        when(coursePackageMapper.selectCount(any())).thenReturn(0L);
-        when(classGroupMapper.selectCount(any())).thenReturn(1L);
-
-        assertThatThrownBy(() -> courseProductService.updateCourseProduct(201L, request))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("This course product is already used.");
+        verify(courseProductMapper).insert(argThat((CourseProductEntity product) ->
+                product.getListPrice().signum() == 0
+                        && product.getDefaultTeacherId() == null
+                        && product.getDefaultClassroomId() == null
+                        && product.getBillingType() == null
+                        && product.getStartDate() == null
+                        && product.getTotalSessions() == null));
+        verify(classGroupMapper, never()).insert(any(ClassGroupEntity.class));
+        verify(transactionManager).commit(transactionStatus);
     }
 
     private CourseProductEntity buildGroupProduct() {
@@ -95,7 +95,6 @@ class CourseProductServiceImplTest {
         product.setTotalSessions(20);
         product.setDefaultClassroomId(401L);
         product.setDefaultTeacherId(301L);
-        product.setListPrice(new BigDecimal("600.00"));
         product.setStatus("ACTIVE");
         return product;
     }
@@ -111,7 +110,6 @@ class CourseProductServiceImplTest {
         request.setTotalSessions(20);
         request.setDefaultClassroomId(401L);
         request.setDefaultTeacherId(301L);
-        request.setListPrice(new BigDecimal("600.00"));
         request.setStatus("ACTIVE");
         CourseProductSaveRequest.ProductScheduleSlotDTO slot = new CourseProductSaveRequest.ProductScheduleSlotDTO();
         slot.setWeekday(1);

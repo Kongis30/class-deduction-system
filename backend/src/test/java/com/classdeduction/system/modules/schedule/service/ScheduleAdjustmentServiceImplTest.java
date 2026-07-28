@@ -6,6 +6,7 @@ import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -13,6 +14,7 @@ import com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.dto.WeeklyScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.ScheduleAdjustmentServiceImpl;
@@ -38,6 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,6 +58,12 @@ class ScheduleAdjustmentServiceImplTest {
 
     @Mock
     private LessonRecordMapper lessonRecordMapper;
+
+    @Mock
+    private ClassEnrollmentMapper classEnrollmentMapper;
+
+    @Mock
+    private StudentMapper studentMapper;
 
     @Mock
     private TeacherMapper teacherMapper;
@@ -79,10 +88,14 @@ class ScheduleAdjustmentServiceImplTest {
                 lessonOccurrenceMapper,
                 lessonAdjustmentLogMapper,
                 lessonRecordMapper,
+                classEnrollmentMapper,
+                studentMapper,
                 teacherMapper,
                 classroomMapper,
                 jsonHelper
         );
+        // 调课写入现在会校验受影响行数，默认让 updateById 返回成功，避免误报并发冲突。
+        lenient().when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
     }
 
     @Test
@@ -123,6 +136,111 @@ class ScheduleAdjustmentServiceImplTest {
         assertThat(logCaptor.getValue().getAdjustmentType()).isEqualTo("MAKEUP_CREATE");
         assertThat(result.adjustmentLogId()).isEqualTo(3003L);
         assertThat(result.createdOccurrenceId()).isEqualTo(2002L);
+    }
+
+    @Test
+    void shouldAssignTeacherAndClassroomToAnUnassignedLesson() {
+        LessonOccurrenceEntity source = buildSourceOccurrence();
+        source.setPlannedTeacherId(null);
+        source.setPlannedClassroomId(null);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
+        doAnswer(invocation -> {
+            LessonAdjustmentLogEntity entity = invocation.getArgument(0);
+            entity.setId(3003L);
+            return 1;
+        }).when(lessonAdjustmentLogMapper).insert(any(LessonAdjustmentLogEntity.class));
+
+        ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();
+        request.setOccurrenceId(1001L);
+        request.setAdjustmentType("ASSIGN_RESOURCES");
+        request.setPlannedTeacherId(3001L);
+        request.setPlannedClassroomId(4001L);
+        request.setReason("Assign before class");
+
+        scheduleAdjustmentService.adjust(request);
+
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getValue().getPlannedTeacherId()).isEqualTo(3001L);
+        assertThat(occurrenceCaptor.getValue().getPlannedClassroomId()).isEqualTo(4001L);
+        assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("ADJUSTED");
+    }
+
+    @Test
+    void shouldKeepClassGroupWhenAdjustingClassOccurrence() {
+        LessonOccurrenceEntity source = buildSourceOccurrence();
+        source.setPackageId(null);
+        source.setStudentId(null);
+        source.setClassGroupId(7001L);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
+        doAnswer(invocation -> {
+            LessonAdjustmentLogEntity entity = invocation.getArgument(0);
+            entity.setId(3003L);
+            return 1;
+        }).when(lessonAdjustmentLogMapper).insert(any(LessonAdjustmentLogEntity.class));
+
+        ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();
+        request.setOccurrenceId(1001L);
+        request.setAdjustmentType("RESCHEDULE");
+        request.setPlannedTeacherId(3001L);
+        request.setPlannedClassroomId(4001L);
+        request.setPlannedStartAt(LocalDateTime.of(2026, 4, 14, 18, 0));
+        request.setPlannedEndAt(LocalDateTime.of(2026, 4, 14, 20, 0));
+        request.setPlannedUnits(4);
+        request.setReason("class schedule change");
+
+        scheduleAdjustmentService.adjust(request);
+
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getValue().getClassGroupId()).isEqualTo(7001L);
+        assertThat(occurrenceCaptor.getValue().getPackageId()).isNull();
+        assertThat(occurrenceCaptor.getValue().getStudentId()).isNull();
+    }
+
+    @Test
+    void shouldNotRebalancePackageWhenClassOccurrenceDurationChanges() {
+        LessonOccurrenceEntity source = buildSourceOccurrence();
+        source.setPackageId(null);
+        source.setStudentId(null);
+        source.setClassGroupId(7001L);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
+        doAnswer(invocation -> {
+            LessonAdjustmentLogEntity entity = invocation.getArgument(0);
+            entity.setId(3003L);
+            return 1;
+        }).when(lessonAdjustmentLogMapper).insert(any(LessonAdjustmentLogEntity.class));
+
+        ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();
+        request.setOccurrenceId(1001L);
+        request.setAdjustmentType("RESCHEDULE");
+        request.setPlannedTeacherId(3001L);
+        request.setPlannedClassroomId(4001L);
+        request.setPlannedStartAt(LocalDateTime.of(2026, 4, 14, 18, 0));
+        request.setPlannedEndAt(LocalDateTime.of(2026, 4, 14, 20, 30));
+        request.setPlannedUnits(5);
+        request.setReason("class duration change");
+
+        scheduleAdjustmentService.adjust(request);
+
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getValue().getClassGroupId()).isEqualTo(7001L);
+        assertThat(occurrenceCaptor.getValue().getPackageId()).isNull();
+        assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(5);
+        assertThat(occurrenceCaptor.getValue().getPlannedEndAt())
+                .isEqualTo(LocalDateTime.of(2026, 4, 14, 20, 30));
     }
 
     @Test

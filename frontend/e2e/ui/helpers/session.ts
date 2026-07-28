@@ -103,11 +103,21 @@ async function ensureE2EApiRouting(page: Page): Promise<void> {
     delete headers['access-control-request-headers'];
     delete headers['access-control-request-method'];
 
-    const response = await route.fetch({
-      url: `${apiBase.origin}${apiBasePath}${apiPath}${originalUrl.search}`,
-      headers,
-    });
-    await route.fulfill({ response });
+    try {
+      const response = await route.fetch({
+        url: `${apiBase.origin}${apiBasePath}${apiPath}${originalUrl.search}`,
+        headers,
+      });
+      await route.fulfill({ response });
+    } catch (error) {
+      // Playwright may close the page while late background requests are still
+      // routed during test teardown. Those requests should not fail a completed
+      // business assertion.
+      if (String(error).includes('Target page, context or browser has been closed')) {
+        return;
+      }
+      throw error;
+    }
   });
   routedPages.add(page);
 }

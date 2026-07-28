@@ -7,8 +7,9 @@
 --   本项目无 Flyway/Liquibase，schema 变更需手工执行本脚本，并同步
 --   doc/mysql_schema_from_db.sql。请在执行前备份数据库。
 --
---   退款实现：退款记为一条 amount 为负、payment_type='REFUND' 的 payment_record，
---   订单 payment_status 置为 REFUNDED，received_amount 归零。
+--   退款实现：退款记为一条 amount 为负、payment_type='REFUND' 的 payment_record。
+--   部分退款更新订单 received_amount、balance_amount 和 payment_status；全额退款
+--   置为 REFUNDED 并清零。该规则不需要新增数据库字段。
 -- ============================================================================
 
 -- payment_record: 新增记录类型列（区分支付/退款），存量行默认 PAYMENT

@@ -34,18 +34,21 @@ public class LessonRecordController {
     private final LessonRecordService lessonRecordService;
 
     @GetMapping
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Page lesson records")
     public ApiResponse<PageResponse<LessonRecordListItemVO>> pageRecords(@ParameterObject LessonRecordPageQuery query) {
         return ApiResponse.success(lessonRecordService.pageRecords(query));
     }
 
     @GetMapping("/{id}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Get lesson record detail")
     public ApiResponse<LessonRecordDetailVO> getRecord(@PathVariable Long id) {
         return ApiResponse.success(lessonRecordService.getRecord(id));
     }
 
     @PostMapping
+    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
     @Operation(summary = "Confirm a lesson by current role")
     public ApiResponse<LessonRecordConfirmResultVO> confirmLesson(
             @Valid @RequestBody LessonRecordConfirmRequest request,
@@ -55,7 +58,7 @@ public class LessonRecordController {
     }
 
     @PostMapping("/{id}/admin-confirm")
-    @RequireRoles({"ADMIN"})
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Admin finally confirms a pending lesson record")
     public ApiResponse<LessonRecordConfirmResultVO> adminConfirmLesson(
             @PathVariable Long id,
@@ -78,6 +81,7 @@ public class LessonRecordController {
     }
 
     @PostMapping("/{id}/revoke")
+    @RequireRoles({"ADMIN"})
     @Operation(summary = "Revoke a confirmed lesson record and roll back the deducted units")
     public ApiResponse<Void> revokeLesson(
             @PathVariable Long id,

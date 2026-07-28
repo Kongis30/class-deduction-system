@@ -67,8 +67,8 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * 主动刷新 token：将旧 token 替换为新 token，延长会话有效期。
-   * 建议在会话剩余时间不足 2 小时时调用一次。
+
+
    */
   async function refreshSession() {
     if (!token.value) return;
@@ -77,14 +77,14 @@ export const useAuthStore = defineStore('auth', () => {
       token.value = response.data.data.token;
       storeAuthToken(token.value);
     } catch {
-      // 刷新失败不跳转，静默等待下次 bootstrap 自然重新登录
+
     }
   }
 
   /**
-   * 启动自动刷新：每 10 小时调用一次 refreshSession，
-   * 确保 session 在 12h TTL 内不会因为时间流逝而失效。
-   * 若前端页面长期开着（比如一天），也能自动续期。
+
+
+
    */
   function startAutoRefresh() {
     setInterval(refreshSession, 10 * 60 * 60 * 1000);

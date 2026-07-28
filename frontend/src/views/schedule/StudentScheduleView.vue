@@ -38,7 +38,7 @@
           <!-- No student selected -->
           <div v-if="!selectedStudentId" class="calendar-empty">
             <el-icon :size="40" color="#c0c4cc"><Calendar /></el-icon>
-            <p>Select a student on the left to view their weekly class schedule.</p>
+            <p>{{ isStudent ? 'No schedule is available for your account.' : 'Select a student to view their weekly schedule.' }}</p>
           </div>
 
           <!-- Loading -->
@@ -47,55 +47,91 @@
             <span>Loading schedule...</span>
           </div>
 
-          <!-- Calendar -->
+          <!-- Student lesson list / staff calendar -->
           <template v-else>
-            <div class="calendar-controls">
-              <div class="calendar-controls__nav">
-                <el-button-group>
-                  <el-button :icon="ArrowLeft" @click="prevWeek" />
-                  <el-button :icon="ArrowRight" @click="nextWeek" />
-                </el-button-group>
-                <el-date-picker
-                  v-model="pickerDate"
-                  type="date"
-                  placeholder="Jump to week"
-                  value-format="YYYY-MM-DD"
-                  style="width: 150px;"
-                  @change="jumpToDate"
-                />
-                <span class="calendar-controls__label">{{ weekLabel }}</span>
-                <el-tag size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+            <template v-if="isStudent">
+              <div v-if="studentPackages.length > 0" class="package-info-bar">
+                <div v-for="pkg in studentPackages" :key="pkg.id" class="package-info-chip">
+                  <span class="package-info-chip__name">{{ pkg.packageName }}</span>
+                  <span class="package-info-chip__meta">{{ pkg.remainingUnits ?? pkg.totalUnits }}h remaining</span>
+                </div>
               </div>
-              <span class="calendar-controls__student">
-                {{ selectedStudentName }}
-              </span>
-            </div>
-
-            <!-- Package info bar -->
-            <div v-if="studentPackages.length > 0" class="package-info-bar">
-              <div
-                v-for="pkg in studentPackages"
-                :key="pkg.id"
-                class="package-info-chip"
-              >
-                <span class="package-info-chip__name">{{ pkg.packageName }}</span>
-                <span class="package-info-chip__meta">
-                  {{ pkg.remainingUnits ?? pkg.totalUnits }}h remaining
-                  <template v-if="packageLastDates[pkg.id]">
-                    · Last lesson {{ packageLastDates[pkg.id] }}
-                  </template>
+              <div class="student-lessons__toolbar">
+                <el-radio-group v-model="studentScheduleTab" @change="loadSchedule">
+                  <el-radio-button label="future">Future lessons</el-radio-button>
+                  <el-radio-button label="history">History</el-radio-button>
+                </el-radio-group>
+                <span class="student-lessons__range">
+                  {{ studentScheduleTab === 'future' ? 'Today through the next 30 days' : 'Previous 30 days' }}
                 </span>
               </div>
-            </div>
 
-            <WeeklyTimeSelector
-              v-model="emptySlots"
-              :occupied-slots="occupiedSlots"
-              :week-start-date="weekMonday"
-              :readonly="true"
-              :hide-hint="true"
-              @cell-click="onCellClick"
-            />
+              <div v-if="occurrences.length === 0" class="student-lessons__empty">
+                No {{ studentScheduleTab === 'future' ? 'upcoming' : 'past' }} lessons in this period.
+              </div>
+              <div v-else class="student-lessons__list">
+                <article v-for="lesson in occurrences" :key="lesson.id" class="student-lesson-card">
+                  <div class="student-lesson-card__time">{{ formatLessonTime(lesson) }}</div>
+                  <div class="student-lesson-card__course">{{ lessonCourseLabel(lesson) }}</div>
+                  <div class="student-lesson-card__detail">
+                    <span>Teacher: {{ lesson.plannedTeacherName || '—' }}</span>
+                    <span>Room: {{ lesson.plannedClassroomName || '—' }}</span>
+                  </div>
+                  <el-tag size="small" :type="planningStatusTag(lesson.planningStatus)">
+                    {{ planningStatusLabel(lesson.planningStatus) }}
+                  </el-tag>
+                </article>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="calendar-controls">
+                <div class="calendar-controls__nav">
+                  <el-button-group>
+                    <el-button :icon="ArrowLeft" @click="prevWeek" />
+                    <el-button :icon="ArrowRight" @click="nextWeek" />
+                  </el-button-group>
+                  <el-date-picker
+                    v-model="pickerDate"
+                    type="date"
+                    placeholder="Jump to week"
+                    value-format="YYYY-MM-DD"
+                    style="width: 150px;"
+                    @change="jumpToDate"
+                  />
+                  <span class="calendar-controls__label">{{ weekLabel }}</span>
+                  <el-tag size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+                </div>
+                <span class="calendar-controls__student">
+                  {{ selectedStudentName }}
+                </span>
+              </div>
+
+              <div v-if="studentPackages.length > 0" class="package-info-bar">
+                <div
+                  v-for="pkg in studentPackages"
+                  :key="pkg.id"
+                  class="package-info-chip"
+                >
+                  <span class="package-info-chip__name">{{ pkg.packageName }}</span>
+                  <span class="package-info-chip__meta">
+                    {{ pkg.remainingUnits ?? pkg.totalUnits }}h remaining
+                    <template v-if="packageLastDates[pkg.id]">
+                      · Last lesson {{ packageLastDates[pkg.id] }}
+                    </template>
+                  </span>
+                </div>
+              </div>
+
+              <WeeklyTimeSelector
+                v-model="emptySlots"
+                :occupied-slots="occupiedSlots"
+                :week-start-date="weekMonday"
+                :readonly="true"
+                :hide-hint="true"
+                @cell-click="onCellClick"
+              />
+            </template>
           </template>
         </main>
       </div>
@@ -103,6 +139,7 @@
 
     <!-- Detail dialog -->
     <el-dialog
+      v-if="!isStudent"
       v-model="detailDialogVisible"
       title="Lesson Detail"
       width="540px"
@@ -180,7 +217,7 @@ import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import dayjs from 'dayjs';
 import { fetchAllStudents } from '@/api/base-data';
-import { fetchCoursePackages } from '@/api/enrollment';
+import { fetchCoursePackages, fetchMyCoursePackages } from '@/api/enrollment';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
@@ -201,10 +238,16 @@ const selectedStudentId = ref<EntityId | null>(null);
 const weekOffset = ref(0);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
+const studentScheduleTab = ref<'future' | 'history'>('future');
 
 // ─── Package info bar ──────────────────────────
 const studentPackages = ref<CoursePackageItem[]>([]);
 const packageLastDates = ref<Record<string, string>>({});
+
+// Monotonic token guarding against stale responses: when the user switches
+// students quickly, only the latest request may write shared state.
+let scheduleRequestSeq = 0;
+let packageRequestSeq = 0;
 
 // ─── Student list ──────────────────────────────
 const filteredStudents = computed(() => {
@@ -229,23 +272,31 @@ async function onStudentSelect(id: EntityId) {
 
 async function loadPackageInfo() {
   if (!selectedStudentId.value) return;
+  const requestId = ++packageRequestSeq;
+  const studentId = selectedStudentId.value;
   try {
-    const pkgRes = await fetchCoursePackages({
-      studentId: selectedStudentId.value,
+    const pkgRes = await (isStudent.value ? fetchMyCoursePackages({
       packageStatus: 'ACTIVE',
       pageSize: 50,
-    });
+    }) : fetchCoursePackages({
+      studentId,
+      packageStatus: 'ACTIVE',
+      pageSize: 50,
+    }));
+    // Discard if a newer selection has superseded this request.
+    if (requestId !== packageRequestSeq) return;
     studentPackages.value = pkgRes.data.data.records;
 
     // Query recent occurrences to find each package's last lesson date
     const dates: Record<string, string> = {};
     try {
       const occRes = await fetchLessonOccurrences({
-        studentId: selectedStudentId.value,
+        studentId,
         startAt: dayjs().subtract(90, 'day').format('YYYY-MM-DDT00:00:00'),
         endAt: dayjs().add(90, 'day').format('YYYY-MM-DDT23:59:59'),
-        pageSize: 500,
+        pageSize: 200,
       });
+      if (requestId !== packageRequestSeq) return;
       const occs = occRes.data.data.records;
       for (const occ of occs) {
         const pkgKey = String(occ.packageId);
@@ -260,8 +311,10 @@ async function loadPackageInfo() {
     for (const [pkgKey, dt] of Object.entries(dates)) {
       formatted[pkgKey] = dayjs(dt).format('MMM D, YYYY');
     }
+    if (requestId !== packageRequestSeq) return;
     packageLastDates.value = formatted;
   } catch {
+    if (requestId !== packageRequestSeq) return;
     studentPackages.value = [];
   }
 }
@@ -305,7 +358,7 @@ function jumpToDate(date: string | null) {
 // ─── Occupied slots ────────────────────────────
 const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
-  // 1v1 课包课次
+
   for (const o of occurrences.value) {
     if (o.planningStatus === 'CANCELLED') continue;
     const start = dayjs(o.plannedStartAt);
@@ -326,25 +379,35 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
 // ─── Data loading ──────────────────────────────
 async function loadSchedule() {
   if (!selectedStudentId.value) return;
+  const requestId = ++scheduleRequestSeq;
+  const studentId = selectedStudentId.value;
   loading.value = true;
   try {
-    const monday = dayjs(weekMonday.value);
-    const sunday = monday.add(6, 'day').endOf('day');
-    const weekStart = monday.format('YYYY-MM-DDTHH:mm:ss');
-    const weekEnd = sunday.format('YYYY-MM-DDTHH:mm:ss');
+    const today = dayjs().startOf('day');
+    const startAt = isStudent.value
+      ? (studentScheduleTab.value === 'future' ? today : today.subtract(30, 'day')).format('YYYY-MM-DDTHH:mm:ss')
+      : dayjs(weekMonday.value).format('YYYY-MM-DDTHH:mm:ss');
+    const endAt = isStudent.value
+      ? (studentScheduleTab.value === 'future' ? today.add(30, 'day').endOf('day') : today).format('YYYY-MM-DDTHH:mm:ss')
+      : dayjs(weekMonday.value).add(6, 'day').endOf('day').format('YYYY-MM-DDTHH:mm:ss');
 
     const res = await fetchLessonOccurrences({
-      studentId: selectedStudentId.value,
-      startAt: weekStart,
-      endAt: weekEnd,
-      pageSize: 100,
+      studentId,
+      startAt,
+      endAt,
+      pageSize: isStudent.value ? 200 : 100,
     });
+    // Discard if a newer selection/week has superseded this request.
+    if (requestId !== scheduleRequestSeq) return;
     occurrences.value = res.data.data.records;
   } catch {
+    if (requestId !== scheduleRequestSeq) return;
     ElMessage.error('Failed to load schedule.');
     occurrences.value = [];
   } finally {
-    loading.value = false;
+    if (requestId === scheduleRequestSeq) {
+      loading.value = false;
+    }
   }
 }
 
@@ -402,6 +465,18 @@ function planningStatusTag(status: string) {
 
 function planningStatusLabel(status: string) {
   return { SCHEDULED: 'Scheduled', ADJUSTED: 'Adjusted', CANCELLED: 'Cancelled', MERGED: 'Merged' }[status] ?? status;
+}
+
+function formatLessonTime(lesson: LessonOccurrenceItem) {
+  const start = dayjs(lesson.plannedStartAt);
+  return `${start.format('MMM D, YYYY HH:mm')} - ${dayjs(lesson.plannedEndAt).format('HH:mm')}`;
+}
+
+function lessonCourseLabel(lesson: LessonOccurrenceItem) {
+  if (lesson.packageName && lesson.className && lesson.packageName !== lesson.className) {
+    return `${lesson.packageName} · ${lesson.className}`;
+  }
+  return lesson.packageName || lesson.className || 'Lesson';
 }
 
 // ─── Init ──────────────────────────────────────
@@ -571,6 +646,66 @@ onMounted(async () => {
   color: #409eff;
 }
 
+/* ── Student lesson list ───────────────────── */
+.student-lessons__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.student-lessons__range {
+  color: #909399;
+  font-size: 13px;
+}
+
+.student-lessons__empty {
+  padding: 48px 16px;
+  color: #909399;
+  font-size: 14px;
+  text-align: center;
+}
+
+.student-lessons__list {
+  display: grid;
+  gap: 10px;
+}
+
+.student-lesson-card {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1fr) minmax(220px, 1.2fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid #ebeef5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.student-lesson-card__time,
+.student-lesson-card__course {
+  color: #303133;
+  font-size: 13px;
+}
+
+.student-lesson-card__time {
+  font-weight: 600;
+}
+
+.student-lesson-card__course {
+  font-weight: 500;
+}
+
+.student-lesson-card__detail {
+  display: flex;
+  gap: 12px;
+  color: #606266;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
 /* ── Package info bar ────────────────────── */
 .package-info-bar {
   display: flex;
@@ -672,5 +807,15 @@ onMounted(async () => {
   color: #606266;
   font-size: 13px;
   line-height: 1.5;
+}
+
+@media (max-width: 880px) {
+  .student-lesson-card {
+    grid-template-columns: 1fr auto;
+  }
+
+  .student-lesson-card__detail {
+    grid-column: 1 / -1;
+  }
 }
 </style>
