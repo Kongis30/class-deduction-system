@@ -34,6 +34,7 @@ export function fetchTeacherAccounts(params: TeacherAccountQuery = {}) {
 }
 
 export interface TeacherAccountCreatePayload {
+  teacherId?: EntityId;
   teacherName: string;
   username: string;
   password: string;
@@ -64,6 +65,7 @@ export function fetchStudentAccounts(params: StudentAccountQuery = {}) {
 }
 
 export interface StudentAccountCreatePayload {
+  studentId?: EntityId;
   studentName: string;
   guardianName?: string;
   guardianPhone?: string;

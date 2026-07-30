@@ -86,6 +86,9 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         if (!createsMakeup) {
             validateOccurrenceAdjustable(source);
             ensureNoLessonRecords(List.of(source.getId()));
+        } else if (source.getClassGroupId() != null) {
+            throw new BusinessException("CLASS_MAKEUP_NOT_SUPPORTED",
+                    "Group class lessons do not support makeup time. Adjust the actual attendance record instead.");
         }
 
         LessonOccurrenceEntity targetOccurrence;

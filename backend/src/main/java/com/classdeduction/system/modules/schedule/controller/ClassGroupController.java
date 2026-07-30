@@ -61,7 +61,7 @@ public class ClassGroupController {
     }
 
     @PostMapping("/{classId}/occurrences/{occurrenceId}/confirm")
-    @RequireRoles({"ADMIN", "TEACHER"})
+    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
     @Operation(summary = "Unified confirmation for all active students in a class")
     public ApiResponse<Map<String, Object>> confirmLesson(
             @PathVariable Long classId,

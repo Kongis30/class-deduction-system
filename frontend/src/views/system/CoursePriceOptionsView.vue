@@ -16,44 +16,37 @@
         </div>
       </div>
 
+      <div class="pricing-mode-tabs">
+        <button
+          v-for="mode in courseModes"
+          :key="mode.value"
+          class="pricing-mode-tab"
+          :class="{ 'pricing-mode-tab--active': selectedMode === mode.value }"
+          type="button"
+          @click="switchCourseMode(mode.value)"
+        >
+          {{ mode.label }}
+        </button>
+      </div>
+
       <div class="matrix-layout">
         <aside class="navigation-sidebar">
-          <template v-if="!selectedMode">
-            <span class="navigation-sidebar__label">Teaching mode</span>
-            <button
-              v-for="mode in courseModes"
-              :key="mode.value"
-              class="type-tab"
-              type="button"
-              @click="selectCourseMode(mode.value)"
-            >
-              <strong>{{ mode.label }}</strong>
-              <span>{{ mode.description }}</span>
-            </button>
-          </template>
-
-          <template v-else>
-            <button class="navigation-back" type="button" @click="backToModePicker">
-              <el-icon><ArrowLeft /></el-icon>
-              Teaching modes
-            </button>
-            <span class="navigation-sidebar__label">{{ selectedModeLabel }}</span>
-            <button
-              v-for="product in productChoices"
-              :key="product.id"
-              :class="['product-nav-item', { 'product-nav-item--active': String(query.courseProductId) === String(product.id) }]"
-              type="button"
-              @click="selectCourseProduct(product)"
-            >
-              <strong>{{ product.productName }}</strong>
-              <span>{{ product.registerClass || product.subjectName || 'Course product' }}</span>
-            </button>
-            <el-empty
-              v-if="!loadingProducts && productChoices.length === 0"
-              :image-size="44"
-              description="No products"
-            />
-          </template>
+          <span class="navigation-sidebar__label">{{ selectedModeLabel }} products</span>
+          <button
+            v-for="product in productChoices"
+            :key="product.id"
+            :class="['product-nav-item', { 'product-nav-item--active': String(query.courseProductId) === String(product.id) }]"
+            type="button"
+            @click="selectCourseProduct(product)"
+          >
+            <strong>{{ product.productName }}</strong>
+            <span>{{ product.registerClass || product.subjectName || 'Course product' }}</span>
+          </button>
+          <el-empty
+            v-if="!loadingProducts && productChoices.length === 0"
+            :image-size="44"
+            description="No products"
+          />
         </aside>
 
         <div class="matrix-content">
@@ -131,48 +124,75 @@
                 <el-button text type="primary" @click="openPriceForProduct(group.productId)">Add price row</el-button>
               </header>
 
-              <el-table v-loading="loading || loadingProducts" :data="group.rows" row-key="id" class="config-table">
-                <el-table-column prop="gradeBand" label="Grade / Level" min-width="120" />
-                <el-table-column label="Grade class" min-width="200">
+              <el-table
+                v-loading="loading || loadingProducts"
+                :data="group.rows"
+                row-key="id"
+                class="config-table price-matrix-table"
+                size="small"
+                border
+              >
+                <el-table-column label="Class & schedule" min-width="260">
                   <template #default="{ row }">
-                    <div class="cell-stack">
-                      <strong>{{ formatGroupBilling(row) }}</strong>
+                    <div class="matrix-class-cell">
+                      <div class="matrix-class-cell__title">
+                        <strong>{{ row.gradeBand || 'Grade not set' }}</strong>
+                        <el-tag v-if="row.groupBillingType" size="small" type="info" effect="plain">
+                          {{ groupBillingTypeLabel(row) }}
+                        </el-tag>
+                      </div>
                       <span>{{ formatGroupSchedule(row) }}</span>
+                      <small>{{ formatGroupResources(row) }}</small>
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column prop="detailText" label="Registration detail" min-width="200" show-overflow-tooltip />
-                <el-table-column label="Hours" width="90" align="right">
-                  <template #default="{ row }">{{ row.oneOnOneHours ?? '-' }}</template>
-                </el-table-column>
-                <el-table-column label="Price" width="110" align="right">
-                  <template #default="{ row }">{{ formatMoney(row.priceAmount) }}</template>
-                </el-table-column>
-                <el-table-column label="Readiness" min-width="210">
+                <el-table-column label="Billing" min-width="180">
                   <template #default="{ row }">
-                    <div class="tag-stack">
+                    <div class="cell-stack">
+                      <strong>{{ formatGroupBilling(row) }}</strong>
+                      <span>{{ row.detailText || 'No registration detail' }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Price" width="120" align="right">
+                  <template #default="{ row }">
+                    <div class="price-cell">
+                      <strong>{{ formatMoney(row.priceAmount) }}</strong>
+                      <span>{{ priceUnitLabel(row) }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Usage" width="145">
+                  <template #default="{ row }">
+                    <div class="usage-cell">
+                      <el-tag size="small" :type="row.referenced ? 'warning' : 'info'" effect="plain">
+                        {{ row.referenced ? `Used ${row.referenceCount ?? 0}` : 'Not used' }}
+                      </el-tag>
                       <el-tag
-                        v-for="issue in rowIssues(row)"
-                        :key="issue.label"
+                        v-if="hasRowIssue(row)"
                         size="small"
-                        :type="issue.type"
+                        type="danger"
+                        effect="plain"
                       >
-                        {{ issue.label }}
+                        Needs setup
                       </el-tag>
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column prop="sortOrder" label="Sort" width="80" align="center" />
-                <el-table-column label="Status" width="110" align="center">
+                <el-table-column label="Status" width="100" align="center">
                   <template #default="{ row }">
-                    <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status }}</el-tag>
+                    <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
+                      {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+                    </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="Actions" width="220" fixed="right">
+                <el-table-column label="Actions" width="190" fixed="right" align="center">
                   <template #default="{ row }">
-                    <el-button text type="primary" @click="openDialog(row)">Edit</el-button>
-                    <el-button v-if="row.status === 'ACTIVE'" text type="warning" @click="deactivateOption(row)">Deactivate</el-button>
-                    <el-button text type="danger" @click="removeOption(row.id)">Delete</el-button>
+                    <div class="matrix-actions">
+                      <el-button size="small" type="primary" plain @click="openDialog(row)">Edit</el-button>
+                      <el-button v-if="row.status === 'ACTIVE'" size="small" plain @click="deactivateOption(row)">Deactivate</el-button>
+                      <el-button size="small" type="danger" text @click="removeOption(row.id)">Delete</el-button>
+                    </div>
                   </template>
                 </el-table-column>
               </el-table>
@@ -345,7 +365,7 @@
 import { ArrowLeft, Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 
 import {
   createCoursePriceOption,
@@ -373,7 +393,6 @@ interface CourseTypeDef {
 interface CourseModeDef {
   value: CourseMode;
   label: string;
-  description: string;
 }
 
 interface MatrixPreset {
@@ -402,12 +421,11 @@ const courseTypes: CourseTypeDef[] = [
 ];
 
 const courseModes: CourseModeDef[] = [
-  { value: 'GROUP', label: 'Group Class', description: 'Classes and schedules' },
-  { value: 'ONE_ON_ONE', label: '1-on-1 Private', description: 'Packages and prices' },
+  { value: 'ONE_ON_ONE', label: '1-on-1 Private' },
+  { value: 'GROUP', label: 'Group Class' },
 ];
 
 const route = useRoute();
-const router = useRouter();
 const presets: MatrixPreset[] = [
   { label: 'After School G1-G5 2 months', courseType: 'AFTER_SCHOOL', gradeBand: 'G1-G5', durationLabel: '2 months', timeSlotLabel: 'Mon-Fri 3-6pm' },
   { label: 'After School G6-G8 6 months', courseType: 'AFTER_SCHOOL', gradeBand: 'G6-G8', durationLabel: '6 months', timeSlotLabel: 'Mon-Fri 3-6pm' },
@@ -435,7 +453,7 @@ const formRef = ref();
 
 const query = reactive({
   keyword: '',
-  courseType: 'AFTER_SCHOOL' as CourseTypeValue,
+  courseType: 'ONE_ON_ONE' as CourseTypeValue,
   courseProductId: '' as EntityId | '',
   status: 'ACTIVE',
   pageNum: 1,
@@ -458,7 +476,7 @@ const form = reactive({
   courseProductId: undefined as EntityId | undefined,
   groupTeacherId: undefined as EntityId | undefined,
   groupClassroomId: undefined as EntityId | undefined,
-  groupScheduleSlots: [] as Array<{ weekday: number; startTime: string; endTime: string; plannedUnits?: number }>,
+  groupScheduleSlots: [] as Array<{ weekday: number; startTime: string; endTime: string; plannedUnits: number }>,
   groupBillingType: 'PER_SESSION' as 'PER_SESSION' | 'MONTHLY',
   groupStartDate: '',
   groupTotalSessions: undefined as number | undefined,
@@ -490,24 +508,22 @@ const rules = {
   }],
 };
 
-const selectedMode = ref<CourseMode | null>(null);
+const selectedMode = ref<CourseMode>('ONE_ON_ONE');
 const selectedModeLabel = computed(() =>
   courseModes.find(item => item.value === selectedMode.value)?.label ?? ''
 );
 const productMap = computed(() => new Map(courseProducts.value.map(item => [String(item.id), item])));
 const selectedProduct = computed(() => query.courseProductId ? productMap.value.get(String(query.courseProductId)) : undefined);
 const productChoices = computed(() =>
-  selectedMode.value
-    ? courseProducts.value.filter(product => product.teachingMode === selectedMode.value)
-    : []
+  courseProducts.value.filter(product => product.teachingMode === selectedMode.value)
 );
 const visiblePresets = computed(() =>
-  presets.filter(item => selectedMode.value && modeForCourseType(item.courseType) === selectedMode.value)
+  presets.filter(item => modeForCourseType(item.courseType) === selectedMode.value)
 );
 
 const visibleOptions = computed(() => {
   return options.value.filter((option) => {
-    if (!selectedMode.value || modeForCourseType(option.courseType) !== selectedMode.value) {
+    if (modeForCourseType(option.courseType) !== selectedMode.value) {
       return false;
     }
     if (!query.courseProductId) {
@@ -639,16 +655,14 @@ function reloadFirstPage() {
   loadOptions();
 }
 
-function selectCourseMode(mode: CourseMode) {
+function switchCourseMode(mode: CourseMode) {
+  if (selectedMode.value === mode) {
+    return;
+  }
   selectedMode.value = mode;
   query.courseType = mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL';
   query.courseProductId = '';
   reloadFirstPage();
-}
-
-function backToModePicker() {
-  selectedMode.value = null;
-  query.courseProductId = '';
 }
 
 function backToProductList() {
@@ -919,37 +933,6 @@ async function removeOption(id: EntityId) {
   }
 }
 
-function rowIssues(row: CoursePriceOptionItem) {
-  const issues: Array<{ label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = [];
-  const product = row.courseProductId ? productMap.value.get(String(row.courseProductId)) : undefined;
-  if (row.referenced) {
-    const sourceText = row.referenceSources?.length ? ` · ${row.referenceSources.join(', ')}` : '';
-    issues.push({ label: `Used ${row.referenceCount ?? 0}${sourceText}`, type: 'warning' });
-  }
-  if (!product) {
-    issues.push({ label: 'Missing product', type: 'danger' });
-  } else if (product.teachingMode !== modeForCourseType(row.courseType)) {
-    issues.push({ label: 'Mode mismatch', type: 'danger' });
-  } else if (product.referenced) {
-    issues.push({ label: `Product used ${product.referenceCount ?? 0}`, type: 'info' });
-  }
-  if (row.priceAmount === undefined || row.priceAmount === null) {
-    issues.push({ label: 'Missing price', type: 'danger' });
-  } else if (Number(row.priceAmount) === 0) {
-    issues.push({ label: 'Check $0 price', type: 'warning' });
-  }
-  if (product?.teachingMode === 'GROUP' && !hasClassGroup(product.id)) {
-    issues.push({ label: 'No class yet', type: 'warning' });
-  }
-  if (issues.length === 0) {
-    issues.push({ label: 'Ready', type: 'success' });
-  }
-  if (!row.referenced) {
-    issues.push({ label: 'Not used yet', type: 'info' });
-  }
-  return issues;
-}
-
 function hasClassGroup(productId: EntityId) {
   return classGroups.value.some(item => String(item.productId) === String(productId));
 }
@@ -985,7 +968,7 @@ function queryValue(value: unknown) {
 }
 
 function formatCourseType(value: string) {
-  return value ? value.replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, char => char.toUpperCase()) : '-';
+  return value ? value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (char: string) => char.toUpperCase()) : '-';
 }
 
 function formatGroupBilling(row: CoursePriceOptionItem) {
@@ -998,6 +981,10 @@ function formatGroupBilling(row: CoursePriceOptionItem) {
   return row.groupTotalSessions ? `${row.groupTotalSessions} total sessions` : 'Per session';
 }
 
+function groupBillingTypeLabel(row: CoursePriceOptionItem) {
+  return row.groupBillingType === 'MONTHLY' ? 'Monthly' : 'Per session';
+}
+
 function formatGroupSchedule(row: CoursePriceOptionItem) {
   if (row.courseType === 'ONE_ON_ONE') {
     return '-';
@@ -1005,6 +992,43 @@ function formatGroupSchedule(row: CoursePriceOptionItem) {
   return (row.groupScheduleSlots ?? [])
     .map(slot => `${['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday]} ${slot.startTime}-${slot.endTime}`)
     .join(', ') || 'Schedule not set';
+}
+
+function formatGroupResources(row: CoursePriceOptionItem) {
+  const teacher = teacherName(row.groupTeacherId);
+  const room = classroomName(row.groupClassroomId);
+  return `Teacher: ${teacher} · Room: ${room}`;
+}
+
+function teacherName(id?: EntityId) {
+  if (!id) return 'Assign later';
+  return teachers.value.find(item => String(item.id) === String(id))?.teacherName ?? 'Assign later';
+}
+
+function classroomName(id?: EntityId) {
+  if (!id) return 'Assign later';
+  return classrooms.value.find(item => String(item.id) === String(id))?.roomName ?? 'Assign later';
+}
+
+function hasRowIssue(row: CoursePriceOptionItem) {
+  const product = row.courseProductId ? productMap.value.get(String(row.courseProductId)) : undefined;
+  if (!product) {
+    return true;
+  }
+  return product.teachingMode !== modeForCourseType(row.courseType)
+    || row.priceAmount === undefined
+    || row.priceAmount === null
+    || Number(row.priceAmount) === 0
+    || (product.teachingMode === 'GROUP' && !hasClassGroup(product.id))
+    || (modeForCourseType(row.courseType) === 'GROUP' && (row.groupScheduleSlots ?? []).length === 0);
+}
+
+function priceUnitLabel(row: CoursePriceOptionItem) {
+  const currency = row.currencyCode || 'USD';
+  if (modeForCourseType(row.courseType) === 'GROUP') {
+    return row.groupBillingType === 'MONTHLY' ? `${currency} / month` : `${currency} / session`;
+  }
+  return `${currency} / package`;
 }
 
 function formatMoney(value?: number) {
@@ -1061,6 +1085,35 @@ function timeToMinutes(value: string) {
   gap: 8px;
 }
 
+.pricing-mode-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 14px;
+  border-bottom: 2px solid #e8edf2;
+}
+
+.pricing-mode-tab {
+  margin-bottom: -2px;
+  padding: 10px 24px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #909399;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.pricing-mode-tab:hover {
+  color: #18b58a;
+}
+
+.pricing-mode-tab--active {
+  border-bottom-color: #18b58a;
+  color: #18b58a;
+}
+
 .matrix-layout {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
@@ -1082,53 +1135,6 @@ function timeToMinutes(value: string) {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-}
-
-.type-tab {
-  width: 100%;
-  padding: 8px 9px;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  background: #f9fafb;
-  color: #374151;
-  text-align: left;
-  cursor: pointer;
-}
-
-.type-tab strong,
-.type-tab span {
-  display: block;
-}
-
-.type-tab span {
-  margin-top: 2px;
-  color: #6b7280;
-  font-size: 11px;
-  line-height: 1.25;
-}
-
-.type-tab--active {
-  border-color: #18a058;
-  background: #effaf3;
-  color: #0f7a3a;
-}
-
-.navigation-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  width: fit-content;
-  margin: 0 0 3px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: #64748b;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.navigation-back:hover {
-  color: #0f7a3a;
 }
 
 .product-nav-item {
@@ -1190,10 +1196,6 @@ function timeToMinutes(value: string) {
   margin-bottom: 12px;
 }
 
-.product-required-alert {
-  margin-bottom: 12px;
-}
-
 .matrix-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1239,6 +1241,16 @@ function timeToMinutes(value: string) {
   width: 100%;
 }
 
+.price-matrix-table :deep(.el-table__header th) {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 700;
+}
+
+.price-matrix-table :deep(.el-table__cell) {
+  vertical-align: top;
+}
+
 .product-price-group {
   margin-top: 12px;
   overflow: hidden;
@@ -1277,10 +1289,74 @@ function timeToMinutes(value: string) {
   gap: 3px;
 }
 
-.tag-stack {
+.cell-stack strong {
+  color: #1e293b;
+}
+
+.matrix-class-cell {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.matrix-class-cell__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.matrix-class-cell__title strong {
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matrix-class-cell span,
+.matrix-class-cell small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.price-cell,
+.usage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.price-cell {
+  align-items: flex-end;
+}
+
+.price-cell strong {
+  color: #111827;
+  font-size: 14px;
+}
+
+.price-cell span {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.usage-cell {
+  align-items: flex-start;
+}
+
+.matrix-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  justify-content: center;
+  gap: 6px;
+}
+
+.matrix-actions :deep(.el-button) {
+  margin-left: 0;
 }
 
 .matrix-note,

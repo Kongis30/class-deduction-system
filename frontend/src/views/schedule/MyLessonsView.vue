@@ -3,7 +3,7 @@
     <section class="my-lessons-page__header">
       <div>
         <h2>My Lessons</h2>
-        <p>Review your scheduled lessons and submit attendance for admin review.</p>
+        <p>Review your lessons and submit each lesson result for admin deduction review.</p>
       </div>
       <el-button type="primary" :loading="loading" @click="loadLessons">Refresh</el-button>
     </section>
@@ -13,6 +13,11 @@
     </section>
 
     <template v-else>
+      <el-tabs v-model="lessonType" class="my-lessons-type-tabs">
+        <el-tab-pane label="1-on-1" name="one-on-one" />
+        <el-tab-pane label="Group class" name="group" />
+      </el-tabs>
+
       <section class="my-lessons-toolbar">
         <el-radio-group v-model="period" @change="loadLessons">
           <el-radio-button label="future">Future</el-radio-button>
@@ -23,21 +28,14 @@
 
       <el-table
         v-loading="loading"
-        :data="lessons"
+        :data="visibleLessons"
         border
         stripe
         size="small"
         max-height="520"
         class="my-lessons-table"
-        empty-text="No lessons found for this period."
+        :empty-text="emptyText"
       >
-        <el-table-column label="Type" width="110" align="center" header-align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.classGroupId ? 'primary' : 'success'">
-              {{ row.classGroupId ? 'Group class' : '1-on-1' }}
-            </el-tag>
-          </template>
-        </el-table-column>
         <el-table-column label="Course / Class" min-width="180" align="center" header-align="center">
           <template #default="{ row }">
             {{ row.className || row.packageName || '—' }}
@@ -68,7 +66,7 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Action" width="190" fixed="right" align="center" header-align="center">
+        <el-table-column label="Action" width="220" fixed="right" align="center" header-align="center">
           <template #default="{ row }">
             <el-button
               v-if="canSubmitAttendance(row)"
@@ -76,7 +74,7 @@
               size="small"
               @click="openConfirmDialog(row)"
             >
-              Submit attendance
+              Confirm
             </el-button>
             <span v-else class="my-lessons-no-action">{{ actionLabel(row) }}</span>
           </template>
@@ -86,10 +84,17 @@
 
     <el-dialog
       v-model="confirmDialogVisible"
-      title="Submit Attendance"
+      title="Confirm Lesson"
       width="520px"
       :close-on-click-modal="false"
     >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="Confirm the lesson result and submit it for admin review. Hours are deducted only after admin confirmation."
+        class="my-lessons-confirm-alert"
+      />
       <el-form label-width="130px">
         <el-form-item label="Result status">
           <el-select v-model="confirmForm.resultStatus" style="width: 100%">
@@ -123,7 +128,7 @@
       </el-form>
       <template #footer>
         <el-button @click="confirmDialogVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitAttendance">Submit for review</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitAttendance">Confirm</el-button>
       </template>
     </el-dialog>
   </div>
@@ -141,9 +146,11 @@ import { useAuthStore } from '@/stores/auth';
 import type { LessonOccurrenceItem } from '@/types/domain';
 
 type LessonPeriod = 'future' | 'history';
+type LessonType = 'one-on-one' | 'group';
 
 const authStore = useAuthStore();
 const teacherId = computed(() => authStore.currentUser?.teacherId);
+const lessonType = ref<LessonType>('one-on-one');
 const period = ref<LessonPeriod>('future');
 const loading = ref(false);
 const submitting = ref(false);
@@ -160,8 +167,16 @@ const confirmForm = reactive({
 
 const periodHint = computed(() =>
   period.value === 'future'
-    ? 'Showing the next 30 days and lessons awaiting admin review.'
-    : 'Showing the previous 30 days.',
+    ? 'Showing the next 30 days and lessons awaiting admin review. Confirmation is available 14 days before each lesson.'
+    : 'Showing the previous 30 days. Lesson confirmation does not expire.',
+);
+
+const visibleLessons = computed(() => lessons.value.filter(lesson =>
+  lessonType.value === 'group' ? Boolean(lesson.classGroupId) : !lesson.classGroupId
+));
+
+const emptyText = computed(() =>
+  `No ${lessonType.value === 'group' ? 'group class' : '1-on-1'} lessons found for this period.`
 );
 
 onMounted(loadLessons);
@@ -252,7 +267,7 @@ async function submitAttendance() {
     } else {
       await confirmLesson({ occurrenceId: lesson.id, ...payload });
     }
-    ElMessage.success('Attendance submitted for admin review.');
+    ElMessage.success('Lesson result submitted for admin review.');
     confirmDialogVisible.value = false;
     await loadLessons();
   } catch (error) {
@@ -268,17 +283,16 @@ function canSubmitAttendance(lesson: LessonOccurrenceItem) {
     && lesson.confirmStage !== 'PENDING_ADMIN'
     && lesson.confirmStage !== 'CONFIRMED'
     && !(lesson.resultStatus && lesson.confirmStage !== 'REJECTED')
-    && !dayjs(lesson.plannedStartAt).isAfter(now.add(6, 'hour'))
-    && !dayjs(lesson.plannedEndAt).isBefore(now.subtract(7, 'day'));
+    && !dayjs(lesson.plannedStartAt).isAfter(now.add(14, 'day'));
 }
 
 function actionLabel(lesson: LessonOccurrenceItem) {
   if (lesson.confirmStage === 'PENDING_ADMIN') return 'Awaiting admin review';
   if (lesson.confirmStage === 'CONFIRMED') return 'Confirmed';
   if (lesson.planningStatus === 'CANCELLED') return 'Cancelled';
-  if (lesson.confirmStage === 'REJECTED') return 'Outside resubmission window';
-  if (dayjs(lesson.plannedStartAt).isAfter(dayjs().add(6, 'hour'))) return 'Available near lesson time';
-  if (dayjs(lesson.plannedEndAt).isBefore(dayjs().subtract(7, 'day'))) return 'Confirmation window closed';
+  if (dayjs(lesson.plannedStartAt).isAfter(dayjs().add(14, 'day'))) {
+    return `Confirmation available from ${dayjs(lesson.plannedStartAt).subtract(14, 'day').format('MMM D, HH:mm')}`;
+  }
   return 'No action';
 }
 
@@ -350,6 +364,18 @@ function formatTimeRange(startAt: string, endAt: string) {
   margin: 4px 0 0;
 }
 
+.my-lessons-type-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0 14px;
+}
+
+.my-lessons-type-tabs :deep(.el-tabs__content) {
+  display: none;
+}
+
 .my-lessons-toolbar {
   border: 1px solid var(--surface-border);
   border-radius: 8px;
@@ -374,6 +400,10 @@ function formatTimeRange(startAt: string, endAt: string) {
 
 .my-lessons-time span {
   color: var(--text-secondary);
+}
+
+.my-lessons-confirm-alert {
+  margin-bottom: 16px;
 }
 
 .my-lessons-form-hint {

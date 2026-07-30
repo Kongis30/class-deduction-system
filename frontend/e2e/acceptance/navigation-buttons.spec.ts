@@ -10,8 +10,8 @@ test.describe('Acceptance - Navigation and button smoke', () => {
     await expect(page).toHaveURL(/\/registration/);
     await expect(page.getByText('Registration & Receipt')).toBeVisible();
 
-    await clickSidebarEntry(page, 'Classrooms');
-    await expect(page).toHaveURL(/\/calendar\?tab=room/);
+    await clickSidebarEntry(page, 'Calendar');
+    await expect(page).toHaveURL(/\/calendar/);
     await expect(page.getByText('School Schedule')).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Room Calendar' })).toBeVisible();
 
@@ -24,8 +24,9 @@ test.describe('Acceptance - Navigation and button smoke', () => {
     await expect(page.getByText('Daily registration checks')).toBeVisible();
 
     await page.getByRole('button', { name: /Back office/ }).click();
-    await expect(page.getByText('Course setup')).toBeVisible();
-    await page.getByText('Course prices').click();
+    const backOfficeMenu = page.locator('.app-header__admin-tools-menu');
+    await expect(backOfficeMenu.getByText('Courses', { exact: true })).toBeVisible();
+    await backOfficeMenu.getByText('Prices', { exact: true }).click();
     await expect(page).toHaveURL(/\/admin\/config\/course-prices/);
     await expect(page.getByRole('heading', { name: 'Course Pricing Matrix' })).toBeVisible();
   });

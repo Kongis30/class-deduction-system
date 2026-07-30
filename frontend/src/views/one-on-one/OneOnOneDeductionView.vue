@@ -314,9 +314,10 @@
             <el-option label="Completed" value="COMPLETED" />
             <el-option label="Formal Leave" value="FORMAL_LEAVE" />
             <el-option label="No Show" value="NO_SHOW" />
+            <el-option v-if="isAdmin" label="Cancelled" value="CANCELLED" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Actual Start">
+        <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Actual Start">
           <el-date-picker
             v-model="confirmForm.actualStartAt"
             type="datetime"
@@ -325,11 +326,11 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="Actual Hours">
+        <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Actual Hours">
           <el-input-number v-model="confirmForm.actualHours" :min="0" :max="10" :precision="1" :step="0.5" />
           <span class="oo-form-hint">Default is 2h; 1.5h and other 0.5h increments are allowed.</span>
         </el-form-item>
-        <el-form-item label="Actual End">
+        <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Actual End">
           <span>{{ computedActualEndAt || '—' }}</span>
         </el-form-item>
         <el-form-item label="Notes">
@@ -337,7 +338,7 @@
         </el-form-item>
         <el-alert
           v-if="isNonAttendanceStatus(confirmForm.resultStatus)"
-          title="No actual attendance will be recorded. Formal Leave adds a makeup lesson; No Show deducts the planned hours."
+          :title="nonAttendanceNotice(confirmForm.resultStatus)"
           type="info"
           :closable="false"
           show-icon
@@ -899,11 +900,15 @@ async function submitAssignment() {
   }
 }
 
-function resolveAdjustedUnits() {
-  const minutes = dayjs(adjustForm.plannedEndAt).diff(dayjs(adjustForm.plannedStartAt), 'minute');
+function resolveHalfHourUnits(startAt: string, endAt: string) {
+  const minutes = dayjs(endAt).diff(dayjs(startAt), 'minute');
   if (minutes <= 0) return null;
   if (minutes % 30 !== 0) return null;
   return minutes / 30;
+}
+
+function resolveAdjustedUnits() {
+  return resolveHalfHourUnits(adjustForm.plannedStartAt, adjustForm.plannedEndAt);
 }
 
 async function submitAdjustLesson() {
@@ -1047,11 +1052,22 @@ function isRejectedOrAbnormal(row: OneOnOneLesson) {
   return row.confirmStage === 'REJECTED'
     || row.planningStatus === 'CANCELLED'
     || row.resultStatus === 'FORMAL_LEAVE'
-    || row.resultStatus === 'NO_SHOW';
+    || row.resultStatus === 'NO_SHOW'
+    || row.resultStatus === 'CANCELLED';
 }
 
 function isNonAttendanceStatus(status: string) {
-  return status === 'FORMAL_LEAVE' || status === 'NO_SHOW';
+  return status === 'FORMAL_LEAVE' || status === 'NO_SHOW' || status === 'CANCELLED';
+}
+
+function nonAttendanceNotice(status: string) {
+  if (status === 'FORMAL_LEAVE') {
+    return 'Formal Leave does not deduct hours. The system automatically appends a replacement lesson to preserve the package total.';
+  }
+  if (status === 'CANCELLED') {
+    return 'Cancelled lessons deduct the full planned hours and do not create a replacement lesson.';
+  }
+  return 'No Show deducts the full planned hours and does not create a replacement lesson.';
 }
 
 function isFutureScheduleReconciliationError(error: unknown) {

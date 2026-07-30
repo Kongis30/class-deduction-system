@@ -97,6 +97,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     private static final String DEFAULT_CURRENCY = "USD";
     private static final String DEFAULT_RECEIPT_TEMPLATE = "DEFAULT_RECEIPT";
+    private static final String REFUND_RECEIPT_TEMPLATE = "REFUND_RECEIPT";
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
     private final EnrollmentOrderMapper enrollmentOrderMapper;
@@ -1126,7 +1127,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void refundOrder(Long id, RefundRequest request) {
+    public ReceiptRecordVO refundOrder(Long id, RefundRequest request) {
         EnrollmentOrderEntity order = requireOrder(id);
 
         if ("REFUNDED".equals(order.getPaymentStatus())) {
@@ -1198,6 +1199,58 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 coursePackageMapper.updateById(coursePackage);
             }
         }
+        return createRefundReceipt(order, request, refundRecord, refundAmount);
+    }
+
+    private ReceiptRecordVO createRefundReceipt(EnrollmentOrderEntity order,
+                                                RefundRequest request,
+                                                PaymentRecordEntity refundRecord,
+                                                BigDecimal refundAmount) {
+        LocalDateTime issuedAt = AppTime.nowLocalDateTime();
+        String receiptNo = BusinessNoGenerator.generateReceiptNo();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("receiptType", "REFUND");
+        payload.put("receiptNo", receiptNo);
+        payload.put("enrollmentOrderId", order.getId());
+        payload.put("enrollmentNo", order.getEnrollmentNo());
+        payload.put("studentId", order.getStudentId());
+        payload.put("studentName", order.getStudentNameSnapshot());
+        payload.put("currencyCode", order.getCurrencyCode());
+        payload.put("issuedAt", issuedAt);
+        payload.put("paymentAmount", refundAmount);
+        payload.put("amountDue", order.getAmountDue());
+        payload.put("receivedAmount", order.getReceivedAmount());
+        payload.put("balanceAmount", order.getBalanceAmount());
+        payload.put("paymentStatus", order.getPaymentStatus());
+        Map<String, Object> refundPayment = new LinkedHashMap<>();
+        refundPayment.put("paymentNo", refundRecord.getPaymentNo());
+        refundPayment.put("paymentMethod", refundRecord.getPaymentMethod());
+        refundPayment.put("amount", refundRecord.getAmount());
+        refundPayment.put("paidAt", refundRecord.getPaidAt());
+        refundPayment.put("handledByName", refundRecord.getHandledByName());
+        refundPayment.put("remark", refundRecord.getRemark());
+        payload.put("payments", List.of(refundPayment));
+
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setReceiptNo(receiptNo);
+        receipt.setEnrollmentOrderId(order.getId());
+        receipt.setStudentId(order.getStudentId());
+        receipt.setTemplateCode(REFUND_RECEIPT_TEMPLATE);
+        receipt.setReceiptPayload(jsonHelper.toJson(payload));
+        receipt.setIssuedAt(issuedAt);
+        receipt.setIssuedBy(request.getHandledByUserId());
+        receiptRecordMapper.insert(receipt);
+
+        return ReceiptRecordVO.builder()
+                .id(receipt.getId())
+                .receiptNo(receiptNo)
+                .enrollmentOrderId(order.getId())
+                .studentId(order.getStudentId())
+                .studentName(order.getStudentNameSnapshot())
+                .templateCode(REFUND_RECEIPT_TEMPLATE)
+                .receiptPayload(receipt.getReceiptPayload())
+                .issuedAt(issuedAt)
+                .build();
     }
 
     private void requireActivePaymentMethod(String methodCode) {

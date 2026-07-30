@@ -66,18 +66,40 @@
                 </span>
               </div>
 
+              <section v-if="conflictGroups.length" class="student-conflict-summary">
+                <div class="student-conflict-summary__header">
+                  <strong>{{ conflictSummaryTitle }}</strong>
+                  <span>Contact the school before attending either lesson.</span>
+                </div>
+                <div class="student-conflict-summary__list">
+                  <div v-for="group in conflictGroups" :key="group.key" class="student-conflict-card">
+                    <span class="student-conflict-card__time">{{ group.timeLabel }}</span>
+                    <strong>{{ group.items.length }} overlapping lessons</strong>
+                    <span>{{ group.items.map(lessonCourseLabel).join(' / ') }}</span>
+                  </div>
+                </div>
+              </section>
+
               <div v-if="occurrences.length === 0" class="student-lessons__empty">
                 No {{ studentScheduleTab === 'future' ? 'upcoming' : 'past' }} lessons in this period.
               </div>
               <div v-else class="student-lessons__list">
-                <article v-for="lesson in occurrences" :key="lesson.id" class="student-lesson-card">
+                <article
+                  v-for="lesson in occurrences"
+                  :key="lesson.id"
+                  class="student-lesson-card"
+                  :class="{ 'student-lesson-card--conflict': conflictOccurrenceIds.has(lesson.id) }"
+                >
                   <div class="student-lesson-card__time">{{ formatLessonTime(lesson) }}</div>
                   <div class="student-lesson-card__course">{{ lessonCourseLabel(lesson) }}</div>
                   <div class="student-lesson-card__detail">
                     <span>Teacher: {{ lesson.plannedTeacherName || '—' }}</span>
                     <span>Room: {{ lesson.plannedClassroomName || '—' }}</span>
                   </div>
-                  <el-tag size="small" :type="planningStatusTag(lesson.planningStatus)">
+                  <el-tag v-if="conflictOccurrenceIds.has(lesson.id)" size="small" type="danger">
+                    Conflict
+                  </el-tag>
+                  <el-tag v-else size="small" :type="planningStatusTag(lesson.planningStatus)">
                     {{ planningStatusLabel(lesson.planningStatus) }}
                   </el-tag>
                 </article>
@@ -122,6 +144,26 @@
                   </span>
                 </div>
               </div>
+
+              <section v-if="conflictGroups.length" class="student-conflict-summary">
+                <div class="student-conflict-summary__header">
+                  <strong>{{ conflictSummaryTitle }}</strong>
+                  <span>These lessons overlap for the selected student.</span>
+                </div>
+                <div class="student-conflict-summary__list">
+                  <button
+                    v-for="group in conflictGroups"
+                    :key="group.key"
+                    class="student-conflict-card"
+                    type="button"
+                    @click="openDetailDialog(group.items[0])"
+                  >
+                    <span class="student-conflict-card__time">{{ group.timeLabel }}</span>
+                    <strong>{{ group.items.length }} overlapping lessons</strong>
+                    <span>{{ group.items.map(lessonCourseLabel).join(' / ') }}</span>
+                  </button>
+                </div>
+              </section>
 
               <WeeklyTimeSelector
                 v-model="emptySlots"
@@ -227,6 +269,7 @@ import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { useAuthStore } from '@/stores/auth';
 import { isStudentUser } from '@/types/auth';
+import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
 
 const authStore = useAuthStore();
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
@@ -354,6 +397,25 @@ function jumpToDate(date: string | null) {
   pickerDate.value = weekMonday.value;
   loadSchedule();
 }
+
+// ─── Student schedule conflicts ───────────────
+const conflictGroups = computed(() => findScheduleConflictGroups(occurrences.value));
+
+const conflictOccurrenceIds = computed(() => {
+  const ids = new Set<EntityId>();
+  for (const group of conflictGroups.value) {
+    for (const lesson of group.items) {
+      ids.add(lesson.id);
+    }
+  }
+  return ids;
+});
+
+const conflictSummaryTitle = computed(() => {
+  const count = conflictGroups.value.length;
+  const range = isStudent.value ? 'in this period' : 'this week';
+  return `${count} schedule conflict${count === 1 ? '' : 's'} ${range}`;
+});
 
 // ─── Occupied slots ────────────────────────────
 const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
@@ -673,6 +735,71 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.student-conflict-summary {
+  margin-bottom: 12px;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  background: #fff7f6;
+  padding: 10px 12px;
+}
+
+.student-conflict-summary__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.student-conflict-summary__header strong {
+  color: #b42318;
+  font-size: 13px;
+}
+
+.student-conflict-summary__header span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.student-conflict-summary__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.student-conflict-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  border: 1px solid #fda29b;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px 10px;
+  color: #667085;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+
+button.student-conflict-card {
+  cursor: pointer;
+}
+
+button.student-conflict-card:hover {
+  background: #fff1f0;
+}
+
+.student-conflict-card strong {
+  color: #344054;
+}
+
+.student-conflict-card__time {
+  color: #b42318;
+  font-weight: 700;
+}
+
 .student-lesson-card {
   display: grid;
   grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1fr) minmax(220px, 1.2fr) auto;
@@ -682,6 +809,12 @@ onMounted(async () => {
   border: 1px solid #ebeef5;
   border-radius: 8px;
   background: #fff;
+}
+
+.student-lesson-card--conflict {
+  border-color: #fda29b;
+  background: #fff7f6;
+  box-shadow: inset 4px 0 0 #f56c6c;
 }
 
 .student-lesson-card__time,

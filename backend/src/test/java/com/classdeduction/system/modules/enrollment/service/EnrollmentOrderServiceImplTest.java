@@ -434,9 +434,16 @@ class EnrollmentOrderServiceImplTest {
         request.setRefundAmount(new BigDecimal("1100.00"));
         request.setPaymentMethod("CASH");
         request.setHandledByName("Amy");
+        request.setHandledByUserId(88L);
         request.setRemark("Student withdrew");
+        when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"REFUND\"}");
+        when(receiptRecordMapper.insert(any(ReceiptRecordEntity.class))).thenAnswer(invocation -> {
+            ReceiptRecordEntity receipt = invocation.getArgument(0);
+            receipt.setId(9001L);
+            return 1;
+        });
 
-        enrollmentOrderService.refundOrder(2001L, request);
+        ReceiptRecordVO receipt = enrollmentOrderService.refundOrder(2001L, request);
 
         // Negative refund payment record persisted.
         verify(paymentRecordMapper).insert(paymentCaptor.capture());
@@ -444,6 +451,13 @@ class EnrollmentOrderServiceImplTest {
         assertThat(paymentCaptor.getValue().getPaymentStatus()).isEqualTo("REFUNDED");
         assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("-1100.00"));
         assertThat(paymentCaptor.getValue().getHandledByName()).isEqualTo("Amy");
+        assertThat(paymentCaptor.getValue().getHandledByUserId()).isEqualTo(88L);
+
+        ArgumentCaptor<ReceiptRecordEntity> receiptCaptor = ArgumentCaptor.forClass(ReceiptRecordEntity.class);
+        verify(receiptRecordMapper).insert(receiptCaptor.capture());
+        assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("REFUND_RECEIPT");
+        assertThat(receipt.templateCode()).isEqualTo("REFUND_RECEIPT");
+        assertThat(receipt.id()).isEqualTo(9001L);
 
         // Order set to REFUNDED + CANCELLED, with no paid or collectible amount remaining.
         verify(enrollmentOrderMapper).updateById(orderCaptor.capture());

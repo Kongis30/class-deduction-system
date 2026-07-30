@@ -13,7 +13,9 @@ import lombok.Data;
 @Schema(description = "Student account create request")
 public class StudentAccountCreateRequest {
 
-    @NotBlank(message = "Student name is required")
+    @Schema(description = "Existing student profile ID. When present, create login access for that profile.")
+    private Long studentId;
+
     @Schema(description = "Student name", example = "Ava Lin")
     private String studentName;
 

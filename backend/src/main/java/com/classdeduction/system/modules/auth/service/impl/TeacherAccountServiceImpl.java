@@ -89,17 +89,9 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
     public Long createTeacherAccount(TeacherAccountCreateRequest request) {
         ensureUsernameUnique(request.getUsername());
 
-        // 1. Create teacher profile
-        TeacherEntity teacher = new TeacherEntity();
-        teacher.setTeacherNo(generateTeacherNo());
-        teacher.setTeacherName(request.getTeacherName());
-        teacher.setEmail(request.getEmail());
-        teacher.setMobile(request.getMobile());
-        teacher.setSubjectTags(request.getSubjectTags() != null ? jsonHelper.toJson(request.getSubjectTags()) : null);
-        teacher.setStatus("ACTIVE");
-        teacherMapper.insert(teacher);
+        TeacherEntity teacher = resolveTeacherForAccount(request);
 
-        // 2. Create login account linked to the teacher
+        // Login access belongs to one teacher profile. The profile may be existing or newly created.
         UserAccountEntity entity = new UserAccountEntity();
         entity.setUsername(request.getUsername());
         entity.setPasswordHash(passwordEncoder.encode(request.getPassword()));
@@ -113,6 +105,38 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
         userAccountMapper.insert(entity);
         bindTeacherRole(entity.getId());
         return entity.getId();
+    }
+
+    private TeacherEntity resolveTeacherForAccount(TeacherAccountCreateRequest request) {
+        if (request.getTeacherId() != null) {
+            TeacherEntity teacher = teacherMapper.selectById(request.getTeacherId());
+            if (teacher == null) {
+                throw new BusinessException("TEACHER_NOT_FOUND", "Teacher profile not found.");
+            }
+            ensureTeacherHasNoAccount(teacher.getId());
+            return teacher;
+        }
+        if (!StringUtils.hasText(request.getTeacherName())) {
+            throw new BusinessException("TEACHER_NAME_REQUIRED", "Teacher name is required.");
+        }
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setTeacherNo(generateTeacherNo());
+        teacher.setTeacherName(request.getTeacherName());
+        teacher.setEmail(request.getEmail());
+        teacher.setMobile(request.getMobile());
+        teacher.setSubjectTags(request.getSubjectTags() != null ? jsonHelper.toJson(request.getSubjectTags()) : null);
+        teacher.setStatus("ACTIVE");
+        teacherMapper.insert(teacher);
+        return teacher;
+    }
+
+    private void ensureTeacherHasNoAccount(Long teacherId) {
+        Long existing = userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccountEntity>()
+                .eq(UserAccountEntity::getTeacherId, teacherId)
+                .eq(UserAccountEntity::getIsDeleted, 0));
+        if (existing != null && existing > 0) {
+            throw new BusinessException("TEACHER_ACCOUNT_EXISTS", "This teacher already has a login account.");
+        }
     }
 
     @Override

@@ -99,8 +99,28 @@
             <div class="room-occupancy-scroll">
               <div class="calendar-help">
                 <span><i class="calendar-help__mark calendar-help__mark--occupied" />Occupied or conflicting slots</span>
+                <span><i class="calendar-help__mark calendar-help__mark--conflict" />Conflict: multiple lessons use this room at the same time</span>
                 <span>Open the room assignment queue below only for lessons that still need a room.</span>
               </div>
+              <section v-if="conflictGroups.length" class="conflict-summary">
+                <div class="conflict-summary__header">
+                  <strong>{{ conflictGroups.length }} room conflict{{ conflictGroups.length === 1 ? '' : 's' }} this week</strong>
+                  <span>Resolve these before confirming attendance or adding more lessons.</span>
+                </div>
+                <div class="conflict-summary__list">
+                  <button
+                    v-for="group in conflictGroups"
+                    :key="group.key"
+                    class="conflict-card"
+                    type="button"
+                    @click="openConflictGroup(group)"
+                  >
+                    <span class="conflict-card__time">{{ group.timeLabel }}</span>
+                    <span class="conflict-card__title">{{ group.items.length }} overlapping lessons</span>
+                    <span class="conflict-card__detail">{{ group.items.map(item => item.courseLabel).join(' / ') }}</span>
+                  </button>
+                </div>
+              </section>
               <WeeklyTimeSelector
                 v-model="emptySlots"
                 :occupied-slots="occupiedSlots"
@@ -118,6 +138,7 @@
                 size="small"
                 class="occupancy-table"
                 empty-text="No occupancy rows for this week."
+                :row-class-name="occupancyRowClassName"
               >
                 <el-table-column label="Start" min-width="145" prop="startLabel" />
                 <el-table-column label="End" min-width="145" prop="endLabel" />
@@ -132,7 +153,8 @@
                 <el-table-column label="Teacher" min-width="120" prop="teacherName" />
                 <el-table-column label="Status" min-width="110">
                   <template #default="{ row }">
-                    <el-tag size="small" :type="planningStatusTag(row.planningStatus)">
+                    <el-tag v-if="row.hasConflict" size="small" type="danger">Conflict</el-tag>
+                    <el-tag v-else size="small" :type="planningStatusTag(row.planningStatus)">
                       {{ planningStatusLabel(row.planningStatus) }}
                     </el-tag>
                   </template>
@@ -460,6 +482,25 @@ const occupancyError = ref('');
 const occupancyItems = ref<ClassroomOccupancyItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
 
+interface OccupancyRow {
+  occurrenceId: EntityId;
+  courseLabel: string;
+  studentName?: string;
+  teacherName: string;
+  planningStatus: string;
+  startLabel: string;
+  endLabel: string;
+  hasConflict: boolean;
+}
+
+interface ConflictGroup {
+  key: string;
+  startAt: string;
+  endAt: string;
+  timeLabel: string;
+  items: OccupancyRow[];
+}
+
 const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
   for (const o of occupancyItems.value) {
@@ -479,7 +520,17 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
   return result;
 });
 
-const occupancyRows = computed(() => occupancyItems.value
+const conflictOccurrenceIds = computed(() => {
+  const ids = new Set<EntityId>();
+  for (const group of conflictGroups.value) {
+    for (const item of group.items) {
+      ids.add(item.occurrenceId);
+    }
+  }
+  return ids;
+});
+
+const occupancyRows = computed<OccupancyRow[]>(() => occupancyItems.value
   .filter(o => o.planningStatus !== 'CANCELLED')
   .slice()
   .sort((a, b) => dayjs(a.plannedStartAt).valueOf() - dayjs(b.plannedStartAt).valueOf())
@@ -491,7 +542,84 @@ const occupancyRows = computed(() => occupancyItems.value
     planningStatus: o.planningStatus,
     startLabel: dayjs(o.plannedStartAt).format('MMM D HH:mm'),
     endLabel: dayjs(o.plannedEndAt).format('MMM D HH:mm'),
+    hasConflict: conflictOccurrenceIds.value.has(o.occurrenceId),
   })));
+
+const conflictGroups = computed<ConflictGroup[]>(() => {
+  const activeItems = occupancyItems.value.filter(o => o.planningStatus !== 'CANCELLED');
+  const segmentMap = new Map<string, ClassroomOccupancyItem[]>();
+  for (const item of activeItems) {
+    const start = dayjs(item.plannedStartAt);
+    const end = dayjs(item.plannedEndAt);
+    for (let cursor = start; cursor.isBefore(end); cursor = cursor.add(30, 'minute')) {
+      const key = cursor.format('YYYY-MM-DDTHH:mm');
+      segmentMap.set(key, [...(segmentMap.get(key) || []), item]);
+    }
+  }
+
+  const groups: ConflictGroup[] = [];
+  const sortedSegments = [...segmentMap.entries()]
+    .filter(([, items]) => items.length > 1)
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  for (const [segmentStart, segmentItems] of sortedSegments) {
+    const segmentIds = segmentItems.map(item => String(item.occurrenceId)).sort().join('|');
+    const previous = groups[groups.length - 1];
+    const canMerge = previous
+      && previous.endAt === segmentStart
+      && previous.items.map(item => String(item.occurrenceId)).sort().join('|') === segmentIds;
+
+    if (canMerge) {
+      previous.endAt = dayjs(segmentStart).add(30, 'minute').format('YYYY-MM-DDTHH:mm');
+      previous.timeLabel = formatConflictTime(previous.startAt, previous.endAt);
+      continue;
+    }
+
+    const startAt = segmentStart;
+    const endAt = dayjs(segmentStart).add(30, 'minute').format('YYYY-MM-DDTHH:mm');
+    const items = segmentItems
+      .slice()
+      .sort((a, b) => dayjs(a.plannedStartAt).valueOf() - dayjs(b.plannedStartAt).valueOf())
+      .map(toOccupancyRow);
+    groups.push({
+      key: `${segmentStart}:${segmentIds}`,
+      startAt,
+      endAt,
+      timeLabel: formatConflictTime(startAt, endAt),
+      items,
+    });
+  }
+  return groups;
+});
+
+function toOccupancyRow(o: ClassroomOccupancyItem): OccupancyRow {
+  return {
+    occurrenceId: o.occurrenceId,
+    courseLabel: o.className || o.packageName || o.lessonNo || 'Lesson',
+    studentName: o.studentName,
+    teacherName: o.teacherName || '—',
+    planningStatus: o.planningStatus,
+    startLabel: dayjs(o.plannedStartAt).format('MMM D HH:mm'),
+    endLabel: dayjs(o.plannedEndAt).format('MMM D HH:mm'),
+    hasConflict: true,
+  };
+}
+
+function formatConflictTime(startAt: string, endAt: string) {
+  return `${dayjs(startAt).format('ddd MMM D HH:mm')}–${dayjs(endAt).format('HH:mm')}`;
+}
+
+function openConflictGroup(group: ConflictGroup) {
+  const first = group.items[0];
+  const item = occupancyItems.value.find(o => o.occurrenceId === first?.occurrenceId);
+  if (!item) return;
+  detailData.value = item;
+  detailDialogVisible.value = true;
+}
+
+function occupancyRowClassName({ row }: { row: OccupancyRow }) {
+  return row.hasConflict ? 'occupancy-row--conflict' : '';
+}
 
 async function loadData() {
   if (!selectedClassroomId.value) return;
@@ -909,6 +1037,84 @@ function resolveQueryId(value: unknown): EntityId | null {
   );
 }
 
+.calendar-help__mark--conflict {
+  background: #fff1f0;
+  box-shadow:
+    inset 4px 0 0 #f56c6c,
+    inset 0 0 0 1px #f56c6c;
+}
+
+.conflict-summary {
+  margin-bottom: 12px;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  background: #fff7f6;
+  padding: 10px 12px;
+}
+
+.conflict-summary__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.conflict-summary__header strong {
+  color: #b42318;
+  font-size: 13px;
+}
+
+.conflict-summary__header span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.conflict-summary__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.conflict-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  border: 1px solid #fda29b;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conflict-card:hover {
+  background: #fff1f0;
+}
+
+.conflict-card__time {
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.conflict-card__title {
+  color: #344054;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.conflict-card__detail {
+  color: #667085;
+  font-size: 12px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .calendar-empty-state {
   display: flex;
   align-items: center;
@@ -926,6 +1132,14 @@ function resolveQueryId(value: unknown): EntityId | null {
   border: 1px solid #ebeef5;
   border-radius: 6px;
   overflow: hidden;
+}
+
+.occupancy-table :deep(.occupancy-row--conflict) {
+  background: #fff7f6;
+}
+
+.occupancy-table :deep(.occupancy-row--conflict td:first-child) {
+  box-shadow: inset 4px 0 0 #f56c6c;
 }
 
 .cell-stack {

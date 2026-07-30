@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.schedule.service;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
@@ -107,6 +108,44 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldReturnSessionBalanceForClassStudentList() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 4, 1),
+                LocalDate.of(2026, 4, 30));
+        enrollment.setBillingType("PER_SESSION");
+        enrollment.setPurchasedQuantity(4);
+        StudentEntity student = new StudentEntity();
+        student.setId(601L);
+        student.setStudentName("Alice Chen");
+
+        LessonOccurrenceEntity usedOccurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 5, 10, 0));
+        usedOccurrence.setId(9001L);
+        LessonRecordEntity usedRecord = new LessonRecordEntity();
+        usedRecord.setOccurrenceId(9001L);
+        usedRecord.setStudentId(601L);
+        usedRecord.setConfirmStage("CONFIRMED");
+        usedRecord.setResultStatus("COMPLETED");
+
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(studentMapper.selectBatchIds(List.of(601L))).thenReturn(List.of(student));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(usedOccurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(usedRecord));
+
+        List<Map<String, Object>> result = classGroupService.listEnrolledStudents(501L, adminUser());
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0))
+                .containsEntry("studentName", "Alice Chen")
+                .containsEntry("billingType", "PER_SESSION")
+                .containsEntry("purchasedQuantity", 4)
+                .containsEntry("usedSessions", 1L)
+                .containsEntry("remainingSessions", 3);
+    }
+
+    @Test
     void shouldPersistConfirmedStageForAllPendingClassRecordsWhenAdminFinalConfirms() {
         LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
         occurrence.setId(1001L);
@@ -198,6 +237,28 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldApplyAdminFinalResultStatusWhenConfirmingPendingClassRecord() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 9, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        LessonRecordEntity pending = pendingClassRecord(2001L, 601L);
+        pending.setResultStatus("COMPLETED");
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(pending);
+
+        classGroupService.confirmLesson(501L, 1001L,
+                Map.of("resultStatus", "CANCELLED"), adminUser());
+
+        verify(lessonRecordMapper).updateById(recordCaptor.capture());
+        LessonRecordEntity confirmed = recordCaptor.getValue();
+        assertThat(confirmed.getResultStatus()).isEqualTo("CANCELLED");
+        assertThat(confirmed.getConfirmStage()).isEqualTo("CONFIRMED");
+    }
+
+    @Test
     void shouldRejectClassConfirmationWhenActualTeacherConflicts() {
         LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
         ClassEnrollmentEntity enrollment = activeEnrollment(601L,
@@ -248,7 +309,7 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
-    void shouldRejectPerSessionClassEnrollmentWhenPurchasedQuantityIsAlreadyUsed() {
+    void shouldCountCancelledLessonAgainstPurchasedSessionQuantity() {
         LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
         ClassEnrollmentEntity usedUp = activeEnrollment(601L,
                 LocalDate.of(2026, 1, 1),
@@ -258,6 +319,8 @@ class ClassGroupServiceImplTest {
         LessonRecordEntity confirmed = new LessonRecordEntity();
         confirmed.setOccurrenceId(9001L);
         confirmed.setStudentId(601L);
+        confirmed.setConfirmStage("CONFIRMED");
+        confirmed.setResultStatus("CANCELLED");
         LessonOccurrenceEntity previousOccurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 5, 10, 0));
         previousOccurrence.setId(9001L);
 
@@ -271,6 +334,48 @@ class ClassGroupServiceImplTest {
                 .hasMessage("No active eligible students in this class lesson.");
         verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
         verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldRejectFormalLeaveAndNoShowForClassLessons() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L,
+                Map.of("resultStatus", "FORMAL_LEAVE"), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CLASS_RESULT_STATUS_NOT_ALLOWED");
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L,
+                Map.of("resultStatus", "NO_SHOW"), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CLASS_RESULT_STATUS_NOT_ALLOWED");
+
+        verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
+    }
+
+    @Test
+    void shouldAllowAdminToConfirmCancelledClassLesson() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+
+        classGroupService.confirmLesson(501L, 1001L,
+                Map.of("resultStatus", "CANCELLED"), adminUser());
+
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().getResultStatus()).isEqualTo("CANCELLED");
+        assertThat(recordCaptor.getValue().getConfirmStage()).isEqualTo("CONFIRMED");
     }
 
     @Test
@@ -288,6 +393,7 @@ class ClassGroupServiceImplTest {
         oldConfirmed.setOccurrenceId(9001L);
         oldConfirmed.setStudentId(601L);
         oldConfirmed.setConfirmStage("CONFIRMED");
+        oldConfirmed.setResultStatus("COMPLETED");
 
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(renewedEnrollment));

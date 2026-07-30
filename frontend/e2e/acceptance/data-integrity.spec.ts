@@ -106,6 +106,111 @@ test.describe.serial('Acceptance - Generated schedule and lesson data integrity'
     expect(Number(row.balanceAmount)).toBeLessThan(0);
     expect(Number(row.remainingHours)).toBe(38);
   });
+
+  test('请假应保留课时并自动补排，取消应扣除计划课时且不补排', async ({ request }) => {
+    const adminToken = await apiLogin(request);
+    const suffix = `absence-${Date.now().toString(36)}`;
+    const teacher = await createTeacherAccountByApi(request, adminToken, suffix);
+    const classroom = await createClassroomByApi(request, adminToken, suffix);
+    const cancelTeacher = await createTeacherAccountByApi(request, adminToken, `${suffix}-cancel`);
+    const cancelClassroom = await createClassroomByApi(request, adminToken, `${suffix}-cancel`);
+    const { product, option } = await createOneOnOneProductAndPriceByApi(request, adminToken, suffix, 900);
+
+    const leaveRegistration = await submitOneOnOneRegistrationByApi(request, adminToken, {
+      suffix: `${suffix}-leave`,
+      productId: product.id,
+      optionId: option.id,
+      teacherId: teacher.profile.id,
+    });
+    const leavePackageId = leaveRegistration.courseArtifacts[0].packageId;
+    await createRecurringScheduleByApi(request, adminToken, leavePackageId, teacher.profile.id, classroom.id);
+    const leaveOccurrence = await withAcceptanceDb((db) => firstOccurrenceForPackage(db, leavePackageId));
+
+    await apiPost(request, adminToken, '/v1/lessons/records', {
+      occurrenceId: leaveOccurrence.id,
+      resultStatus: 'FORMAL_LEAVE',
+      notes: `${ACCEPTANCE_MARKER} formal leave`,
+    });
+
+    await withAcceptanceDb(async (db) => {
+      const pkg = await queryOne<Record<string, any>>(db, 'SELECT * FROM course_package WHERE id = ?', [leavePackageId]);
+      expect(Number(pkg!.remaining_units)).toBe(80);
+
+      const record = await queryOne<Record<string, any>>(
+        db,
+        'SELECT * FROM lesson_record WHERE occurrence_id = ? AND package_id = ?',
+        [leaveOccurrence.id, leavePackageId],
+      );
+      expect(record!.result_status).toBe('FORMAL_LEAVE');
+      expect(Number(record!.deducted_units)).toBe(0);
+
+      const ledger = await queryOne<Record<string, any>>(
+        db,
+        'SELECT * FROM hour_ledger WHERE lesson_record_id = ?',
+        [record!.id],
+      );
+      expect(ledger!.ledger_type).toBe('NO_DEDUCT_AUDIT');
+      expect(Number(ledger!.change_units)).toBe(0);
+
+      const makeup = await queryOne<Record<string, any>>(
+        db,
+        'SELECT * FROM lesson_occurrence WHERE source_occurrence_id = ? AND occurrence_type = "MAKEUP" AND planning_status = "SCHEDULED"',
+        [leaveOccurrence.id],
+      );
+      expect(makeup).toBeTruthy();
+      expect(Number(makeup!.planned_units)).toBe(Number(leaveOccurrence.planned_units));
+    });
+
+    const cancelRegistration = await submitOneOnOneRegistrationByApi(request, adminToken, {
+      suffix: `${suffix}-cancel`,
+      productId: product.id,
+      optionId: option.id,
+      teacherId: cancelTeacher.profile.id,
+    });
+    const cancelPackageId = cancelRegistration.courseArtifacts[0].packageId;
+    await createRecurringScheduleByApi(
+      request,
+      adminToken,
+      cancelPackageId,
+      cancelTeacher.profile.id,
+      cancelClassroom.id,
+    );
+    const cancelOccurrence = await withAcceptanceDb((db) => firstOccurrenceForPackage(db, cancelPackageId));
+
+    await apiPost(request, adminToken, '/v1/lessons/records', {
+      occurrenceId: cancelOccurrence.id,
+      resultStatus: 'CANCELLED',
+      notes: `${ACCEPTANCE_MARKER} cancellation`,
+    });
+
+    await withAcceptanceDb(async (db) => {
+      const pkg = await queryOne<Record<string, any>>(db, 'SELECT * FROM course_package WHERE id = ?', [cancelPackageId]);
+      expect(Number(pkg!.remaining_units)).toBe(76);
+
+      const record = await queryOne<Record<string, any>>(
+        db,
+        'SELECT * FROM lesson_record WHERE occurrence_id = ? AND package_id = ?',
+        [cancelOccurrence.id, cancelPackageId],
+      );
+      expect(record!.result_status).toBe('CANCELLED');
+      expect(Number(record!.deducted_units)).toBe(4);
+
+      const ledger = await queryOne<Record<string, any>>(
+        db,
+        'SELECT * FROM hour_ledger WHERE lesson_record_id = ?',
+        [record!.id],
+      );
+      expect(ledger!.ledger_type).toBe('DEDUCT');
+      expect(Number(ledger!.change_units)).toBe(-4);
+
+      const makeup = await queryOne<Record<string, any>>(
+        db,
+        'SELECT * FROM lesson_occurrence WHERE source_occurrence_id = ? AND occurrence_type = "MAKEUP" AND planning_status <> "CANCELLED"',
+        [cancelOccurrence.id],
+      );
+      expect(makeup).toBeNull();
+    });
+  });
 });
 
 async function loginWithCredentials(request: APIRequestContext, username: string, password: string): Promise<string> {

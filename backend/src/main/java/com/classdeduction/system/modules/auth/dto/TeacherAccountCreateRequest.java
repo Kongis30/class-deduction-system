@@ -15,7 +15,9 @@ import java.util.List;
 @Schema(description = "Teacher account create request")
 public class TeacherAccountCreateRequest {
 
-    @NotBlank(message = "Teacher name is required")
+    @Schema(description = "Existing teacher profile ID. When present, create login access for that profile.")
+    private Long teacherId;
+
     @Schema(description = "Teacher name", example = "Emily Chen")
     private String teacherName;
 

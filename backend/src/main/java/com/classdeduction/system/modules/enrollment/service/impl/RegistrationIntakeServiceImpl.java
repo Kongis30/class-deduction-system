@@ -400,8 +400,12 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         BigDecimal tuitionSubtotal = lines.stream()
                 .map(line -> line.priceAmount)
                 .reduce(ZERO_AMOUNT, BigDecimal::add);
-        BigDecimal pickupFee = defaultAmount(request.getPickupFeeAmount());
-        BigDecimal dropoffFee = defaultAmount(request.getDropoffFeeAmount());
+        BigDecimal pickupFee = isPickupFeeCharged(request)
+                ? defaultAmount(request.getPickupFeeAmount())
+                : ZERO_AMOUNT;
+        BigDecimal dropoffFee = isDropoffFeeCharged(request)
+                ? defaultAmount(request.getDropoffFeeAmount())
+                : ZERO_AMOUNT;
         BigDecimal extraFee = defaultAmount(firstNonNull(request.getExtraFeeAmount(), sumFeeLines(request.getExtraFees())));
         BigDecimal discount = defaultAmount(firstNonNull(request.getDiscountAmount(), sumFeeLines(request.getDiscounts())));
         BigDecimal originalAmount = tuitionSubtotal.add(pickupFee).add(dropoffFee).add(extraFee).setScale(2, RoundingMode.HALF_UP);
@@ -419,6 +423,18 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         String paymentStatus = resolvePaymentStatus(amountDue, paid);
         return new MoneySnapshot(tuitionSubtotal, pickupFee, dropoffFee, extraFee, originalAmount,
                 discount, paid, amountDue, amountDue.subtract(paid), paymentStatus);
+    }
+
+    private boolean isPickupFeeCharged(RegistrationIntakeRequest request) {
+        return Boolean.TRUE.equals(request.getPickupFeeCharged())
+                && request.getStudent() != null
+                && Boolean.TRUE.equals(request.getStudent().getPickupRequired());
+    }
+
+    private boolean isDropoffFeeCharged(RegistrationIntakeRequest request) {
+        return Boolean.TRUE.equals(request.getDropoffFeeCharged())
+                && request.getStudent() != null
+                && Boolean.TRUE.equals(request.getStudent().getDropoffRequired());
     }
 
     private EnrollmentOrderEntity createOrder(RegistrationIntakeRequest request,
@@ -790,7 +806,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         payload.put("payments", payments);
         payload.put("artifacts", artifacts);
         payload.put("tuitionSubtotalAmount", money.tuitionSubtotal());
+        payload.put("pickupFeeCharged", isPickupFeeCharged(request));
         payload.put("pickupFeeAmount", money.pickupFeeAmount());
+        payload.put("dropoffFeeCharged", isDropoffFeeCharged(request));
         payload.put("dropoffFeeAmount", money.dropoffFeeAmount());
         payload.put("extraFeeAmount", money.extraFeeAmount());
         payload.put("originalAmount", money.originalAmount());
@@ -816,8 +834,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("lineNo", line.lineNo);
         item.put("registerClass", line.registerClass);
         item.put("courseType", line.courseType);
+        item.put("courseProductId", line.courseProductId);
+        item.put("courseProductName", line.product == null ? null : line.product.getProductName());
         item.put("detail", line.detail);
-        item.put("gradeBand", line.gradeBand);
+        item.put("gradeBand", firstText(line.gradeBand, line.classGroup == null ? null : line.classGroup.getGradeBand()));
         item.put("periodLabel", line.periodLabel);
         item.put("timeSlotLabel", line.timeSlotLabel);
         item.put("priceAmount", line.priceAmount);
@@ -829,6 +849,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("initialLessonEndAt", line.initialLessonEndAt);
         item.put("teacherId", line.teacherId);
         item.put("classId", line.classId);
+        item.put("className", line.classGroup == null ? null : line.classGroup.getClassName());
         if (!line.oneOnOne) {
             item.put("groupBillingType", line.classGroup == null ? null : line.classGroup.getBillingType());
             item.put("groupTotalSessions", line.classGroup == null ? null : line.classGroup.getTotalSessions());

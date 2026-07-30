@@ -1,20 +1,29 @@
 package com.classdeduction.system.modules.base.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
+import com.classdeduction.system.modules.auth.entity.AuthSessionEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
+import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
+import com.classdeduction.system.modules.auth.mapper.AuthSessionMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
+import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.base.dto.TeacherPageQuery;
 import com.classdeduction.system.modules.base.dto.TeacherSaveRequest;
+import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
+import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.TeacherService;
 import com.classdeduction.system.modules.base.vo.TeacherVO;
+import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
+import com.classdeduction.system.modules.finance.mapper.TeacherPayRateMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
@@ -51,6 +60,10 @@ public class TeacherServiceImpl implements TeacherService {
     private final ClassGroupMapper classGroupMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final JsonHelper jsonHelper;
+    private final AuthSessionMapper authSessionMapper;
+    private final UserRoleMapper userRoleMapper;
+    private final CourseProductMapper courseProductMapper;
+    private final TeacherPayRateMapper teacherPayRateMapper;
 
     @Override
     @Cacheable(value = "reference:teachers", key = "'listAllActive'")
@@ -137,36 +150,39 @@ public class TeacherServiceImpl implements TeacherService {
     @CacheEvict(value = {"reference:teachers", "reference:teacher"}, allEntries = true)
     public void deleteTeacher(Long id) {
         requireTeacher(id);
-        // 检查未来的排课
-        Long futureOccurrences = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPlannedTeacherId, id)
-                .eq(LessonOccurrenceEntity::getIsDeleted, 0)
-                .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
-        // 检查活跃的排课规则
-        Long activeRules = recurringScheduleRuleMapper.selectCount(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
-                .eq(RecurringScheduleRuleEntity::getPrimaryTeacherId, id)
-                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
-                .eq(RecurringScheduleRuleEntity::getIsDeleted, 0));
-        // 检查登录账号
-        Long userAccounts = userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccountEntity>()
-                .eq(UserAccountEntity::getTeacherId, id)
-                .eq(UserAccountEntity::getIsDeleted, 0));
-        // 检查班级
-        Long classGroups = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getTeacherId, id)
-                .eq(ClassGroupEntity::getIsDeleted, 0));
-        // 检查课包分配
-        Long packageAssignments = packageTeacherAssignmentMapper.selectCount(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
-                .eq(PackageTeacherAssignmentEntity::getTeacherId, id)
-                .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
-                .eq(PackageTeacherAssignmentEntity::getIsDeleted, 0));
-        if (futureOccurrences + activeRules + userAccounts + classGroups + packageAssignments > 0) {
-            throw new BusinessException("TEACHER_HAS_REFERENCES",
-                    "Cannot delete instructor: there are future lessons, active schedule rules, "
-                            + "user accounts, assigned classes, or active course package assignments. "
-                            + "Set to INACTIVE instead.");
-        }
+        cascadeDeleteTeacherOperationalData(id);
         teacherMapper.deleteById(id);
+    }
+
+    private void cascadeDeleteTeacherOperationalData(Long teacherId) {
+        List<UserAccountEntity> accounts = userAccountMapper.selectList(new LambdaQueryWrapper<UserAccountEntity>()
+                .eq(UserAccountEntity::getTeacherId, teacherId)
+                .eq(UserAccountEntity::getIsDeleted, 0));
+        List<Long> userIds = accounts.stream().map(UserAccountEntity::getId).filter(Objects::nonNull).toList();
+        if (!userIds.isEmpty()) {
+            userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
+                    .in(UserRoleEntity::getUserId, userIds));
+            authSessionMapper.delete(new LambdaQueryWrapper<AuthSessionEntity>()
+                    .in(AuthSessionEntity::getUserId, userIds));
+            userAccountMapper.delete(new LambdaQueryWrapper<UserAccountEntity>()
+                    .in(UserAccountEntity::getId, userIds));
+        }
+
+        lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPlannedTeacherId, teacherId)
+                .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
+        recurringScheduleRuleMapper.delete(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                .eq(RecurringScheduleRuleEntity::getPrimaryTeacherId, teacherId));
+        packageTeacherAssignmentMapper.delete(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId));
+        teacherPayRateMapper.delete(new LambdaQueryWrapper<TeacherPayRateEntity>()
+                .eq(TeacherPayRateEntity::getTeacherId, teacherId));
+        courseProductMapper.update(null, new LambdaUpdateWrapper<CourseProductEntity>()
+                .set(CourseProductEntity::getDefaultTeacherId, null)
+                .eq(CourseProductEntity::getDefaultTeacherId, teacherId));
+        classGroupMapper.update(null, new LambdaUpdateWrapper<ClassGroupEntity>()
+                .set(ClassGroupEntity::getTeacherId, null)
+                .eq(ClassGroupEntity::getTeacherId, teacherId));
     }
 
     @Override

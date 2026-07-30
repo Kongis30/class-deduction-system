@@ -26,12 +26,12 @@ public class LessonStatusRuleBootstrapInitializer implements ApplicationRunner {
     private static final RuleSeed[] CORE_RULES = {
             new RuleSeed("COMPLETED",         "Completed",        1, "ACTUAL_UNITS",  0, 1, "Lesson completed normally"),
             new RuleSeed("FORMAL_LEAVE",      "Formal Leave",     0, "NONE",          1, 0, "Approved leave, no deduction, extend by one lesson"),
-            new RuleSeed("TEMP_CANCEL",       "Temporary Cancel", 0, "NONE",          0, 1, "Temporary cancellation"),
+            new RuleSeed("TEMP_CANCEL",       "Temporary Cancel", 1, "PLANNED_UNITS", 0, 0, "Student cancellation, deduct planned units"),
             new RuleSeed("NO_SHOW",           "No Show",          1, "PLANNED_UNITS", 0, 1, "Student absent, deduct planned units"),
             new RuleSeed("TEACHER_CANCEL",    "Teacher Cancel",   0, "NONE",          0, 1, "Teacher cancelled the lesson"),
             new RuleSeed("MAKEUP_COMPLETED",  "Makeup Completed", 1, "ACTUAL_UNITS",  0, 1, "Makeup lesson completed"),
             new RuleSeed("SUBSTITUTED",       "Substituted",      1, "ACTUAL_UNITS",  0, 1, "Substitute lesson completed"),
-            new RuleSeed("CANCELLED",         "Cancelled",        0, "NONE",          1, 0, "Lesson cancelled, no deduction, extend by one lesson"),
+            new RuleSeed("CANCELLED",         "Cancelled",        1, "PLANNED_UNITS", 0, 0, "Student cancellation, deduct planned units"),
     };
 
     @Override

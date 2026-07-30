@@ -24,8 +24,7 @@ import java.util.Set;
 public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
 
     private static final Set<String> ALLOWED_SELF_CONFIRM_STATUSES = Set.of("COMPLETED", "NO_SHOW", "FORMAL_LEAVE");
-    private static final int PAST_CONFIRM_WINDOW_DAYS = 7;
-    private static final int FUTURE_CONFIRM_WINDOW_HOURS = 6;
+    private static final int FUTURE_CONFIRM_WINDOW_DAYS = 14;
 
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordService lessonRecordService;
@@ -65,15 +64,12 @@ public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
     }
 
     /**
-     * 老师端只允许确认最近发生的课，避免未来课误确认或历史课被追溯篡改。
+     * 老师可从开课前 14 天开始确认，开课后不再限制确认时间。
      */
     private void validateTeacherConfirmWindow(LessonOccurrenceEntity occurrence) {
         LocalDateTime now = AppTime.nowLocalDateTime();
-        if (occurrence.getPlannedStartAt().isAfter(now.plusHours(FUTURE_CONFIRM_WINDOW_HOURS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Teachers can only confirm lessons that are happening now or have already happened.");
-        }
-        if (occurrence.getPlannedEndAt().isBefore(now.minusDays(PAST_CONFIRM_WINDOW_DAYS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_LATE", "This lesson is outside the teacher self-confirmation window.");
+        if (occurrence.getPlannedStartAt().isAfter(now.plusDays(FUTURE_CONFIRM_WINDOW_DAYS))) {
+            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Lesson confirmation is available 14 days before the planned start time.");
         }
     }
 }

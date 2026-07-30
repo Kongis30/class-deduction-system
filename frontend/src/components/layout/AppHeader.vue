@@ -5,12 +5,24 @@
         <el-icon><Fold /></el-icon>
       </el-button>
       <nav v-if="breadcrumbs.length" class="app-header__breadcrumbs" aria-label="Current page path">
-        <span v-for="(crumb, index) in breadcrumbs" :key="`${crumb.label}-${index}`">
-          <span v-if="index > 0" class="app-header__breadcrumb-separator">/</span>
-          <strong v-if="index === breadcrumbs.length - 1">{{ crumb.label }}</strong>
-          <router-link v-else-if="crumb.to" :to="crumb.to">{{ crumb.label }}</router-link>
-          <span v-else>{{ crumb.label }}</span>
-        </span>
+        <span class="app-header__breadcrumb-label">You are in</span>
+        <template v-for="(crumb, index) in breadcrumbs" :key="`${crumb.label}-${index}`">
+          <span v-if="index > 0" class="app-header__breadcrumb-separator">›</span>
+          <strong
+            v-if="index === breadcrumbs.length - 1"
+            class="app-header__breadcrumb-chip app-header__breadcrumb-chip--current"
+          >
+            {{ crumb.label }}
+          </strong>
+          <router-link
+            v-else-if="crumb.to"
+            :to="crumb.to"
+            class="app-header__breadcrumb-chip app-header__breadcrumb-chip--link"
+          >
+            {{ crumb.label }}
+          </router-link>
+          <span v-else class="app-header__breadcrumb-chip">{{ crumb.label }}</span>
+        </template>
       </nav>
       <el-button
         v-if="showBackButton"
@@ -160,7 +172,7 @@ function buildBreadcrumbs() {
   if (!title || route.path === '/login') {
     return [];
   }
-  if (route.path === '/registration' || route.path === '/calendar' || route.path === '/one-on-one-deduction' || route.path === '/data-summary') {
+  if (isDailyWorkRoute(route.path)) {
     return [
       { label: 'Daily work', to: '/dashboard' },
       { label: title }
@@ -174,7 +186,7 @@ function buildBreadcrumbs() {
         ? []
         : [{
             label: resolvedSection,
-            to: resolvedSection === 'Course setup' ? '/base-data/course-products' : '/dashboard'
+            to: backOfficeSectionPath(resolvedSection)
           }]),
       { label: title }
     ];
@@ -184,23 +196,49 @@ function buildBreadcrumbs() {
     : [{ label: title }];
 }
 
+function isDailyWorkRoute(path: string) {
+  return [
+    '/registration',
+    '/calendar',
+    '/one-on-one-deduction',
+    '/group-class-lessons',
+    '/data-summary',
+    '/classrooms',
+  ].some(dailyPath => path === dailyPath || path.startsWith(`${dailyPath}/`));
+}
+
 function resolveBackOfficeSection(section: string, title: string) {
   if (['Course Products', 'Course Pricing', 'Class Schedules', 'Schedule 1-on-1 Lessons'].includes(title)) {
-    return 'Course setup';
+    return 'Courses';
   }
   if (['Enrollment History', 'Course Packages', 'Registration Receipts'].includes(title)) {
-    return 'Records';
+    return 'Enrollment';
   }
   if (['Teacher Pay', 'Payment Methods'].includes(title)) {
-    return 'Payments & payroll';
+    return 'Finance';
   }
-  if (['Students', 'Teachers', 'Accounts'].includes(title)) {
-    return 'People & accounts';
+  if (['People', 'Students', 'Teachers', 'Accounts'].includes(title)) {
+    return 'People';
   }
-  if (['Campuses', 'Notifications', 'Brand & receipts', 'User Guide'].includes(title)) {
-    return 'School settings';
+  if (title === 'User Guide') {
+    return 'Help';
+  }
+  if (['Campuses', 'Notifications', 'Brand & receipts'].includes(title)) {
+    return 'System';
   }
   return section || 'Back office';
+}
+
+function backOfficeSectionPath(section: string) {
+  const sectionPaths: Record<string, string> = {
+    Help: '/admin/guide',
+    People: '/admin/config/people',
+    Enrollment: '/enrollment/orders',
+    Courses: '/base-data/course-products',
+    Finance: '/admin/config/teacher-pay-rates',
+    System: '/admin/config/campuses',
+  };
+  return sectionPaths[section] ?? '/base-data/course-products';
 }
 
 async function handleSignOut() {
@@ -319,21 +357,60 @@ function resetPasswordForm() {
 .app-header__breadcrumbs {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   min-width: 0;
-  color: #64748b;
-  font-size: 13px;
+  max-width: min(720px, 52vw);
+  padding: 4px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
   white-space: nowrap;
 }
 
-.app-header__breadcrumbs strong {
-  color: #102a43;
+.app-header__breadcrumb-label {
+  padding: 0 4px 0 6px;
+  color: #64748b;
+  font-size: 11px;
   font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .app-header__breadcrumb-separator {
-  margin-right: 6px;
   color: #94a3b8;
+  font-size: 14px;
+}
+
+.app-header__breadcrumb-chip {
+  display: inline-flex;
+  max-width: 180px;
+  min-width: 0;
+  align-items: center;
+  padding: 3px 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  color: #334155;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-header__breadcrumb-chip--link {
+  color: #2563eb;
+  text-decoration: none;
+}
+
+.app-header__breadcrumb-chip--link:hover {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.app-header__breadcrumb-chip--current {
+  background: #1e293b;
+  color: #fff;
+  font-weight: 800;
 }
 
 .app-header__back {
@@ -342,37 +419,47 @@ function resetPasswordForm() {
 }
 
 :global(.app-header__admin-tools-menu) {
-  min-width: 248px;
+  min-width: 264px;
 }
 
 :global(.app-header__tool-group) {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 6px 8px 2px;
-  padding: 4px 8px;
-  border-top: 1px solid #eef2f7;
-  color: #64748b;
+  gap: 8px;
+  margin: 8px 8px 4px;
+  padding: 7px 10px;
+  border-left: 3px solid #2563eb;
+  border-radius: 6px;
+  background: #eff6ff;
+  color: #1e3a8a;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 :global(.app-header__tool-group:first-child) {
-  border-top: 0;
-  margin-top: 0;
+  margin-top: 6px;
 }
 
 :global(.app-header__tool-group .el-icon) {
-  color: var(--accent-deep);
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 :global(.app-header__tool-item) {
   display: flex;
-  min-width: 248px !important;
+  min-width: 264px !important;
   flex-direction: column;
   align-items: flex-start;
   gap: 1px;
-  padding: 7px 14px !important;
+  padding: 8px 14px 8px 18px !important;
   line-height: 1.2;
 }
 

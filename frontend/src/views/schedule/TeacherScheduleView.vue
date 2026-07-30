@@ -70,6 +70,25 @@
                 {{ selectedTeacherName }}
               </span>
             </div>
+            <section v-if="conflictGroups.length" class="teacher-conflict-summary">
+              <div class="teacher-conflict-summary__header">
+                <strong>{{ conflictSummaryTitle }}</strong>
+                <span>These lessons overlap for the selected teacher.</span>
+              </div>
+              <div class="teacher-conflict-summary__list">
+                <button
+                  v-for="group in conflictGroups"
+                  :key="group.key"
+                  class="teacher-conflict-card"
+                  type="button"
+                  @click="openDetailDialog(group.items[0])"
+                >
+                  <span class="teacher-conflict-card__time">{{ group.timeLabel }}</span>
+                  <strong>{{ group.items.length }} overlapping lessons</strong>
+                  <span>{{ group.items.map(lessonCourseLabel).join(' / ') }}</span>
+                </button>
+              </div>
+            </section>
             <WeeklyTimeSelector
               v-model="emptySlots"
               :occupied-slots="occupiedSlots"
@@ -171,6 +190,7 @@ import { isTeacherUser } from '@/types/auth';
 import type { EntityId, LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
+import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
 
 const authStore = useAuthStore();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
@@ -242,6 +262,11 @@ function jumpToDate(date: string | null) {
 const loading = ref(false);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
+const conflictGroups = computed(() => findScheduleConflictGroups(occurrences.value));
+const conflictSummaryTitle = computed(() => {
+  const count = conflictGroups.value.length;
+  return `${count} teaching conflict${count === 1 ? '' : 's'} this week`;
+});
 
 const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
@@ -347,6 +372,13 @@ function planningStatusTag(status: string) {
 
 function planningStatusLabel(status: string) {
   return { SCHEDULED: 'Scheduled', ADJUSTED: 'Adjusted', CANCELLED: 'Cancelled', MERGED: 'Merged' }[status] ?? status;
+}
+
+function lessonCourseLabel(lesson: LessonOccurrenceItem) {
+  if (lesson.packageName && lesson.className && lesson.packageName !== lesson.className) {
+    return `${lesson.packageName} · ${lesson.className}`;
+  }
+  return lesson.packageName || lesson.className || lesson.lessonNo || 'Lesson';
 }
 
 // ─── Init ──────────────────────────────────────
@@ -511,6 +543,68 @@ onMounted(async () => {
   font-size: 13px;
   font-weight: 500;
   color: #409eff;
+}
+
+.teacher-conflict-summary {
+  margin-bottom: 12px;
+  border: 1px solid #fecdca;
+  border-radius: 8px;
+  background: #fff7f6;
+  padding: 10px 12px;
+}
+
+.teacher-conflict-summary__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.teacher-conflict-summary__header strong {
+  color: #b42318;
+  font-size: 13px;
+}
+
+.teacher-conflict-summary__header span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.teacher-conflict-summary__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.teacher-conflict-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  border: 1px solid #fda29b;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px 10px;
+  color: #667085;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.teacher-conflict-card:hover {
+  background: #fff1f0;
+}
+
+.teacher-conflict-card strong {
+  color: #344054;
+}
+
+.teacher-conflict-card__time {
+  color: #b42318;
+  font-weight: 700;
 }
 
 /* ── Dialog ───────────────────────────────── */

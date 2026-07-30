@@ -60,9 +60,15 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Course line items")
     private List<CourseItemPayload> items;
 
+    @Schema(description = "Whether pickup fee is charged on this registration")
+    private Boolean pickupFeeCharged;
+
     @DecimalMin(value = "0.00", message = "Pickup fee amount cannot be negative")
     @Schema(description = "Pickup service fee amount", example = "50.00")
     private BigDecimal pickupFeeAmount;
+
+    @Schema(description = "Whether drop-off fee is charged on this registration")
+    private Boolean dropoffFeeCharged;
 
     @DecimalMin(value = "0.00", message = "Drop-off fee amount cannot be negative")
     @Schema(description = "Drop-off service fee amount", example = "50.00")

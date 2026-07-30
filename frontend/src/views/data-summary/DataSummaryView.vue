@@ -180,6 +180,14 @@
             </div>
             <span v-else class="check-muted">—</span>
             <div class="check-action">
+              <el-button
+                v-if="canRecordPayment(row)"
+                size="small"
+                type="primary"
+                @click="openPaymentDialog(row)"
+              >
+                Record payment
+              </el-button>
               <el-button class="review-link" link type="primary" @click="openReviewDrawer(row)">
                 Details
               </el-button>
@@ -274,7 +282,17 @@
                 <h4>Order details</h4>
               <span>{{ reviewOrder.studentName }}</span>
               </div>
-              <el-button link type="primary" @click="openRegistrationForm">Open registration form</el-button>
+              <div class="review-section__actions">
+                <el-button
+                  v-if="canRecordOrderPayment(reviewOrder)"
+                  type="primary"
+                  size="small"
+                  @click="openPaymentDialogFromReview"
+                >
+                  Record payment
+                </el-button>
+                <el-button link type="primary" @click="openReceipt">Open receipt</el-button>
+              </div>
             </div>
             <div class="review-grid">
               <span>Order status</span><strong>{{ orderStatusLabel(reviewOrder.orderStatus) }}</strong>
@@ -318,6 +336,67 @@
         <el-empty v-else description="Order details are unavailable." />
       </template>
     </el-drawer>
+
+    <el-dialog
+      v-model="paymentDialogVisible"
+      title="Record Payment"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <template v-if="paymentOrder">
+        <div class="payment-dialog-summary">
+          <div><span>Student</span><strong>{{ paymentOrder.studentName }}</strong></div>
+          <div><span>Enrollment</span><strong>{{ paymentOrder.enrollmentNo }}</strong></div>
+          <div><span>Outstanding balance</span><strong>{{ formatMoney(paymentBalance) }}</strong></div>
+        </div>
+
+        <el-form label-position="top">
+          <el-form-item label="Payment method">
+            <el-select v-model="paymentForm.paymentMethod" placeholder="Select payment method" style="width: 100%;">
+              <el-option
+                v-for="method in paymentMethods"
+                :key="method.methodCode"
+                :label="method.methodName"
+                :value="method.methodCode"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Amount">
+            <el-input-number
+              v-model="paymentForm.amount"
+              :min="0.01"
+              :max="paymentBalance"
+              :precision="2"
+              :controls="false"
+              style="width: 100%;"
+            />
+          </el-form-item>
+          <el-form-item label="Payment date">
+            <el-date-picker
+              v-model="paymentForm.paidAt"
+              type="date"
+              value-format="YYYY-MM-DD"
+              style="width: 100%;"
+            />
+          </el-form-item>
+          <el-form-item label="Handled by">
+            <el-input v-model="paymentForm.handledByName" />
+          </el-form-item>
+          <el-form-item label="Notes">
+            <el-input v-model="paymentForm.remark" type="textarea" :rows="2" placeholder="Optional" />
+          </el-form-item>
+        </el-form>
+      </template>
+
+      <template #footer>
+        <el-button @click="paymentDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="paymentSubmitting" @click="submitPayment">Record payment</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="paymentReceiptDialogVisible" title="Payment Receipt" width="820px">
+      <PaymentReceiptPreview v-if="paymentReceipt" :receipt="paymentReceipt" />
+    </el-dialog>
 
     <el-dialog v-model="packageDialogVisible" title="Course package details" width="620px">
       <el-skeleton v-if="packageLoading" :rows="5" animated />
@@ -363,10 +442,24 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { fetchCampuses } from '@/api/base-data';
 import { fetchDataSummary, type DataSummaryQuery, type DataSummaryResponse, type DataSummaryRow } from '@/api/data-summary';
-import { fetchEnrollmentOrder, fetchCoursePackage } from '@/api/enrollment';
+import {
+  createPaymentRecord,
+  fetchActivePaymentMethods,
+  fetchCoursePackage,
+  fetchEnrollmentOrder,
+} from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
 import { fetchHourLedger, type HourLedgerItem } from '@/api/lesson';
-import type { CampusItem, CoursePackageItem, EnrollmentOrderDetailItem, EntityId } from '@/types/domain';
+import { useAuthStore } from '@/stores/auth';
+import type {
+  CampusItem,
+  CoursePackageItem,
+  EnrollmentOrderDetailItem,
+  EntityId,
+  PaymentMethodItem,
+  ReceiptRecordItem,
+} from '@/types/domain';
+import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
 import RenewalRemindersView from '@/views/enrollment/RenewalRemindersView.vue';
 
 const courseTypeOptions = [
@@ -405,6 +498,7 @@ const advancedFiltersVisible = ref(false);
 const periodRange = ref<[string, string] | null>(null);
 const route = useRoute();
 const router = useRouter();
+const authStore = useAuthStore();
 const activeTab = ref(route.query.tab === 'renewal' ? 'renewal' : 'checks');
 const activePageTitle = computed(() =>
   activeTab.value === 'renewal' ? 'Renewal follow-up' : 'Daily registration checks'
@@ -424,6 +518,19 @@ const reviewPackage = ref<CoursePackageItem | null>(null);
 const ledgerDialogVisible = ref(false);
 const ledgerLoading = ref(false);
 const ledgerRows = ref<HourLedgerItem[]>([]);
+const paymentDialogVisible = ref(false);
+const paymentSubmitting = ref(false);
+const paymentOrder = ref<EnrollmentOrderDetailItem | null>(null);
+const paymentReceiptDialogVisible = ref(false);
+const paymentReceipt = ref<ReceiptRecordItem | null>(null);
+const paymentMethods = ref<PaymentMethodItem[]>([]);
+const paymentForm = reactive({
+  paymentMethod: '',
+  amount: 0,
+  paidAt: dayjs().format('YYYY-MM-DD'),
+  handledByName: authStore.displayName,
+  remark: '',
+});
 const issueFilter = ref<IssueFilter>('');
 const metricsVisible = ref(false);
 const filters = reactive<DataSummaryQuery>({
@@ -501,6 +608,7 @@ const workbookRows = computed(() => summary.value.rows.filter(matchesIssueFilter
     || String(left.studentName ?? '').localeCompare(String(right.studentName ?? ''))
     || String(left.enrollmentNo ?? '').localeCompare(String(right.enrollmentNo ?? ''));
 }));
+const paymentBalance = computed(() => Math.max(0, Number(paymentOrder.value?.balanceAmount ?? 0)));
 
 watch(periodRange, (value) => {
   filters.periodStartDate = value?.[0];
@@ -675,6 +783,101 @@ function orderStatusLabel(status?: string) {
   return labels[status || ''] || status || '—';
 }
 
+function canRecordPayment(row: DataSummaryRow) {
+  return row.orderStatus === 'CONFIRMED'
+    && ['UNPAID', 'PARTIAL'].includes(row.paymentStatus)
+    && Number(row.amountDue ?? 0) > Number(row.paidAmount ?? 0);
+}
+
+function canRecordOrderPayment(order: EnrollmentOrderDetailItem) {
+  return order.orderStatus === 'CONFIRMED'
+    && ['UNPAID', 'PARTIAL'].includes(order.paymentStatus)
+    && Number(order.balanceAmount ?? 0) > 0;
+}
+
+async function loadPaymentMethods() {
+  if (paymentMethods.value.length > 0) {
+    return;
+  }
+  const response = await fetchActivePaymentMethods();
+  paymentMethods.value = response.data.data ?? [];
+}
+
+async function openPaymentDialog(row: DataSummaryRow) {
+  try {
+    const [orderResponse] = await Promise.all([
+      fetchEnrollmentOrder(row.orderId),
+      loadPaymentMethods(),
+    ]);
+    const order = orderResponse.data.data;
+    if (!canRecordOrderPayment(order)) {
+      ElMessage.info('This enrollment no longer has an outstanding payment.');
+      await loadSummary();
+      return;
+    }
+    paymentOrder.value = order;
+    Object.assign(paymentForm, {
+      paymentMethod: paymentMethods.value[0]?.methodCode ?? 'CASH',
+      amount: Number(Number(order.balanceAmount ?? 0).toFixed(2)),
+      paidAt: dayjs().format('YYYY-MM-DD'),
+      handledByName: authStore.displayName,
+      remark: '',
+    });
+    paymentDialogVisible.value = true;
+  } catch (error) {
+    ElMessage.error(`Failed to prepare payment: ${extractErrorMessage(error)}`);
+  }
+}
+
+function openPaymentDialogFromReview() {
+  if (reviewRow.value) {
+    openPaymentDialog(reviewRow.value);
+  }
+}
+
+async function submitPayment() {
+  if (!paymentOrder.value) {
+    return;
+  }
+  const amount = Number(Number(paymentForm.amount ?? 0).toFixed(2));
+  if (!paymentForm.paymentMethod || !paymentForm.paidAt || !paymentForm.handledByName.trim()) {
+    ElMessage.warning('Payment method, date, and handler are required.');
+    return;
+  }
+  if (amount <= 0 || amount > paymentBalance.value) {
+    ElMessage.warning('Payment amount must be greater than zero and cannot exceed the outstanding balance.');
+    return;
+  }
+
+  paymentSubmitting.value = true;
+  try {
+    const orderId = paymentOrder.value.id;
+    const response = await createPaymentRecord({
+      enrollmentOrderId: orderId,
+      splits: [{
+        paymentMethod: paymentForm.paymentMethod,
+        amount,
+        paidAt: `${paymentForm.paidAt}T00:00:00`,
+        handledByName: paymentForm.handledByName.trim(),
+        remark: paymentForm.remark.trim() || undefined,
+      }],
+    });
+    ElMessage.success('Payment recorded.');
+    paymentReceipt.value = response.data.data;
+    paymentDialogVisible.value = false;
+    paymentReceiptDialogVisible.value = true;
+    await loadSummary();
+    if (reviewRow.value?.orderId === orderId) {
+      const response = await fetchEnrollmentOrder(orderId);
+      reviewOrder.value = response.data.data;
+    }
+  } catch (error) {
+    ElMessage.error(`Payment failed: ${extractErrorMessage(error)}`);
+  } finally {
+    paymentSubmitting.value = false;
+  }
+}
+
 async function openReviewDrawer(row: DataSummaryRow) {
   reviewRow.value = row;
   reviewOrder.value = null;
@@ -690,7 +893,7 @@ async function openReviewDrawer(row: DataSummaryRow) {
   }
 }
 
-function openRegistrationForm() {
+function openReceipt() {
   if (!reviewRow.value) return;
   router.push({ name: 'registration', query: { orderId: reviewRow.value.orderId } });
 }
@@ -1083,6 +1286,12 @@ onMounted(() => {
   font-size: 12px;
 }
 
+.review-section__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .review-grid {
   display: grid;
   grid-template-columns: minmax(120px, 0.7fr) minmax(0, 1.3fr);
@@ -1131,6 +1340,32 @@ onMounted(() => {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.payment-dialog-summary {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #eff6ff;
+}
+
+.payment-dialog-summary > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.payment-dialog-summary span {
+  color: #64748b;
+}
+
+.payment-dialog-summary strong {
+  color: #1e3a8a;
+  font-variant-numeric: tabular-nums;
 }
 
 .summary-group__amount {
@@ -1378,10 +1613,14 @@ onMounted(() => {
 }
 
 .check-action {
+  display: grid;
+  place-content: center;
+  gap: 2px;
   text-align: center;
 }
 
 .check-action .review-link {
+  margin-left: 0;
   white-space: nowrap;
 }
 

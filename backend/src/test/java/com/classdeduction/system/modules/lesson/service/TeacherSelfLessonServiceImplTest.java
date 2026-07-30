@@ -20,6 +20,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
@@ -98,8 +99,52 @@ class TeacherSelfLessonServiceImplTest {
                 .hasMessage("Teachers can only confirm completed, no-show, or formal-leave results.");
     }
 
+    @Test
+    void shouldAllowConfirmationWithinFourteenDaysBeforeLesson() {
+        LocalDateTime startAt = AppTime.nowLocalDateTime().plusDays(14).minusMinutes(1);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrenceAt(startAt));
+
+        assertThatCode(() -> teacherSelfLessonService.confirmOwnLesson(confirmRequest(), currentTeacherUser()))
+                .doesNotThrowAnyException();
+        verify(lessonRecordService).initialConfirmLesson(any(), any());
+    }
+
+    @Test
+    void shouldRejectConfirmationMoreThanFourteenDaysBeforeLesson() {
+        LocalDateTime startAt = AppTime.nowLocalDateTime().plusDays(14).plusMinutes(1);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrenceAt(startAt));
+
+        assertThatThrownBy(() -> teacherSelfLessonService.confirmOwnLesson(confirmRequest(), currentTeacherUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Lesson confirmation is available 14 days before the planned start time.");
+    }
+
+    @Test
+    void shouldAllowConfirmationForOldLessonWithoutExpiry() {
+        LocalDateTime startAt = AppTime.nowLocalDateTime().minusYears(2);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrenceAt(startAt));
+
+        assertThatCode(() -> teacherSelfLessonService.confirmOwnLesson(confirmRequest(), currentTeacherUser()))
+                .doesNotThrowAnyException();
+        verify(lessonRecordService).initialConfirmLesson(any(), any());
+    }
+
+    private TeacherLessonConfirmRequest confirmRequest() {
+        TeacherLessonConfirmRequest request = new TeacherLessonConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("COMPLETED");
+        return request;
+    }
+
     private CurrentUserResponse currentTeacherUser() {
         return new CurrentUserResponse(1002L, "teacher", "Emma Wang", "TEACHER", 9001L, null, List.of("TEACHER"));
+    }
+
+    private LessonOccurrenceEntity buildOccurrenceAt(LocalDateTime startAt) {
+        LessonOccurrenceEntity occurrence = buildOccurrence(9001L, startAt);
+        occurrence.setPlannedStartAt(startAt);
+        occurrence.setPlannedEndAt(startAt.plusHours(1));
+        return occurrence;
     }
 
     private LessonOccurrenceEntity buildOccurrence(Long teacherId, LocalDateTime baseTime) {

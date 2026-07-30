@@ -145,12 +145,17 @@ function formatTime(minutes: number) {
 
 // ─── Occupied slot lookup ───────────────────
 const occupiedMap = computed(() => {
-  const map = new Map<string, OccupiedSlotDef>();
+  const map = new Map<string, OccupiedSlotDef[]>();
   for (const slot of (props.occupiedSlots || [])) {
     const startMin = parseTimeToMin(slot.startTime);
     const endMin = parseTimeToMin(slot.endTime);
-    for (let m = startMin; m < endMin; m += 30) {
-      map.set(`${slot.weekday}:${m}`, slot);
+    // A lesson may start off-grid (for example 17:15). Mark every 30-minute
+    // calendar cell touched by the lesson so overlaps are not silently missed.
+    const firstCellMin = Math.floor(startMin / 30) * 30;
+    for (let m = firstCellMin; m < endMin; m += 30) {
+      if (m + 30 <= startMin) continue;
+      const key = `${slot.weekday}:${m}`;
+      map.set(key, [...(map.get(key) || []), slot]);
     }
   }
   return map;
@@ -161,8 +166,33 @@ function isOccupied(day: number, hour: number, minute: number): boolean {
 }
 
 function occupiedTooltipContent(day: number, hour: number, minute: number): string {
-  const slot = occupiedMap.value.get(`${day}:${timeToMinutes(hour, minute)}`);
-  if (!slot) return '';
+  const slots = occupiedMap.value.get(`${day}:${timeToMinutes(hour, minute)}`);
+  if (!slots?.length) return '';
+  if (slots.length === 1) {
+    return occupiedSlotTooltip(slots[0]);
+  }
+  return [
+    `<b>Conflict: ${slots.length} lessons overlap</b>`,
+    ...slots.map((slot, index) => `${index + 1}. ${occupiedSlotTooltip(slot)}`),
+  ].join('<br><br>');
+}
+
+function occupiedLabel(day: number, hour: number, minute: number): string {
+  const minuteVal = timeToMinutes(hour, minute);
+  const slots = occupiedMap.value.get(`${day}:${minuteVal}`);
+  if (!slots?.length) return '';
+  if (slots.length > 1 && isConflictStart(day, minuteVal)) {
+    return `${slots.length} lessons conflict`;
+  }
+  const slot = slots[0];
+  // Show the label on the first calendar cell touched by the slot.
+  if (minuteVal === Math.floor(parseTimeToMin(slot.startTime) / 30) * 30) {
+    return slot.courseLabel;
+  }
+  return '';
+}
+
+function occupiedSlotTooltip(slot: OccupiedSlotDef): string {
   const lines = [
     `<b>${slot.courseLabel}</b>`,
     `${slot.startTime}–${slot.endTime}`,
@@ -173,14 +203,10 @@ function occupiedTooltipContent(day: number, hour: number, minute: number): stri
   return lines.join('<br>');
 }
 
-function occupiedLabel(day: number, hour: number, minute: number): string {
-  const slot = occupiedMap.value.get(`${day}:${timeToMinutes(hour, minute)}`);
-  if (!slot) return '';
-  // Only show label on first cell of the slot block
-  if (timeToMinutes(hour, minute) === parseTimeToMin(slot.startTime)) {
-    return slot.courseLabel;
-  }
-  return '';
+function isConflictStart(day: number, minuteVal: number) {
+  const current = occupiedMap.value.get(`${day}:${minuteVal}`) || [];
+  const previous = occupiedMap.value.get(`${day}:${minuteVal - 30}`) || [];
+  return current.length > 1 && previous.length <= 1;
 }
 
 // ─── Selection state ─────────────────────────
@@ -189,7 +215,12 @@ const anchor = ref<{ weekday: number; hour: number; minute: number } | null>(nul
 const currentHover = ref<{ weekday: number; hour: number; minute: number } | null>(null);
 
 function onCellClick(weekday: number, hour: number, minute: number) {
-  if (props.readonly) return;
+  if (props.readonly) {
+    if (isOccupied(weekday, hour, minute)) {
+      emit('cell-click', weekday, hour, minute);
+    }
+    return;
+  }
   if (isOccupied(weekday, hour, minute)) {
     emit('cell-click', weekday, hour, minute);
   }
@@ -287,7 +318,9 @@ function cellClass(day: number, hour: number, minute: number) {
 
   // Occupied cells
   if (isOccupied(day, hour, minute)) {
-    const slot = occupiedMap.value.get(`${day}:${minuteVal}`);
+    const slots = occupiedMap.value.get(`${day}:${minuteVal}`) || [];
+    if (slots.length > 1) return 'wts-cell--conflict';
+    const slot = slots[0];
     return slot?.isCurrent ? 'wts-cell--current' : 'wts-cell--occupied';
   }
 
@@ -459,6 +492,20 @@ function weekdayName(d: number) {
   );
 }
 
+/* ─── Hard conflicts: multiple lessons cover the same 30-minute cell ─────────── */
+.wts-cell--conflict {
+  background: #fff1f0;
+  box-shadow:
+    inset 4px 0 0 #f56c6c,
+    inset 0 0 0 1px #f56c6c;
+  cursor: not-allowed;
+  z-index: 2;
+}
+
+.wts-cell--conflict:hover {
+  background: #ffe4e1;
+}
+
 /* ─── Current package's own slots ─────────── */
 .wts-cell--current {
   background: #e6f7ff;
@@ -483,6 +530,12 @@ function weekdayName(d: number) {
 }
 .wts-cell--occupied .wts-cell__label {
   color: #999;
+}
+
+.wts-cell--conflict .wts-cell__label {
+  color: #b42318;
+  font-size: 9px;
+  font-weight: 700;
 }
 
 /* ─── Summary ─────────── */

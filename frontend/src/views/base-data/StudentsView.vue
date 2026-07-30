@@ -95,10 +95,24 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" width="190" fixed="right">
+        <el-table-column label="Login access" min-width="170">
+          <template #default="{ row }">
+            <div class="cell-stack">
+              <strong>{{ accountForStudent(row)?.username || 'No login' }}</strong>
+              <el-tag size="small" :type="accountForStudent(row)?.status === 'ACTIVE' ? 'success' : 'info'">
+                {{ accountForStudent(row) ? accountStatusLabel(accountForStudent(row)!.status) : 'Not enabled' }}
+              </el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Actions" width="320" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
               <el-button text type="primary" @click.stop="openStudentDetail(row)">Details</el-button>
+              <el-button text type="primary" @click.stop="startRegistrationForStudent(row)">Register</el-button>
+              <el-button text type="primary" @click.stop="openStudentAccountDialog(row)">
+                {{ accountForStudent(row) ? 'Edit login' : 'Create login' }}
+              </el-button>
               <el-button text type="primary" @click.stop="openStudentDialog(row)">Edit</el-button>
               <el-button text type="danger" @click.stop="handleDeleteStudent(row)">Delete</el-button>
             </div>
@@ -203,10 +217,10 @@
 
         <h4 class="student-form__section-title">Pickup and drop-off</h4>
         <div class="student-form__row">
-          <el-form-item label="Pickup service" class="student-form__half">
+          <el-form-item label="Pickup needed" class="student-form__half">
             <el-switch v-model="studentForm.pickupRequired" active-text="Required" inactive-text="Not required" />
           </el-form-item>
-          <el-form-item label="Drop-off service" class="student-form__half">
+          <el-form-item label="Drop-off needed" class="student-form__half">
             <el-switch v-model="studentForm.dropoffRequired" active-text="Required" inactive-text="Not required" />
           </el-form-item>
         </div>
@@ -240,6 +254,68 @@
         <div class="dialog-footer">
           <el-button @click="studentDialogVisible = false">Cancel</el-button>
           <el-button type="primary" :loading="submitting" @click="handleStudentSubmit">Save</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- Student login dialog -->
+    <el-dialog
+      v-model="studentAccountDialogVisible"
+      width="480px"
+      :close-on-click-modal="false"
+      class="student-dialog"
+    >
+      <template #header>
+        <div class="dialog-header">
+          <h3 class="dialog-header__title">{{ studentAccountMode === 'create' ? 'Create student login' : 'Edit student login' }}</h3>
+        </div>
+      </template>
+
+      <div v-if="studentAccountTarget" class="payment-detail">
+        <div class="metric-grid">
+          <div>
+            <label>Student</label>
+            <strong>{{ studentAccountTarget.studentName }}</strong>
+          </div>
+          <div>
+            <label>Student no.</label>
+            <strong>{{ studentAccountTarget.studentNo }}</strong>
+          </div>
+        </div>
+        <el-form label-position="top" class="student-form">
+          <el-form-item label="Username">
+            <el-input v-model="studentAccountForm.username" placeholder="Login username" />
+          </el-form-item>
+          <el-form-item label="Display name">
+            <el-input v-model="studentAccountForm.displayName" placeholder="Defaults to student name" />
+          </el-form-item>
+          <el-form-item label="Email">
+            <el-input v-model="studentAccountForm.email" placeholder="Login email" />
+          </el-form-item>
+          <el-form-item label="Status">
+            <el-select v-model="studentAccountForm.status" style="width: 100%;">
+              <el-option label="Active" value="ACTIVE" />
+              <el-option label="Inactive" value="INACTIVE" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="studentAccountMode === 'create' ? 'Initial password' : 'New password'">
+            <el-input
+              v-model="studentAccountForm.password"
+              type="password"
+              :placeholder="studentAccountMode === 'create' ? 'Min 8 characters' : 'Leave blank to keep current'"
+              show-password
+            />
+          </el-form-item>
+          <el-form-item label="Confirm password">
+            <el-input v-model="studentAccountForm.confirmPassword" type="password" placeholder="Re-enter password" show-password />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="studentAccountDialogVisible = false">Cancel</el-button>
+          <el-button type="primary" :loading="studentAccountSaving" @click="submitStudentAccount">Save</el-button>
         </div>
       </template>
     </el-dialog>
@@ -435,11 +511,12 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" min-width="210" fixed="right">
+            <el-table-column label="Actions" min-width="230" fixed="right">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button text type="primary" @click="openHistoricalForm(row)">View & print form</el-button>
+                  <el-button text type="primary" @click="openReceipt(row)">View receipt</el-button>
                   <el-button text type="primary" :disabled="!canRecordPayment(row)" @click="openPaymentDialog(row)">Record payment</el-button>
+                  <el-button text type="warning" :disabled="!canRefundOrder(row)" @click="openRefundDialog(row)">Refund</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -525,6 +602,127 @@
       </template>
     </el-dialog>
 
+    <!-- Refund dialog -->
+    <el-dialog
+      v-model="refundDialogVisible"
+      width="520px"
+      :close-on-click-modal="false"
+      class="student-dialog"
+    >
+      <template #header>
+        <div class="dialog-header">
+          <h3 class="dialog-header__title">Refund</h3>
+        </div>
+      </template>
+
+      <div v-if="refundOrder" class="refund-detail">
+        <div class="metric-grid">
+          <div>
+            <label>Order no.</label>
+            <strong>{{ refundOrder.enrollmentNo }}</strong>
+          </div>
+          <div>
+            <label>Currently received</label>
+            <strong>{{ formatMoney(refundOrder.receivedAmount) }}</strong>
+          </div>
+          <div>
+            <label>Balance</label>
+            <strong>{{ formatMoney(refundOrder.balanceAmount) }}</strong>
+          </div>
+        </div>
+        <p class="refund-warning">
+          Partial refund keeps current courses active. Full refund cancels this order, future lessons, and class eligibility.
+          If lessons were already recorded, the backend will block full refund and require manual review.
+        </p>
+        <el-form label-position="top" class="student-form">
+          <el-form-item label="Refund amount">
+            <el-input-number
+              v-model="refundForm.refundAmount"
+              :min="0.01"
+              :max="refundOrder.receivedAmount ?? 0"
+              :precision="2"
+              :controls="false"
+              style="width: 100%;"
+            />
+          </el-form-item>
+          <el-form-item label="Refund method">
+            <el-select v-model="refundForm.paymentMethod" placeholder="Select method" style="width: 100%;">
+              <el-option v-for="method in paymentMethods" :key="method.methodCode" :label="method.methodName" :value="method.methodCode" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="Handled by">
+            <el-input v-model="refundForm.handledByName" placeholder="Your name" />
+          </el-form-item>
+          <el-form-item label="Reason / Notes">
+            <el-input v-model="refundForm.remark" type="textarea" :rows="2" placeholder="Optional reason" />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="refundDialogVisible = false">Cancel</el-button>
+          <el-button type="warning" :loading="refunding" @click="submitRefund">Confirm refund</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="transactionReceiptDialogVisible" :title="transactionReceiptTitle" width="820px">
+      <PaymentReceiptPreview v-if="transactionReceipt" :receipt="transactionReceipt" />
+    </el-dialog>
+
+    <el-dialog
+      v-model="deleteDialogVisible"
+      width="520px"
+      :close-on-click-modal="false"
+      class="student-dialog"
+      @closed="resetDeleteDialog"
+    >
+      <template #header>
+        <div class="dialog-header">
+          <h3 class="dialog-header__title">Delete student</h3>
+        </div>
+      </template>
+
+      <div v-if="deleteTarget" class="delete-confirm">
+        <p class="delete-warning-text">
+          This action is only for mistaken student profiles. The system will remove login access, close active
+          operational records, and cancel future schedules. Use Inactive when you need to preserve operations.
+        </p>
+        <div class="metric-grid">
+          <div>
+            <label>Student</label>
+            <strong>{{ deleteTarget.studentName }}</strong>
+          </div>
+          <div>
+            <label>Managed courses</label>
+            <strong>{{ deleteManagedCourseCount }}</strong>
+          </div>
+          <div>
+            <label>Login access</label>
+            <strong>{{ accountForStudent(deleteTarget) ? 'Enabled' : 'No login' }}</strong>
+          </div>
+        </div>
+        <p v-if="deleteConfirmRemaining > 0" class="delete-cooldown">
+          Please wait {{ deleteConfirmRemaining }} second(s) before confirming.
+        </p>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="deleteDialogVisible = false">Cancel</el-button>
+          <el-button
+            type="danger"
+            :disabled="deleteConfirmRemaining > 0"
+            :loading="deletingStudent"
+            @click="confirmDeleteStudent"
+          >
+            {{ deleteConfirmRemaining > 0 ? `Delete (${deleteConfirmRemaining}s)` : 'Delete student' }}
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <!-- Deleted Students Dialog -->
     <el-dialog
       v-model="deletedDialogVisible"
@@ -554,10 +752,17 @@
 
 <script setup lang="ts">
 import { Delete, Filter } from '@element-plus/icons-vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, reactive, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import {
+  createStudentAccount,
+  fetchStudentAccounts,
+  updateStudentAccount,
+  type AccountUpdatePayload,
+  type StudentAccountCreatePayload,
+} from '@/api/auth';
 import {
   fetchCampuses,
   fetchDeletedStudents,
@@ -568,9 +773,16 @@ import {
   type StudentQuery,
   type StudentSavePayload,
 } from '@/api/base-data';
-import { createPaymentRecord, fetchActivePaymentMethods, fetchEnrollmentOrder, fetchEnrollmentOrders } from '@/api/enrollment';
+import {
+  createPaymentRecord,
+  fetchActivePaymentMethods,
+  fetchEnrollmentOrder,
+  fetchEnrollmentOrders,
+  refundEnrollmentOrder,
+} from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
-import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, StudentItem } from '@/types/domain';
+import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
+import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, ReceiptRecordItem, StudentAccountItem, StudentItem } from '@/types/domain';
 
 const loading = ref(false);
 const submitting = ref(false);
@@ -634,11 +846,45 @@ const detailDrawerVisible = ref(false);
 const detailLoading = ref(false);
 const studentOrders = ref<EnrollmentOrderItem[]>([]);
 const studentOrderPayments = ref<Record<string, PaymentRecordItem[]>>({});
+const studentAccounts = ref<StudentAccountItem[]>([]);
+const studentAccountDialogVisible = ref(false);
+const studentAccountSaving = ref(false);
+const studentAccountMode = ref<'create' | 'edit'>('create');
+const studentAccountTarget = ref<StudentItem | null>(null);
+const editingStudentAccount = ref<StudentAccountItem | null>(null);
+const studentAccountForm = reactive({
+  username: '',
+  displayName: '',
+  email: '',
+  status: 'ACTIVE',
+  password: '',
+  confirmPassword: '',
+});
 
 const paymentDialogVisible = ref(false);
 const paymentSubmitting = ref(false);
 const paymentOrder = ref<EnrollmentOrderDetailItem | null>(null);
 const paymentRows = ref<PaymentDraft[]>([]);
+const transactionReceiptDialogVisible = ref(false);
+const transactionReceipt = ref<ReceiptRecordItem | null>(null);
+const refundDialogVisible = ref(false);
+const refunding = ref(false);
+const refundOrder = ref<EnrollmentOrderItem | null>(null);
+const refundForm = reactive({
+  refundAmount: 0,
+  paymentMethod: 'CASH',
+  handledByName: '',
+  remark: '',
+});
+
+const DELETE_COOLDOWN_SECONDS = 10;
+const deleteDialogVisible = ref(false);
+const deleteTarget = ref<StudentItem | null>(null);
+const deleteConfirmRemaining = ref(DELETE_COOLDOWN_SECONDS);
+const deletingStudent = ref(false);
+let deleteCooldownTimer: number | undefined;
+let deleteCooldownReleaseTimer: number | undefined;
+let deleteCooldownDeadline = 0;
 
 interface PaymentDraft {
   rowKey: string;
@@ -653,6 +899,9 @@ const selectedStudentForDisplay = computed(() => studentDetail.value ?? selected
 const paymentBalance = computed(() => roundMoney(paymentOrder.value?.balanceAmount ?? 0));
 const paymentDraftTotal = computed(() => roundMoney(paymentRows.value.reduce((sum, row) => sum + numeric(row.amount), 0)));
 const paymentDraftRemaining = computed(() => roundMoney(paymentBalance.value - paymentDraftTotal.value));
+const transactionReceiptTitle = computed(() =>
+  transactionReceipt.value?.templateCode === 'REFUND_RECEIPT' ? 'Refund Receipt' : 'Payment Receipt'
+);
 
 function handleFilterChange() {
   pagination.page = 1;
@@ -681,6 +930,91 @@ function clearAdvancedFilters() {
   handleFilterChange();
 }
 
+function accountForStudent(row: StudentItem) {
+  return studentAccounts.value.find((account) => String(account.studentId) === String(row.id));
+}
+
+function accountStatusLabel(status?: string) {
+  return status === 'ACTIVE' ? 'Active' : 'Inactive';
+}
+
+function openStudentAccountDialog(row: StudentItem) {
+  const account = accountForStudent(row);
+  studentAccountTarget.value = row;
+  editingStudentAccount.value = account ?? null;
+  studentAccountMode.value = account ? 'edit' : 'create';
+  Object.assign(studentAccountForm, {
+    username: account?.username ?? '',
+    displayName: account?.displayName ?? row.studentName,
+    email: account?.email ?? row.guardianEmail ?? '',
+    status: account?.status ?? 'ACTIVE',
+    password: '',
+    confirmPassword: '',
+  });
+  studentAccountDialogVisible.value = true;
+}
+
+function validateStudentAccountForm() {
+  if (!studentAccountForm.username.trim()) {
+    ElMessage.warning('Username is required.');
+    return false;
+  }
+  if (studentAccountMode.value === 'create' && studentAccountForm.password.length < 8) {
+    ElMessage.warning('Password must be at least 8 characters.');
+    return false;
+  }
+  if (studentAccountForm.password && studentAccountForm.password.length < 8) {
+    ElMessage.warning('Password must be at least 8 characters.');
+    return false;
+  }
+  if (studentAccountForm.password !== studentAccountForm.confirmPassword) {
+    ElMessage.warning('Passwords do not match.');
+    return false;
+  }
+  return true;
+}
+
+async function submitStudentAccount() {
+  if (!studentAccountTarget.value || !validateStudentAccountForm()) {
+    return;
+  }
+  studentAccountSaving.value = true;
+  try {
+    if (studentAccountMode.value === 'create') {
+      const payload: StudentAccountCreatePayload = {
+        studentId: studentAccountTarget.value.id,
+        studentName: studentAccountTarget.value.studentName,
+        guardianName: studentAccountTarget.value.guardianName ?? undefined,
+        guardianPhone: studentAccountTarget.value.guardianPhone ?? studentAccountTarget.value.phone ?? undefined,
+        guardianEmail: studentAccountTarget.value.guardianEmail ?? undefined,
+        username: studentAccountForm.username.trim(),
+        password: studentAccountForm.password,
+        displayName: studentAccountForm.displayName.trim() || undefined,
+        email: studentAccountForm.email.trim() || undefined,
+        status: studentAccountForm.status,
+      };
+      await createStudentAccount(payload);
+      ElMessage.success('Student login created.');
+    } else if (editingStudentAccount.value) {
+      const payload: AccountUpdatePayload = {
+        username: studentAccountForm.username.trim(),
+        displayName: studentAccountForm.displayName.trim() || undefined,
+        email: studentAccountForm.email.trim() || undefined,
+        status: studentAccountForm.status,
+        password: studentAccountForm.password || undefined,
+      };
+      await updateStudentAccount(editingStudentAccount.value.userId, payload);
+      ElMessage.success('Student login updated.');
+    }
+    studentAccountDialogVisible.value = false;
+    await loadStudentAccounts();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    studentAccountSaving.value = false;
+  }
+}
+
 // ─── Load Data ────────────────────────────────────
 async function loadData() {
   loading.value = true;
@@ -696,10 +1030,20 @@ async function loadData() {
     const data = res.data.data;
     tableData.value = data.records;
     pagination.total = data.total;
+    await loadStudentAccounts();
   } catch {
     ElMessage.error('Failed to load students.');
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadStudentAccounts() {
+  try {
+    const res = await fetchStudentAccounts({ pageSize: 500 });
+    studentAccounts.value = res.data.data.records ?? [];
+  } catch {
+    studentAccounts.value = [];
   }
 }
 
@@ -778,20 +1122,62 @@ async function handleStudentSubmit() {
 }
 
 async function handleDeleteStudent(row: StudentItem) {
+  deleteTarget.value = row;
+  deleteDialogVisible.value = true;
+  startDeleteCooldown();
+}
+
+const deleteManagedCourseCount = computed(() => deleteTarget.value?.enrollmentCount ?? 0);
+
+function startDeleteCooldown() {
+  clearDeleteCooldown();
+  deleteCooldownDeadline = Date.now() + DELETE_COOLDOWN_SECONDS * 1000;
+  deleteCooldownTimer = window.setInterval(() => {
+    deleteConfirmRemaining.value = Math.max(0, Math.ceil((deleteCooldownDeadline - Date.now()) / 1000));
+    if (deleteConfirmRemaining.value === 0) {
+      clearDeleteCooldown();
+    }
+  }, 250);
+  deleteCooldownReleaseTimer = window.setTimeout(() => {
+    deleteConfirmRemaining.value = 0;
+    clearDeleteCooldown();
+  }, DELETE_COOLDOWN_SECONDS * 1000);
+  deleteConfirmRemaining.value = DELETE_COOLDOWN_SECONDS;
+}
+
+function clearDeleteCooldown() {
+  if (deleteCooldownTimer != null) {
+    window.clearInterval(deleteCooldownTimer);
+    deleteCooldownTimer = undefined;
+  }
+  if (deleteCooldownReleaseTimer != null) {
+    window.clearTimeout(deleteCooldownReleaseTimer);
+    deleteCooldownReleaseTimer = undefined;
+  }
+  deleteCooldownDeadline = 0;
+}
+
+function resetDeleteDialog() {
+  clearDeleteCooldown();
+  deleteTarget.value = null;
+  deleteConfirmRemaining.value = DELETE_COOLDOWN_SECONDS;
+  deletingStudent.value = false;
+}
+
+async function confirmDeleteStudent() {
+  if (!deleteTarget.value || deleteConfirmRemaining.value > 0) {
+    return;
+  }
+  deletingStudent.value = true;
   try {
-    await ElMessageBox.confirm(
-      `Delete student "${row.studentName}"? This keeps their historical records in the Deleted list.`,
-      'Confirm delete',
-      { type: 'warning' },
-    );
-    await deleteStudent(row.id);
+    await deleteStudent(deleteTarget.value.id);
     ElMessage.success('Student deleted.');
+    deleteDialogVisible.value = false;
     await loadData();
   } catch (error) {
-    if (error === 'cancel' || error === 'close') {
-      return;
-    }
     ElMessage.error(extractErrorMessage(error));
+  } finally {
+    deletingStudent.value = false;
   }
 }
 
@@ -874,7 +1260,7 @@ async function loadStudentOrderHistory(studentId: StudentItem['id']) {
   );
 }
 
-function openHistoricalForm(row: EnrollmentOrderItem) {
+function openReceipt(row: EnrollmentOrderItem) {
   router.push({ name: 'registration', query: { orderId: row.id } });
 }
 
@@ -883,9 +1269,13 @@ function startNewRegistration() {
     return;
   }
   detailDrawerVisible.value = false;
+  startRegistrationForStudent(selectedStudent.value);
+}
+
+function startRegistrationForStudent(student: StudentItem) {
   router.push({
     name: 'registration',
-    query: { studentId: selectedStudent.value.id },
+    query: { studentId: student.id },
   });
 }
 
@@ -894,6 +1284,10 @@ function canRecordPayment(row: EnrollmentOrderItem) {
     && row.paymentStatus !== 'PAID'
     && row.paymentStatus !== 'REFUNDED'
     && numeric(row.balanceAmount) > 0;
+}
+
+function canRefundOrder(row: EnrollmentOrderItem) {
+  return row.paymentStatus !== 'REFUNDED' && numeric(row.receivedAmount) > 0;
 }
 
 async function openPaymentDialog(row: EnrollmentOrderItem) {
@@ -954,7 +1348,7 @@ async function submitPayments() {
 
   paymentSubmitting.value = true;
   try {
-    await createPaymentRecord({
+    const response = await createPaymentRecord({
       enrollmentOrderId: paymentOrder.value.id,
       splits: rows.map((row) => ({
         paymentMethod: row.paymentMethod,
@@ -970,10 +1364,61 @@ async function submitPayments() {
     paymentOrder.value = updatedOrder.data.data;
     await reloadCurrentStudentContext();
     paymentDialogVisible.value = false;
+    transactionReceipt.value = response.data.data;
+    transactionReceiptDialogVisible.value = true;
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
   } finally {
     paymentSubmitting.value = false;
+  }
+}
+
+function openRefundDialog(row: EnrollmentOrderItem) {
+  refundOrder.value = row;
+  Object.assign(refundForm, {
+    refundAmount: roundMoney(row.receivedAmount ?? 0),
+    paymentMethod: paymentMethods.value[0]?.methodCode ?? 'CASH',
+    handledByName: '',
+    remark: '',
+  });
+  refundDialogVisible.value = true;
+}
+
+async function submitRefund() {
+  if (!refundOrder.value) {
+    return;
+  }
+  const refundAmount = roundMoney(refundForm.refundAmount);
+  if (refundAmount <= 0) {
+    ElMessage.warning('Refund amount must be greater than zero.');
+    return;
+  }
+  if (refundAmount > numeric(refundOrder.value.receivedAmount)) {
+    ElMessage.warning('Refund amount cannot exceed the currently received amount.');
+    return;
+  }
+  if (!refundForm.paymentMethod || !refundForm.handledByName.trim()) {
+    ElMessage.warning('Refund method and handler are required.');
+    return;
+  }
+
+  refunding.value = true;
+  try {
+    const response = await refundEnrollmentOrder(refundOrder.value.id, {
+      refundAmount,
+      paymentMethod: refundForm.paymentMethod,
+      handledByName: refundForm.handledByName.trim(),
+      remark: refundForm.remark.trim() || undefined,
+    });
+    ElMessage.success('Refund completed.');
+    refundDialogVisible.value = false;
+    transactionReceipt.value = response.data.data;
+    transactionReceiptDialogVisible.value = true;
+    await reloadCurrentStudentContext();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    refunding.value = false;
   }
 }
 
@@ -1126,6 +1571,10 @@ watch(
 );
 
 void initializeStudentPage();
+
+onBeforeUnmount(() => {
+  clearDeleteCooldown();
+});
 </script>
 
 <style scoped>
@@ -1407,6 +1856,45 @@ void initializeStudentPage();
   gap: 18px;
   color: #606266;
   font-size: 13px;
+  font-weight: 600;
+}
+
+.refund-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.refund-warning {
+  margin: 0;
+  border: 1px solid #f5c2c7;
+  border-radius: 6px;
+  background: #fff5f5;
+  padding: 10px 12px;
+  color: #b42318;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.delete-confirm {
+  display: grid;
+  gap: 14px;
+}
+
+.delete-warning-text {
+  margin: 0;
+  border: 1px solid #f5c2c7;
+  border-radius: 6px;
+  background: #fff5f5;
+  padding: 10px 12px;
+  color: #b42318;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.delete-cooldown {
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
   font-weight: 600;
 }
 

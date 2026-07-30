@@ -8,8 +8,18 @@ import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.service.impl.StudentServiceImpl;
 import com.classdeduction.system.modules.base.vo.StudentListItemVO;
+import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
+import com.classdeduction.system.modules.auth.mapper.AuthSessionMapper;
+import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
+import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
+import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.finance.mapper.TeacherPayRateMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import org.apache.ibatis.annotations.Select;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,6 +37,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -42,6 +53,22 @@ class StudentServiceImplTest {
     private ClassEnrollmentMapper classEnrollmentMapper;
     @Mock
     private CampusMapper campusMapper;
+    @Mock
+    private UserAccountMapper userAccountMapper;
+    @Mock
+    private AuthSessionMapper authSessionMapper;
+    @Mock
+    private UserRoleMapper userRoleMapper;
+    @Mock
+    private LessonOccurrenceMapper lessonOccurrenceMapper;
+    @Mock
+    private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    @Mock
+    private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+    @Mock
+    private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
+    @Mock
+    private TeacherPayRateMapper teacherPayRateMapper;
 
     private StudentServiceImpl studentService;
 
@@ -52,7 +79,15 @@ class StudentServiceImplTest {
                 studentNoGenerator,
                 coursePackageMapper,
                 classEnrollmentMapper,
-                campusMapper
+                campusMapper,
+                userAccountMapper,
+                authSessionMapper,
+                userRoleMapper,
+                lessonOccurrenceMapper,
+                recurringScheduleRuleMapper,
+                recurringScheduleSlotMapper,
+                packageTeacherAssignmentMapper,
+                teacherPayRateMapper
         );
     }
 
@@ -133,6 +168,29 @@ class StudentServiceImplTest {
 
         assertThat(sql).contains("AND eo.order_status &lt;&gt; 'CANCELLED'");
         assertThat(sql).contains("AND eo.payment_status &lt;&gt; 'REFUNDED'");
+    }
+
+    @Test
+    void shouldCascadeDeleteLoginAndOperationalDataWhenDeletingStudent() {
+        StudentEntity student = new StudentEntity();
+        student.setId(1L);
+        student.setStudentName("Ava Chen");
+        UserAccountEntity account = new UserAccountEntity();
+        account.setId(101L);
+        account.setStudentId(1L);
+        when(studentMapper.selectById(1L)).thenReturn(student);
+        when(userAccountMapper.selectList(any())).thenReturn(List.of(account));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of());
+
+        studentService.deleteStudent(1L);
+
+        verify(userRoleMapper).delete(any());
+        verify(authSessionMapper).delete(any());
+        verify(userAccountMapper).delete(any());
+        verify(lessonOccurrenceMapper).delete(any());
+        verify(classEnrollmentMapper).delete(any());
+        verify(teacherPayRateMapper).delete(any());
+        verify(studentMapper).deleteById(1L);
     }
 
     private Map<String, Object> enrolledRow() {

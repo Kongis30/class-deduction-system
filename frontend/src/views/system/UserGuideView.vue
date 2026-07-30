@@ -24,12 +24,24 @@
       </div>
     </section>
 
-    <section class="guide-quick-grid">
-      <article v-for="entry in pageCopy.dailyEntries" :key="entry.title" class="guide-card guide-card--compact">
-        <span>{{ entry.step }}</span>
-        <h3>{{ entry.title }}</h3>
-        <p>{{ entry.desc }}</p>
-      </article>
+    <section class="guide-common">
+      <div class="guide-common__header">
+        <h3>{{ pageCopy.quickTitle }}</h3>
+        <p>{{ pageCopy.quickDescription }}</p>
+      </div>
+      <div class="guide-quick-grid">
+        <a
+          v-for="entry in pageCopy.dailyEntries"
+          :key="entry.title"
+          :href="`#${entry.target}`"
+          class="guide-card guide-card--compact"
+        >
+          <span>{{ entry.step }}</span>
+          <h3>{{ entry.title }}</h3>
+          <p>{{ entry.desc }}</p>
+          <strong>{{ pageCopy.viewSteps }} →</strong>
+        </a>
+      </div>
     </section>
 
     <section class="guide-layout">
@@ -91,8 +103,11 @@ interface GuideCopy {
   eyebrow: string;
   title: string;
   description: string;
+  quickTitle: string;
+  quickDescription: string;
+  viewSteps: string;
   navTitle: string;
-  dailyEntries: Array<{ step: string; title: string; desc: string }>;
+  dailyEntries: Array<{ step: string; title: string; desc: string; target: string }>;
   guideSections: GuideSection[];
 }
 
@@ -100,173 +115,169 @@ const activeLang = ref<GuideLang>('zh');
 
 const guideCopy: Record<GuideLang, GuideCopy> = {
   zh: {
-    eyebrow: 'Quick start',
-    title: '开箱即用指南',
-    description: '先由管理员完成一次准备；之后员工只需使用左侧四个入口。不要先学习全部功能，按当前要做的事进入对应页面即可。',
-    navTitle: '快速定位',
+    eyebrow: 'Quick Guide',
+    title: '你现在要做什么？',
+    description: '选择一个常见任务，照着 3 个步骤操作即可。不需要先了解全部菜单。',
+    quickTitle: '常见业务',
+    quickDescription: '点击任务直接查看最短操作步骤。',
+    viewSteps: '查看步骤',
+    navTitle: '全部教学',
     dailyEntries: [
-      { step: '1', title: '报名', desc: '填一张表，系统自动算金额、记录付款、打印收据。' },
-      { step: '2', title: '一对一课程', desc: '按老师和学生找课程，确认实际上课时长。' },
-      { step: '3', title: '教室管理', desc: '查看教室占用，为未安排的课程补教室。' },
-      { step: '4', title: '数据整理', desc: '每天查看欠款、到期和剩余课时提醒。' },
+      { step: '1', title: '给学生报名', desc: '选择课程、收费并生成收据。', target: 'registration' },
+      { step: '2', title: '查看排课冲突', desc: '查看学生、老师和教室日历。', target: 'calendar' },
+      { step: '3', title: '确认课程并扣课', desc: '老师确认，管理员最终扣课。', target: 'confirmation' },
+      { step: '4', title: '补款、退款和收据', desc: '按报名订单处理财务记录。', target: 'payments' },
+      { step: '5', title: '处理欠款和续费', desc: '集中查看需要跟进的学生。', target: 'follow-up' },
     ],
     guideSections: [
       {
-        id: 'first-start',
-        badge: 'First time only',
-        title: '管理员首次准备',
-        summary: '只需做一次。完成后前台报名会自动带出课程矩阵、价格和接送费，员工不需要理解后台配置。',
-        steps: [
-          { order: '1', title: '检查校区和接送费', detail: '打开 Back office > School settings > Campuses & service fees，确认南校、北校、线上课，以及默认接送费。' },
-          { order: '2', title: '检查课程价格', detail: '打开 Back office > Course setup > Course prices，找到 PPT 预置模板，补齐真实价格。', note: 'PPT 未提供正式价格，预置模板为 $0.00；报名时选择 $0 行必须手动录入真实价格和原因。冲刺班的年级、周期和时段需要客户补充后再创建。' },
-          { order: '3', title: '班课可先建、后排课', detail: '班课价格行保存后会生成对应年级班。课程、年级和价格可以先准备好，不必当场确定老师和教室。' },
-          { order: '4', title: '需要时再点 Schedule', detail: '从 Courses 的 Schedules 或课程价格行的 Schedule 进入班课排课，选择老师、教室和每周时间后保存。系统会检查冲突。' },
-        ],
-      },
-      {
-        id: 'daily-work',
-        badge: 'Every day',
-        title: '员工每天只做这四件事',
-        summary: '左侧四个入口覆盖日常工作。除非需要改规则，否则不进入 Back office。',
-        steps: [
-          { order: '1', title: '有新生：打开报名', detail: '填写学生和家长信息，选择校区、课程、年级和周期。已维护的价格、接送费和总额会自动带出；$0 模板必须手动录入真实价格。' },
-          { order: '2', title: '有一对一课：打开一对一课程', detail: '选择老师 → 学生 → 学生课程，按表格确认本次实际上课时长。' },
-          { order: '3', title: '有教室问题：打开教室管理', detail: '先看教室周日历；只有未安排教室的课程才打开待分配列表补录。' },
-          { order: '4', title: '每天收尾：打开数据整理', detail: '优先处理红色负余额、临近到期和一对一剩余两节课以内的记录。' },
-        ],
-      },
-      {
         id: 'registration',
-        badge: 'Registration',
-        title: '报名：照着表格填写即可',
-        summary: '不需要先建学生，也不需要手工算钱。完成一张表即可保存报名和打印收据。',
+        badge: '最常用',
+        title: '给学生报名',
+        summary: '从学生列表或 Registration 进入，一张表完成课程、费用、付款和收据。',
         steps: [
-          { order: '1', title: '先填学生和校区', detail: '填写姓名、家长电话、年级、学校和报名日期；如有接送，勾选后补地址。系统会提示是否复用已有学生。' },
-          { order: '2', title: '再选课程', detail: '每行依次选课程、年级、时长或时段。需要多个课程时点 Add course row。', note: '班课未排课时不能报名，请通知管理员完成班课排课。' },
-          { order: '3', title: '确认费用和付款', detail: '系统自动计算应付与余额。可添加多笔付款并记录日期和方式；特殊价格必须写明原因。' },
-          { order: '4', title: '保存并打印', detail: '保存后可直接打印收据。普通收据默认不显示 EIN；需要时点击 Show EIN。后续补款、退款和历史收据由管理员在 Back office > Records 处理。' },
+          { order: '1', title: '找到学生', detail: '已有学生：在 People > Students 点击 Register。新学生：直接打开 Registration 填写学生和家长信息。' },
+          { order: '2', title: '选择课程和费用', detail: '选择校区、课程、年级和课包。接送需求不会自动收费，只有本次明确勾选 Charge 才计费。' },
+          { order: '3', title: '保存并交付收据', detail: '检查总额和付款方式后保存。系统会创建报名记录，并可立即查看或打印 Receipt。' },
         ],
       },
       {
-        id: 'deduction',
-        badge: 'Deduction',
-        title: '一对一：按老师文件夹操作',
-        summary: '页面只显示完成当前确认所需的信息：学生、课程、课次、时长和剩余课时。',
+        id: 'calendar',
+        badge: '排课',
+        title: '查看排课和冲突',
+        summary: 'Calendar 同时检查学生、老师和教室，红色表示时间重叠。',
         steps: [
-          { order: '1', title: '找到学生课程', detail: '可按学生、老师、课程或年级筛选；点击左侧学生课程后，右侧会显示课次表和剩余课时。' },
-          { order: '2', title: '先安排、再确认', detail: '如课程没有老师或教室，先点 Set teacher & room；有排课后再确认实际上课。' },
-          { order: '3', title: '老师确认后等管理员确认', detail: '老师确认只提交记录；管理员终确认后才真正扣课并进入工资统计。实际时长支持 1.5 小时等 0.5 小时档位。' },
-          { order: '4', title: '看到提醒就续费', detail: '剩余两节课以内会显示续费提醒。需要固定排课时，管理员在 Back office > Course setup > Weekly schedules 设置。' },
+          { order: '1', title: '选择查看对象', detail: '打开 Calendar，选择 Student、Teacher 或 Room，再选择具体人员、教室和周次。学生日历会同时显示一对一和班课。' },
+          { order: '2', title: '查看红色冲突', detail: '冲突摘要和红色时间格会显示重叠课程数量。点击即可查看相关课程和时间。' },
+          { order: '3', title: '调整排课', detail: '根据冲突修改时间、老师或教室。未安排教室的课次可在对应排课页面补录。' },
         ],
       },
       {
-        id: 'classrooms-review',
-        badge: 'Review',
-        title: '教室与数据整理',
-        summary: '教室可以后补；数据整理像 Excel 一样用于查异常，不需要逐条查看所有学生。',
+        id: 'confirmation',
+        badge: '消课',
+        title: '确认课程并扣课',
+        summary: '老师只确认一次课程结果，管理员审核后才正式扣课。',
         steps: [
-          { order: '1', title: '教室先看日历', detail: '打开 Classrooms，选教室和周次查看占用。报名时不填教室是正常流程。' },
-          { order: '2', title: '只处理待分配', detail: '有遗漏时打开 Room assignment queue，为课程或课次补教室；保存时系统阻止时间冲突。' },
-          { order: '3', title: '数据整理优先看红色行', detail: '负数余额表示家长尚未付清；缴清后会自动取消红色。可筛选校区、课程和付款状态。' },
-          { order: '4', title: '续费提醒集中处理', detail: '切到 Renewal follow-up，查看课程到期或低课时学生；确认后再发家长提醒。' },
+          { order: '1', title: '老师点击 Confirm', detail: '老师在 My Lessons 中切换 1-on-1 或 Group class。Confirm 在开课前 14 天出现，课程结束后不会过期。' },
+          { order: '2', title: '填写课程结果', detail: '选择 Completed、Formal Leave 或 No Show；正常完成时填写实际开始时间和时长。' },
+          { order: '3', title: '管理员审核扣课', detail: '老师提交后显示 Awaiting admin review。管理员点击 Review & deduct 后才扣课并计入老师工资。' },
         ],
       },
       {
-        id: 'back-office',
-        badge: 'Back office',
-        title: '什么时候才进入 Back office',
-        summary: '只在改规则、查历史、结算工资或管理账号时使用。日常报名和排课不需要进入这里。',
+        id: 'payments',
+        badge: '财务',
+        title: '补款、退款和收据',
+        summary: '所有操作都针对报名订单，不直接针对学生资料。',
         steps: [
-          { order: '1', title: '改课程或价格', detail: 'Course setup > Courses / Course prices。已有学生使用过的价格不要直接改，新增一条价格或停用旧价格。' },
-          { order: '2', title: '查历史、补款或退款', detail: 'Records > Enrollments / Receipts。退款会保留独立流水，便于之后核对。' },
-          { order: '3', title: '管理账号和工资', detail: 'People & accounts > Accounts 管理师生登录；Payments & payroll > Pay rates / Teacher Payments 配费率和结算工资。' },
-          { order: '4', title: '改机构规则', detail: 'School settings 用于校区接送费、收据 EIN、提醒规则和系统说明。无明确需求时不要修改。' },
+          { order: '1', title: '找到报名订单', detail: '打开 Back office > Enrollment > Enrollments，或在学生 Details > Registration history 找到订单。' },
+          { order: '2', title: '选择操作', detail: '未付清时选择 Record payment；需要退款时选择 Refund。全额退款会取消未来课程，已消课订单需人工处理。' },
+          { order: '3', title: '查看凭证', detail: '点击 View receipt 查看或打印历史收据。付款和退款会保留独立流水，方便核对。' },
+        ],
+      },
+      {
+        id: 'follow-up',
+        badge: '跟进',
+        title: '处理欠款和续费',
+        summary: 'Data Summary 只展示需要关注的记录，不用逐个打开学生。',
+        steps: [
+          { order: '1', title: '打开 Data Summary', detail: '先看红色欠款，再看临近到期和剩余两节课以内的一对一课包。' },
+          { order: '2', title: '确认需要跟进的人', detail: '使用校区、课程和付款状态筛选，核对学生当前余额和剩余课时。' },
+          { order: '3', title: '完成后续处理', detail: '补款进入报名订单；续费从学生列表点击 Register 创建新报名。处理完成后提醒会自动更新。' },
+        ],
+      },
+      {
+        id: 'admin-setup',
+        badge: '管理员',
+        title: '首次配置与低频管理',
+        summary: '只有管理员需要使用这些入口，日常员工可以跳过。',
+        steps: [
+          { order: '1', title: '维护人员', detail: 'People 使用 Students / Teachers Tab 管理资料和登录权限，没有单独的 Accounts 页面。' },
+          { order: '2', title: '维护课程', detail: 'Courses 依次维护 Products、Prices 和 Schedule。保存排课前系统会检查冲突。' },
+          { order: '3', title: '维护机构规则', detail: 'Finance 管理费率和付款方式；System 管理品牌收据、校区和提醒规则。' },
         ],
       },
     ],
   },
   en: {
-    eyebrow: 'User Guide',
-    title: 'System User Guide',
-    description: 'Set up the school once, then staff only use the four daily entries. Open Back office only to change rules or review history.',
-    navTitle: 'Quick links',
+    eyebrow: 'Quick Guide',
+    title: 'What do you need to do?',
+    description: 'Choose a common task and follow three short steps. You do not need to learn every menu first.',
+    quickTitle: 'Common tasks',
+    quickDescription: 'Select a task to jump directly to the shortest instructions.',
+    viewSteps: 'View steps',
+    navTitle: 'All instructions',
     dailyEntries: [
-      { step: '1', title: 'Registration', desc: 'Fill one form. The system calculates fees, records payment, and prints the receipt.' },
-      { step: '2', title: '1-on-1 Deduction', desc: 'Review lessons by teacher, student, and course, then complete teacher and admin confirmation.' },
-      { step: '3', title: 'Classrooms', desc: 'Assign missing rooms and review weekly room occupancy.' },
-      { step: '4', title: 'Data Summary', desc: 'Review unpaid balances, renewals, and low-hour alerts.' },
+      { step: '1', title: 'Register a student', desc: 'Choose courses, charge fees, and create a receipt.', target: 'registration' },
+      { step: '2', title: 'Check schedule conflicts', desc: 'Review student, teacher, and room calendars.', target: 'calendar' },
+      { step: '3', title: 'Confirm and deduct a lesson', desc: 'Teacher confirms; admin completes deduction.', target: 'confirmation' },
+      { step: '4', title: 'Payment, refund, or receipt', desc: 'Handle finance by enrollment order.', target: 'payments' },
+      { step: '5', title: 'Follow up balances and renewals', desc: 'See students who need attention.', target: 'follow-up' },
     ],
     guideSections: [
       {
-        id: 'first-start',
-        badge: 'First time only',
-        title: 'Administrator First-time Setup',
-        summary: 'Complete this once. Registration will then offer the approved course matrix, prices, and service fees.',
-        steps: [
-          { order: '1', title: 'Check campuses and service fees', detail: 'Open Back office > School settings > Campuses & service fees to confirm campuses and default pickup/drop-off fees.' },
-          { order: '2', title: 'Check course prices', detail: 'Open Back office > Course setup > Course prices. Complete the real prices for the PPT templates.', note: 'The PPT did not provide approved prices, so seeded templates use $0.00. Registration requires a manual price and reason when staff select a $0 row. Sprint Class still needs its grade, period, and time matrix from the customer.' },
-          { order: '3', title: 'Create grade classes first', detail: 'A group price row creates its grade class. You can save it before teachers, rooms, and weekly times are finalized.' },
-          { order: '4', title: 'Schedule when ready', detail: 'Use Schedules on Courses or Schedule on a price row to set teacher, room, and weekly times. Conflicts are checked before lessons are created.' },
-        ],
-      },
-      {
-        id: 'daily-work',
-        badge: 'Every day',
-        title: 'The Four Daily Entries',
-        summary: 'Staff use only the four left-side entries. Back office is for administrators and lower-frequency work.',
-        steps: [
-          { order: '1', title: 'New student: Registration', detail: 'Enter student details, choose campus, course, grade, and duration. Maintained prices and service fees are filled automatically; $0 templates require a manual real price.' },
-          { order: '2', title: '1-on-1 lesson: 1-on-1 Lessons', detail: 'Choose teacher, student, and course, then confirm actual lesson time.' },
-          { order: '3', title: 'Room issue: Classrooms', detail: 'Review room occupancy first. Open the assignment queue only for courses still missing a room.' },
-          { order: '4', title: 'Daily close: Data Summary', detail: 'Handle red negative balances, expiring registrations, and students with two or fewer 1-on-1 lessons left.' },
-        ],
-      },
-      {
         id: 'registration',
-        badge: 'Registration',
-        title: 'Registration, Payments, and Receipts',
-        summary: 'Follow the paper-form order. You do not need to create a student or calculate totals first.',
+        badge: 'Most common',
+        title: 'Register a Student',
+        summary: 'Start from the student list or Registration. One form covers courses, fees, payment, and receipt.',
         steps: [
-          { order: '1', title: 'Enter student and campus', detail: 'Enter name, guardian phone, grade, school, and registration date. Select pickup/drop-off only when needed.' },
-          { order: '2', title: 'Choose courses', detail: 'For each row choose course, grade, and duration or time. Use Add course row for multiple courses.', note: 'A group class must be scheduled before it can be registered.' },
-          { order: '3', title: 'Review fees and payment', detail: 'The system calculates totals. Add multiple payment rows for installments; a manual price must include a reason.' },
-          { order: '4', title: 'Save and print', detail: 'Save, then print the receipt. Later payments, refunds, and receipt history are in Back office > Records.' },
+          { order: '1', title: 'Find the student', detail: 'Existing student: select Register under People > Students. New student: open Registration and enter student and guardian details.' },
+          { order: '2', title: 'Choose courses and fees', detail: 'Select campus, course, grade, and package. Pickup/drop-off needs do not charge automatically; select Charge only when this registration should include the fee.' },
+          { order: '3', title: 'Save and provide the receipt', detail: 'Review the total and payment method, then save. The enrollment is created and its Receipt can be viewed or printed immediately.' },
         ],
       },
       {
-        id: 'deduction',
+        id: 'calendar',
+        badge: 'Schedule',
+        title: 'Check Schedules and Conflicts',
+        summary: 'Calendar checks students, teachers, and rooms. Red means lessons overlap.',
+        steps: [
+          { order: '1', title: 'Choose what to view', detail: 'Open Calendar and choose Student, Teacher, or Room, then select the person, room, and week. Student Calendar includes 1-on-1 and group lessons.' },
+          { order: '2', title: 'Review red conflicts', detail: 'The conflict summary and red time cells show how many lessons overlap. Select one to review the related lessons and times.' },
+          { order: '3', title: 'Adjust the schedule', detail: 'Resolve the conflict by changing time, teacher, or room. Assign missing rooms from the related scheduling page.' },
+        ],
+      },
+      {
+        id: 'confirmation',
         badge: 'Deduction',
-        title: 'Deduction and Teacher Confirmation',
-        summary: 'The page shows only the student, course, lessons, hours, and next action needed for confirmation.',
+        title: 'Confirm and Deduct a Lesson',
+        summary: 'The teacher confirms the result once. Admin review completes the deduction.',
         steps: [
-          { order: '1', title: 'Find the student course', detail: 'Filter by student, teacher, course, or grade. Select a student course to see lessons and remaining hours.' },
-          { order: '2', title: 'Arrange before confirming', detail: 'Use Set teacher & room when resources are missing. Confirm only after the lesson is arranged.' },
-          { order: '3', title: 'Teacher then administrator', detail: 'Teacher confirmation submits the record. Administrator final confirmation deducts hours and makes it eligible for payroll.' },
-          { order: '4', title: 'Renew when alerted', detail: 'Two lessons or fewer shows a renewal alert. Use Weekly schedules in Back office for fixed 1-on-1 times.' },
+          { order: '1', title: 'Teacher selects Confirm', detail: 'In My Lessons, choose 1-on-1 or Group class. Confirm appears 14 days before the lesson and does not expire after it ends.' },
+          { order: '2', title: 'Enter the lesson result', detail: 'Choose Completed, Formal Leave, or No Show. For a completed lesson, enter actual start time and duration.' },
+          { order: '3', title: 'Admin reviews and deducts', detail: 'Teacher submission shows Awaiting admin review. Hours and payroll are updated only after admin selects Review & deduct.' },
         ],
       },
       {
-        id: 'classrooms-review',
-        badge: 'Review',
-        title: 'Classrooms and Data Review',
-        summary: 'Rooms can be assigned later. Data Summary is a spreadsheet-style exception list, not a page to review student by student.',
+        id: 'payments',
+        badge: 'Finance',
+        title: 'Payment, Refund, and Receipt',
+        summary: 'These actions belong to an enrollment order, not directly to a student profile.',
         steps: [
-          { order: '1', title: 'Review the room calendar', detail: 'Choose a room and week to see occupancy. Leaving room assignment until after registration is normal.' },
-          { order: '2', title: 'Only resolve pending assignments', detail: 'Use Room assignment queue to assign missing rooms. Saving prevents time conflicts.' },
-          { order: '3', title: 'Prioritize red rows', detail: 'A negative balance means payment is still owed. The row clears automatically when paid.' },
-          { order: '4', title: 'Process renewals together', detail: 'Open Renewal follow-up for expiring registrations and low-hour students, then review messages before sending.' },
+          { order: '1', title: 'Find the enrollment order', detail: 'Open Back office > Enrollment > Enrollments, or find the order under student Details > Registration history.' },
+          { order: '2', title: 'Choose the action', detail: 'Use Record payment for an unpaid balance or Refund for a return. Full refund cancels future lessons; an order with deducted lessons requires manual handling.' },
+          { order: '3', title: 'Review the document', detail: 'Select View receipt to view or print the saved receipt. Payments and refunds remain as separate ledger entries.' },
         ],
       },
       {
-        id: 'back-office',
-        badge: 'Back office',
-        title: 'When to Open Back Office',
-        summary: 'Use it only to change rules, review history, settle payroll, or manage accounts.',
+        id: 'follow-up',
+        badge: 'Follow-up',
+        title: 'Handle Balances and Renewals',
+        summary: 'Data Summary shows only records that need attention.',
         steps: [
-          { order: '1', title: 'Change courses or prices', detail: 'Use Course setup > Courses / Course prices. Do not overwrite a price already used by students; add a new row or deactivate the old one.' },
-          { order: '2', title: 'Review records, payments, and refunds', detail: 'Use Records > Enrollments / Receipts. Refunds keep their own payment history for later review.' },
-          { order: '3', title: 'Manage accounts and payroll', detail: 'Use People & accounts > Accounts and Payments & payroll > Pay rates / Teacher Payments.' },
-          { order: '4', title: 'Change school rules', detail: 'Use School settings for service fees, receipt EIN, alerts, and system guidance. Do not change a rule without a confirmed business need.' },
+          { order: '1', title: 'Open Data Summary', detail: 'Start with red unpaid balances, then review expiring registrations and 1-on-1 packages with two or fewer lessons left.' },
+          { order: '2', title: 'Find who needs follow-up', detail: 'Filter by campus, course, or payment status and verify the current balance and remaining lessons.' },
+          { order: '3', title: 'Complete the follow-up', detail: 'Record payment on the enrollment order. For renewal, select Register from the student list to create a new enrollment.' },
+        ],
+      },
+      {
+        id: 'admin-setup',
+        badge: 'Admin only',
+        title: 'Initial Setup and Low-frequency Management',
+        summary: 'Only administrators need these entries. Daily users can skip this section.',
+        steps: [
+          { order: '1', title: 'Maintain people', detail: 'People uses Students and Teachers tabs for profiles and login access. There is no separate Accounts page.' },
+          { order: '2', title: 'Maintain courses', detail: 'Under Courses, maintain Products, Prices, and Schedule in that order. Conflicts are checked before schedule changes are saved.' },
+          { order: '3', title: 'Maintain school rules', detail: 'Finance manages rates and payment methods. System manages brand and receipts, campuses, and alerts.' },
         ],
       },
     ],
@@ -310,9 +321,31 @@ const pageCopy = computed(() => guideCopy[activeLang.value]);
   color: #fff !important;
 }
 
+.guide-common {
+  padding: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #eff6ff;
+}
+
+.guide-common__header {
+  margin-bottom: 12px;
+}
+
+.guide-common__header h3 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.guide-common__header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
 .guide-quick-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -324,7 +357,19 @@ const pageCopy = computed(() => guideCopy[activeLang.value]);
 }
 
 .guide-card {
+  display: flex;
+  min-height: 150px;
+  flex-direction: column;
   padding: 14px;
+  color: var(--text-primary);
+  text-decoration: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.guide-card:hover {
+  border-color: #60a5fa;
+  box-shadow: 0 6px 16px rgb(37 99 235 / 10%);
+  transform: translateY(-2px);
 }
 
 .guide-card span {
@@ -354,6 +399,13 @@ const pageCopy = computed(() => guideCopy[activeLang.value]);
   color: var(--text-secondary);
   font-size: 13px;
   line-height: 1.55;
+}
+
+.guide-card > strong {
+  margin-top: auto;
+  padding-top: 12px;
+  color: #2563eb;
+  font-size: 12px;
 }
 
 .guide-layout {
@@ -460,6 +512,12 @@ const pageCopy = computed(() => guideCopy[activeLang.value]);
 
   .guide-nav {
     position: static;
+  }
+}
+
+@media (max-width: 640px) {
+  .guide-quick-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

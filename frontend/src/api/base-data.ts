@@ -99,6 +99,10 @@ export function updateTeacher(id: EntityId, data: TeacherSavePayload) {
   return http.put(`/v1/base/teachers/${id}`, data);
 }
 
+export function deleteTeacher(id: EntityId) {
+  return http.delete(`/v1/base/teachers/${id}`);
+}
+
 export function fetchDeletedTeachers() {
   return http.get<ApiResponse<TeacherItem[]>>('/v1/base/teachers/deleted');
 }

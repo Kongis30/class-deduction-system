@@ -16,10 +16,26 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.service.StudentService;
 import com.classdeduction.system.modules.base.vo.StudentDetailVO;
 import com.classdeduction.system.modules.base.vo.StudentListItemVO;
+import com.classdeduction.system.modules.auth.entity.AuthSessionEntity;
+import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
+import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
+import com.classdeduction.system.modules.auth.mapper.AuthSessionMapper;
+import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
+import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
+import com.classdeduction.system.modules.finance.mapper.TeacherPayRateMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -51,6 +67,14 @@ public class StudentServiceImpl implements StudentService {
     private final CoursePackageMapper coursePackageMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final CampusMapper campusMapper;
+    private final UserAccountMapper userAccountMapper;
+    private final AuthSessionMapper authSessionMapper;
+    private final UserRoleMapper userRoleMapper;
+    private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
+    private final TeacherPayRateMapper teacherPayRateMapper;
 
     @Override
     public List<StudentListItemVO> listAllActive() {
@@ -126,22 +150,53 @@ public class StudentServiceImpl implements StudentService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteStudent(Long id) {
         requireStudent(id);
-        // 检查未完成的课包（DRAFT 或 ACTIVE）
-        Long activePackages = coursePackageMapper.selectCount(new LambdaQueryWrapper<CoursePackageEntity>()
-                .eq(CoursePackageEntity::getStudentId, id)
-                .in(CoursePackageEntity::getPackageStatus, "DRAFT", "ACTIVE")
-                .eq(CoursePackageEntity::getIsDeleted, 0));
-        // 检查活跃的班课报名
-        Long activeEnrollments = classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                .eq(ClassEnrollmentEntity::getStudentId, id)
-                .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                .eq(ClassEnrollmentEntity::getIsDeleted, 0));
-        if (activePackages + activeEnrollments > 0) {
-            throw new BusinessException("STUDENT_HAS_REFERENCES",
-                    "Cannot delete student: there are active course packages or class group enrollments. "
-                            + "Set to INACTIVE instead.");
-        }
+        cascadeDeleteStudentOperationalData(id);
         studentMapper.deleteById(id);
+    }
+
+    private void cascadeDeleteStudentOperationalData(Long studentId) {
+        List<UserAccountEntity> accounts = userAccountMapper.selectList(new LambdaQueryWrapper<UserAccountEntity>()
+                .eq(UserAccountEntity::getStudentId, studentId)
+                .eq(UserAccountEntity::getIsDeleted, 0));
+        List<Long> userIds = accounts.stream().map(UserAccountEntity::getId).filter(Objects::nonNull).toList();
+        if (!userIds.isEmpty()) {
+            userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
+                    .in(UserRoleEntity::getUserId, userIds));
+            authSessionMapper.delete(new LambdaQueryWrapper<AuthSessionEntity>()
+                    .in(AuthSessionEntity::getUserId, userIds));
+            userAccountMapper.delete(new LambdaQueryWrapper<UserAccountEntity>()
+                    .in(UserAccountEntity::getId, userIds));
+        }
+
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(new LambdaQueryWrapper<CoursePackageEntity>()
+                .eq(CoursePackageEntity::getStudentId, studentId)
+                .eq(CoursePackageEntity::getIsDeleted, 0));
+        List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).filter(Objects::nonNull).toList();
+        if (!packageIds.isEmpty()) {
+            List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                    .in(RecurringScheduleRuleEntity::getPackageId, packageIds)
+                    .eq(RecurringScheduleRuleEntity::getIsDeleted, 0));
+            List<Long> ruleIds = rules.stream().map(RecurringScheduleRuleEntity::getId).filter(Objects::nonNull).toList();
+            if (!ruleIds.isEmpty()) {
+                recurringScheduleSlotMapper.delete(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .in(RecurringScheduleSlotEntity::getRuleId, ruleIds));
+            }
+            recurringScheduleRuleMapper.delete(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                    .in(RecurringScheduleRuleEntity::getPackageId, packageIds));
+            packageTeacherAssignmentMapper.delete(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                    .in(PackageTeacherAssignmentEntity::getPackageId, packageIds));
+            lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                    .in(LessonOccurrenceEntity::getPackageId, packageIds));
+            coursePackageMapper.delete(new LambdaQueryWrapper<CoursePackageEntity>()
+                    .eq(CoursePackageEntity::getStudentId, studentId));
+        }
+
+        lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getStudentId, studentId));
+        classEnrollmentMapper.delete(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                .eq(ClassEnrollmentEntity::getStudentId, studentId));
+        teacherPayRateMapper.delete(new LambdaQueryWrapper<TeacherPayRateEntity>()
+                .eq(TeacherPayRateEntity::getStudentId, studentId));
     }
 
     @Override

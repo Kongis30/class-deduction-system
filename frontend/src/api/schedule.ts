@@ -255,6 +255,10 @@ export function fetchClassGroupsByClassroom(classroomId: string | number) {
   return http.get<ApiResponse<any[]>>(`/v1/classes/classroom/${classroomId}`);
 }
 
+export function fetchClassGroupsByTeacher(teacherId: string | number) {
+  return http.get<ApiResponse<any[]>>(`/v1/classes/teacher/${teacherId}`);
+}
+
 export function deleteClassGroup(classId: string | number) {
   return http.delete<ApiResponse<null>>(`/v1/classes/${classId}`);
 }

@@ -4,7 +4,7 @@
       <div class="panel-header">
         <div>
           <span class="panel-header__title">Enrollment history</span>
-          <p class="panel-header__hint">New registrations are created from Registration or a student's profile. Use this page to review orders, payments, and historical forms.</p>
+          <p class="panel-header__hint">New registrations are created from Registration or a student's profile. Use this page to review orders, payments, and saved receipts.</p>
         </div>
         <div class="panel-header__actions">
           <el-button type="primary" @click="router.push({ name: 'registration' })">New registration</el-button>
@@ -113,7 +113,7 @@
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="detail">Detail</el-dropdown-item>
-                      <el-dropdown-item command="form">View form</el-dropdown-item>
+                      <el-dropdown-item command="receipt">View receipt</el-dropdown-item>
                       <el-dropdown-item v-if="canPayOrder(row)" command="pay">Pay</el-dropdown-item>
                       <el-dropdown-item v-if="canRefundOrder(row)" command="refund">Refund</el-dropdown-item>
                       <el-dropdown-item v-if="canCancelOrder(row)" command="cancel">Cancel</el-dropdown-item>
@@ -201,7 +201,7 @@
                           <template #dropdown>
                             <el-dropdown-menu>
                               <el-dropdown-item command="detail">Detail</el-dropdown-item>
-                              <el-dropdown-item command="form">View form</el-dropdown-item>
+                              <el-dropdown-item command="receipt">View receipt</el-dropdown-item>
                               <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
                               <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
                               <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
@@ -376,8 +376,8 @@
             </el-table-column>
             <el-table-column label="Actions" min-width="110" align="center">
               <template #default="{ row: payRow }">
-                <el-button text type="primary" size="small" @click="showPaymentReceipt(detailData!)">
-                  View Receipt
+                <el-button text type="primary" size="small" @click="showPaymentStatement(detailData!)">
+                  View statement
                 </el-button>
               </template>
             </el-table-column>
@@ -388,7 +388,7 @@
 
       <template #footer>
         <div class="dialog-footer">
-          <el-button v-if="detailData" @click="openHistoricalForm(detailData)">View form</el-button>
+          <el-button v-if="detailData" @click="openReceipt(detailData)">View receipt</el-button>
           <el-button v-if="detailData && canPayOrder(detailData)" type="primary" @click="openPayDialog(detailData)">
             Record payment
           </el-button>
@@ -513,11 +513,6 @@
           </span>
         </div>
 
-        <div class="enrollment-form__row">
-          <el-form-item label="Issue receipt">
-            <el-switch v-model="payForm.issueReceipt" />
-          </el-form-item>
-        </div>
       </el-form>
 
       <template #footer>
@@ -590,6 +585,10 @@
           <el-button type="warning" :loading="refunding" @click="handleRefundSubmit">Confirm Refund</el-button>
         </div>
       </template>
+    </el-dialog>
+
+    <el-dialog v-model="transactionReceiptDialogVisible" :title="transactionReceiptTitle" width="820px">
+      <PaymentReceiptPreview v-if="transactionReceipt" :receipt="transactionReceipt" />
     </el-dialog>
 
     <!-- Delete enrollment order dialog -->
@@ -1174,7 +1173,8 @@ import dayjs from 'dayjs';
 import { createEnrollmentOrder, cancelEnrollmentOrder, deleteEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, createClassEnrollmentOrder, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
 import { fetchAllStudents, fetchAllTeachers, fetchAllClassrooms, fetchCourseProducts, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchLessonOccurrences, fetchClassGroups, fetchClassroomOccupancy, fetchClassGroupsByClassroom } from '@/api/schedule';
-import type { CourseProductItem, DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ClassroomOccupancyItem } from '@/types/domain';
+import type { CourseProductItem, DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ClassroomOccupancyItem, ReceiptRecordItem } from '@/types/domain';
+import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef, OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
 
@@ -1383,13 +1383,6 @@ function getPaymentMethodName(code: string): string {
   return m ? m.methodName : code;
 }
 
-function getPaymentSplitSummary(): string {
-  return payForm.splits
-    .filter(s => s.amount > 0)
-    .map(s => getPaymentMethodName(s.paymentMethod))
-    .join(', ');
-}
-
 function openMethodEditDialog(method?: PaymentMethodItem) {
   if (method) {
     editingMethodId.value = method.id;
@@ -1471,6 +1464,8 @@ const payDialogVisible = ref(false);
 const paying = ref(false);
 const payFormRef = ref();
 const payOrder = ref<EnrollmentOrderItem | null>(null);
+const transactionReceiptDialogVisible = ref(false);
+const transactionReceipt = ref<ReceiptRecordItem | null>(null);
 
 interface PaySplit {
   paymentMethod: string;
@@ -1483,7 +1478,6 @@ interface PaySplit {
 const paymentMethods = ref<PaymentMethodItem[]>([]);
 const payForm = reactive({
   splits: [] as PaySplit[],
-  issueReceipt: true,
 });
 
 const payAmountDue = computed(() => {
@@ -1727,7 +1721,7 @@ async function handleCancel(row: EnrollmentOrderItem) {
 }
 
 // ─── Row Action Menu ────────────────────────────────
-type OrderAction = 'detail' | 'form' | 'pay' | 'refund' | 'cancel' | 'delete';
+type OrderAction = 'detail' | 'receipt' | 'pay' | 'refund' | 'cancel' | 'delete';
 
 function canPayOrder(row: EnrollmentOrderItem) {
   return row.orderStatus === 'CONFIRMED'
@@ -1750,7 +1744,7 @@ function canDeleteOrder(row: EnrollmentOrderItem) {
 function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
   const actions: Record<OrderAction, () => void> = {
     detail: () => openDetailDialog(row),
-    form: () => openHistoricalForm(row),
+    receipt: () => openReceipt(row),
     pay: () => openPayDialog(row),
     refund: () => openRefundDialog(row),
     cancel: () => handleCancel(row),
@@ -1759,7 +1753,7 @@ function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
   actions[command]?.();
 }
 
-function openHistoricalForm(row: EnrollmentOrderItem) {
+function openReceipt(row: EnrollmentOrderItem) {
   router.push({ name: 'registration', query: { orderId: row.id } });
 }
 
@@ -1866,7 +1860,7 @@ async function handleRefundSubmit() {
   if (!valid || !refundOrder.value) return;
   refunding.value = true;
   try {
-    await refundEnrollmentOrder(refundOrder.value.id, {
+    const response = await refundEnrollmentOrder(refundOrder.value.id, {
       refundAmount: refundForm.refundAmount,
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName,
@@ -1874,6 +1868,8 @@ async function handleRefundSubmit() {
     });
     ElMessage.success('Refund completed.');
     refundDialogVisible.value = false;
+    transactionReceipt.value = response.data.data;
+    transactionReceiptDialogVisible.value = true;
     const order = refundOrder.value;
     if (order.classId) {
       await loadExpandedClassOrders(order.classId, expandedClassPagination[order.classId]?.page ?? 1);
@@ -1891,7 +1887,6 @@ async function handleRefundSubmit() {
 function openPayDialog(row: EnrollmentOrderItem) {
   payOrder.value = row;
   payForm.splits = [createPaySplit(payAmountDue.value)];
-  payForm.issueReceipt = true;
   payDialogVisible.value = true;
 }
 
@@ -1919,7 +1914,7 @@ async function handlePaySubmit() {
 
   paying.value = true;
   try {
-    await createPaymentRecord({
+    const response = await createPaymentRecord({
       enrollmentOrderId: payOrder.value.id,
       splits: rows.map((row) => ({
         paymentMethod: row.paymentMethod,
@@ -1930,13 +1925,10 @@ async function handlePaySubmit() {
       })),
     });
 
-    // If receipt requested, show receipt preview
-    if (payForm.issueReceipt) {
-      showReceiptPreview(payOrder.value, paySplitTotal.value);
-    }
-
     ElMessage.success('Payment recorded successfully.');
     payDialogVisible.value = false;
+    transactionReceipt.value = response.data.data;
+    transactionReceiptDialogVisible.value = true;
     await refreshAfterPayment(payOrder.value);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Payment failed.');
@@ -1965,40 +1957,11 @@ function openReceiptWindow(html: string) {
   }
 }
 
-function showReceiptPreview(order: EnrollmentOrderItem, paidAmount: number) {
-  const dueAmount = order.amountDue ?? 0;
-  const newReceived = (order.receivedAmount ?? 0) + paidAmount;
-  const html = receiptHtml({
-    title: 'Payment Receipt',
-    infoRows: [
-      ['Order No.', order.enrollmentNo],
-      ['Student', order.studentName],
-      ['Payment Date', dayjs().format('YYYY-MM-DD')],
-      ['Handler', getPaymentHandlerSummary()],
-      ['Payment Method', getPaymentSplitSummary()],
-    ],
-    tableRows: [
-      ['Original price', `$${(order.originalAmount ?? 0).toFixed(2)}`],
-      ['Discount', `-$${(order.discountAmount ?? 0).toFixed(2)}`],
-      ['Amount Due', `$${dueAmount.toFixed(2)}`],
-      ['Previously Paid', `$${(order.receivedAmount ?? 0).toFixed(2)}`],
-      ['This Payment', `$${paidAmount.toFixed(2)}`],
-      ['Total Paid', `$${newReceived.toFixed(2)}`, true],
-    ],
-    remark: getPaymentRemarkSummary() || undefined,
-  });
-  openReceiptWindow(html);
-}
+const transactionReceiptTitle = computed(() =>
+  transactionReceipt.value?.templateCode === 'REFUND_RECEIPT' ? 'Refund Receipt' : 'Payment Receipt'
+);
 
-function getPaymentHandlerSummary() {
-  return [...new Set(payForm.splits.map((item) => item.handledByName).filter(Boolean))].join(', ');
-}
-
-function getPaymentRemarkSummary() {
-  return payForm.splits.map((item) => item.remark).filter(Boolean).join('; ');
-}
-
-function showPaymentReceipt(order: EnrollmentOrderDetailItem) {
+function showPaymentStatement(order: EnrollmentOrderDetailItem) {
   const methods = [...new Set(order.payments.map(p => getPaymentMethodName(p.paymentMethod)))].join(', ');
   const totalPaid = order.payments.reduce((sum, p) => sum + (p.amount ?? 0), 0);
   const infoRows: [string, string][] = [
@@ -2013,7 +1976,7 @@ function showPaymentReceipt(order: EnrollmentOrderDetailItem) {
   ]);
   tableRows.push(['Total', `$${totalPaid.toFixed(2)}`, true]);
   const html = receiptHtml({
-    title: 'Payment Receipt',
+    title: 'Payment Statement',
     infoRows,
     tableRows,
   });

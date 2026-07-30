@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.lesson.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
@@ -59,8 +60,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private static final String CONFIRM_STAGE_CONFIRMED = "CONFIRMED";
     private static final String CONFIRM_STAGE_REJECTED = "REJECTED";
     private static final Set<String> ALLOWED_TEACHER_CONFIRM_STATUSES = Set.of("COMPLETED", "NO_SHOW", "FORMAL_LEAVE");
-    private static final int TEACHER_PAST_CONFIRM_WINDOW_DAYS = 7;
-    private static final int TEACHER_FUTURE_CONFIRM_WINDOW_HOURS = 6;
+    private static final int TEACHER_FUTURE_CONFIRM_WINDOW_DAYS = 14;
     private static final int MAX_CONFIRM_QUERY_DAYS = 180;
 
     private final LessonRecordMapper lessonRecordMapper;
@@ -229,7 +229,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         StudentEntity student = requireStudent(record.getStudentId());
         LessonStatusRuleEntity rule = requireActiveRule(record.getResultStatus());
         ConfirmationDecision decision = buildDecision(record);
-        return settleConfirmedRecord(record, occurrence, coursePackage, student, rule, decision, currentUser);
+        return settleConfirmedRecord(record, occurrence, coursePackage, student, rule, decision, currentUser, true);
     }
 
     @Override
@@ -256,8 +256,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         ConfirmationDecision decision = buildDecision(normalizedRequest, occurrence, coursePackage, rule);
         fillRecordFromDecision(record, occurrence, coursePackage, student, rule, decision, normalizedRequest.getNotes());
         record.setRecordSource(resolveRecordSource(currentUser));
-        lessonRecordMapper.updateById(record);
-        return settleConfirmedRecord(record, occurrence, coursePackage, student, rule, decision, currentUser);
+        return settleConfirmedRecord(record, occurrence, coursePackage, student, rule, decision, currentUser, true);
     }
 
     @Override
@@ -304,7 +303,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         } else {
             lessonRecordMapper.updateById(record);
         }
-        return settleConfirmedRecord(record, occurrence, coursePackage, student, rule, decision, currentUser);
+        return settleConfirmedRecord(record, occurrence, coursePackage, student, rule, decision, currentUser, false);
     }
 
     private LessonRecordConfirmResultVO settleConfirmedRecord(LessonRecordEntity record,
@@ -313,7 +312,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                                                               StudentEntity student,
                                                               LessonStatusRuleEntity rule,
                                                               ConfirmationDecision decision,
-                                                              CurrentUserResponse currentUser) {
+                                                              CurrentUserResponse currentUser,
+                                                              boolean requirePendingClaim) {
         if (decision.shouldDeduct() && decision.deductedUnits() > coursePackage.getRemainingUnits()) {
             throw new BusinessException("INSUFFICIENT_REMAINING_UNITS", "The package does not have enough remaining units for this confirmation.");
         }
@@ -334,7 +334,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         record.setRejectReason(null);
         record.setRejectedAt(null);
         record.setRejectedByUserId(null);
-        lessonRecordMapper.updateById(record);
+        if (requirePendingClaim) {
+            claimPendingRecordForFinalConfirm(record);
+        } else {
+            lessonRecordMapper.updateById(record);
+        }
 
         applyActualValuesToOccurrence(occurrence, decision);
         occurrence.setPlanningStatus("MERGED");
@@ -358,6 +362,16 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .remainingUnits(UnitConverter.toHoursDecimal(packageUpdate.remainingUnits()))
                 .packageCompleted(packageUpdate.packageCompleted())
                 .build();
+    }
+
+    private void claimPendingRecordForFinalConfirm(LessonRecordEntity record) {
+        int updated = lessonRecordMapper.update(record, new LambdaUpdateWrapper<LessonRecordEntity>()
+                .eq(LessonRecordEntity::getId, record.getId())
+                .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_PENDING_ADMIN)
+                .eq(LessonRecordEntity::getIsDeleted, 0));
+        if (updated != 1) {
+            throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be finally confirmed.");
+        }
     }
 
     private void ensureNoConflictForConfirmedOccurrence(LessonOccurrenceEntity occurrence,
@@ -516,11 +530,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
 
         LocalDateTime now = AppTime.nowLocalDateTime();
-        if (occurrence.getPlannedStartAt().isAfter(now.plusHours(TEACHER_FUTURE_CONFIRM_WINDOW_HOURS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Teachers can only confirm lessons that are happening now or have already happened.");
-        }
-        if (occurrence.getPlannedEndAt().isBefore(now.minusDays(TEACHER_PAST_CONFIRM_WINDOW_DAYS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_LATE", "This lesson is outside the teacher self-confirmation window.");
+        if (occurrence.getPlannedStartAt().isAfter(now.plusDays(TEACHER_FUTURE_CONFIRM_WINDOW_DAYS))) {
+            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Lesson confirmation is available 14 days before the planned start time.");
         }
     }
 

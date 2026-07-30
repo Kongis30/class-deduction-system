@@ -3,13 +3,12 @@ import { createRouter, createWebHistory, createWebHashHistory, type RouteRecordR
 import AppLayout from '@/components/layout/AppLayout.vue';
 import { APP_SYSTEM_NAME } from '@/config/app-config';
 import { getStoredAuthToken, getStoredAuthUser } from '@/utils/auth-storage';
-import { getDefaultLandingPath, isAdminUser, isStudentUser, isTeacherUser, type AuthUser } from '@/types/auth';
+import { getDefaultLandingPath, isAdminOrStaffUser, isStudentUser, isTeacherUser, type AuthUser } from '@/types/auth';
 
 // Route-level lazy loading keeps the initial admin bundle smaller.
 const LoginView = () => import('@/views/LoginView.vue');
 const DashboardView = () => import('@/views/dashboard/DashboardView.vue');
-const StudentsView = () => import('@/views/base-data/StudentsView.vue');
-const TeachersView = () => import('@/views/base-data/TeachersView.vue');
+const PeopleView = () => import('@/views/base-data/PeopleView.vue');
 const ClassroomsView = () => import('@/views/base-data/ClassroomsView.vue');
 const CourseProductsView = () => import('@/views/base-data/CourseProductsView.vue');
 const CampusesView = () => import('@/views/base-data/CampusesView.vue');
@@ -30,7 +29,6 @@ const NotificationSettingsView = () => import('@/views/system/NotificationSettin
 const BrandSettingsView = () => import('@/views/system/BrandSettingsView.vue');
 const CoursePriceOptionsView = () => import('@/views/system/CoursePriceOptionsView.vue');
 const PaymentMethodsView = () => import('@/views/system/PaymentMethodsView.vue');
-const AccountSettingsView = () => import('@/views/system/AccountSettingsView.vue');
 const UserGuideView = () => import('@/views/system/UserGuideView.vue');
 const TeacherPayRatesView = () => import('@/views/finance/TeacherPayRatesView.vue');
 const TeacherPaymentsView = () => import('@/views/finance/TeacherPaymentsView.vue');
@@ -51,7 +49,7 @@ const routes: RouteRecordRaw[] = [
     children: [
       {
         path: 'base-data',
-        redirect: '/admin/config/students',
+        redirect: '/admin/config/people',
       },
       {
         path: 'enrollment',
@@ -67,15 +65,15 @@ const routes: RouteRecordRaw[] = [
       },
       {
         path: 'system',
-        redirect: '/admin/config/accounts',
+        redirect: '/admin/config/people',
       },
       {
         path: 'admin/config',
-        redirect: '/admin/config/students',
+        redirect: '/admin/config/people',
       },
       {
         path: 'back-office',
-        redirect: '/admin/config/students',
+        redirect: '/admin/config/people',
       },
       {
         path: 'registration',
@@ -195,24 +193,24 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: 'admin/config/people',
+        name: 'admin-config-people',
+        component: PeopleView,
+        meta: {
+          title: 'People',
+          section: 'Admin Configuration',
+          description: 'Manage student and teacher records with login access in one place.',
+        },
+      },
+      {
         path: 'admin/config/students',
         name: 'admin-config-students',
-        component: StudentsView,
-        meta: {
-          title: 'Students',
-          section: 'Admin Configuration',
-          description: 'Manage student profiles, guardian contacts, and active course packages.',
-        },
+        redirect: { name: 'admin-config-people', query: { tab: 'students' } },
       },
       {
         path: 'admin/config/teachers',
         name: 'admin-config-teachers',
-        component: TeachersView,
-        meta: {
-          title: 'Teachers',
-          section: 'Admin Configuration',
-          description: 'Review instructor profiles, teaching details, and account linkage.',
-        },
+        redirect: { name: 'admin-config-people', query: { tab: 'teachers' } },
       },
       {
         path: 'admin/config/course-prices',
@@ -257,12 +255,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'admin/config/accounts',
         name: 'admin-config-accounts',
-        component: AccountSettingsView,
-        meta: {
-          title: 'Accounts',
-          section: 'Settings',
-          description: 'Manage permissions for admins, staff, teachers, and students.',
-        },
+        redirect: { name: 'admin-config-people' },
       },
       {
         path: 'admin/config/notifications',
@@ -297,22 +290,12 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'base-data/students',
         name: 'students',
-        component: StudentsView,
-        meta: {
-          title: 'Students',
-          section: 'Base Data',
-          description: 'Manage student profiles, guardian contacts, and active course packages.',
-        },
+        redirect: { name: 'admin-config-people', query: { tab: 'students' } },
       },
       {
         path: 'base-data/teachers',
         name: 'teachers',
-        component: TeachersView,
-        meta: {
-          title: 'Teachers',
-          section: 'Base Data',
-          description: 'Review teacher profiles, teaching details, and account linkage.',
-        },
+        redirect: { name: 'admin-config-people', query: { tab: 'teachers' } },
       },
       {
         path: 'base-data/classrooms',
@@ -351,7 +334,7 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: 'Enrollment History',
           section: 'Enrollment',
-          description: 'Review historical registrations, record later payments, and open each saved registration form.',
+          description: 'Review historical registrations, record later payments, and open each saved receipt.',
         },
       },
       {
@@ -371,7 +354,7 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: 'Registration Receipts',
           section: 'Enrollment',
-          description: 'Find each student, then open or print their saved registration forms.',
+          description: 'Find each student, then open or print their saved receipts.',
         },
       },
       {
@@ -447,12 +430,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'system/accounts',
         name: 'account-settings',
-        component: AccountSettingsView,
-        meta: {
-          title: 'Accounts & Permissions',
-          section: 'Settings',
-          description: 'Manage permissions for admins, staff, and future instructor roles.',
-        },
+        redirect: { name: 'admin-config-people' },
       },
       {
         path: 'finance/pay-rates',
@@ -493,13 +471,13 @@ const isElectron = typeof window !== 'undefined' && window.electronAPI?.platform
 const teacherSelfServicePaths = new Set(['/my-lessons', '/calendar']);
 const studentSelfServicePaths = new Set(['/calendar']);
 const adminConfigurationPaths = new Set([
+  '/admin/config/people',
   '/admin/config/students',
   '/admin/config/teachers',
   '/admin/config/course-prices',
   '/admin/config/payment-methods',
   '/admin/config/receipt',
   '/admin/config/campuses',
-  '/admin/config/accounts',
   '/admin/config/notifications',
   '/admin/config/teacher-pay-rates',
   '/base-data/course-products',
@@ -543,7 +521,7 @@ router.beforeEach((to) => {
   if (selfServiceFallbackPath && to.path !== selfServiceFallbackPath) {
     return selfServiceFallbackPath;
   }
-  if (adminConfigurationPaths.has(to.path) && !isAdminUser(storedUser)) {
+  if (adminConfigurationPaths.has(to.path) && !isAdminOrStaffUser(storedUser)) {
     return getDefaultLandingPath(storedUser);
   }
   return true;

@@ -532,6 +532,10 @@ export interface ClassEnrolledStudentItem {
   studentName: string;
   enrollmentDate: string;
   expiryDate: string;
+  billingType?: 'PER_SESSION' | 'MONTHLY' | string;
+  purchasedQuantity?: number;
+  usedSessions?: number;
+  remainingSessions?: number;
   enrollmentStatus: string;
   expiryStatus: 'EXPIRED' | 'EXPIRING_SOON' | 'NORMAL';
 }

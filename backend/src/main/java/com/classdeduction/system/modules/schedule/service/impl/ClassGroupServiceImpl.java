@@ -43,9 +43,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private static final String CONFIRM_STAGE_PENDING_ADMIN = "PENDING_ADMIN";
     private static final String CONFIRM_STAGE_CONFIRMED = "CONFIRMED";
     private static final String CONFIRM_STAGE_REJECTED = "REJECTED";
-    private static final Set<String> ALLOWED_TEACHER_CONFIRM_STATUSES = Set.of("COMPLETED", "NO_SHOW", "FORMAL_LEAVE");
-    private static final int TEACHER_PAST_CONFIRM_WINDOW_DAYS = 7;
-    private static final int TEACHER_FUTURE_CONFIRM_WINDOW_HOURS = 6;
+    private static final Set<String> ALLOWED_TEACHER_CONFIRM_STATUSES = Set.of("COMPLETED");
+    private static final Set<String> ALLOWED_ADMIN_CONFIRM_STATUSES = Set.of(
+            "COMPLETED", "CANCELLED");
+    private static final Set<String> CHARGEABLE_CLASS_RESULT_STATUSES = Set.of(
+            "COMPLETED", "CANCELLED");
+    private static final int TEACHER_FUTURE_CONFIRM_WINDOW_DAYS = 14;
 
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
@@ -142,10 +145,17 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .collect(Collectors.toMap(StudentEntity::getId, s -> s));
 
         LocalDate today = LocalDate.now();
+        Map<Long, List<LocalDate>> confirmedLessonDatesByStudent = loadConfirmedLessonDatesByStudent(classId);
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassEnrollmentEntity enrollment : enrollments) {
             StudentEntity student = studentMap.get(enrollment.getStudentId());
             if (student == null) continue;
+            Long usedSessions = null;
+            Integer remainingSessions = null;
+            if ("PER_SESSION".equals(enrollment.getBillingType()) && enrollment.getPurchasedQuantity() != null) {
+                usedSessions = countUsedSessions(enrollment, confirmedLessonDatesByStudent);
+                remainingSessions = Math.max(enrollment.getPurchasedQuantity() - usedSessions.intValue(), 0);
+            }
 
             String expiryStatus;
             if (enrollment.getExpiryDate().isBefore(today)) {
@@ -160,6 +170,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("studentName", student.getStudentName());
             item.put("enrollmentDate", enrollment.getEnrollmentDate());
             item.put("expiryDate", enrollment.getExpiryDate());
+            item.put("billingType", enrollment.getBillingType());
+            item.put("purchasedQuantity", enrollment.getPurchasedQuantity());
+            item.put("usedSessions", usedSessions);
+            item.put("remainingSessions", remainingSessions);
             item.put("enrollmentStatus", enrollment.getStatus());
             item.put("expiryStatus", expiryStatus);
             result.add(item);
@@ -310,9 +324,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 ? (String) body.get("notes") : pendingRecord == null ? null : pendingRecord.getNotes();
         String resultStatus = body != null && body.get("resultStatus") instanceof String s && !s.isBlank()
                 ? s : pendingRecord == null ? "COMPLETED" : pendingRecord.getResultStatus();
-        if (!ALLOWED_TEACHER_CONFIRM_STATUSES.contains(resultStatus)) {
+        Set<String> allowedStatuses = teacherConfirm
+                ? ALLOWED_TEACHER_CONFIRM_STATUSES
+                : ALLOWED_ADMIN_CONFIRM_STATUSES;
+        if (!allowedStatuses.contains(resultStatus)) {
             throw new BusinessException("CLASS_RESULT_STATUS_NOT_ALLOWED",
-                    "Class lessons only support completed, no-show, or formal-leave results.");
+                    teacherConfirm
+                            ? "Teachers can only submit completed class lessons."
+                            : "Class lessons only support completed or cancelled results.");
         }
         if (actualUnits != null && actualUnits <= 0) {
             throw new BusinessException("INVALID_ACTUAL_UNITS", "Actual lesson hours must be greater than zero.");
@@ -347,7 +366,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 if (teacherConfirm || CONFIRM_STAGE_CONFIRMED.equals(existing.getConfirmStage())) {
                     continue;
                 }
-                applyClassActualValues(existing, occ, actualTeacherId, actualClassroomId, actualUnits, actualStartAt, actualEndAt, notes);
+                applyClassActualValues(existing, occ, resultStatus, actualTeacherId, actualClassroomId, actualUnits, actualStartAt, actualEndAt, notes);
                 finalizeClassRecord(existing, currentUser);
                 lessonRecordMapper.updateById(existing);
                 confirmedCount++;
@@ -433,13 +452,18 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (!"PER_SESSION".equals(enrollment.getBillingType()) || enrollment.getPurchasedQuantity() == null) {
             return true;
         }
-        long usedSessions = confirmedLessonDatesByStudent
+        long usedSessions = countUsedSessions(enrollment, confirmedLessonDatesByStudent);
+        return usedSessions < enrollment.getPurchasedQuantity();
+    }
+
+    private long countUsedSessions(ClassEnrollmentEntity enrollment,
+                                   Map<Long, List<LocalDate>> confirmedLessonDatesByStudent) {
+        return confirmedLessonDatesByStudent
                 .getOrDefault(enrollment.getStudentId(), Collections.emptyList())
                 .stream()
                 .filter(date -> enrollment.getEnrollmentDate() == null || !date.isBefore(enrollment.getEnrollmentDate()))
                 .filter(date -> enrollment.getExpiryDate() == null || !date.isAfter(enrollment.getExpiryDate()))
                 .count();
-        return usedSessions < enrollment.getPurchasedQuantity();
     }
 
     private Map<Long, List<LocalDate>> loadConfirmedLessonDatesByStudent(Long classGroupId) {
@@ -464,7 +488,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .eq(LessonRecordEntity::getIsDeleted, 0))
                 .stream()
                 .filter(record -> record.getStudentId() != null
-                        && lessonDateByOccurrenceId.containsKey(record.getOccurrenceId()))
+                        && lessonDateByOccurrenceId.containsKey(record.getOccurrenceId())
+                        && CHARGEABLE_CLASS_RESULT_STATUSES.contains(record.getResultStatus()))
                 .collect(Collectors.groupingBy(
                         LessonRecordEntity::getStudentId,
                         Collectors.mapping(
@@ -792,14 +817,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             throw new BusinessException("FORBIDDEN", "Teachers can only confirm their own planned class lessons.");
         }
         if (!ALLOWED_TEACHER_CONFIRM_STATUSES.contains(resultStatus)) {
-            throw new BusinessException("TEACHER_STATUS_NOT_ALLOWED", "Teachers can only confirm completed, no-show, or formal-leave results.");
+            throw new BusinessException("TEACHER_STATUS_NOT_ALLOWED", "Teachers can only confirm completed class lessons.");
         }
         LocalDateTime now = AppTime.nowLocalDateTime();
-        if (occurrence.getPlannedStartAt().isAfter(now.plusHours(TEACHER_FUTURE_CONFIRM_WINDOW_HOURS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Teachers can only confirm lessons that are happening now or have already happened.");
-        }
-        if (occurrence.getPlannedEndAt().isBefore(now.minusDays(TEACHER_PAST_CONFIRM_WINDOW_DAYS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_LATE", "This lesson is outside the teacher self-confirmation window.");
+        if (occurrence.getPlannedStartAt().isAfter(now.plusDays(TEACHER_FUTURE_CONFIRM_WINDOW_DAYS))) {
+            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Lesson confirmation is available 14 days before the planned start time.");
         }
     }
 
@@ -826,12 +848,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     private void applyClassActualValues(LessonRecordEntity record,
                                         LessonOccurrenceEntity occurrence,
+                                        String resultStatus,
                                         Long actualTeacherId,
                                         Long actualClassroomId,
                                         Integer actualUnits,
                                         LocalDateTime actualStartAt,
                                         LocalDateTime actualEndAt,
                                         String notes) {
+        record.setResultStatus(resultStatus);
         record.setActualTeacherId(actualTeacherId);
         record.setActualClassroomId(actualClassroomId);
         record.setActualUnits(actualUnits != null ? actualUnits : occurrence.getPlannedUnits());

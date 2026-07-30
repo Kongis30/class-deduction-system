@@ -9,6 +9,7 @@ import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO;
+import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 
 public interface EnrollmentOrderService {
 
@@ -40,7 +41,7 @@ public interface EnrollmentOrderService {
     /**
      * 退款：记录退款流水并更新订单财务快照；全额退款会同时取消报名产物。
      */
-    void refundOrder(Long id, RefundRequest request);
+    ReceiptRecordVO refundOrder(Long id, RefundRequest request);
 
     /**
      * 创建班课报名订单。

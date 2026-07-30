@@ -15,9 +15,9 @@
 
     <section class="registration-desk no-print">
       <div>
-        <strong>{{ isReadOnly ? 'Saved registration form' : 'Registration desk' }}</strong>
+        <strong>{{ isReadOnly ? 'Saved receipt' : 'Registration desk' }}</strong>
         <p>{{ isReadOnly
-          ? 'This is the original saved form. It is read-only and prints with the same layout.'
+          ? 'This is the saved receipt. It is read-only and prints with the same layout.'
           : 'Fill the familiar paper form, save the record, then print the receipt when ready.' }}</p>
       </div>
       <div class="registration-desk__actions">
@@ -120,12 +120,12 @@
 
         <label class="address-line">
           <input type="checkbox" v-model="form.student.pickupRequired" :disabled="isReadOnly" />
-          <span>Pickup service</span>
+          <span>Pickup needed</span>
           <el-input v-model="form.student.pickupAddress" :disabled="isReadOnly" class="line-input" />
         </label>
         <label class="address-line">
           <input type="checkbox" v-model="form.student.dropoffRequired" :disabled="isReadOnly" />
-          <span>Drop-off service</span>
+          <span>Drop-off needed</span>
           <el-input v-model="form.student.dropoffAddress" :disabled="isReadOnly" class="line-input" />
         </label>
       </section>
@@ -177,7 +177,10 @@
           <tbody>
             <tr v-for="(line, index) in courseLines" :key="line.rowKey" class="course-entry-row">
               <td>
-                <div class="course-class-cell">
+                <div v-if="isReadOnly" class="receipt-course-display">
+                  <strong>{{ printCourseProductLabel(line) }}</strong>
+                </div>
+                <div v-else class="course-class-cell">
                   <el-select
                     v-model="line.courseProductId"
                     class="table-select table-select--primary"
@@ -199,7 +202,26 @@
                 </div>
               </td>
               <td>
-                <div class="course-detail-cell">
+                <div v-if="isReadOnly" class="receipt-course-detail">
+                  <div>
+                    <span>Grade</span>
+                    <strong>{{ line.gradeBand || '—' }}</strong>
+                  </div>
+                  <div>
+                    <span>Duration & schedule</span>
+                    <strong>{{ printCourseScheduleLabel(line) }}</strong>
+                  </div>
+                  <div v-if="showGroupDurationInput(line)">
+                    <span>{{ groupDurationInputLabel(line) }}</span>
+                    <strong>{{ printGroupDurationLabel(line) }}</strong>
+                  </div>
+                  <div>
+                    <span>{{ isOneOnOneLine(line) ? 'Teacher' : 'Class' }}</span>
+                    <strong>{{ printTeacherOrClassLabel(line) }}</strong>
+                  </div>
+                  <p v-if="isOneOnOneLine(line)">Arrange lesson times on the weekly calendar after this registration is saved.</p>
+                </div>
+                <div v-else class="course-detail-cell">
                   <div class="detail-row">
                     <label class="course-control">
                       <span>Grade</span>
@@ -313,8 +335,11 @@
                 </div>
               </td>
               <td class="price-cell">
-                <el-input-number v-model="line.priceAmount" :min="0" :precision="2" :controls="false" :disabled="isReadOnly" class="table-price" @change="() => handlePriceChange(line)" />
-                <strong class="print-only print-course-price">{{ formatMoney(line.priceAmount) }}</strong>
+                <strong v-if="isReadOnly" class="receipt-course-price">{{ formatMoney(line.priceAmount) }}</strong>
+                <template v-else>
+                  <el-input-number v-model="line.priceAmount" :min="0" :precision="2" :controls="false" class="table-price" @change="() => handlePriceChange(line)" />
+                  <strong class="print-only print-course-price">{{ formatMoney(line.priceAmount) }}</strong>
+                </template>
                 <button v-if="!isReadOnly && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
               </td>
             </tr>
@@ -330,18 +355,24 @@
         <div class="adjustment-column adjustment-column--fees">
           <div class="adjustment-heading">
             <strong>Service & other fees</strong>
-            <span>Each service is charged separately</span>
+            <span>Pickup/drop-off fees are per registration, not per student profile</span>
           </div>
           <div v-if="form.student.pickupRequired" class="adjustment-row adjustment-row--service">
-            <span>Pickup service</span>
-            <el-input-number v-model="form.pickupFeeAmount" :min="0" :precision="2" :controls="false" />
+            <label class="service-charge-toggle">
+              <input type="checkbox" v-model="form.pickupFeeCharged" />
+              <span>Charge pickup on this registration</span>
+            </label>
+            <el-input-number v-model="form.pickupFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!form.pickupFeeCharged" />
           </div>
           <div v-if="form.student.dropoffRequired" class="adjustment-row adjustment-row--service">
-            <span>Drop-off service</span>
-            <el-input-number v-model="form.dropoffFeeAmount" :min="0" :precision="2" :controls="false" />
+            <label class="service-charge-toggle">
+              <input type="checkbox" v-model="form.dropoffFeeCharged" />
+              <span>Charge drop-off on this registration</span>
+            </label>
+            <el-input-number v-model="form.dropoffFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!form.dropoffFeeCharged" />
           </div>
           <div v-if="!form.student.pickupRequired && !form.student.dropoffRequired" class="adjustment-empty">
-            Select Pickup service or Drop-off service above to add its fee.
+            Select Pickup needed or Drop-off needed above, then explicitly choose whether to charge this registration.
           </div>
           <div v-for="(fee, index) in extraFees" :key="fee.rowKey" class="adjustment-row">
             <el-input v-model="fee.label" placeholder="Other fee label" />
@@ -414,13 +445,13 @@
             <span>Tuition</span>
             <b>{{ formatMoney(courseSubtotal) }}</b>
           </div>
-          <div v-if="form.pickupFeeAmount > 0" class="receipt-financial-summary__row">
+          <div v-if="effectivePickupFeeAmount > 0" class="receipt-financial-summary__row">
             <span>Pickup service</span>
-            <b>{{ formatMoney(form.pickupFeeAmount) }}</b>
+            <b>{{ formatMoney(effectivePickupFeeAmount) }}</b>
           </div>
-          <div v-if="form.dropoffFeeAmount > 0" class="receipt-financial-summary__row">
+          <div v-if="effectiveDropoffFeeAmount > 0" class="receipt-financial-summary__row">
             <span>Drop-off service</span>
-            <b>{{ formatMoney(form.dropoffFeeAmount) }}</b>
+            <b>{{ formatMoney(effectiveDropoffFeeAmount) }}</b>
           </div>
           <div v-for="fee in extraFees.filter((item) => item.amount > 0)" :key="`print-${fee.rowKey}`" class="receipt-financial-summary__row">
             <span>{{ fee.label || 'Other fee' }}</span>
@@ -538,7 +569,9 @@ interface RegistrationCourseLine {
   periodKey: string;
   coursePriceOptionId: EntityId | '';
   courseProductId?: EntityId;
+  courseProductName?: string;
   classId?: EntityId;
+  className?: string;
   teacherId?: EntityId;
   registerClass: string;
   detail: string;
@@ -589,7 +622,9 @@ interface RegistrationForm {
   periodStartDate: string;
   periodEndDate: string;
   handledByName: string;
+  pickupFeeCharged: boolean;
   pickupFeeAmount: number;
+  dropoffFeeCharged: boolean;
   dropoffFeeAmount: number;
   remark: string;
   student: {
@@ -625,7 +660,9 @@ const form = reactive<RegistrationForm>({
   periodStartDate: '',
   periodEndDate: '',
   handledByName: currentUser?.displayName ?? '',
+  pickupFeeCharged: false,
   pickupFeeAmount: 0,
+  dropoffFeeCharged: false,
   dropoffFeeAmount: 0,
   remark: '',
   student: {
@@ -704,7 +741,9 @@ const courseSetupHint = computed(() => courseProducts.value.length === 0
 
 const courseSubtotal = computed(() => sumNumbers(courseLines.value.map((line) => line.priceAmount)));
 const extraFeeTotal = computed(() => sumNumbers(extraFees.value.map((line) => line.amount)));
-const serviceFeeTotal = computed(() => roundMoney(form.pickupFeeAmount + form.dropoffFeeAmount));
+const effectivePickupFeeAmount = computed(() => form.pickupFeeCharged ? roundMoney(form.pickupFeeAmount) : 0);
+const effectiveDropoffFeeAmount = computed(() => form.dropoffFeeCharged ? roundMoney(form.dropoffFeeAmount) : 0);
+const serviceFeeTotal = computed(() => roundMoney(effectivePickupFeeAmount.value + effectiveDropoffFeeAmount.value));
 const discountableAmount = computed(() => roundMoney(courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value));
 const discountTotal = computed(() => sumNumbers(discounts.value.map((line) => line.amount)));
 const paidAmount = computed(() => sumNumbers(payments.value.map((line) => line.amount)));
@@ -767,14 +806,28 @@ watch(() => form.student.dropoffAddress, (value) => {
 
 watch(() => form.student.pickupRequired, (pickupRequired) => {
   if (!pickupRequired) {
+    form.pickupFeeCharged = false;
+    form.pickupFeeAmount = 0;
+  }
+});
+
+watch(() => form.student.dropoffRequired, (dropoffRequired) => {
+  if (!dropoffRequired) {
+    form.dropoffFeeCharged = false;
+    form.dropoffFeeAmount = 0;
+  }
+});
+
+watch(() => form.pickupFeeCharged, (charged) => {
+  if (!charged) {
     form.pickupFeeAmount = 0;
   } else if (!isReadOnly.value && form.pickupFeeAmount === 0) {
     form.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
   }
 });
 
-watch(() => form.student.dropoffRequired, (dropoffRequired) => {
-  if (!dropoffRequired) {
+watch(() => form.dropoffFeeCharged, (charged) => {
+  if (!charged) {
     form.dropoffFeeAmount = 0;
   } else if (!isReadOnly.value && form.dropoffFeeAmount === 0) {
     form.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
@@ -785,10 +838,10 @@ watch(() => form.campusKey, () => {
   if (isReadOnly.value) {
     return;
   }
-  if (form.student.pickupRequired) {
+  if (form.pickupFeeCharged) {
     form.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
   }
-  if (form.student.dropoffRequired) {
+  if (form.dropoffFeeCharged) {
     form.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
   }
 });
@@ -894,6 +947,10 @@ async function loadExistingStudent() {
     form.student.pickupAddress = student.pickupAddress || '';
     form.student.dropoffRequired = Boolean(student.dropoffRequired);
     form.student.dropoffAddress = student.dropoffAddress || '';
+    form.pickupFeeCharged = false;
+    form.pickupFeeAmount = 0;
+    form.dropoffFeeCharged = false;
+    form.dropoffFeeAmount = 0;
     if (student.campusId != null) {
       form.campusKey = String(student.campusId);
     }
@@ -906,7 +963,8 @@ async function loadExistingStudent() {
 }
 
 function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
-  const receiptPayload = parsePayload(order.receipts?.[0]?.receiptPayload);
+  const registrationReceipt = order.receipts.find(receipt => receipt.templateCode === 'DEFAULT_RECEIPT');
+  const receiptPayload = parsePayload(registrationReceipt?.receiptPayload);
   const campusId = getString(receiptPayload, 'campusId') || String(order.campusId ?? '');
   const campusName = getString(receiptPayload, 'campusName') || order.campusNameSnapshot || '';
   form.campusKey = resolveCampusKey(campusId, campusName);
@@ -915,10 +973,12 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   form.periodEndDate = normalizeDate(getString(receiptPayload, 'periodEndDate') || order.periodEndDate || '');
   form.handledByName = getString(receiptPayload, 'handledByName') || order.handledByName || '';
   form.pickupFeeAmount = firstPositiveNumber(getNumber(receiptPayload, 'pickupFeeAmount'), order.pickupFeeAmount);
+  form.pickupFeeCharged = getBoolean(receiptPayload, 'pickupFeeCharged', form.pickupFeeAmount > 0);
   form.dropoffFeeAmount = firstPositiveNumber(
     getNumber(receiptPayload, 'dropoffFeeAmount'),
     order.dropoffFeeAmount,
   );
+  form.dropoffFeeCharged = getBoolean(receiptPayload, 'dropoffFeeCharged', form.dropoffFeeAmount > 0);
   form.remark = order.remark ?? '';
   setStudentName(getString(receiptPayload, 'studentName') || order.studentNameSnapshot || order.studentName || '');
   form.student.grade = getString(receiptPayload, 'grade') || order.gradeSnapshot || '';
@@ -933,17 +993,24 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   form.student.dropoffAddress = getString(receiptPayload, 'dropoffAddress') || order.dropoffAddressSnapshot || '';
 
   const payloadItems = getArray(receiptPayload, 'items');
-  courseLines.value = (payloadItems.length > 0 ? payloadItems : order.items).map((item, index) => toHistoricalCourseLine(item, index));
+  courseLines.value = (payloadItems.length > 0 ? payloadItems : order.items)
+    .map((item, index) => toHistoricalCourseLine(item, index, findOrderItemFallback(item, order.items, index)));
   if (courseLines.value.length === 0) {
     courseLines.value = [createCourseLine()];
   }
 
   const historicalExtraFees = getMoneyLines(receiptPayload, 'extraFees');
+  const savedPickupFee = historicalExtraFees.find((fee) => fee.label === 'Pickup service');
   const savedDropoffFee = historicalExtraFees.find((fee) => fee.label === 'Drop-off service');
+  if (form.pickupFeeAmount === 0 && savedPickupFee) {
+    form.pickupFeeAmount = savedPickupFee.amount;
+    form.pickupFeeCharged = true;
+  }
   if (form.dropoffFeeAmount === 0 && savedDropoffFee) {
     form.dropoffFeeAmount = savedDropoffFee.amount;
+    form.dropoffFeeCharged = true;
   }
-  extraFees.value = historicalExtraFees.filter((fee) => fee.label !== 'Drop-off service');
+  extraFees.value = historicalExtraFees.filter((fee) => !['Pickup service', 'Drop-off service'].includes(fee.label));
   if (extraFees.value.length === 0) {
     extraFees.value = [createMoneyLineWithAmount('Other fee', firstPositiveNumber(getNumber(receiptPayload, 'extraFeeAmount'), order.extraFeeAmount))];
   }
@@ -953,16 +1020,17 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
     discounts.value = [createDiscountLine('Custom discount', firstPositiveNumber(getNumber(receiptPayload, 'discountAmount'), order.discountAmount))];
   }
 
-  payments.value = order.payments.length > 0
-    ? order.payments.map((payment) => ({
+  const savedPayments = getHistoricalPayments(receiptPayload);
+  payments.value = registrationReceipt
+    ? savedPayments
+    : order.payments.map((payment) => ({
       rowKey: `payment-${payment.id}`,
       paymentMethod: payment.paymentMethod,
       amount: numeric(payment.amount),
       paidAt: normalizeDate(payment.paidAt),
       handledByName: payment.handledByName,
       remark: payment.remark,
-    }))
-    : getHistoricalPayments(receiptPayload);
+    }));
   if (payments.value.length === 0) {
     payments.value = [createPaymentLine()];
   }
@@ -974,27 +1042,33 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   reusableStudent.value = null;
 }
 
-function toHistoricalCourseLine(item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number], index: number): RegistrationCourseLine {
-  const periodLabel = getString(item, 'periodLabel');
+function toHistoricalCourseLine(
+  item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number],
+  index: number,
+  fallback?: EnrollmentOrderDetailItem['items'][number],
+): RegistrationCourseLine {
+  const periodLabel = getString(item, 'periodLabel') || getString(fallback, 'periodLabel');
   return {
-    rowKey: `history-course-${getString(item, 'id') || getString(item, 'orderItemId') || index}`,
-    courseType: getString(item, 'courseType'),
-    gradeBand: getString(item, 'gradeBand'),
+    rowKey: `history-course-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || index}`,
+    courseType: getString(item, 'courseType') || getString(fallback, 'courseType'),
+    gradeBand: getString(item, 'gradeBand') || getString(fallback, 'gradeBand'),
     periodKey: `${periodLabel || 'General'}::Standard`,
-    coursePriceOptionId: getString(item, 'coursePriceOptionId') as EntityId | '',
-    courseProductId: getString(item, 'courseProductId') || undefined,
-    classId: getString(item, 'classId') || undefined,
-    teacherId: getString(item, 'teacherId') || undefined,
-    registerClass: getString(item, 'registerClass'),
-    detail: getString(item, 'detail'),
+    coursePriceOptionId: (getString(item, 'coursePriceOptionId') || getString(fallback, 'coursePriceOptionId')) as EntityId | '',
+    courseProductId: getString(item, 'courseProductId') || getString(fallback, 'courseProductId') || undefined,
+    courseProductName: getString(item, 'courseProductName') || undefined,
+    classId: getString(item, 'classId') || getString(fallback, 'classId') || undefined,
+    className: getString(item, 'className') || undefined,
+    teacherId: getString(item, 'teacherId') || getString(fallback, 'teacherId') || undefined,
+    registerClass: getString(item, 'registerClass') || getString(fallback, 'registerClass'),
+    detail: getString(item, 'detail') || getString(fallback, 'detail'),
     periodLabel,
     durationLabel: '',
-    timeSlotLabel: getString(item, 'timeSlotLabel'),
-    priceAmount: getNumber(item, 'priceAmount'),
-    originalPriceAmount: optionalNumber(item, 'originalPriceAmount'),
+    timeSlotLabel: getString(item, 'timeSlotLabel') || getString(fallback, 'timeSlotLabel'),
+    priceAmount: firstPositiveNumber(getNumber(item, 'priceAmount'), getNumber(fallback, 'priceAmount')),
+    originalPriceAmount: optionalNumber(item, 'originalPriceAmount') ?? optionalNumber(fallback, 'originalPriceAmount'),
     manualPriceOverride: getBoolean(item, 'manualPriceOverride', false),
-    oneOnOneHours: optionalNumber(item, 'oneOnOneHours'),
-    oneOnOneUnits: optionalNumber(item, 'oneOnOneUnits'),
+    oneOnOneHours: optionalNumber(item, 'oneOnOneHours') ?? optionalNumber(fallback, 'oneOnOneHours'),
+    oneOnOneUnits: optionalNumber(item, 'oneOnOneUnits') ?? optionalNumber(fallback, 'oneOnOneUnits'),
     groupBillingType: getString(item, 'groupBillingType') || undefined,
     groupSessionCount: optionalNumber(item, 'sessions'),
     groupStartMonth: getString(item, 'groupStartMonth') || getString(item, 'startMonth') || undefined,
@@ -1005,6 +1079,18 @@ function toHistoricalCourseLine(item: Record<string, unknown> | EnrollmentOrderD
     initialLessonEndAt: getString(item, 'initialLessonEndAt') || undefined,
     remark: getString(item, 'remark') || undefined,
   };
+}
+
+function findOrderItemFallback(
+  item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number],
+  orderItems: EnrollmentOrderDetailItem['items'],
+  index: number,
+) {
+  const orderItemId = getString(item, 'orderItemId') || getString(item, 'id');
+  const lineNo = getNumber(item, 'lineNo');
+  return orderItems.find((candidate) => String(candidate.id) === orderItemId)
+    || orderItems.find((candidate) => candidate.lineNo === lineNo)
+    || orderItems[index];
 }
 
 async function checkReusableStudent() {
@@ -1357,14 +1443,37 @@ function productSelectPlaceholder(line: RegistrationCourseLine) {
 }
 
 function productOptionLabel(product: CourseProductItem) {
-  return [product.productName, formatCourseType(product.courseType || ''), product.registerClass]
-    .filter(Boolean)
-    .join(' · ');
+  const labels: string[] = [];
+  appendDistinctCourseLabel(labels, product.productName);
+  appendDistinctCourseLabel(labels, product.registerClass);
+  appendDistinctCourseLabel(labels, formatCourseType(product.courseType || ''));
+  return labels.join(' · ') || 'Course';
+}
+
+function appendDistinctCourseLabel(labels: string[], value?: string) {
+  const label = value?.trim();
+  if (!label) {
+    return;
+  }
+  const normalized = normalizeCourseLabel(label);
+  const duplicated = labels.some((existing) => {
+    const existingNormalized = normalizeCourseLabel(existing);
+    return existingNormalized === normalized
+      || existingNormalized.includes(normalized)
+      || normalized.includes(existingNormalized);
+  });
+  if (!duplicated) {
+    labels.push(label);
+  }
+}
+
+function normalizeCourseLabel(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 function printCourseProductLabel(line: RegistrationCourseLine) {
   const product = courseProducts.value.find((item) => String(item.id) === String(line.courseProductId));
-  return product ? productOptionLabel(product) : line.registerClass || '—';
+  return product ? productOptionLabel(product) : line.courseProductName || line.registerClass || '—';
 }
 
 function printCourseScheduleLabel(line: RegistrationCourseLine) {
@@ -1415,7 +1524,7 @@ function printTeacherOrClassLabel(line: RegistrationCourseLine) {
     return teachers.value.find((teacher) => String(teacher.id) === String(line.teacherId))?.teacherName || 'To be assigned';
   }
   const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
-  return classGroup ? formatClassLabel(classGroup) : '—';
+  return classGroup ? formatClassLabel(classGroup) : line.className || '—';
 }
 
 function durationOptionLabel(option: CoursePriceOptionItem) {
@@ -1567,6 +1676,12 @@ function validateForm() {
   }
   if (form.student.dropoffRequired && !form.student.dropoffAddress.trim()) {
     errors.push('Drop off address is required when Drop off is checked.');
+  }
+  if (form.pickupFeeCharged && form.pickupFeeAmount <= 0) {
+    errors.push('Pickup fee is marked for this registration. Enter an amount or uncheck the charge option.');
+  }
+  if (form.dropoffFeeCharged && form.dropoffFeeAmount <= 0) {
+    errors.push('Drop-off fee is marked for this registration. Enter an amount or uncheck the charge option.');
   }
   if (discountTotal.value > courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value) {
     errors.push('Discount cannot exceed tuition plus fees.');
@@ -1723,8 +1838,10 @@ function buildPayload(): RegistrationIntakePayload {
         ? line.groupRegistrationEndMonth : undefined,
       remark: line.remark,
     })),
-    pickupFeeAmount: roundMoney(form.pickupFeeAmount),
-    dropoffFeeAmount: roundMoney(form.dropoffFeeAmount),
+    pickupFeeCharged: form.pickupFeeCharged,
+    pickupFeeAmount: roundMoney(effectivePickupFeeAmount.value),
+    dropoffFeeCharged: form.dropoffFeeCharged,
+    dropoffFeeAmount: roundMoney(effectiveDropoffFeeAmount.value),
     extraFeeAmount: roundMoney(extraFeeTotal.value),
     extraFees: buildMoneyPayload(extraFees.value),
     discountAmount: roundMoney(discountTotal.value),
@@ -1766,7 +1883,9 @@ function resetForNextRegistration() {
   form.signupDate = formatDate(new Date());
   form.periodStartDate = '';
   form.periodEndDate = '';
+  form.pickupFeeCharged = false;
   form.pickupFeeAmount = 0;
+  form.dropoffFeeCharged = false;
   form.dropoffFeeAmount = 0;
   form.remark = '';
   form.student.firstName = '';
@@ -2440,6 +2559,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   overflow-wrap: anywhere;
 }
 
+.receipt-course-display,
+.receipt-course-detail {
+  color: #111;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.receipt-course-display strong,
+.receipt-course-detail strong,
+.receipt-course-price {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.receipt-course-detail {
+  display: grid;
+  gap: 6px;
+}
+
+.receipt-course-detail > div {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.receipt-course-detail span {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.receipt-course-detail p {
+  margin: 2px 0 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.receipt-course-price {
+  display: block;
+  text-align: right;
+}
+
 .receipt-financial-summary {
   display: none;
 }
@@ -2675,6 +2836,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   min-width: 0;
   color: #374151;
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.service-charge-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #374151;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.service-charge-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #111;
+}
+
+.service-charge-toggle span {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 

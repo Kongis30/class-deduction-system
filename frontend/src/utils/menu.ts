@@ -1,5 +1,5 @@
 import type { AppMenuItem } from '@/types/menu';
-import { isAdminUser, isStudentUser, isTeacherUser, type AuthUser } from '@/types/auth';
+import { isAdminOrStaffUser, isStudentUser, isTeacherUser, type AuthUser } from '@/types/auth';
 
 export const dailyMenus: AppMenuItem[] = [
   {
@@ -34,14 +34,21 @@ export const dailyMenus: AppMenuItem[] = [
   },
 ];
 
+export const adminGuideMenu: AppMenuItem = {
+  key: 'admin-help',
+  title: 'Help',
+  icon: 'Files',
+  children: [
+    { key: 'admin-guide', title: 'User Guide', description: 'How to use the system', path: '/admin/guide' },
+  ],
+};
+
 export const adminPeopleMenu: AppMenuItem = {
   key: 'admin-people',
   title: 'People',
   icon: 'User',
   children: [
-    { key: 'config-students', title: 'Students', description: 'Profiles and contacts', path: '/admin/config/students' },
-    { key: 'config-teachers', title: 'Teachers', description: 'Teacher profiles', path: '/admin/config/teachers' },
-    { key: 'config-accounts', title: 'Accounts', description: 'User access', path: '/admin/config/accounts' },
+    { key: 'config-people', title: 'Students & teachers', description: 'Profiles and login access', path: '/admin/config/people' },
   ],
 };
 
@@ -52,7 +59,7 @@ export const adminEnrollmentMenu: AppMenuItem = {
   children: [
     { key: 'enrollment-orders', title: 'Enrollments', description: 'Registration records', path: '/enrollment/orders' },
     { key: 'course-packages', title: 'Packages', description: 'Balance and hours', path: '/enrollment/packages' },
-    { key: 'receipt-history', title: 'Receipts', description: 'Registration forms by student', path: '/enrollment/receipts' },
+    { key: 'receipt-history', title: 'Receipts', description: 'Saved receipts by student', path: '/enrollment/receipts' },
   ],
 };
 
@@ -82,7 +89,6 @@ export const adminSystemMenu: AppMenuItem = {
   title: 'System',
   icon: 'Setting',
   children: [
-    { key: 'admin-guide', title: 'Guide', description: 'How to use the system', path: '/admin/guide' },
     { key: 'config-receipt', title: 'Brand & receipts', description: 'Brand, receipts, and EIN', path: '/admin/config/receipt' },
     { key: 'config-campuses', title: 'Campuses', description: 'Locations and rooms', path: '/admin/config/campuses' },
     { key: 'config-notifications', title: 'Alerts', description: 'Notification rules', path: '/admin/config/notifications' },
@@ -129,8 +135,8 @@ export function getStudentMenus(): AppMenuItem[] {
  * Returns low-frequency navigation separated from daily work entries.
  */
 export function getSecondaryMenusForUser(user: AuthUser | null): AppMenuItem[] {
-  return isAdminUser(user)
-    ? [adminPeopleMenu, adminEnrollmentMenu, adminCoursesMenu, adminFinanceMenu, adminSystemMenu]
+  return isAdminOrStaffUser(user)
+    ? [adminGuideMenu, adminPeopleMenu, adminEnrollmentMenu, adminCoursesMenu, adminFinanceMenu, adminSystemMenu]
     : [];
 }
 

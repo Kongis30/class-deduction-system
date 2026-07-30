@@ -78,7 +78,7 @@ export interface RefundPayload {
 }
 
 export function refundEnrollmentOrder(id: string | number, data: RefundPayload) {
-  return http.post(`/v1/enrollment/orders/${id}/refund`, data);
+  return http.post<ApiResponse<ReceiptRecordItem>>(`/v1/enrollment/orders/${id}/refund`, data);
 }
 
 export function deleteEnrollmentOrder(id: string | number) {
@@ -186,7 +186,9 @@ export interface RegistrationIntakePayload {
   handledByName: string;
   currencyCode?: string;
   items: RegistrationCourseItemPayload[];
+  pickupFeeCharged?: boolean;
   pickupFeeAmount?: number;
+  dropoffFeeCharged?: boolean;
   dropoffFeeAmount?: number;
   extraFeeAmount?: number;
   extraFees?: RegistrationFeeLinePayload[];
@@ -304,7 +306,7 @@ export interface PaymentRecordSavePayload {
 }
 
 export function createPaymentRecord(data: PaymentRecordSavePayload) {
-  return http.post('/v1/enrollment/payments', data);
+  return http.post<ApiResponse<ReceiptRecordItem>>('/v1/enrollment/payments', data);
 }
 
 // ─── Payment Methods ─────────────────────────────────
@@ -340,6 +342,7 @@ export interface ReceiptQuery {
   keyword?: string;
   studentId?: EntityId;
   enrollmentOrderId?: EntityId;
+  templateCode?: string;
   pageNum?: number;
   pageSize?: number;
 }

@@ -89,17 +89,9 @@ public class StudentAccountServiceImpl implements StudentAccountService {
     public Long createStudentAccount(StudentAccountCreateRequest request) {
         ensureUsernameUnique(request.getUsername());
 
-        // 1. Create student profile
-        StudentEntity student = new StudentEntity();
-        student.setStudentNo(studentNoGenerator.generate());
-        student.setStudentName(request.getStudentName());
-        student.setStatus("ACTIVE");
-        student.setGuardianName(request.getGuardianName());
-        student.setGuardianPhone(request.getGuardianPhone());
-        student.setGuardianEmail(request.getGuardianEmail());
-        studentMapper.insert(student);
+        StudentEntity student = resolveStudentForAccount(request);
 
-        // 2. Create login account linked to the student
+        // Login access belongs to one student profile. The profile may be existing or newly created.
         UserAccountEntity entity = new UserAccountEntity();
         entity.setUsername(request.getUsername());
         entity.setPasswordHash(passwordEncoder.encode(request.getPassword()));
@@ -112,6 +104,38 @@ public class StudentAccountServiceImpl implements StudentAccountService {
         userAccountMapper.insert(entity);
         bindStudentRole(entity.getId());
         return entity.getId();
+    }
+
+    private StudentEntity resolveStudentForAccount(StudentAccountCreateRequest request) {
+        if (request.getStudentId() != null) {
+            StudentEntity student = studentMapper.selectById(request.getStudentId());
+            if (student == null) {
+                throw new BusinessException("STUDENT_NOT_FOUND", "Student profile not found.");
+            }
+            ensureStudentHasNoAccount(student.getId());
+            return student;
+        }
+        if (!StringUtils.hasText(request.getStudentName())) {
+            throw new BusinessException("STUDENT_NAME_REQUIRED", "Student name is required.");
+        }
+        StudentEntity student = new StudentEntity();
+        student.setStudentNo(studentNoGenerator.generate());
+        student.setStudentName(request.getStudentName());
+        student.setStatus("ACTIVE");
+        student.setGuardianName(request.getGuardianName());
+        student.setGuardianPhone(request.getGuardianPhone());
+        student.setGuardianEmail(request.getGuardianEmail());
+        studentMapper.insert(student);
+        return student;
+    }
+
+    private void ensureStudentHasNoAccount(Long studentId) {
+        Long existing = userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccountEntity>()
+                .eq(UserAccountEntity::getStudentId, studentId)
+                .eq(UserAccountEntity::getIsDeleted, 0));
+        if (existing != null && existing > 0) {
+            throw new BusinessException("STUDENT_ACCOUNT_EXISTS", "This student already has a login account.");
+        }
     }
 
     @Override

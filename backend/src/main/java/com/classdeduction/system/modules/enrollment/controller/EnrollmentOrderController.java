@@ -1,8 +1,10 @@
 package com.classdeduction.system.modules.enrollment.controller;
 
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
+import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
@@ -12,6 +14,7 @@ import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderServi
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO;
+import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -72,11 +75,12 @@ public class EnrollmentOrderController {
 
     @PostMapping("/{id}/refund")
     @Operation(summary = "报名单退款（部分退款仅更新财务，全额退款同时退课）")
-    public ApiResponse<Void> refundOrder(
+    public ApiResponse<ReceiptRecordVO> refundOrder(
             @Parameter(description = "报名单ID") @PathVariable Long id,
-            @Valid @RequestBody RefundRequest request) {
-        enrollmentOrderService.refundOrder(id, request);
-        return ApiResponse.success("Refunded successfully.", null);
+            @Valid @RequestBody RefundRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        request.setHandledByUserId(currentUser.userId());
+        return ApiResponse.success("Refunded successfully.", enrollmentOrderService.refundOrder(id, request));
     }
 
     @PostMapping("/class-enroll")

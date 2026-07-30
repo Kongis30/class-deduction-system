@@ -113,7 +113,7 @@
             class="product-table"
             :show-empty="true"
           >
-            <el-table-column label="Product name" min-width="220">
+            <el-table-column label="Course product" min-width="260">
               <template #default="{ row }">
                 <div class="cell-stack">
                   <strong>{{ row.productName }}</strong>
@@ -121,18 +121,31 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Billing" min-width="150" align="center">
-              <template #default="{ row }">{{ formatBilling(row) }}</template>
-            </el-table-column>
-            <el-table-column label="Schedule" min-width="240">
-              <template #default="{ row }">
-                <span v-if="row.slots?.length">{{ formatSlots(row.slots) }}</span>
-                <span v-else class="text-muted">—</span>
+            <el-table-column label="Product role" min-width="170">
+              <template #default>
+                <div class="cell-stack">
+                  <strong>Parent course</strong>
+                  <span>Grade classes and prices are configured next</span>
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="Teacher" min-width="130">
+            <el-table-column label="Setup" min-width="210">
               <template #default="{ row }">
-                {{ row.defaultTeacherName || '—' }}
+                <div class="setup-cell">
+                  <el-tag
+                    size="small"
+                    :type="groupClassCount(row) > 0 ? 'success' : 'warning'"
+                    effect="plain"
+                  >
+                    {{ groupClassCount(row) > 0 ? `${groupClassCount(row)} grade class${groupClassCount(row) === 1 ? '' : 'es'}` : 'Needs grade class' }}
+                  </el-tag>
+                  <span>{{ groupClassCount(row) > 0 ? 'Ready for schedules and enrollment' : 'Add grade classes and prices first' }}</span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="Active students" min-width="120" align="center">
+              <template #default="{ row }">
+                {{ groupStudentCount(row) }}
               </template>
             </el-table-column>
             <el-table-column label="Status" min-width="90" align="center">
@@ -142,10 +155,10 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" min-width="260" fixed="right">
+            <el-table-column label="Actions" min-width="250" fixed="right">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button text type="primary" @click="openProductPrices(row)">Grade classes / Prices</el-button>
+                  <el-button text type="primary" @click="openProductPrices(row)">Configure grade classes</el-button>
                   <el-tooltip
                     :content="hasGradeClasses(row) ? 'Open grade class schedules' : 'Create grade classes in Price Matrix first'"
                     placement="top"
@@ -522,6 +535,18 @@ function hasGradeClasses(product: CourseProductItem) {
   return classGroups.value.some(item => String(item.productId) === String(product.id));
 }
 
+function groupClassesFor(product: CourseProductItem) {
+  return classGroups.value.filter(item => String(item.productId) === String(product.id));
+}
+
+function groupClassCount(product: CourseProductItem) {
+  return groupClassesFor(product).length;
+}
+
+function groupStudentCount(product: CourseProductItem) {
+  return groupClassesFor(product).reduce((sum, item) => sum + (item.activeStudentCount ?? 0), 0);
+}
+
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
@@ -756,28 +781,8 @@ async function handleDelete(row: CourseProductItem) {
 }
 
 
-function formatSlots(slots: { weekday: number; startTime: string; endTime: string }[]): string {
-  const weekdays = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-  return slots.map(s => `${weekdays[s.weekday]} ${s.startTime}-${s.endTime}`).join(', ');
-}
-
-
-function formatTeachingMode(mode: string): string {
-  return mode === 'ONE_ON_ONE' ? '1:1' : mode === 'GROUP' ? 'Group' : mode;
-}
-
 function formatCourseType(type?: string): string {
   return type ? courseTypeOptions.find(item => item.value === type)?.label ?? 'Unclassified' : 'Any group type';
-}
-
-function formatBilling(row: CourseProductItem): string {
-  if (row.billingType === 'PER_SESSION') {
-    return row.totalSessions ? `${row.totalSessions} sessions` : 'Per session';
-  }
-  if (row.billingType === 'MONTHLY') {
-    return row.startMonth && row.endMonth ? `${row.startMonth} ~ ${row.endMonth}` : 'Monthly';
-  }
-  return '—';
 }
 
 function classTypeInitial(billingType?: string): string {
@@ -913,6 +918,18 @@ loadTeachers();
 
 .cell-stack span {
   color: #909399;
+  font-size: 12px;
+}
+
+.setup-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+.setup-cell span {
+  color: #64748b;
   font-size: 12px;
 }
 

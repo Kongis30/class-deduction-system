@@ -3,8 +3,8 @@
     <section class="hero-card table-page-header">
       <div>
         <span class="hero-card__eyebrow table-page-header__eyebrow">Receipts</span>
-        <h2>Registration Receipts</h2>
-        <p>Search a student on the left, then open or print any saved registration form on the right.</p>
+        <h2>Student Receipts</h2>
+        <p>Review saved registration, payment, and refund receipts.</p>
       </div>
       <el-button class="action-primary" type="primary" :loading="studentLoading" @click="loadStudents">Refresh</el-button>
     </section>
@@ -55,56 +55,46 @@
 
       <el-col :xs="24" :sm="16" :md="18" :lg="18" :xl="19">
         <section class="panel-card records-panel">
+          <el-tabs v-model="receiptType" class="receipt-type-tabs" @tab-change="handleReceiptTypeChange">
+            <el-tab-pane label="Registration receipts" name="registration" />
+            <el-tab-pane label="Payment receipts" name="payment" />
+            <el-tab-pane label="Refund receipts" name="refund" />
+          </el-tabs>
+
           <div class="records-header">
             <div>
               <span>Selected student</span>
               <strong>{{ selectedStudent?.studentName || 'No student selected' }}</strong>
             </div>
             <p v-if="selectedStudent">
-              {{ orderTotal }} saved registration receipt{{ orderTotal === 1 ? '' : 's' }}.
+              {{ recordTotal }} saved {{ receiptType }} receipt{{ recordTotal === 1 ? '' : 's' }}.
             </p>
-            <p v-else>Select a student to view registration receipts.</p>
+            <p v-else>Select a student to view receipts.</p>
           </div>
 
           <el-table
-            v-loading="orderLoading"
-            :data="orders"
+            v-loading="receiptLoading"
+            :data="receipts"
             row-key="id"
             class="receipt-order-table sheet-table"
-            empty-text="No registration receipts for this student."
+            :empty-text="`No ${receiptType} receipts for this student.`"
           >
-            <el-table-column prop="enrollmentNo" label="Registration no." min-width="170" />
-            <el-table-column label="Date" min-width="110">
-              <template #default="{ row }">{{ formatDate(row.signupDate || row.createdAt) }}</template>
+            <el-table-column prop="receiptNo" label="Receipt no." min-width="170" />
+            <el-table-column label="Enrollment" min-width="170">
+              <template #default="{ row }">{{ receiptPayload(row).enrollmentNo || '—' }}</template>
             </el-table-column>
-            <el-table-column label="Courses" width="90" align="center">
-              <template #default="{ row }">{{ courseCount(row) }}</template>
+            <el-table-column label="Issued at" min-width="150">
+              <template #default="{ row }">{{ formatDateTime(row.issuedAt) }}</template>
             </el-table-column>
-            <el-table-column label="Course summary" min-width="260">
-              <template #default="{ row }">{{ courseSummary(row) }}</template>
+            <el-table-column v-if="receiptType !== 'registration'" :label="receiptType === 'refund' ? 'This refund' : 'This payment'" min-width="120" align="right">
+              <template #default="{ row }">{{ formatMoney(Math.abs(receiptPayload(row).paymentAmount)) }}</template>
             </el-table-column>
-            <el-table-column label="Amount due" min-width="120" align="right">
-              <template #default="{ row }">{{ formatMoney(row.amountDue ?? row.originalAmount) }}</template>
+            <el-table-column v-if="receiptType !== 'registration'" label="Balance after" min-width="120" align="right">
+              <template #default="{ row }">{{ formatMoney(receiptPayload(row).balanceAmount) }}</template>
             </el-table-column>
-            <el-table-column label="Paid" min-width="110" align="right">
-              <template #default="{ row }">{{ formatMoney(row.receivedAmount) }}</template>
-            </el-table-column>
-            <el-table-column label="Balance" min-width="110" align="right">
-              <template #default="{ row }">{{ formatMoney(row.balanceAmount) }}</template>
-            </el-table-column>
-            <el-table-column label="Status" width="110" align="center">
+            <el-table-column label="Actions" width="110" fixed="right">
               <template #default="{ row }">
-                <el-tag size="small" :type="paymentStatusType(row.paymentStatus)">
-                  {{ paymentStatusLabel(row.paymentStatus) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Actions" width="140" fixed="right">
-              <template #default="{ row }">
-                <div class="row-actions">
-                  <el-button link type="primary" @click="openRegistration(row)">View</el-button>
-                  <el-button link type="primary" @click="printRegistration(row)">Print</el-button>
-                </div>
+                <el-button link type="primary" @click="openReceipt(row)">View receipt</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -113,7 +103,7 @@
             v-if="selectedStudent"
             class="records-pagination"
             layout="prev, pager, next, total"
-            :total="orderTotal"
+            :total="recordTotal"
             :page-size="orderQuery.pageSize"
             :current-page="orderQuery.pageNum"
             @current-change="handleOrderPageChange"
@@ -121,28 +111,37 @@
         </section>
       </el-col>
     </el-row>
+
+    <el-dialog v-model="transactionReceiptDialogVisible" :title="transactionReceiptTitle" width="820px">
+      <PaymentReceiptPreview v-if="selectedTransactionReceipt" :receipt="selectedTransactionReceipt" />
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { fetchStudents } from '@/api/base-data';
-import { fetchEnrollmentOrders } from '@/api/enrollment';
+import { fetchReceipts } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
-import type { EnrollmentOrderItem, StudentItem } from '@/types/domain';
+import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
+import type { ReceiptRecordItem, StudentItem } from '@/types/domain';
 
 const router = useRouter();
 
 const studentLoading = ref(false);
-const orderLoading = ref(false);
+const receiptLoading = ref(false);
 const students = ref<StudentItem[]>([]);
 const studentTotal = ref(0);
 const selectedStudent = ref<StudentItem | null>(null);
-const orders = ref<EnrollmentOrderItem[]>([]);
-const orderTotal = ref(0);
+const receiptType = ref<'registration' | 'payment' | 'refund'>('registration');
+const receipts = ref<ReceiptRecordItem[]>([]);
+const receiptTotal = ref(0);
+const transactionReceiptDialogVisible = ref(false);
+const selectedTransactionReceipt = ref<ReceiptRecordItem | null>(null);
+const recordTotal = computed(() => receiptTotal.value);
 
 const studentQuery = reactive({
   keyword: '',
@@ -188,7 +187,7 @@ async function loadStudents() {
 async function selectStudent(student: StudentItem) {
   selectedStudent.value = student;
   orderQuery.pageNum = 1;
-  await loadSelectedStudentOrders();
+  await loadSelectedStudentRecords();
 }
 
 function selectStudentById(studentId: string) {
@@ -198,26 +197,42 @@ function selectStudentById(studentId: string) {
   }
 }
 
-async function loadSelectedStudentOrders() {
+const receiptTemplateCodes = {
+  registration: 'DEFAULT_RECEIPT',
+  payment: 'PAYMENT_RECEIPT',
+  refund: 'REFUND_RECEIPT',
+} as const;
+
+async function loadSelectedStudentReceipts() {
   if (!selectedStudent.value) {
-    clearOrders();
+    receipts.value = [];
+    receiptTotal.value = 0;
     return;
   }
-  orderLoading.value = true;
+  receiptLoading.value = true;
   try {
-    const res = await fetchEnrollmentOrders({
+    const res = await fetchReceipts({
       studentId: selectedStudent.value.id,
+      templateCode: receiptTemplateCodes[receiptType.value],
       pageNum: orderQuery.pageNum,
       pageSize: orderQuery.pageSize,
     });
-    const page = res.data.data;
-    orders.value = page.records ?? [];
-    orderTotal.value = page.total ?? 0;
+    receipts.value = res.data.data.records ?? [];
+    receiptTotal.value = res.data.data.total ?? 0;
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
   } finally {
-    orderLoading.value = false;
+    receiptLoading.value = false;
   }
+}
+
+function loadSelectedStudentRecords() {
+  return loadSelectedStudentReceipts();
+}
+
+function handleReceiptTypeChange() {
+  orderQuery.pageNum = 1;
+  loadSelectedStudentRecords();
 }
 
 function handleStudentSearch() {
@@ -234,7 +249,7 @@ function handleStudentPageChange(page: number) {
 
 function handleOrderPageChange(page: number) {
   orderQuery.pageNum = page;
-  loadSelectedStudentOrders();
+  loadSelectedStudentRecords();
 }
 
 function clearSelection() {
@@ -243,59 +258,56 @@ function clearSelection() {
 }
 
 function clearOrders() {
-  orders.value = [];
-  orderTotal.value = 0;
+  receipts.value = [];
+  receiptTotal.value = 0;
 }
 
-function openRegistration(row: EnrollmentOrderItem) {
-  router.push({ name: 'registration', query: { orderId: row.id } });
+const transactionReceiptTitle = computed(() =>
+  receiptType.value === 'refund' ? 'Refund Receipt' : 'Payment Receipt'
+);
+
+function openReceipt(row: ReceiptRecordItem) {
+  if (receiptType.value === 'registration') {
+    const orderId = receiptPayload(row).enrollmentOrderId || row.enrollmentOrderId;
+    router.push({ name: 'registration', query: { orderId: String(orderId) } });
+    return;
+  }
+  selectedTransactionReceipt.value = row;
+  transactionReceiptDialogVisible.value = true;
 }
 
-function printRegistration(row: EnrollmentOrderItem) {
-  router.push({ name: 'registration', query: { orderId: row.id, print: '1' } });
+function receiptPayload(row: ReceiptRecordItem) {
+  const payload = parseReceiptPayload(row.receiptPayload);
+  return {
+    enrollmentNo: String(payload.enrollmentNo ?? ''),
+    paymentAmount: Number(payload.paymentAmount ?? 0),
+    balanceAmount: Number(payload.balanceAmount ?? 0),
+  };
 }
 
-function courseCount(row: EnrollmentOrderItem) {
-  return row.items?.length || row.packageCount || (row.classId ? 1 : 0) || 1;
+function parseReceiptPayload(value: unknown): Record<string, unknown> {
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
 }
 
-function courseSummary(row: EnrollmentOrderItem) {
-  const summaries = (row.items ?? [])
-    .map((item) => item.detail || item.registerClass || item.courseType)
-    .filter(Boolean);
-  return summaries.length > 0 ? summaries.join(' / ') : row.className || row.courseProductName || '-';
-}
-
-function formatDate(value?: string) {
-  return value ? value.replace('T', ' ').slice(0, 10) : '-';
+function formatDateTime(value?: string) {
+  return value ? value.replace('T', ' ').slice(0, 16) : '-';
 }
 
 function formatMoney(value?: number) {
   return `$${Number(value ?? 0).toFixed(2)}`;
 }
 
-function paymentStatusLabel(status?: string) {
-  const labels: Record<string, string> = {
-    PAID: 'Paid',
-    PARTIAL: 'Partial',
-    UNPAID: 'Unpaid',
-    REFUNDED: 'Refunded',
-  };
-  return labels[status || ''] || status || '-';
-}
-
-function paymentStatusType(status?: string) {
-  if (status === 'PAID') {
-    return 'success';
-  }
-  if (status === 'PARTIAL') {
-    return 'warning';
-  }
-  if (status === 'REFUNDED') {
-    return 'info';
-  }
-  return 'danger';
-}
 </script>
 
 <style scoped>

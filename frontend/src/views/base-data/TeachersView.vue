@@ -74,10 +74,24 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" min-width="140" fixed="right">
+        <el-table-column label="Login access" min-width="170">
+          <template #default="{ row }">
+            <div class="cell-stack">
+              <strong>{{ accountForTeacher(row)?.username || 'No login' }}</strong>
+              <el-tag size="small" :type="accountForTeacher(row)?.status === 'ACTIVE' ? 'success' : 'info'">
+                {{ accountForTeacher(row) ? accountStatusLabel(accountForTeacher(row)!.status) : 'Not enabled' }}
+              </el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Actions" min-width="220" fixed="right">
           <template #default="{ row }">
             <div class="table-actions">
+              <el-button text type="primary" @click="openTeacherAccountDialog(row)">
+                {{ accountForTeacher(row) ? 'Edit login' : 'Create login' }}
+              </el-button>
               <el-button text type="primary" @click="openTeacherDialog(row)">Edit</el-button>
+              <el-button text type="danger" @click="handleDeleteTeacher(row)">Delete</el-button>
             </div>
           </template>
         </el-table-column>
@@ -156,6 +170,116 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="teacherAccountDialogVisible"
+      width="480px"
+      :close-on-click-modal="false"
+      class="teacher-dialog"
+    >
+      <template #header>
+        <h3>{{ teacherAccountMode === 'create' ? 'Create teacher login' : 'Edit teacher login' }}</h3>
+      </template>
+
+      <div v-if="teacherAccountTarget" class="payment-detail">
+        <div class="metric-grid">
+          <div>
+            <label>Teacher</label>
+            <strong>{{ teacherAccountTarget.teacherName }}</strong>
+          </div>
+          <div>
+            <label>Teacher no.</label>
+            <strong>{{ teacherAccountTarget.teacherNo }}</strong>
+          </div>
+        </div>
+        <el-form label-position="top" class="teacher-form">
+          <el-form-item label="Username">
+            <el-input v-model="teacherAccountForm.username" placeholder="Login username" />
+          </el-form-item>
+          <el-form-item label="Display name">
+            <el-input v-model="teacherAccountForm.displayName" placeholder="Defaults to teacher name" />
+          </el-form-item>
+          <el-form-item label="Email">
+            <el-input v-model="teacherAccountForm.email" placeholder="Login email" />
+          </el-form-item>
+          <el-form-item label="Status">
+            <el-select v-model="teacherAccountForm.status" style="width: 100%;">
+              <el-option label="Active" value="ACTIVE" />
+              <el-option label="Inactive" value="INACTIVE" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="teacherAccountMode === 'create' ? 'Initial password' : 'New password'">
+            <el-input
+              v-model="teacherAccountForm.password"
+              type="password"
+              :placeholder="teacherAccountMode === 'create' ? 'Min 8 characters' : 'Leave blank to keep current'"
+              show-password
+            />
+          </el-form-item>
+          <el-form-item label="Confirm password">
+            <el-input v-model="teacherAccountForm.confirmPassword" type="password" placeholder="Re-enter password" show-password />
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="teacherAccountDialogVisible = false">Cancel</el-button>
+          <el-button type="primary" :loading="teacherAccountSaving" @click="submitTeacherAccount">Save</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-if="deleteDialogVisible"
+      v-model="deleteDialogVisible"
+      width="520px"
+      :close-on-click-modal="false"
+      class="teacher-dialog"
+      @close="resetDeleteDialog"
+    >
+      <template #header>
+        <h3>Delete teacher</h3>
+      </template>
+
+      <div v-if="deleteTarget" class="delete-confirm">
+        <p class="delete-warning-text">
+          This action is only for mistaken teacher profiles. The system will remove login access, unassign active
+          teaching links, and cancel future schedules. Use Inactive when you need to preserve operations.
+        </p>
+        <div class="metric-grid">
+          <div>
+            <label>Teacher</label>
+            <strong>{{ deleteTarget.teacherName }}</strong>
+          </div>
+          <div>
+            <label>Managed courses</label>
+            <strong>{{ deleteManagedCourseCountLabel }}</strong>
+          </div>
+          <div>
+            <label>Login access</label>
+            <strong>{{ accountForTeacher(deleteTarget) ? 'Enabled' : 'No login' }}</strong>
+          </div>
+        </div>
+        <p v-if="deleteConfirmRemaining > 0" class="delete-cooldown">
+          Please wait {{ deleteConfirmRemaining }} second(s) before confirming.
+        </p>
+      </div>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="closeDeleteDialog">Cancel</el-button>
+          <el-button
+            type="danger"
+            :disabled="deleteConfirmRemaining > 0"
+            :loading="deletingTeacher"
+            @click="confirmDeleteTeacher"
+          >
+            {{ deleteConfirmRemaining > 0 ? `Delete (${deleteConfirmRemaining}s)` : 'Delete teacher' }}
+          </el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <!-- Deleted Teachers Dialog -->
     <el-dialog
       v-model="deletedDialogVisible"
@@ -190,17 +314,27 @@
 <script setup lang="ts">
 import { Delete } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import { reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
+import {
+  createTeacherAccount,
+  fetchTeacherAccounts,
+  updateTeacherAccount,
+  type AccountUpdatePayload,
+  type TeacherAccountCreatePayload,
+} from '@/api/auth';
 import {
   fetchAllTeachers,
   fetchDeletedTeachers,
   fetchTeachers,
+  deleteTeacher,
   updateTeacher,
   type TeacherQuery,
   type TeacherSavePayload,
 } from '@/api/base-data';
-import type { TeacherItem } from '@/types/domain';
+import { extractErrorMessage } from '@/api/http';
+import { fetchClassGroupsByTeacher } from '@/api/schedule';
+import type { TeacherAccountItem, TeacherItem } from '@/types/domain';
 
 const loading = ref(false);
 const submitting = ref(false);
@@ -228,6 +362,30 @@ const pagination = reactive({
 });
 
 const tableData = ref<TeacherItem[]>([]);
+const teacherAccounts = ref<TeacherAccountItem[]>([]);
+const teacherAccountDialogVisible = ref(false);
+const teacherAccountSaving = ref(false);
+const teacherAccountMode = ref<'create' | 'edit'>('create');
+const teacherAccountTarget = ref<TeacherItem | null>(null);
+const editingTeacherAccount = ref<TeacherAccountItem | null>(null);
+const teacherAccountForm = reactive({
+  username: '',
+  displayName: '',
+  email: '',
+  status: 'ACTIVE',
+  password: '',
+  confirmPassword: '',
+});
+
+const DELETE_COOLDOWN_SECONDS = 10;
+const deleteDialogVisible = ref(false);
+const deleteTarget = ref<TeacherItem | null>(null);
+const deleteConfirmRemaining = ref(DELETE_COOLDOWN_SECONDS);
+const deletingTeacher = ref(false);
+const deleteManagedCourseCount = ref<number | null>(null);
+let deleteCooldownTimer: number | undefined;
+let deleteCooldownReleaseTimer: number | undefined;
+let deleteCooldownDeadline = 0;
 
 function handleFilterChange() {
   pagination.page = 1;
@@ -248,10 +406,104 @@ async function loadData() {
     const data = res.data.data;
     tableData.value = data.records;
     pagination.total = data.total;
+    await loadTeacherAccounts();
   } catch {
     ElMessage.error('Failed to load teachers.');
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadTeacherAccounts() {
+  try {
+    const res = await fetchTeacherAccounts({ pageSize: 500 });
+    teacherAccounts.value = res.data.data.records ?? [];
+  } catch {
+    teacherAccounts.value = [];
+  }
+}
+
+function accountForTeacher(row: TeacherItem) {
+  return teacherAccounts.value.find((account) => String(account.teacherId) === String(row.id));
+}
+
+function accountStatusLabel(status?: string) {
+  return status === 'ACTIVE' ? 'Active' : 'Inactive';
+}
+
+function openTeacherAccountDialog(row: TeacherItem) {
+  const account = accountForTeacher(row);
+  teacherAccountTarget.value = row;
+  editingTeacherAccount.value = account ?? null;
+  teacherAccountMode.value = account ? 'edit' : 'create';
+  Object.assign(teacherAccountForm, {
+    username: account?.username ?? '',
+    displayName: account?.displayName ?? row.teacherName,
+    email: account?.email ?? row.email ?? '',
+    status: account?.status ?? 'ACTIVE',
+    password: '',
+    confirmPassword: '',
+  });
+  teacherAccountDialogVisible.value = true;
+}
+
+function validateTeacherAccountForm() {
+  if (!teacherAccountForm.username.trim()) {
+    ElMessage.warning('Username is required.');
+    return false;
+  }
+  if (teacherAccountMode.value === 'create' && teacherAccountForm.password.length < 8) {
+    ElMessage.warning('Password must be at least 8 characters.');
+    return false;
+  }
+  if (teacherAccountForm.password && teacherAccountForm.password.length < 8) {
+    ElMessage.warning('Password must be at least 8 characters.');
+    return false;
+  }
+  if (teacherAccountForm.password !== teacherAccountForm.confirmPassword) {
+    ElMessage.warning('Passwords do not match.');
+    return false;
+  }
+  return true;
+}
+
+async function submitTeacherAccount() {
+  if (!teacherAccountTarget.value || !validateTeacherAccountForm()) {
+    return;
+  }
+  teacherAccountSaving.value = true;
+  try {
+    if (teacherAccountMode.value === 'create') {
+      const payload: TeacherAccountCreatePayload = {
+        teacherId: teacherAccountTarget.value.id,
+        teacherName: teacherAccountTarget.value.teacherName,
+        username: teacherAccountForm.username.trim(),
+        password: teacherAccountForm.password,
+        displayName: teacherAccountForm.displayName.trim() || undefined,
+        mobile: teacherAccountTarget.value.mobile ?? undefined,
+        email: teacherAccountForm.email.trim() || undefined,
+        subjectTags: teacherAccountTarget.value.subjectTags ?? undefined,
+        status: teacherAccountForm.status,
+      };
+      await createTeacherAccount(payload);
+      ElMessage.success('Teacher login created.');
+    } else if (editingTeacherAccount.value) {
+      const payload: AccountUpdatePayload = {
+        username: teacherAccountForm.username.trim(),
+        displayName: teacherAccountForm.displayName.trim() || undefined,
+        email: teacherAccountForm.email.trim() || undefined,
+        status: teacherAccountForm.status,
+        password: teacherAccountForm.password || undefined,
+      };
+      await updateTeacherAccount(editingTeacherAccount.value.userId, payload);
+      ElMessage.success('Teacher login updated.');
+    }
+    teacherAccountDialogVisible.value = false;
+    await loadTeacherAccounts();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    teacherAccountSaving.value = false;
   }
 }
 
@@ -318,6 +570,81 @@ async function handleTeacherSubmit() {
   }
 }
 
+async function handleDeleteTeacher(row: TeacherItem) {
+  deleteTarget.value = row;
+  deleteManagedCourseCount.value = null;
+  deleteDialogVisible.value = true;
+  startDeleteCooldown();
+  try {
+    const response = await fetchClassGroupsByTeacher(row.id);
+    deleteManagedCourseCount.value = response.data.data?.length ?? 0;
+  } catch {
+    deleteManagedCourseCount.value = null;
+  }
+}
+
+const deleteManagedCourseCountLabel = computed(() =>
+  deleteManagedCourseCount.value == null ? 'Loading...' : deleteManagedCourseCount.value
+);
+
+function startDeleteCooldown() {
+  clearDeleteCooldown();
+  deleteCooldownDeadline = Date.now() + DELETE_COOLDOWN_SECONDS * 1000;
+  deleteCooldownTimer = window.setInterval(() => {
+    deleteConfirmRemaining.value = Math.max(0, Math.ceil((deleteCooldownDeadline - Date.now()) / 1000));
+    if (deleteConfirmRemaining.value === 0) {
+      clearDeleteCooldown();
+    }
+  }, 250);
+  deleteCooldownReleaseTimer = window.setTimeout(() => {
+    deleteConfirmRemaining.value = 0;
+    clearDeleteCooldown();
+  }, DELETE_COOLDOWN_SECONDS * 1000);
+  deleteConfirmRemaining.value = DELETE_COOLDOWN_SECONDS;
+}
+
+function clearDeleteCooldown() {
+  if (deleteCooldownTimer != null) {
+    window.clearInterval(deleteCooldownTimer);
+    deleteCooldownTimer = undefined;
+  }
+  if (deleteCooldownReleaseTimer != null) {
+    window.clearTimeout(deleteCooldownReleaseTimer);
+    deleteCooldownReleaseTimer = undefined;
+  }
+  deleteCooldownDeadline = 0;
+}
+
+function resetDeleteDialog() {
+  clearDeleteCooldown();
+  deleteTarget.value = null;
+  deleteManagedCourseCount.value = null;
+  deleteConfirmRemaining.value = DELETE_COOLDOWN_SECONDS;
+  deletingTeacher.value = false;
+}
+
+function closeDeleteDialog() {
+  deleteDialogVisible.value = false;
+  resetDeleteDialog();
+}
+
+async function confirmDeleteTeacher() {
+  if (!deleteTarget.value || deleteConfirmRemaining.value > 0) {
+    return;
+  }
+  deletingTeacher.value = true;
+  try {
+    await deleteTeacher(deleteTarget.value.id);
+    ElMessage.success('Teacher deleted.');
+    closeDeleteDialog();
+    await loadData();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    deletingTeacher.value = false;
+  }
+}
+
 // ─── Deleted Teachers Dialog ───────────────────────────
 const deletedDialogVisible = ref(false);
 const deletedLoading = ref(false);
@@ -339,6 +666,10 @@ async function openDeletedDialog() {
 
 
 loadData();
+
+onBeforeUnmount(() => {
+  clearDeleteCooldown();
+});
 </script>
 
 <style scoped>
@@ -435,6 +766,29 @@ loadData();
   margin: 0 0 12px;
   font-size: 12px;
   color: #909399;
+}
+
+.delete-confirm {
+  display: grid;
+  gap: 14px;
+}
+
+.delete-warning-text {
+  margin: 0;
+  border: 1px solid #f5c2c7;
+  border-radius: 6px;
+  background: #fff5f5;
+  padding: 10px 12px;
+  color: #b42318;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.delete-cooldown {
+  margin: 0;
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 /* Teacher dialog */

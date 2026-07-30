@@ -37,7 +37,7 @@ test.describe.serial('Acceptance - Registration intake', () => {
     expect((await pricesLoaded).ok(), 'registration should load active course price options').toBeTruthy();
 
     await page.getByRole('button', { name: 'Save' }).click();
-    await expect(page.locator('.validation-list li').filter({ hasText: 'Select one campus before submitting.' })).toBeVisible();
+    await expect(page.locator('.validation-list li').filter({ hasText: 'First name and last name are required.' })).toBeVisible();
 
     const result = await apiPost<Record<string, any>>(request, token, '/v1/registration/intake', {
       student: {

@@ -1,10 +1,13 @@
 package com.classdeduction.system.modules.enrollment.controller;
 
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
+import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.PaymentRecordSaveRequest;
 import com.classdeduction.system.modules.enrollment.service.PaymentRecordService;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
+import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -45,10 +48,12 @@ public class PaymentRecordController {
     }
 
     @PostMapping
-    @Operation(summary = "创建支付记录（支持组合支付）并更新报名订单")
-    public ApiResponse<Void> createPaymentRecord(@Valid @RequestBody PaymentRecordSaveRequest request) {
-        paymentRecordService.createPaymentRecord(request);
-        return ApiResponse.success("Payment recorded successfully.", null);
+    @Operation(summary = "创建支付记录（支持组合支付）、更新报名订单并生成付款收据")
+    public ApiResponse<ReceiptRecordVO> createPaymentRecord(
+            @Valid @RequestBody PaymentRecordSaveRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        request.setHandledByUserId(currentUser.userId());
+        return ApiResponse.success("Payment recorded successfully.", paymentRecordService.createPaymentRecord(request));
     }
 
     @GetMapping("/package/{packageId}/balance")

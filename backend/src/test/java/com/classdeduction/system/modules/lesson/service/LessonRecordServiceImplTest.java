@@ -211,12 +211,13 @@ class LessonRecordServiceImplTest {
         when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(lessonRecordMapper.update(any(LessonRecordEntity.class), any())).thenReturn(1);
         when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
         stubLedgerInsertedId(3001L);
 
         LessonRecordConfirmResultVO result = lessonRecordService.adminConfirmLesson(2001L, currentAdminUser());
 
-        verify(lessonRecordMapper, org.mockito.Mockito.atLeastOnce()).updateById(recordCaptor.capture());
+        verify(lessonRecordMapper).update(recordCaptor.capture(), any());
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
         verify(coursePackageMapper).updateById(packageCaptor.capture());
         verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
@@ -227,6 +228,26 @@ class LessonRecordServiceImplTest {
         assertThat(packageCaptor.getValue().getRemainingUnits()).isEqualTo(6);
         assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("MERGED");
         assertThat(result.ledgerId()).isEqualTo(3001L);
+    }
+
+    @Test
+    void shouldRejectStaleAdminFinalConfirmBeforeWritingLedger() {
+        LessonRecordEntity pendingRecord = buildPendingRecord();
+        when(lessonRecordMapper.selectById(2001L)).thenReturn(pendingRecord);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(lessonRecordMapper.update(any(LessonRecordEntity.class), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> lessonRecordService.adminConfirmLesson(2001L, currentAdminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("INVALID_CONFIRM_STAGE");
+
+        verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
     }
 
     @Test
@@ -254,12 +275,13 @@ class LessonRecordServiceImplTest {
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(buildFutureOccurrence(2001L, LocalDate.of(2026, 4, 20), 4)));
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(lessonRecordMapper.update(any(LessonRecordEntity.class), any())).thenReturn(1);
         when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
         stubLedgerInsertedId(3001L);
 
         LessonRecordConfirmResultVO result = lessonRecordService.adminConfirmLesson(2001L, reviewRequest, currentAdminUser());
 
-        verify(lessonRecordMapper, org.mockito.Mockito.atLeastOnce()).updateById(recordCaptor.capture());
+        verify(lessonRecordMapper).update(recordCaptor.capture(), any());
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
         verify(coursePackageMapper, org.mockito.Mockito.atLeastOnce()).updateById(packageCaptor.capture());
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
@@ -328,6 +350,7 @@ class LessonRecordServiceImplTest {
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(future));
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(lessonRecordMapper.update(any(LessonRecordEntity.class), any())).thenReturn(1);
         when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
         stubLedgerInsertedId(3001L);
 
@@ -475,6 +498,34 @@ class LessonRecordServiceImplTest {
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
         assertThat(recordCaptor.getValue().getActualUnits()).isZero();
         assertThat(recordCaptor.getValue().getDeductedUnits()).isEqualTo(4);
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(-4);
+        assertThat(result.remainingUnits()).isEqualTo(3.0);
+    }
+
+    @Test
+    void shouldDeductPlannedHoursForCancellationWithoutCreatingMakeup() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("CANCELLED");
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCancelledRule());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        stubInsertedIds();
+
+        LessonRecordConfirmResultVO result = lessonRecordService.confirmLesson(request, currentAdminUser());
+
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        verify(hourLedgerMapper).insert(ledgerCaptor.capture());
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+        assertThat(recordCaptor.getValue().getActualUnits()).isZero();
+        assertThat(recordCaptor.getValue().getDeductedUnits()).isEqualTo(4);
+        assertThat(recordCaptor.getValue().getShouldExtendEndDate()).isZero();
         assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(-4);
         assertThat(result.remainingUnits()).isEqualTo(3.0);
     }
@@ -871,6 +922,19 @@ class LessonRecordServiceImplTest {
         rule.setDefaultShouldDeduct(0);
         rule.setDeductMode("NONE");
         rule.setDefaultShouldExtend(1);
+        rule.setAllowManualOverride(0);
+        rule.setStatus("ACTIVE");
+        return rule;
+    }
+
+    private LessonStatusRuleEntity buildCancelledRule() {
+        LessonStatusRuleEntity rule = new LessonStatusRuleEntity();
+        rule.setId(4L);
+        rule.setStatusCode("CANCELLED");
+        rule.setStatusName("Cancelled");
+        rule.setDefaultShouldDeduct(1);
+        rule.setDeductMode("PLANNED_UNITS");
+        rule.setDefaultShouldExtend(0);
         rule.setAllowManualOverride(0);
         rule.setStatus("ACTIVE");
         return rule;

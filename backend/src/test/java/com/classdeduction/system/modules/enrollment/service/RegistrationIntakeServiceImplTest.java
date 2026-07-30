@@ -148,6 +148,9 @@ class RegistrationIntakeServiceImplTest {
     private ArgumentCaptor<EnrollmentOrderItemEntity> orderItemCaptor;
 
     @Captor
+    private ArgumentCaptor<EnrollmentOrderEntity> enrollmentOrderCaptor;
+
+    @Captor
     private ArgumentCaptor<UserAccountEntity> userAccountCaptor;
 
     private RegistrationIntakeServiceImpl registrationIntakeService;
@@ -311,6 +314,23 @@ class RegistrationIntakeServiceImplTest {
         assertThat(orderItemCaptor.getValue().getOriginalPriceAmount()).isEqualByComparingTo("0.00");
         assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("850.00");
         assertThat(orderItemCaptor.getValue().getManualPriceOverride()).isTrue();
+    }
+
+    @Test
+    void shouldNotChargePickupFeeUnlessThisRegistrationExplicitlyChargesIt() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getStudent().setPickupRequired(true);
+        request.getStudent().setPickupAddress("Main St");
+        request.setPickupFeeAmount(new BigDecimal("50.00"));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderMapper).insert(enrollmentOrderCaptor.capture());
+        assertThat(enrollmentOrderCaptor.getValue().getPickupRequiredSnapshot()).isTrue();
+        assertThat(enrollmentOrderCaptor.getValue().getPickupFeeAmount()).isEqualByComparingTo("0.00");
+        assertThat(enrollmentOrderCaptor.getValue().getOriginalAmount()).isEqualByComparingTo("800.00");
+        assertThat(enrollmentOrderCaptor.getValue().getAmountDue()).isEqualByComparingTo("800.00");
     }
 
     @Test

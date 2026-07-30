@@ -131,20 +131,21 @@
                       </el-tag>
                     </el-tooltip>
                     <el-tag v-else-if="occ.planningStatus === 'CANCELLED'" size="small" type="danger">Cancelled</el-tag>
-                    <el-tag v-else size="small" type="warning">Pending</el-tag>
+                    <el-tooltip v-else :content="unconfirmedStatusHint(occ)" placement="top" :show-after="300">
+                      <el-tag size="small" :type="unconfirmedStatusTag(occ)">
+                        {{ unconfirmedStatusLabel(occ) }}
+                      </el-tag>
+                    </el-tooltip>
                   </div>
 
                   <div class="pkg-occ__actions">
-                    <el-tooltip
-                      v-if="canAdminReviewOccurrence(occ)"
-                      :content="adminConfirmTooltip(occ)"
-                      placement="top"
-                    >
-                      <el-button
-                        type="warning" size="small"
-                        @click="openAdminConfirmDialog(occ)"
-                      >Admin Confirm</el-button>
-                    </el-tooltip>
+                    <div v-if="canAdminReviewOccurrence(occ)" class="admin-review-action">
+                      <el-tooltip :content="adminConfirmTooltip(occ)" placement="top">
+                        <el-button :type="adminReviewButtonType(occ)" size="small" @click="openAdminConfirmDialog(occ)">
+                          {{ adminReviewButtonLabel }}
+                        </el-button>
+                      </el-tooltip>
+                    </div>
                     <el-button
                       v-if="canAdminRejectOccurrence(occ)"
                       type="danger" size="small" plain
@@ -158,17 +159,12 @@
                       v-if="canOpenNormalConfirm(occ)"
                       type="success" size="small" plain
                       @click="openConfirmDialog(occ)"
-                    >{{ isRejected(occ) ? 'Confirm Again' : (isTeacherRole ? 'Teacher Confirm' : 'Confirm') }}</el-button>
+                    >{{ isRejected(occ) ? 'Confirm Again' : 'Submit attendance' }}</el-button>
                     <el-button
                       v-if="occ.resultStatus && !isRejected(occ)"
                       size="small" plain
                       @click="openDetailDialog(occ)"
                     >Detail</el-button>
-                    <el-button
-                      v-if="occ.resultStatus === 'CANCELLED'"
-                      size="small" plain
-                      @click="openMakeupDialog(occ)"
-                    >Makeup</el-button>
                   </div>
                 </div>
 
@@ -253,7 +249,21 @@
               </el-button>
             </div>
             <el-table :data="enrolledStudents" v-loading="classStudentsLoading" size="small" max-height="220" stripe>
-              <el-table-column label="Student" prop="studentName" min-width="120" />
+              <el-table-column label="Student" min-width="130">
+                <template #default="{ row }">
+                  <el-button class="student-link" text type="primary" @click.stop="openStudentProfile(row)">
+                    {{ row.studentName }}
+                  </el-button>
+                </template>
+              </el-table-column>
+              <el-table-column label="Sessions" min-width="130">
+                <template #default="{ row }">
+                  <div class="session-balance">
+                    <strong>{{ formatClassSessionBalance(row) }}</strong>
+                    <span>{{ classSessionBalanceHint(row) }}</span>
+                  </div>
+                </template>
+              </el-table-column>
               <el-table-column label="Enrolled" prop="enrollmentDate" min-width="100" sortable>
                 <template #default="{ row }">{{ formatDateShort(row.enrollmentDate) }}</template>
               </el-table-column>
@@ -282,78 +292,90 @@
             <div v-if="classOccurrences.length === 0 && !occurrencesLoading" class="class-empty">
               No occurrences for this class.
             </div>
-            <div v-loading="occurrencesLoading" class="class-occ-list">
-              <div v-for="occ in classOccurrences" :key="occ.id" class="pkg-occ-row" :class="dayMarkerClass(occ.plannedStartAt)">
-                <div class="pkg-occ__marker">
-                  <el-tag v-if="isToday(occ.plannedStartAt)" size="small" type="success" effect="dark">today</el-tag>
-                  <el-tag v-else-if="isPast(occ.plannedStartAt)" size="small" type="info">prev</el-tag>
-                  <el-tag v-else size="small">next</el-tag>
-                </div>
-                <div class="pkg-occ__time">
-                  <div class="pkg-occ__date">{{ formatDate(occ.plannedStartAt) }}</div>
-                  <div class="pkg-occ__range">{{ formatTimeRange(occ.plannedStartAt, occ.plannedEndAt) }}</div>
-                </div>
-                <el-tooltip :content="occ.plannedTeacherName || 'No teacher assigned'" placement="top" :show-after="300">
-                  <div class="pkg-occ__teacher">{{ occ.plannedTeacherName || '—' }}</div>
-                </el-tooltip>
-                <el-tooltip :content="occ.plannedClassroomName || 'No classroom assigned'" placement="top" :show-after="300">
-                  <div class="pkg-occ__room">{{ occ.plannedClassroomName || '—' }}</div>
-                </el-tooltip>
-                <div class="pkg-occ__hours">{{ (occ.plannedUnits * 0.5).toFixed(1) }}h</div>
-                <div class="pkg-occ__status">
-                  <el-tag v-if="isPendingAdmin(occ)" size="small" type="warning">
-                    Pending Admin Review
-                  </el-tag>
-                  <el-tooltip
-                    v-else-if="isRejected(occ)"
-                    :content="occ.rejectReason ? `Reason: ${occ.rejectReason}` : 'Admin rejected this confirmation. Teacher can submit again.'"
-                    placement="top"
-                  >
-                    <el-tag size="small" type="danger">Rejected - Teacher Action Required</el-tag>
-                  </el-tooltip>
-                  <el-tooltip v-else-if="occ.resultStatus" :content="resultStatusLabel(occ.resultStatus)" placement="top" :show-after="300">
-                    <el-tag size="small" :type="resultStatusTag(occ.resultStatus)">
-                      {{ resultStatusLabel(occ.resultStatus) }}
+            <el-table
+              v-loading="occurrencesLoading"
+              :data="classOccurrences"
+              :max-height="520"
+              border
+              stripe
+              size="small"
+              class="class-occ-table sheet-table"
+              :row-class-name="classOccurrenceRowClassName"
+            >
+              <el-table-column label="Lesson details" min-width="220" align="center" header-align="center">
+                <template #default="{ row }">
+                  <div class="class-lesson-main">
+                    <strong>{{ formatDate(row.plannedStartAt) }}</strong>
+                    <span>{{ formatTimeRange(row.plannedStartAt, row.plannedEndAt) }}</span>
+                    <el-tag class="status-pill" size="small" :type="classOccurrenceStatusTag(row)">
+                      {{ classOccurrenceStatusLabel(row) }}
                     </el-tag>
-                  </el-tooltip>
-                  <el-tag v-else-if="occ.planningStatus === 'CANCELLED'" size="small" type="danger">Cancelled</el-tag>
-                  <el-tag v-else size="small" type="warning">Pending</el-tag>
-                </div>
-                <div class="pkg-occ__actions">
-                  <el-button
-                    v-if="canAdjustClassOccurrence(occ)"
-                    type="primary"
-                    size="small"
-                    plain
-                    @click="openClassAdjustDialog(occ)"
-                  >Adjust</el-button>
-                  <el-tooltip
-                    v-if="canAdminReviewOccurrence(occ)"
-                    :content="adminConfirmTooltip(occ)"
-                    placement="top"
-                  >
+                    <span>Teacher: {{ displayResourceName(row.plannedTeacherName) }}</span>
+                    <span>Room: {{ displayResourceName(row.plannedClassroomName) }}</span>
+                    <span>Hours: {{ (row.plannedUnits * 0.5).toFixed(1) }}h</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="Action"
+                width="250"
+                fixed="right"
+                class-name="no-print"
+                align="center"
+                header-align="center"
+              >
+                <template #default="{ row }">
+                  <div class="class-action-cell">
                     <el-button
-                      type="warning" size="small"
-                      @click="openAdminConfirmDialog(occ)"
-                    >Admin Confirm</el-button>
-                  </el-tooltip>
-                  <el-button
-                    v-if="canAdminRejectOccurrence(occ)"
-                    type="danger" size="small" plain
-                    @click="openRejectDialog(occ)"
-                  >Reject</el-button>
-                  <el-button
-                    v-if="isTeacherRole && isPendingAdmin(occ)"
-                    type="warning" size="small" plain disabled
-                  >Pending Admin Review</el-button>
-                  <el-button
-                    v-if="canOpenNormalConfirm(occ)"
-                    type="success" size="small" plain
-                    @click="openClassConfirmDialog(occ)"
-                  >{{ isRejected(occ) ? 'Confirm Again' : (isTeacherRole ? 'Teacher Confirm' : 'Confirm') }}</el-button>
-                </div>
-              </div>
-            </div>
+                      v-if="canAdjustClassOccurrence(row)"
+                      size="small"
+                      plain
+                      @click="openClassAdjustDialog(row)"
+                    >
+                      Adjust
+                    </el-button>
+                    <el-tooltip v-if="canAdminReviewOccurrence(row)" :content="adminConfirmTooltip(row)" placement="top">
+                      <el-button
+                        class="action-primary"
+                        :type="adminReviewButtonType(row)"
+                        size="small"
+                        @click="openAdminConfirmDialog(row)"
+                      >
+                        {{ adminReviewButtonLabel }}
+                      </el-button>
+                    </el-tooltip>
+                    <el-button
+                      v-if="canAdminRejectOccurrence(row)"
+                      type="danger"
+                      size="small"
+                      plain
+                      @click="openRejectDialog(row)"
+                    >
+                      Reject
+                    </el-button>
+                    <el-button
+                      v-if="isTeacherRole && isPendingAdmin(row)"
+                      type="warning"
+                      size="small"
+                      plain
+                      disabled
+                    >
+                      Pending Admin Review
+                    </el-button>
+                    <el-button
+                      v-if="canOpenNormalConfirm(row)"
+                      class="action-primary"
+                      type="success"
+                      size="small"
+                      plain
+                      @click="openClassConfirmDialog(row)"
+                    >
+                      {{ isRejected(row) ? 'Confirm Again' : 'Submit attendance' }}
+                    </el-button>
+                  </div>
+                </template>
+              </el-table-column>
+            </el-table>
           </div>
         </div>
       </main>
@@ -449,7 +471,7 @@
     <!-- ====== Confirm Dialog ====== -->
     <el-dialog
       v-model="confirmDialogVisible"
-      :title="`Confirm Lesson — ${selectedOcc?.lessonNo}`"
+      :title="confirmDialogTitle"
       width="620px"
       :close-on-click-modal="false"
       class="adj-dialog"
@@ -458,16 +480,18 @@
       <el-form ref="confirmFormRef" :model="confirmForm" :rules="confirmFormRules" label-width="160px">
         <el-alert
           v-if="showAdminDirectConfirmWarning"
-          title="Teacher has not submitted attendance for this lesson. If you continue, admin will finally confirm and deduct it directly."
-          type="warning"
+          :title="adminDirectConfirmWarningTitle"
+          type="error"
           :closable="false"
           show-icon
+          class="admin-direct-alert"
         />
         <el-form-item label="Result Status" prop="resultStatus">
           <el-select v-model="confirmForm.resultStatus" placeholder="Select status" style="width: 100%;">
             <el-option label="Completed" value="COMPLETED" />
-            <el-option label="Formal Leave" value="FORMAL_LEAVE" />
-            <el-option label="No Show" value="NO_SHOW" />
+            <el-option v-if="!classConfirmMode" label="Formal Leave" value="FORMAL_LEAVE" />
+            <el-option v-if="!classConfirmMode" label="No Show" value="NO_SHOW" />
+            <el-option v-if="isNonTeacherRole" label="Cancelled" value="CANCELLED" />
           </el-select>
         </el-form-item>
         <el-form-item label="Actual Teacher" prop="actualTeacherId">
@@ -480,7 +504,7 @@
             <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Actual Start Time">
+        <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Actual Start Time">
           <el-date-picker
             v-model="confirmForm.actualStartAt"
             type="datetime"
@@ -490,10 +514,10 @@
             style="width: 100%;"
           />
         </el-form-item>
-        <el-form-item label="Actual End Time">
+        <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Actual End Time">
           <div class="end-time-display">{{ computedEndTime || '—' }}</div>
         </el-form-item>
-        <el-form-item label="Hours">
+        <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Hours">
           <div class="units-input-row">
             <el-input-number
               v-model="confirmForm.actualHours"
@@ -507,7 +531,7 @@
           </div>
           <div v-else class="form-hint">0.5h increments</div>
         </el-form-item>
-        <el-form-item v-if="confirmForm.resultStatus !== 'FORMAL_LEAVE'" label="Deduction Preview">
+        <el-form-item label="Business Effect">
           <el-alert :title="deductionPreview" type="info" :closable="false" show-icon />
         </el-form-item>
         <el-form-item label="Notes">
@@ -516,7 +540,7 @@
       </el-form>
       <template #footer>
         <el-button @click="confirmDialogVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitConfirm">Confirm</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitConfirm">{{ confirmDialogSubmitLabel }}</el-button>
       </template>
     </el-dialog>
 
@@ -588,41 +612,6 @@
       </template>
     </el-dialog>
 
-    <!-- ====== Makeup Dialog ====== -->
-    <el-dialog
-      v-model="makeupDialogVisible"
-      :title="`Create Makeup — ${selectedOcc?.lessonNo}`"
-      width="520px"
-      :close-on-click-modal="false"
-      class="adj-dialog"
-    >
-      <p class="makeup-hint">Create a makeup lesson to replace the cancelled lesson.</p>
-      <el-form ref="makeupFormRef" :model="makeupForm" :rules="makeupFormRules" label-width="140px">
-        <el-form-item label="New Teacher">
-          <el-select v-model="makeupForm.plannedTeacherId" placeholder="Select teacher (optional)" clearable filterable style="width: 100%;">
-            <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="New Classroom">
-          <el-select v-model="makeupForm.plannedClassroomId" placeholder="Select classroom (optional)" clearable filterable style="width: 100%;">
-            <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Start Time" prop="plannedStartAt">
-          <el-date-picker v-model="makeupForm.plannedStartAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="Select start time" style="width: 100%;" :disabled-date="disabledPastDatetime" />
-        </el-form-item>
-        <el-form-item label="End Time" prop="plannedEndAt">
-          <el-date-picker v-model="makeupForm.plannedEndAt" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="Select end time" style="width: 100%;" :disabled-date="disabledPastDatetime" />
-        </el-form-item>
-        <el-form-item label="Reason">
-          <el-input v-model="makeupForm.reason" type="textarea" :rows="2" placeholder="Optional reason" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="makeupDialogVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitMakeup">Create Makeup</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -640,7 +629,7 @@ import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fet
 import { fetchCoursePackages } from '@/api/enrollment';
 import { adminConfirmLessonRecord, confirmLesson, fetchLessonRecords, rejectLessonRecord, type LessonConfirmPayload } from '@/api/lesson';
 import { useAuthStore } from '@/stores/auth';
-import { isTeacherUser } from '@/types/auth';
+import { isAdminOrStaffUser, isTeacherUser } from '@/types/auth';
 import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem, LessonRecordItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
@@ -708,18 +697,16 @@ const confirmDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
 const detailLoading = ref(false);
 const detailData = ref<LessonOccurrenceItem | null>(null);
-const makeupDialogVisible = ref(false);
 const rejectDialogVisible = ref(false);
 const classScheduleDialogVisible = ref(false);
 const classAdjustDialogVisible = ref(false);
 const confirmFormRef = ref<FormInstance>();
 const rejectFormRef = ref<FormInstance>();
-const makeupFormRef = ref<FormInstance>();
 const classScheduleFormRef = ref<FormInstance>();
 const classAdjustFormRef = ref<FormInstance>();
 
 const isTeacherRole = computed(() => isTeacherUser(authStore.currentUser));
-const isAdminRole = computed(() => Boolean(authStore.currentUser?.userType === 'ADMIN' || (authStore.currentUser?.roleCodes ?? []).includes('ADMIN')));
+const isAdminRole = computed(() => isAdminOrStaffUser(authStore.currentUser));
 const isNonTeacherRole = computed(() => !isTeacherRole.value);
 
 
@@ -780,7 +767,7 @@ function isAwaitingTeacherConfirmation(occ: ConfirmableOccurrence): boolean {
 
 function adminConfirmTooltip(occ: ConfirmableOccurrence): string {
   return isAwaitingTeacherConfirmation(occ)
-    ? 'Teacher has not confirmed. Admin can confirm directly.'
+    ? 'Admin can confirm this lesson directly.'
     : 'Teacher confirmed. Pending admin review.';
 }
 
@@ -978,6 +965,33 @@ function filterExpiryStatus(value: string, row: ClassEnrolledStudentItem): boole
   return row.expiryStatus === value;
 }
 
+function openStudentProfile(row: ClassEnrolledStudentItem) {
+  router.push({
+    name: 'admin-config-people',
+    query: { tab: 'students', studentId: row.studentId },
+  });
+}
+
+function formatClassSessionBalance(row: ClassEnrolledStudentItem): string {
+  if (row.billingType === 'MONTHLY') {
+    return 'Monthly';
+  }
+  if (row.billingType !== 'PER_SESSION' || row.remainingSessions == null || row.purchasedQuantity == null) {
+    return '—';
+  }
+  return `${row.remainingSessions} / ${row.purchasedQuantity} left`;
+}
+
+function classSessionBalanceHint(row: ClassEnrolledStudentItem): string {
+  if (row.billingType === 'MONTHLY') {
+    return row.purchasedQuantity ? `${row.purchasedQuantity} month(s)` : 'No session cap';
+  }
+  if (row.billingType !== 'PER_SESSION' || row.usedSessions == null) {
+    return 'Not tracked';
+  }
+  return `${row.usedSessions} used`;
+}
+
 async function selectClass(id: string | number) {
   const classKey = String(id);
   selectedClassId.value = classKey;
@@ -1125,6 +1139,54 @@ function resultStatusTag(status: string) {
 }
 function resultStatusLabel(status: string) {
   return { COMPLETED: 'Completed', FORMAL_LEAVE: 'Leave', NO_SHOW: 'No Show', CANCELLED: 'Cancelled' }[status] ?? status;
+}
+
+function unconfirmedStatusTag(occ: ConfirmableOccurrence) {
+  if (isPast(occ.plannedStartAt)) return 'danger';
+  if (isToday(occ.plannedStartAt)) return 'warning';
+  return 'info';
+}
+
+function unconfirmedStatusLabel(occ: ConfirmableOccurrence) {
+  if (isPast(occ.plannedStartAt)) return 'Past - Unconfirmed';
+  if (isToday(occ.plannedStartAt)) return 'Due Today';
+  return 'Scheduled';
+}
+
+function unconfirmedStatusHint(occ: ConfirmableOccurrence) {
+  if (isPast(occ.plannedStartAt)) return 'This lesson has passed but has not been confirmed.';
+  if (isToday(occ.plannedStartAt)) return 'This lesson is scheduled for today and still needs confirmation.';
+  return 'This future lesson is scheduled and not ready for confirmation yet.';
+}
+
+function adminReviewButtonType(occ: ConfirmableOccurrence) {
+  return isPendingAdmin(occ) ? 'success' : 'warning';
+}
+
+function classOccurrenceStatusTag(occ: ClassOccurrenceItem) {
+  if (isPendingAdmin(occ)) return 'warning';
+  if (isRejected(occ)) return 'danger';
+  if (occ.resultStatus) return resultStatusTag(occ.resultStatus);
+  if (occ.planningStatus === 'CANCELLED') return 'danger';
+  return unconfirmedStatusTag(occ);
+}
+
+function classOccurrenceStatusLabel(occ: ClassOccurrenceItem) {
+  if (isPendingAdmin(occ)) return 'Awaiting admin review';
+  if (isRejected(occ)) return 'Rejected';
+  if (occ.resultStatus) return resultStatusLabel(occ.resultStatus);
+  if (occ.planningStatus === 'CANCELLED') return 'Cancelled';
+  return unconfirmedStatusLabel(occ);
+}
+
+function classOccurrenceRowClassName({ row }: { row: ClassOccurrenceItem }) {
+  if (isToday(row.plannedStartAt)) return 'class-occ-row--today';
+  if (isPast(row.plannedStartAt)) return 'class-occ-row--past';
+  return '';
+}
+
+function displayResourceName(name?: string) {
+  return name?.trim() || 'Unassigned';
 }
 
 const classAdjustForm = reactive({
@@ -1302,10 +1364,40 @@ const showAdminDirectConfirmWarning = computed(() =>
   && Boolean(selectedOcc.value)
   && isAwaitingTeacherConfirmation(selectedOcc.value!)
 );
+const adminReviewButtonLabel = computed(() => 'Review & deduct');
+const adminDirectConfirmWarningTitle = computed(() =>
+  classConfirmMode.value
+    ? 'Teacher has not confirmed this lesson. Admin can still confirm this class lesson directly.'
+    : 'Teacher has not confirmed this lesson. Admin can still review and deduct directly.'
+);
+const confirmDialogTitle = computed(() => {
+  const action = confirmSubmitMode.value === 'admin-final' ? 'Review & Deduct Lesson' : 'Submit Attendance';
+  return `${action} — ${selectedOcc.value?.lessonNo ?? ''}`;
+});
+const confirmDialogSubmitLabel = computed(() =>
+  confirmSubmitMode.value === 'admin-final' ? adminReviewButtonLabel.value : 'Submit for review'
+);
+
+const selectedPlannedHours = computed(() =>
+  plannedHoursForReview.value ?? ((selectedOcc.value?.plannedUnits ?? 0) * 0.5)
+);
 
 const deductionPreview = computed(() => {
   const status = confirmForm.resultStatus;
-  if (status === 'FORMAL_LEAVE') return 'No hours will be deducted for this status.';
+  if (classConfirmMode.value) {
+    return status === 'CANCELLED'
+      ? 'The cancelled class lesson consumes one purchased session. No replacement session is created.'
+      : 'The class lesson consumes one purchased session. No replacement session is created.';
+  }
+  if (status === 'FORMAL_LEAVE') {
+    return 'No hours are deducted. A replacement lesson is appended automatically.';
+  }
+  if (status === 'CANCELLED') {
+    return `The cancelled lesson deducts the full planned ${selectedPlannedHours.value.toFixed(1)}h.`;
+  }
+  if (status === 'NO_SHOW') {
+    return `The no-show deducts the full planned ${selectedPlannedHours.value.toFixed(1)}h.`;
+  }
   const hours = confirmForm.actualHours;
   if (hours == null || hours <= 0) return 'No hours will be deducted.';
   return `This lesson will deduct ${hours.toFixed(1)}h.`;
@@ -1334,9 +1426,9 @@ function openConfirmDialog(occ: LessonOccurrenceItem) {
 
   if (authStore.currentUser?.userType === 'TEACHER' && occ.plannedTeacherId && authStore.currentUser.teacherId != null && occ.plannedTeacherId !== authStore.currentUser.teacherId) {
     ElMessageBox.confirm(
-      'This lesson is assigned to another teacher. Are you sure you want to confirm it?',
-      'Confirm as Another Teacher',
-      { confirmButtonText: 'Confirm', cancelButtonText: 'Cancel', type: 'warning' },
+      'This lesson is assigned to another teacher. Are you sure you want to submit attendance?',
+      'Submit as Another Teacher',
+      { confirmButtonText: 'Submit', cancelButtonText: 'Cancel', type: 'warning' },
     ).then(() => { confirmDialogVisible.value = true; }).catch(() => {});
     return;
   }
@@ -1489,59 +1581,6 @@ async function openDetailDialog(occ: LessonOccurrenceItem) {
   detailDialogVisible.value = true;
 }
 
-
-const makeupForm = reactive({
-  plannedTeacherId: undefined as string | number | undefined,
-  plannedClassroomId: undefined as string | number | undefined,
-  plannedStartAt: '',
-  plannedEndAt: '',
-  reason: '',
-});
-const makeupFormRules: FormRules = {
-  plannedStartAt: [{ required: true, message: 'Start time is required', trigger: 'change' }],
-  plannedEndAt: [{ required: true, message: 'End time is required', trigger: 'change' }],
-};
-
-function openMakeupDialog(occ: LessonOccurrenceItem) {
-  selectedOcc.value = occ;
-  makeupFormRef.value?.resetFields();
-  Object.assign(makeupForm, {
-    plannedTeacherId: undefined,
-    plannedClassroomId: undefined,
-    plannedStartAt: '',
-    plannedEndAt: '',
-    reason: '',
-  });
-  makeupDialogVisible.value = true;
-}
-
-async function submitMakeup() {
-  if (!makeupFormRef.value) return;
-  await makeupFormRef.value.validate(async (valid) => {
-    if (!valid) return;
-    submitting.value = true;
-    try {
-      await createScheduleAdjustment({
-        occurrenceId: selectedOcc.value!.id,
-        adjustmentType: 'MAKEUP_CREATE',
-        plannedTeacherId: makeupForm.plannedTeacherId,
-        plannedClassroomId: makeupForm.plannedClassroomId,
-        plannedStartAt: makeupForm.plannedStartAt,
-        plannedEndAt: makeupForm.plannedEndAt,
-        reason: makeupForm.reason || undefined,
-      });
-      ElMessage.success('Makeup lesson created.');
-      makeupDialogVisible.value = false;
-
-      if (selectedPackageId.value) await loadPackageOccurrences(selectedPackageId.value);
-    } catch (err) {
-      ElMessage.error(extractErrorMessage(err));
-    } finally {
-      submitting.value = false;
-    }
-  });
-}
-
 // ─── Init ──────────────────────────────
 onMounted(async () => {
   studentsLoading.value = true;
@@ -1565,10 +1604,6 @@ onMounted(async () => {
   }
 });
 
-// ─── Date helpers ──────────────────────────────────────────
-function disabledPastDatetime(date: Date) {
-  return dayjs(date).isBefore(dayjs().startOf('day'));
-}
 </script>
 
 <style scoped>
@@ -1609,6 +1644,43 @@ function disabledPastDatetime(date: Date) {
 .adj-page--group-lessons .adj-workspace {
   border-top: 1px solid #e8edf2;
   border-radius: 8px;
+}
+
+.class-occ-table {
+  width: 100%;
+}
+
+.class-lesson-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #64748b;
+  line-height: 1.35;
+}
+
+.class-lesson-main strong {
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.class-action-cell {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.class-action-cell :deep(.el-button) {
+  margin-left: 0;
+}
+
+.class-occ-row--today :deep(td) {
+  background: #f0faf6 !important;
+}
+
+.class-occ-row--past :deep(td) {
+  color: #909399;
 }
 
 /* ── Tab bar ──────────────────────────── */
@@ -1876,6 +1948,7 @@ function disabledPastDatetime(date: Date) {
   flex-wrap: nowrap;
   gap: 6px;
   justify-content: flex-end;
+  align-items: center;
 }
 .pkg-occ__actions :deep(.el-button) {
   margin-left: 0;
@@ -1896,6 +1969,17 @@ function disabledPastDatetime(date: Date) {
     justify-content: flex-end;
     text-align: right;
   }
+}
+
+.admin-review-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.admin-direct-alert {
+  margin-bottom: 14px;
 }
 
 .pkg-occ-empty {
@@ -1974,6 +2058,25 @@ function disabledPastDatetime(date: Date) {
   font-size: 14px;
   font-weight: 600;
   color: #303133;
+}
+.student-link {
+  padding: 0;
+  height: auto;
+  font-weight: 600;
+}
+.session-balance {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.25;
+}
+.session-balance strong {
+  color: #1f2937;
+  font-size: 13px;
+}
+.session-balance span {
+  color: #909399;
+  font-size: 12px;
 }
 .class-empty {
   padding: 32px;

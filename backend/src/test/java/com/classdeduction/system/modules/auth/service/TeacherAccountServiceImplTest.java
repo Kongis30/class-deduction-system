@@ -116,6 +116,33 @@ class TeacherAccountServiceImplTest {
     }
 
     @Test
+    void shouldCreateLoginForExistingTeacherProfile() {
+        TeacherAccountCreateRequest request = new TeacherAccountCreateRequest();
+        request.setTeacherId(701L);
+        request.setTeacherName("Emma Wang");
+        request.setUsername("emma.login");
+        request.setPassword("Teacher@123456");
+
+        when(userAccountMapper.selectOne(any())).thenReturn(null);
+        when(teacherMapper.selectById(701L)).thenReturn(buildActiveTeacher());
+        when(userAccountMapper.selectCount(any())).thenReturn(0L);
+        when(roleMapper.selectOne(any())).thenReturn(buildTeacherRole());
+        doAnswer(invocation -> {
+            UserAccountEntity entity = invocation.getArgument(0);
+            entity.setId(9003L);
+            return 1;
+        }).when(userAccountMapper).insert(any(UserAccountEntity.class));
+
+        Long userId = teacherAccountService.createTeacherAccount(request);
+
+        verify(teacherMapper, never()).insert(any(TeacherEntity.class));
+        verify(userAccountMapper).insert(userCaptor.capture());
+        assertThat(userId).isEqualTo(9003L);
+        assertThat(userCaptor.getValue().getTeacherId()).isEqualTo(701L);
+        assertThat(userCaptor.getValue().getDisplayName()).isEqualTo("Emma Wang");
+    }
+
+    @Test
     void shouldRejectWhenUsernameAlreadyExists() {
         TeacherAccountCreateRequest request = new TeacherAccountCreateRequest();
         request.setTeacherName("Emma Wang");

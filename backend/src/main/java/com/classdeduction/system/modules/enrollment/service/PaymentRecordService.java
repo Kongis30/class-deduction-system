@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.enrollment.service;
 
 import com.classdeduction.system.modules.enrollment.dto.PaymentRecordSaveRequest;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
+import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 
 import java.util.List;
 
@@ -21,9 +22,9 @@ public interface PaymentRecordService {
     PaymentRecordVO getPaymentRecord(Long id);
 
     /**
-     * 创建支付记录（支持组合支付）并更新报名订单的已收金额和支付状态。
+     * 创建支付记录（支持组合支付）、更新报名订单并生成独立付款收据。
      */
-    void createPaymentRecord(PaymentRecordSaveRequest request);
+    ReceiptRecordVO createPaymentRecord(PaymentRecordSaveRequest request);
 
     /**
      * 获取课时包余额。

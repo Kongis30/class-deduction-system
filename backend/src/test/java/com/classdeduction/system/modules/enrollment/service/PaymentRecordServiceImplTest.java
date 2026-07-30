@@ -1,17 +1,21 @@
 package com.classdeduction.system.modules.enrollment.service;
 
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.enrollment.dto.PaymentRecordSaveRequest;
 import com.classdeduction.system.modules.enrollment.dto.PaymentSplitDTO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
+import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.PaymentRecordServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
+import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -50,6 +54,12 @@ class PaymentRecordServiceImplTest {
     @Mock
     private PaymentMethodMapper paymentMethodMapper;
 
+    @Mock
+    private ReceiptRecordMapper receiptRecordMapper;
+
+    @Mock
+    private JsonHelper jsonHelper;
+
     @InjectMocks
     private PaymentRecordServiceImpl paymentRecordService;
 
@@ -62,6 +72,9 @@ class PaymentRecordServiceImplTest {
         testOrder = new EnrollmentOrderEntity();
         testOrder.setId(1L);
         testOrder.setEnrollmentNo("EO202604280001");
+        testOrder.setStudentId(601L);
+        testOrder.setStudentNameSnapshot("Amy Wang");
+        testOrder.setCurrencyCode("USD");
         testOrder.setOriginalAmount(new BigDecimal("2699.00"));
         testOrder.setDiscountAmount(new BigDecimal("100.00"));
         testOrder.setAmountDue(new BigDecimal("2599.00"));
@@ -107,9 +120,15 @@ class PaymentRecordServiceImplTest {
                 entity.setId(1L);
                 return 1;
             });
+            when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"PAYMENT\"}");
+            when(receiptRecordMapper.insert(any(ReceiptRecordEntity.class))).thenAnswer(i -> {
+                ReceiptRecordEntity entity = i.getArgument(0);
+                entity.setId(9001L);
+                return 1;
+            });
 
             // When
-            paymentRecordService.createPaymentRecord(request);
+            ReceiptRecordVO receipt = paymentRecordService.createPaymentRecord(request);
 
             // Then
             // Verify payment record was saved
@@ -128,6 +147,13 @@ class PaymentRecordServiceImplTest {
             assertThat(updatedOrder.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("2599.00")); // 2099 + 500
             assertThat(updatedOrder.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("0.00"));
             assertThat(updatedOrder.getPaymentStatus()).isEqualTo("PAID");
+
+            ArgumentCaptor<ReceiptRecordEntity> receiptCaptor = ArgumentCaptor.forClass(ReceiptRecordEntity.class);
+            verify(receiptRecordMapper).insert(receiptCaptor.capture());
+            assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("PAYMENT_RECEIPT");
+            assertThat(receiptCaptor.getValue().getEnrollmentOrderId()).isEqualTo(1L);
+            assertThat(receipt.id()).isEqualTo(9001L);
+            assertThat(receipt.templateCode()).isEqualTo("PAYMENT_RECEIPT");
         }
 
         @Test

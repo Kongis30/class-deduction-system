@@ -3,27 +3,35 @@ package com.classdeduction.system.modules.enrollment.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.enrollment.dto.PaymentRecordSaveRequest;
 import com.classdeduction.system.modules.enrollment.dto.PaymentSplitDTO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
+import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.PaymentRecordService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
+import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 支付记录服务实现。
@@ -36,8 +44,11 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PaymentMethodMapper paymentMethodMapper;
+    private final ReceiptRecordMapper receiptRecordMapper;
+    private final JsonHelper jsonHelper;
 
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO;
+    private static final String PAYMENT_RECEIPT_TEMPLATE = "PAYMENT_RECEIPT";
 
     @Override
     public List<PaymentRecordVO> listByEnrollmentOrderId(Long enrollmentOrderId) {
@@ -60,7 +71,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void createPaymentRecord(PaymentRecordSaveRequest request) {
+    public ReceiptRecordVO createPaymentRecord(PaymentRecordSaveRequest request) {
         // 1. Validate enrollment order exists
         EnrollmentOrderEntity order = requireEnrollmentOrder(request.getEnrollmentOrderId());
 
@@ -106,6 +117,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         validatePaymentAmount(order, totalAmount);
 
         // 4. Create payment records (one per split)
+        List<PaymentRecordEntity> paymentRecords = new ArrayList<>(splits.size());
         for (PaymentSplitDTO split : splits) {
             PaymentRecordEntity paymentRecord = new PaymentRecordEntity();
             paymentRecord.setEnrollmentOrderId(request.getEnrollmentOrderId());
@@ -121,10 +133,69 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
             paymentRecord.setHandledByName(resolveHandledByName(request, split));
             paymentRecord.setRemark(resolveRemark(request, split));
             paymentRecordMapper.insert(paymentRecord);
+            paymentRecords.add(paymentRecord);
         }
 
-        // Payment records are the immutable order-level ledger; update the derived order snapshot only.
+        // Payment records and receipts are immutable; only the derived order balance is updated.
         updateEnrollmentOrderPayment(order, totalAmount);
+        return createPaymentReceipt(order, request, paymentRecords, totalAmount);
+    }
+
+    private ReceiptRecordVO createPaymentReceipt(EnrollmentOrderEntity order,
+                                                 PaymentRecordSaveRequest request,
+                                                 List<PaymentRecordEntity> paymentRecords,
+                                                 BigDecimal paymentAmount) {
+        LocalDateTime issuedAt = AppTime.nowLocalDateTime();
+        String receiptNo = BusinessNoGenerator.generateReceiptNo();
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("receiptType", "PAYMENT");
+        payload.put("receiptNo", receiptNo);
+        payload.put("enrollmentOrderId", order.getId());
+        payload.put("enrollmentNo", order.getEnrollmentNo());
+        payload.put("studentId", order.getStudentId());
+        payload.put("studentName", order.getStudentNameSnapshot());
+        payload.put("currencyCode", order.getCurrencyCode());
+        payload.put("issuedAt", issuedAt);
+        payload.put("paymentAmount", paymentAmount);
+        payload.put("amountDue", order.getAmountDue());
+        payload.put("receivedAmount", order.getReceivedAmount());
+        payload.put("balanceAmount", order.getBalanceAmount());
+        payload.put("paymentStatus", order.getPaymentStatus());
+        payload.put("payments", paymentRecords.stream().map(this::toReceiptPaymentPayload).toList());
+
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setReceiptNo(receiptNo);
+        receipt.setEnrollmentOrderId(order.getId());
+        receipt.setStudentId(order.getStudentId());
+        receipt.setTemplateCode(PAYMENT_RECEIPT_TEMPLATE);
+        receipt.setReceiptPayload(jsonHelper.toJson(payload));
+        receipt.setIssuedAt(issuedAt);
+        receipt.setIssuedBy(request.getHandledByUserId());
+        receiptRecordMapper.insert(receipt);
+
+        return ReceiptRecordVO.builder()
+                .id(receipt.getId())
+                .receiptNo(receiptNo)
+                .enrollmentOrderId(order.getId())
+                .studentId(order.getStudentId())
+                .studentName(order.getStudentNameSnapshot())
+                .templateCode(PAYMENT_RECEIPT_TEMPLATE)
+                .receiptPayload(receipt.getReceiptPayload())
+                .issuedAt(issuedAt)
+                .build();
+    }
+
+    private Map<String, Object> toReceiptPaymentPayload(PaymentRecordEntity payment) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("paymentId", payment.getId());
+        payload.put("paymentNo", payment.getPaymentNo());
+        payload.put("paymentMethod", payment.getPaymentMethod());
+        payload.put("amount", payment.getAmount());
+        payload.put("paidAt", payment.getPaidAt());
+        payload.put("handledByName", payment.getHandledByName());
+        payload.put("remark", payment.getRemark());
+        return payload;
     }
 
     private String resolveHandledByName(PaymentRecordSaveRequest request, PaymentSplitDTO split) {
