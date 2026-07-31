@@ -35,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.verify;
@@ -191,6 +192,32 @@ class StudentServiceImplTest {
         verify(classEnrollmentMapper).delete(any());
         verify(teacherPayRateMapper).delete(any());
         verify(studentMapper).deleteById(1L);
+    }
+
+    @Test
+    void shouldClearServiceAddressWhenServiceIsNotRequired() {
+        StudentEntity student = new StudentEntity();
+        student.setId(1L);
+        student.setStudentNo("S-0001");
+        when(studentMapper.selectById(1L)).thenReturn(student);
+        when(studentMapper.selectOne(any())).thenReturn(null);
+
+        var request = new com.classdeduction.system.modules.base.dto.StudentSaveRequest();
+        request.setStudentNo("S-0001");
+        request.setStudentName("Ava Chen");
+        request.setPickupRequired(false);
+        request.setPickupAddress("100 Main St");
+        request.setDropoffRequired(true);
+        request.setDropoffAddress(" 200 Center Ave ");
+
+        studentService.updateStudent(1L, request);
+
+        var captor = forClass(StudentEntity.class);
+        verify(studentMapper).updateById(captor.capture());
+        assertThat(captor.getValue().getPickupRequired()).isFalse();
+        assertThat(captor.getValue().getPickupAddress()).isNull();
+        assertThat(captor.getValue().getDropoffRequired()).isTrue();
+        assertThat(captor.getValue().getDropoffAddress()).isEqualTo("200 Center Ave");
     }
 
     private Map<String, Object> enrolledRow() {

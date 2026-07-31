@@ -10,7 +10,7 @@
         <div>
           <span class="panel-header__eyebrow">Course setup</span>
           <h2 class="panel-header__title">Course Products</h2>
-          <p class="panel-header__desc">Create the parent course first. Grade, duration, time slot, and price are maintained in the price matrix.</p>
+          <p class="panel-header__desc">Use this page only to create the course family. The next step is always grade, duration, schedule, and price.</p>
         </div>
         <div class="panel-header__actions">
           <el-button @click="openSubjectDialog()">Manage subjects</el-button>
@@ -55,6 +55,36 @@
         </el-form-item>
       </el-form>
 
+      <section class="product-guide">
+        <article :class="{ 'product-guide__item--active': activeTab === 'ONE_ON_ONE' }">
+          <span>1</span>
+          <strong>Create course family</strong>
+          <small>Examples: 1-on-1, After School, Saturday Class.</small>
+        </article>
+        <article>
+          <span>2</span>
+          <strong>Add registration options</strong>
+          <small>Grade, hours/months/sessions, time slot, and price live in Price Matrix.</small>
+        </article>
+        <article>
+          <span>3</span>
+          <strong>Assign schedule if needed</strong>
+          <small>Group classes can add teacher, room, and weekly schedule after price rows exist.</small>
+        </article>
+      </section>
+
+      <section v-if="createdNextStep" class="next-step-card">
+        <div>
+          <span>Course created</span>
+          <strong>{{ createdNextStep.productName }}</strong>
+          <p>{{ createdNextStep.description }}</p>
+        </div>
+        <div class="next-step-card__actions">
+          <el-button @click="createdNextStep = null">Later</el-button>
+          <el-button type="primary" @click="openCreatedProductNextStep">Continue setup</el-button>
+        </div>
+      </section>
+
       <div class="product-tab-content">
         <template v-if="activeTab === 'ONE_ON_ONE'">
           <el-table
@@ -88,15 +118,18 @@
             </el-table-column>
             <el-table-column label="Status" min-width="90" align="center">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
-                  {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-                </el-tag>
+                <div class="status-cell">
+                  <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
+                    {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+                  </el-tag>
+                  <span>{{ row.status === 'ACTIVE' ? 'Ready for price rows' : 'Hidden from registration' }}</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="Actions" min-width="220" fixed="right">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button text type="primary" @click="openProductPrices(row)">Prices</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set prices</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -150,28 +183,18 @@
             </el-table-column>
             <el-table-column label="Status" min-width="90" align="center">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
-                  {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-                </el-tag>
+                <div class="status-cell">
+                  <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
+                    {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+                  </el-tag>
+                  <span>{{ row.status === 'ACTIVE' ? 'Visible after grade rows are ready' : 'Hidden from registration' }}</span>
+                </div>
               </template>
             </el-table-column>
             <el-table-column label="Actions" min-width="250" fixed="right">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button text type="primary" @click="openProductPrices(row)">Configure grade classes</el-button>
-                  <el-tooltip
-                    :content="hasGradeClasses(row) ? 'Open grade class schedules' : 'Create grade classes in Price Matrix first'"
-                    placement="top"
-                  >
-                    <span>
-                      <el-button
-                        text
-                        type="success"
-                        :disabled="!hasGradeClasses(row)"
-                        @click="openClassSchedules(row)"
-                      >Class schedules</el-button>
-                    </span>
-                  </el-tooltip>
+                  <el-button type="primary" link @click="openProductPrices(row)">Continue setup</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -257,7 +280,7 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="dialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submitting" @click="handleSubmit">Save</el-button>
+          <el-button type="primary" :loading="submitting" @click="handleSubmit">{{ productSaveButtonLabel }}</el-button>
         </div>
       </template>
     </el-dialog>
@@ -341,7 +364,7 @@
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import {
@@ -349,8 +372,6 @@ import {
   createSubject,
   deleteCourseProduct,
   deleteSubject,
-  fetchAllClassrooms,
-  fetchAllTeachers,
   fetchCourseProducts,
   fetchSubjects,
   updateCourseProduct,
@@ -358,9 +379,7 @@ import {
   type CourseProductQuery,
   type CourseProductSavePayload,
 } from '@/api/base-data';
-import { fetchClassGroups, fetchClassroomOccupancy } from '@/api/schedule';
-import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
-import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
+import { fetchClassGroups } from '@/api/schedule';
 import type { ClassGroupItem, CourseProductItem, EntityId, SubjectItem } from '@/types/domain';
 
 const router = useRouter();
@@ -370,12 +389,13 @@ const dialogVisible = ref(false);
 const editingId = ref<EntityId | null>(null);
 const formRef = ref();
 
-const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
-const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const classGroups = ref<ClassGroupItem[]>([]);
-const formSlots = ref<SlotDef[]>([]);
-const occupiedSlots = ref<OccupiedSlotDef[]>([]);
-const planningDefaultsOpen = ref<string[]>([]);
+const createdNextStep = ref<{
+  productId: EntityId;
+  productName: string;
+  courseType?: string;
+  description: string;
+} | null>(null);
 
 
 const subjectDialogVisible = ref(false);
@@ -509,9 +529,16 @@ const productDialogTitle = computed(() => {
 
 const productDialogSubtitle = computed(() =>
   form.teachingMode === 'ONE_ON_ONE'
-    ? 'Private tutoring products define the saleable package family. Prices are configured by grade and package hours.'
-    : 'Group class products define course families. Grade classes, prices, rooms, teachers, and schedules are configured next.'
+    ? 'Step 1 of 2: create the private course family. After saving, add grade and package-hour prices.'
+    : 'Step 1 of 3: create the group course family. After saving, add grade classes, prices, and schedules.'
 );
+
+const productSaveButtonLabel = computed(() => {
+  if (editingId.value) {
+    return 'Save changes';
+  }
+  return 'Create course';
+});
 
 function openProductPrices(product: CourseProductItem) {
   router.push({
@@ -523,16 +550,17 @@ function openProductPrices(product: CourseProductItem) {
   });
 }
 
-function openClassSchedules(product: CourseProductItem) {
-  if (!hasGradeClasses(product)) return;
+function openCreatedProductNextStep() {
+  if (!createdNextStep.value) {
+    return;
+  }
   router.push({
-    name: 'class-schedule',
-    query: { productId: product.id },
+    name: 'admin-config-course-prices',
+    query: {
+      ...(createdNextStep.value.courseType ? { courseType: createdNextStep.value.courseType } : {}),
+      courseProductId: createdNextStep.value.productId,
+    },
   });
-}
-
-function hasGradeClasses(product: CourseProductItem) {
-  return classGroups.value.some(item => String(item.productId) === String(product.id));
 }
 
 function groupClassesFor(product: CourseProductItem) {
@@ -630,7 +658,7 @@ const formRules = {
   teachingMode: [{ required: true, message: 'Teaching format is required' }],
   defaultTotalUnits: [
     {
-      validator: (rule: any, value: any, callback: any) => {
+      validator: (_rule: any, value: any, callback: any) => {
         if (form.teachingMode === 'ONE_ON_ONE' && (value === undefined || value === null)) {
           callback(new Error('Total hours is required'));
         } else if (form.teachingMode === 'ONE_ON_ONE' && (value * 2) % 1 !== 0) {
@@ -667,20 +695,6 @@ function openProductDialog(row?: CourseProductItem) {
       slots: row.slots ? row.slots.map(s => ({ weekday: s.weekday, startTime: s.startTime, endTime: s.endTime })) : [],
     });
 
-    formSlots.value = row.slots
-      ? row.slots.map(s => {
-          const startM = parseInt(s.startTime.split(':')[0]) * 60 + parseInt(s.startTime.split(':')[1]);
-          const endM = parseInt(s.endTime.split(':')[0]) * 60 + parseInt(s.endTime.split(':')[1]);
-          return {
-            weekday: s.weekday,
-            startTime: s.startTime,
-            endTime: s.endTime,
-            plannedUnits: Math.round((endM - startM) / 30),
-          };
-        })
-      : [];
-
-    occupiedSlots.value = [];
   } else {
     const mode = activeTab.value === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'GROUP';
     Object.assign(form, {
@@ -703,8 +717,6 @@ function openProductDialog(row?: CourseProductItem) {
       notes: '',
       slots: [],
     });
-    formSlots.value = [];
-    occupiedSlots.value = [];
   }
   dialogVisible.value = true;
 }
@@ -742,16 +754,18 @@ async function handleSubmit() {
       await loadData();
     } else {
       const response = await createCourseProduct(payload);
-      ElMessage.success('Course created. Add its registration prices next.');
+      const productId = response.data.data;
+      createdNextStep.value = {
+        productId,
+        productName: form.productName,
+        courseType: form.courseType,
+        description: form.teachingMode === 'ONE_ON_ONE'
+          ? 'Next, add grade, package hours, and price. You can do it now or come back later.'
+          : 'Next, add grade class, billing, schedule, and price. You can do it now or come back later.',
+      };
+      ElMessage.success('Course created.');
       dialogVisible.value = false;
-      await router.push({
-        name: 'admin-config-course-prices',
-        query: {
-          ...(form.courseType ? { courseType: form.courseType } : {}),
-          courseProductId: String(response.data.data),
-          create: '1',
-        },
-      });
+      await loadData();
     }
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
@@ -805,29 +819,8 @@ function billingTypeDescription(billingType?: string): string {
 }
 
 
-async function loadClassrooms() {
-  try {
-    const res = await fetchAllClassrooms();
-    classrooms.value = (res.data.data || []).map(r => ({ id: r.id, roomName: r.roomName }));
-  } catch {
-    // ignore
-  }
-}
-
-async function loadTeachers() {
-  try {
-    const res = await fetchAllTeachers();
-    teachers.value = res.data.data.map(t => ({ id: t.id, teacherName: t.teacherName }));
-  } catch {
-    // ignore
-  }
-}
-
-
 loadData();
 loadSubjects();
-loadClassrooms();
-loadTeachers();
 </script>
 
 <style scoped>
@@ -898,6 +891,94 @@ loadTeachers();
   font-size: 13px;
 }
 
+.product-guide {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.product-guide article {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  align-items: start;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 12px;
+}
+
+.product-guide__item--active {
+  border-color: #d8e7ff;
+  background: #f7fbff;
+}
+
+.product-guide span {
+  grid-row: span 2;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #409eff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.product-guide strong {
+  color: #1f2937;
+  font-size: 13px;
+}
+
+.product-guide small {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.next-step-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #c9ead5;
+  border-radius: 10px;
+  background: #effaf3;
+}
+
+.next-step-card span {
+  display: block;
+  color: #18a058;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.next-step-card strong {
+  display: block;
+  margin-top: 3px;
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.next-step-card p {
+  margin: 3px 0 0;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.next-step-card__actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
 .product-table {
   border-radius: 6px;
   overflow: hidden;
@@ -931,6 +1012,20 @@ loadTeachers();
 .setup-cell span {
   color: #64748b;
   font-size: 12px;
+}
+
+.status-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.status-cell span {
+  max-width: 140px;
+  color: #909399;
+  font-size: 11px;
+  line-height: 1.25;
 }
 
 .product-title {
@@ -985,6 +1080,7 @@ loadTeachers();
 .table-actions {
   display: flex;
   gap: 4px;
+  flex-wrap: wrap;
 }
 
 .table-footer {

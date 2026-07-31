@@ -161,12 +161,47 @@
               <strong>{{ activeStudent.studentName }}</strong>
               <span>{{ activePackage.packageName }}</span>
             </div>
-            <span class="oo-student-context__balance">
-              {{ formatHours(activePackage.remainingUnits) }}h remaining
-            </span>
+            <div class="oo-student-context__metrics">
+              <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
+              <span><small>Allocated</small>{{ formatHours(signatureAllocatedHours) }}h</span>
+              <span><small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h</span>
+            </div>
           </div>
 
-          <div class="oo-action-line" :class="{ 'oo-action-line--done': workflowComplete }">
+          <section class="oo-signature-sheet print-only">
+            <div class="oo-signature-sheet__meta">
+              <p><strong>Student :</strong> {{ activeStudent.studentName }}</p>
+              <p><strong>Teacher:</strong> {{ signatureTeacherName }}</p>
+              <p><strong>Classtime:</strong> {{ signatureClassTime }}</p>
+              <p><strong>Total Hours :</strong> {{ formatHours(activePackage.totalUnits) }}</p>
+              <p><strong>Allocated Hours :</strong> {{ formatHours(signatureAllocatedHours) }}</p>
+            </div>
+
+            <table class="oo-signature-table">
+              <thead>
+                <tr>
+                  <th>Course</th>
+                  <th>Date</th>
+                  <th>Signature</th>
+                  <th class="oo-signature-table__index"></th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, index) in signatureSheetRows" :key="row.occurrenceId">
+                  <td>{{ signatureCourseLabel }}</td>
+                  <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
+                  <td></td>
+                  <td class="oo-signature-table__index">{{ index + 1 }}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <p class="oo-signature-sheet__remaining">
+              <strong>Remaining Hours :</strong> {{ formatHours(activePackage.remainingUnits) }}
+            </p>
+          </section>
+
+          <div class="oo-action-line no-print" :class="{ 'oo-action-line--done': workflowComplete }">
             <span class="oo-action-line__marker" aria-hidden="true"></span>
             <div>
               <strong>{{ nextActionTitle }}</strong>
@@ -192,14 +227,14 @@
 
           <el-alert
             v-if="activePackage.renewalReminder"
-            class="oo-renewal"
+            class="oo-renewal no-print"
             title="Renewal reminder: two lessons or fewer remain."
             type="warning"
             :closable="false"
             show-icon
           />
 
-          <div class="oo-table-title">
+          <div class="oo-table-title no-print">
             <div>
               <strong>Lesson records</strong>
               <span>
@@ -217,20 +252,32 @@
             border
             stripe
             size="small"
-            class="oo-table sheet-table"
+            class="oo-table sheet-table no-print"
             :row-class-name="lessonRowClassName"
           >
-            <el-table-column label="Lesson details" min-width="210" align="center" header-align="center">
+            <el-table-column label="Course" min-width="150">
               <template #default="{ row }">
-                <div class="oo-lesson-main">
+                <div class="oo-simple-cell">
+                  <strong>{{ signatureCourseLabel }}</strong>
+                  <span v-if="row.actualTeacherName || row.plannedTeacherName">
+                    {{ displayResourceName(row.actualTeacherName || row.plannedTeacherName) }}
+                  </span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="Date & time" min-width="150" align="center" header-align="center">
+              <template #default="{ row }">
+                <div class="oo-simple-cell oo-simple-cell--center">
                   <strong>{{ formatDate(row.plannedStartAt) }}</strong>
                   <span>{{ formatTimeRange(row.plannedStartAt, row.plannedEndAt) }}</span>
-                  <el-tag class="status-pill" :class="statusPillClass(row)" size="small" :type="statusTag(row)">
-                    {{ statusLabel(row) }}
-                  </el-tag>
-                  <span>Teacher: {{ displayResourceName(row.actualTeacherName || row.plannedTeacherName) }}</span>
-                  <span>Room: {{ displayResourceName(row.actualClassroomName || row.plannedClassroomName) }}</span>
                 </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="Status" min-width="155" align="center" header-align="center">
+              <template #default="{ row }">
+                <el-tag class="status-pill" :class="statusPillClass(row)" size="small" :type="statusTag(row)">
+                  {{ statusLabel(row) }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column
@@ -282,11 +329,6 @@
                   </el-button>
                   <span v-else-if="!canAdjustLesson(row)" class="oo-no-action">{{ taskLabel(row) }}</span>
                 </div>
-              </template>
-            </el-table-column>
-            <el-table-column v-if="hasNotes" label="Notes" min-width="160" fixed="right" show-overflow-tooltip align="center" header-align="center">
-              <template #default="{ row }">
-                <span class="oo-note-cell">{{ row.rejectReason || row.notes || '—' }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -467,7 +509,6 @@ const studentEntries = computed<StudentEntry[]>(() => teachers.value.flatMap(tea
   teacher.students.map(student => ({ teacher, student })),
 ));
 const teacherFilterOptions = computed(() => teachers.value.filter(teacher => Boolean(teacher.teacherId)));
-const hasNotes = computed(() => activePackage.value?.lessons.some(row => Boolean(row.rejectReason || row.notes)));
 const allPackageCandidates = computed<PackageCandidate[]>(() => {
   const candidates: PackageCandidate[] = [];
   for (const teacher of teachers.value) {
@@ -542,6 +583,40 @@ const pendingTeacherCount = computed(() =>
 const pendingAdminCount = computed(() =>
   activePackage.value?.lessons.filter(row => row.confirmStage === 'PENDING_ADMIN').length ?? 0
 );
+const signatureSheetRows = computed(() =>
+  activePackage.value?.lessons.filter(row => row.planningStatus !== 'CANCELLED') ?? []
+);
+const signatureAllocatedHours = computed(() =>
+  signatureSheetRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
+);
+const signatureTeacherName = computed(() => {
+  if (activeTeacher.value?.teacherName) {
+    return displayResourceName(activeTeacher.value.teacherName);
+  }
+  const firstLesson = signatureSheetRows.value.find(row => row.plannedTeacherName || row.actualTeacherName);
+  return displayResourceName(firstLesson?.plannedTeacherName || firstLesson?.actualTeacherName);
+});
+const signatureCourseLabel = computed(() => {
+  const pkg = activePackage.value;
+  if (!pkg) {
+    return '—';
+  }
+  const subject = pkg.subjectName?.trim() || pkg.courseProductName?.trim();
+  const grade = pkg.gradeBand?.trim() || activeStudent.value?.grade?.trim();
+  const label = [grade, subject].filter(Boolean).join(' ');
+  return label || pkg.packageName;
+});
+const signatureClassTime = computed(() => {
+  const schedules = Array.from(new Set(
+    signatureSheetRows.value
+      .filter(row => row.plannedStartAt && row.plannedEndAt)
+      .map(row => `${dayjs(row.plannedStartAt).format('ddd h:mm')}-${dayjs(row.plannedEndAt).format('h:mma').toLowerCase()}`)
+  ));
+  if (schedules.length === 0) {
+    return 'To be scheduled';
+  }
+  return schedules.join(', ');
+});
 const workflowComplete = computed(() => !nextActionLesson.value
   && !nextArrangementLesson.value
   && pendingTeacherCount.value === 0
@@ -1083,6 +1158,10 @@ function formatDate(value: string) {
   return value ? dayjs(value).format('MM/DD/YYYY') : '—';
 }
 
+function formatSignatureDate(value: string) {
+  return value ? dayjs(value).format('M/D/YYYY') : '—';
+}
+
 function formatDateTime(value: string) {
   return value ? dayjs(value).format('MM/DD HH:mm') : '—';
 }
@@ -1254,11 +1333,27 @@ onMounted(async () => {
   font-size: 12px;
 }
 
-.oo-student-context__balance {
+.oo-student-context__metrics {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.oo-student-context__metrics > span {
   color: #102a43;
   font-size: 15px;
   font-weight: 800;
+  text-align: right;
   white-space: nowrap;
+}
+
+.oo-student-context__metrics small {
+  display: block;
+  margin-bottom: 2px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .oo-empty {
@@ -1417,6 +1512,67 @@ onMounted(async () => {
   padding: 12px;
 }
 
+.oo-signature-sheet {
+  margin-bottom: 12px;
+  padding: 14px 16px;
+  border: 1px solid #111;
+  border-radius: 6px;
+  background: #fff;
+  color: #111;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.oo-signature-sheet__meta {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.oo-signature-sheet__meta p,
+.oo-signature-sheet__remaining {
+  margin: 0;
+  color: #111;
+  font-size: 20px;
+  line-height: 1.22;
+}
+
+.oo-signature-sheet__meta strong,
+.oo-signature-sheet__remaining strong {
+  font-weight: 800;
+}
+
+.oo-signature-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: #111;
+  font-size: 18px;
+}
+
+.oo-signature-table th,
+.oo-signature-table td {
+  height: 34px;
+  padding: 4px 8px;
+  border: 1px solid #111;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.oo-signature-table th {
+  font-weight: 700;
+}
+
+.oo-signature-table__index {
+  width: 28px;
+  border: 0 !important;
+  padding-left: 8px !important;
+  text-align: left !important;
+}
+
+.oo-signature-sheet__remaining {
+  margin-top: 34px;
+}
+
 .oo-record-panel--empty {
   display: flex;
   align-items: center;
@@ -1531,37 +1687,29 @@ onMounted(async () => {
   width: 100%;
 }
 
-.oo-lesson-main {
+.print-only {
+  display: none;
+}
+
+.oo-simple-cell {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.oo-simple-cell--center {
   align-items: center;
   text-align: center;
 }
 
-.oo-lesson-main strong {
+.oo-simple-cell strong {
   color: #102a43;
   font-size: 13px;
 }
 
-.oo-lesson-main span {
+.oo-simple-cell span {
   color: #64748b;
   font-size: 12px;
-}
-
-.oo-lesson-main .status-pill {
-  align-self: center;
-  margin: 1px 0;
-}
-
-.oo-note-cell {
-  display: block;
-  overflow: hidden;
-  color: #64748b;
-  font-size: 12px;
-  text-align: center;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .oo-action-cell {
@@ -1671,19 +1819,60 @@ onMounted(async () => {
     min-height: auto;
   }
 
+  .oo-package-panel,
+  .oo-package-toggle {
+    display: none !important;
+  }
+
+  .oo-split-workspace,
+  .oo-split-workspace--collapsed {
+    display: block;
+    min-height: auto;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
   .oo-print-area {
     color: #000;
   }
 
-  .oo-student-context,
-  .oo-action-line,
-  .oo-table-title {
-    break-inside: avoid;
+  .oo-student-context {
+    display: none;
   }
 
-  .oo-action-line {
-    border-color: #999;
-    background: #fff;
+  .oo-record-panel {
+    border: 0;
+    padding: 0;
+  }
+
+  .oo-signature-sheet {
+    width: 100%;
+    border: 0;
+    padding: 0;
+    break-inside: avoid;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  .oo-signature-sheet__meta p,
+  .oo-signature-sheet__remaining {
+    font-size: 24px;
+  }
+
+  .oo-signature-table {
+    margin-top: 6px;
+    font-size: 22px;
+  }
+
+  .oo-signature-table th,
+  .oo-signature-table td {
+    height: 38px;
+    border: 2px solid #111;
+  }
+
+  .oo-signature-table__index {
+    border: 0 !important;
   }
 }
 </style>

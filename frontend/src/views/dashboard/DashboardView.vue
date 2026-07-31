@@ -3,11 +3,24 @@
     <section class="hero-card">
       <div>
         <span class="hero-card__eyebrow">Dashboard</span>
-        <h2>Operations overview</h2>
-        <p>System-wide metrics and per-campus statistics.</p>
+        <h2>What do you need to do?</h2>
+        <p>Start from a daily task. The system will take you to the right page so staff do not need to learn every menu first.</p>
       </div>
     </section>
 
+    <section class="task-panel">
+      <button
+        v-for="task in dailyTasks"
+        :key="task.title"
+        type="button"
+        class="task-card"
+        @click="router.push(task.path)"
+      >
+        <span>{{ task.step }}</span>
+        <strong>{{ task.title }}</strong>
+        <small>{{ task.description }}</small>
+      </button>
+    </section>
 
     <section class="stat-grid">
       <article v-for="card in cards" :key="card.label" class="stat-card">
@@ -48,8 +61,25 @@
     <section class="content-grid">
       <article class="panel-card">
         <div class="panel-card__header">
-          <h3>Quick actions</h3>
-          <span>High-frequency tasks</span>
+          <h3>First-time setup checklist</h3>
+          <span>Complete these before daily use</span>
+        </div>
+        <ul class="setup-list">
+          <li v-for="item in setupItems" :key="item.title" :class="{ 'setup-list__item--done': item.done }">
+            <span>{{ item.done ? 'Done' : 'To do' }}</span>
+            <div>
+              <strong>{{ item.title }}</strong>
+              <small>{{ item.description }}</small>
+            </div>
+            <button type="button" @click="router.push(item.path)">{{ item.action }}</button>
+          </li>
+        </ul>
+      </article>
+
+      <article class="panel-card">
+        <div class="panel-card__header">
+          <h3>Quick links</h3>
+          <span>Low-frequency admin tools</span>
         </div>
         <div class="quick-grid">
           <button
@@ -61,19 +91,6 @@
             {{ action.label }}
           </button>
         </div>
-      </article>
-
-      <article class="panel-card">
-        <div class="panel-card__header">
-          <h3>Summary</h3>
-          <span>Real-time data from the system</span>
-        </div>
-        <ul class="todo-list">
-          <li>{{ summary.totalStudents }} active students enrolled in courses.</li>
-          <li>{{ summary.totalTeachers }} active teachers in the system.</li>
-          <li>{{ summary.todayLessonsCount }} lessons scheduled for today.</li>
-          <li>{{ summary.lowBalancePackages }} course package(s) are running low on units.</li>
-        </ul>
       </article>
     </section>
   </div>
@@ -109,13 +126,69 @@ const cards = computed(() => [
   { label: 'Low Balance Alerts', value: String(summary.value.lowBalancePackages), hint: 'Packages below threshold' },
 ]);
 
+const dailyTasks = [
+  {
+    step: '1',
+    title: 'Register a student',
+    description: 'Create a new registration, record payment, and print the receipt.',
+    path: '/registration',
+  },
+  {
+    step: '2',
+    title: 'Review and deduct lessons',
+    description: 'Check teacher confirmations and complete admin deduction.',
+    path: '/schedule/adjustments',
+  },
+  {
+    step: '3',
+    title: 'Check conflicts',
+    description: 'Open student, teacher, and room calendars before changing schedules.',
+    path: '/classrooms/occupancy',
+  },
+  {
+    step: '4',
+    title: 'Follow up balances',
+    description: 'Find unpaid, ending, or low-balance students in one list.',
+    path: '/data-summary',
+  },
+];
+
+const setupItems = computed(() => [
+  {
+    title: 'Create campuses and rooms',
+    description: 'Needed for registration campus selection and classroom calendars.',
+    done: summary.value.totalCampuses > 0 && summary.value.totalClassrooms > 0,
+    action: 'Open',
+    path: '/admin/config/campuses',
+  },
+  {
+    title: 'Create teachers',
+    description: 'Needed before assigning 1-on-1 or group lessons.',
+    done: summary.value.totalTeachers > 0,
+    action: 'Open',
+    path: '/admin/config/people?tab=teachers',
+  },
+  {
+    title: 'Configure course products and prices',
+    description: 'Needed before staff can select courses on Registration.',
+    done: summary.value.totalCourseProducts > 0,
+    action: 'Open',
+    path: '/admin/config/course-prices',
+  },
+  {
+    title: 'Review renewal and email settings',
+    description: 'Optional, but useful before sending guardian reminders.',
+    done: true,
+    action: 'Open',
+    path: '/admin/config/notifications',
+  },
+]);
+
 const actions = [
-  { label: 'Create enrollment', handler: () => router.push('/enrollment/orders') },
-  { label: 'Build schedule', handler: () => router.push('/schedule/recurring') },
-  { label: 'Add student', handler: () => router.push('/system/accounts') },
-  { label: 'Add teacher', handler: () => router.push('/system/accounts') },
-  { label: 'Add classroom', handler: () => router.push('/base-data/classrooms') },
-  { label: 'Confirm lesson', handler: () => router.push('/schedule/adjustments') },
+  { label: 'Students & teachers', handler: () => router.push('/admin/config/people') },
+  { label: 'Course prices', handler: () => router.push('/admin/config/course-prices') },
+  { label: 'Class schedules', handler: () => router.push('/schedule/recurring') },
+  { label: 'Payment methods', handler: () => router.push('/admin/config/payment-methods') },
 ];
 
 async function loadSummary() {
@@ -185,6 +258,57 @@ onUnmounted(() => {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 20px;
+}
+
+.task-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.task-card {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: start;
+  border: 1px solid #d8e7ff;
+  border-radius: 10px;
+  background: #f7fbff;
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.task-card:hover {
+  border-color: #409eff;
+  box-shadow: 0 8px 18px rgba(64, 158, 255, 0.12);
+  transform: translateY(-1px);
+}
+
+.task-card span {
+  grid-row: span 2;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #409eff;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.task-card strong {
+  color: #1f2937;
+  font-size: 15px;
+}
+
+.task-card small {
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .stat-card {
@@ -258,7 +382,6 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
 }
-
 .campus-stat {
   display: flex;
   align-items: center;
@@ -337,7 +460,7 @@ onUnmounted(() => {
   border-color: #18b58a;
 }
 
-.todo-list {
+.setup-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -346,7 +469,11 @@ onUnmounted(() => {
   gap: 10px;
 }
 
-.todo-list li {
+.setup-list li {
+  display: grid;
+  grid-template-columns: 52px 1fr auto;
+  gap: 12px;
+  align-items: center;
   font-size: 13px;
   color: #303133;
   padding: 10px 12px;
@@ -355,7 +482,45 @@ onUnmounted(() => {
   background: #fafbfc;
 }
 
+.setup-list li > span {
+  color: #b88230;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.setup-list__item--done > span {
+  color: #18b58a;
+}
+
+.setup-list strong {
+  display: block;
+  color: #1f2937;
+  margin-bottom: 2px;
+}
+
+.setup-list small {
+  color: #606266;
+}
+
+.setup-list button {
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #fff;
+  padding: 6px 10px;
+  color: #303133;
+  cursor: pointer;
+}
+
+.setup-list button:hover {
+  border-color: #409eff;
+  color: #409eff;
+}
+
 @media (max-width: 900px) {
+  .task-panel {
+    grid-template-columns: repeat(2, 1fr);
+  }
   .stat-grid {
     grid-template-columns: repeat(2, 1fr);
   }

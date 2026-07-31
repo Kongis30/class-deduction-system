@@ -115,6 +115,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     @Transactional(rollbackFor = Exception.class)
     public RegistrationIntakeResultVO submitIntake(RegistrationIntakeRequest request) {
         validateRegistrationPeriod(request);
+        validateCampusSelection(request);
         StudentResolution studentResolution = createOrReuseStudent(request);
         List<ResolvedCourseLine> lines = resolveCourseLines(request.getItems());
         MoneySnapshot money = calculateMoney(request, lines);
@@ -874,9 +875,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             return toAccountResult(existing, false, null);
         }
 
-        String rawPassword = StringUtils.hasText(normalizePhone(student.getGuardianPhone()))
-                ? normalizePhone(student.getGuardianPhone())
-                : DEFAULT_ACCOUNT_PASSWORD;
+        String rawPassword = resolveInitialAccountPassword(student.getGuardianPhone());
         UserAccountEntity account = new UserAccountEntity();
         account.setUsername(generateUniqueJinUsername(student.getStudentName(), student.getStudentNo()));
         account.setPasswordHash(passwordEncoder.encode(rawPassword));
@@ -912,9 +911,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 result.add(toAccountResult(existing, false, null));
                 continue;
             }
-            String rawPassword = StringUtils.hasText(teacher.getMobile())
-                    ? teacher.getMobile().trim()
-                    : DEFAULT_ACCOUNT_PASSWORD;
+            String rawPassword = resolveInitialAccountPassword(teacher.getMobile());
             UserAccountEntity account = new UserAccountEntity();
             account.setUsername(generateUniqueJinUsername(teacher.getTeacherName(), teacher.getTeacherNo()));
             account.setPasswordHash(passwordEncoder.encode(rawPassword));
@@ -1018,9 +1015,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     /**
-     * Phone digits are used for the initial student password. Formatting characters
-     * must never become part of a credential or break profile reuse matching.
+     * Phone digits are preferred for 1-on-1 student and teacher accounts.
+     * The fixed fallback keeps account creation available when a phone is missing.
      */
+    private String resolveInitialAccountPassword(String phone) {
+        String normalizedPhone = normalizePhone(phone);
+        return StringUtils.hasText(normalizedPhone) ? normalizedPhone : DEFAULT_ACCOUNT_PASSWORD;
+    }
+
     private String normalizePhone(String value) {
         if (!StringUtils.hasText(value)) {
             return null;
@@ -1367,6 +1369,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("INVALID_REGISTRATION_PERIOD",
                     "Registration period end date cannot be earlier than start date.");
         }
+    }
+
+    private void validateCampusSelection(RegistrationIntakeRequest request) {
+        resolveCampusName(request);
     }
 
     private ClassGroupEntity requireActiveClassGroup(Long id) {

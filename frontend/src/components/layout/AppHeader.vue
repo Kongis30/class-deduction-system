@@ -4,26 +4,6 @@
       <el-button text class="app-header__toggle" aria-label="Toggle navigation" @click="appStore.toggleSidebar">
         <el-icon><Fold /></el-icon>
       </el-button>
-      <nav v-if="breadcrumbs.length" class="app-header__breadcrumbs" aria-label="Current page path">
-        <span class="app-header__breadcrumb-label">You are in</span>
-        <template v-for="(crumb, index) in breadcrumbs" :key="`${crumb.label}-${index}`">
-          <span v-if="index > 0" class="app-header__breadcrumb-separator">›</span>
-          <strong
-            v-if="index === breadcrumbs.length - 1"
-            class="app-header__breadcrumb-chip app-header__breadcrumb-chip--current"
-          >
-            {{ crumb.label }}
-          </strong>
-          <router-link
-            v-else-if="crumb.to"
-            :to="crumb.to"
-            class="app-header__breadcrumb-chip app-header__breadcrumb-chip--link"
-          >
-            {{ crumb.label }}
-          </router-link>
-          <span v-else class="app-header__breadcrumb-chip">{{ crumb.label }}</span>
-        </template>
-      </nav>
       <el-button
         v-if="showBackButton"
         text
@@ -37,9 +17,13 @@
     </div>
 
     <div class="app-header__right">
+      <PageUsageGuide />
+
       <el-dropdown
         v-if="adminToolGroups.length"
         trigger="click"
+        :teleported="true"
+        :popper-options="{ strategy: 'fixed' }"
         popper-class="app-header__admin-tools-menu"
         @command="handleAdminToolCommand"
       >
@@ -148,6 +132,7 @@ import { computed, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { changePassword } from '@/api/auth';
+import PageUsageGuide from '@/components/shared/PageUsageGuide.vue';
 import { APP_TIMEZONE_LABEL } from '@/config/app-config';
 import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
@@ -160,85 +145,9 @@ const authStore = useAuthStore();
 const adminToolGroups = computed(() => getSecondaryMenusForUser(authStore.currentUser));
 const adminIconMap = { DataAnalysis, Files, Money, Setting, Tickets, User };
 const showBackButton = computed(() => route.path !== '/dashboard');
-const breadcrumbs = computed(() => buildBreadcrumbs());
 
 function resolveAdminIcon(icon?: string) {
   return adminIconMap[icon as keyof typeof adminIconMap] ?? Setting;
-}
-
-function buildBreadcrumbs() {
-  const section = String(route.meta.section ?? '').trim();
-  const title = String(route.meta.title ?? '').trim();
-  if (!title || route.path === '/login') {
-    return [];
-  }
-  if (isDailyWorkRoute(route.path)) {
-    return [
-      { label: 'Daily work', to: '/dashboard' },
-      { label: title }
-    ];
-  }
-  if (route.path.startsWith('/admin') || route.path.startsWith('/base-data') || route.path.startsWith('/schedule') || route.path.startsWith('/enrollment')) {
-    const resolvedSection = resolveBackOfficeSection(section, title);
-    return [
-      { label: 'Back office', to: '/base-data/course-products' },
-      ...(resolvedSection === 'Back office'
-        ? []
-        : [{
-            label: resolvedSection,
-            to: backOfficeSectionPath(resolvedSection)
-          }]),
-      { label: title }
-    ];
-  }
-  return section && section !== title
-    ? [{ label: section, to: '/dashboard' }, { label: title }]
-    : [{ label: title }];
-}
-
-function isDailyWorkRoute(path: string) {
-  return [
-    '/registration',
-    '/calendar',
-    '/one-on-one-deduction',
-    '/group-class-lessons',
-    '/data-summary',
-    '/classrooms',
-  ].some(dailyPath => path === dailyPath || path.startsWith(`${dailyPath}/`));
-}
-
-function resolveBackOfficeSection(section: string, title: string) {
-  if (['Course Products', 'Course Pricing', 'Class Schedules', 'Schedule 1-on-1 Lessons'].includes(title)) {
-    return 'Courses';
-  }
-  if (['Enrollment History', 'Course Packages', 'Registration Receipts'].includes(title)) {
-    return 'Enrollment';
-  }
-  if (['Teacher Pay', 'Payment Methods'].includes(title)) {
-    return 'Finance';
-  }
-  if (['People', 'Students', 'Teachers', 'Accounts'].includes(title)) {
-    return 'People';
-  }
-  if (title === 'User Guide') {
-    return 'Help';
-  }
-  if (['Campuses', 'Notifications', 'Brand & receipts'].includes(title)) {
-    return 'System';
-  }
-  return section || 'Back office';
-}
-
-function backOfficeSectionPath(section: string) {
-  const sectionPaths: Record<string, string> = {
-    Help: '/admin/guide',
-    People: '/admin/config/people',
-    Enrollment: '/enrollment/orders',
-    Courses: '/base-data/course-products',
-    Finance: '/admin/config/teacher-pay-rates',
-    System: '/admin/config/campuses',
-  };
-  return sectionPaths[section] ?? '/base-data/course-products';
 }
 
 async function handleSignOut() {
@@ -354,65 +263,6 @@ function resetPasswordForm() {
   color: #334155;
 }
 
-.app-header__breadcrumbs {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-  max-width: min(720px, 52vw);
-  padding: 4px 6px;
-  border: 1px solid #e2e8f0;
-  border-radius: 999px;
-  background: #f8fafc;
-  color: #475569;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.app-header__breadcrumb-label {
-  padding: 0 4px 0 6px;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.app-header__breadcrumb-separator {
-  color: #94a3b8;
-  font-size: 14px;
-}
-
-.app-header__breadcrumb-chip {
-  display: inline-flex;
-  max-width: 180px;
-  min-width: 0;
-  align-items: center;
-  padding: 3px 9px;
-  overflow: hidden;
-  border-radius: 999px;
-  color: #334155;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.app-header__breadcrumb-chip--link {
-  color: #2563eb;
-  text-decoration: none;
-}
-
-.app-header__breadcrumb-chip--link:hover {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
-.app-header__breadcrumb-chip--current {
-  background: #1e293b;
-  color: #fff;
-  font-weight: 800;
-}
-
 .app-header__back {
   color: #334155;
   font-weight: 600;
@@ -420,6 +270,14 @@ function resetPasswordForm() {
 
 :global(.app-header__admin-tools-menu) {
   min-width: 264px;
+  max-height: min(680px, calc(100vh - 88px));
+  overflow: hidden;
+}
+
+:global(.app-header__admin-tools-menu .el-dropdown-menu) {
+  max-height: min(680px, calc(100vh - 88px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 :global(.app-header__tool-group) {

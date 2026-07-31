@@ -1076,6 +1076,18 @@ const studentFormRules = {
   guardianPhone: [{ required: true, message: 'Phone is required' }],
 };
 
+watch(() => studentForm.pickupRequired, (required) => {
+  if (!required) {
+    studentForm.pickupAddress = '';
+  }
+});
+
+watch(() => studentForm.dropoffRequired, (required) => {
+  if (!required) {
+    studentForm.dropoffAddress = '';
+  }
+});
+
 function openStudentDialog(row: StudentItem) {
   editingId.value = row.id;
   Object.assign(studentForm, {
@@ -1095,9 +1107,9 @@ function openStudentDialog(row: StudentItem) {
     sourceChannel: row.sourceChannel ?? '',
     campusId: row.campusId ?? undefined,
     pickupRequired: Boolean(row.pickupRequired),
-    pickupAddress: row.pickupAddress ?? '',
+    pickupAddress: row.pickupRequired ? row.pickupAddress ?? '' : '',
     dropoffRequired: Boolean(row.dropoffRequired),
-    dropoffAddress: row.dropoffAddress ?? '',
+    dropoffAddress: row.dropoffRequired ? row.dropoffAddress ?? '' : '',
   });
   // Clear any previous validation errors when opening dialog
   studentFormRef.value?.clearValidate();
@@ -1110,7 +1122,11 @@ async function handleStudentSubmit() {
 
   submitting.value = true;
   try {
-    await updateStudent(editingId.value!, { ...studentForm });
+    await updateStudent(editingId.value!, {
+      ...studentForm,
+      pickupAddress: studentForm.pickupRequired ? studentForm.pickupAddress : '',
+      dropoffAddress: studentForm.dropoffRequired ? studentForm.dropoffAddress : '',
+    });
     ElMessage.success('Student updated.');
     studentDialogVisible.value = false;
     loadData();

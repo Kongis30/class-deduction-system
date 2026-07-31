@@ -25,6 +25,34 @@
       </div>
     </section>
 
+    <section v-if="!isReadOnly" class="registration-flow no-print" aria-label="Registration workflow">
+      <article>
+        <span>1</span>
+        <strong>Student</strong>
+        <small>Name, grade, guardian, campus</small>
+      </article>
+      <article>
+        <span>2</span>
+        <strong>Course</strong>
+        <small>Course, grade, duration, teacher/class</small>
+      </article>
+      <article>
+        <span>3</span>
+        <strong>Fees</strong>
+        <small>Pickup, drop-off, discounts</small>
+      </article>
+      <article>
+        <span>4</span>
+        <strong>Payment</strong>
+        <small>Cash, Zelle, transfer, balance</small>
+      </article>
+      <article>
+        <span>5</span>
+        <strong>Receipt</strong>
+        <small>Save, preview, print</small>
+      </article>
+    </section>
+
     <section class="paper-form">
       <header class="form-header">
         <div class="form-title-block">
@@ -63,8 +91,9 @@
             <el-tooltip placement="top" effect="light">
               <template #content>
                 The first 1-on-1 registration creates a student account only when one does not already exist.
-                The username is generated from the student's name and ends with @jin. The initial password is the guardian phone digits only,
-                with spaces, dashes, and brackets removed. Existing account credentials never change here.
+                The username is generated from the student's name and ends with @jin. Initial passwords prefer phone digits only,
+                with spaces, dashes, and brackets removed; when no phone is available, the system uses 9297019872.
+                Existing account credentials never change here.
               </template>
               <el-icon class="registration-help-icon" aria-label="Account creation rules"><QuestionFilled /></el-icon>
             </el-tooltip>
@@ -943,10 +972,12 @@ async function loadExistingStudent() {
     form.student.guardianPhone = student.guardianPhone || student.phone || '';
     form.student.guardianPhone2 = student.guardianPhone2 || '';
     form.student.guardianEmail = student.guardianEmail || '';
-    form.student.pickupRequired = Boolean(student.pickupRequired);
-    form.student.pickupAddress = student.pickupAddress || '';
-    form.student.dropoffRequired = Boolean(student.dropoffRequired);
-    form.student.dropoffAddress = student.dropoffAddress || '';
+    const pickupRequired = Boolean(student.pickupRequired);
+    const dropoffRequired = Boolean(student.dropoffRequired);
+    form.student.pickupRequired = pickupRequired;
+    form.student.pickupAddress = pickupRequired ? student.pickupAddress || '' : '';
+    form.student.dropoffRequired = dropoffRequired;
+    form.student.dropoffAddress = dropoffRequired ? student.dropoffAddress || '' : '';
     form.pickupFeeCharged = false;
     form.pickupFeeAmount = 0;
     form.dropoffFeeCharged = false;
@@ -1722,8 +1753,8 @@ function validateForm() {
     if (payment.amount > 0 && !payment.paymentMethod) {
       errors.push(`Payment row ${index + 1}: payment method is required.`);
     }
-    if (payment.paymentMethod && payment.amount <= 0) {
-      errors.push(`Payment row ${index + 1}: amount must be greater than zero.`);
+    if (payment.amount < 0) {
+      errors.push(`Payment row ${index + 1}: amount cannot be negative.`);
     }
     if (payment.amount > 0 && !payment.paidAt) {
       errors.push(`Payment row ${index + 1}: payment date is required.`);
@@ -2194,6 +2225,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.registration-flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  max-width: 920px;
+}
+
+.registration-flow article {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #d8e7ff;
+  border-radius: 8px;
+  background: #f7fbff;
+}
+
+.registration-flow span {
+  grid-row: span 2;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: #409eff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.registration-flow strong {
+  color: #1f2937;
+  font-size: 13px;
+}
+
+.registration-flow small {
+  overflow: hidden;
+  color: #606266;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .form-header {
@@ -3260,6 +3336,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 @media (max-width: 960px) {
   .registration-desk,
+  .registration-flow,
   .submit-bar {
     width: 920px;
     max-width: none;

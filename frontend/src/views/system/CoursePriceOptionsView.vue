@@ -64,6 +64,17 @@
               <strong>{{ selectedProduct?.productName }}</strong>
             </div>
 
+            <section class="matrix-flow-card">
+              <div>
+                <span>{{ startedFromProductCreate ? 'You just created the course' : 'Course setup flow' }}</span>
+                <strong>{{ matrixFlowTitle }}</strong>
+                <p>{{ matrixFlowDescription }}</p>
+              </div>
+              <el-button type="primary" @click="openDialog()">
+                {{ matrixPrimaryActionLabel }}
+              </el-button>
+            </section>
+
             <el-form class="filters" :model="query" inline>
               <el-form-item label="Keyword">
                 <el-input
@@ -223,7 +234,7 @@
       v-model="dialogVisible"
       width="860px"
       :close-on-click-modal="false"
-      :title="editingId ? 'Edit price matrix row' : 'Add price matrix row'"
+      :title="editingId ? 'Edit price matrix row' : priceDialogTitle"
     >
       <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
         <div class="pricing-context">
@@ -355,7 +366,7 @@
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">Cancel</el-button>
-        <el-button type="primary" :loading="saving" @click="saveOption">Save</el-button>
+        <el-button type="primary" :loading="saving" @click="saveOption">{{ priceSaveButtonLabel }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -514,6 +525,7 @@ const selectedModeLabel = computed(() =>
 );
 const productMap = computed(() => new Map(courseProducts.value.map(item => [String(item.id), item])));
 const selectedProduct = computed(() => query.courseProductId ? productMap.value.get(String(query.courseProductId)) : undefined);
+const startedFromProductCreate = computed(() => queryValue(route.query.create) === '1');
 const productChoices = computed(() =>
   courseProducts.value.filter(product => product.teachingMode === selectedMode.value)
 );
@@ -546,6 +558,45 @@ const visibleOptions = computed(() => {
       productName(option.courseProductId),
     ].some(value => String(value ?? '').toLowerCase().includes(keyword));
   });
+});
+
+const matrixFlowTitle = computed(() => {
+  if (selectedMode.value === 'ONE_ON_ONE') {
+    return visibleOptions.value.length === 0
+      ? 'Step 2: add grade, package hours, and price'
+      : 'Add more grade/hour price rows when needed';
+  }
+  return visibleOptions.value.length === 0
+    ? 'Step 2: add grade class, billing, schedule, and price'
+    : 'Review grade classes, schedules, and prices';
+});
+
+const matrixFlowDescription = computed(() => {
+  if (selectedMode.value === 'ONE_ON_ONE') {
+    return 'Each row becomes one registration option, such as G1-G5 / 40 hours / $price.';
+  }
+  return 'Each row creates one grade class for enrollment. Add grade, billing run, weekly time, teacher or room if known, and price.';
+});
+
+const matrixPrimaryActionLabel = computed(() =>
+  selectedMode.value === 'ONE_ON_ONE'
+    ? 'Add grade and price'
+    : 'Add grade class and price'
+);
+
+const priceDialogTitle = computed(() =>
+  selectedMode.value === 'ONE_ON_ONE'
+    ? 'Step 2: Add grade and package price'
+    : 'Step 2: Add grade class and price'
+);
+
+const priceSaveButtonLabel = computed(() => {
+  if (editingId.value) {
+    return 'Save changes';
+  }
+  return selectedMode.value === 'ONE_ON_ONE'
+    ? 'Save price row'
+    : 'Save grade class';
 });
 
 const groupedOptions = computed<ProductPriceGroup[]>(() => {
@@ -602,10 +653,6 @@ async function initializePage() {
     query.courseProductId = requestedProduct.id;
   }
   await loadOptions();
-
-  if (queryValue(route.query.create) === '1') {
-    openDialog();
-  }
 }
 
 async function loadAll() {
@@ -1082,6 +1129,9 @@ function timeToMinutes(value: string) {
 
 .header-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -1190,6 +1240,45 @@ function timeToMinutes(value: string) {
   font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.matrix-flow-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d8e7ff;
+  border-radius: 10px;
+  background: #f7fbff;
+}
+
+.matrix-flow-card div {
+  min-width: 0;
+}
+
+.matrix-flow-card span {
+  display: block;
+  color: #409eff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.matrix-flow-card strong {
+  display: block;
+  margin-top: 3px;
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.matrix-flow-card p {
+  margin: 3px 0 0;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .filters {

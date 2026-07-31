@@ -246,9 +246,9 @@ public class StudentServiceImpl implements StudentService {
         entity.setGuardianEmail(request.getGuardianEmail());
         entity.setGuardianRelationType(request.getGuardianRelationType());
         entity.setPickupRequired(Boolean.TRUE.equals(request.getPickupRequired()));
-        entity.setPickupAddress(request.getPickupAddress());
+        entity.setPickupAddress(Boolean.TRUE.equals(request.getPickupRequired()) ? trimToNull(request.getPickupAddress()) : null);
         entity.setDropoffRequired(Boolean.TRUE.equals(request.getDropoffRequired()));
-        entity.setDropoffAddress(request.getDropoffAddress());
+        entity.setDropoffAddress(Boolean.TRUE.equals(request.getDropoffRequired()) ? trimToNull(request.getDropoffAddress()) : null);
         entity.setCampusId(request.getCampusId());
     }
 

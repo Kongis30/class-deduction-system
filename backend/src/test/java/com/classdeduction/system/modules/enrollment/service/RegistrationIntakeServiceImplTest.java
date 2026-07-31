@@ -63,6 +63,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -212,7 +213,72 @@ class RegistrationIntakeServiceImplTest {
 
         verify(userAccountMapper).insert(userAccountCaptor.capture());
         assertThat(userAccountCaptor.getValue().getUsername()).isEqualTo("jint@jin");
+        assertThat(userAccountCaptor.getValue().getPasswordHash()).isEqualTo("encoded");
         assertThat(result.studentAccount().username()).isEqualTo("jint@jin");
+        assertThat(result.studentAccount().initialPassword()).isEqualTo("9175550101");
+    }
+
+    @Test
+    void shouldUseNormalizedTeacherPhoneAsInitialPassword() {
+        stubSuccessfulIntake(false);
+        TeacherEntity teacher = buildTeacher();
+        teacher.setMobile("(917) 555-0202");
+        when(teacherMapper.selectById(301L)).thenReturn(teacher);
+        when(userAccountMapper.selectOne(any())).thenReturn(
+                (UserAccountEntity) null,
+                (UserAccountEntity) null);
+        when(passwordEncoder.encode("9175550101")).thenReturn("student-password");
+        when(passwordEncoder.encode("9175550202")).thenReturn("teacher-password");
+
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(buildOneOnOneRequest());
+
+        verify(userAccountMapper, times(2)).insert(userAccountCaptor.capture());
+        UserAccountEntity teacherAccount = userAccountCaptor.getAllValues().stream()
+                .filter(account -> "TEACHER".equals(account.getUserType()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(teacherAccount.getPasswordHash()).isEqualTo("teacher-password");
+        assertThat(result.teacherAccounts()).singleElement()
+                .extracting(RegistrationIntakeResultVO.AccountResultVO::initialPassword)
+                .isEqualTo("9175550202");
+    }
+
+    @Test
+    void shouldUseFixedFallbackWhenTeacherPhoneIsMissing() {
+        stubSuccessfulIntake(false);
+        TeacherEntity teacher = buildTeacher();
+        teacher.setMobile(null);
+        when(teacherMapper.selectById(301L)).thenReturn(teacher);
+        when(userAccountMapper.selectOne(any())).thenReturn(
+                (UserAccountEntity) null,
+                (UserAccountEntity) null);
+        when(passwordEncoder.encode("9297019872")).thenReturn("fallback-password");
+
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(buildOneOnOneRequest());
+
+        verify(userAccountMapper, times(2)).insert(userAccountCaptor.capture());
+        UserAccountEntity teacherAccount = userAccountCaptor.getAllValues().stream()
+                .filter(account -> "TEACHER".equals(account.getUserType()))
+                .findFirst()
+                .orElseThrow();
+        assertThat(teacherAccount.getPasswordHash()).isEqualTo("fallback-password");
+        assertThat(result.teacherAccounts()).singleElement()
+                .extracting(RegistrationIntakeResultVO.AccountResultVO::initialPassword)
+                .isEqualTo("9297019872");
+    }
+
+    @Test
+    void shouldRejectInvalidCampusBeforeWritingStudent() {
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.setCampusId(999L);
+        when(campusMapper.selectById(999L)).thenReturn(null);
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CAMPUS_NOT_AVAILABLE");
+        verify(studentMapper, never()).insert(any(StudentEntity.class));
+        verify(studentMapper, never()).updateById(any(StudentEntity.class));
     }
 
     @Test
@@ -524,6 +590,7 @@ class RegistrationIntakeServiceImplTest {
     private void stubStudentCreationOnly() {
         when(studentNoGenerator.generate()).thenReturn("STU202609010001");
         when(studentMapper.selectReusableStudent("Jin Tang", "9175550101")).thenReturn(null);
+        when(campusMapper.selectById(1L)).thenReturn(buildCampus());
         doAnswer(invocation -> {
             StudentEntity student = invocation.getArgument(0);
             student.setId(101L);
