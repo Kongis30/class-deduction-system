@@ -183,19 +183,77 @@
 
       <aside class="adj-sidebar">
         <div class="adj-sidebar__search">
-          <el-input v-model="classKeyword" placeholder="Search class..." clearable size="small" />
+          <el-input v-model="classKeyword" placeholder="Search course, grade, class..." clearable size="small" />
         </div>
         <div class="adj-sidebar__list" v-loading="classesLoading">
-          <div
-            v-for="clz in filteredClasses"
-            :key="clz.id"
-            class="adj-sidebar__item"
-            :class="{ 'adj-sidebar__item--active': selectedClassId === String(clz.id) }"
-            @click="selectClass(clz.id)"
-          >
-            <div class="adj-sidebar__name">{{ clz.className }}</div>
-            <div class="adj-sidebar__meta">{{ clz.activeStudentCount }} students</div>
+          <div class="class-drill-header">
+            <button
+              v-if="classDrillLevel !== 'course'"
+              type="button"
+              class="class-drill-back"
+              @click="goBackClassDrill"
+            >
+              ← Back
+            </button>
+            <div>
+              <strong>{{ classDrillTitle }}</strong>
+              <span>{{ classDrillSubtitle }}</span>
+            </div>
           </div>
+          <div
+            v-if="classDrillLevel === 'course'"
+            class="class-drill-list"
+          >
+            <button
+              v-for="group in classCourseGroups"
+              :key="group.key"
+              type="button"
+              class="class-drill-card"
+              @click="selectClassCourse(group.key)"
+            >
+              <span class="class-drill-card__main">{{ group.label }}</span>
+              <span class="class-drill-card__meta">{{ group.classCount }} class(es) · {{ group.studentCount }} students</span>
+            </button>
+          </div>
+
+          <div
+            v-else-if="classDrillLevel === 'grade'"
+            class="class-drill-list"
+          >
+            <button
+              v-for="group in classGradeGroups"
+              :key="group.key"
+              type="button"
+              class="class-drill-card"
+              @click="selectClassGrade(group.key)"
+            >
+              <span class="class-drill-card__main">{{ group.label }}</span>
+              <span class="class-drill-card__meta">{{ group.classCount }} class(es) · {{ group.studentCount }} students</span>
+            </button>
+          </div>
+
+          <div v-else class="class-drill-list">
+            <button
+              v-for="clz in drilldownClasses"
+              :key="clz.id"
+              type="button"
+              class="adj-sidebar__item class-drill-class"
+              :class="{ 'adj-sidebar__item--active': selectedClassId === String(clz.id) }"
+              @click="selectClass(clz.id)"
+            >
+              <span class="class-drill-class__times">
+                <span
+                  v-for="slot in classTimeSlotLabels(clz)"
+                  :key="slot"
+                  class="class-time-chip"
+                >
+                  {{ slot }}
+                </span>
+              </span>
+              <span class="adj-sidebar__meta">{{ classTimeSlotMeta(clz) }}</span>
+            </button>
+          </div>
+
           <div v-if="!classesLoading && filteredClasses.length === 0" class="adj-sidebar__empty">
             No classes found.
           </div>
@@ -678,6 +736,9 @@ const classKeyword = ref('');
 const classesLoading = ref(false);
 const classes = ref<ClassGroupItem[]>([]);
 const selectedClassId = ref<EntityId | null>(null);
+const classDrillLevel = ref<'course' | 'grade' | 'class'>('course');
+const selectedClassCourseKey = ref('');
+const selectedClassGradeKey = ref('');
 const selectedClass = computed(() => classes.value.find(c => String(c.id) === selectedClassId.value) ?? null);
 const enrolledStudents = ref<ClassEnrolledStudentItem[]>([]);
 const classOccurrences = ref<ClassOccurrenceItem[]>([]);
@@ -720,7 +781,50 @@ const filteredStudents = computed(() => {
 const filteredClasses = computed(() => {
   if (!classKeyword.value) return classes.value;
   const kw = classKeyword.value.toLowerCase();
-  return classes.value.filter(c => c.className.toLowerCase().includes(kw));
+  return classes.value.filter(c => [
+    c.className,
+    classCourseLabel(c),
+    classGradeLabel(c),
+    c.teacherName,
+    c.classroomName,
+    classScheduleSummary(c),
+    classTimeSlotLabel(c),
+  ].some(value => String(value ?? '').toLowerCase().includes(kw)));
+});
+
+type ClassGroupSummary = {
+  key: string;
+  label: string;
+  classCount: number;
+  studentCount: number;
+};
+
+const classCourseGroups = computed(() =>
+  summarizeClassGroups(filteredClasses.value, classCourseKey, classCourseLabel)
+);
+
+const classGradeGroups = computed(() => {
+  const scopedClasses = filteredClasses.value.filter(clz => classCourseKey(clz) === selectedClassCourseKey.value);
+  return summarizeClassGroups(scopedClasses, classGradeKey, classGradeLabel);
+});
+
+const drilldownClasses = computed(() =>
+  filteredClasses.value.filter(clz =>
+    classCourseKey(clz) === selectedClassCourseKey.value
+    && classGradeKey(clz) === selectedClassGradeKey.value
+  )
+);
+
+const classDrillTitle = computed(() => {
+  if (classDrillLevel.value === 'course') return 'Choose class type';
+  if (classDrillLevel.value === 'grade') return selectedClassCourseKey.value;
+  return selectedClassGradeKey.value;
+});
+
+const classDrillSubtitle = computed(() => {
+  if (classDrillLevel.value === 'course') return `${filteredClasses.value.length} active class(es)`;
+  if (classDrillLevel.value === 'grade') return 'Choose a grade group';
+  return 'Choose a time slot';
 });
 
 type ConfirmableOccurrence = LessonOccurrenceItem | ClassOccurrenceItem;
@@ -963,6 +1067,114 @@ const expiryStatusFilters = [
 
 function filterExpiryStatus(value: string, row: ClassEnrolledStudentItem): boolean {
   return row.expiryStatus === value;
+}
+
+function normalizeGroupKey(value: string): string {
+  return value.trim().replace(/\s+/g, ' ') || 'Other';
+}
+
+function classGradeLabel(clz: ClassGroupItem): string {
+  const name = clz.className;
+  const rangeMatch = name.match(/\bG\s*\d+\s*[-–]\s*G?\s*\d+\b/i);
+  if (rangeMatch) {
+    return rangeMatch[0].replace(/\s+/g, '').replace(/g/gi, 'G');
+  }
+  const singleMatch = name.match(/\bG\s*\d+\b/i);
+  if (singleMatch) {
+    return singleMatch[0].replace(/\s+/g, '').replace(/g/gi, 'G');
+  }
+  return 'Other grades';
+}
+
+function classGradeKey(clz: ClassGroupItem): string {
+  return normalizeGroupKey(classGradeLabel(clz));
+}
+
+function classCourseLabel(clz: ClassGroupItem): string {
+  const withoutDemoPrefix = clz.className.replace(/^DEMO\s+/i, '');
+  const withoutGrade = withoutDemoPrefix
+    .replace(/\s*[·-]\s*\bG\s*\d+\s*[-–]\s*G?\s*\d+\b/gi, '')
+    .replace(/\bG\s*\d+\s*[-–]\s*G?\s*\d+\b/gi, '')
+    .replace(/\bG\s*\d+\b/gi, '')
+    .replace(/\s*[·-]\s*g\d+\b/gi, '')
+    .replace(/\s*[·-]\s*$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return withoutGrade || 'Other classes';
+}
+
+function classCourseKey(clz: ClassGroupItem): string {
+  return normalizeGroupKey(classCourseLabel(clz));
+}
+
+function summarizeClassGroups(
+  source: ClassGroupItem[],
+  keyGetter: (clz: ClassGroupItem) => string,
+  labelGetter: (clz: ClassGroupItem) => string,
+): ClassGroupSummary[] {
+  const map = new Map<string, ClassGroupSummary>();
+  source.forEach((clz) => {
+    const key = keyGetter(clz);
+    const existing = map.get(key);
+    if (existing) {
+      existing.classCount += 1;
+      existing.studentCount += clz.activeStudentCount ?? 0;
+      return;
+    }
+    map.set(key, {
+      key,
+      label: labelGetter(clz),
+      classCount: 1,
+      studentCount: clz.activeStudentCount ?? 0,
+    });
+  });
+  return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function selectClassCourse(key: string) {
+  selectedClassCourseKey.value = key;
+  selectedClassGradeKey.value = '';
+  classDrillLevel.value = 'grade';
+}
+
+function selectClassGrade(key: string) {
+  selectedClassGradeKey.value = key;
+  classDrillLevel.value = 'class';
+}
+
+function goBackClassDrill() {
+  if (classDrillLevel.value === 'class') {
+    classDrillLevel.value = 'grade';
+    selectedClassGradeKey.value = '';
+    return;
+  }
+  classDrillLevel.value = 'course';
+  selectedClassCourseKey.value = '';
+}
+
+function classScheduleSummary(clz: ClassGroupItem) {
+  return clz.scheduleDesc || `${clz.scheduleSlots?.length ?? 0} weekly time(s)`;
+}
+
+const weekdayLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function classTimeSlotLabel(clz: ClassGroupItem) {
+  return classTimeSlotLabels(clz).join(' ');
+}
+
+function classTimeSlotLabels(clz: ClassGroupItem) {
+  const slots = clz.scheduleSlots ?? [];
+  if (slots.length === 0) {
+    return [clz.scheduleDesc || 'Time not set'];
+  }
+  return slots
+    .map(slot => `${weekdayLabels[slot.weekday] ?? 'Day'} ${slot.startTime.slice(0, 5)}-${slot.endTime.slice(0, 5)}`);
+}
+
+function classTimeSlotMeta(clz: ClassGroupItem) {
+  const teacher = clz.teacherName || 'Teacher not set';
+  const room = clz.classroomName || 'Room not set';
+  return `${teacher} · ${room} · ${clz.activeStudentCount ?? 0} students`;
 }
 
 function openStudentProfile(row: ClassEnrolledStudentItem) {
@@ -1327,7 +1539,7 @@ async function submitClassAdjustment() {
       });
       ElMessage.success('Class lesson schedule adjusted.');
       classAdjustDialogVisible.value = false;
-      await loadClassOccurrences(selectedClassId.value);
+      await loadClassOccurrences(selectedClassId.value!);
     } catch (err) {
       ElMessage.error(extractErrorMessage(err));
     } finally {
@@ -1765,6 +1977,125 @@ onMounted(async () => {
   text-align: center;
   color: #909399;
   font-size: 13px;
+}
+
+.class-drill-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #e8edf2;
+  background: #fff;
+}
+
+.class-drill-header strong,
+.class-drill-header span {
+  display: block;
+}
+
+.class-drill-header strong {
+  color: #1f2937;
+  font-size: 13px;
+}
+
+.class-drill-header span {
+  margin-top: 2px;
+  color: #909399;
+  font-size: 11px;
+}
+
+.class-drill-back {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  color: #409eff;
+  font-size: 12px;
+  background: #ecf5ff;
+  border: 1px solid #d9ecff;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.class-drill-back:hover {
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.class-drill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.class-drill-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  background: #fff;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+}
+
+.class-drill-card:hover {
+  background: #f7fbff;
+  border-color: #bfdbfe;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.08);
+}
+
+.class-drill-card__main {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.class-drill-card__meta {
+  color: #909399;
+  font-size: 11px;
+}
+
+.class-drill-class {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border-top: none;
+  border-right: none;
+  border-bottom: none;
+}
+
+.class-drill-class__times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.class-time-chip {
+  display: inline-flex;
+  max-width: 100%;
+  padding: 3px 8px;
+  overflow: hidden;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+}
+
+.class-drill-class .adj-sidebar__meta {
+  display: block;
+  line-height: 1.35;
 }
 
 /* ── Right content ──────────────────── */
