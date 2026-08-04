@@ -50,23 +50,25 @@
         </aside>
 
         <div class="matrix-content">
-          <el-empty
-            v-if="!query.courseProductId"
-            description="Choose a course product to manage its grade and price rows."
-          />
+          <section v-if="!query.courseProductId" class="matrix-empty-guide">
+            <span>Step 2</span>
+            <strong>Choose a course product on the left to set grade and price.</strong>
+            <p>{{ emptyGuideDescription }}</p>
+            <el-button v-if="fromProductSetup" @click="goToCourseProducts">Back to Course Products</el-button>
+          </section>
 
           <template v-else>
             <div class="matrix-content__context">
-              <el-button text type="primary" @click="backToProductList">
+              <el-button text type="primary" @click="handleContextBack">
                 <el-icon><ArrowLeft /></el-icon>
-                Course products
+                {{ contextBackLabel }}
               </el-button>
               <strong>{{ selectedProduct?.productName }}</strong>
             </div>
 
             <section class="matrix-flow-card">
               <div>
-                <span>{{ startedFromProductCreate ? 'You just created the course' : 'Course setup flow' }}</span>
+                <span>{{ matrixFlowEyebrow }}</span>
                 <strong>{{ matrixFlowTitle }}</strong>
                 <p>{{ matrixFlowDescription }}</p>
               </div>
@@ -75,50 +77,23 @@
               </el-button>
             </section>
 
-            <el-form class="filters" :model="query" inline>
-              <el-form-item label="Keyword">
-                <el-input
-                  v-model="query.keyword"
-                  clearable
-                  placeholder="Grade, duration, time"
-                  style="width: 220px;"
-                  @input="reloadFirstPage"
-                />
-              </el-form-item>
-              <el-form-item label="Status">
-                <el-select v-model="query.status" clearable placeholder="All" style="width: 140px;" @change="reloadFirstPage">
-                  <el-option label="Active" value="ACTIVE" />
-                  <el-option label="Inactive" value="INACTIVE" />
-                </el-select>
-              </el-form-item>
-            </el-form>
-
-            <div class="matrix-summary">
-              <div class="summary-card">
-                <span>Teaching mode</span>
-                <strong>{{ selectedModeLabel }}</strong>
+            <section class="matrix-step-strip">
+              <div class="matrix-step-strip__item matrix-step-strip__item--done">
+                <span>1</span>
+                <strong>Product created</strong>
+                <small>{{ selectedProduct?.productName }}</small>
               </div>
-              <div class="summary-card">
-                <span>Product</span>
-                <strong>{{ selectedProduct?.productName }}</strong>
+              <div class="matrix-step-strip__item matrix-step-strip__item--active">
+                <span>2</span>
+                <strong>{{ selectedMode === 'GROUP' ? 'Add grade class & price' : 'Add grade/hour price' }}</strong>
+                <small>{{ visibleOptions.length }} row{{ visibleOptions.length === 1 ? '' : 's' }} configured</small>
               </div>
-              <div class="summary-card">
-                <span>Matrix rows</span>
-                <strong>{{ visibleOptions.length }}</strong>
+              <div class="matrix-step-strip__item">
+                <span>3</span>
+                <strong>Use in registration</strong>
+                <small>Only active rows appear in registration.</small>
               </div>
-            </div>
-
-            <div class="template-strip">
-              <span>Quick templates</span>
-              <el-button
-                v-for="preset in visiblePresets"
-                :key="preset.label"
-                size="small"
-                @click="openTemplate(preset)"
-              >
-                {{ preset.label }}
-              </el-button>
-            </div>
+            </section>
 
             <el-empty v-if="!loading && groupedOptions.length === 0" description="No price rows for this course product." />
 
@@ -209,11 +184,6 @@
               </el-table>
             </section>
 
-            <div class="matrix-note">
-              <strong>Downstream impact:</strong>
-              Product and price rows are copied into enrollment snapshots. Once used, prefer deactivating or adding a new price row instead of changing historical structure.
-            </div>
-
             <div class="pagination-row">
               <el-pagination
                 v-model:current-page="query.pageNum"
@@ -262,7 +232,22 @@
 
         <div class="form-grid form-grid--two">
           <el-form-item label="Grade / Level" prop="gradeBand">
-            <el-input v-model="form.gradeBand" placeholder="e.g. G3-G6" @input="syncDetailText" />
+            <el-select
+              v-model="form.gradeBand"
+              filterable
+              allow-create
+              default-first-option
+              placeholder="Select PPT grade or type a custom one"
+              style="width: 100%;"
+              @change="syncDetailText"
+            >
+              <el-option
+                v-for="grade in gradeOptionsForForm"
+                :key="grade"
+                :label="grade"
+                :value="grade"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item :label="priceFieldLabel" prop="priceAmount">
             <el-input-number v-model="form.priceAmount" :min="0" :precision="2" :controls="false" style="width: 100%;" />
@@ -376,7 +361,7 @@
 import { ArrowLeft, Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import {
   createCoursePriceOption,
@@ -406,16 +391,6 @@ interface CourseModeDef {
   label: string;
 }
 
-interface MatrixPreset {
-  label: string;
-  courseType: CourseTypeValue;
-  gradeBand: string;
-  periodLabel?: string;
-  durationLabel: string;
-  timeSlotLabel?: string;
-  oneOnOneHours?: number;
-}
-
 interface ProductPriceGroup {
   productId: EntityId | undefined;
   productName: string;
@@ -437,17 +412,15 @@ const courseModes: CourseModeDef[] = [
 ];
 
 const route = useRoute();
-const presets: MatrixPreset[] = [
-  { label: 'After School G1-G5 2 months', courseType: 'AFTER_SCHOOL', gradeBand: 'G1-G5', durationLabel: '2 months', timeSlotLabel: 'Mon-Fri 3-6pm' },
-  { label: 'After School G6-G8 6 months', courseType: 'AFTER_SCHOOL', gradeBand: 'G6-G8', durationLabel: '6 months', timeSlotLabel: 'Mon-Fri 3-6pm' },
-  { label: 'Saturday G1-2 Fall half day', courseType: 'SATURDAY', gradeBand: 'G1-2', periodLabel: 'Fall', durationLabel: '13 weeks half day', timeSlotLabel: 'Sat 9am-12pm' },
-  { label: 'Saturday SAT full day', courseType: 'SATURDAY', gradeBand: 'SAT', periodLabel: 'Full year', durationLabel: '33 weeks full day', timeSlotLabel: 'Sat 9am-4pm' },
-  { label: 'Summer G1-G6 half day', courseType: 'SUMMER', gradeBand: 'G1-G6', periodLabel: 'Summer', durationLabel: '7 weeks half day', timeSlotLabel: '9am-12pm' },
-  { label: '1 on 1 G1-G5 40 hours', courseType: 'ONE_ON_ONE', gradeBand: 'G1-G5', durationLabel: '40 hours', oneOnOneHours: 40 },
-  { label: '1 on 1 G6-G8 60 hours', courseType: 'ONE_ON_ONE', gradeBand: 'G6-G8', durationLabel: '60 hours', oneOnOneHours: 60 },
-  { label: '1 on 1 AP 120 hours', courseType: 'ONE_ON_ONE', gradeBand: 'AP', durationLabel: '120 hours', oneOnOneHours: 120 },
-];
+const router = useRouter();
 const oneOnOneHourChoices = [20, 40, 60, 80, 100, 120];
+const pptGradeOptions: Record<CourseTypeValue, string[]> = {
+  AFTER_SCHOOL: ['G1-G5', 'G6-G8', 'ESL'],
+  SATURDAY: ['G1-2', 'G3-G6', 'SHSAT', 'PSAT', 'SAT'],
+  SUMMER: ['G1-G6', 'SHSAT', 'PSAT', 'SAT', 'ESL'],
+  SPRINT: [],
+  ONE_ON_ONE: ['G1-G5', 'G6-G8', 'G9-G12', 'AP'],
+};
 
 const loading = ref(false);
 const loadingProducts = ref(false);
@@ -463,7 +436,6 @@ const editingId = ref<EntityId | null>(null);
 const formRef = ref();
 
 const query = reactive({
-  keyword: '',
   courseType: 'ONE_ON_ONE' as CourseTypeValue,
   courseProductId: '' as EntityId | '',
   status: 'ACTIVE',
@@ -519,6 +491,8 @@ const rules = {
   }],
 };
 
+const gradeOptionsForForm = computed(() => pptGradeOptions[form.courseType] ?? []);
+
 const selectedMode = ref<CourseMode>('ONE_ON_ONE');
 const selectedModeLabel = computed(() =>
   courseModes.find(item => item.value === selectedMode.value)?.label ?? ''
@@ -526,13 +500,10 @@ const selectedModeLabel = computed(() =>
 const productMap = computed(() => new Map(courseProducts.value.map(item => [String(item.id), item])));
 const selectedProduct = computed(() => query.courseProductId ? productMap.value.get(String(query.courseProductId)) : undefined);
 const startedFromProductCreate = computed(() => queryValue(route.query.create) === '1');
+const fromProductSetup = computed(() => queryValue(route.query.from) === 'course-products');
 const productChoices = computed(() =>
   courseProducts.value.filter(product => product.teachingMode === selectedMode.value)
 );
-const visiblePresets = computed(() =>
-  presets.filter(item => modeForCourseType(item.courseType) === selectedMode.value)
-);
-
 const visibleOptions = computed(() => {
   return options.value.filter((option) => {
     if (modeForCourseType(option.courseType) !== selectedMode.value) {
@@ -544,19 +515,7 @@ const visibleOptions = computed(() => {
     if (query.courseProductId && String(option.courseProductId) !== String(query.courseProductId)) {
       return false;
     }
-    const keyword = query.keyword.trim().toLowerCase();
-    if (!keyword) {
-      return true;
-    }
-    return [
-      option.registerClass,
-      option.gradeBand,
-      option.periodLabel,
-      option.durationLabel,
-      option.timeSlotLabel,
-      option.detailText,
-      productName(option.courseProductId),
-    ].some(value => String(value ?? '').toLowerCase().includes(keyword));
+    return true;
   });
 });
 
@@ -571,12 +530,29 @@ const matrixFlowTitle = computed(() => {
     : 'Review grade classes, schedules, and prices';
 });
 
+const matrixFlowEyebrow = computed(() => {
+  if (startedFromProductCreate.value) {
+    return 'You just created the course';
+  }
+  return fromProductSetup.value ? 'Continue from Course Products' : 'Course setup flow';
+});
+
 const matrixFlowDescription = computed(() => {
   if (selectedMode.value === 'ONE_ON_ONE') {
     return 'Each row becomes one registration option, such as G1-G5 / 40 hours / $price.';
   }
   return 'Each row creates one grade class for enrollment. Add grade, billing run, weekly time, teacher or room if known, and price.';
 });
+
+const emptyGuideDescription = computed(() =>
+  selectedMode.value === 'GROUP'
+    ? 'Products are only parent courses. Pick one here, then add the grade, billing period, weekly time, teacher, room, and price.'
+    : 'Pick a 1-on-1 product here, then add grade, package hours, and price rows.'
+);
+
+const contextBackLabel = computed(() =>
+  fromProductSetup.value ? 'Back to Course Products' : 'Choose another product'
+);
 
 const matrixPrimaryActionLabel = computed(() =>
   selectedMode.value === 'ONE_ON_ONE'
@@ -689,7 +665,7 @@ async function loadOptions() {
       pageSize: query.pageSize,
     });
     options.value = res.data.data.records ?? [];
-    total.value = query.courseProductId || query.keyword ? visibleOptions.value.length : (res.data.data.total ?? 0);
+    total.value = query.courseProductId ? visibleOptions.value.length : (res.data.data.total ?? 0);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to load course price options.');
   } finally {
@@ -712,8 +688,23 @@ function switchCourseMode(mode: CourseMode) {
   reloadFirstPage();
 }
 
-function backToProductList() {
+function chooseAnotherProduct() {
   query.courseProductId = '';
+}
+
+function goToCourseProducts() {
+  router.push({
+    name: 'course-products',
+    query: { tab: selectedMode.value === 'ONE_ON_ONE' ? 'one-on-one' : 'group' },
+  });
+}
+
+function handleContextBack() {
+  if (fromProductSetup.value) {
+    goToCourseProducts();
+    return;
+  }
+  chooseAnotherProduct();
 }
 
 function selectCourseProduct(product: CourseProductItem) {
@@ -775,26 +766,6 @@ function openPriceForProduct(productId?: EntityId) {
   }
   query.courseProductId = productId;
   openDialog();
-}
-
-function openTemplate(preset: MatrixPreset) {
-  openDialog();
-  form.courseType = preset.courseType;
-  form.registerClass = selectedTypeLabelFor(preset.courseType);
-  form.gradeBand = preset.gradeBand;
-  form.periodLabel = preset.periodLabel ?? '';
-  form.durationLabel = preset.durationLabel;
-  form.timeSlotLabel = preset.timeSlotLabel ?? '';
-  form.oneOnOneHours = preset.oneOnOneHours;
-  form.customOneOnOneHours = undefined;
-  form.oneOnOneHoursMode = preset.oneOnOneHours && oneOnOneHourChoices.includes(preset.oneOnOneHours)
-    ? String(preset.oneOnOneHours)
-    : 'CUSTOM';
-  const currentProduct = query.courseProductId ? productMap.value.get(String(query.courseProductId)) : undefined;
-  form.courseProductId = currentProduct && productMatchesCourseType(currentProduct, preset.courseType)
-    ? currentProduct.id
-    : undefined;
-  syncDetailText();
 }
 
 function handleFormProductChange() {
@@ -1242,6 +1213,36 @@ function timeToMinutes(value: string) {
   white-space: nowrap;
 }
 
+.matrix-empty-guide {
+  display: grid;
+  gap: 7px;
+  padding: 18px;
+  border: 1px dashed #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+}
+
+.matrix-empty-guide span {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.matrix-empty-guide strong {
+  color: #1f2937;
+  font-size: 15px;
+}
+
+.matrix-empty-guide p {
+  max-width: 640px;
+  margin: 0;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .matrix-flow-card {
   display: flex;
   align-items: center;
@@ -1281,49 +1282,63 @@ function timeToMinutes(value: string) {
   line-height: 1.45;
 }
 
-.filters {
-  margin-bottom: 12px;
-}
-
-.matrix-summary {
+.matrix-step-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 12px;
 }
 
-.summary-card {
+.matrix-step-strip__item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 8px;
+  align-items: start;
   padding: 10px 12px;
   border: 1px solid #e8edf2;
-  border-radius: 10px;
-  background: #fbfcfe;
+  border-radius: 8px;
+  background: #f8fafc;
 }
 
-.summary-card span {
-  display: block;
-  color: #6b7280;
+.matrix-step-strip__item--done,
+.matrix-step-strip__item--active {
+  border-color: #c9ead5;
+  background: #effaf3;
+}
+
+.matrix-step-strip__item span {
+  grid-row: span 2;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  color: #fff;
   font-size: 12px;
+  font-weight: 700;
 }
 
-.summary-card strong {
-  display: block;
-  margin-top: 4px;
-  color: #111827;
+.matrix-step-strip__item--done span,
+.matrix-step-strip__item--active span {
+  background: #18a058;
 }
 
-.template-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.template-strip > span {
-  color: #6b7280;
+.matrix-step-strip__item strong {
+  overflow: hidden;
+  color: #1f2937;
   font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.matrix-step-strip__item small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .config-table {
@@ -1448,7 +1463,6 @@ function timeToMinutes(value: string) {
   margin-left: 0;
 }
 
-.matrix-note,
 .dialog-hint {
   margin-top: 12px;
   padding: 10px 12px;
@@ -1579,7 +1593,6 @@ function timeToMinutes(value: string) {
     border-right: 0;
   }
 
-  .matrix-summary,
   .form-grid--three,
   .form-grid--two {
     grid-template-columns: 1fr;

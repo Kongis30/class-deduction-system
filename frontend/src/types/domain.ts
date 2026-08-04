@@ -518,6 +518,9 @@ export interface ClassGroupItem {
   className: string;
   description?: string;
   productId?: EntityId;
+  productName?: string;
+  registerClass?: string;
+  courseType?: string;
   scheduleDesc?: string;
   teacherId?: EntityId;
   teacherName?: string;

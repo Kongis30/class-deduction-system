@@ -783,7 +783,10 @@ const filteredClasses = computed(() => {
   const kw = classKeyword.value.toLowerCase();
   return classes.value.filter(c => [
     c.className,
-    classCourseLabel(c),
+    classProductLabel(c),
+    c.productName,
+    c.registerClass,
+    c.courseType,
     classGradeLabel(c),
     c.teacherName,
     c.classroomName,
@@ -800,17 +803,17 @@ type ClassGroupSummary = {
 };
 
 const classCourseGroups = computed(() =>
-  summarizeClassGroups(filteredClasses.value, classCourseKey, classCourseLabel)
+  summarizeClassGroups(filteredClasses.value, classProductKey, classProductLabel)
 );
 
 const classGradeGroups = computed(() => {
-  const scopedClasses = filteredClasses.value.filter(clz => classCourseKey(clz) === selectedClassCourseKey.value);
+  const scopedClasses = filteredClasses.value.filter(clz => classProductKey(clz) === selectedClassCourseKey.value);
   return summarizeClassGroups(scopedClasses, classGradeKey, classGradeLabel);
 });
 
 const drilldownClasses = computed(() =>
   filteredClasses.value.filter(clz =>
-    classCourseKey(clz) === selectedClassCourseKey.value
+    classProductKey(clz) === selectedClassCourseKey.value
     && classGradeKey(clz) === selectedClassGradeKey.value
   )
 );
@@ -1090,21 +1093,21 @@ function classGradeKey(clz: ClassGroupItem): string {
   return normalizeGroupKey(classGradeLabel(clz));
 }
 
-function classCourseLabel(clz: ClassGroupItem): string {
-  const withoutDemoPrefix = clz.className.replace(/^DEMO\s+/i, '');
-  const withoutGrade = withoutDemoPrefix
-    .replace(/\s*[·-]\s*\bG\s*\d+\s*[-–]\s*G?\s*\d+\b/gi, '')
-    .replace(/\bG\s*\d+\s*[-–]\s*G?\s*\d+\b/gi, '')
-    .replace(/\bG\s*\d+\b/gi, '')
-    .replace(/\s*[·-]\s*g\d+\b/gi, '')
-    .replace(/\s*[·-]\s*$/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  return withoutGrade || 'Other classes';
+function classProductLabel(clz: ClassGroupItem): string {
+  return clz.registerClass || formatCourseTypeLabel(clz.courseType) || 'Class type not set';
 }
 
-function classCourseKey(clz: ClassGroupItem): string {
-  return normalizeGroupKey(classCourseLabel(clz));
+function classProductKey(clz: ClassGroupItem): string {
+  return normalizeGroupKey(classProductLabel(clz));
+}
+
+function formatCourseTypeLabel(courseType?: string): string {
+  if (!courseType) return '';
+  return courseType
+    .toLowerCase()
+    .split('_')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 function summarizeClassGroups(

@@ -37,11 +37,11 @@ mysql -uroot -p class_deduction_system < 20260727_seed_ppt_course_matrix.sql
 - Baseline campuses and classrooms:
   - `South Campus`, `North Campus`.
   - `Room 101`, `Room 102`, `Room 201`.
-- Course products and course/grade matrix from the customer PPT:
-  - `After School`: `G1-G5`, `G6-G8`, `ESL`; `2/6/10 months`; `Mon-Fri 3pm-6pm`.
-  - `Saturday Class`: `G1-2`, `G3-G6`, `SHSAT`, `PSAT`, `SAT`; `Fall 13 weeks`, `Spring 20 weeks`, `Full year 33 weeks`; AM/PM/full-day slots.
-  - `Summer Class`: `G1-G6`, `SHSAT`, `PSAT`, `SAT`, `ESL`; `7/6-8/21`, `7 weeks`; AM/PM/full-day slots.
-  - `Sprint Class`: product placeholder only; the PPT does not define grade, period, or time matrix.
-  - `1-on-1`: `G1-G5`, `G6-G8`, `G9-G12`, `AP`; `40/60/120 hours`.
+- Course products from the customer PPT:
+  - `After School`
+  - `Saturday Class`
+  - `Summer Class`
+  - `Sprint Class`
+  - `1-on-1`
 
-Prices are seeded as `0.00` template rows. Registration requires staff to enter a manual price and reason until approved prices are configured.
+Price rows are not seeded. Staff should add grade, billing, schedule, and price rows manually in Course Pricing Matrix. The UI provides PPT grade suggestions while keeping the actual price rows user-created.

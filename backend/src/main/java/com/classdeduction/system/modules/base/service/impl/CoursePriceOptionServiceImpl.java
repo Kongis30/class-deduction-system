@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
+import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.dto.CoursePriceOptionPageQuery;
 import com.classdeduction.system.modules.base.dto.CoursePriceOptionSaveRequest;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
@@ -15,10 +16,14 @@ import com.classdeduction.system.modules.base.service.CoursePriceOptionService;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,9 +31,12 @@ import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.YearMonth;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -49,6 +57,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final LessonRecordMapper lessonRecordMapper;
 
     @Override
     public List<CoursePriceOptionVO> listActiveOptions(String courseType) {
@@ -348,6 +358,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         }
         classGroupScheduleSlotMapper.delete(new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
                 .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId()));
+        List<ClassGroupScheduleSlotEntity> slots = new ArrayList<>();
         for (CoursePriceOptionSaveRequest.GroupScheduleSlotDTO slot : request.getGroupScheduleSlots()) {
             if (slot.getWeekday() == null || slot.getWeekday() < 1 || slot.getWeekday() > 7) {
                 throw new BusinessException("INVALID_GROUP_SCHEDULE", "Weekday must be between 1 and 7.");
@@ -363,7 +374,129 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             entity.setStartTime(start);
             entity.setEndTime(end);
             classGroupScheduleSlotMapper.insert(entity);
+            slots.add(entity);
         }
+        rebuildFutureClassOccurrences(classGroup, slots);
+    }
+
+    /**
+     * Grade classes should show their planned lessons before students enroll.
+     * Preserve recorded lessons, but keep future unrecorded rows aligned with
+     * the latest weekly schedule from Price Matrix.
+     */
+    private void rebuildFutureClassOccurrences(ClassGroupEntity classGroup, List<ClassGroupScheduleSlotEntity> slots) {
+        removeFutureUnrecordedClassOccurrences(classGroup.getId());
+        if (slots.isEmpty()) {
+            return;
+        }
+        Set<String> existingKeys = futureClassOccurrenceKeys(classGroup.getId());
+        LocalDate startDate = resolveOccurrenceStartDate(classGroup);
+        LocalDate endDate = resolveOccurrenceEndDate(classGroup, startDate);
+        if (endDate.isBefore(startDate)) {
+            return;
+        }
+        int remainingSessions = "PER_SESSION".equals(classGroup.getBillingType())
+                && classGroup.getTotalSessions() != null
+                ? Math.max(classGroup.getTotalSessions() - existingKeys.size(), 0)
+                : Integer.MAX_VALUE;
+        for (LocalDate date = startDate; !date.isAfter(endDate) && remainingSessions > 0; date = date.plusDays(1)) {
+            int weekday = date.getDayOfWeek().getValue();
+            for (ClassGroupScheduleSlotEntity slot : slots) {
+                if (!slot.getWeekday().equals(weekday) || remainingSessions <= 0) {
+                    continue;
+                }
+                LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
+                LocalDateTime endAt = LocalDateTime.of(date, slot.getEndTime());
+                String key = occurrenceKey(startAt, endAt);
+                if (existingKeys.contains(key)) {
+                    continue;
+                }
+                LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+                occurrence.setLessonNo(generateClassLessonNo());
+                occurrence.setClassGroupId(classGroup.getId());
+                occurrence.setScheduleSlotId(slot.getId());
+                occurrence.setOccurrenceType("REGULAR");
+                occurrence.setPlannedTeacherId(classGroup.getTeacherId());
+                occurrence.setPlannedClassroomId(classGroup.getClassroomId());
+                occurrence.setPlannedStartAt(startAt);
+                occurrence.setPlannedEndAt(endAt);
+                occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                occurrence.setPlanningStatus("SCHEDULED");
+                occurrence.setConflictChecked(1);
+                lessonOccurrenceMapper.insert(occurrence);
+                existingKeys.add(key);
+                remainingSessions--;
+            }
+        }
+    }
+
+    private void removeFutureUnrecordedClassOccurrences(Long classId) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now));
+        if (futureOccurrences.isEmpty()) {
+            return;
+        }
+        Set<Long> occurrenceIds = futureOccurrences.stream()
+                .map(LessonOccurrenceEntity::getId)
+                .collect(java.util.stream.Collectors.toSet());
+        Set<Long> recordedIds = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .map(LessonRecordEntity::getOccurrenceId)
+                .collect(java.util.stream.Collectors.toSet());
+        List<Long> removableIds = futureOccurrences.stream()
+                .map(LessonOccurrenceEntity::getId)
+                .filter(id -> !recordedIds.contains(id))
+                .toList();
+        if (!removableIds.isEmpty()) {
+            lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                    .in(LessonOccurrenceEntity::getId, removableIds));
+        }
+    }
+
+    private Set<String> futureClassOccurrenceKeys(Long classId) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        Set<String> keys = new HashSet<>();
+        lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now))
+                .forEach(item -> keys.add(occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt())));
+        return keys;
+    }
+
+    private LocalDate resolveOccurrenceStartDate(ClassGroupEntity classGroup) {
+        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
+        LocalDate configuredStart = "MONTHLY".equals(classGroup.getBillingType())
+                ? classGroup.getStartMonth()
+                : classGroup.getStartDate();
+        if (configuredStart == null || configuredStart.isBefore(today)) {
+            return today;
+        }
+        return configuredStart;
+    }
+
+    private LocalDate resolveOccurrenceEndDate(ClassGroupEntity classGroup, LocalDate startDate) {
+        if ("PER_SESSION".equals(classGroup.getBillingType()) && classGroup.getTotalSessions() != null) {
+            return startDate.plusDays(370);
+        }
+        if ("MONTHLY".equals(classGroup.getBillingType()) && classGroup.getEndMonth() != null) {
+            return YearMonth.from(classGroup.getEndMonth()).atEndOfMonth();
+        }
+        return startDate.plusDays(60);
+    }
+
+    private String occurrenceKey(LocalDateTime startAt, LocalDateTime endAt) {
+        return startAt + "|" + endAt;
+    }
+
+    private String generateClassLessonNo() {
+        return "CLS-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 6).toUpperCase(Locale.ROOT);
     }
 
     private void validateGroupBilling(CoursePriceOptionSaveRequest request) {

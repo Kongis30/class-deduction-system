@@ -6,10 +6,12 @@ import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -58,6 +60,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final CourseProductMapper courseProductMapper;
     private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
 
     @Override
@@ -81,11 +84,13 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // 批量加载教师和教室
         Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(classes, ClassGroupEntity::getTeacherId);
         Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(classes, ClassGroupEntity::getClassroomId);
+        Map<Long, CourseProductEntity> productMap = batchLoadCourseProducts(classes);
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassGroupEntity clz : classes) {
             String teacherName = resolveTeacherName(clz.getTeacherId(), teacherMap);
             String classroomName = resolveClassroomName(clz.getClassroomId(), classroomMap);
+            CourseProductEntity product = productMap.get(clz.getProductId());
             Map<String, Object> item = new HashMap<>();
             item.put("id", clz.getId());
             item.put("className", clz.getClassName());
@@ -97,6 +102,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("classroomName", classroomName);
             item.put("listPrice", clz.getListPrice());
             item.put("productId", clz.getProductId());
+            item.put("productName", product == null ? null : product.getProductName());
+            item.put("registerClass", product == null ? null : product.getRegisterClass());
+            item.put("courseType", product == null ? null : product.getCourseType());
             item.put("status", clz.getStatus());
             item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc(), clz.getProductId()));
             item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
@@ -193,14 +201,19 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     @Override
     public List<Map<String, Object>> listClassOccurrences(Long classId, CurrentUserResponse currentUser) {
-        requireClassForRead(classId, currentUser);
-        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
-                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt)
-        );
+        ClassGroupEntity classGroup = requireClassForRead(classId, currentUser);
+        List<LessonOccurrenceEntity> occurrences = listClassOccurrenceEntities(classId);
+        // Older grade classes may have weekly slots but no generated lesson rows
+        // until a student enrolls. Backfill planned rows so schedules are visible.
         if (occurrences.isEmpty()) {
-            return Collections.emptyList();
+            List<ClassGroupScheduleSlotEntity> slots = listClassScheduleSlots(classId);
+            if (!slots.isEmpty()) {
+                generateFutureClassOccurrences(classGroup, slots, Collections.emptySet());
+                occurrences = listClassOccurrenceEntities(classId);
+            }
+            if (occurrences.isEmpty()) {
+                return Collections.emptyList();
+            }
         }
 
         // Return the latest confirmation record, including REJECTED, so the UI can show retry state.
@@ -259,6 +272,20 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             result.add(item);
         }
         return result;
+    }
+
+    private List<LessonOccurrenceEntity> listClassOccurrenceEntities(Long classId) {
+        return lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
+    }
+
+    private List<ClassGroupScheduleSlotEntity> listClassScheduleSlots(Long classId) {
+        return classGroupScheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                        .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId)
+                        .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
     }
 
     @Override
@@ -770,6 +797,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (ids.isEmpty()) return Collections.emptyMap();
         return classroomMapper.selectBatchIds(ids).stream()
                 .collect(Collectors.toMap(ClassroomEntity::getId, c -> c));
+    }
+
+    private Map<Long, CourseProductEntity> batchLoadCourseProducts(Collection<ClassGroupEntity> classes) {
+        Set<Long> ids = classes.stream()
+                .map(ClassGroupEntity::getProductId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (ids.isEmpty()) return Collections.emptyMap();
+        return courseProductMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(CourseProductEntity::getId, product -> product));
     }
 
     private CurrentUserResponse defaultAdminIfMissing(CurrentUserResponse currentUser) {

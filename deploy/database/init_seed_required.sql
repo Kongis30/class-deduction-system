@@ -305,5 +305,5 @@ UNLOCK TABLES;
 
 -- Dump completed on 2026-07-30 18:54:15
 
--- Load customer-required class/course/grade matrix. This file is idempotent.
+-- Load customer-required course product presets. This file is idempotent.
 SOURCE 20260727_seed_ppt_course_matrix.sql;

@@ -10,11 +10,9 @@
         <div>
           <span class="panel-header__eyebrow">Course setup</span>
           <h2 class="panel-header__title">Course Products</h2>
-          <p class="panel-header__desc">Use this page only to create the course family. The next step is always grade, duration, schedule, and price.</p>
+          <p class="panel-header__desc">Create course families first, then set grade and price rows.</p>
         </div>
         <div class="panel-header__actions">
-          <el-button @click="openSubjectDialog()">Manage subjects</el-button>
-          <el-button @click="$router.push('/admin/config/course-prices')">Open price matrix</el-button>
           <el-button type="primary" @click="openProductDialog()">
             <el-icon><Plus /></el-icon>
             {{ createCourseButtonLabel }}
@@ -22,56 +20,42 @@
         </div>
       </div>
 
-      <el-form class="filters" :model="filters" inline>
-        <el-form-item label="Product name" class="filters__item">
+      <section class="setup-path-card">
+        <div>
+          <span>{{ activeTab === 'GROUP' ? 'Group class setup path' : '1-on-1 setup path' }}</span>
+          <strong>{{ setupPathTitle }}</strong>
+          <p>{{ setupPathDescription }}</p>
+        </div>
+        <div class="setup-path-card__actions">
+          <el-button type="primary" @click="openPriceMatrixForCurrentTab">
+            Go to grade & price setup
+          </el-button>
+        </div>
+      </section>
+
+      <div class="product-toolbar">
+        <div class="product-toolbar__filters">
           <el-input
             v-model="filters.productName"
-            placeholder="Search by name"
+            placeholder="Search product, subject, or label"
             clearable
-            style="width: 180px;"
             @input="handleFilterChange"
           />
-        </el-form-item>
-        <el-form-item label="Subject" class="filters__item">
-          <el-input
-            v-model="filters.subjectName"
-            placeholder="Search by subject"
-            clearable
-            style="width: 140px;"
-            @input="handleFilterChange"
-          />
-        </el-form-item>
-        <el-form-item label="Status" class="filters__item">
           <el-select
             v-model="filters.status"
-            placeholder="All"
+            placeholder="All status"
             clearable
-            style="width: 140px;"
             @change="handleFilterChange"
           >
             <el-option label="Active" value="ACTIVE" />
             <el-option label="Inactive" value="INACTIVE" />
           </el-select>
-        </el-form-item>
-      </el-form>
-
-      <section class="product-guide">
-        <article :class="{ 'product-guide__item--active': activeTab === 'ONE_ON_ONE' }">
-          <span>1</span>
-          <strong>Create course family</strong>
-          <small>Examples: 1-on-1, After School, Saturday Class.</small>
-        </article>
-        <article>
-          <span>2</span>
-          <strong>Add registration options</strong>
-          <small>Grade, hours/months/sessions, time slot, and price live in Price Matrix.</small>
-        </article>
-        <article>
-          <span>3</span>
-          <strong>Assign schedule if needed</strong>
-          <small>Group classes can add teacher, room, and weekly schedule after price rows exist.</small>
-        </article>
-      </section>
+        </div>
+        <div class="product-toolbar__links">
+          <el-button text type="primary" @click="openSubjectDialog()">Manage subjects</el-button>
+          <el-button text type="primary" @click="$router.push('/admin/config/course-prices')">Price matrix</el-button>
+        </div>
+      </div>
 
       <section v-if="createdNextStep" class="next-step-card">
         <div>
@@ -109,24 +93,21 @@
                       </span>
                     </el-tooltip>
                   </strong>
-                  <span>{{ formatCourseType(row.courseType) }} · {{ row.registerClass || row.subjectName || 'No display label' }}</span>
+                  <span>
+                    {{ row.defaultTotalUnits }} hours · {{ row.registerClass || row.subjectName || 'No display label' }}
+                    <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
+                      {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+                    </el-tag>
+                  </span>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Total hours" min-width="100" align="center">
-              <template #default="{ row }">{{ row.defaultTotalUnits }}</template>
-            </el-table-column>
-            <el-table-column label="Status" min-width="90" align="center">
-              <template #default="{ row }">
-                <div class="status-cell">
-                  <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
-                    {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-                  </el-tag>
-                  <span>{{ row.status === 'ACTIVE' ? 'Ready for price rows' : 'Hidden from registration' }}</span>
-                </div>
+            <el-table-column label="Next step" min-width="150">
+              <template #default>
+                <span class="next-step-text">Add grade/hour prices</span>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" min-width="220" fixed="right">
+            <el-table-column label="Actions" width="190">
               <template #default="{ row }">
                 <div class="table-actions">
                   <el-button type="primary" link @click="openProductPrices(row)">Set prices</el-button>
@@ -149,16 +130,13 @@
             <el-table-column label="Course product" min-width="260">
               <template #default="{ row }">
                 <div class="cell-stack">
-                  <strong>{{ row.productName }}</strong>
+                  <strong>
+                    {{ row.productName }}
+                    <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
+                      {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+                    </el-tag>
+                  </strong>
                   <span>{{ formatCourseType(row.courseType) }} · {{ row.registerClass || row.subjectName || 'No display label' }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="Product role" min-width="170">
-              <template #default>
-                <div class="cell-stack">
-                  <strong>Parent course</strong>
-                  <span>Grade classes and prices are configured next</span>
                 </div>
               </template>
             </el-table-column>
@@ -170,31 +148,16 @@
                     :type="groupClassCount(row) > 0 ? 'success' : 'warning'"
                     effect="plain"
                   >
-                    {{ groupClassCount(row) > 0 ? `${groupClassCount(row)} grade class${groupClassCount(row) === 1 ? '' : 'es'}` : 'Needs grade class' }}
+                    {{ groupSetupLabel(row) }}
                   </el-tag>
                   <span>{{ groupClassCount(row) > 0 ? 'Ready for schedules and enrollment' : 'Add grade classes and prices first' }}</span>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Active students" min-width="120" align="center">
-              <template #default="{ row }">
-                {{ groupStudentCount(row) }}
-              </template>
-            </el-table-column>
-            <el-table-column label="Status" min-width="90" align="center">
-              <template #default="{ row }">
-                <div class="status-cell">
-                  <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
-                    {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-                  </el-tag>
-                  <span>{{ row.status === 'ACTIVE' ? 'Visible after grade rows are ready' : 'Hidden from registration' }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="Actions" min-width="250" fixed="right">
+            <el-table-column label="Actions" width="210">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button type="primary" link @click="openProductPrices(row)">Continue setup</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set grade & price</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -365,7 +328,7 @@
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, reactive, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import {
   createCourseProduct,
@@ -383,6 +346,7 @@ import { fetchClassGroups } from '@/api/schedule';
 import type { ClassGroupItem, CourseProductItem, EntityId, SubjectItem } from '@/types/domain';
 
 const router = useRouter();
+const route = useRoute();
 const loading = ref(false);
 const submitting = ref(false);
 const dialogVisible = ref(false);
@@ -483,7 +447,6 @@ async function handleSubjectDelete(row: SubjectItem) {
 
 const filters = reactive({
   productName: '',
-  subjectName: '',
   status: '',
 });
 
@@ -500,7 +463,7 @@ const pagination = reactive({
 });
 
 const tableData = ref<CourseProductItem[]>([]);
-const activeTab = ref('ONE_ON_ONE');
+const activeTab = ref(route.query.tab === 'group' ? 'GROUP' : 'ONE_ON_ONE');
 
 const courseTypeOptions = [
   { value: 'AFTER_SCHOOL', label: 'After School', hint: 'Group course. Add grade/month price rows later.', mode: 'GROUP', registerClass: 'After School' },
@@ -520,6 +483,18 @@ const groupData = computed(() =>
 
 const createCourseButtonLabel = computed(() =>
   activeTab.value === 'ONE_ON_ONE' ? 'Create 1-on-1 product' : 'Create group class product'
+);
+
+const setupPathTitle = computed(() =>
+  activeTab.value === 'GROUP'
+    ? 'Create product first, then immediately set grade, schedule, and price.'
+    : 'Create product first, then add grade and package-hour prices.'
+);
+
+const setupPathDescription = computed(() =>
+  activeTab.value === 'GROUP'
+    ? 'A group product is only the parent course. It becomes usable after at least one grade class and price row is added in Price Matrix.'
+    : 'A 1-on-1 product becomes available for registration after its grade/hour price rows are added in Price Matrix.'
 );
 
 const productDialogTitle = computed(() => {
@@ -544,8 +519,19 @@ function openProductPrices(product: CourseProductItem) {
   router.push({
     name: 'admin-config-course-prices',
     query: {
+      from: 'course-products',
       ...(product.courseType ? { courseType: product.courseType } : {}),
       courseProductId: product.id,
+    },
+  });
+}
+
+function openPriceMatrixForCurrentTab() {
+  router.push({
+    name: 'admin-config-course-prices',
+    query: {
+      from: 'course-products',
+      courseType: activeTab.value === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL',
     },
   });
 }
@@ -557,6 +543,8 @@ function openCreatedProductNextStep() {
   router.push({
     name: 'admin-config-course-prices',
     query: {
+      from: 'course-products',
+      create: '1',
       ...(createdNextStep.value.courseType ? { courseType: createdNextStep.value.courseType } : {}),
       courseProductId: createdNextStep.value.productId,
     },
@@ -575,6 +563,16 @@ function groupStudentCount(product: CourseProductItem) {
   return groupClassesFor(product).reduce((sum, item) => sum + (item.activeStudentCount ?? 0), 0);
 }
 
+function groupSetupLabel(product: CourseProductItem) {
+  const classCount = groupClassCount(product);
+  if (classCount === 0) {
+    return 'Needs grade class';
+  }
+  const classLabel = `${classCount} grade class${classCount === 1 ? '' : 'es'}`;
+  const studentCount = groupStudentCount(product);
+  return `${classLabel} · ${studentCount} student${studentCount === 1 ? '' : 's'}`;
+}
+
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
@@ -585,7 +583,7 @@ async function loadData() {
   loading.value = true;
   try {
     const params: CourseProductQuery = {
-      keyword: [filters.productName, filters.subjectName].filter(Boolean).join(' ') || undefined,
+      keyword: filters.productName || undefined,
       status: filters.status || undefined,
       pageNum: pagination.page,
       pageSize: pagination.size,
@@ -877,65 +875,65 @@ loadSubjects();
   display: none;
 }
 
-.filters {
-  margin-bottom: 12px;
-}
-
-.filters__item {
-  margin-right: 16px;
-  margin-bottom: 0;
-}
-
-.filters__item :deep(.el-form-item__label) {
-  color: #606266;
-  font-size: 13px;
-}
-
-.product-guide {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.product-guide article {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 3px 8px;
-  align-items: start;
-  border: 1px solid #e8edf2;
-  border-radius: 8px;
-  background: #f8fafc;
+.setup-path-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
   padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
 }
 
-.product-guide__item--active {
-  border-color: #d8e7ff;
-  background: #f7fbff;
+.setup-path-card span {
+  display: block;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.product-guide span {
-  grid-row: span 2;
-  display: inline-grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  background: #409eff;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.product-guide strong {
+.setup-path-card strong {
+  display: block;
+  margin-top: 3px;
   color: #1f2937;
-  font-size: 13px;
+  font-size: 14px;
 }
 
-.product-guide small {
-  color: #64748b;
+.setup-path-card p {
+  margin: 3px 0 0;
+  color: #606266;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.45;
+}
+
+.setup-path-card__actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.product-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.product-toolbar__filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 140px;
+  gap: 8px;
+}
+
+.product-toolbar__links {
+  display: flex;
+  flex: none;
+  gap: 6px;
 }
 
 .next-step-card {
@@ -999,6 +997,16 @@ loadSubjects();
 
 .cell-stack span {
   color: #909399;
+  font-size: 12px;
+}
+
+.cell-stack span :deep(.el-tag) {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.next-step-text {
+  color: #64748b;
   font-size: 12px;
 }
 
