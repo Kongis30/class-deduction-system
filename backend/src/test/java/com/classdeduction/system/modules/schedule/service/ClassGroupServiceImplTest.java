@@ -5,6 +5,7 @@ import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -74,6 +75,9 @@ class ClassGroupServiceImplTest {
     private ClassroomMapper classroomMapper;
 
     @Mock
+    private CourseProductMapper courseProductMapper;
+
+    @Mock
     private CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
 
     @Captor
@@ -103,6 +107,7 @@ class ClassGroupServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
+                courseProductMapper,
                 courseProductScheduleSlotMapper
         );
     }

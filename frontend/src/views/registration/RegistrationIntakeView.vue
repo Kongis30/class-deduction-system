@@ -520,12 +520,12 @@
       <section class="policies-and-zelle">
         <div class="policy-copy">
           <p><strong>退款政策 / Refund Policy</strong></p>
-          <p>当前系统仅支持整单全额退款：取消报名、未来课次和班课资格，并退还当前已收金额。</p>
-          <p>Partial refunds create a separate refund record and update the order balance without changing active courses. Refunding the full currently received amount cancels the enrollment, future lessons, and class eligibility.</p>
-          <p>部分退款、按课程退款、已消课退课和学费抵用金需由工作人员人工处理，当前系统不记录。</p>
+          <p>开课前退还50%，其余转为学费抵用金；开课后不退，剩余学费转为抵用金。</p>
+          <p>Before class starts: 50% refund; remaining becomes tuition credit.</p>
+          <p>After class starts: No refund; remaining becomes credit for future courses.</p>
           <p><strong>停课政策 / Course Suspension Policy</strong></p>
-          <p>课程中途停课、退款或余额处理需由工作人员审核；系统当前不会自动创建学费抵用金。</p>
-          <p>Mid-course suspension and tuition credit require manual staff review. The system does not create tuition credit automatically.</p>
+          <p>课程中途如需停课，需支付$50手续费，剩余学费转为学费抵用金。</p>
+          <p>Mid-course Suspension: $50 fee; remaining tuition becomes credit.</p>
           <p><strong>材料政策 / Material Policy</strong></p>
           <p>首次报名含全套教材。如有遗失，每本需支付$10重新打印教材。</p>
           <p>Materials included. If lost, each item requires a $10 reprint fee.</p>

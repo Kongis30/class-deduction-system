@@ -500,6 +500,18 @@ class RegistrationIntakeServiceImplTest {
         verify(classEnrollmentMapper, never()).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
     }
 
+    @Test
+    void shouldCreateGroupClassIntakeWhenOneOnOneUnitsIsMissing() {
+        stubGroupClassIntake();
+
+        registrationIntakeService.submitIntake(buildGroupClassRequest());
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getOneOnOneUnits()).isZero();
+        verify(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
+        verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+    }
+
     private void stubSuccessfulIntake(boolean duplicateStudentUsername) {
         stubSuccessfulIntake(duplicateStudentUsername, "15:30-17:00");
     }
@@ -587,6 +599,59 @@ class RegistrationIntakeServiceImplTest {
         }).when(coursePackageMapper).insert(any(CoursePackageEntity.class));
     }
 
+    private void stubGroupClassIntake() {
+        stubStudentCreationOnly();
+        CoursePriceOptionEntity option = buildOption("15:30-17:00");
+        option.setCourseType("GROUP");
+        option.setRegisterClass("Group class");
+        CourseProductEntity product = buildProduct();
+        product.setTeachingMode("GROUP");
+        product.setBillingType("PER_SESSION");
+        product.setStartDate(LocalDate.of(2026, 9, 1));
+        product.setTotalSessions(1);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setProductId(202L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setBillingType("PER_SESSION");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
+        classGroup.setTotalSessions(1);
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setClassGroupId(501L);
+        slot.setWeekday(2);
+        slot.setStartTime(java.time.LocalTime.of(15, 30));
+        slot.setEndTime(java.time.LocalTime.of(17, 0));
+        LessonOccurrenceEntity targetOccurrence = new LessonOccurrenceEntity();
+        targetOccurrence.setId(4001L);
+        targetOccurrence.setClassGroupId(501L);
+        targetOccurrence.setPlannedStartAt(LocalDateTime.of(2026, 9, 1, 15, 30));
+        targetOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 9, 1, 17, 0));
+
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        when(courseProductMapper.selectById(202L)).thenReturn(product);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        when(jsonHelper.toJson(any())).thenReturn("{}");
+        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        lenient().when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(Collections.emptyList(), List.of(targetOccurrence), Collections.emptyList(), Collections.emptyList());
+        doAnswer(invocation -> {
+            EnrollmentOrderEntity order = invocation.getArgument(0);
+            order.setId(2001L);
+            return 1;
+        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+        doAnswer(invocation -> {
+            EnrollmentOrderItemEntity item = invocation.getArgument(0);
+            item.setId(2101L);
+            return 1;
+        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
+        doAnswer(invocation -> {
+            com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity enrollment = invocation.getArgument(0);
+            enrollment.setId(3101L);
+            return 1;
+        }).when(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
+    }
+
     private void stubStudentCreationOnly() {
         when(studentNoGenerator.generate()).thenReturn("STU202609010001");
         when(studentMapper.selectReusableStudent("Jin Tang", "9175550101")).thenReturn(null);
@@ -617,7 +682,7 @@ class RegistrationIntakeServiceImplTest {
         item.setInitialLessonStartAt(null);
         item.setInitialLessonEndAt(null);
         item.setClassId(501L);
-        item.setOneOnOneUnits(0);
+        item.setOneOnOneUnits(null);
         item.setSessions(1);
         request.setItems(List.of(item));
         return request;

@@ -1,6 +1,5 @@
 package com.classdeduction.system.modules.enrollment.support;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import lombok.RequiredArgsConstructor;
@@ -33,9 +32,17 @@ public class PaymentMethodBootstrapInitializer implements ApplicationRunner {
     }
 
     private void ensureMethod(DefaultMethod method) {
-        Long count = paymentMethodMapper.selectCount(new LambdaQueryWrapper<PaymentMethodEntity>()
-                .eq(PaymentMethodEntity::getMethodCode, method.code()));
-        if (count != null && count > 0) {
+        PaymentMethodEntity existing =
+                paymentMethodMapper.selectByMethodCodeIgnoreLogicDelete(method.code());
+        if (existing != null) {
+            if (Integer.valueOf(1).equals(existing.getIsDeleted())) {
+                paymentMethodMapper.restoreDefaultMethodById(
+                        existing.getId(),
+                        method.name(),
+                        method.sortOrder(),
+                        "ACTIVE"
+                );
+            }
             return;
         }
         PaymentMethodEntity entity = new PaymentMethodEntity();

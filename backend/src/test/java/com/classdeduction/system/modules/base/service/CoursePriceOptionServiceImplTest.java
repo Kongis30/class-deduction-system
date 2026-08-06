@@ -12,8 +12,14 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.impl.CoursePriceOptionServiceImpl;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +33,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -47,6 +56,12 @@ class CoursePriceOptionServiceImplTest {
     @Mock
     private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
+    @Mock
+    private LessonOccurrenceMapper lessonOccurrenceMapper;
+
+    @Mock
+    private LessonRecordMapper lessonRecordMapper;
+
     private CoursePriceOptionServiceImpl coursePriceOptionService;
 
     @BeforeEach
@@ -56,7 +71,9 @@ class CoursePriceOptionServiceImplTest {
                 courseProductMapper,
                 enrollmentOrderItemMapper,
                 classGroupMapper,
-                classGroupScheduleSlotMapper
+                classGroupScheduleSlotMapper,
+                lessonOccurrenceMapper,
+                lessonRecordMapper
         );
     }
 
@@ -90,6 +107,38 @@ class CoursePriceOptionServiceImplTest {
         when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
 
         coursePriceOptionService.createOption(request);
+    }
+
+    @Test
+    void shouldCreateGroupOptionWithFutureClassOccurrencesWithoutRecurringSlotReference() {
+        CoursePriceOptionSaveRequest request = groupOption();
+        when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
+        when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of());
+        doAnswer(invocation -> {
+            ClassGroupEntity classGroup = invocation.getArgument(0);
+            classGroup.setId(401L);
+            return 1;
+        }).when(classGroupMapper).insert(any(ClassGroupEntity.class));
+        doAnswer(invocation -> {
+            ClassGroupScheduleSlotEntity slot = invocation.getArgument(0);
+            slot.setId(501L);
+            return 1;
+        }).when(classGroupScheduleSlotMapper).insert(any(ClassGroupScheduleSlotEntity.class));
+
+        coursePriceOptionService.createOption(request);
+
+        ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor =
+                ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper, times(13)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues())
+                .allSatisfy(occurrence -> {
+                    assertThat(occurrence.getClassGroupId()).isEqualTo(401L);
+                    assertThat(occurrence.getScheduleSlotId()).isNull();
+                    assertThat(occurrence.getPlannedTeacherId()).isEqualTo(701L);
+                    assertThat(occurrence.getPlannedClassroomId()).isEqualTo(801L);
+                    assertThat(occurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
+                });
     }
 
     @Test
@@ -200,6 +249,8 @@ class CoursePriceOptionServiceImplTest {
         request.setGroupBillingType("PER_SESSION");
         request.setGroupStartDate(LocalDate.of(2026, 9, 1));
         request.setGroupTotalSessions(13);
+        request.setGroupTeacherId(701L);
+        request.setGroupClassroomId(801L);
         CoursePriceOptionSaveRequest.GroupScheduleSlotDTO slot =
                 new CoursePriceOptionSaveRequest.GroupScheduleSlotDTO();
         slot.setWeekday(6);

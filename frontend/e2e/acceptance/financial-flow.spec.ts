@@ -8,6 +8,8 @@ import {
   cleanupAcceptanceData,
   createOneOnOneProductAndPriceByApi,
   ensureTransferPaymentMethod,
+  normalizeReceiptPayload,
+  readReceiptPayload,
   submitOneOnOneRegistrationByApi,
   withAcceptanceDb,
 } from './helpers';
@@ -194,17 +196,6 @@ async function getRegistrationReceiptPayload(orderId: string | number): Promise<
 
 function visibleDialog(page: Page) {
   return page.locator('.el-dialog:visible');
-}
-
-function normalizeReceiptPayload(payload: unknown): string {
-  return JSON.stringify(readReceiptPayload(payload));
-}
-
-function readReceiptPayload(payload: unknown): Record<string, any> {
-  if (typeof payload === 'string') {
-    return JSON.parse(payload);
-  }
-  return payload as Record<string, any>;
 }
 
 async function closeVisibleDialog(page: Page): Promise<void> {

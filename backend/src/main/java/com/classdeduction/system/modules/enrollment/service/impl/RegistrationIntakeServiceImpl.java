@@ -498,7 +498,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.setOriginalPriceAmount(line.originalPriceAmount);
         item.setManualPriceOverride(line.manualPriceOverride);
         item.setOneOnOneHours(line.oneOnOneHours);
-        item.setOneOnOneUnits(line.oneOnOne ? resolveOneOnOneUnits(line) : line.oneOnOneUnits);
+        item.setOneOnOneUnits(resolveLineOneOnOneUnits(line));
         item.setInitialLessonStartAt(line.initialLessonStartAt);
         item.setInitialLessonEndAt(line.initialLessonEndAt);
         item.setTeacherId(line.teacherId);
@@ -845,7 +845,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("originalPriceAmount", line.originalPriceAmount);
         item.put("manualPriceOverride", line.manualPriceOverride);
         item.put("oneOnOneHours", line.oneOnOneHours);
-        item.put("oneOnOneUnits", line.oneOnOne ? resolveOneOnOneUnits(line) : line.oneOnOneUnits);
+        item.put("oneOnOneUnits", resolveLineOneOnOneUnits(line));
         item.put("initialLessonStartAt", line.initialLessonStartAt);
         item.put("initialLessonEndAt", line.initialLessonEndAt);
         item.put("teacherId", line.teacherId);
@@ -1429,6 +1429,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             return line.product.getDefaultTotalUnits() * 2;
         }
         return 0;
+    }
+
+    private int resolveLineOneOnOneUnits(ResolvedCourseLine line) {
+        return line.oneOnOne ? resolveOneOnOneUnits(line) : 0;
     }
 
     private int resolveDefaultLessonUnits(CourseProductEntity product, int totalUnits) {

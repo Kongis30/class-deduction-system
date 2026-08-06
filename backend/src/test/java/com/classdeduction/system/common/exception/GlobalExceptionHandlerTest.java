@@ -1,0 +1,25 @@
+package com.classdeduction.system.common.exception;
+
+import com.classdeduction.system.common.model.ApiResponse;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class GlobalExceptionHandlerTest {
+
+    private final GlobalExceptionHandler handler = new GlobalExceptionHandler();
+
+    @Test
+    void shouldReturnNotFoundForMissingStaticResource() {
+        ResponseEntity<ApiResponse<Void>> response =
+                handler.handleNoResourceFound(new NoResourceFoundException(HttpMethod.GET, "/mcp"));
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().code()).isEqualTo("NOT_FOUND");
+    }
+}

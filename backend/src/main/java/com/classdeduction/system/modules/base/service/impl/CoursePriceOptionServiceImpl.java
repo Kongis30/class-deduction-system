@@ -414,7 +414,6 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
                 occurrence.setLessonNo(generateClassLessonNo());
                 occurrence.setClassGroupId(classGroup.getId());
-                occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(classGroup.getTeacherId());
                 occurrence.setPlannedClassroomId(classGroup.getClassroomId());

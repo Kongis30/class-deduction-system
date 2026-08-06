@@ -224,6 +224,48 @@ class PaymentRecordServiceImplTest {
         }
 
         @Test
+        @DisplayName("Should inherit request-level payment defaults when split fields are omitted")
+        void shouldInheritRequestLevelPaymentDefaultsWhenSplitFieldsAreOmitted() {
+            LocalDateTime requestPaidAt = LocalDateTime.of(2026, 4, 22, 10, 30);
+            LocalDateTime cardPaidAt = LocalDateTime.of(2026, 4, 23, 11, 45);
+            PaymentSplitDTO cash = new PaymentSplitDTO("CASH", new BigDecimal("200.00"));
+            PaymentSplitDTO card = new PaymentSplitDTO("CARD", new BigDecimal("300.00"));
+            card.setPaidAt(cardPaidAt);
+            card.setHandledByName(" Ben ");
+            card.setRemark(" Card authorization ");
+
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setPaidAt(requestPaidAt);
+            request.setHandledByUserId(999L);
+            request.setHandledByName(" Front Desk ");
+            request.setRemark("Request-level payment note");
+            request.setSplits(List.of(cash, card));
+
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+
+            paymentRecordService.createPaymentRecord(request);
+
+            ArgumentCaptor<PaymentRecordEntity> paymentCaptor =
+                    ArgumentCaptor.forClass(PaymentRecordEntity.class);
+            verify(paymentRecordMapper, times(2)).insert(paymentCaptor.capture());
+            List<PaymentRecordEntity> savedPayments = paymentCaptor.getAllValues();
+            assertThat(savedPayments)
+                    .extracting(PaymentRecordEntity::getPaidAt)
+                    .containsExactly(requestPaidAt, cardPaidAt);
+            assertThat(savedPayments)
+                    .extracting(PaymentRecordEntity::getHandledByName)
+                    .containsExactly("Front Desk", "Ben");
+            assertThat(savedPayments)
+                    .extracting(PaymentRecordEntity::getRemark)
+                    .containsExactly("Request-level payment note", "Card authorization");
+            assertThat(savedPayments)
+                    .extracting(PaymentRecordEntity::getHandledByUserId)
+                    .containsExactly(999L, 999L);
+        }
+
+        @Test
         @DisplayName("Should retain package allocations across multiple subsequent order payments")
         void shouldRetainPackageAllocationsAcrossMultipleSubsequentOrderPayments() {
             CoursePackageEntity firstPackage = new CoursePackageEntity();
