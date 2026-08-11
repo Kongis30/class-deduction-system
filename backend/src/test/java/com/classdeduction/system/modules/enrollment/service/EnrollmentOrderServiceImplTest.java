@@ -4,13 +4,11 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
-import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -32,6 +30,7 @@ import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -48,7 +47,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.Collections;
 import java.util.List;
 
@@ -121,7 +119,7 @@ class EnrollmentOrderServiceImplTest {
     private com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper classEnrollmentMapper;
 
     @Mock
-    private com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
+    private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
     @Captor
     private ArgumentCaptor<EnrollmentOrderEntity> orderCaptor;
@@ -167,7 +165,7 @@ class EnrollmentOrderServiceImplTest {
                 lessonRecordMapper,
                 classGroupMapper,
                 classEnrollmentMapper,
-                courseProductScheduleSlotMapper,
+                classGroupScheduleSlotMapper,
                 paymentMethodMapper
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
@@ -655,101 +653,6 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldComputeProratedPriceAndOccurrencesForPerSessionEnrollment() {
-        // Product: PER_SESSION, start Monday 2026-09-07, total 20 sessions, weekly Monday slot, list price 1200.
-        LocalDate startDate = LocalDate.of(2026, 9, 7); // Monday
-        CourseProductEntity product = buildGroupCourseProduct();
-        product.setBillingType("PER_SESSION");
-        product.setStartDate(startDate);
-        product.setTotalSessions(20);
-        CourseProductScheduleSlotEntity slot = buildClassSlot(startDate.getDayOfWeek().getValue());
-        ClassGroupEntity existingGroup = buildClassGroup(product.getId());
-
-        ClassEnrollmentCreateRequest request = new ClassEnrollmentCreateRequest();
-        request.setStudentId(101L);
-        request.setProductId(202L);
-        request.setSessions(10); // buy 10 of 20 sessions -> 1200 * 10/20 = 600.00
-        request.setHandledByName("Amy");
-        request.setCurrencyCode("USD");
-        request.setDiscountAmount(BigDecimal.ZERO);
-        request.setReceivedAmount(BigDecimal.ZERO);
-
-        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
-        when(courseProductMapper.selectById(product.getId())).thenReturn(product);
-        when(classGroupMapper.selectOne(any())).thenReturn(existingGroup);
-        when(courseProductScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
-        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
-        ArgumentCaptor<EnrollmentOrderEntity> orderInsertCaptor = ArgumentCaptor.forClass(EnrollmentOrderEntity.class);
-        doAnswer(invocation -> {
-            EnrollmentOrderEntity entity = invocation.getArgument(0);
-            entity.setId(2001L);
-            return 1;
-        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
-        ArgumentCaptor<ClassEnrollmentEntity> enrollInsertCaptor = ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
-
-        enrollmentOrderService.createClassEnrollmentOrder(request);
-
-        // Server computes original amount by proration (10/20 of 1200).
-        verify(enrollmentOrderMapper).insert(orderInsertCaptor.capture());
-        assertThat(orderInsertCaptor.getValue().getOriginalAmount()).isEqualByComparingTo(new BigDecimal("600.00"));
-
-        // Occurrences cover the FULL product period (20 weekly sessions), independent of purchased quantity.
-        ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
-        verify(lessonOccurrenceMapper, times(20)).insert(occurrenceCaptor.capture());
-        LocalDate twentiethSession = startDate.plusWeeks(19);
-        assertThat(occurrenceCaptor.getAllValues())
-                .anySatisfy(occ -> assertThat(occ.getPlannedStartAt().toLocalDate()).isEqualTo(twentiethSession));
-
-        // Enrollment snapshot carries billing type + purchased quantity; expiry = student's 10th session date.
-        verify(classEnrollmentMapper).insert(enrollInsertCaptor.capture());
-        assertThat(enrollInsertCaptor.getValue().getBillingType()).isEqualTo("PER_SESSION");
-        assertThat(enrollInsertCaptor.getValue().getPurchasedQuantity()).isEqualTo(10);
-        assertThat(enrollInsertCaptor.getValue().getExpiryDate()).isEqualTo(startDate.plusWeeks(9));
-    }
-
-    @Test
-    void shouldWriteAmountDueAndBalanceForClassEnrollmentDownPayment() {
-        // 班课首付后仍应记录 amountDue 与 balanceAmount，否则余额默认 0，补款会被误判为已付清。
-        LocalDate startDate = LocalDate.of(2026, 9, 7); // Monday
-        CourseProductEntity product = buildGroupCourseProduct();
-        product.setBillingType("PER_SESSION");
-        product.setStartDate(startDate);
-        product.setTotalSessions(20);
-        CourseProductScheduleSlotEntity slot = buildClassSlot(startDate.getDayOfWeek().getValue());
-        ClassGroupEntity existingGroup = buildClassGroup(product.getId());
-
-        ClassEnrollmentCreateRequest request = new ClassEnrollmentCreateRequest();
-        request.setStudentId(101L);
-        request.setProductId(202L);
-        request.setSessions(10); // 10/20 of 1200 -> original 600.00
-        request.setHandledByName("Amy");
-        request.setCurrencyCode("USD");
-        request.setDiscountAmount(BigDecimal.ZERO);
-        request.setReceivedAmount(new BigDecimal("200.00")); // down payment
-
-        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
-        when(courseProductMapper.selectById(product.getId())).thenReturn(product);
-        when(classGroupMapper.selectOne(any())).thenReturn(existingGroup);
-        when(courseProductScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
-        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
-        ArgumentCaptor<EnrollmentOrderEntity> orderInsertCaptor = ArgumentCaptor.forClass(EnrollmentOrderEntity.class);
-        doAnswer(invocation -> {
-            EnrollmentOrderEntity entity = invocation.getArgument(0);
-            entity.setId(2001L);
-            return 1;
-        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
-
-        enrollmentOrderService.createClassEnrollmentOrder(request);
-
-        verify(enrollmentOrderMapper).insert(orderInsertCaptor.capture());
-        EnrollmentOrderEntity saved = orderInsertCaptor.getValue();
-        assertThat(saved.getAmountDue()).isEqualByComparingTo(new BigDecimal("600.00"));
-        assertThat(saved.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("400.00"));
-    }
-
-    @Test
     void shouldReturnReceiptPayloadInOrderDetailReceipts() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
@@ -884,16 +787,6 @@ class EnrollmentOrderServiceImplTest {
         classGroup.setClassroomId(401L);
         classGroup.setStatus("ACTIVE");
         return classGroup;
-    }
-
-    private CourseProductScheduleSlotEntity buildClassSlot(int weekday) {
-        CourseProductScheduleSlotEntity slot = new CourseProductScheduleSlotEntity();
-        slot.setId(901L);
-        slot.setProductId(202L);
-        slot.setWeekday(weekday);
-        slot.setStartTime(LocalTime.of(9, 0));
-        slot.setEndTime(LocalTime.of(10, 0));
-        return slot;
     }
 
     private TeacherEntity buildTeacher() {

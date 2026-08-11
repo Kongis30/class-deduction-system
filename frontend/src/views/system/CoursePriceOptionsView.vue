@@ -32,16 +32,21 @@
       <div class="matrix-layout">
         <aside class="navigation-sidebar">
           <span class="navigation-sidebar__label">{{ selectedModeLabel }} products</span>
-          <button
+          <el-tooltip
             v-for="product in productChoices"
             :key="product.id"
-            :class="['product-nav-item', { 'product-nav-item--active': String(query.courseProductId) === String(product.id) }]"
-            type="button"
-            @click="selectCourseProduct(product)"
+            :content="product.productName"
+            placement="right"
+            :show-after="300"
           >
-            <strong>{{ product.productName }}</strong>
-            <span>{{ product.registerClass || product.subjectName || 'Course product' }}</span>
-          </button>
+            <button
+              :class="['product-nav-item', { 'product-nav-item--active': String(query.courseProductId) === String(product.id) }]"
+              type="button"
+              @click="selectCourseProduct(product)"
+            >
+              <strong>{{ product.productName }}</strong>
+            </button>
+          </el-tooltip>
           <el-empty
             v-if="!loadingProducts && productChoices.length === 0"
             :image-size="44"
@@ -118,37 +123,54 @@
                 size="small"
                 border
               >
-                <el-table-column label="Class & schedule" min-width="260">
+                <el-table-column :label="primaryColumnLabel" min-width="220">
+                  <template #header>
+                    <header-tip :label="primaryColumnLabel" :tip="primaryColumnTip" />
+                  </template>
                   <template #default="{ row }">
                     <div class="matrix-class-cell">
                       <div class="matrix-class-cell__title">
                         <strong>{{ row.gradeBand || 'Grade not set' }}</strong>
-                        <el-tag v-if="row.groupBillingType" size="small" type="info" effect="plain">
+                        <el-tag v-if="isGroupRow(row)" size="small" type="info" effect="plain">
                           {{ groupBillingTypeLabel(row) }}
                         </el-tag>
                       </div>
-                      <span>{{ formatGroupSchedule(row) }}</span>
-                      <small>{{ formatGroupResources(row) }}</small>
+                      <template v-if="isGroupRow(row)">
+                        <span>{{ formatGroupSchedule(row) }}</span>
+                        <small>{{ formatGroupResources(row) }}</small>
+                      </template>
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="Billing" min-width="180">
+                <el-table-column :label="billingColumnLabel" min-width="150">
+                  <template #header>
+                    <header-tip :label="billingColumnLabel" :tip="billingColumnTip" />
+                  </template>
                   <template #default="{ row }">
                     <div class="cell-stack">
                       <strong>{{ formatGroupBilling(row) }}</strong>
-                      <span>{{ row.detailText || 'No registration detail' }}</span>
+                      <span v-if="billingSubtitle(row)">{{ billingSubtitle(row) }}</span>
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="Price" width="120" align="right">
+                <el-table-column label="Price" min-width="150" align="right">
+                  <template #header>
+                    <header-tip label="Price" :tip="priceColumnTip" />
+                  </template>
                   <template #default="{ row }">
                     <div class="price-cell">
                       <strong>{{ formatMoney(row.priceAmount) }}</strong>
                       <span>{{ priceUnitLabel(row) }}</span>
+                      <small v-if="row.groupTotalPrice">
+                        {{ formatMoney(row.groupTotalPrice) }} total · {{ formatMoney(row.groupSessionPrice) }}/session
+                      </small>
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="Usage" width="145">
+                <el-table-column label="Usage" width="120">
+                  <template #header>
+                    <header-tip label="Usage" tip="Whether this price row has already been used by registrations or packages." />
+                  </template>
                   <template #default="{ row }">
                     <div class="usage-cell">
                       <el-tag size="small" :type="row.referenced ? 'warning' : 'info'" effect="plain">
@@ -165,19 +187,32 @@
                     </div>
                   </template>
                 </el-table-column>
-                <el-table-column label="Status" width="100" align="center">
+                <el-table-column label="Status" width="96" align="center">
+                  <template #header>
+                    <header-tip label="Status" tip="Only active rows are available during registration." />
+                  </template>
                   <template #default="{ row }">
                     <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
                       {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="Actions" width="190" fixed="right" align="center">
+                <el-table-column label="Actions" width="124" align="center">
+                  <template #header>
+                    <header-tip label="Actions" tip="Edit the row, deactivate it, or delete unused setup rows." />
+                  </template>
                   <template #default="{ row }">
                     <div class="matrix-actions">
                       <el-button size="small" type="primary" plain @click="openDialog(row)">Edit</el-button>
-                      <el-button v-if="row.status === 'ACTIVE'" size="small" plain @click="deactivateOption(row)">Deactivate</el-button>
-                      <el-button size="small" type="danger" text @click="removeOption(row.id)">Delete</el-button>
+                      <el-dropdown trigger="click">
+                        <el-button size="small" text>More</el-button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item v-if="row.status === 'ACTIVE'" @click="deactivateOption(row)">Deactivate</el-dropdown-item>
+                            <el-dropdown-item divided class="danger-menu-item" @click="removeOption(row.id)">Delete</el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
                     </div>
                   </template>
                 </el-table-column>
@@ -237,7 +272,6 @@
               filterable
               allow-create
               default-first-option
-              placeholder="Select PPT grade or type a custom one"
               style="width: 100%;"
               @change="syncDetailText"
             >
@@ -249,7 +283,7 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item :label="priceFieldLabel" prop="priceAmount">
+          <el-form-item v-if="formTeachingMode === 'ONE_ON_ONE'" :label="priceFieldLabel" prop="priceAmount">
             <el-input-number v-model="form.priceAmount" :min="0" :precision="2" :controls="false" style="width: 100%;" />
           </el-form-item>
         </div>
@@ -259,21 +293,38 @@
             <strong>Grade class arrangement</strong>
             <small>Students who choose this grade join this class. It owns the class run and schedule.</small>
           </div>
-          <el-form-item label="Billing type">
-            <el-radio-group v-model="form.groupBillingType" @change="syncDetailText">
-              <el-radio-button value="PER_SESSION">Per session</el-radio-button>
-              <el-radio-button value="MONTHLY">Monthly</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-          <div v-if="form.groupBillingType === 'PER_SESSION'" class="form-grid form-grid--two">
-            <el-form-item label="First class date">
-              <el-date-picker v-model="form.groupStartDate" type="date" value-format="YYYY-MM-DD" style="width: 100%;" @change="syncDetailText" />
+          <div class="form-grid form-grid--two">
+            <el-form-item label="Total price">
+              <el-input-number
+                v-model="form.groupTotalPrice"
+                :min="0"
+                :precision="2"
+                :controls="false"
+                style="width: 100%;"
+              />
             </el-form-item>
             <el-form-item label="Total sessions">
-              <el-input-number v-model="form.groupTotalSessions" :min="1" :precision="0" :controls="false" style="width: 100%;" @change="syncDetailText" />
+              <el-input-number
+                v-model="form.groupTotalSessions"
+                :min="1"
+                :precision="0"
+                :controls="false"
+                style="width: 100%;"
+              />
             </el-form-item>
           </div>
-          <div v-else class="form-grid form-grid--two">
+          <div class="form-grid form-grid--two calculated-price-grid">
+            <div class="calculated-price">
+              <span>Price per session</span>
+              <strong>{{ formatMoney(groupSessionPrice) }}</strong>
+            </div>
+            <div class="calculated-price">
+              <span>Monthly price</span>
+              <strong>{{ formatMoney(groupMonthlyPrice) }}</strong>
+              <small>Based on {{ form.groupScheduleSlots.length }} weekly slot(s)</small>
+            </div>
+          </div>
+          <div class="form-grid form-grid--two">
             <el-form-item label="First month">
               <el-date-picker v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" @change="syncDetailText" />
             </el-form-item>
@@ -282,7 +333,7 @@
             </el-form-item>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Teacher">
+            <el-form-item label="Default teacher">
               <el-select v-model="form.groupTeacherId" clearable placeholder="Assign later" style="width: 100%;">
                 <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
               </el-select>
@@ -294,6 +345,23 @@
             </el-form-item>
           </div>
           <WeeklyTimeSelector v-model="form.groupScheduleSlots" />
+          <div v-if="form.groupScheduleSlots.length > 0" class="slot-teacher-list">
+            <div
+              v-for="(slot, index) in form.groupScheduleSlots"
+              :key="`${slot.weekday}-${slot.startTime}-${index}`"
+              class="slot-teacher-row"
+            >
+              <span>{{ groupSlotLabel(slot) }}</span>
+              <el-select
+                v-model="slot.teacherId"
+                clearable
+                filterable
+                placeholder="Use default teacher"
+              >
+                <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+              </el-select>
+            </div>
+          </div>
         </section>
 
         <el-form-item v-else label="1-on-1 package hours" prop="oneOnOneHours">
@@ -325,20 +393,6 @@
             <el-form-item label="Registration detail" prop="detailText">
               <el-input v-model="form.detailText" type="textarea" :rows="2" />
             </el-form-item>
-            <div class="form-grid form-grid--three">
-              <el-form-item label="Option code">
-                <el-input v-model="form.optionCode" placeholder="Auto-generated when empty" />
-              </el-form-item>
-              <el-form-item label="Sort order">
-                <el-input-number v-model="form.sortOrder" :min="0" :precision="0" :controls="false" style="width: 100%;" />
-              </el-form-item>
-              <el-form-item label="Status">
-                <el-select v-model="form.status" style="width: 100%;">
-                  <el-option label="Active" value="ACTIVE" />
-                  <el-option label="Inactive" value="INACTIVE" />
-                </el-select>
-              </el-form-item>
-            </div>
           </el-collapse-item>
         </el-collapse>
 
@@ -358,9 +412,9 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, Plus } from '@element-plus/icons-vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { ArrowLeft, InfoFilled, Plus } from '@element-plus/icons-vue';
+import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
+import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
@@ -397,6 +451,22 @@ interface ProductPriceGroup {
   registerClass: string;
   rows: CoursePriceOptionItem[];
 }
+
+const HeaderTip = defineComponent({
+  name: 'HeaderTip',
+  props: {
+    label: { type: String, required: true },
+    tip: { type: String, required: true },
+  },
+  setup(props) {
+    return () => h('span', { class: 'table-header-tip' }, [
+      h('span', props.label),
+      h(ElTooltip, { content: props.tip, placement: 'top', effect: 'dark' }, {
+        default: () => h(ElIcon, { class: 'table-header-tip__icon' }, () => h(InfoFilled)),
+      }),
+    ]);
+  },
+});
 
 const courseTypes: CourseTypeDef[] = [
   { value: 'AFTER_SCHOOL', label: 'After School', mode: 'GROUP' },
@@ -459,10 +529,11 @@ const form = reactive({
   courseProductId: undefined as EntityId | undefined,
   groupTeacherId: undefined as EntityId | undefined,
   groupClassroomId: undefined as EntityId | undefined,
-  groupScheduleSlots: [] as Array<{ weekday: number; startTime: string; endTime: string; plannedUnits: number }>,
-  groupBillingType: 'PER_SESSION' as 'PER_SESSION' | 'MONTHLY',
+  groupScheduleSlots: [] as Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string; plannedUnits: number }>,
+  groupBillingType: 'MONTHLY' as 'PER_SESSION' | 'MONTHLY',
   groupStartDate: '',
-  groupTotalSessions: undefined as number | undefined,
+  groupTotalSessions: 13 as number | undefined,
+  groupTotalPrice: undefined as number | undefined,
   groupStartMonth: '',
   groupEndMonth: '',
   sortOrder: 0,
@@ -492,6 +563,16 @@ const rules = {
 };
 
 const gradeOptionsForForm = computed(() => pptGradeOptions[form.courseType] ?? []);
+const groupSessionPrice = computed(() => {
+  const totalPrice = Number(form.groupTotalPrice ?? 0);
+  const totalSessions = Number(form.groupTotalSessions ?? 0);
+  return totalPrice > 0 && totalSessions > 0
+    ? Math.round((totalPrice / totalSessions) * 100) / 100
+    : 0;
+});
+const groupMonthlyPrice = computed(() =>
+  Math.round((groupSessionPrice.value * form.groupScheduleSlots.length * 52 / 12) * 100) / 100
+);
 
 const selectedMode = ref<CourseMode>('ONE_ON_ONE');
 const selectedModeLabel = computed(() =>
@@ -605,6 +686,17 @@ const groupedOptions = computed<ProductPriceGroup[]>(() => {
 });
 
 const formTeachingMode = computed<CourseMode>(() => courseTypes.find(item => item.value === form.courseType)?.mode ?? 'GROUP');
+const primaryColumnLabel = computed(() => selectedMode.value === 'ONE_ON_ONE' ? 'Grade' : 'Class schedule');
+const primaryColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
+  ? 'Grade range that can use this private lesson package.'
+  : 'Grade class setup used for registration, including weekly schedule and assigned resources.');
+const billingColumnLabel = computed(() => selectedMode.value === 'ONE_ON_ONE' ? 'Package' : 'Billing window');
+const billingColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
+  ? 'Package size sold to the student, measured in hours.'
+  : 'Monthly billing period configured for this grade class.');
+const priceColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
+  ? 'Total package price for the selected private lesson hours.'
+  : 'Monthly tuition used during registration; totals are calculated from selected months.');
 const priceFieldLabel = computed(() => {
   if (formTeachingMode.value !== 'GROUP') return 'Price';
   return form.groupBillingType === 'MONTHLY' ? 'Price per month' : 'Price per session';
@@ -746,9 +838,10 @@ function openDialog(option?: CoursePriceOptionItem) {
     ...slot,
     plannedUnits: Math.round((timeToMinutes(slot.endTime) - timeToMinutes(slot.startTime)) / 30),
   }));
-  form.groupBillingType = option?.groupBillingType === 'MONTHLY' ? 'MONTHLY' : 'PER_SESSION';
+  form.groupBillingType = 'MONTHLY';
   form.groupStartDate = option?.groupStartDate ?? '';
-  form.groupTotalSessions = option?.groupTotalSessions;
+  form.groupTotalSessions = option?.groupTotalSessions ?? 13;
+  form.groupTotalPrice = option?.groupTotalPrice;
   form.groupStartMonth = option?.groupStartMonth ?? '';
   form.groupEndMonth = option?.groupEndMonth ?? '';
   form.sortOrder = option?.sortOrder ?? 0;
@@ -811,9 +904,7 @@ function syncOneOnOneDuration() {
 }
 
 function syncDetailText() {
-  const groupBillingDetail = form.groupBillingType === 'PER_SESSION'
-    ? 'Per session'
-    : 'Monthly';
+  const groupBillingDetail = 'Monthly';
   const detailParts = formTeachingMode.value === 'GROUP'
     ? [form.registerClass, form.gradeBand, groupBillingDetail]
     : [form.registerClass, form.gradeBand, form.durationLabel];
@@ -834,23 +925,22 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     timeSlotLabel: undefined,
     detailText: form.detailText.trim(),
     oneOnOneHours: formTeachingMode.value === 'ONE_ON_ONE' ? form.oneOnOneHours : undefined,
-    priceAmount: form.priceAmount,
+    priceAmount: formTeachingMode.value === 'GROUP' ? groupMonthlyPrice.value : form.priceAmount,
     currencyCode: 'USD',
     courseProductId: form.courseProductId,
     groupTeacherId: formTeachingMode.value === 'GROUP' ? form.groupTeacherId : undefined,
     groupClassroomId: formTeachingMode.value === 'GROUP' ? form.groupClassroomId : undefined,
     groupScheduleSlots: formTeachingMode.value === 'GROUP'
-      ? form.groupScheduleSlots.map(({ weekday, startTime, endTime }) => ({ weekday, startTime, endTime }))
+      ? form.groupScheduleSlots.map(({ teacherId, weekday, startTime, endTime }) => ({
+          teacherId, weekday, startTime, endTime,
+        }))
       : undefined,
-    groupBillingType: formTeachingMode.value === 'GROUP' ? form.groupBillingType : undefined,
-    groupStartDate: formTeachingMode.value === 'GROUP' && form.groupBillingType === 'PER_SESSION'
-      ? form.groupStartDate || undefined : undefined,
-    groupTotalSessions: formTeachingMode.value === 'GROUP' && form.groupBillingType === 'PER_SESSION'
-      ? form.groupTotalSessions : undefined,
-    groupStartMonth: formTeachingMode.value === 'GROUP' && form.groupBillingType === 'MONTHLY'
-      ? form.groupStartMonth || undefined : undefined,
-    groupEndMonth: formTeachingMode.value === 'GROUP' && form.groupBillingType === 'MONTHLY'
-      ? form.groupEndMonth || undefined : undefined,
+    groupBillingType: formTeachingMode.value === 'GROUP' ? 'MONTHLY' : undefined,
+    groupStartDate: undefined,
+    groupTotalSessions: formTeachingMode.value === 'GROUP' ? form.groupTotalSessions : undefined,
+    groupTotalPrice: formTeachingMode.value === 'GROUP' ? form.groupTotalPrice : undefined,
+    groupStartMonth: formTeachingMode.value === 'GROUP' ? form.groupStartMonth || undefined : undefined,
+    groupEndMonth: formTeachingMode.value === 'GROUP' ? form.groupEndMonth || undefined : undefined,
     sortOrder: form.sortOrder,
     status,
   };
@@ -877,6 +967,7 @@ function payloadFromRow(row: CoursePriceOptionItem, status: string): CoursePrice
     groupBillingType: row.groupBillingType,
     groupStartDate: row.groupStartDate,
     groupTotalSessions: row.groupTotalSessions,
+    groupTotalPrice: row.groupTotalPrice,
     groupStartMonth: row.groupStartMonth,
     groupEndMonth: row.groupEndMonth,
     sortOrder: row.sortOrder,
@@ -894,13 +985,13 @@ async function saveOption() {
     ElMessage.warning('Add at least one weekly schedule slot for this grade class.');
     return;
   }
-  if (formTeachingMode.value === 'GROUP' && form.groupBillingType === 'PER_SESSION'
-      && (!form.groupStartDate || !form.groupTotalSessions)) {
-    ElMessage.warning('Add the first class date and total sessions for this grade class.');
+  if (formTeachingMode.value === 'GROUP'
+      && (!form.groupTotalPrice || form.groupTotalPrice <= 0
+        || !form.groupTotalSessions || form.groupTotalSessions <= 0)) {
+    ElMessage.warning('Add a total price and total sessions for this grade class.');
     return;
   }
-  if (formTeachingMode.value === 'GROUP' && form.groupBillingType === 'MONTHLY'
-      && (!form.groupStartMonth || !form.groupEndMonth)) {
+  if (formTeachingMode.value === 'GROUP' && (!form.groupStartMonth || !form.groupEndMonth)) {
     ElMessage.warning('Add the first and last month for this grade class.');
     return;
   }
@@ -963,8 +1054,7 @@ function productName(id?: EntityId) {
 }
 
 function productLabel(product: CourseProductItem) {
-  const mode = product.teachingMode === 'ONE_ON_ONE' ? '1 on 1' : 'Group';
-  return `${product.productName} · ${mode}`;
+  return product.productName;
 }
 
 function selectedTypeLabelFor(value: string) {
@@ -999,6 +1089,17 @@ function formatGroupBilling(row: CoursePriceOptionItem) {
   return row.groupTotalSessions ? `${row.groupTotalSessions} total sessions` : 'Per session';
 }
 
+function isGroupRow(row: CoursePriceOptionItem) {
+  return modeForCourseType(row.courseType) === 'GROUP';
+}
+
+function billingSubtitle(row: CoursePriceOptionItem) {
+  if (isGroupRow(row)) {
+    return row.groupTotalSessions ? `${row.groupTotalSessions} total sessions` : '';
+  }
+  return row.notes || '';
+}
+
 function groupBillingTypeLabel(row: CoursePriceOptionItem) {
   return row.groupBillingType === 'MONTHLY' ? 'Monthly' : 'Per session';
 }
@@ -1010,6 +1111,11 @@ function formatGroupSchedule(row: CoursePriceOptionItem) {
   return (row.groupScheduleSlots ?? [])
     .map(slot => `${['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday]} ${slot.startTime}-${slot.endTime}`)
     .join(', ') || 'Schedule not set';
+}
+
+function groupSlotLabel(slot: { weekday: number; startTime: string; endTime: string }) {
+  const weekday = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday] ?? '';
+  return `${weekday} ${slot.startTime}-${slot.endTime}`;
 }
 
 function formatGroupResources(row: CoursePriceOptionItem) {
@@ -1159,10 +1265,8 @@ function timeToMinutes(value: string) {
 }
 
 .product-nav-item {
-  display: flex;
+  display: block;
   width: 100%;
-  flex-direction: column;
-  gap: 2px;
   min-width: 0;
   padding: 7px 8px;
   border: 1px solid transparent;
@@ -1180,21 +1284,14 @@ function timeToMinutes(value: string) {
   color: #0f7a3a;
 }
 
-.product-nav-item strong,
-.product-nav-item span {
+.product-nav-item strong {
+  display: block;
   width: 100%;
   overflow: hidden;
+  font-size: 12px;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.product-nav-item strong {
-  font-size: 12px;
-}
-
-.product-nav-item span {
-  color: #64748b;
-  font-size: 11px;
 }
 
 .matrix-content__context {
@@ -1351,6 +1448,24 @@ function timeToMinutes(value: string) {
   font-weight: 700;
 }
 
+.table-header-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.table-header-tip__icon {
+  color: #94a3b8;
+  font-size: 13px;
+  cursor: help;
+}
+
+.table-header-tip__icon:hover {
+  color: #409eff;
+}
+
 .price-matrix-table :deep(.el-table__cell) {
   vertical-align: top;
 }
@@ -1413,7 +1528,7 @@ function timeToMinutes(value: string) {
 .matrix-class-cell__title strong {
   overflow: hidden;
   color: #0f172a;
-  font-size: 13px;
+  font-size: 14px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1448,19 +1563,28 @@ function timeToMinutes(value: string) {
   font-size: 11px;
 }
 
+.price-cell small {
+  color: #64748b;
+  font-size: 10px;
+}
+
 .usage-cell {
   align-items: flex-start;
 }
 
 .matrix-actions {
-  display: flex;
-  flex-wrap: wrap;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .matrix-actions :deep(.el-button) {
   margin-left: 0;
+}
+
+:deep(.danger-menu-item) {
+  color: #f56c6c;
 }
 
 .dialog-hint {
@@ -1483,12 +1607,32 @@ function timeToMinutes(value: string) {
   gap: 14px;
 }
 
-.form-grid--three {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
 .form-grid--two {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.calculated-price-grid {
+  gap: 12px;
+}
+
+.calculated-price {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.calculated-price span,
+.calculated-price small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.calculated-price strong {
+  color: #1d4ed8;
+  font-size: 18px;
 }
 
 .grade-class-settings {
@@ -1514,6 +1658,28 @@ function timeToMinutes(value: string) {
 .grade-class-settings__head small {
   color: #64748b;
   font-size: 12px;
+}
+
+.slot-teacher-list {
+  display: grid;
+  gap: 8px;
+}
+
+.slot-teacher-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.slot-teacher-row > span {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .custom-hours {
@@ -1593,7 +1759,6 @@ function timeToMinutes(value: string) {
     border-right: 0;
   }
 
-  .form-grid--three,
   .form-grid--two {
     grid-template-columns: 1fr;
   }

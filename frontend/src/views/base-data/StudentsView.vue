@@ -144,7 +144,7 @@
     >
       <template #header>
         <div class="dialog-header">
-          <h3 class="dialog-header__title">Edit student</h3>
+          <h3 class="dialog-header__title">{{ editingId ? 'Edit student' : 'Add student' }}</h3>
         </div>
       </template>
 
@@ -764,6 +764,7 @@ import {
   type StudentAccountCreatePayload,
 } from '@/api/auth';
 import {
+  createStudent,
   fetchCampuses,
   fetchDeletedStudents,
   fetchStudent,
@@ -1088,28 +1089,28 @@ watch(() => studentForm.dropoffRequired, (required) => {
   }
 });
 
-function openStudentDialog(row: StudentItem) {
-  editingId.value = row.id;
+function openStudentDialog(row?: StudentItem) {
+  editingId.value = row?.id ?? null;
   Object.assign(studentForm, {
-    studentName: row.studentName,
-    gender: row.gender,
-    guardianName: row.guardianName,
-    guardianPhone: row.guardianPhone ?? row.phone ?? '',
-    guardianPhone2: row.guardianPhone2 ?? '',
-    guardianEmail: row.guardianEmail ?? '',
-    guardianRelationType: row.guardianRelationType ?? '',
-    grade: row.grade ?? '',
-    school: row.school ?? '',
-    status: row.status,
-    notes: row.notes ?? '',
-    englishName: row.englishName ?? '',
-    birthDate: row.birthDate ?? '',
-    sourceChannel: row.sourceChannel ?? '',
-    campusId: row.campusId ?? undefined,
-    pickupRequired: Boolean(row.pickupRequired),
-    pickupAddress: row.pickupRequired ? row.pickupAddress ?? '' : '',
-    dropoffRequired: Boolean(row.dropoffRequired),
-    dropoffAddress: row.dropoffRequired ? row.dropoffAddress ?? '' : '',
+    studentName: row?.studentName ?? '',
+    gender: row?.gender ?? '',
+    guardianName: row?.guardianName ?? '',
+    guardianPhone: row?.guardianPhone ?? row?.phone ?? '',
+    guardianPhone2: row?.guardianPhone2 ?? '',
+    guardianEmail: row?.guardianEmail ?? '',
+    guardianRelationType: row?.guardianRelationType ?? '',
+    grade: row?.grade ?? '',
+    school: row?.school ?? '',
+    status: row?.status ?? 'ACTIVE',
+    notes: row?.notes ?? '',
+    englishName: row?.englishName ?? '',
+    birthDate: row?.birthDate ?? '',
+    sourceChannel: row?.sourceChannel ?? '',
+    campusId: row?.campusId ?? undefined,
+    pickupRequired: Boolean(row?.pickupRequired),
+    pickupAddress: row?.pickupRequired ? row.pickupAddress ?? '' : '',
+    dropoffRequired: Boolean(row?.dropoffRequired),
+    dropoffAddress: row?.dropoffRequired ? row.dropoffAddress ?? '' : '',
   });
   // Clear any previous validation errors when opening dialog
   studentFormRef.value?.clearValidate();
@@ -1122,12 +1123,18 @@ async function handleStudentSubmit() {
 
   submitting.value = true;
   try {
-    await updateStudent(editingId.value!, {
+    const payload = {
       ...studentForm,
       pickupAddress: studentForm.pickupRequired ? studentForm.pickupAddress : '',
       dropoffAddress: studentForm.dropoffRequired ? studentForm.dropoffAddress : '',
-    });
-    ElMessage.success('Student updated.');
+    };
+    if (editingId.value) {
+      await updateStudent(editingId.value, payload);
+      ElMessage.success('Student updated.');
+    } else {
+      await createStudent(payload);
+      ElMessage.success('Student added.');
+    }
     studentDialogVisible.value = false;
     loadData();
   } catch (err: any) {
@@ -1136,6 +1143,8 @@ async function handleStudentSubmit() {
     submitting.value = false;
   }
 }
+
+defineExpose({ openCreateDialog: () => openStudentDialog() });
 
 async function handleDeleteStudent(row: StudentItem) {
   deleteTarget.value = row;

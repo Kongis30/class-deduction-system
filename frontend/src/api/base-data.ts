@@ -57,6 +57,10 @@ export function fetchStudent(id: EntityId) {
   return http.get<ApiResponse<StudentItem>>(`/v1/base/students/${id}`);
 }
 
+export function createStudent(data: StudentSavePayload) {
+  return http.post<ApiResponse<EntityId>>('/v1/base/students', data);
+}
+
 export function updateStudent(id: string, data: StudentSavePayload) {
   return http.put(`/v1/base/students/${id}`, data);
 }
@@ -93,6 +97,10 @@ export interface TeacherSavePayload {
   subjectTags?: string[];
   status?: string;
   notes?: string | null;
+}
+
+export function createTeacher(data: TeacherSavePayload) {
+  return http.post<ApiResponse<EntityId>>('/v1/base/teachers', data);
 }
 
 export function updateTeacher(id: EntityId, data: TeacherSavePayload) {
@@ -230,10 +238,12 @@ export interface CoursePriceOptionSavePayload {
   classId?: EntityId;
   groupTeacherId?: EntityId;
   groupClassroomId?: EntityId;
-  groupScheduleSlots?: { weekday: number; startTime: string; endTime: string }[];
+  groupScheduleSlots?: { teacherId?: EntityId; weekday: number; startTime: string; endTime: string }[];
   groupBillingType?: string;
   groupStartDate?: string;
   groupTotalSessions?: number;
+  groupTotalPrice?: number;
+  groupSessionPrice?: number;
   groupStartMonth?: string;
   groupEndMonth?: string;
   sortOrder?: number;
@@ -280,17 +290,8 @@ export interface CourseProductSavePayload {
   teachingMode: string;
   defaultTotalUnits?: number;
   defaultLessonUnits?: number;
-  billingType?: string;
-  startDate?: string;
-  totalSessions?: number;
-  startMonth?: string;
-  endMonth?: string;
-  defaultClassroomId?: EntityId;
-  defaultTeacherId?: EntityId;
-  listPrice?: number;
   status?: string;
   notes?: string;
-  slots?: { weekday: number; startTime: string; endTime: string }[];
 }
 
 export function createCourseProduct(data: CourseProductSavePayload) {

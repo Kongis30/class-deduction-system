@@ -10,14 +10,12 @@ import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
-import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeRequest;
@@ -35,6 +33,7 @@ import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.RegistrationIntakeServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
@@ -84,9 +83,6 @@ class RegistrationIntakeServiceImplTest {
 
     @Mock
     private CourseProductMapper courseProductMapper;
-
-    @Mock
-    private CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
 
     @Mock
     private TeacherMapper teacherMapper;
@@ -164,7 +160,6 @@ class RegistrationIntakeServiceImplTest {
                 campusMapper,
                 coursePriceOptionMapper,
                 courseProductMapper,
-                courseProductScheduleSlotMapper,
                 teacherMapper,
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
@@ -216,6 +211,21 @@ class RegistrationIntakeServiceImplTest {
         assertThat(userAccountCaptor.getValue().getPasswordHash()).isEqualTo("encoded");
         assertThat(result.studentAccount().username()).isEqualTo("jint@jin");
         assertThat(result.studentAccount().initialPassword()).isEqualTo("9175550101");
+    }
+
+    @Test
+    void shouldScaleOneOnOnePriceFromConfiguredHourlyRate() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOneOnOneHours(new BigDecimal("15.0"));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1200.00");
+        assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(30);
+        assertThat(coursePackageCaptor.getValue().getOriginalAmount()).isEqualByComparingTo("1200.00");
     }
 
     @Test
@@ -437,20 +447,15 @@ class RegistrationIntakeServiceImplTest {
         option.setRegisterClass("Group class");
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
-        product.setBillingType("PER_SESSION");
-        product.setStartDate(LocalDate.of(2026, 9, 1));
-        product.setTotalSessions(1);
-        product.setDefaultTeacherId(301L);
-        product.setDefaultClassroomId(401L);
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setTeacherId(301L);
         classGroup.setClassroomId(401L);
-        classGroup.setBillingType("PER_SESSION");
-        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
-        classGroup.setTotalSessions(1);
+        classGroup.setBillingType("MONTHLY");
+        classGroup.setStartMonth(LocalDate.of(2026, 9, 1));
+        classGroup.setEndMonth(LocalDate.of(2026, 12, 1));
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
         slot.setClassGroupId(501L);
         slot.setWeekday(2);
@@ -510,6 +515,27 @@ class RegistrationIntakeServiceImplTest {
         assertThat(orderItemCaptor.getValue().getOneOnOneUnits()).isZero();
         verify(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
         verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+    }
+
+    @Test
+    void shouldCreateRollingMonthlyGroupEnrollmentFromPurchasedMonths() {
+        stubMonthlyGroupClassIntake();
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setSessions(null);
+        item.setPurchasedMonths(6);
+
+        registrationIntakeService.submitIntake(request);
+
+        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
+                ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("4800.00");
+        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(6);
+        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2027, 2, 28));
+        assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("MONTHLY");
     }
 
     private void stubSuccessfulIntake(boolean duplicateStudentUsername) {
@@ -606,16 +632,13 @@ class RegistrationIntakeServiceImplTest {
         option.setRegisterClass("Group class");
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
-        product.setBillingType("PER_SESSION");
-        product.setStartDate(LocalDate.of(2026, 9, 1));
-        product.setTotalSessions(1);
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
-        classGroup.setBillingType("PER_SESSION");
-        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
-        classGroup.setTotalSessions(1);
+        classGroup.setBillingType("MONTHLY");
+        classGroup.setStartMonth(LocalDate.of(2026, 9, 1));
+        classGroup.setEndMonth(LocalDate.of(2026, 12, 1));
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
         slot.setClassGroupId(501L);
         slot.setWeekday(2);
@@ -652,6 +675,26 @@ class RegistrationIntakeServiceImplTest {
         }).when(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
     }
 
+    private void stubMonthlyGroupClassIntake() {
+        stubGroupClassIntake();
+        CoursePriceOptionEntity option = buildOption("15:30-17:00");
+        option.setCourseType("GROUP");
+        option.setRegisterClass("Group class");
+        CourseProductEntity product = buildProduct();
+        product.setTeachingMode("GROUP");
+        product.setBillingType("MONTHLY");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setProductId(202L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setBillingType("MONTHLY");
+        classGroup.setStartMonth(LocalDate.of(2026, 9, 1));
+        classGroup.setEndMonth(LocalDate.of(2027, 12, 1));
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        when(courseProductMapper.selectById(202L)).thenReturn(product);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+    }
+
     private void stubStudentCreationOnly() {
         when(studentNoGenerator.generate()).thenReturn("STU202609010001");
         when(studentMapper.selectReusableStudent("Jin Tang", "9175550101")).thenReturn(null);
@@ -683,7 +726,7 @@ class RegistrationIntakeServiceImplTest {
         item.setInitialLessonEndAt(null);
         item.setClassId(501L);
         item.setOneOnOneUnits(null);
-        item.setSessions(1);
+        item.setPurchasedMonths(1);
         request.setItems(List.of(item));
         return request;
     }

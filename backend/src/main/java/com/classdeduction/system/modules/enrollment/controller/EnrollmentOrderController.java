@@ -5,7 +5,6 @@ import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
-import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
@@ -81,13 +80,6 @@ public class EnrollmentOrderController {
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         request.setHandledByUserId(currentUser.userId());
         return ApiResponse.success("Refunded successfully.", enrollmentOrderService.refundOrder(id, request));
-    }
-
-    @PostMapping("/class-enroll")
-    @Operation(summary = "创建班课报名订单（同时创建 class_enrollment 记录）")
-    public ApiResponse<Void> createClassEnrollmentOrder(@Valid @RequestBody ClassEnrollmentCreateRequest request) {
-        enrollmentOrderService.createClassEnrollmentOrder(request);
-        return ApiResponse.success("Class enrollment created successfully.", null);
     }
 
     @DeleteMapping("/{id}")

@@ -119,7 +119,7 @@
       class="teacher-dialog"
     >
       <template #header>
-        <h3>Edit</h3>
+        <h3>{{ editingId ? 'Edit teacher' : 'Add teacher' }}</h3>
       </template>
 
       <el-form ref="teacherFormRef" label-position="top" :model="teacherForm" :rules="teacherFormRules" class="teacher-form">
@@ -324,6 +324,7 @@ import {
   type TeacherAccountCreatePayload,
 } from '@/api/auth';
 import {
+  createTeacher,
   fetchAllTeachers,
   fetchDeletedTeachers,
   fetchTeachers,
@@ -528,15 +529,15 @@ const teacherFormRules = {
   email: [{ type: 'email', message: 'Email format is invalid' }],
 };
 
-async function openTeacherDialog(row: TeacherItem) {
-  editingId.value = row.id;
+async function openTeacherDialog(row?: TeacherItem) {
+  editingId.value = row?.id ?? null;
   Object.assign(teacherForm, {
-    teacherName: row.teacherName,
-    mobile: row.mobile ?? '',
-    email: row.email ?? '',
-    subjectTags: [...(row.subjectTags || [])],
-    status: row.status,
-    notes: row.notes ?? '',
+    teacherName: row?.teacherName ?? '',
+    mobile: row?.mobile ?? '',
+    email: row?.email ?? '',
+    subjectTags: [...(row?.subjectTags || [])],
+    status: row?.status ?? 'ACTIVE',
+    notes: row?.notes ?? '',
   });
   teacherFormRef.value?.clearValidate();
   teacherDialogVisible.value = true;
@@ -559,8 +560,13 @@ async function handleTeacherSubmit() {
 
   submitting.value = true;
   try {
-    await updateTeacher(editingId.value!, payload);
-    ElMessage.success('Teacher updated.');
+    if (editingId.value) {
+      await updateTeacher(editingId.value, payload);
+      ElMessage.success('Teacher updated.');
+    } else {
+      await createTeacher(payload);
+      ElMessage.success('Teacher added.');
+    }
     teacherDialogVisible.value = false;
     loadData();
   } catch (err: any) {
@@ -569,6 +575,8 @@ async function handleTeacherSubmit() {
     submitting.value = false;
   }
 }
+
+defineExpose({ openCreateDialog: () => openTeacherDialog() });
 
 async function handleDeleteTeacher(row: TeacherItem) {
   deleteTarget.value = row;

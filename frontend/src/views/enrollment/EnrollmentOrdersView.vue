@@ -67,7 +67,19 @@
             class="product-table"
             :show-empty="true"
           >
-            <el-table-column label="Course" min-width="150">
+            <el-table-column min-width="170">
+              <template #header>
+                <div class="table-header-filter">
+                  <span>Course</span>
+                  <el-input
+                    v-model="filters.keyword"
+                    size="small"
+                    clearable
+                    placeholder="Course / student / order no."
+                    @input="handleFilterChange"
+                  />
+                </div>
+              </template>
               <template #default="{ row }">
                 <div class="cell-stack">
                   <strong>{{ row.courseProductName ?? '—' }}</strong>
@@ -92,14 +104,52 @@
                 <strong>${{ row.receivedAmount?.toFixed(2) }}</strong>
               </template>
             </el-table-column>
-            <el-table-column label="Payment" min-width="100" align="center">
+            <el-table-column min-width="120" align="center">
+              <template #header>
+                <div class="table-header-filter table-header-filter--center">
+                  <span>Payment</span>
+                  <el-select
+                    v-model="filters.paymentStatus"
+                    size="small"
+                    placeholder="All"
+                    clearable
+                    @change="handleFilterChange"
+                  >
+                    <el-option
+                      v-for="option in paymentStatusOptions"
+                      :key="option.value"
+                      :label="option.label"
+                      :value="option.value"
+                    />
+                  </el-select>
+                </div>
+              </template>
               <template #default="{ row }">
                 <el-tag size="small" :type="paymentStatusType(row.paymentStatus)">
                   {{ paymentStatusLabel(row.paymentStatus) }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Status" min-width="100" align="center">
+            <el-table-column min-width="120" align="center">
+              <template #header>
+                <div class="table-header-filter table-header-filter--center">
+                  <span>Status</span>
+                  <el-select
+                    v-model="filters.orderStatus"
+                    size="small"
+                    placeholder="All"
+                    clearable
+                    @change="handleFilterChange"
+                  >
+                    <el-option
+                      v-for="option in orderStatusOptions"
+                      :key="option.value"
+                      :label="option.label"
+                      :value="option.value"
+                    />
+                  </el-select>
+                </div>
+              </template>
               <template #default="{ row }">
                 <el-tag size="small" :type="orderStatusType(row.orderStatus)">
                   {{ orderStatusLabel(row.orderStatus) }}
@@ -143,7 +193,7 @@
         <el-tab-pane label="Group Class" name="GROUP">
           <el-table
             v-loading="loadingClasses"
-            :data="classEnrollmentData"
+            :data="filteredClassEnrollmentData"
             row-key="id"
             class="product-table"
             :show-empty="true"
@@ -162,7 +212,19 @@
                     class="nested-table"
                     empty-text="No enrollment orders for this class."
                   >
-                    <el-table-column label="Student" min-width="130">
+                    <el-table-column min-width="150">
+                      <template #header>
+                        <div class="table-header-filter">
+                          <span>Student</span>
+                          <el-input
+                            v-model="groupOrderFilters.keyword"
+                            size="small"
+                            clearable
+                            placeholder="Student / order no."
+                            @input="handleGroupOrderFilterChange"
+                          />
+                        </div>
+                      </template>
                       <template #default="{ row: order }">
                         <strong>{{ order.studentName }}</strong>
                       </template>
@@ -180,14 +242,52 @@
                         <strong>${{ order.receivedAmount?.toFixed(2) }}</strong>
                       </template>
                     </el-table-column>
-                    <el-table-column label="Payment" min-width="90" align="center">
+                    <el-table-column min-width="112" align="center">
+                      <template #header>
+                        <div class="table-header-filter table-header-filter--center">
+                          <span>Payment</span>
+                          <el-select
+                            v-model="groupOrderFilters.paymentStatus"
+                            size="small"
+                            placeholder="All"
+                            clearable
+                            @change="handleGroupOrderFilterChange"
+                          >
+                            <el-option
+                              v-for="option in paymentStatusOptions"
+                              :key="option.value"
+                              :label="option.label"
+                              :value="option.value"
+                            />
+                          </el-select>
+                        </div>
+                      </template>
                       <template #default="{ row: order }">
                         <el-tag size="small" :type="paymentStatusType(order.paymentStatus)">
                           {{ paymentStatusLabel(order.paymentStatus) }}
                         </el-tag>
                       </template>
                     </el-table-column>
-                    <el-table-column label="Status" min-width="90" align="center">
+                    <el-table-column min-width="112" align="center">
+                      <template #header>
+                        <div class="table-header-filter table-header-filter--center">
+                          <span>Status</span>
+                          <el-select
+                            v-model="groupOrderFilters.orderStatus"
+                            size="small"
+                            placeholder="All"
+                            clearable
+                            @change="handleGroupOrderFilterChange"
+                          >
+                            <el-option
+                              v-for="option in orderStatusOptions"
+                              :key="option.value"
+                              :label="option.label"
+                              :value="option.value"
+                            />
+                          </el-select>
+                        </div>
+                      </template>
                       <template #default="{ row: order }">
                         <el-tag size="small" :type="orderStatusType(order.orderStatus)">
                           {{ orderStatusLabel(order.orderStatus) }}
@@ -228,7 +328,18 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="Course" min-width="160">
+            <el-table-column min-width="190">
+              <template #header>
+                <div class="table-header-filter">
+                  <span>Course</span>
+                  <el-input
+                    v-model="groupFilters.keyword"
+                    size="small"
+                    clearable
+                    placeholder="Course / teacher / room"
+                  />
+                </div>
+              </template>
               <template #default="{ row }">
                 <div class="cell-stack">
                   <strong>{{ row.className }}</strong>
@@ -633,365 +744,6 @@
       </template>
     </el-dialog>
 
-    <!-- Create enrollment dialog -->
-    <el-dialog
-      v-model="createDialogVisible"
-      width="560px"
-      :close-on-click-modal="false"
-      class="enrollment-dialog"
-    >
-      <template #header>
-        <h3>New enrollment</h3>
-      </template>
-
-      <el-form
-        ref="createFormRef"
-        label-position="top"
-        :model="createForm"
-        :rules="createFormRules"
-        class="enrollment-form"
-      >
-        <div class="enrollment-form__row">
-          <el-form-item label="Student" prop="studentId" class="enrollment-form__full">
-            <el-select
-              v-model="createForm.studentId"
-              placeholder="Select student"
-              filterable
-              style="width: 100%;"
-            >
-              <el-option v-for="s in students" :key="s.id" :label="s.studentName" :value="s.id" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <div class="enrollment-form__row">
-          <el-form-item label="Course product" prop="courseProductId" class="enrollment-form__full">
-            <el-select
-              v-model="createForm.courseProductId"
-              placeholder="Select course product"
-              filterable
-              style="width: 100%;"
-              @change="createForm.slots = []"
-            >
-              <el-option
-                v-for="p in courseProducts"
-                :key="p.id"
-                :label="`${p.productName} (${p.subjectName ?? 'General'})`"
-                :value="p.id"
-              />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <!-- Product info card -->
-        <div v-if="selectedProduct" class="product-info-card">
-          <div class="product-info-card__item">
-            <span class="product-info-card__label">Subject</span>
-            <span class="product-info-card__value">{{ selectedProduct.subjectName ?? 'General' }}</span>
-          </div>
-          <div class="product-info-card__item">
-            <span class="product-info-card__label">Total hours</span>
-            <span class="product-info-card__value">{{ selectedProduct.defaultTotalUnits ?? 40 }}h</span>
-          </div>
-          <div class="product-info-card__item">
-            <span class="product-info-card__label">Original price</span>
-            <span class="product-info-card__value">${{ (selectedProduct.listPrice ?? 0).toFixed(2) }}</span>
-          </div>
-        </div>
-
-        <div class="enrollment-form__row">
-          <el-form-item label="Primary teacher" prop="primaryTeacherId">
-            <el-select
-              v-model="createForm.primaryTeacherId"
-              placeholder="Select teacher"
-              filterable
-              clearable
-              style="width: 100%;"
-            >
-              <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Handled by" prop="handledByName">
-            <el-input v-model="createForm.handledByName" placeholder="Your name" />
-          </el-form-item>
-        </div>
-
-        <div class="enrollment-form__row">
-          <el-form-item label="Start date" prop="startDate">
-            <el-date-picker
-              v-model="createForm.startDate"
-              type="date"
-              placeholder="First class date"
-              style="width: 100%;"
-              value-format="YYYY-MM-DD"
-              :disabled-date="disabledStartDate"
-            />
-          </el-form-item>
-          <el-form-item label="Default classroom">
-            <el-select
-              v-model="createForm.defaultClassroomId"
-              placeholder="Select classroom"
-              clearable
-              style="width: 100%;"
-            >
-              <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <div class="enrollment-form__row">
-          <el-form-item label="Discount type">
-            <el-select v-model="createDiscountPresetId" placeholder="Select discount" clearable style="width: 100%;">
-              <el-option label="No discount" value="__none__" />
-              <el-option
-                v-for="p in discountPresets"
-                :key="p.id"
-                :label="`${p.presetName} (${p.discountType === 'PERCENTAGE' ? p.discountValue + '% off' : '$' + p.discountValue + ' off'})`"
-                :value="p.id"
-              />
-              <el-option label="Custom" value="__custom__" />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="createDiscountPresetId === '__custom__'" label="Discount amount" prop="discountAmount">
-            <el-input-number
-              v-model="createForm.discountAmount"
-              :min="0"
-              :precision="2"
-              :controls="false"
-              style="width: 100%;"
-              placeholder="0.00"
-            />
-          </el-form-item>
-          <el-form-item v-else label="Discount amount">
-            <div class="discount-display">${{ createForm.discountAmount.toFixed(2) }}</div>
-          </el-form-item>
-        </div>
-
-        <!-- Weekly Class Schedule -->
-        <el-divider />
-        <div class="enrollment-form__section-title">Weekly class schedule</div>
-
-        <!-- Hint: missing prerequisites -->
-        <div v-if="!canShowCalendar" class="schedule-placeholder">
-          <el-icon><InfoFilled /></el-icon>
-          <span>Select <strong>student</strong>, <strong>course product</strong> and <strong>start date</strong> to configure the weekly schedule.</span>
-        </div>
-
-        <!-- Calendar area -->
-        <template v-else>
-          <div v-if="loadingSchedule" class="schedule-loading-hint">
-            Loading existing schedule...
-          </div>
-
-          <div v-if="scheduleLoadError" class="schedule-error-banner">
-            <el-icon><WarningFilled /></el-icon>
-            <span>{{ scheduleLoadError }}</span>
-          </div>
-
-          <div class="enrollment-form__row">
-            <el-form-item class="enrollment-form__full">
-              <WeeklyTimeSelector
-                v-model="createForm.slots"
-                :occupied-slots="occupiedSlots"
-              />
-            </el-form-item>
-          </div>
-        </template>
-
-        <!-- Schedule Preview -->
-        <div v-if="schedulePreview" class="schedule-preview">
-          <div class="schedule-preview__title">Schedule Preview</div>
-          <div class="schedule-preview__stats">
-            <span>{{ schedulePreview.weeklySessions }} session(s)/week</span>
-            <span>{{ (schedulePreview.weeklyUnits * 0.5).toFixed(1) }} hr(s)/week</span>
-            <span>~{{ schedulePreview.totalSessions }} total sessions</span>
-            <span><strong>{{ schedulePreview.weeks }} weeks</strong></span>
-            <span v-if="schedulePreview.endDate" class="schedule-preview__end-date">
-              Estimated end: <strong>{{ schedulePreview.endDate }}</strong>
-            </span>
-          </div>
-          <div v-if="!createForm.startDate" class="schedule-preview__hint">
-            Select a start date above to calculate the estimated end date.
-          </div>
-        </div>
-
-        <el-divider />
-        <div class="enrollment-form__row">
-          <el-form-item label="Notes" class="enrollment-form__full">
-            <el-input v-model="createForm.remark" type="textarea" :rows="2" placeholder="Optional notes" />
-          </el-form-item>
-        </div>
-      </el-form>
-
-      <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="createDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submitting" @click="handleCreateSubmit">Submit</el-button>
-        </div>
-      </template>
-    </el-dialog>
-
-    <!-- Class enrollment dialog -->
-    <el-dialog
-      v-model="classEnrollDialogVisible"
-      width="560px"
-      :close-on-click-modal="false"
-      class="enrollment-dialog"
-    >
-      <template #header>
-        <h3>New class enrollment</h3>
-      </template>
-
-      <el-form
-        ref="classEnrollFormRef"
-        label-position="top"
-        :model="classEnrollForm"
-        :rules="classEnrollFormRules"
-        class="enrollment-form"
-      >
-        <el-form-item label="Student" prop="studentId">
-          <el-select
-            v-model="classEnrollForm.studentId"
-            placeholder="Select student"
-            filterable
-            style="width: 100%;"
-          >
-            <el-option v-for="s in students" :key="s.id" :label="s.studentName" :value="s.id" />
-          </el-select>
-        </el-form-item>
-
-        <el-form-item label="Class" prop="classId">
-          <el-select
-            v-model="classEnrollForm.classId"
-            placeholder="Select class"
-            filterable
-            style="width: 100%;"
-          >
-            <el-option
-              v-for="c in classes"
-              :key="c.id"
-              :label="c.productName"
-              :value="c.id"
-            />
-          </el-select>
-        </el-form-item>
-
-        <!-- Class price + billing selection -->
-        <div v-if="selectedClass" class="product-info-card" style="margin-bottom: 12px;">
-          <div class="product-info-card__item">
-            <span class="product-info-card__label">Original price</span>
-            <span class="product-info-card__value">${{ (selectedClass.listPrice ?? 0).toFixed(2) }}</span>
-          </div>
-          <div class="product-info-card__item">
-            <span class="product-info-card__label">Billing</span>
-            <span class="product-info-card__value">
-              {{ selectedClass.billingType === 'MONTHLY'
-                ? `Monthly (${selectedClass.totalMonths ?? '-'} mo total)`
-                : `Per session (${selectedClass.totalSessions ?? '-'} total)` }}
-            </span>
-          </div>
-        </div>
-
-        <!-- Per-session: number of sessions -->
-        <el-form-item
-          v-if="selectedClass && selectedClass.billingType === 'PER_SESSION'"
-          label="Sessions to purchase"
-          prop="sessions"
-        >
-          <el-input-number
-            v-model="classEnrollForm.sessions"
-            :min="1"
-            :max="selectedClass.totalSessions ?? undefined"
-            :step="1"
-            :precision="0"
-            :controls="false"
-            style="width: 100%;"
-            placeholder="Number of sessions"
-          />
-        </el-form-item>
-
-        <!-- Monthly: start + end month within product range -->
-        <div v-if="selectedClass && selectedClass.billingType === 'MONTHLY'" class="enrollment-form__row">
-          <el-form-item label="Start month" prop="startMonth">
-            <el-select v-model="classEnrollForm.startMonth" placeholder="Start month" style="width: 100%;">
-              <el-option v-for="m in classMonthOptions" :key="`s-${m}`" :label="m" :value="m" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="End month" prop="endMonth">
-            <el-select v-model="classEnrollForm.endMonth" placeholder="End month" style="width: 100%;">
-              <el-option v-for="m in classMonthOptions" :key="`e-${m}`" :label="m" :value="m" />
-            </el-select>
-          </el-form-item>
-        </div>
-
-        <!-- Prorated price preview -->
-        <div v-if="selectedClass" class="product-info-card" style="margin-bottom: 12px;">
-          <div class="product-info-card__item">
-            <span class="product-info-card__label">Prorated amount</span>
-            <span class="product-info-card__value">${{ classPricePreview.toFixed(2) }}</span>
-          </div>
-        </div>
-
-        <el-divider />
-
-        <div class="enrollment-form__row">
-          <el-form-item label="Discount type">
-            <el-select v-model="classEnrollDiscountPresetId" placeholder="Select discount" clearable style="width: 100%;">
-              <el-option label="No discount" value="__none__" />
-              <el-option
-                v-for="p in discountPresets"
-                :key="p.id"
-                :label="`${p.presetName} (${p.discountType === 'PERCENTAGE' ? p.discountValue + '% off' : '$' + p.discountValue + ' off'})`"
-                :value="p.id"
-              />
-              <el-option label="Custom" value="__custom__" />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="classEnrollDiscountPresetId === '__custom__'" label="Discount amount" prop="discountAmount">
-            <el-input-number
-              v-model="classEnrollForm.discountAmount"
-              :min="0"
-              :precision="2"
-              :controls="false"
-              style="width: 100%;"
-              placeholder="0.00"
-            />
-          </el-form-item>
-          <el-form-item v-else label="Discount amount">
-            <div class="discount-display">${{ classEnrollForm.discountAmount.toFixed(2) }}</div>
-          </el-form-item>
-        </div>
-
-        <div class="enrollment-form__row">
-          <el-form-item label="Received amount" prop="receivedAmount">
-            <el-input-number
-              v-model="classEnrollForm.receivedAmount"
-              :min="0"
-              :precision="2"
-              :controls="false"
-              :disabled="true"
-              style="width: 100%;"
-              placeholder="0.00"
-            />
-          </el-form-item>
-          <el-form-item label="Handled by" prop="handledByName">
-            <el-input v-model="classEnrollForm.handledByName" placeholder="Your name" />
-          </el-form-item>
-        </div>
-
-        <el-form-item label="Notes" class="enrollment-form__full">
-          <el-input v-model="classEnrollForm.remark" type="textarea" :rows="2" placeholder="Optional notes" />
-        </el-form-item>
-      </el-form>
-
-      <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="classEnrollDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submittingClassEnroll" @click="submitClassEnroll">Submit</el-button>
-        </div>
-      </template>
-    </el-dialog>
-
     <!-- Discount presets management dialog -->
     <el-dialog
       v-model="discountPresetDialogVisible"
@@ -1164,30 +916,58 @@
 </template>
 
 <script setup lang="ts">
-import { InfoFilled, Plus, WarningFilled } from '@element-plus/icons-vue';
+import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
-import { createEnrollmentOrder, cancelEnrollmentOrder, deleteEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, createClassEnrollmentOrder, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
-import { fetchAllStudents, fetchAllTeachers, fetchAllClassrooms, fetchCourseProducts, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
-import { fetchLessonOccurrences, fetchClassGroups, fetchClassroomOccupancy, fetchClassGroupsByClassroom } from '@/api/schedule';
-import type { CourseProductItem, DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ClassroomOccupancyItem, ReceiptRecordItem } from '@/types/domain';
+import { cancelEnrollmentOrder, deleteEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
+import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
+import { fetchClassGroups } from '@/api/schedule';
+import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ReceiptRecordItem } from '@/types/domain';
 import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
-import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
-import type { SlotDef, OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
+
+const orderStatusOptions = [
+  { label: 'Draft', value: 'DRAFT' },
+  { label: 'Confirmed', value: 'CONFIRMED' },
+  { label: 'Cancelled', value: 'CANCELLED' },
+  { label: 'Closed', value: 'CLOSED' },
+];
+
+const paymentStatusOptions = [
+  { label: 'Unpaid', value: 'UNPAID' },
+  { label: 'Partial', value: 'PARTIAL' },
+  { label: 'Paid', value: 'PAID' },
+  { label: 'Refunded', value: 'REFUNDED' },
+];
 
 const loading = ref(false);
-const submitting = ref(false);
 const route = useRoute();
 const router = useRouter();
 const detailDialogVisible = ref(false);
-const createDialogVisible = ref(false);
-const createFormRef = ref();
 const activeTab = ref('ONE_ON_ONE');
 const loadingClasses = ref(false);
 const classEnrollmentData = ref<any[]>([]);
+const groupFilters = reactive({
+  keyword: '',
+});
+const groupOrderFilters = reactive({
+  keyword: '',
+  orderStatus: '',
+  paymentStatus: '',
+});
+const filteredClassEnrollmentData = computed(() => {
+  const keyword = groupFilters.keyword.trim().toLowerCase();
+  if (!keyword) return classEnrollmentData.value;
+  return classEnrollmentData.value.filter((row) => [
+    row.className,
+    row.productName,
+    row.teacherName,
+    row.classroomName,
+    row.scheduleDesc,
+  ].some((value) => String(value ?? '').toLowerCase().includes(keyword)));
+});
 
 // ─── Group Class expandable rows ──────────────────
 const expandedClassOrders = reactive<Record<string, EnrollmentOrderItem[]>>({});
@@ -1204,12 +984,15 @@ async function loadExpandedClassOrders(classId: string | number, pageNum = 1) {
     expandedClassPagination[classKey].page = pageNum;
     const res = await fetchEnrollmentOrders({
       classId,
+      keyword: groupOrderFilters.keyword || undefined,
+      orderStatus: groupOrderFilters.orderStatus || undefined,
+      paymentStatus: groupOrderFilters.paymentStatus || undefined,
       pageNum,
       pageSize: expandedClassPagination[classKey].size,
     });
     const data = res.data.data;
-    expandedClassOrders[classKey] = data.records.filter((o: EnrollmentOrderItem) => o.orderStatus !== 'CANCELLED');
-    expandedClassPagination[classKey].total = data.records.filter((o: EnrollmentOrderItem) => o.orderStatus !== 'CANCELLED').length;
+    expandedClassOrders[classKey] = data.records;
+    expandedClassPagination[classKey].total = data.total;
   } catch {
     expandedClassOrders[classKey] = [];
     expandedClassPagination[classKey] = { page: 1, size: 10, total: 0 };
@@ -1228,19 +1011,6 @@ function handleExpandChange(row: any, expandedRows: any[]) {
 const detailData = ref<EnrollmentOrderDetailItem | null>(null);
 const paymentRecords = computed(() => detailData.value?.payments ?? []);
 const students = ref<{ id: string; studentName: string }[]>([]);
-const teachers = ref<{ id: string; teacherName: string }[]>([]);
-const courseProducts = ref<{ id: string; productName: string; subjectName?: string; defaultTotalUnits?: number; defaultLessonUnits?: number; listPrice?: number }[]>([]);
-const classrooms = ref<{ id: string; roomName: string }[]>([]);
-const classes = ref<CourseProductItem[]>([]);
-const studentOccupiedSlots = ref<OccupiedSlotDef[]>([]);
-const classroomOccupiedSlots = ref<OccupiedSlotDef[]>([]);
-const loadingSchedule = ref(false);
-const scheduleLoadError = ref('');
-
-const occupiedSlots = computed<OccupiedSlotDef[]>(() => [
-  ...studentOccupiedSlots.value,
-  ...classroomOccupiedSlots.value,
-]);
 
 // ─── Discount Presets ──────────────────────────────────
 const discountPresets = ref<DiscountPresetItem[]>([]);
@@ -1278,9 +1048,6 @@ watch(
 
 // ─── Discount preset selection for dialogs ──────────
 type DiscountSelectionId = EntityId | '__none__' | '__custom__' | null;
-
-const createDiscountPresetId = ref<DiscountSelectionId>(null);
-const classEnrollDiscountPresetId = ref<DiscountSelectionId>(null);
 
 async function loadDiscountPresets() {
   try {
@@ -1555,6 +1322,12 @@ function handleFilterChange() {
   loadData();
 }
 
+function handleGroupOrderFilterChange() {
+  Object.keys(expandedClassOrders).forEach((classId) => {
+    loadExpandedClassOrders(classId, 1);
+  });
+}
+
 function orderStatusType(status: string) {
   if (status === 'CONFIRMED') return 'success';
   if (status === 'CANCELLED') return 'danger';
@@ -1622,53 +1395,6 @@ async function loadStudents() {
     students.value = res.data.data.map((s) => ({ id: s.id, studentName: s.studentName }));
   } catch {
     // Silent fail
-  }
-}
-
-async function loadTeachers() {
-  try {
-    const res = await fetchAllTeachers();
-    teachers.value = res.data.data.map((t: any) => ({ id: t.id, teacherName: t.teacherName }));
-  } catch {
-    // Silent fail
-  }
-}
-
-async function loadCourseProducts() {
-  try {
-    const res = await fetchCourseProducts({ status: 'ACTIVE', teachingMode: 'ONE_ON_ONE', pageSize: 100 });
-    courseProducts.value = res.data.data.records.map((p: any) => ({
-      id: p.id,
-      productName: p.productName,
-      subjectName: p.subjectName,
-      defaultTotalUnits: p.defaultTotalUnits,
-      defaultLessonUnits: p.defaultLessonUnits,
-      listPrice: p.listPrice,
-    }));
-  } catch {
-    // Silent fail
-  }
-}
-
-async function loadClassrooms() {
-  try {
-    const res = await fetchAllClassrooms();
-    const data = res.data.data as any[];
-    classrooms.value = data.map((r: any) => ({
-      id: r.id,
-      roomName: r.roomName,
-    }));
-  } catch {
-    // silent fail
-  }
-}
-
-async function loadClasses() {
-  try {
-    const res = await fetchCourseProducts({ teachingMode: 'GROUP', status: 'ACTIVE' });
-    classes.value = (res.data.data as any).records ?? [];
-  } catch {
-    classes.value = [];
   }
 }
 
@@ -2075,429 +1801,6 @@ function receiptHtml(cfg: ReceiptConfig): string {
 </body></html>`;
 }
 
-// ─── Create Dialog ──────────────────────────────────
-const createForm = reactive({
-  studentId: undefined as string | undefined,
-  courseProductId: undefined as string | undefined,
-  primaryTeacherId: undefined as string | undefined,
-  handledByName: '',
-  startDate: '',
-  originalAmount: 0,
-  discountAmount: 0,
-  remark: '',
-  slots: [] as SlotDef[],
-  defaultClassroomId: undefined as string | undefined,
-});
-
-const createFormRules = {
-  studentId: [{ required: true, message: 'Student is required' }],
-  courseProductId: [{ required: true, message: 'Course product is required' }],
-  handledByName: [{ required: true, message: 'Handler name is required' }],
-};
-
-// ─── Class Enrollment Dialog ──────────────────────
-const classEnrollDialogVisible = ref(false);
-const submittingClassEnroll = ref(false);
-const classEnrollFormRef = ref();
-const classEnrollForm = reactive({
-  studentId: undefined as string | undefined,
-  classId: undefined as string | undefined,
-  sessions: undefined as number | undefined,
-  startMonth: undefined as string | undefined,
-  endMonth: undefined as string | undefined,
-  originalAmount: 0,
-  discountAmount: 0,
-  receivedAmount: 0,
-  handledByName: '',
-  remark: '',
-});
-const classEnrollFormRules = {
-  studentId: [{ required: true, message: 'Student is required' }],
-  classId: [{ required: true, message: 'Class is required' }],
-};
-
-// ─── Selected class product + billing ──
-const selectedClass = computed<CourseProductItem | null>(() => {
-  if (!classEnrollForm.classId) return null;
-  return classes.value.find(c => c.id === classEnrollForm.classId) ?? null;
-});
-
-// Month options within the product range (yyyy-MM), inclusive.
-const classMonthOptions = computed<string[]>(() => {
-  const cls = selectedClass.value;
-  if (!cls || cls.billingType !== 'MONTHLY' || !cls.startMonth || !cls.endMonth) return [];
-  const options: string[] = [];
-  let cursor = dayjs(cls.startMonth + '-01');
-  const end = dayjs(cls.endMonth + '-01');
-  while (cursor.isBefore(end) || cursor.isSame(end, 'month')) {
-    options.push(cursor.format('YYYY-MM'));
-    cursor = cursor.add(1, 'month');
-  }
-  return options;
-});
-
-// ─── Prorated price preview (server is authoritative; this mirrors its formula) ──
-const classPricePreview = computed<number>(() => {
-  const cls = selectedClass.value;
-  if (!cls || cls.listPrice == null) return 0;
-  if (cls.billingType === 'PER_SESSION') {
-    const total = cls.totalSessions ?? 0;
-    const sessions = classEnrollForm.sessions ?? 0;
-    if (total <= 0 || sessions <= 0) return 0;
-    return Math.round((cls.listPrice * sessions / total) * 100) / 100;
-  }
-  if (cls.billingType === 'MONTHLY') {
-    const total = cls.totalMonths ?? 0;
-    if (total <= 0 || !classEnrollForm.startMonth || !classEnrollForm.endMonth) return 0;
-    const months = dayjs(classEnrollForm.endMonth + '-01').diff(dayjs(classEnrollForm.startMonth + '-01'), 'month') + 1;
-    if (months <= 0) return 0;
-    return Math.round((cls.listPrice * months / total) * 100) / 100;
-  }
-  return 0;
-});
-
-// Keep originalAmount in sync with the prorated preview so discount math stays consistent.
-watch(classPricePreview, (value) => {
-  classEnrollForm.originalAmount = value;
-});
-
-// Reset billing selections when switching class product.
-watch(() => classEnrollForm.classId, () => {
-  classEnrollForm.sessions = undefined;
-  classEnrollForm.startMonth = undefined;
-  classEnrollForm.endMonth = undefined;
-});
-
-// ─── Discount preset watchers ──
-watch(() => createDiscountPresetId.value, (id) => {
-  applyPresetDiscount(id, createForm);
-});
-
-watch(() => classEnrollDiscountPresetId.value, (id) => {
-  applyPresetDiscount(id, classEnrollForm);
-});
-
-// When originalAmount changes, recalculate preset discount for 1:1
-watch(() => createForm.originalAmount, () => {
-  if (createDiscountPresetId.value && createDiscountPresetId.value !== '__custom__') {
-    applyPresetDiscount(createDiscountPresetId.value, createForm);
-  }
-});
-
-// When originalAmount changes, recalculate preset discount for class
-watch(() => classEnrollForm.originalAmount, () => {
-  if (classEnrollDiscountPresetId.value && classEnrollDiscountPresetId.value !== '__custom__') {
-    applyPresetDiscount(classEnrollDiscountPresetId.value, classEnrollForm);
-  }
-});
-
-// Auto-calculate receivedAmount = originalAmount - discountAmount
-watch([() => classEnrollForm.originalAmount, () => classEnrollForm.discountAmount], () => {
-  classEnrollForm.receivedAmount = Math.max(0, classEnrollForm.originalAmount - classEnrollForm.discountAmount);
-});
-
-function openClassEnrollDialog() {
-  classEnrollFormRef.value?.resetFields();
-  Object.assign(classEnrollForm, {
-    studentId: undefined,
-    classId: undefined,
-    sessions: undefined,
-    startMonth: undefined,
-    endMonth: undefined,
-    originalAmount: 0,
-    discountAmount: 0,
-    receivedAmount: 0,
-    handledByName: '',
-    remark: '',
-  });
-  classEnrollDiscountPresetId.value = '__none__';
-  classEnrollDialogVisible.value = true;
-}
-
-async function submitClassEnroll() {
-  const valid = await classEnrollFormRef.value?.validate().catch(() => false);
-  if (!valid) return;
-  const cls = selectedClass.value;
-  if (!cls) return;
-  if (cls.billingType === 'PER_SESSION' && (!classEnrollForm.sessions || classEnrollForm.sessions < 1)) {
-    ElMessage.warning('Please select the number of sessions.');
-    return;
-  }
-  if (cls.billingType === 'MONTHLY' && (!classEnrollForm.startMonth || !classEnrollForm.endMonth)) {
-    ElMessage.warning('Please select the start and end month.');
-    return;
-  }
-  submittingClassEnroll.value = true;
-  try {
-    await createClassEnrollmentOrder({
-      studentId: classEnrollForm.studentId!,
-      productId: classEnrollForm.classId!,
-      sessions: cls.billingType === 'PER_SESSION' ? classEnrollForm.sessions : undefined,
-      startMonth: cls.billingType === 'MONTHLY' ? classEnrollForm.startMonth : undefined,
-      endMonth: cls.billingType === 'MONTHLY' ? classEnrollForm.endMonth : undefined,
-      discountAmount: classEnrollForm.discountAmount,
-      receivedAmount: classEnrollForm.receivedAmount,
-      handledByName: classEnrollForm.handledByName || undefined,
-      remark: classEnrollForm.remark || undefined,
-    });
-    ElMessage.success('Class enrollment created.');
-    classEnrollDialogVisible.value = false;
-    loadClassEnrollments();
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
-  } finally {
-    submittingClassEnroll.value = false;
-  }
-}
-
-// ─── Calendar visibility ─────────────────────────
-const canShowCalendar = computed(() =>
-  createForm.studentId && createForm.courseProductId && createForm.startDate
-);
-
-function disabledStartDate(date: Date) {
-  return dayjs(date).startOf('day').isBefore(dayjs().startOf('day'));
-}
-
-// ─── Schedule Preview (computed) ────────────────────
-const schedulePreview = computed(() => {
-  const slots = createForm.slots;
-  if (!slots || slots.length === 0) return null;
-
-  const weeklySessions = slots.length;
-  const weeklyUnits = slots.reduce((s, slot) => s + slot.plannedUnits, 0);
-
-  const totalUnits = selectedProduct.value?.defaultTotalUnits ?? 40;
-  const totalHalfHourUnits = totalUnits * 2;
-  const weeks = Math.ceil(totalHalfHourUnits / weeklyUnits);
-
-  let endDate = '';
-  if (createForm.startDate && weeks > 0) {
-    endDate = dayjs(createForm.startDate).add(weeks * 7, 'day').format('YYYY-MM-DD');
-  }
-
-  const totalSessions = weeks * weeklySessions;
-
-  return { weeklyUnits, weeklySessions, totalSessions, weeks, endDate };
-});
-
-// ─── Unique occupied slots (deduplicated by weekday+time) ──
-const uniqueOccupiedCount = computed(() => {
-  const seen = new Set<string>();
-  for (const s of occupiedSlots.value) {
-    seen.add(`${s.weekday}:${s.startTime}-${s.endTime}`);
-  }
-  return seen.size;
-});
-
-// ─── Product info (computed) ─────────────────────
-const selectedProduct = computed(() =>
-  courseProducts.value.find(p => p.id === createForm.courseProductId)
-);
-
-// ─── Auto-fill original price when product is selected ──
-watch(() => createForm.courseProductId, (productId) => {
-  if (!productId) {
-    createForm.originalAmount = 0;
-    return;
-  }
-  const product = courseProducts.value.find(p => p.id === productId);
-  if (product && product.listPrice != null) {
-    createForm.originalAmount = product.listPrice;
-  }
-});
-
-// ─── Load student's existing schedule ──────────
-async function loadExistingSchedule() {
-  const studentId = createForm.studentId;
-  if (!studentId) {
-    studentOccupiedSlots.value = [];
-    return;
-  }
-  loadingSchedule.value = true;
-  try {
-    const startDate = createForm.startDate ? dayjs(createForm.startDate) : dayjs();
-    const baseDate = startDate.isBefore(dayjs(), 'day') ? dayjs() : startDate;
-    const startAt = baseDate.startOf('day').format('YYYY-MM-DDTHH:mm:ss');
-    const endAt = baseDate.add(180, 'day').format('YYYY-MM-DDTHH:mm:ss');
-    const res = await fetchLessonOccurrences({
-      studentId,
-      startAt,
-      endAt,
-      pageSize: 200,
-    });
-    const records = res.data.data.records || [];
-    studentOccupiedSlots.value = records
-      .filter(o => o.planningStatus !== 'CANCELLED')
-      .map(o => {
-        const start = dayjs(o.plannedStartAt);
-        const dayNum = start.day(); // 0=Sun..6=Sat
-        const weekday = dayNum === 0 ? 7 : dayNum; // 1=Mon..7=Sun
-        return {
-          weekday,
-          startTime: start.format('HH:mm'),
-          endTime: dayjs(o.plannedEndAt).format('HH:mm'),
-          courseLabel: o.packageName || o.lessonNo,
-          studentName: o.studentName,
-          teacherName: o.plannedTeacherName,
-          classroomName: o.plannedClassroomName,
-        };
-      });
-  } catch (err: any) {
-    const msg = err?.response?.data?.message || err?.message || 'Unknown error';
-    scheduleLoadError.value = `Failed to load student schedule: ${msg}`;
-    studentOccupiedSlots.value = [];
-  } finally {
-    loadingSchedule.value = false;
-  }
-}
-
-watch(() => createForm.studentId, (newVal, oldVal) => {
-  studentOccupiedSlots.value = [];
-  scheduleLoadError.value = '';
-  loadExistingSchedule();
-});
-
-watch(() => createForm.startDate, (newVal) => {
-  scheduleLoadError.value = '';
-  if (newVal && createForm.studentId && createForm.courseProductId) {
-    loadExistingSchedule();
-  }
-  if (newVal && createForm.defaultClassroomId) {
-    loadClassroomOccupancyData();
-  }
-});
-
-// ─── Load classroom occupancy when classroom selected ──
-const loadingClassroomOcc = ref(false);
-
-async function loadClassroomOccupancyData() {
-  const classroomId = createForm.defaultClassroomId;
-  if (!classroomId || !createForm.startDate) {
-    classroomOccupiedSlots.value = [];
-    return;
-  }
-  loadingClassroomOcc.value = true;
-  try {
-    const monday = dayjs(createForm.startDate).day(1).startOf('day');
-    const sunday = monday.add(6, 'day').endOf('day');
-    const startAt = monday.format('YYYY-MM-DDTHH:mm:ss');
-    const endAt = sunday.format('YYYY-MM-DDTHH:mm:ss');
-
-
-    const occRes = await fetchClassroomOccupancy({
-      classroomId,
-      startAt,
-      endAt,
-      pageSize: 200,
-    });
-    const items: ClassroomOccupancyItem[] = occRes.data.data.records || [];
-
-
-    const clsRes = await fetchClassGroupsByClassroom(classroomId);
-    const classGroups: any[] = clsRes.data.data || [];
-
-
-    const slots: OccupiedSlotDef[] = [];
-
-    for (const o of items) {
-      if (o.planningStatus === 'CANCELLED') continue;
-      const start = dayjs(o.plannedStartAt);
-      const weekday = start.day() === 0 ? 7 : start.day();
-      slots.push({
-        weekday,
-        startTime: start.format('HH:mm'),
-        endTime: dayjs(o.plannedEndAt).format('HH:mm'),
-        courseLabel: o.className || o.packageName || o.lessonNo || '',
-        studentName: o.studentName,
-        teacherName: o.teacherName,
-        classroomName: o.classroomName,
-      });
-    }
-
-
-    for (const cls of classGroups) {
-      const scheduleSlots = cls.scheduleSlots || [];
-      for (const s of scheduleSlots) {
-        slots.push({
-          weekday: s.weekday,
-          startTime: s.startTime,
-          endTime: s.endTime,
-          courseLabel: cls.className || '',
-          teacherName: cls.teacherName,
-          classroomName: cls.classroomName,
-        });
-      }
-    }
-
-    classroomOccupiedSlots.value = slots;
-  } catch {
-    classroomOccupiedSlots.value = [];
-  } finally {
-    loadingClassroomOcc.value = false;
-  }
-}
-
-watch(() => createForm.defaultClassroomId, () => {
-  loadClassroomOccupancyData();
-});
-
-function openCreateDialog() {
-  createFormRef.value?.resetFields();
-  Object.assign(createForm, {
-    studentId: undefined,
-    courseProductId: undefined,
-    primaryTeacherId: undefined,
-    handledByName: '',
-    startDate: '',
-    originalAmount: 0,
-    discountAmount: 0,
-    remark: '',
-    slots: [],
-    defaultClassroomId: undefined,
-  });
-  createDiscountPresetId.value = '__none__';
-  studentOccupiedSlots.value = [];
-  classroomOccupiedSlots.value = [];
-  scheduleLoadError.value = '';
-  createDialogVisible.value = true;
-}
-
-async function handleCreateSubmit() {
-  const valid = await createFormRef.value?.validate().catch(() => false);
-  if (!valid) return;
-
-  submitting.value = true;
-  try {
-    await createEnrollmentOrder({
-      studentId: createForm.studentId!,
-      courseProductId: createForm.courseProductId!,
-      primaryTeacherId: createForm.primaryTeacherId,
-      handledByName: createForm.handledByName,
-      startDate: createForm.startDate || undefined,
-      originalAmount: createForm.originalAmount,
-      discountAmount: createForm.discountAmount,
-      receivedAmount: 0,
-      issueReceipt: false,
-      remark: createForm.remark || undefined,
-      slots: createForm.slots.length > 0 ? createForm.slots.map(s => ({
-        weekday: s.weekday,
-        startTime: s.startTime,
-        endTime: s.endTime,
-        plannedUnits: s.plannedUnits,
-      })) : undefined,
-      defaultClassroomId: createForm.defaultClassroomId || undefined,
-    });
-    ElMessage.success('Enrollment created.');
-    createDialogVisible.value = false;
-    loadData();
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
-  } finally {
-    submitting.value = false;
-  }
-}
-
 // ─── Reload class enrollments when entering GROUP tab ──
 watch(activeTab, () => {
   if (activeTab.value === 'GROUP') {
@@ -2508,10 +1811,6 @@ watch(activeTab, () => {
 // ─── Init ───────────────────────────────────────────
 loadData();
 loadStudents();
-loadTeachers();
-loadCourseProducts();
-loadClassrooms();
-loadClasses();
 loadClassEnrollments();
 loadDiscountPresets();
 loadActivePaymentMethods();

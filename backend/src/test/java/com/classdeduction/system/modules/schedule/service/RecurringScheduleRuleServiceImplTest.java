@@ -126,10 +126,37 @@ class RecurringScheduleRuleServiceImplTest {
 
         assertThat(ruleCaptor.getValue().getRuleStatus()).isEqualTo("ACTIVE");
         assertThat(slotCaptor.getValue().getWeekday()).isEqualTo(1);
+        assertThat(slotCaptor.getValue().getTeacherId()).isNull();
         assertThat(occurrenceCaptor.getAllValues()).hasSize(2);
+        assertThat(occurrenceCaptor.getAllValues())
+                .allSatisfy(occurrence -> assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3001L));
         assertThat(result.ruleId()).isEqualTo(5001L);
         assertThat(result.generatedOccurrenceCount()).isEqualTo(2);
         assertThat(result.firstGeneratedStartAt()).isBefore(result.lastGeneratedEndAt());
+    }
+
+    @Test
+    void shouldGenerateOccurrencesWithSlotTeacherOverride() {
+        RecurringScheduleRuleCreateRequest request = buildCreateRequest();
+        request.getSlots().get(0).setTeacherId(3002L);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        TeacherEntity slotTeacher = buildTeacher();
+        slotTeacher.setId(3002L);
+        slotTeacher.setTeacherName("Daniel Chen");
+        when(teacherMapper.selectById(3002L)).thenReturn(slotTeacher);
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        stubGeneratedIds(true);
+
+        recurringScheduleRuleService.createRule(request);
+
+        verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
+        verify(lessonOccurrenceMapper, times(2)).insert(occurrenceCaptor.capture());
+        assertThat(slotCaptor.getValue().getTeacherId()).isEqualTo(3002L);
+        assertThat(occurrenceCaptor.getAllValues())
+                .allSatisfy(occurrence -> assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3002L));
     }
 
     @Test
@@ -335,6 +362,7 @@ class RecurringScheduleRuleServiceImplTest {
         LocalDate nextMonday = buildCreateRequest().getStartDate();
         conflict.setId(9001L);
         conflict.setLessonNo("LS-CONFLICT");
+        conflict.setPlannedTeacherId(3001L);
         conflict.setPlannedStartAt(LocalDateTime.of(nextMonday, LocalTime.of(19, 0)));
         conflict.setPlannedEndAt(LocalDateTime.of(nextMonday, LocalTime.of(21, 0)));
         conflict.setPlanningStatus("SCHEDULED");

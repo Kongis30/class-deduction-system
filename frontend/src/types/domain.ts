@@ -131,10 +131,12 @@ export interface CoursePriceOptionItem {
   classId?: EntityId;
   groupTeacherId?: EntityId;
   groupClassroomId?: EntityId;
-  groupScheduleSlots?: Array<{ weekday: number; startTime: string; endTime: string }>;
+  groupScheduleSlots?: Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string }>;
   groupBillingType?: string;
   groupStartDate?: string;
   groupTotalSessions?: number;
+  groupTotalPrice?: number;
+  groupSessionPrice?: number;
   groupStartMonth?: string;
   groupEndMonth?: string;
   sortOrder: number;
@@ -157,30 +159,11 @@ export interface CourseProductItem {
   teachingMode: string;
   defaultTotalUnits: number;
   defaultLessonUnits: number;
-  billingType?: string;
-  startDate?: string;
-  totalSessions?: number;
-  startMonth?: string;
-  endMonth?: string;
-  totalMonths?: number;
-  defaultClassroomId?: EntityId;
-  defaultClassroomName?: string;
-  defaultTeacherId?: EntityId;
-  defaultTeacherName?: string;
-  listPrice: number;
   status: string;
   notes?: string;
   referenced?: boolean;
   referenceCount?: number;
   referenceSources?: string[];
-  slots?: ProductScheduleSlotItem[];
-}
-
-export interface ProductScheduleSlotItem {
-  id?: EntityId;
-  weekday: number;
-  startTime: string;
-  endTime: string;
 }
 
 // ─── Enrollment ────────────────────────────────────────
@@ -410,6 +393,7 @@ export interface RecurringScheduleRuleItem {
 
 export interface RecurringScheduleSlotItem {
   id: EntityId;
+  teacherId?: EntityId;
   weekday: number;
   startTime: string;
   endTime: string;
@@ -527,7 +511,7 @@ export interface ClassGroupItem {
   classroomId?: EntityId;
   classroomName?: string;
   activeStudentCount: number;
-  scheduleSlots?: Array<{ weekday: number; startTime: string; endTime: string; plannedUnits?: number }>;
+  scheduleSlots?: Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string; plannedUnits?: number }>;
 }
 
 export interface ClassEnrolledStudentItem {

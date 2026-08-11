@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -214,9 +215,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             return;
         }
         requireText(request.getGradeBand(), "Grade band");
-        // A grade class can be created before the school has finalized its
-        // teacher, room, billing window, or weekly timetable. Registration
-        // remains blocked until those operational details are completed.
+        calculateGroupPrices(request);
     }
 
     private void requireText(String value, String label) {
@@ -231,6 +230,10 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         if (!isOptionReferenced(existing.getId())) {
             return;
         }
+        boolean oneOnOne = "ONE_ON_ONE".equals(request.getCourseType());
+        BigDecimal requestedPrice = oneOnOne
+                ? request.getPriceAmount()
+                : calculateGroupPrices(request).monthlyPrice();
         boolean changed = !safeEquals(existing.getCourseProductId(), request.getCourseProductId())
                 || !safeEquals(existing.getCourseType(), request.getCourseType())
                 || !safeEquals(existing.getRegisterClass(), request.getRegisterClass())
@@ -240,7 +243,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 || !safeEquals(existing.getTimeSlotLabel(), normalizeBlank(request.getTimeSlotLabel()))
                 || !safeEquals(existing.getDetailText(), request.getDetailText())
                 || !sameAmount(existing.getOneOnOneHours(), request.getOneOnOneHours())
-                || !sameAmount(existing.getPriceAmount(), request.getPriceAmount())
+                || !sameAmount(existing.getPriceAmount(), requestedPrice)
+                || !sameAmount(existing.getGroupTotalPrice(), oneOnOne ? null : request.getGroupTotalPrice())
                 || !safeEquals(existing.getCurrencyCode(), StringUtils.hasText(request.getCurrencyCode())
                         ? request.getCurrencyCode()
                         : DEFAULT_CURRENCY);
@@ -291,7 +295,16 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         entity.setTimeSlotLabel(null);
         entity.setDetailText(request.getDetailText());
         entity.setOneOnOneHours(request.getOneOnOneHours());
-        entity.setPriceAmount(request.getPriceAmount());
+        if (oneOnOne) {
+            entity.setPriceAmount(request.getPriceAmount());
+            entity.setGroupTotalPrice(null);
+            entity.setGroupSessionPrice(null);
+        } else {
+            GroupPrices prices = calculateGroupPrices(request);
+            entity.setPriceAmount(prices.monthlyPrice());
+            entity.setGroupTotalPrice(request.getGroupTotalPrice());
+            entity.setGroupSessionPrice(prices.sessionPrice());
+        }
         entity.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
         entity.setCourseProductId(request.getCourseProductId());
         entity.setSortOrder(request.getSortOrder() == null ? 0 : request.getSortOrder());
@@ -347,8 +360,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     private void applyGroupSchedule(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request) {
         classGroup.setTeacherId(request.getGroupTeacherId());
         classGroup.setClassroomId(request.getGroupClassroomId());
-        classGroup.setBillingType(request.getGroupBillingType());
-        classGroup.setStartDate(request.getGroupStartDate());
+        classGroup.setBillingType("MONTHLY");
+        classGroup.setStartDate(null);
         classGroup.setTotalSessions(request.getGroupTotalSessions());
         classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
         classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
@@ -370,6 +383,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             }
             ClassGroupScheduleSlotEntity entity = new ClassGroupScheduleSlotEntity();
             entity.setClassGroupId(classGroup.getId());
+            entity.setTeacherId(slot.getTeacherId());
             entity.setWeekday(slot.getWeekday());
             entity.setStartTime(start);
             entity.setEndTime(end);
@@ -415,7 +429,9 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 occurrence.setLessonNo(generateClassLessonNo());
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(classGroup.getTeacherId());
+                occurrence.setPlannedTeacherId(slot.getTeacherId() == null
+                        ? classGroup.getTeacherId()
+                        : slot.getTeacherId());
                 occurrence.setPlannedClassroomId(classGroup.getClassroomId());
                 occurrence.setPlannedStartAt(startAt);
                 occurrence.setPlannedEndAt(endAt);
@@ -498,22 +514,21 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         return "CLS-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 6).toUpperCase(Locale.ROOT);
     }
 
-    private void validateGroupBilling(CoursePriceOptionSaveRequest request) {
-        if (!Set.of("PER_SESSION", "MONTHLY").contains(request.getGroupBillingType())) {
-            throw new BusinessException("INVALID_GROUP_BILLING_TYPE",
-                    "Grade class billing type must be PER_SESSION or MONTHLY.");
+    private GroupPrices calculateGroupPrices(CoursePriceOptionSaveRequest request) {
+        if (request.getGroupTotalPrice() == null
+                || request.getGroupTotalPrice().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("GROUP_TOTAL_PRICE_REQUIRED",
+                    "Grade classes require a total price greater than zero.");
         }
-        if ("PER_SESSION".equals(request.getGroupBillingType())) {
-            if (request.getGroupStartDate() == null || request.getGroupTotalSessions() == null
-                    || request.getGroupTotalSessions() < 1) {
-                throw new BusinessException("GROUP_BILLING_REQUIRED",
-                        "Per-session grade classes need a start date and total sessions.");
-            }
-            if (StringUtils.hasText(request.getGroupStartMonth()) || StringUtils.hasText(request.getGroupEndMonth())) {
-                throw new BusinessException("INVALID_GROUP_BILLING",
-                        "Per-session grade classes cannot have a month range.");
-            }
-            return;
+        if (request.getGroupTotalSessions() == null || request.getGroupTotalSessions() < 1) {
+            throw new BusinessException("GROUP_TOTAL_SESSIONS_REQUIRED",
+                    "Grade classes require at least one session.");
+        }
+        int weeklySessions = request.getGroupScheduleSlots() == null
+                ? 0 : request.getGroupScheduleSlots().size();
+        if (weeklySessions < 1) {
+            throw new BusinessException("GROUP_SCHEDULE_REQUIRED",
+                    "Grade classes require at least one weekly time slot to calculate monthly price.");
         }
         LocalDate startMonth = parseMonth(request.getGroupStartMonth(), "start month");
         LocalDate endMonth = parseMonth(request.getGroupEndMonth(), "end month");
@@ -524,10 +539,16 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         if (endMonth.isBefore(startMonth)) {
             throw new BusinessException("INVALID_GROUP_BILLING", "End month cannot be earlier than start month.");
         }
-        if (request.getGroupStartDate() != null || request.getGroupTotalSessions() != null) {
-            throw new BusinessException("INVALID_GROUP_BILLING",
-                    "Monthly grade classes cannot have a start date or total sessions.");
-        }
+        BigDecimal sessionPrice = request.getGroupTotalPrice()
+                .divide(BigDecimal.valueOf(request.getGroupTotalSessions()), 2, RoundingMode.HALF_UP);
+        BigDecimal monthlyPrice = sessionPrice
+                .multiply(BigDecimal.valueOf(weeklySessions))
+                .multiply(BigDecimal.valueOf(52))
+                .divide(BigDecimal.valueOf(12), 2, RoundingMode.HALF_UP);
+        return new GroupPrices(sessionPrice, monthlyPrice);
+    }
+
+    private record GroupPrices(BigDecimal sessionPrice, BigDecimal monthlyPrice) {
     }
 
     private LocalDate parseMonth(String value, String fieldName) {
@@ -613,7 +634,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                                 .orderByAsc(ClassGroupScheduleSlotEntity::getStartTime))
                         .stream()
                         .map(slot -> new CoursePriceOptionVO.GroupScheduleSlotVO(
-                                slot.getWeekday(), slot.getStartTime().toString(), slot.getEndTime().toString()))
+                                slot.getTeacherId(), slot.getWeekday(),
+                                slot.getStartTime().toString(), slot.getEndTime().toString()))
                         .toList();
         return CoursePriceOptionVO.builder()
                 .id(entity.getId())
@@ -627,6 +649,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 .detailText(entity.getDetailText())
                 .oneOnOneHours(entity.getOneOnOneHours())
                 .priceAmount(entity.getPriceAmount())
+                .groupTotalPrice(entity.getGroupTotalPrice())
+                .groupSessionPrice(entity.getGroupSessionPrice())
                 .currencyCode(entity.getCurrencyCode())
                 .courseProductId(entity.getCourseProductId())
                 .classId(entity.getClassId())

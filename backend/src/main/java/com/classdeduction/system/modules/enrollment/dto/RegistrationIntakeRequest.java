@@ -164,6 +164,9 @@ public class RegistrationIntakeRequest {
         @Schema(description = "Per-session group class purchased sessions", example = "10")
         private Integer sessions;
 
+        @Schema(description = "Monthly group class purchased rolling months", example = "6")
+        private Integer purchasedMonths;
+
         @Schema(description = "Monthly group class start month yyyy-MM", example = "2026-09")
         private String startMonth;
 

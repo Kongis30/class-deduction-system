@@ -29,6 +29,7 @@ export function fetchRecurringScheduleRule(id: EntityId) {
 }
 
 export interface RecurringScheduleSlotPayload {
+  teacherId?: EntityId;
   weekday: number;
   startTime: string;
   endTime: string;
@@ -220,6 +221,7 @@ export function fetchClassOccurrences(classId: string | number) {
 }
 
 export interface ClassScheduleSlotPayload {
+  teacherId?: string | number;
   weekday: number;
   startTime: string;
   endTime: string;

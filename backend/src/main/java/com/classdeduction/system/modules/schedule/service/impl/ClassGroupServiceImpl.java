@@ -7,12 +7,10 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
-import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
@@ -61,7 +59,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final CourseProductMapper courseProductMapper;
-    private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
 
     @Override
     public List<Map<String, Object>> listClasses(CurrentUserResponse currentUser) {
@@ -70,7 +67,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .isNotNull(ClassGroupEntity::getProductId)
                 .orderByAsc(ClassGroupEntity::getClassName);
         if (isTeacherUser(currentUser)) {
-            query.eq(ClassGroupEntity::getTeacherId, requireTeacherId(currentUser));
+            Long teacherId = requireTeacherId(currentUser);
+            List<Long> slotClassIds = classIdsBySlotTeacher(teacherId);
+            query.and(wrapper -> wrapper
+                    .eq(ClassGroupEntity::getTeacherId, teacherId)
+                    .or(!slotClassIds.isEmpty(), nested -> nested.in(ClassGroupEntity::getId, slotClassIds)));
         }
         List<ClassGroupEntity> classes = classGroupMapper.selectList(query);
         if (classes.isEmpty()) {
@@ -106,7 +107,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("registerClass", product == null ? null : product.getRegisterClass());
             item.put("courseType", product == null ? null : product.getCourseType());
             item.put("status", clz.getStatus());
-            item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc(), clz.getProductId()));
+            item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
             item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
             result.add(item);
         }
@@ -567,8 +568,18 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
         validateClassScheduleSlots(slots);
         validateTeacher(teacherId);
+        slots.stream()
+                .map(ClassGroupScheduleSlotEntity::getTeacherId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .forEach(this::validateTeacher);
         validateClassroom(classroomId);
         lockClassScheduleResources(classId, teacherId, classroomId);
+        slots.stream()
+                .map(ClassGroupScheduleSlotEntity::getTeacherId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .forEach(teacherMapper::selectByIdForUpdate);
 
         classGroup.setTeacherId(teacherId);
         classGroup.setClassroomId(classroomId);
@@ -693,7 +704,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("scheduleDesc", clz.getScheduleDesc());
             item.put("teacherName", teacherName);
             item.put("classroomName", classroomName);
-            item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc(), clz.getProductId()));
+            item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
             result.add(item);
         }
         return result;
@@ -701,9 +712,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     @Override
     public List<Map<String, Object>> listByTeacher(Long teacherId) {
+        List<Long> slotClassIds = classIdsBySlotTeacher(teacherId);
         List<ClassGroupEntity> classes = classGroupMapper.selectList(
                 new LambdaQueryWrapper<ClassGroupEntity>()
-                        .eq(ClassGroupEntity::getTeacherId, teacherId)
+                        .and(wrapper -> wrapper
+                                .eq(ClassGroupEntity::getTeacherId, teacherId)
+                                .or(!slotClassIds.isEmpty(), nested -> nested.in(ClassGroupEntity::getId, slotClassIds)))
                         .eq(ClassGroupEntity::getStatus, "ACTIVE")
                         .isNotNull(ClassGroupEntity::getProductId)
         );
@@ -831,10 +845,31 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     private void validateTeacherClassAccess(ClassGroupEntity classGroup, CurrentUserResponse currentUser) {
-        if (isTeacherUser(currentUser)
-                && !Objects.equals(classGroup.getTeacherId(), requireTeacherId(currentUser))) {
+        if (!isTeacherUser(currentUser)) {
+            return;
+        }
+        Long teacherId = requireTeacherId(currentUser);
+        boolean assignedToClass = Objects.equals(classGroup.getTeacherId(), teacherId)
+                || classGroupScheduleSlotMapper.selectCount(
+                new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                        .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId())
+                        .eq(ClassGroupScheduleSlotEntity::getTeacherId, teacherId)
+                        .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0)) > 0;
+        if (!assignedToClass) {
             throw new BusinessException("FORBIDDEN", "Teachers can only view their own classes.");
         }
+    }
+
+    private List<Long> classIdsBySlotTeacher(Long teacherId) {
+        return classGroupScheduleSlotMapper.selectList(
+                        new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                                .eq(ClassGroupScheduleSlotEntity::getTeacherId, teacherId)
+                                .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0))
+                .stream()
+                .map(ClassGroupScheduleSlotEntity::getClassGroupId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
     }
 
     private ClassGroupEntity requireClassForRead(Long classId, CurrentUserResponse currentUser) {
@@ -1007,6 +1042,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 continue;
             }
             ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+            slot.setTeacherId(parseLongValue(map.get("teacherId")));
             slot.setWeekday(weekday);
             slot.setStartTime(start);
             slot.setEndTime(end);
@@ -1103,7 +1139,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setLessonNo(generateClassLessonNo());
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(classGroup.getTeacherId());
+                occurrence.setPlannedTeacherId(slot.getTeacherId() == null
+                        ? classGroup.getTeacherId()
+                        : slot.getTeacherId());
                 occurrence.setPlannedClassroomId(classGroup.getClassroomId());
                 occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
@@ -1329,15 +1367,15 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("listPrice", clz.getListPrice());
         item.put("productId", clz.getProductId());
         item.put("status", clz.getStatus());
-        item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc(), clz.getProductId()));
+        item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
         return item;
     }
 
     /**
      * 解析 scheduleDesc 为前端可用的 slot 列表。
-     * 优先从产品排课时段表加载（更准确），降级到解析 scheduleDesc 文本。
+     * 优先从班级排课时段表加载，降级到解析班级自己的 scheduleDesc 文本。
      */
-    private List<Map<String, Object>> toScheduleSlotList(Long classGroupId, String scheduleDesc, Long productId) {
+    private List<Map<String, Object>> toScheduleSlotList(Long classGroupId, String scheduleDesc) {
         if (classGroupId != null) {
             List<ClassGroupScheduleSlotEntity> classSlots = classGroupScheduleSlotMapper.selectList(
                     new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
@@ -1347,25 +1385,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 return classSlots.stream()
                         .map(slot -> {
                             int minutes = (int) ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
-                            return toSlotMap(slot.getWeekday(),
-                                    slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
-                                    slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
-                                    minutes > 0 ? minutes / 30 : 0);
-                        })
-                        .toList();
-            }
-        }
-        // Fallback to product slots for legacy data.
-        if (productId != null) {
-            List<CourseProductScheduleSlotEntity> slots = courseProductScheduleSlotMapper.selectList(
-                    new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
-                            .eq(CourseProductScheduleSlotEntity::getProductId, productId)
-                            .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
-            if (!slots.isEmpty()) {
-                return slots.stream()
-                        .map(slot -> {
-                            int minutes = (int) ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
-                            return toSlotMap(slot.getWeekday(),
+                            return toSlotMap(slot.getTeacherId(), slot.getWeekday(),
                                     slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     minutes > 0 ? minutes / 30 : 0);
@@ -1376,18 +1396,33 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // Fallback: parse scheduleDesc text
         if (scheduleDesc != null) {
             return ScheduleDescParser.parse(scheduleDesc).stream()
-                    .map(slot -> toSlotMap(slot.weekday(), slot.startTime(), slot.endTime(), slot.plannedUnits()))
+                    .map(slot -> toSlotMap(null, slot.weekday(), slot.startTime(), slot.endTime(), slot.plannedUnits()))
                     .toList();
         }
         return Collections.emptyList();
     }
 
-    private Map<String, Object> toSlotMap(int weekday, String startTime, String endTime, int plannedUnits) {
+    private Map<String, Object> toSlotMap(Long teacherId, int weekday, String startTime, String endTime, int plannedUnits) {
         Map<String, Object> m = new HashMap<>();
+        m.put("teacherId", teacherId);
         m.put("weekday", weekday);
         m.put("startTime", startTime);
         m.put("endTime", endTime);
         m.put("plannedUnits", plannedUnits);
         return m;
+    }
+
+    private Long parseLongValue(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Long.parseLong(text);
+            } catch (NumberFormatException ignored) {
+                return null;
+            }
+        }
+        return null;
     }
 }

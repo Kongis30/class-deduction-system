@@ -12,14 +12,11 @@ import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
-import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
-import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
@@ -52,11 +49,13 @@ import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
@@ -116,7 +115,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final LessonRecordMapper lessonRecordMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
-    private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
+    private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final PaymentMethodMapper paymentMethodMapper;
 
     /**
@@ -176,10 +175,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public PageResponse<EnrollmentOrderListItemVO> pageOrders(EnrollmentOrderPageQuery query) {
         Page<EnrollmentOrderEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
         List<Long> matchedStudentIds = findMatchedStudentIds(query.getKeyword());
+        List<Long> matchedCourseOrderIds = findMatchedCourseOrderIds(query.getKeyword());
+        List<Long> matchedClassIds = findMatchedClassIds(query.getKeyword());
         LambdaQueryWrapper<EnrollmentOrderEntity> wrapper = new LambdaQueryWrapper<EnrollmentOrderEntity>()
                 .and(StringUtils.hasText(query.getKeyword()), w -> w
                         .like(EnrollmentOrderEntity::getEnrollmentNo, query.getKeyword())
-                        .or(!matchedStudentIds.isEmpty(), nested -> nested.in(EnrollmentOrderEntity::getStudentId, matchedStudentIds)))
+                        .or(!matchedStudentIds.isEmpty(), nested -> nested.in(EnrollmentOrderEntity::getStudentId, matchedStudentIds))
+                        .or(!matchedCourseOrderIds.isEmpty(), nested -> nested.in(EnrollmentOrderEntity::getId, matchedCourseOrderIds))
+                        .or(!matchedClassIds.isEmpty(), nested -> nested.in(EnrollmentOrderEntity::getClassId, matchedClassIds)))
                 .eq(query.getStudentId() != null, EnrollmentOrderEntity::getStudentId, query.getStudentId())
                 .eq(query.getClassId() != null, EnrollmentOrderEntity::getClassId, query.getClassId())
                 .isNull(query.isExcludeClassOrders(), EnrollmentOrderEntity::getClassId)
@@ -1492,20 +1495,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         List<ClassGroupEntity> activeGroups = classGroupMapper.selectList(
                 new LambdaQueryWrapper<ClassGroupEntity>()
                         .eq(ClassGroupEntity::getStatus, "ACTIVE")
-                        .isNotNull(ClassGroupEntity::getProductId));
+                        .eq(ClassGroupEntity::getBillingType, "MONTHLY")
+                        .isNotNull(ClassGroupEntity::getStartMonth)
+                        .isNotNull(ClassGroupEntity::getEndMonth));
         LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
         int inserted = 0;
         for (ClassGroupEntity group : activeGroups) {
             try {
-                CourseProductEntity product = courseProductMapper.selectById(group.getProductId());
-                if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
-                    continue;
-                }
-                LocalDate[] window = resolveProductOccurrenceWindow(product, today);
+                LocalDate[] window = resolveClassOccurrenceWindow(group, today);
                 if (window == null) {
                     continue;
                 }
-                inserted += ensureClassOccurrencesThrough(group, product, window[0], window[1]);
+                inserted += ensureClassOccurrencesThrough(group, window[0], window[1]);
             } catch (RuntimeException ex) {
                 log.warn("Failed to renew occurrences for class group id={}: {}", group.getId(), ex.getMessage());
             }
@@ -1513,290 +1514,21 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return inserted;
     }
 
-    /**
-     * 计算班课产品的课次生成窗口 [max(产品起始, 今天), 产品自然终点]；配置不全返回 null。
-     */
-    private LocalDate[] resolveProductOccurrenceWindow(CourseProductEntity product, LocalDate today) {
-        if ("PER_SESSION".equals(product.getBillingType())) {
-            if (product.getStartDate() == null || product.getTotalSessions() == null || product.getTotalSessions() < 1) {
-                return null;
-            }
-            List<CourseProductScheduleSlotEntity> slots = loadProductSlots(product.getId());
-            if (slots.isEmpty()) {
-                return null;
-            }
-            LocalDate start = product.getStartDate().isAfter(today) ? product.getStartDate() : today;
-            LocalDate end = computeNthSessionDate(product.getStartDate(), slots, product.getTotalSessions());
-            return end.isBefore(start) ? null : new LocalDate[]{start, end};
+    private LocalDate[] resolveClassOccurrenceWindow(ClassGroupEntity group, LocalDate today) {
+        LocalDate classStartDay = group.getStartMonth();
+        LocalDate classEndDay = group.getEndMonth();
+        if (classStartDay == null || classEndDay == null) {
+            return null;
         }
-        if ("MONTHLY".equals(product.getBillingType())) {
-            if (product.getStartMonth() == null || product.getEndMonth() == null) {
-                return null;
-            }
-            LocalDate productStartDay = YearMonth.from(product.getStartMonth()).atDay(1);
-            LocalDate start = productStartDay.isAfter(today) ? productStartDay : today;
-            LocalDate end = YearMonth.from(product.getEndMonth()).atEndOfMonth();
-            return end.isBefore(start) ? null : new LocalDate[]{start, end};
-        }
-        return null;
-    }
-
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void createClassEnrollmentOrder(ClassEnrollmentCreateRequest request) {
-        // Validate student
-        StudentEntity student = requireStudent(request.getStudentId());
-
-        // Resolve class_group and its backing GROUP product
-        ClassGroupEntity clz;
-        Long resolvedClassId;
-        CourseProductEntity product;
-        if (request.getProductId() != null) {
-            product = courseProductMapper.selectById(request.getProductId());
-            if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
-                throw new BusinessException("PRODUCT_NOT_FOUND", "Group course product not found or not active.");
-            }
-            ClassGroupEntity existingGroup = classGroupMapper.selectOne(
-                    new LambdaQueryWrapper<ClassGroupEntity>()
-                            .eq(ClassGroupEntity::getProductId, request.getProductId())
-                            .eq(ClassGroupEntity::getIsDeleted, 0)
-                            .last("LIMIT 1"));
-            if (existingGroup != null) {
-                clz = existingGroup;
-            } else {
-                ClassGroupEntity newGroup = new ClassGroupEntity();
-                newGroup.setClassName(product.getProductName());
-                newGroup.setListPrice(product.getListPrice());
-                newGroup.setProductId(request.getProductId());
-                newGroup.setTeacherId(product.getDefaultTeacherId());
-                newGroup.setClassroomId(product.getDefaultClassroomId());
-                newGroup.setStatus("ACTIVE");
-                classGroupMapper.insert(newGroup);
-                clz = newGroup;
-            }
-            resolvedClassId = clz.getId();
-        } else {
-            if (request.getClassId() == null) {
-                throw new BusinessException("CLASS_ID_REQUIRED", "Either classId or productId is required.");
-            }
-            clz = classGroupMapper.selectById(request.getClassId());
-            if (clz == null || !"ACTIVE".equals(clz.getStatus())) {
-                throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
-            }
-            resolvedClassId = request.getClassId();
-            product = clz.getProductId() != null ? courseProductMapper.selectById(clz.getProductId()) : null;
-        }
-        if (product == null || !"GROUP".equals(product.getTeachingMode())) {
-            throw new BusinessException("PRODUCT_NOT_FOUND", "Group course product not found for this class.");
-        }
-
-        // Compute pricing + enrollment window from the product's billing type (server-authoritative).
-        ClassBillingResult billing = computeClassBilling(product, request);
-
-        // Check duplicate active enrollment
-        Long existingCount = classEnrollmentMapper.selectCount(
-                new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .eq(ClassEnrollmentEntity::getClassId, resolvedClassId)
-                        .eq(ClassEnrollmentEntity::getStudentId, request.getStudentId())
-                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
-        );
-        if (existingCount > 0) {
-            throw new BusinessException("ALREADY_ENROLLED", "Student is already enrolled in this class.");
-        }
-
-        // Validate discount/received against the computed original amount
-        BigDecimal discountedAmount = billing.originalAmount.subtract(request.getDiscountAmount());
-        if (discountedAmount.compareTo(BigDecimal.ZERO) < 0) {
-            throw new BusinessException("DISCOUNT_EXCEEDS_AMOUNT", "Discount cannot exceed original amount.");
-        }
-        if (request.getReceivedAmount().compareTo(discountedAmount) > 0) {
-            throw new BusinessException("RECEIVED_EXCEEDS_AMOUNT", "Received amount cannot exceed amount due.");
-        }
-
-        // Generate shared class occurrences across the full product period (calendar completeness)
-        ensureClassOccurrencesThrough(clz, product, billing.occurrenceWindowStart, billing.occurrenceWindowEnd);
-
-        // Create enrollment_order
-        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
-        order.setEnrollmentNo(BusinessNoGenerator.generateEnrollmentNo());
-        order.setStudentId(student.getId());
-        order.setClassId(resolvedClassId);
-        order.setOrderStatus("CONFIRMED");
-        order.setHandledByName(request.getHandledByName());
-        order.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
-        order.setOriginalAmount(billing.originalAmount);
-        order.setDiscountAmount(request.getDiscountAmount());
-        order.setReceivedAmount(request.getReceivedAmount());
-        // Persist the amount snapshot so later balance payments are accepted:
-        // amountDue = original - discount; balance = amountDue - received.
-        order.setAmountDue(discountedAmount);
-        order.setBalanceAmount(discountedAmount.subtract(request.getReceivedAmount()));
-        order.setPaymentStatus(resolvePaymentStatus(billing.originalAmount, request.getDiscountAmount(), request.getReceivedAmount()));
-        order.setRemark(request.getRemark());
-        enrollmentOrderMapper.insert(order);
-
-        // Create class_enrollment (with billing snapshot)
-        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
-        enrollment.setClassId(resolvedClassId);
-        enrollment.setStudentId(student.getId());
-        enrollment.setEnrollmentDate(billing.enrollmentDate);
-        enrollment.setExpiryDate(billing.expiryDate);
-        enrollment.setBillingType(product.getBillingType());
-        enrollment.setPurchasedQuantity(billing.purchasedQuantity);
-        enrollment.setStatus("ACTIVE");
-        classEnrollmentMapper.insert(enrollment);
-
-        // Create payment record if received amount > 0
-        if (request.getReceivedAmount().compareTo(BigDecimal.ZERO) > 0) {
-            PaymentRecordEntity paymentRecord = new PaymentRecordEntity();
-            paymentRecord.setEnrollmentOrderId(order.getId());
-            paymentRecord.setPaymentNo(BusinessNoGenerator.generatePaymentNo());
-            paymentRecord.setPaymentMethod("CASH");
-            paymentRecord.setPaymentStatus(order.getPaymentStatus());
-            paymentRecord.setAmount(request.getReceivedAmount());
-            paymentRecord.setPaidAt(AppTime.nowLocalDateTime());
-            paymentRecord.setHandledByName(request.getHandledByName());
-            paymentRecord.setRemark(request.getRemark());
-            paymentRecordMapper.insert(paymentRecord);
-        }
-    }
-
-    /**
-     * 班课定价结果：服务端根据产品 billingType 与学生选择量计算原价与报名/到期窗口。
-     * 注意：定价窗口（enrollmentDate/expiryDate，按学生所选）与日历课次生成窗口
-     * （occurrenceWindowStart/occurrenceWindowEnd，按产品完整周期）是解耦的——
-     * 班课课次是班级共享，应覆盖整个产品周期，与单个学生的购买量无关。
-     */
-    private static class ClassBillingResult {
-        final BigDecimal originalAmount;
-        final LocalDate enrollmentDate;
-        final LocalDate expiryDate;
-        final LocalDate occurrenceWindowStart;   // 课次生成起点 = max(产品起始, 今天)
-        final LocalDate occurrenceWindowEnd;     // 课次生成终点 = 产品自然终点
-        final Integer purchasedQuantity;
-
-        ClassBillingResult(BigDecimal originalAmount, LocalDate enrollmentDate, LocalDate expiryDate,
-                           LocalDate occurrenceWindowStart, LocalDate occurrenceWindowEnd, Integer purchasedQuantity) {
-            this.originalAmount = originalAmount;
-            this.enrollmentDate = enrollmentDate;
-            this.expiryDate = expiryDate;
-            this.occurrenceWindowStart = occurrenceWindowStart;
-            this.occurrenceWindowEnd = occurrenceWindowEnd;
-            this.purchasedQuantity = purchasedQuantity;
-        }
-    }
-
-    /**
-     * 按计费类型计算班课报名定价与时间窗口（按比例收费）。
-     * 定价/到期按学生所选量；日历课次生成窗口按产品完整周期（起点 max(产品起始, 今天)）。
-     * PER_SESSION: 原价 = listPrice × sessions / totalSessions；到期 = 第 sessions 次课日期；
-     *              课次窗口 = [max(产品起始, 今天), 第 totalSessions 次课日期]。
-     * MONTHLY:     原价 = listPrice × months / totalMonths；到期 = 所选结束月月末；
-     *              课次窗口 = [max(产品起始月1号, 今天), 产品结束月月末]。
-     */
-    private ClassBillingResult computeClassBilling(CourseProductEntity product, ClassEnrollmentCreateRequest request) {
-        String billingType = product.getBillingType();
-        BigDecimal listPrice = product.getListPrice() != null ? product.getListPrice() : BigDecimal.ZERO;
-        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
-
-        if ("PER_SESSION".equals(billingType)) {
-            Integer totalSessions = product.getTotalSessions();
-            if (totalSessions == null || totalSessions < 1 || product.getStartDate() == null) {
-                throw new BusinessException("PRODUCT_BILLING_INCOMPLETE", "Per-session product is missing start date or total sessions.");
-            }
-            Integer sessions = request.getSessions();
-            if (sessions == null || sessions < 1) {
-                throw new BusinessException("INVALID_SESSIONS", "Please select the number of sessions.");
-            }
-            if (sessions > totalSessions) {
-                throw new BusinessException("SESSIONS_EXCEED_TOTAL", "Selected sessions exceed the product total sessions.");
-            }
-            BigDecimal original = listPrice.multiply(BigDecimal.valueOf(sessions))
-                    .divide(BigDecimal.valueOf(totalSessions), 2, RoundingMode.HALF_UP);
-            List<CourseProductScheduleSlotEntity> slots = loadProductSlots(product.getId());
-            if (slots.isEmpty()) {
-                throw new BusinessException("PRODUCT_NO_SLOTS", "Per-session product has no schedule slots.");
-            }
-            LocalDate expiry = computeNthSessionDate(product.getStartDate(), slots, sessions);
-            // 课次覆盖产品完整周期：从产品起始日到第 totalSessions 次课日期。
-            LocalDate windowStart = product.getStartDate().isAfter(today) ? product.getStartDate() : today;
-            LocalDate windowEnd = computeNthSessionDate(product.getStartDate(), slots, totalSessions);
-            return new ClassBillingResult(original, product.getStartDate(), expiry, windowStart, windowEnd, sessions);
-        } else if ("MONTHLY".equals(billingType)) {
-            if (product.getStartMonth() == null || product.getEndMonth() == null) {
-                throw new BusinessException("PRODUCT_BILLING_INCOMPLETE", "Monthly product is missing start or end month.");
-            }
-            YearMonth productStart = YearMonth.from(product.getStartMonth());
-            YearMonth productEnd = YearMonth.from(product.getEndMonth());
-            YearMonth selStart = parseRequestMonth(request.getStartMonth(), "start month");
-            YearMonth selEnd = parseRequestMonth(request.getEndMonth(), "end month");
-            if (selEnd.isBefore(selStart)) {
-                throw new BusinessException("INVALID_MONTH_RANGE", "End month cannot be earlier than start month.");
-            }
-            if (selStart.isBefore(productStart) || selEnd.isAfter(productEnd)) {
-                throw new BusinessException("MONTH_OUT_OF_RANGE", "Selected months must be within the product month range.");
-            }
-            int totalMonths = (int) ChronoUnit.MONTHS.between(productStart, productEnd) + 1;
-            int months = (int) ChronoUnit.MONTHS.between(selStart, selEnd) + 1;
-            BigDecimal original = listPrice.multiply(BigDecimal.valueOf(months))
-                    .divide(BigDecimal.valueOf(totalMonths), 2, RoundingMode.HALF_UP);
-            LocalDate enrollmentDate = selStart.atDay(1);
-            LocalDate expiry = selEnd.atEndOfMonth();
-            // 课次覆盖产品完整周期：从产品起始月到产品结束月月末。
-            LocalDate productStartDay = productStart.atDay(1);
-            LocalDate windowStart = productStartDay.isAfter(today) ? productStartDay : today;
-            LocalDate windowEnd = productEnd.atEndOfMonth();
-            return new ClassBillingResult(original, enrollmentDate, expiry, windowStart, windowEnd, months);
-        } else {
-            throw new BusinessException("INVALID_BILLING_TYPE", "Unknown billing type for group product.");
-        }
-    }
-
-    private List<CourseProductScheduleSlotEntity> loadProductSlots(Long productId) {
-        return courseProductScheduleSlotMapper.selectList(
-                new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
-                        .eq(CourseProductScheduleSlotEntity::getProductId, productId)
-                        .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
-    }
-
-    private YearMonth parseRequestMonth(String value, String fieldName) {
-        if (!StringUtils.hasText(value)) {
-            throw new BusinessException("INVALID_MONTH", "Schedule " + fieldName + " is required.");
-        }
-        try {
-            return YearMonth.parse(value);
-        } catch (RuntimeException ex) {
-            throw new BusinessException("INVALID_MONTH", "Schedule " + fieldName + " must use yyyy-MM format.");
-        }
-    }
-
-    /**
-     * 从起始日期开始，按每周固定 slot 顺序数到第 n 次课，返回该次课的日期。
-     */
-    private LocalDate computeNthSessionDate(LocalDate startDate, List<CourseProductScheduleSlotEntity> slots, int n) {
-        Set<Integer> weekdays = slots.stream()
-                .map(CourseProductScheduleSlotEntity::getWeekday)
-                .collect(Collectors.toCollection(java.util.TreeSet::new));
-        int count = 0;
-        // 上限保护：最多扫描约 10 年，避免异常配置导致死循环。
-        LocalDate limit = startDate.plusYears(10);
-        for (LocalDate date = startDate; !date.isAfter(limit); date = date.plusDays(1)) {
-            if (weekdays.contains(date.getDayOfWeek().getValue())) {
-                count++;
-                if (count >= n) {
-                    return date;
-                }
-            }
-        }
-        throw new BusinessException("SESSION_DATE_UNRESOLVED", "Cannot resolve the date for the selected sessions.");
+        LocalDate start = classStartDay.isAfter(today) ? classStartDay : today;
+        LocalDate end = java.time.YearMonth.from(classEndDay).atEndOfMonth();
+        return end.isBefore(start) ? null : new LocalDate[]{start, end};
     }
 
     private int ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
-                                               CourseProductEntity product,
                                                LocalDate windowStart,
                                                LocalDate horizonEnd) {
-        List<CourseProductScheduleSlotEntity> slots = loadProductSlots(product.getId());
+        List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup.getId());
         if (slots.isEmpty()) {
             return 0;
         }
@@ -1817,8 +1549,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
         for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
             int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
-            for (CourseProductScheduleSlotEntity slot : slots) {
-                if (slot.getWeekday() != weekday || !slot.getEndTime().isAfter(slot.getStartTime())) {
+            for (ClassGroupScheduleSlotEntity slot : slots) {
+                if (!Objects.equals(slot.getWeekday(), weekday) || !slot.getEndTime().isAfter(slot.getStartTime())) {
                     continue;
                 }
                 LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
@@ -1830,8 +1562,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 occ.setLessonNo(generateClassLessonNo());
                 occ.setClassGroupId(classGroup.getId());
                 occ.setOccurrenceType("REGULAR");
-                occ.setPlannedTeacherId(product.getDefaultTeacherId());
-                occ.setPlannedClassroomId(product.getDefaultClassroomId());
+                occ.setPlannedTeacherId(slot.getTeacherId() == null ? classGroup.getTeacherId() : slot.getTeacherId());
+                occ.setPlannedClassroomId(classGroup.getClassroomId());
                 occ.setPlannedStartAt(plannedStartAt);
                 occ.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
                 occ.setPlannedUnits((int) (minutes / 30));
@@ -1842,7 +1574,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
 
         if (!occurrences.isEmpty()) {
-            ensureNoConflicts(occurrences, null, product.getDefaultTeacherId(), product.getDefaultClassroomId());
+            ensureNoConflicts(occurrences, null, null, classGroup.getClassroomId());
+            occurrences.stream()
+                    .filter(item -> item.getPlannedTeacherId() != null)
+                    .collect(Collectors.groupingBy(LessonOccurrenceEntity::getPlannedTeacherId))
+                    .forEach((teacherId, teacherOccurrences) ->
+                            ensureNoConflicts(teacherOccurrences, null, teacherId, null));
             occurrences.forEach(lessonOccurrenceMapper::insert);
         }
 
@@ -1867,6 +1604,40 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .toList();
     }
 
+    private List<Long> findMatchedCourseOrderIds(String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return Collections.emptyList();
+        }
+        List<Long> productIds = courseProductMapper.selectList(new LambdaQueryWrapper<CourseProductEntity>()
+                        .and(w -> w.like(CourseProductEntity::getProductName, keyword)
+                                .or()
+                                .like(CourseProductEntity::getRegisterClass, keyword)))
+                .stream()
+                .map(CourseProductEntity::getId)
+                .toList();
+        if (productIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return coursePackageMapper.selectList(new LambdaQueryWrapper<CoursePackageEntity>()
+                        .in(CoursePackageEntity::getCourseProductId, productIds))
+                .stream()
+                .map(CoursePackageEntity::getEnrollmentOrderId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    private List<Long> findMatchedClassIds(String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return Collections.emptyList();
+        }
+        return classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
+                        .like(ClassGroupEntity::getClassName, keyword))
+                .stream()
+                .map(ClassGroupEntity::getId)
+                .toList();
+    }
+
     /**
      * 生成班课排课编号：CLS + yyyyMMddHHmmss + 4 位随机数
      */
@@ -1876,13 +1647,17 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
     }
 
-    /**
-     * 从 course_product_schedule_slot 列表生成 scheduleDesc 文本，如 "Mon/Wed 09:00-10:30"。
-     */
-    private String buildScheduleDesc(List<CourseProductScheduleSlotEntity> slots) {
+    private List<ClassGroupScheduleSlotEntity> loadClassSlots(Long classGroupId) {
+        return classGroupScheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                        .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroupId)
+                        .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
+    }
+
+    private String buildScheduleDesc(List<ClassGroupScheduleSlotEntity> slots) {
         // 按 (startTime, endTime) 分组，每组的星期合并
         Map<String, List<Integer>> timeToWeekdays = new LinkedHashMap<>();
-        for (CourseProductScheduleSlotEntity slot : slots) {
+        for (ClassGroupScheduleSlotEntity slot : slots) {
             String key = slot.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm"))
                     + "-" + slot.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm"));
             timeToWeekdays.computeIfAbsent(key, k -> new ArrayList<>()).add(slot.getWeekday());

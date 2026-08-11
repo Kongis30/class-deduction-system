@@ -835,14 +835,22 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (teacherId == null) {
             return Collections.emptyList();
         }
-        return packageTeacherAssignmentMapper.selectList(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+        Set<Long> packageIds = packageTeacherAssignmentMapper.selectList(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
                         .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
                         .eq(PackageTeacherAssignmentEntity::getIsPrimary, 1)
                         .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE"))
                 .stream()
                 .map(PackageTeacherAssignmentEntity::getPackageId)
-                .distinct()
-                .toList();
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .select(LessonOccurrenceEntity::getPackageId)
+                        .eq(LessonOccurrenceEntity::getPlannedTeacherId, teacherId)
+                        .isNotNull(LessonOccurrenceEntity::getPackageId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"))
+                .stream()
+                .map(LessonOccurrenceEntity::getPackageId)
+                .forEach(packageIds::add);
+        return packageIds.stream().toList();
     }
 
     private Map<Long, PackageTeacherAssignmentEntity> loadPrimaryAssignments(List<Long> packageIds) {

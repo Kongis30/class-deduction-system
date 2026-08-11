@@ -15,6 +15,9 @@ import java.time.LocalTime;
 @Schema(description = "Recurring schedule slot request")
 public class RecurringScheduleSlotRequest {
 
+    @Schema(description = "Teacher assigned to this slot; inherits the rule's default teacher when omitted")
+    private Long teacherId;
+
     @NotNull(message = "Weekday is required")
     @Min(value = 1, message = "Weekday must be between 1 and 7")
     @Max(value = 7, message = "Weekday must be between 1 and 7")

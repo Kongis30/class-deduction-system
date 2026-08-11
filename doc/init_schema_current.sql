@@ -197,6 +197,7 @@ DROP TABLE IF EXISTS `class_group_schedule_slot`;
 CREATE TABLE `class_group_schedule_slot` (
   `id` bigint NOT NULL,
   `class_group_id` bigint NOT NULL,
+  `teacher_id` bigint DEFAULT NULL COMMENT 'Optional teacher override for this weekly slot',
   `weekday` tinyint NOT NULL,
   `start_time` time NOT NULL,
   `end_time` time NOT NULL,
@@ -210,7 +211,9 @@ CREATE TABLE `class_group_schedule_slot` (
   `version` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   KEY `idx_class_group_schedule_slot` (`class_group_id`,`weekday`),
-  CONSTRAINT `fk_class_group_schedule_slot_group` FOREIGN KEY (`class_group_id`) REFERENCES `class_group` (`id`)
+  KEY `idx_class_group_schedule_slot_teacher` (`teacher_id`,`weekday`,`start_time`),
+  CONSTRAINT `fk_class_group_schedule_slot_group` FOREIGN KEY (`class_group_id`) REFERENCES `class_group` (`id`),
+  CONSTRAINT `fk_class_group_schedule_slot_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -322,6 +325,8 @@ CREATE TABLE `course_price_option` (
   `group_session_count` int DEFAULT NULL COMMENT 'Purchased sessions for a per-session grade class',
   `group_month_count` int DEFAULT NULL COMMENT 'Purchased months for a monthly grade class',
   `price_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Default list price for this option',
+  `group_total_price` decimal(12,2) DEFAULT NULL COMMENT 'User-entered total group class price',
+  `group_session_price` decimal(12,2) DEFAULT NULL COMMENT 'Derived group class price per session',
   `currency_code` varchar(16) NOT NULL DEFAULT 'USD' COMMENT 'Currency code',
   `course_product_id` bigint DEFAULT NULL COMMENT 'Optional linked course product template ID',
   `class_id` bigint DEFAULT NULL COMMENT 'Generated grade class for group price option',
@@ -1116,6 +1121,7 @@ DROP TABLE IF EXISTS `recurring_schedule_slot`;
 CREATE TABLE `recurring_schedule_slot` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `rule_id` bigint NOT NULL COMMENT 'Rule ID',
+  `teacher_id` bigint DEFAULT NULL COMMENT 'Teacher assigned to this recurring weekly slot',
   `weekday` tinyint NOT NULL COMMENT 'Weekday: 1-7',
   `start_time` time NOT NULL COMMENT 'Start time',
   `end_time` time NOT NULL COMMENT 'End time',
@@ -1131,7 +1137,9 @@ CREATE TABLE `recurring_schedule_slot` (
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
   KEY `idx_schedule_slot_rule` (`rule_id`,`weekday`,`start_time`),
+  KEY `idx_schedule_slot_teacher` (`teacher_id`,`weekday`,`start_time`),
   CONSTRAINT `fk_schedule_slot_rule` FOREIGN KEY (`rule_id`) REFERENCES `recurring_schedule_rule` (`id`),
+  CONSTRAINT `fk_schedule_slot_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`),
   CONSTRAINT `chk_schedule_slot_units` CHECK ((`planned_units` > 0)),
   CONSTRAINT `chk_schedule_slot_weekday` CHECK ((`weekday` between 1 and 7))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Recurring schedule slots';

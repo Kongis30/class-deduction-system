@@ -9,9 +9,7 @@ import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.dto.ClassroomPageQuery;
 import com.classdeduction.system.modules.base.dto.ClassroomSaveRequest;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
-import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.ClassroomService;
 import com.classdeduction.system.modules.base.vo.ClassroomVO;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -42,7 +40,6 @@ public class ClassroomServiceImpl implements ClassroomService {
     private final ClassroomMapper classroomMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
-    private final CourseProductMapper courseProductMapper;
     private final ClassGroupMapper classGroupMapper;
 
     @Override
@@ -149,19 +146,14 @@ public class ClassroomServiceImpl implements ClassroomService {
                 .eq(RecurringScheduleRuleEntity::getDefaultClassroomId, id)
                 .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
                 .eq(RecurringScheduleRuleEntity::getIsDeleted, 0));
-        // 检查课程产品
-        Long courseProducts = courseProductMapper.selectCount(new LambdaQueryWrapper<CourseProductEntity>()
-                .eq(CourseProductEntity::getDefaultClassroomId, id)
-                .eq(CourseProductEntity::getStatus, "ACTIVE")
-                .eq(CourseProductEntity::getIsDeleted, 0));
         // 检查班级
         Long classGroups = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
                 .eq(ClassGroupEntity::getClassroomId, id)
                 .eq(ClassGroupEntity::getIsDeleted, 0));
-        if (futureOccurrences + activeRules + courseProducts + classGroups > 0) {
+        if (futureOccurrences + activeRules + classGroups > 0) {
             throw new BusinessException("CLASSROOM_HAS_REFERENCES",
                     "Cannot delete classroom: there are future lessons, active schedule rules, "
-                            + "course products, or classes using it. Reassign them first.");
+                            + "or classes using it. Reassign them first.");
         }
         classroomMapper.deleteById(id);
     }

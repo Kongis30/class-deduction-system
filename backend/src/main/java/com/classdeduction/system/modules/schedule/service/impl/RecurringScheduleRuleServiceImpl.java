@@ -185,6 +185,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         ClassroomEntity classroom = resolveClassroom(request.getDefaultClassroomId());
         validateRuleDates(request);
         validateSlots(request.getSlots());
+        validateSlotTeachers(request.getSlots());
 
         RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
         rule.setPackageId(coursePackage.getId());
@@ -207,7 +208,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Map<Long, LessonRecordEntity> recordByOccurrenceId = listActiveRecordsByOccurrenceId(existingOccurrences);
         generatedOccurrences = removeOccurrencesOverlappingPreserved(generatedOccurrences, existingOccurrences);
         generatedOccurrences = capGeneratedOccurrencesToPackageBalance(generatedOccurrences, existingOccurrences, recordByOccurrenceId, coursePackage);
-        ensureNoConflicts(generatedOccurrences, student.getId(), rule.getPrimaryTeacherId(), rule.getDefaultClassroomId());
+        ensureNoConflicts(generatedOccurrences, student.getId(), rule.getDefaultClassroomId());
         generatedOccurrences.forEach(lessonOccurrenceMapper::insert);
 
         LocalDateTime firstStart = generatedOccurrences.stream().map(LessonOccurrenceEntity::getPlannedStartAt).min(LocalDateTime::compareTo).orElse(null);
@@ -276,7 +277,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return 0;
         }
 
-        ensureNoConflicts(toInsert, coursePackage.getStudentId(), rule.getPrimaryTeacherId(), rule.getDefaultClassroomId());
+        ensureNoConflicts(toInsert, coursePackage.getStudentId(), rule.getDefaultClassroomId());
         toInsert.forEach(lessonOccurrenceMapper::insert);
         return toInsert.size();
     }
@@ -309,6 +310,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         // d) Validate dates and slots
         validateUpdateRuleDates(request);
         validateSlots(request.getSlots());
+        validateSlotTeachers(request.getSlots());
 
         // e) Update rule entity
         String newStatus = request.getRuleStatus() != null ? request.getRuleStatus() : existingRule.getRuleStatus();
@@ -387,7 +389,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
         // j) Conflict check excluding this rule's preserved occurrences
         ensureNoConflictsExcludingRule(newOccurrences, student.getId(),
-                existingRule.getPrimaryTeacherId(), existingRule.getDefaultClassroomId(), id);
+                existingRule.getDefaultClassroomId(), id);
 
         newOccurrences.forEach(lessonOccurrenceMapper::insert);
 
@@ -414,7 +416,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     }
 
     private void ensureNoConflictsExcludingRule(List<LessonOccurrenceEntity> candidates,
-                                                Long studentId, Long teacherId, Long classroomId, Long excludeRuleId) {
+                                                Long studentId, Long classroomId, Long excludeRuleId) {
         if (candidates.isEmpty()) {
             return;
         }
@@ -427,8 +429,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .ne(LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
-        List<LessonOccurrenceEntity> teacherOccurrences = teacherId == null ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPlannedTeacherId, teacherId)
+        Set<Long> teacherIds = candidates.stream()
+                .map(LessonOccurrenceEntity::getPlannedTeacherId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> teacherOccurrences = teacherIds.isEmpty() ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPlannedTeacherId, teacherIds)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .ne(LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
@@ -448,10 +454,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
                 details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), studentConflict));
             }
-            LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences);
-            if (teacherId != null && teacherConflict != null) {
+            Long candidateTeacherId = candidate.getPlannedTeacherId();
+            LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences.stream()
+                    .filter(existing -> Objects.equals(existing.getPlannedTeacherId(), candidateTeacherId))
+                    .toList());
+            if (candidateTeacherId != null && teacherConflict != null) {
                 conflicts.add("Teacher conflict at " + candidate.getPlannedStartAt());
-                details.add(buildConflictDetail("TEACHER", teacherId, resolveTeacherName(teacherId), teacherConflict));
+                details.add(buildConflictDetail("TEACHER", candidateTeacherId,
+                        resolveTeacherName(candidateTeacherId), teacherConflict));
             }
             LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
             if (classroomId != null && classroomConflict != null) {
@@ -508,6 +518,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
     }
 
+    private void validateSlotTeachers(List<RecurringScheduleSlotRequest> slots) {
+        slots.stream()
+                .map(RecurringScheduleSlotRequest::getTeacherId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .forEach(this::resolveTeacherById);
+    }
+
     private TeacherEntity resolveTeacher(RecurringScheduleRuleCreateRequest request, Long packageId) {
         Long teacherId = request.getPrimaryTeacherId();
         if (teacherId == null) {
@@ -543,6 +561,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private RecurringScheduleSlotEntity toSlotEntity(Long ruleId, RecurringScheduleSlotRequest request) {
         RecurringScheduleSlotEntity entity = new RecurringScheduleSlotEntity();
         entity.setRuleId(ruleId);
+        entity.setTeacherId(request.getTeacherId());
         entity.setWeekday(request.getWeekday());
         entity.setStartTime(request.getStartTime());
         entity.setEndTime(request.getEndTime());
@@ -576,7 +595,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 occurrence.setScheduleRuleId(rule.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(rule.getPrimaryTeacherId());
+                occurrence.setPlannedTeacherId(
+                        slot.getTeacherId() != null ? slot.getTeacherId() : rule.getPrimaryTeacherId());
                 occurrence.setPlannedClassroomId(rule.getDefaultClassroomId());
                 occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
@@ -679,7 +699,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
      */
     private void ensureNoConflicts(List<LessonOccurrenceEntity> generatedOccurrences,
                                    Long studentId,
-                                   Long teacherId,
                                    Long classroomId) {
         if (generatedOccurrences.isEmpty()) {
             return;
@@ -692,8 +711,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
-        List<LessonOccurrenceEntity> teacherOccurrences = teacherId == null ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPlannedTeacherId, teacherId)
+        Set<Long> teacherIds = generatedOccurrences.stream()
+                .map(LessonOccurrenceEntity::getPlannedTeacherId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> teacherOccurrences = teacherIds.isEmpty() ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPlannedTeacherId, teacherIds)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
@@ -711,10 +734,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
                 details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), studentConflict));
             }
-            LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences);
-            if (teacherId != null && teacherConflict != null) {
+            Long candidateTeacherId = candidate.getPlannedTeacherId();
+            LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences.stream()
+                    .filter(existing -> Objects.equals(existing.getPlannedTeacherId(), candidateTeacherId))
+                    .toList());
+            if (candidateTeacherId != null && teacherConflict != null) {
                 conflicts.add("Teacher conflict at " + candidate.getPlannedStartAt());
-                details.add(buildConflictDetail("TEACHER", teacherId, resolveTeacherName(teacherId), teacherConflict));
+                details.add(buildConflictDetail("TEACHER", candidateTeacherId,
+                        resolveTeacherName(candidateTeacherId), teacherConflict));
             }
             LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
             if (classroomId != null && classroomConflict != null) {
@@ -910,6 +937,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private RecurringScheduleSlotVO toSlotVO(RecurringScheduleSlotEntity slot) {
         return RecurringScheduleSlotVO.builder()
                 .id(slot.getId())
+                .teacherId(slot.getTeacherId())
                 .weekday(slot.getWeekday())
                 .startTime(slot.getStartTime())
                 .endTime(slot.getEndTime())

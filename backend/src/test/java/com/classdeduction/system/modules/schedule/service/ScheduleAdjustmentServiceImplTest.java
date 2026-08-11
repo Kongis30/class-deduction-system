@@ -139,14 +139,13 @@ class ScheduleAdjustmentServiceImplTest {
     }
 
     @Test
-    void shouldAssignTeacherAndClassroomToAnUnassignedLesson() {
+    void shouldAssignTeacherWithoutRequiringClassroom() {
         LessonOccurrenceEntity source = buildSourceOccurrence();
         source.setPlannedTeacherId(null);
         source.setPlannedClassroomId(null);
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
-        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
         doAnswer(invocation -> {
             LessonAdjustmentLogEntity entity = invocation.getArgument(0);
@@ -158,14 +157,13 @@ class ScheduleAdjustmentServiceImplTest {
         request.setOccurrenceId(1001L);
         request.setAdjustmentType("ASSIGN_RESOURCES");
         request.setPlannedTeacherId(3001L);
-        request.setPlannedClassroomId(4001L);
         request.setReason("Assign before class");
 
         scheduleAdjustmentService.adjust(request);
 
         verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
         assertThat(occurrenceCaptor.getValue().getPlannedTeacherId()).isEqualTo(3001L);
-        assertThat(occurrenceCaptor.getValue().getPlannedClassroomId()).isEqualTo(4001L);
+        assertThat(occurrenceCaptor.getValue().getPlannedClassroomId()).isNull();
         assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("ADJUSTED");
     }
 

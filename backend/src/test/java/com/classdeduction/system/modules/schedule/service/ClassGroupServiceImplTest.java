@@ -4,9 +4,9 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
-import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
@@ -77,9 +77,6 @@ class ClassGroupServiceImplTest {
     @Mock
     private CourseProductMapper courseProductMapper;
 
-    @Mock
-    private CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
-
     @Captor
     private ArgumentCaptor<LessonRecordEntity> recordCaptor;
 
@@ -107,8 +104,7 @@ class ClassGroupServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
-                courseProductMapper,
-                courseProductScheduleSlotMapper
+                courseProductMapper
         );
     }
 
@@ -499,8 +495,13 @@ class ClassGroupServiceImplTest {
     void shouldUpdateClassWeeklyScheduleAndGenerateFutureOccurrences() {
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
+        classGroup.setTeacherId(701L);
         classGroup.setStatus("ACTIVE");
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        TeacherEntity slotTeacher = new TeacherEntity();
+        slotTeacher.setId(702L);
+        slotTeacher.setStatus("ACTIVE");
+        when(teacherMapper.selectById(702L)).thenReturn(slotTeacher);
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, LocalDate.now(), LocalDate.now())));
@@ -509,6 +510,7 @@ class ClassGroupServiceImplTest {
         int weekday = LocalDate.now().getDayOfWeek().getValue();
         Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
                 "slots", List.of(Map.of(
+                        "teacherId", 702L,
                         "weekday", weekday,
                         "startTime", "10:00",
                         "endTime", "11:30"))
@@ -520,8 +522,10 @@ class ClassGroupServiceImplTest {
         verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
         assertThat(classGroup.getScheduleDesc()).isEqualTo(weekdayShortLabel(weekday) + " 10:00-11:30");
         assertThat(slotCaptor.getValue().getClassGroupId()).isEqualTo(501L);
+        assertThat(slotCaptor.getValue().getTeacherId()).isEqualTo(702L);
         assertThat(slotCaptor.getValue().getWeekday()).isEqualTo(weekday);
         assertThat(occurrenceCaptor.getValue().getClassGroupId()).isEqualTo(501L);
+        assertThat(occurrenceCaptor.getValue().getPlannedTeacherId()).isEqualTo(702L);
         assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(3);
         assertThat(result.get("generatedOccurrences")).isEqualTo(1);
     }

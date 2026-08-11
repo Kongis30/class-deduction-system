@@ -70,15 +70,15 @@
         <strong>不止提分，更帮助孩子建立自信，掌握方法</strong>
         <div class="phone-line">☎ Ms. Jin （929）528–1060 / 办公室 （929）701–9872</div>
 
-        <label class="campus-line">
+        <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('SOUTH') }]">
           <input type="checkbox" :checked="isCampusProfileSelected('SOUTH')" :disabled="isReadOnly" @change="selectCampusProfile('SOUTH')" />
           <span>南校：144–56 Roosevelt Ave, Flushing, NY 11354</span>
         </label>
-        <label class="campus-line">
+        <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('NORTH') }]">
           <input type="checkbox" :checked="isCampusProfileSelected('NORTH')" :disabled="isReadOnly" @change="selectCampusProfile('NORTH')" />
           <span>北校：142–18 32nd Ave, Flushing, NY 11354</span>
         </label>
-        <label class="campus-line">
+        <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('ONLINE') }]">
           <input type="checkbox" :checked="isCampusProfileSelected('ONLINE')" :disabled="isReadOnly" @change="selectCampusProfile('ONLINE')" />
           <span>线上课 online</span>
         </label>
@@ -98,10 +98,11 @@
               <el-icon class="registration-help-icon" aria-label="Account creation rules"><QuestionFilled /></el-icon>
             </el-tooltip>
           </span>
-          <div class="student-name-fields">
+          <div class="student-name-fields screen-only">
             <el-input v-model="form.student.firstName" :disabled="isReadOnly" placeholder="First name" />
             <el-input v-model="form.student.lastName" :disabled="isReadOnly" placeholder="Last name" />
           </div>
+          <strong class="printed-student-name">{{ fullStudentName || '—' }}</strong>
           <el-tag v-if="!isReadOnly && studentReuseStatus === 'existing'" size="small" type="success" class="reuse-tag">Reuse</el-tag>
           <el-tag v-else-if="!isReadOnly && studentReuseStatus === 'new'" size="small" type="info" class="reuse-tag">New</el-tag>
         </div>
@@ -132,18 +133,10 @@
           </label>
         </div>
 
-        <div class="two-col-line signup-period-line">
+        <div class="two-col-line">
           <label>
             <span>Sign Up Date:</span>
             <el-date-picker v-model="form.signupDate" type="date" value-format="YYYY-MM-DD" :disabled="isReadOnly" class="line-date" />
-          </label>
-          <label>
-            <span>Sign Up Period:</span>
-            <div class="period-line">
-              <el-date-picker v-model="form.periodStartDate" type="date" value-format="YYYY-MM-DD" placeholder="Start" :disabled="isReadOnly" class="line-date half" />
-              <span class="period-separator">–</span>
-              <el-date-picker v-model="form.periodEndDate" type="date" value-format="YYYY-MM-DD" placeholder="End" :disabled="isReadOnly" class="line-date half" />
-            </div>
           </label>
         </div>
 
@@ -209,25 +202,35 @@
                 <div v-if="isReadOnly" class="receipt-course-display">
                   <strong>{{ printCourseProductLabel(line) }}</strong>
                 </div>
-                <div v-else class="course-class-cell">
-                  <el-select
-                    v-model="line.courseProductId"
-                    class="table-select table-select--primary"
-                    :placeholder="productSelectPlaceholder(line)"
-                    :disabled="isReadOnly || productOptionsForLine(line).length === 0"
-                    no-data-text="No linked products"
-                    no-match-text="No matching product"
-                    filterable
-                    @change="() => handleCourseProductChange(line)"
-                  >
-                    <el-option
-                      v-for="product in productOptionsForLine(line)"
-                      :key="product.id"
-                      :label="productOptionLabel(product)"
-                      :value="product.id"
-                    />
-                  </el-select>
-                  <span class="print-only print-course-value">{{ printCourseProductLabel(line) }}</span>
+                <div v-else>
+                  <div class="course-class-cell screen-only">
+                    <el-select
+                      v-model="line.courseProductId"
+                      class="table-select table-select--primary"
+                      :placeholder="productSelectPlaceholder(line)"
+                      :disabled="isReadOnly || productOptionsForLine(line).length === 0"
+                      no-data-text="No linked products"
+                      no-match-text="No matching product"
+                      filterable
+                      @change="() => handleCourseProductChange(line)"
+                    >
+                      <el-option-group
+                        v-for="group in productOptionGroupsForLine(line)"
+                        :key="group.value"
+                        :label="group.label"
+                        :class="`course-product-group course-product-group--${group.value}`"
+                      >
+                        <el-option
+                          v-for="product in group.options"
+                          :key="product.id"
+                          :label="productOptionLabel(product)"
+                          :value="product.id"
+                          :class="`course-product-option course-product-option--${group.value}`"
+                        />
+                      </el-option-group>
+                    </el-select>
+                  </div>
+                  <strong class="print-only print-course-value">{{ printCourseProductLabel(line) }}</strong>
                 </div>
               </td>
               <td>
@@ -237,12 +240,12 @@
                     <strong>{{ line.gradeBand || '—' }}</strong>
                   </div>
                   <div>
-                    <span>Duration & schedule</span>
+                    <span>{{ isOneOnOneLine(line) ? 'Tuition option' : 'Schedule' }}</span>
                     <strong>{{ printCourseScheduleLabel(line) }}</strong>
                   </div>
-                  <div v-if="showGroupDurationInput(line)">
-                    <span>{{ groupDurationInputLabel(line) }}</span>
-                    <strong>{{ printGroupDurationLabel(line) }}</strong>
+                  <div v-if="showDurationInput(line)">
+                    <span>Duration &amp; schedule</span>
+                    <strong>{{ printRegistrationDurationLabel(line) }}</strong>
                   </div>
                   <div>
                     <span>{{ isOneOnOneLine(line) ? 'Teacher' : 'Class' }}</span>
@@ -250,8 +253,9 @@
                   </div>
                   <p v-if="isOneOnOneLine(line)">Arrange lesson times on the weekly calendar after this registration is saved.</p>
                 </div>
-                <div v-else class="course-detail-cell">
-                  <div class="detail-row">
+                <div v-else>
+                  <div class="course-detail-cell screen-only">
+                    <div :class="['detail-row', { 'detail-row--group': !isOneOnOneLine(line) }]">
                     <label class="course-control">
                       <span>Grade</span>
                       <el-select
@@ -267,8 +271,8 @@
                       </el-select>
                       <strong class="print-only print-course-value">{{ line.gradeBand || '—' }}</strong>
                     </label>
-                    <label class="course-control">
-                      <span>Duration & schedule</span>
+                    <label v-if="isOneOnOneLine(line)" class="course-control">
+                      <span>Tuition option</span>
                       <el-select
                         v-model="line.coursePriceOptionId"
                         class="table-select option"
@@ -282,7 +286,7 @@
                         <el-option
                           v-for="option in optionChoicesForLine(line)"
                           :key="option.id"
-                          :label="option.detailText"
+                          :label="durationOptionLabel(option)"
                           :value="option.id"
                         >
                           <div class="price-option-row">
@@ -293,42 +297,45 @@
                       </el-select>
                       <strong class="print-only print-course-value">{{ printCourseScheduleLabel(line) }}</strong>
                     </label>
-                    <label v-if="showGroupDurationInput(line)" class="course-control">
-                      <span>{{ groupDurationInputLabel(line) }}</span>
+                    <label v-if="showDurationInput(line)" class="course-control">
+                      <span>Duration &amp; schedule</span>
                       <el-input-number
-                        v-if="line.groupBillingType === 'PER_SESSION'"
-                        v-model="line.groupSessionCount"
+                        v-if="isOneOnOneLine(line)"
+                        v-model="line.oneOnOneHours"
                         class="table-price"
-                        :min="1"
-                        :max="line.groupTotalSessions"
-                        :precision="0"
-                        :controls="false"
+                        :min="0.5"
+                        :max="400"
+                        :step="0.5"
+                        :precision="1"
+                        :controls="true"
                         :disabled="isReadOnly"
-                        @change="() => handleGroupDurationChange(line)"
+                        @change="() => handleRegistrationDurationChange(line)"
                       />
-                      <div v-else class="group-month-range">
-                        <el-date-picker
-                          v-model="line.groupRegistrationStartMonth"
-                          type="month"
-                          value-format="YYYY-MM"
-                          placeholder="Start"
+                      <div v-else class="group-duration-picker">
+                        <el-select
+                          v-model="line.groupDurationMode"
                           :disabled="isReadOnly"
-                          @change="() => handleGroupDurationChange(line)"
-                        />
-                        <span>to</span>
-                        <el-date-picker
-                          v-model="line.groupRegistrationEndMonth"
-                          type="month"
-                          value-format="YYYY-MM"
-                          placeholder="End"
-                          :disabled="isReadOnly"
-                          @change="() => handleGroupDurationChange(line)"
+                          @change="() => applyGroupDurationMode(line)"
+                        >
+                          <el-option label="2 months" value="2" />
+                          <el-option label="6 months" value="6" />
+                          <el-option label="10 months" value="10" />
+                          <el-option label="Custom" value="CUSTOM" />
+                        </el-select>
+                        <el-input-number
+                          v-if="line.groupDurationMode === 'CUSTOM'"
+                          v-model="line.groupPurchasedMonths"
+                          :min="1"
+                          :max="36"
+                          :precision="0"
+                          :controls="true"
+                          @change="() => handleRegistrationDurationChange(line)"
                         />
                       </div>
-                      <strong class="print-only print-course-value">{{ printGroupDurationLabel(line) }}</strong>
+                      <strong class="print-only print-course-value">{{ printRegistrationDurationLabel(line) }}</strong>
                     </label>
                   </div>
-                  <div class="teacher-class-line">
+                    <div class="teacher-class-line">
                     <label class="course-control course-control--wide">
                       <span>{{ isOneOnOneLine(line) ? 'Teacher (optional)' : 'Class' }}</span>
                       <el-select
@@ -350,16 +357,29 @@
                     </label>
                     <span v-if="!line.coursePriceOptionId" class="course-detail-hint">{{ courseLineHint(line) }}</span>
                   </div>
-                  <p v-if="isOneOnOneLine(line)" class="one-on-one-scheduling-hint">
-                    Arrange lesson times on the weekly calendar after this registration is saved.
-                  </p>
-                  <div v-if="!isReadOnly && line.manualPriceOverride" class="manual-price-line">
-                    <el-tag size="small" type="warning">Manual price</el-tag>
-                    <el-input
-                      v-model="line.remark"
-                      size="small"
-                      placeholder="Reason, e.g. mid-term enrollment"
-                    />
+                    <p v-if="isOneOnOneLine(line)" class="one-on-one-scheduling-hint">
+                      Arrange lesson times on the weekly calendar after this registration is saved.
+                    </p>
+                    <div v-if="!isReadOnly && line.manualPriceOverride" class="manual-price-line">
+                      <el-tag size="small" type="warning">Manual price</el-tag>
+                      <el-input
+                        v-model="line.remark"
+                        size="small"
+                        placeholder="Reason, e.g. mid-term enrollment"
+                      />
+                    </div>
+                  </div>
+                  <div class="print-only print-course-summary">
+                    <div><span>Grade</span><strong>{{ line.gradeBand || '—' }}</strong></div>
+                    <div><span>Registration</span><strong>{{ printRegistrationDurationLabel(line) }}</strong></div>
+                    <div>
+                      <span>{{ isOneOnOneLine(line) ? 'Tuition option' : 'Sessions' }}</span>
+                      <strong>{{ printTuitionOptionLabel(line) }}</strong>
+                    </div>
+                    <div>
+                      <span>{{ isOneOnOneLine(line) ? 'Teacher' : 'Schedule' }}</span>
+                      <strong>{{ printScheduleSummaryLabel(line) }}</strong>
+                    </div>
                   </div>
                 </div>
               </td>
@@ -517,7 +537,7 @@
         </div>
       </section>
 
-      <section class="policies-and-zelle">
+      <section class="policies">
         <div class="policy-copy">
           <p><strong>退款政策 / Refund Policy</strong></p>
           <p>开课前退还50%，其余转为学费抵用金；开课后不退，剩余学费转为抵用金。</p>
@@ -533,7 +553,6 @@
           <p>学生须遵守校规。如有三次以上严重违纪（如扰乱课堂、霸凌等），将被劝退。</p>
           <p>Students must follow rules. 3 serious violations may lead to dismissal.</p>
         </div>
-        <div class="zelle-placeholder" aria-label="Zelle QR placeholder"></div>
       </section>
     </section>
 
@@ -617,6 +636,8 @@ interface RegistrationCourseLine {
   groupStartMonth?: string;
   groupEndMonth?: string;
   groupSessionCount?: number;
+  groupDurationMode?: '2' | '6' | '10' | 'CUSTOM';
+  groupPurchasedMonths?: number;
   groupRegistrationStartMonth?: string;
   groupRegistrationEndMonth?: string;
   initialLessonStartAt?: string;
@@ -648,8 +669,6 @@ interface PaymentLine {
 interface RegistrationForm {
   campusKey: string;
   signupDate: string;
-  periodStartDate: string;
-  periodEndDate: string;
   handledByName: string;
   pickupFeeCharged: boolean;
   pickupFeeAmount: number;
@@ -686,8 +705,6 @@ const today = formatDate(new Date());
 const form = reactive<RegistrationForm>({
   campusKey: '',
   signupDate: today,
-  periodStartDate: '',
-  periodEndDate: '',
   handledByName: currentUser?.displayName ?? '',
   pickupFeeCharged: false,
   pickupFeeAmount: 0,
@@ -1000,8 +1017,6 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   const campusName = getString(receiptPayload, 'campusName') || order.campusNameSnapshot || '';
   form.campusKey = resolveCampusKey(campusId, campusName);
   form.signupDate = normalizeDate(getString(receiptPayload, 'signupDate') || order.signupDate || '');
-  form.periodStartDate = normalizeDate(getString(receiptPayload, 'periodStartDate') || order.periodStartDate || '');
-  form.periodEndDate = normalizeDate(getString(receiptPayload, 'periodEndDate') || order.periodEndDate || '');
   form.handledByName = getString(receiptPayload, 'handledByName') || order.handledByName || '';
   form.pickupFeeAmount = firstPositiveNumber(getNumber(receiptPayload, 'pickupFeeAmount'), order.pickupFeeAmount);
   form.pickupFeeCharged = getBoolean(receiptPayload, 'pickupFeeCharged', form.pickupFeeAmount > 0);
@@ -1102,6 +1117,8 @@ function toHistoricalCourseLine(
     oneOnOneUnits: optionalNumber(item, 'oneOnOneUnits') ?? optionalNumber(fallback, 'oneOnOneUnits'),
     groupBillingType: getString(item, 'groupBillingType') || undefined,
     groupSessionCount: optionalNumber(item, 'sessions'),
+    groupPurchasedMonths: optionalNumber(item, 'purchasedMonths') ?? groupMonthCountFromSnapshot(item),
+    groupDurationMode: durationModeForMonths(optionalNumber(item, 'purchasedMonths') ?? groupMonthCountFromSnapshot(item)),
     groupStartMonth: getString(item, 'groupStartMonth') || getString(item, 'startMonth') || undefined,
     groupEndMonth: getString(item, 'groupEndMonth') || getString(item, 'endMonth') || undefined,
     groupRegistrationStartMonth: getString(item, 'startMonth') || undefined,
@@ -1161,6 +1178,8 @@ function createCourseLine(): RegistrationCourseLine {
     groupStartMonth: undefined,
     groupEndMonth: undefined,
     groupSessionCount: undefined,
+    groupDurationMode: '2',
+    groupPurchasedMonths: 2,
     groupRegistrationStartMonth: undefined,
     groupRegistrationEndMonth: undefined,
     initialLessonStartAt: undefined,
@@ -1304,6 +1323,16 @@ function handleCourseProductChange(line: RegistrationCourseLine) {
 function handleGradeChange(line: RegistrationCourseLine) {
   line.periodKey = '';
   clearSelectedOption(line);
+  autoSelectPriceOptionForLine(line);
+}
+
+function autoSelectPriceOptionForLine(line: RegistrationCourseLine) {
+  const option = optionChoicesForLine(line)[0];
+  if (!option) {
+    return;
+  }
+  line.coursePriceOptionId = option.id;
+  handleOptionChange(line);
 }
 
 function handleOptionChange(line: RegistrationCourseLine) {
@@ -1330,24 +1359,19 @@ function handleOptionChange(line: RegistrationCourseLine) {
   line.groupEndMonth = option.groupEndMonth;
   if (isOneOnOneLine(line)) {
     line.groupSessionCount = undefined;
+    line.groupPurchasedMonths = undefined;
+    line.groupDurationMode = undefined;
     line.groupRegistrationStartMonth = undefined;
     line.groupRegistrationEndMonth = undefined;
-  } else if (line.groupBillingType === 'MONTHLY') {
-    line.groupSessionCount = undefined;
-    const defaultStart = monthWithinRange(line.groupRegistrationStartMonth, line)
-      ? line.groupRegistrationStartMonth
-      : line.groupStartMonth;
-    line.groupRegistrationStartMonth = defaultStart;
-    line.groupRegistrationEndMonth = monthWithinRange(line.groupRegistrationEndMonth, line)
-      ? line.groupRegistrationEndMonth
-      : defaultStart;
   } else {
-    line.groupSessionCount = line.groupSessionCount || 1;
+    line.groupSessionCount = undefined;
+    line.groupPurchasedMonths = line.groupPurchasedMonths || 2;
+    line.groupDurationMode = durationModeForMonths(line.groupPurchasedMonths);
     line.groupRegistrationStartMonth = undefined;
     line.groupRegistrationEndMonth = undefined;
   }
   line.manualPriceOverride = false;
-  handleGroupDurationChange(line);
+  handleRegistrationDurationChange(line);
 }
 
 function handlePriceChange(line: RegistrationCourseLine) {
@@ -1355,32 +1379,36 @@ function handlePriceChange(line: RegistrationCourseLine) {
   line.manualPriceOverride = originalPrice !== undefined && roundMoney(line.priceAmount) !== roundMoney(originalPrice);
 }
 
-function handleGroupDurationChange(line: RegistrationCourseLine) {
-  syncGroupDurationLabel(line);
+function handleRegistrationDurationChange(line: RegistrationCourseLine) {
+  if (isOneOnOneLine(line)) {
+    line.oneOnOneUnits = line.oneOnOneHours ? Math.round(line.oneOnOneHours * 2) : undefined;
+    line.durationLabel = line.oneOnOneHours ? `${formatHours(line.oneOnOneHours)} hours` : '';
+  } else {
+    line.durationLabel = printRegistrationDurationLabel(line);
+  }
   recalculateLinePrice(line);
+}
+
+function applyGroupDurationMode(line: RegistrationCourseLine) {
+  if (line.groupDurationMode !== 'CUSTOM') {
+    line.groupPurchasedMonths = Number(line.groupDurationMode);
+  }
+  handleRegistrationDurationChange(line);
 }
 
 function recalculateLinePrice(line: RegistrationCourseLine) {
   const option = findOption(line.coursePriceOptionId);
   if (!option) return;
-  const quantity = isOneOnOneLine(line) ? 1 : groupPurchasedQuantity(line);
-  const computedPrice = roundMoney(numeric(option.priceAmount) * quantity);
+  const configuredHours = numeric(option.oneOnOneHours);
+  const computedPrice = isOneOnOneLine(line)
+    ? configuredHours > 0
+      ? roundMoney(numeric(option.priceAmount) / configuredHours * numeric(line.oneOnOneHours))
+      : 0
+    : roundMoney(numeric(option.priceAmount) * numeric(line.groupPurchasedMonths));
   line.originalPriceAmount = computedPrice;
   if (!line.manualPriceOverride) {
     line.priceAmount = computedPrice;
   }
-}
-
-function groupPurchasedQuantity(line: RegistrationCourseLine) {
-  if (line.groupBillingType === 'MONTHLY') {
-    return groupRegistrationMonthCount(line);
-  }
-  return numeric(line.groupSessionCount);
-}
-
-function syncGroupDurationLabel(line: RegistrationCourseLine) {
-  if (isOneOnOneLine(line)) return;
-  line.durationLabel = printGroupDurationLabel(line);
 }
 
 function clearSelectedOption(line: RegistrationCourseLine) {
@@ -1402,6 +1430,8 @@ function clearSelectedOption(line: RegistrationCourseLine) {
   line.groupStartMonth = undefined;
   line.groupEndMonth = undefined;
   line.groupSessionCount = undefined;
+  line.groupDurationMode = '2';
+  line.groupPurchasedMonths = 2;
   line.groupRegistrationStartMonth = undefined;
   line.groupRegistrationEndMonth = undefined;
 }
@@ -1433,6 +1463,18 @@ function productOptionsForLine(line: RegistrationCourseLine) {
   return courseProducts.value.filter((product) => linkedProductIds.has(String(product.id)));
 }
 
+function productOptionGroupsForLine(line: RegistrationCourseLine) {
+  const options = productOptionsForLine(line);
+  const oneOnOne = options.filter((product) => product.teachingMode === 'ONE_ON_ONE');
+  const groupClass = options.filter((product) => product.teachingMode === 'GROUP');
+  const other = options.filter((product) => product.teachingMode !== 'ONE_ON_ONE' && product.teachingMode !== 'GROUP');
+  return [
+    { label: 'Group class', value: 'group', options: groupClass },
+    { label: '1 on 1', value: 'one-on-one', options: oneOnOne },
+    { label: 'Other', value: 'other', options: other },
+  ].filter((group) => group.options.length > 0);
+}
+
 function classOptionsForLine(line: RegistrationCourseLine) {
   if (!line.courseProductId) {
     return [];
@@ -1447,7 +1489,7 @@ function detailSelectPlaceholder(line: RegistrationCourseLine) {
   if (!line.gradeBand) {
     return 'Select grade first';
   }
-  return optionChoicesForLine(line).length > 0 ? 'Registration duration' : 'No duration options';
+  return optionChoicesForLine(line).length > 0 ? 'Select tuition option' : 'No tuition option';
 }
 
 function courseLineHint(line: RegistrationCourseLine) {
@@ -1463,7 +1505,9 @@ function courseLineHint(line: RegistrationCourseLine) {
   }
   if (!line.coursePriceOptionId) {
     return optionChoicesForLine(line).length > 0
-      ? 'Select a grade and duration price row.'
+      ? isOneOnOneLine(line)
+        ? 'Select a grade and tuition option.'
+        : 'Select a grade.'
       : 'Course pricing is missing for this product.';
   }
   return 'Detail will appear here.';
@@ -1510,44 +1554,48 @@ function printCourseProductLabel(line: RegistrationCourseLine) {
 function printCourseScheduleLabel(line: RegistrationCourseLine) {
   const option = findOption(line.coursePriceOptionId);
   return [
-    line.durationLabel || option?.durationLabel,
-    line.periodLabel || option?.periodLabel,
-    line.timeSlotLabel || option?.timeSlotLabel,
+    option?.periodLabel || line.periodLabel,
+    option?.timeSlotLabel || line.timeSlotLabel,
   ].filter(Boolean).join(' · ') || line.detail || '—';
 }
 
-function showGroupDurationInput(line: RegistrationCourseLine) {
-  return Boolean(line.coursePriceOptionId) && !isOneOnOneLine(line);
+function showDurationInput(line: RegistrationCourseLine) {
+  return Boolean(line.coursePriceOptionId);
 }
 
-function groupDurationInputLabel(line: RegistrationCourseLine) {
-  return line.groupBillingType === 'MONTHLY' ? 'Registration months' : 'Purchased sessions';
-}
-
-function printGroupDurationLabel(line: RegistrationCourseLine) {
-  if (line.groupBillingType === 'MONTHLY') {
-    const months = groupRegistrationMonthCount(line);
-    return months > 0 && line.groupRegistrationStartMonth && line.groupRegistrationEndMonth
-      ? `${line.groupRegistrationStartMonth} to ${line.groupRegistrationEndMonth} (${months} months)`
-      : '—';
+function printRegistrationDurationLabel(line: RegistrationCourseLine) {
+  if (isOneOnOneLine(line)) {
+    return line.oneOnOneHours ? `${formatHours(line.oneOnOneHours)} hours` : '—';
   }
-  return line.groupSessionCount ? `${line.groupSessionCount} sessions` : '—';
+  return line.groupPurchasedMonths ? `${line.groupPurchasedMonths} months` : '—';
 }
 
-function groupRegistrationMonthCount(line: RegistrationCourseLine) {
-  const start = monthIndex(line.groupRegistrationStartMonth);
-  const end = monthIndex(line.groupRegistrationEndMonth);
-  return start === undefined || end === undefined || end < start ? 0 : end - start + 1;
+function printTuitionOptionLabel(line: RegistrationCourseLine) {
+  const option = findOption(line.coursePriceOptionId);
+  return option ? durationOptionLabel(option) : '—';
 }
 
-function monthWithinRange(value: string | undefined, line: RegistrationCourseLine) {
-  const current = monthIndex(value);
-  const start = monthIndex(line.groupStartMonth);
-  const end = monthIndex(line.groupEndMonth);
-  if (current === undefined || start === undefined || end === undefined) {
-    return false;
+function printScheduleSummaryLabel(line: RegistrationCourseLine) {
+  if (isOneOnOneLine(line)) {
+    return printTeacherOrClassLabel(line);
   }
-  return current >= start && current <= end;
+  const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
+  if (!classGroup) {
+    return line.className || line.timeSlotLabel || '—';
+  }
+  return [classGroup.teacherName, classGroup.scheduleDesc].filter(Boolean).join(' / ')
+    || classGroup.className
+    || '—';
+}
+
+function durationModeForMonths(months?: number): '2' | '6' | '10' | 'CUSTOM' {
+  return months === 2 || months === 6 || months === 10 ? String(months) as '2' | '6' | '10' : 'CUSTOM';
+}
+
+function groupMonthCountFromSnapshot(item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number]) {
+  const start = monthIndex(getString(item, 'startMonth'));
+  const end = monthIndex(getString(item, 'endMonth'));
+  return start === undefined || end === undefined || end < start ? undefined : end - start + 1;
 }
 
 function printTeacherOrClassLabel(line: RegistrationCourseLine) {
@@ -1560,14 +1608,7 @@ function printTeacherOrClassLabel(line: RegistrationCourseLine) {
 
 function durationOptionLabel(option: CoursePriceOptionItem) {
   if (option.courseType !== 'ONE_ON_ONE') {
-    const billing = option.groupBillingType === 'MONTHLY'
-      ? [option.groupStartMonth, option.groupEndMonth].filter(Boolean).join(' to ') || 'Monthly'
-      : option.groupTotalSessions ? `${option.groupTotalSessions} total sessions` : 'Per session';
-    return [
-      billing,
-      option.periodLabel,
-      option.timeSlotLabel,
-    ].filter(Boolean).join(' · ') || option.detailText;
+    return option.groupTotalSessions ? `${option.groupTotalSessions} total sessions` : 'Class tuition';
   }
   return [
     option.durationLabel,
@@ -1698,10 +1739,6 @@ function validateForm() {
   if (!form.handledByName.trim()) {
     errors.push('Handled by is required.');
   }
-  if (form.periodStartDate && form.periodEndDate
-      && Date.parse(form.periodEndDate) < Date.parse(form.periodStartDate)) {
-    errors.push('Registration period end date cannot be earlier than start date.');
-  }
   if (form.student.pickupRequired && !form.student.pickupAddress.trim()) {
     errors.push('Pick up address is required when Pick up is checked.');
   }
@@ -1726,18 +1763,20 @@ function validateForm() {
       errors.push(`${label}: select a course.`);
     }
     if (!line.coursePriceOptionId) {
-      errors.push(`${label}: select a grade and duration price row.`);
+      errors.push(isOneOnOneLine(line)
+        ? `${label}: select a grade and tuition option.`
+        : `${label}: select a grade with configured monthly pricing.`);
     }
     if (!line.detail.trim()) {
       errors.push(`${label}: course detail is missing. Reselect the course option.`);
     }
-    const groupDurationInvalid = validateGroupDuration(line, label, errors);
-    if (!groupDurationInvalid && (line.originalPriceAmount === undefined || line.originalPriceAmount <= 0)) {
+    const durationInvalid = validateRegistrationDuration(line, label, errors);
+    if (!durationInvalid && (line.originalPriceAmount === undefined || line.originalPriceAmount <= 0)) {
       if (!line.manualPriceOverride || line.priceAmount <= 0 || !line.remark?.trim()) {
         errors.push(`${label}: configured price is missing. Enter a manual price and reason, or ask an administrator to update the course price.`);
       }
     }
-    if (!groupDurationInvalid && line.priceAmount <= 0) {
+    if (!durationInvalid && line.priceAmount <= 0) {
       errors.push(`${label}: price must be greater than zero.`);
     }
     if (line.manualPriceOverride && !line.remark?.trim()) {
@@ -1766,47 +1805,23 @@ function validateForm() {
   return errors;
 }
 
-function validateGroupDuration(line: RegistrationCourseLine, label: string, errors: string[]) {
-  if (isOneOnOneLine(line) || !line.coursePriceOptionId) {
+function validateRegistrationDuration(line: RegistrationCourseLine, label: string, errors: string[]) {
+  if (!line.coursePriceOptionId) {
     return false;
   }
-  let invalid = false;
-  if (line.groupBillingType === 'MONTHLY') {
-    const start = monthIndex(line.groupRegistrationStartMonth);
-    const end = monthIndex(line.groupRegistrationEndMonth);
-    const classStart = monthIndex(line.groupStartMonth);
-    const classEnd = monthIndex(line.groupEndMonth);
-    if (classStart === undefined || classEnd === undefined) {
-      errors.push(`${label}: class dates are missing. Ask an administrator to update the course setup.`);
-      invalid = true;
-    }
-    if (start === undefined || end === undefined) {
-      errors.push(`${label}: select registration start month and end month.`);
-      invalid = true;
-    }
-    if (start !== undefined && end !== undefined && end < start) {
-      errors.push(`${label}: registration end month cannot be earlier than start month.`);
-      invalid = true;
-    }
-    if (start !== undefined && classStart !== undefined && start < classStart) {
-      errors.push(`${label}: registration start month cannot be earlier than the grade class start month.`);
-      invalid = true;
-    }
-    if (end !== undefined && classEnd !== undefined && end > classEnd) {
-      errors.push(`${label}: registration end month cannot exceed the grade class end month.`);
-      invalid = true;
+  if (isOneOnOneLine(line)) {
+    const hours = numeric(line.oneOnOneHours);
+    const invalid = hours < 0.5 || hours > 400 || !Number.isInteger(hours * 2);
+    if (invalid) {
+      errors.push(`${label}: enter 0.5 to 400 hours using 0.5-hour increments.`);
     }
     return invalid;
   }
 
-  const sessions = Math.trunc(numeric(line.groupSessionCount));
-  if (sessions < 1) {
-    errors.push(`${label}: enter purchased sessions on the registration form.`);
-    invalid = true;
-  }
-  if (line.groupTotalSessions && sessions > line.groupTotalSessions) {
-    errors.push(`${label}: purchased sessions cannot exceed the grade class total sessions.`);
-    invalid = true;
+  const months = numeric(line.groupPurchasedMonths);
+  const invalid = months < 1 || months > 36 || !Number.isInteger(months);
+  if (invalid) {
+    errors.push(`${label}: select 2, 6, 10, or enter 1 to 36 months.`);
   }
   return invalid;
 }
@@ -1840,8 +1855,6 @@ function buildPayload(): RegistrationIntakePayload {
     campusId: campus?.campusId,
     campusName: campus?.campusName,
     signupDate: form.signupDate,
-    periodStartDate: form.periodStartDate || undefined,
-    periodEndDate: form.periodEndDate || undefined,
     handledByName: form.handledByName.trim(),
     currencyCode: 'USD',
     items: courseLines.value.map((line, index) => ({
@@ -1861,12 +1874,7 @@ function buildPayload(): RegistrationIntakePayload {
       oneOnOneHours: isOneOnOneLine(line) ? line.oneOnOneHours : undefined,
       oneOnOneUnits: isOneOnOneLine(line) ? line.oneOnOneUnits : undefined,
       teacherId: isOneOnOneLine(line) ? line.teacherId : undefined,
-      sessions: !isOneOnOneLine(line) && line.groupBillingType !== 'MONTHLY'
-        ? line.groupSessionCount : undefined,
-      startMonth: !isOneOnOneLine(line) && line.groupBillingType === 'MONTHLY'
-        ? line.groupRegistrationStartMonth : undefined,
-      endMonth: !isOneOnOneLine(line) && line.groupBillingType === 'MONTHLY'
-        ? line.groupRegistrationEndMonth : undefined,
+      purchasedMonths: !isOneOnOneLine(line) ? line.groupPurchasedMonths : undefined,
       remark: line.remark,
     })),
     pickupFeeCharged: form.pickupFeeCharged,
@@ -1912,8 +1920,6 @@ function buildMoneyPayload(lines: MoneyLine[]) {
 function resetForNextRegistration() {
   validationErrors.value = [];
   form.signupDate = formatDate(new Date());
-  form.periodStartDate = '';
-  form.periodEndDate = '';
   form.pickupFeeCharged = false;
   form.pickupFeeAmount = 0;
   form.dropoffFeeCharged = false;
@@ -2412,33 +2418,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   gap: 46px;
 }
 
-.signup-period-line {
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 34px;
-}
-
 .two-col-line label {
   min-width: 0;
 }
 
 .line-input,
-.line-date,
-.period-line {
+.line-date {
   flex: 1;
   min-width: 0;
-}
-
-.period-line {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-}
-
-.period-separator {
-  color: #111;
-  font-weight: 700;
-  line-height: 1;
 }
 
 .reuse-tag {
@@ -2635,6 +2622,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   overflow-wrap: anywhere;
 }
 
+.printed-student-name {
+  display: none;
+  flex: 1;
+  min-height: 28px;
+  padding: 0 4px;
+  border-bottom: 2px solid #111;
+  color: #111;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 28px;
+}
+
 .receipt-course-display,
 .receipt-course-detail {
   color: #111;
@@ -2687,6 +2686,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   gap: 10px;
 }
 
+.detail-row--group {
+  grid-template-columns: minmax(120px, 0.8fr) minmax(150px, 1fr);
+}
+
 .teacher-class-line {
   display: grid;
   gap: 4px;
@@ -2698,24 +2701,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   min-width: 0;
 }
 
-.group-month-range {
+.group-duration-picker {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   min-width: 0;
 }
 
-.group-month-range :deep(.el-date-editor) {
+.group-duration-picker :deep(.el-select),
+.group-duration-picker :deep(.el-input-number) {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-}
-
-.group-month-range > span {
-  color: #6b7280;
-  font-size: 11px;
-  font-weight: 700;
 }
 
 .course-control > span {
@@ -2766,6 +2763,57 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 :deep(.table-select .el-select__placeholder),
 :deep(.table-select .el-select__selected-item) {
   font-size: 13px;
+}
+
+:deep(.course-product-group) {
+  margin: 6px 8px;
+  overflow: hidden;
+  border: 1px solid #d8dee8;
+  border-radius: 6px;
+  background: #fff;
+}
+
+:deep(.course-product-group + .course-product-group) {
+  margin-top: 10px;
+}
+
+:deep(.course-product-group .el-select-group__title) {
+  height: 28px;
+  padding: 0 10px;
+  border-bottom: 1px solid #d8dee8;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 28px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+:deep(.course-product-group--group .el-select-group__title) {
+  background: #eef6ff;
+  color: #1d4ed8;
+}
+
+:deep(.course-product-group--one-on-one .el-select-group__title) {
+  background: #f4f7f2;
+  color: #3f6212;
+}
+
+:deep(.course-product-group--other .el-select-group__title) {
+  background: #f8fafc;
+}
+
+:deep(.course-product-option) {
+  height: auto;
+  min-height: 36px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #eef2f7;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+:deep(.course-product-option:last-child) {
+  border-bottom: none;
 }
 
 .price-option-row {
@@ -3084,11 +3132,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
-.policies-and-zelle {
-  display: grid;
-  grid-template-columns: 1fr 176px;
-  gap: 34px;
-  align-items: end;
+.policies {
   margin-top: 12px;
 }
 
@@ -3105,20 +3149,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .policy-copy strong {
   font-size: 13px;
-}
-
-.zelle-placeholder {
-  width: 126px;
-  height: 126px;
-  margin: 0 auto 18px;
-  border: 13px solid #050505;
-  border-radius: 18px;
-  box-shadow:
-    -6px 0 0 #f59e0b,
-    6px 0 0 #06b6d4,
-    0 -6px 0 #7c3aed,
-    0 6px 0 #ef4444;
-  background: #fff;
 }
 
 .submit-bar {
@@ -3349,8 +3379,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
+@page {
+  size: Letter portrait;
+  margin: 0.3in;
+}
+
 @media print {
   .no-print,
+  .screen-only,
   .submit-bar,
   .validation-alert,
   button,
@@ -3363,6 +3399,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   .registration-page {
     background: #fff;
     padding: 0;
+    color: #111;
+    print-color-adjust: exact;
   }
 
   .paper-form {
@@ -3370,6 +3408,130 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     min-height: auto;
     box-shadow: none;
     padding: 0;
+    font-size: 11.5px;
+  }
+
+  .form-header {
+    min-height: 48px;
+    padding-right: 84px;
+  }
+
+  .form-title-block h1 {
+    font-size: 20px;
+  }
+
+  .form-title-block h2 {
+    margin-top: 2px;
+    font-size: 11px;
+  }
+
+  .form-logo {
+    top: 0;
+    right: 0;
+    width: 70px;
+    height: 70px;
+  }
+
+  .form-tax-id {
+    top: 72px;
+    right: 0;
+    min-width: 70px;
+    font-size: 10px;
+  }
+
+  .contact-block {
+    margin-top: 2px;
+    font-size: 10px;
+    line-height: 1.15;
+  }
+
+  .contact-block strong {
+    margin-bottom: 2px;
+    font-size: 11px;
+  }
+
+  .phone-line {
+    margin-bottom: 1px;
+  }
+
+  .campus-line {
+    display: flex;
+    min-height: 17px;
+  }
+
+  .campus-line input,
+  .address-line input {
+    width: 11px;
+    height: 11px;
+  }
+
+  .student-lines {
+    margin-top: 3px;
+    font-size: 11px;
+  }
+
+  .printed-student-name {
+    display: block !important;
+    min-height: 22px;
+    border-bottom-width: 1px;
+    font-size: 11px;
+    line-height: 22px;
+  }
+
+  .registration-help-icon {
+    display: none !important;
+  }
+
+  .full-line,
+  .two-col-line label,
+  .address-line,
+  .payment-line {
+    min-height: 25px;
+    gap: 5px;
+  }
+
+  .two-col-line {
+    gap: 20px;
+  }
+
+  :deep(.line-input .el-input__inner),
+  :deep(.line-date .el-input__inner) {
+    font-size: 11px;
+  }
+
+  :deep(.line-input .el-input__wrapper),
+  :deep(.line-date .el-input__wrapper) {
+    min-height: 22px;
+    padding: 0 3px;
+    border-bottom-width: 1px;
+  }
+
+  .paper-payment-summary {
+    min-height: 22px;
+    padding: 0 3px;
+    border-bottom-width: 1px;
+    font-size: 11px;
+  }
+
+  .payment-history {
+    gap: 2px;
+    margin-top: 2px;
+    padding: 3px 0;
+    font-size: 9px;
+  }
+
+  .course-table-wrap {
+    margin-top: 8px;
+  }
+
+  .course-table {
+    font-size: 10.5px;
+  }
+
+  .course-table th {
+    height: 24px;
+    font-size: 10.5px;
+    font-weight: 700;
   }
 
   .course-table .el-select,
@@ -3386,7 +3548,87 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
   .course-table .course-entry-row td {
     height: auto;
-    padding: 7px;
+    min-height: 48px;
+    padding: 7px 8px;
+    vertical-align: middle;
+  }
+
+  .course-table .course-entry-row {
+    break-inside: avoid;
+  }
+
+  .print-course-value,
+  .print-course-price {
+    font-size: 10.5px;
+    line-height: 1.3;
+  }
+
+  .print-course-price {
+    padding-top: 2px;
+    text-align: right;
+  }
+
+  .course-table .print-course-summary {
+    display: grid !important;
+    grid-template-columns: 0.55fr 0.65fr 0.8fr minmax(0, 1.7fr);
+    gap: 4px 12px;
+    align-items: start;
+  }
+
+  .print-course-summary > div {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .print-course-summary span {
+    color: #64748b;
+    font-size: 7.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .print-course-summary strong {
+    min-width: 0;
+    font-size: 10px;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .course-table th:nth-child(1),
+  .course-table td:nth-child(1) {
+    width: 28%;
+  }
+
+  .course-table th:nth-child(2),
+  .course-table td:nth-child(2) {
+    width: 58%;
+  }
+
+  .course-table th:nth-child(3),
+  .course-table td:nth-child(3) {
+    width: 14%;
+  }
+
+  .receipt-course-detail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2px 8px;
+    font-size: 9px;
+    line-height: 1.2;
+  }
+
+  .receipt-course-detail > div {
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .receipt-course-detail span,
+  .receipt-course-detail p {
+    font-size: 8px;
+  }
+
+  .receipt-course-detail p {
+    display: none;
   }
 
   .course-table .detail-row {
@@ -3404,12 +3646,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   .receipt-financial-summary {
     display: grid !important;
     grid-template-columns: 1.1fr 0.9fr 1fr;
-    gap: 12px;
-    margin: 10px 0;
+    gap: 10px;
+    margin: 8px 0 6px;
     padding: 8px 10px;
     border: 1px solid #334155;
     color: #111;
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .receipt-financial-summary__column {
@@ -3420,13 +3662,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 
   .receipt-financial-summary__column + .receipt-financial-summary__column {
-    padding-left: 12px;
+    padding-left: 8px;
     border-left: 1px solid #cbd5e1;
   }
 
   .receipt-financial-summary__column > strong {
     margin-bottom: 2px;
-    font-size: 12px;
+    font-size: 10.5px;
   }
 
   .receipt-financial-summary__row {
@@ -3449,7 +3691,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     margin-top: 2px;
     padding-top: 3px;
     border-top: 1px solid #94a3b8;
-    font-size: 12px;
+    font-size: 10.5px;
+  }
+
+  .policies {
+    margin-top: 8px;
+    break-inside: avoid;
+  }
+
+  .policy-copy {
+    min-height: 0;
+    font-size: 8.4px;
+    line-height: 1.12;
+  }
+
+  .policy-copy strong {
+    font-size: 8.5px;
   }
 
 }

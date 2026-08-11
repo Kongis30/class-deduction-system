@@ -1,7 +1,6 @@
 package com.classdeduction.system.modules.enrollment.service;
 
 import com.classdeduction.system.common.model.PageResponse;
-import com.classdeduction.system.modules.enrollment.dto.ClassEnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
@@ -42,11 +41,6 @@ public interface EnrollmentOrderService {
      * 退款：记录退款流水并更新订单财务快照；全额退款会同时取消报名产物。
      */
     ReceiptRecordVO refundOrder(Long id, RefundRequest request);
-
-    /**
-     * 创建班课报名订单。
-     */
-    void createClassEnrollmentOrder(ClassEnrollmentCreateRequest request);
 
     /**
      * 删除误创建且未付款、未上课的报名订单（软删除）。

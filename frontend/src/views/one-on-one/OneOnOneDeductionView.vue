@@ -116,31 +116,46 @@
               </el-button>
             </div>
           </div>
-          <div v-if="visiblePackageCandidates.length" class="oo-package-list">
-            <button
-              v-for="candidate in visiblePackageCandidates"
-              :key="candidate.pkg.packageId"
-              type="button"
-              class="oo-package-item"
-              :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
-              @click="selectCandidatePackage(candidate)"
+          <div v-if="visibleStudentGroups.length" class="oo-package-list">
+            <section
+              v-for="group in visibleStudentGroups"
+              :key="group.studentKey"
+              class="oo-student-group"
             >
-              <strong>{{ candidate.student.studentName }}</strong>
-              <span>{{ candidate.pkg.packageName }}</span>
-              <small>{{ candidate.teacher.teacherName || 'Unassigned' }} · {{ formatHours(candidate.pkg.remainingUnits) }}h remaining</small>
-            </button>
+              <button
+                type="button"
+                class="oo-student-group__toggle"
+                :class="{ 'oo-student-group__toggle--open': expandedStudentKey === group.studentKey }"
+                @click="toggleStudentGroup(group.studentKey)"
+              >
+                <strong>{{ group.studentName }}</strong>
+                <span aria-hidden="true">›</span>
+              </button>
+              <div v-if="expandedStudentKey === group.studentKey" class="oo-student-group__packages">
+                <button
+                  v-for="candidate in group.candidates"
+                  :key="candidate.pkg.packageId"
+                  type="button"
+                  class="oo-package-item"
+                  :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
+                  @click="selectCandidatePackage(candidate)"
+                >
+                  {{ candidate.pkg.packageName }}
+                </button>
+              </div>
+            </section>
           </div>
           <div v-else class="oo-empty empty-state">
             {{ candidateEmptyMessage }}
           </div>
           <el-pagination
-            v-if="filteredPackageCandidates.length > packagePageSize"
+            v-if="studentPackageGroups.length > packagePageSize"
             v-model:current-page="packagePage"
             class="oo-package-pagination"
             small
             layout="prev, pager, next"
             :page-size="packagePageSize"
-            :total="filteredPackageCandidates.length"
+            :total="studentPackageGroups.length"
           />
         </aside>
 
@@ -213,7 +228,7 @@
               type="primary"
               @click="openAssignmentDialog(nextArrangementLesson)"
             >
-              Set teacher & room
+              Set teacher
             </el-button>
             <el-button
               v-else-if="nextActionLesson && canConfirmLessons"
@@ -306,8 +321,14 @@
                     size="small"
                     @click="openAssignmentDialog(row)"
                   >
-                    Set teacher & room
+                    Set teacher
                   </el-button>
+                  <span
+                    v-if="needsLessonResources(row)"
+                    class="oo-action-reason"
+                  >
+                    Teacher required before deduction.
+                  </span>
                   <el-button
                     v-else-if="canAdminConfirm(row)"
                     class="action-primary"
@@ -425,9 +446,9 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="assignmentDialogVisible" title="Assign Teacher & Classroom" width="480px" :close-on-click-modal="false" class="no-print">
+    <el-dialog v-model="assignmentDialogVisible" title="Assign Teacher" width="480px" :close-on-click-modal="false" class="no-print">
       <p class="oo-form-hint">
-        Set the teacher and classroom for this lesson. Students will see the update on their calendar.
+        A teacher is required. The classroom is optional.
       </p>
       <el-form label-width="100px">
         <el-form-item label="Teacher" required>
@@ -435,8 +456,8 @@
             <el-option v-for="teacher in teacherOptions" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Classroom" required>
-          <el-select v-model="assignmentForm.classroomId" filterable placeholder="Select classroom" style="width: 100%">
+        <el-form-item label="Classroom">
+          <el-select v-model="assignmentForm.classroomId" filterable clearable placeholder="Optional" style="width: 100%">
             <el-option v-for="classroom in classrooms" :key="classroom.id" :label="classroom.roomName" :value="classroom.id" />
           </el-select>
         </el-form-item>
@@ -472,6 +493,12 @@ interface PackageCandidate {
   gradeKey: string;
 }
 
+interface StudentPackageGroup {
+  studentKey: string;
+  studentName: string;
+  candidates: PackageCandidate[];
+}
+
 interface StudentEntry {
   teacher: OneOnOneTeacher;
   student: OneOnOneStudent;
@@ -504,6 +531,7 @@ const studentSearchResults = ref<StudentEntry[]>([]);
 const packagePage = ref(1);
 const packagePageSize = 10;
 const packagePanelCollapsed = ref(false);
+const expandedStudentKey = ref('');
 
 const studentEntries = computed<StudentEntry[]>(() => teachers.value.flatMap(teacher =>
   teacher.students.map(student => ({ teacher, student })),
@@ -556,9 +584,25 @@ const filteredPackageCandidates = computed(() =>
     ? allPackageCandidates.value.filter(matchesCandidateFilters)
     : allPackageCandidates.value,
 );
-const visiblePackageCandidates = computed(() => {
+const studentPackageGroups = computed<StudentPackageGroup[]>(() => {
+  const groups = new Map<string, StudentPackageGroup>();
+  for (const candidate of filteredPackageCandidates.value) {
+    const existing = groups.get(candidate.studentKey);
+    if (existing) {
+      existing.candidates.push(candidate);
+      continue;
+    }
+    groups.set(candidate.studentKey, {
+      studentKey: candidate.studentKey,
+      studentName: candidate.student.studentName,
+      candidates: [candidate],
+    });
+  }
+  return Array.from(groups.values());
+});
+const visibleStudentGroups = computed(() => {
   const start = (packagePage.value - 1) * packagePageSize;
-  return filteredPackageCandidates.value.slice(start, start + packagePageSize);
+  return studentPackageGroups.value.slice(start, start + packagePageSize);
 });
 const candidateScopeLabel = computed(() => {
   if (!hasActiveFilters.value) return 'All active 1-on-1 student courses';
@@ -625,7 +669,7 @@ const workflowComplete = computed(() => !nextActionLesson.value
 const nextArrangementLesson = computed(() => {
   if (!canManageLessonResources.value) return null;
   return activePackage.value?.lessons.find(row =>
-    canAssignLessonResources(row) && (!row.plannedTeacherId || !row.plannedClassroomId),
+    canAssignLessonResources(row) && !row.plannedTeacherId,
   ) ?? null;
 });
 const nextActionLesson = computed(() => {
@@ -639,7 +683,7 @@ const nextActionMode = computed<'normal' | 'admin'>(() =>
 );
 const nextActionTitle = computed(() => {
   if (!activePackage.value) return 'Select a student sheet';
-  if (nextArrangementLesson.value) return 'Set teacher and room';
+  if (nextArrangementLesson.value) return 'Set teacher before deduction';
   if (nextActionLesson.value) {
     return nextActionMode.value === 'admin' ? 'Review lesson and deduct hours' : 'Submit lesson attendance';
   }
@@ -651,7 +695,7 @@ const nextActionHint = computed(() => {
   if (!activePackage.value) return 'Choose a course above to start.';
   if (nextArrangementLesson.value) {
     const row = nextArrangementLesson.value;
-    return `${formatDate(row.plannedStartAt)} ${formatTimeRange(row.plannedStartAt, row.plannedEndAt)} needs an arrangement before attendance can be submitted.`;
+    return `${formatDate(row.plannedStartAt)} ${formatTimeRange(row.plannedStartAt, row.plannedEndAt)} has no assigned teacher. Set a teacher before attendance or deduction can continue.`;
   }
   const row = nextActionLesson.value;
   if (!row) {
@@ -862,16 +906,22 @@ function selectCandidatePackage(candidate: PackageCandidate) {
   selectPackage(candidate.teacher, candidate.student, candidate.pkg);
 }
 
+function toggleStudentGroup(studentKey: string) {
+  expandedStudentKey.value = expandedStudentKey.value === studentKey ? '' : studentKey;
+}
+
 function selectPackage(teacher: OneOnOneTeacher, student: OneOnOneStudent, pkg: OneOnOnePackage) {
   activeTeacher.value = teacher;
   activeStudent.value = student;
   activePackage.value = pkg;
+  expandedStudentKey.value = entityKey(student.studentId);
 }
 
 function clearSelection() {
   activeTeacher.value = null;
   activeStudent.value = null;
   activePackage.value = null;
+  expandedStudentKey.value = '';
 }
 
 function canAdminConfirm(row: OneOnOneLesson) {
@@ -905,7 +955,7 @@ function canAssignLessonResources(row: OneOnOneLesson) {
 
 function needsLessonResources(row: OneOnOneLesson) {
   return canAssignLessonResources(row)
-    && (!row.plannedTeacherId || !row.plannedClassroomId);
+    && !row.plannedTeacherId;
 }
 
 function canAdjustLesson(row: OneOnOneLesson) {
@@ -951,8 +1001,8 @@ function findSelectableResourceId(
 }
 
 async function submitAssignment() {
-  if (!assignmentLesson.value || !assignmentForm.teacherId || !assignmentForm.classroomId) {
-    ElMessage.warning('Select both a teacher and a classroom.');
+  if (!assignmentLesson.value || !assignmentForm.teacherId) {
+    ElMessage.warning('Select a teacher.');
     return;
   }
 
@@ -1470,42 +1520,78 @@ onMounted(async () => {
   border-top: 1px solid #e2e8f0;
 }
 
-.oo-package-item {
-  padding: 10px;
+.oo-student-group {
+  overflow: hidden;
   border: 1px solid #e2e8f0;
   border-radius: 5px;
   background: #fff;
+}
+
+.oo-student-group__toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  background: transparent;
   color: #102a43;
   cursor: pointer;
   text-align: left;
+}
+
+.oo-student-group__toggle:hover,
+.oo-student-group__toggle--open {
+  background: #f8fafc;
+}
+
+.oo-student-group__toggle strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-student-group__toggle span {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.oo-student-group__toggle--open span {
+  transform: rotate(90deg);
+}
+
+.oo-student-group__packages {
+  display: grid;
+  gap: 4px;
+  padding: 5px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.oo-package-item {
+  padding: 7px 8px;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #334155;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .oo-package-item:hover,
 .oo-package-item--active {
   border-color: #60a5fa;
   background: #f0f7ff;
-}
-
-.oo-package-item strong,
-.oo-package-item span,
-.oo-package-item small {
-  display: block;
-}
-
-.oo-package-item strong {
-  font-size: 13px;
-}
-
-.oo-package-item span {
-  margin-top: 3px;
-  color: #334155;
-  font-size: 12px;
-}
-
-.oo-package-item small {
-  margin-top: 4px;
-  color: #64748b;
-  font-size: 11px;
+  color: #1d4ed8;
 }
 
 .oo-record-panel {
@@ -1729,6 +1815,15 @@ onMounted(async () => {
   color: #94a3b8;
   font-size: 12px;
   line-height: 1.35;
+}
+
+.oo-action-reason {
+  max-width: 110px;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 :deep(.oo-row--next) {

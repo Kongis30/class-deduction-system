@@ -12,6 +12,7 @@ import java.time.LocalTime;
 @Schema(description = "Recurring schedule slot response")
 public record RecurringScheduleSlotVO(
         Long id,
+        Long teacherId,
         Integer weekday,
         LocalTime startTime,
         LocalTime endTime,

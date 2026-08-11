@@ -237,7 +237,6 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Map<Long, CourseProductEntity> products = productIds.isEmpty() ? Collections.emptyMap()
                 : courseProductMapper.selectBatchIds(productIds).stream()
                         .collect(Collectors.toMap(CourseProductEntity::getId, Function.identity()));
-        products.values().stream().map(CourseProductEntity::getDefaultTeacherId).filter(Objects::nonNull).forEach(teacherIds::add);
 
         Map<Long, PackageTeacherAssignmentEntity> primaryAssignments = packageIds.isEmpty() ? Collections.emptyMap()
                 : packageTeacherAssignmentMapper.selectList(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
@@ -306,8 +305,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
         Long teacherId = firstNonNull(item == null ? null : item.getTeacherId(),
                 coursePackage == null ? null : teacherIdByPackage(coursePackage.getId(), context),
-                classGroup == null ? null : classGroup.getTeacherId(),
-                product == null ? null : product.getDefaultTeacherId());
+                classGroup == null ? null : classGroup.getTeacherId());
         TeacherEntity teacher = teacherId == null ? null : context.teachers().get(teacherId);
 
         String courseType = firstText(item == null ? null : item.getCourseType(),

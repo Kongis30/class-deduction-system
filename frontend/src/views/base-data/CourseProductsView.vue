@@ -83,15 +83,6 @@
                 <div class="cell-stack">
                   <strong class="product-title">
                     {{ row.productName }}
-                    <el-tooltip
-                      :content="billingTypeDescription(row.billingType)"
-                      placement="top"
-                    >
-                      <span :class="['class-type-badge', classTypeClass(row.billingType)]">
-                        <span class="class-type-badge__icon">{{ classTypeInitial(row.billingType) }}</span>
-                        {{ classTypeLabel(row.billingType) }}
-                      </span>
-                    </el-tooltip>
                   </strong>
                   <span>
                     {{ row.defaultTotalUnits }} hours · {{ row.registerClass || row.subjectName || 'No display label' }}
@@ -631,16 +622,8 @@ const form = reactive<CourseProductSavePayload>({
   teachingMode: 'GROUP',
   defaultTotalUnits: 40,
   defaultLessonUnits: 4,
-  billingType: 'PER_SESSION',
-  startDate: undefined,
-  totalSessions: undefined,
-  startMonth: undefined,
-  endMonth: undefined,
-  defaultClassroomId: undefined,
-  defaultTeacherId: undefined,
   status: 'ACTIVE',
   notes: '',
-  slots: [],
 });
 
 const defaultLessonHours = computed({
@@ -681,16 +664,8 @@ function openProductDialog(row?: CourseProductItem) {
       teachingMode: row.teachingMode,
       defaultTotalUnits: row.defaultTotalUnits,
       defaultLessonUnits: row.defaultLessonUnits,
-      billingType: row.billingType ?? 'PER_SESSION',
-      startDate: row.startDate ?? undefined,
-      totalSessions: row.totalSessions ?? undefined,
-      startMonth: row.startMonth ?? undefined,
-      endMonth: row.endMonth ?? undefined,
-      defaultClassroomId: row.defaultClassroomId ?? undefined,
-      defaultTeacherId: row.defaultTeacherId ?? undefined,
       status: row.status,
       notes: row.notes ?? '',
-      slots: row.slots ? row.slots.map(s => ({ weekday: s.weekday, startTime: s.startTime, endTime: s.endTime })) : [],
     });
 
   } else {
@@ -704,16 +679,8 @@ function openProductDialog(row?: CourseProductItem) {
       teachingMode: mode,
       defaultTotalUnits: 40,
       defaultLessonUnits: 4,
-      billingType: 'PER_SESSION',
-      startDate: undefined,
-      totalSessions: undefined,
-      startMonth: undefined,
-      endMonth: undefined,
-      defaultClassroomId: undefined,
-      defaultTeacherId: undefined,
       status: 'ACTIVE',
       notes: '',
-      slots: [],
     });
   }
   dialogVisible.value = true;
@@ -736,9 +703,6 @@ async function handleSubmit() {
       teachingMode: form.teachingMode,
       status: form.status,
       notes: form.notes,
-      // Older local servers still validate this legacy field. Pricing remains
-      // exclusively controlled by the price matrix, so send its neutral value.
-      listPrice: 0,
     };
     if (form.teachingMode === 'ONE_ON_ONE') {
       payload.defaultTotalUnits = form.defaultTotalUnits;
@@ -795,25 +759,6 @@ async function handleDelete(row: CourseProductItem) {
 
 function formatCourseType(type?: string): string {
   return type ? courseTypeOptions.find(item => item.value === type)?.label ?? 'Unclassified' : 'Any group type';
-}
-
-function classTypeInitial(billingType?: string): string {
-  return billingType === 'MONTHLY' ? 'M' : 'S';
-}
-
-function classTypeLabel(billingType?: string): string {
-  return billingType === 'MONTHLY' ? 'Monthly' : 'Per session';
-}
-
-function classTypeClass(billingType?: string): string {
-  return billingType === 'MONTHLY' ? 'class-type-badge--monthly' : 'class-type-badge--session';
-}
-
-function billingTypeDescription(billingType?: string): string {
-  if (billingType === 'MONTHLY') {
-    return 'Monthly class: students enroll for a selected month range.';
-  }
-  return 'Per-session class: students buy a fixed number of class sessions.';
 }
 
 

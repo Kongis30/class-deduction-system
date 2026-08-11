@@ -21,7 +21,7 @@ test.describe('Acceptance - Navigation and button smoke', () => {
 
     await clickSidebarEntry(page, 'Data Summary');
     await expect(page).toHaveURL(/\/data-summary/);
-    await expect(page.getByText('Daily registration checks')).toBeVisible();
+    await expect(page.getByTestId('data-summary-workbook')).toBeVisible();
 
     await page.getByRole('button', { name: /Back office/ }).click();
     const backOfficeMenu = page.locator('.app-header__admin-tools-menu');

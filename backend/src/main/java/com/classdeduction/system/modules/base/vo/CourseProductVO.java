@@ -3,7 +3,6 @@ package com.classdeduction.system.modules.base.vo;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -22,32 +21,11 @@ public record CourseProductVO(
         String teachingMode,
         Integer defaultTotalUnits,
         Integer defaultLessonUnits,
-        String billingType,
-        String startDate,
-        Integer totalSessions,
-        String startMonth,
-        String endMonth,
-        Integer totalMonths,
-        Long defaultClassroomId,
-        String defaultClassroomName,
-        Long defaultTeacherId,
-        String defaultTeacherName,
-        BigDecimal listPrice,
         String status,
         String notes,
         Boolean referenced,
         Long referenceCount,
         List<String> referenceSources,
-        List<ProductScheduleSlotVO> slots,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
-) {
-
-    @Builder
-    public record ProductScheduleSlotVO(
-            Long id,
-            Integer weekday,
-            String startTime,
-            String endTime
-    ) {}
-}
+) {}

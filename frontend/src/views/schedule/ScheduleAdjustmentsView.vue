@@ -36,9 +36,6 @@
             @click="selectStudent(s.id)"
           >
             <div class="adj-sidebar__name">{{ s.studentName }}</div>
-            <div v-if="s.id && studentLastDates[s.id]" class="adj-sidebar__meta">
-              Last: {{ studentLastDates[s.id] }}
-            </div>
           </div>
           <div v-if="!studentsLoading && filteredStudents.length === 0" class="adj-sidebar__empty">
             No students found.
@@ -212,7 +209,6 @@
               @click="selectClassCourse(group.key)"
             >
               <span class="class-drill-card__main">{{ group.label }}</span>
-              <span class="class-drill-card__meta">{{ group.classCount }} class(es) · {{ group.studentCount }} students</span>
             </button>
           </div>
 
@@ -228,7 +224,6 @@
               @click="selectClassGrade(group.key)"
             >
               <span class="class-drill-card__main">{{ group.label }}</span>
-              <span class="class-drill-card__meta">{{ group.classCount }} class(es) · {{ group.studentCount }} students</span>
             </button>
           </div>
 
@@ -250,7 +245,6 @@
                   {{ slot }}
                 </span>
               </span>
-              <span class="adj-sidebar__meta">{{ classTimeSlotMeta(clz) }}</span>
             </button>
           </div>
 
@@ -456,7 +450,7 @@
       />
       <el-form ref="classScheduleFormRef" :model="classScheduleForm" :rules="classScheduleFormRules" label-width="110px">
         <div class="class-schedule-form-grid">
-          <el-form-item label="Teacher">
+          <el-form-item label="Default teacher">
             <el-select v-model="classScheduleForm.teacherId" placeholder="No default teacher" clearable filterable style="width: 100%;">
               <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
             </el-select>
@@ -470,6 +464,18 @@
         <el-form-item label="Weekly Times" prop="slots">
           <WeeklyTimeSelector v-model="classScheduleForm.slots" hide-hint />
         </el-form-item>
+        <div v-if="classScheduleForm.slots.length > 0" class="class-slot-teacher-list">
+          <div
+            v-for="(slot, index) in classScheduleForm.slots"
+            :key="`${slot.weekday}-${slot.startTime}-${index}`"
+            class="class-slot-teacher-row"
+          >
+            <span>{{ classScheduleSlotLabel(slot) }}</span>
+            <el-select v-model="slot.teacherId" clearable filterable placeholder="Use default teacher">
+              <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+            </el-select>
+          </div>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="classScheduleDialogVisible = false">Cancel</el-button>
@@ -726,7 +732,6 @@ const occurrencesLoading = ref(false);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 
 
-const studentLastDates = reactive<Record<string, string>>({});
 const packageLastDates = reactive<Record<string, string>>({});
 
 const occurrenceCounts = reactive<Record<string, number>>({});
@@ -798,8 +803,6 @@ const filteredClasses = computed(() => {
 type ClassGroupSummary = {
   key: string;
   label: string;
-  classCount: number;
-  studentCount: number;
 };
 
 const classCourseGroups = computed(() =>
@@ -1036,7 +1039,6 @@ async function computeLastDates(studentId: EntityId) {
 
     const byPkg = new Map<string, string>();
     const counts = new Map<string, number>();
-    let studentLast = '';
     for (const occ of allOccs) {
       if (!occ.packageId) continue;
       const packageKey = String(occ.packageId);
@@ -1045,13 +1047,9 @@ async function computeLastDates(studentId: EntityId) {
         byPkg.set(packageKey, date);
       }
       counts.set(packageKey, (counts.get(packageKey) ?? 0) + 1);
-      if (!studentLast || occ.plannedStartAt > studentLast) {
-        studentLast = occ.plannedStartAt;
-      }
     }
     byPkg.forEach((v, k) => { packageLastDates[k] = v; });
     counts.forEach((v, k) => { occurrenceCounts[k] = v; });
-    studentLastDates[studentId] = studentLast ? dayjs(studentLast).format('MM/DD') : '';
   } catch {
     // ignore
   }
@@ -1120,15 +1118,11 @@ function summarizeClassGroups(
     const key = keyGetter(clz);
     const existing = map.get(key);
     if (existing) {
-      existing.classCount += 1;
-      existing.studentCount += clz.activeStudentCount ?? 0;
       return;
     }
     map.set(key, {
       key,
       label: labelGetter(clz),
-      classCount: 1,
-      studentCount: clz.activeStudentCount ?? 0,
     });
   });
   return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
@@ -1172,12 +1166,6 @@ function classTimeSlotLabels(clz: ClassGroupItem) {
   }
   return slots
     .map(slot => `${weekdayLabels[slot.weekday] ?? 'Day'} ${slot.startTime.slice(0, 5)}-${slot.endTime.slice(0, 5)}`);
-}
-
-function classTimeSlotMeta(clz: ClassGroupItem) {
-  const teacher = clz.teacherName || 'Teacher not set';
-  const room = clz.classroomName || 'Room not set';
-  return `${teacher} · ${room} · ${clz.activeStudentCount ?? 0} students`;
 }
 
 function openStudentProfile(row: ClassEnrolledStudentItem) {
@@ -1415,7 +1403,7 @@ const classAdjustForm = reactive({
 const classScheduleForm = reactive({
   teacherId: undefined as string | number | undefined,
   classroomId: undefined as string | number | undefined,
-  slots: [] as SlotDef[],
+  slots: [] as Array<SlotDef & { teacherId?: EntityId }>,
 });
 
 const classScheduleFormRules: FormRules = {
@@ -1459,17 +1447,25 @@ function canAdjustClassOccurrence(occ: ClassOccurrenceItem) {
     && !getLessonRecordId(occ);
 }
 
-function normalizeClassScheduleSlots(slots: ClassGroupItem['scheduleSlots']): SlotDef[] {
+function normalizeClassScheduleSlots(
+  slots: ClassGroupItem['scheduleSlots'],
+): Array<SlotDef & { teacherId?: EntityId }> {
   return (slots ?? []).map(slot => {
     const start = slot.startTime.slice(0, 5);
     const end = slot.endTime.slice(0, 5);
     return {
       weekday: slot.weekday,
+      teacherId: slot.teacherId,
       startTime: start,
       endTime: end,
       plannedUnits: slot.plannedUnits ?? Math.max(1, dayjs(`2026-01-01T${end}`).diff(dayjs(`2026-01-01T${start}`), 'minute') / 30),
     };
   });
+}
+
+function classScheduleSlotLabel(slot: SlotDef) {
+  const weekday = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday] ?? '';
+  return `${weekday} ${slot.startTime}-${slot.endTime}`;
 }
 
 function openClassScheduleDialog() {
@@ -1492,7 +1488,9 @@ async function submitClassSchedule() {
       await updateClassSchedule(selectedClassId.value!, {
         teacherId: classScheduleForm.teacherId,
         classroomId: classScheduleForm.classroomId,
-        slots: classScheduleForm.slots.map(({ weekday, startTime, endTime }) => ({ weekday, startTime, endTime })),
+        slots: classScheduleForm.slots.map(({ teacherId, weekday, startTime, endTime }) => ({
+          teacherId, weekday, startTime, endTime,
+        })),
       });
       ElMessage.success('Class schedule updated.');
       classScheduleDialogVisible.value = false;
@@ -1970,11 +1968,6 @@ onMounted(async () => {
   font-weight: 500;
   color: #303133;
 }
-.adj-sidebar__meta {
-  font-size: 11px;
-  color: #909399;
-  margin-top: 2px;
-}
 .adj-sidebar__empty {
   padding: 24px;
   text-align: center;
@@ -2056,11 +2049,6 @@ onMounted(async () => {
   font-weight: 700;
 }
 
-.class-drill-card__meta {
-  color: #909399;
-  font-size: 11px;
-}
-
 .class-drill-class {
   display: flex;
   flex-direction: column;
@@ -2094,11 +2082,6 @@ onMounted(async () => {
   background: #eff6ff;
   border: 1px solid #bfdbfe;
   border-radius: 999px;
-}
-
-.class-drill-class .adj-sidebar__meta {
-  display: block;
-  line-height: 1.35;
 }
 
 /* ── Right content ──────────────────── */
@@ -2443,6 +2426,26 @@ onMounted(async () => {
 }
 .class-schedule-dialog :deep(.weekly-time-selector) {
   min-width: 760px;
+}
+.class-slot-teacher-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 4px 110px;
+}
+.class-slot-teacher-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #f8fbff;
+}
+.class-slot-teacher-row > span {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
 }
 .makeup-hint {
   margin: 0 0 12px;

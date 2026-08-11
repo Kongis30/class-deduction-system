@@ -136,7 +136,7 @@
                 <!-- Schedule summary -->
                 <div v-if="currentRule" class="schedule-summary">
                   <div class="summary-field">
-                    <label>Teacher</label>
+                    <label>Default Teacher</label>
                     <span>{{ currentRule.primaryTeacherName ?? '—' }}</span>
                   </div>
                   <div class="summary-field">
@@ -215,17 +215,6 @@
         </div>
 
         <el-form ref="editFormRef" :model="editForm" :rules="editFormRules" label-width="130px">
-          <el-form-item label="Primary Teacher" prop="primaryTeacherId">
-            <el-select
-              v-model="editForm.primaryTeacherId"
-              placeholder="Assign later"
-              clearable
-              filterable
-              style="width: 100%;"
-            >
-              <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
-            </el-select>
-          </el-form-item>
           <el-form-item label="Classroom" prop="defaultClassroomId">
             <el-select
               v-model="editForm.defaultClassroomId"
@@ -276,6 +265,23 @@
           :occupied-slots="otherPackageOccupiedSlots"
           :readonly="false"
         />
+        <div v-if="editForm.slots.length > 0" class="slot-teacher-list">
+          <div
+            v-for="(slot, index) in editForm.slots"
+            :key="`${slot.weekday}-${slot.startTime}-${index}`"
+            class="slot-teacher-row"
+          >
+            <span class="slot-teacher-row__time">{{ scheduleSlotLabel(slot) }}</span>
+            <el-select
+              v-model="slot.teacherId"
+              clearable
+              filterable
+              placeholder="Select teacher"
+            >
+              <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+            </el-select>
+          </div>
+        </div>
         <div v-if="editForm.slots.length > 0" class="edit-schedule__summary">
           {{ editForm.slots.length }} slot(s) · {{ totalSlotUnits }} total units/week
         </div>
@@ -1228,12 +1234,11 @@ async function loadClassGroupSlots() {
 
 // ─── Edit Form ──────────────────────────────────
 const editForm = reactive({
-  primaryTeacherId: undefined as EntityId | undefined,
   defaultClassroomId: undefined as EntityId | undefined,
   ruleStatus: undefined as string | undefined,
   startDate: '',
   notes: '',
-  slots: [] as SlotDef[],
+  slots: [] as Array<SlotDef & { teacherId?: EntityId }>,
 });
 
 const editFormRules: FormRules = {
@@ -1248,12 +1253,7 @@ async function openCreateDialog() {
   isEditing.value = false;
   editingRuleId.value = null;
   editFormRef.value?.resetFields();
-  const teacherId = route.query.teacherId;
-  const selectedTeacher = typeof teacherId === 'string'
-    ? teachers.value.find((teacher) => String(teacher.id) === teacherId)
-    : undefined;
   Object.assign(editForm, {
-    primaryTeacherId: selectedTeacher?.id,
     defaultClassroomId: undefined,
     ruleStatus: undefined,
     startDate: '',
@@ -1270,12 +1270,12 @@ async function openEditDialog() {
   editingRuleId.value = detail.id;
   editFormRef.value?.resetFields();
   Object.assign(editForm, {
-    primaryTeacherId: detail.primaryTeacherId,
     defaultClassroomId: detail.defaultClassroomId,
     ruleStatus: detail.ruleStatus,
     startDate: detail.startDate,
     notes: detail.notes || '',
     slots: (detail.slots || []).map((s: any) => ({
+      teacherId: s.teacherId,
       weekday: s.weekday,
       startTime: s.startTime,
       endTime: s.endTime,
@@ -1305,11 +1305,11 @@ async function submitCreateForm() {
     try {
       await createRecurringScheduleRule({
         packageId: selectedPackageId.value!,
-        primaryTeacherId: editForm.primaryTeacherId,
         defaultClassroomId: editForm.defaultClassroomId,
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
+          teacherId: s.teacherId,
           weekday: s.weekday,
           startTime: s.startTime,
           endTime: s.endTime,
@@ -1339,12 +1339,12 @@ async function submitEditForm() {
     submitting.value = true;
     try {
       const result = await updateRecurringScheduleRule(editingRuleId.value!, {
-        primaryTeacherId: editForm.primaryTeacherId,
         defaultClassroomId: editForm.defaultClassroomId,
         ruleStatus: editForm.ruleStatus,
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
+          teacherId: s.teacherId,
           weekday: s.weekday,
           startTime: s.startTime,
           endTime: s.endTime,
@@ -1647,6 +1647,10 @@ function ruleStatusLabel(status: string) {
 
 function weekdayLabel(w: number) {
   return ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][w] ?? w;
+}
+
+function scheduleSlotLabel(slot: SlotDef) {
+  return `${weekdayLabel(slot.weekday)} ${slot.startTime}-${slot.endTime}`;
 }
 
 // ─── Init ────────────────────────────────────────
@@ -1964,6 +1968,29 @@ function disabledPastDate(date: Date) {
   margin-top: 8px;
   color: #409eff;
   font-size: 12px;
+  font-weight: 500;
+}
+
+.slot-teacher-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.slot-teacher-row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 6px;
+  background: #f8fbff;
+}
+
+.slot-teacher-row__time {
+  color: #303133;
+  font-size: 13px;
   font-weight: 500;
 }
 

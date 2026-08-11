@@ -16,9 +16,7 @@ import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.base.dto.TeacherPageQuery;
 import com.classdeduction.system.modules.base.dto.TeacherSaveRequest;
-import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
-import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.TeacherService;
 import com.classdeduction.system.modules.base.vo.TeacherVO;
@@ -62,7 +60,6 @@ public class TeacherServiceImpl implements TeacherService {
     private final JsonHelper jsonHelper;
     private final AuthSessionMapper authSessionMapper;
     private final UserRoleMapper userRoleMapper;
-    private final CourseProductMapper courseProductMapper;
     private final TeacherPayRateMapper teacherPayRateMapper;
 
     @Override
@@ -177,9 +174,6 @@ public class TeacherServiceImpl implements TeacherService {
                 .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId));
         teacherPayRateMapper.delete(new LambdaQueryWrapper<TeacherPayRateEntity>()
                 .eq(TeacherPayRateEntity::getTeacherId, teacherId));
-        courseProductMapper.update(null, new LambdaUpdateWrapper<CourseProductEntity>()
-                .set(CourseProductEntity::getDefaultTeacherId, null)
-                .eq(CourseProductEntity::getDefaultTeacherId, teacherId));
         classGroupMapper.update(null, new LambdaUpdateWrapper<ClassGroupEntity>()
                 .set(ClassGroupEntity::getTeacherId, null)
                 .eq(ClassGroupEntity::getTeacherId, teacherId));

@@ -667,9 +667,9 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         if (!"ASSIGN_RESOURCES".equals(request.getAdjustmentType())) {
             return;
         }
-        if (request.getPlannedTeacherId() == null || request.getPlannedClassroomId() == null) {
+        if (request.getPlannedTeacherId() == null) {
             throw new BusinessException("RESOURCE_ASSIGNMENT_INCOMPLETE",
-                    "Assigning a lesson requires both a teacher and a classroom.");
+                    "Assigning a lesson requires a teacher.");
         }
     }
 

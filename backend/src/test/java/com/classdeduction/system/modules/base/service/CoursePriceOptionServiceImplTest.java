@@ -27,7 +27,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -98,15 +97,14 @@ class CoursePriceOptionServiceImplTest {
     }
 
     @Test
-    void shouldAllowActiveGroupOptionBeforeItsGradeClassScheduleIsConfigured() {
+    void shouldRejectGroupOptionWithoutScheduleNeededForMonthlyConversion() {
         CoursePriceOptionSaveRequest request = groupOption();
         request.setGroupScheduleSlots(List.of());
-        request.setGroupStartDate(null);
-        request.setGroupTotalSessions(null);
         when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
-        when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
 
-        coursePriceOptionService.createOption(request);
+        assertThatThrownBy(() -> coursePriceOptionService.createOption(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Grade classes require at least one weekly time slot to calculate monthly price.");
     }
 
     @Test
@@ -128,14 +126,20 @@ class CoursePriceOptionServiceImplTest {
 
         coursePriceOptionService.createOption(request);
 
+        ArgumentCaptor<CoursePriceOptionEntity> optionCaptor =
+                ArgumentCaptor.forClass(CoursePriceOptionEntity.class);
         ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor =
                 ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(coursePriceOptionMapper).insert(optionCaptor.capture());
         verify(lessonOccurrenceMapper, times(13)).insert(occurrenceCaptor.capture());
+        assertThat(optionCaptor.getValue().getGroupTotalPrice()).isEqualByComparingTo("1300.00");
+        assertThat(optionCaptor.getValue().getGroupSessionPrice()).isEqualByComparingTo("100.00");
+        assertThat(optionCaptor.getValue().getPriceAmount()).isEqualByComparingTo("433.33");
         assertThat(occurrenceCaptor.getAllValues())
                 .allSatisfy(occurrence -> {
                     assertThat(occurrence.getClassGroupId()).isEqualTo(401L);
                     assertThat(occurrence.getScheduleSlotId()).isNull();
-                    assertThat(occurrence.getPlannedTeacherId()).isEqualTo(701L);
+                    assertThat(occurrence.getPlannedTeacherId()).isEqualTo(702L);
                     assertThat(occurrence.getPlannedClassroomId()).isEqualTo(801L);
                     assertThat(occurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
                 });
@@ -244,15 +248,18 @@ class CoursePriceOptionServiceImplTest {
         request.setPeriodLabel("Fall");
         request.setTimeSlotLabel("Sat 9am-12pm");
         request.setDetailText("Saturday G3-G6 Fall half day");
-        request.setPriceAmount(new BigDecimal("1800.00"));
+        request.setPriceAmount(new BigDecimal("433.33"));
         request.setCourseProductId(301L);
-        request.setGroupBillingType("PER_SESSION");
-        request.setGroupStartDate(LocalDate.of(2026, 9, 1));
+        request.setGroupBillingType("MONTHLY");
         request.setGroupTotalSessions(13);
+        request.setGroupTotalPrice(new BigDecimal("1300.00"));
+        request.setGroupStartMonth("2026-09");
+        request.setGroupEndMonth("2026-11");
         request.setGroupTeacherId(701L);
         request.setGroupClassroomId(801L);
         CoursePriceOptionSaveRequest.GroupScheduleSlotDTO slot =
                 new CoursePriceOptionSaveRequest.GroupScheduleSlotDTO();
+        slot.setTeacherId(702L);
         slot.setWeekday(6);
         slot.setStartTime("09:00");
         slot.setEndTime("12:00");

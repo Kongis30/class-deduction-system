@@ -7,8 +7,6 @@ import com.classdeduction.system.modules.auth.mapper.AuthSessionMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.impl.TeacherServiceImpl;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
@@ -53,8 +51,6 @@ class TeacherServiceImplTest {
     @Mock
     private UserRoleMapper userRoleMapper;
     @Mock
-    private CourseProductMapper courseProductMapper;
-    @Mock
     private TeacherPayRateMapper teacherPayRateMapper;
 
     private TeacherServiceImpl teacherService;
@@ -62,7 +58,6 @@ class TeacherServiceImplTest {
     @BeforeAll
     static void initMybatisPlusLambdaCache() {
         Configuration configuration = new Configuration();
-        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CourseProductEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupEntity.class);
     }
 
@@ -78,7 +73,6 @@ class TeacherServiceImplTest {
                 new JsonHelper(new ObjectMapper()),
                 authSessionMapper,
                 userRoleMapper,
-                courseProductMapper,
                 teacherPayRateMapper
         );
     }
@@ -103,7 +97,6 @@ class TeacherServiceImplTest {
         verify(recurringScheduleRuleMapper).delete(any());
         verify(packageTeacherAssignmentMapper).delete(any());
         verify(teacherPayRateMapper).delete(any());
-        verify(courseProductMapper).update(any(), any());
         verify(classGroupMapper).update(any(), any());
         verify(teacherMapper).deleteById(701L);
     }

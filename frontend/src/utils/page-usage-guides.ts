@@ -37,7 +37,8 @@ const guides: Record<string, PageUsageGuide> = {
     description: 'Use this page when a student signs up, renews, or pays against an existing registration.',
     steps: [
       'Confirm or create the student profile first, including guardian contact and pickup/drop-off needs.',
-      'Choose a course option. These options come from Course Products and Course Pricing.',
+      'Choose a course option. 1-on-1 and group classes are visually separated in the course dropdown.',
+      'For group classes, select the number of months; pricing is calculated from the class price setup.',
       'Record payment only after reviewing the total. Receipts are saved as snapshots after submission.',
     ],
     actions: [
@@ -140,9 +141,10 @@ const guides: Record<string, PageUsageGuide> = {
     title: 'Use this page to find work that needs follow-up.',
     description: 'Data Summary combines registration, payment, low-balance, and renewal review.',
     steps: [
-      'Start with unpaid or low-balance lists for daily follow-up.',
+      'Use each column header to filter the workbook. Text columns search, date columns use ranges, and amount columns support min/max ranges.',
+      'Use Asc or Desc inside amount column filters to sort Tuition, Pickup/Dropoff, Discount, Paid, or Balance.',
+      'Tuition is the course line price before discounts and before pickup/drop-off fees.',
       'Open the related order when payment or refund review is needed.',
-      'Use renewal actions to start a new registration for the same student.',
     ],
     actions: [
       { label: 'New registration', to: '/registration' },
@@ -187,7 +189,8 @@ const guides: Record<string, PageUsageGuide> = {
     steps: [
       'Pick teaching mode, then select the course product on the left.',
       '1-on-1 rows define grade, package hours, and package price.',
-      'Group rows define grade class, billing type, schedule, teacher or room, and price.',
+      'Group rows define grade class, monthly price, schedule, teacher, room, and admin-visible session information.',
+      'Use the header tooltips and compact actions when reviewing or editing the pricing matrix.',
     ],
     actions: [
       { label: 'Course products', to: '/base-data/course-products' },
@@ -201,7 +204,8 @@ const guides: Record<string, PageUsageGuide> = {
     description: 'Use this after registration when a 1-on-1 package needs concrete scheduled lessons.',
     steps: [
       'Select the student package that needs scheduling.',
-      'Choose teacher, time, and repetition rules.',
+      'Select weekly time slots, then choose a teacher on each slot when that lesson has an assigned teacher.',
+      'Use Classroom when the package should reserve a default room.',
       'Check teacher, student, and room conflicts before saving the plan.',
     ],
     actions: [
@@ -304,7 +308,8 @@ const guides: Record<string, PageUsageGuide> = {
     title: 'Review orders, later payments, refunds, and receipts.',
     description: 'Use this when finance records need review after registration is submitted.',
     steps: [
-      'Search by student or order information.',
+      'Use the table headers to filter by course, student, order number, payment status, or order status.',
+      'Switch between 1-on-1 and Group Class tabs. Expand a group class to review the enrolled student orders.',
       'Use payment actions for later payment and refund workflows.',
       'Open saved receipts instead of recreating old receipt content.',
     ],

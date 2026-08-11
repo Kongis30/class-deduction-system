@@ -7,21 +7,25 @@
           Manage students and teachers here. Login access is handled inside each row, so staff do not need a separate Accounts page.
         </p>
       </div>
+      <div class="people-header__actions">
+        <el-button type="primary" @click="openStudentCreate">Add student</el-button>
+        <el-button type="primary" plain @click="openTeacherCreate">Add teacher</el-button>
+      </div>
     </section>
 
     <el-tabs v-model="activeTab" class="people-tabs" @tab-change="syncRouteTab">
       <el-tab-pane label="Students" name="students">
-        <StudentsView />
+        <StudentsView ref="studentsViewRef" />
       </el-tab-pane>
       <el-tab-pane label="Teachers" name="teachers">
-        <TeachersView />
+        <TeachersView ref="teachersViewRef" />
       </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import StudentsView from './StudentsView.vue';
@@ -32,6 +36,8 @@ type PeopleTab = 'students' | 'teachers';
 const route = useRoute();
 const router = useRouter();
 const activeTab = ref<PeopleTab>(route.query.tab === 'teachers' ? 'teachers' : 'students');
+const studentsViewRef = ref<InstanceType<typeof StudentsView>>();
+const teachersViewRef = ref<InstanceType<typeof TeachersView>>();
 
 watch(
   () => route.query.tab,
@@ -50,14 +56,44 @@ function syncRouteTab(tab: string | number) {
     },
   });
 }
+
+async function openStudentCreate() {
+  activeTab.value = 'students';
+  await syncTabAndRender('students');
+  studentsViewRef.value?.openCreateDialog();
+}
+
+async function openTeacherCreate() {
+  activeTab.value = 'teachers';
+  await syncTabAndRender('teachers');
+  teachersViewRef.value?.openCreateDialog();
+}
+
+async function syncTabAndRender(tab: PeopleTab) {
+  await router.replace({
+    name: 'admin-config-people',
+    query: { ...route.query, tab },
+  });
+  await nextTick();
+}
 </script>
 
 <style scoped>
 .people-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   border: 1px solid #e8edf2;
   border-radius: 8px;
   background: #fff;
   padding: 16px 20px;
+}
+
+.people-header__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
 }
 
 .people-header__title {

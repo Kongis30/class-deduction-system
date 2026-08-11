@@ -13,7 +13,7 @@ import lombok.Setter;
 @Schema(description = "报名单分页查询参数")
 public class EnrollmentOrderPageQuery extends PageQuery {
 
-    @Schema(description = "关键字，支持报名单号和学生姓名", example = "EN2026")
+    @Schema(description = "关键字，支持报名单号、学生姓名、1v1课程名和班课名", example = "EN2026")
     private String keyword;
 
     @Schema(description = "订单状态", example = "CONFIRMED")

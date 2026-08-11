@@ -169,7 +169,6 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         if (classGroup == null) {
             throw new BusinessException("CLASS_NOT_FOUND", "Class group not found.");
         }
-        CourseProductEntity product = classGroup.getProductId() == null ? null : courseProductMapper.selectById(classGroup.getProductId());
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectAllStatusesByClassId(classId);
         if (enrollments.isEmpty()) {
             return Collections.emptyList();
@@ -187,7 +186,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .collect(Collectors.toMap(LessonOccurrenceEntity::getId, item -> item));
 
         return enrollments.stream()
-                .map(enrollment -> toStudentProgress(enrollment, product, studentMap.get(enrollment.getStudentId()),
+                .map(enrollment -> toStudentProgress(enrollment, studentMap.get(enrollment.getStudentId()),
                         occurrences, occurrenceById))
                 .toList();
     }
@@ -389,7 +388,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                                                             Long activeStudentCount,
                                                             List<LessonOccurrenceEntity> occurrences,
                                                             Long confirmedOccurrenceCount) {
-        int total = resolveClassTotalUnits(product, occurrences);
+        int total = resolveClassTotalUnits(classGroup, occurrences);
         int consumed = Math.min(confirmedOccurrenceCount.intValue(), total);
         return GroupClassPackageProgressVO.builder()
                 .classId(classGroup.getId())
@@ -397,7 +396,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .className(classGroup.getClassName())
                 .productName(product == null ? classGroup.getClassName() : product.getProductName())
                 .subjectName(product == null ? null : product.getSubjectName())
-                .billingType(product == null ? null : product.getBillingType())
+                .billingType(classGroup.getBillingType())
                 .scheduleDesc(classGroup.getScheduleDesc())
                 .teacherName(teacher == null ? null : teacher.getTeacherName())
                 .totalUnits(total)
@@ -405,17 +404,16 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .remainingUnits(Math.max(total - consumed, 0))
                 .activeStudentCount(activeStudentCount)
                 .status(classGroup.getStatus())
-                .startDate(resolveClassStartDate(product, occurrences))
-                .estimatedEndDate(resolveClassEndDate(product, occurrences))
+                .startDate(resolveClassStartDate(classGroup, occurrences))
+                .estimatedEndDate(resolveClassEndDate(classGroup, occurrences))
                 .build();
     }
 
     private GroupClassStudentProgressVO toStudentProgress(ClassEnrollmentEntity enrollment,
-                                                          CourseProductEntity product,
                                                           StudentEntity student,
                                                           List<LessonOccurrenceEntity> occurrences,
                                                           Map<Long, LessonOccurrenceEntity> occurrenceById) {
-        int total = resolveStudentTotalUnits(enrollment, product, occurrences);
+        int total = resolveStudentTotalUnits(enrollment, occurrences);
         int consumed = occurrenceById.isEmpty()
                 ? 0
                 : (int) lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
@@ -431,7 +429,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .classId(enrollment.getClassId())
                 .studentId(enrollment.getStudentId())
                 .studentName(student == null ? null : student.getStudentName())
-                .billingType(enrollment.getBillingType() != null ? enrollment.getBillingType() : (product == null ? null : product.getBillingType()))
+                .billingType(enrollment.getBillingType())
                 .totalUnits(total)
                 .consumedUnits(Math.min(consumed, total))
                 .remainingUnits(Math.max(total - consumed, 0))
@@ -441,18 +439,15 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .build();
     }
 
-    private int resolveClassTotalUnits(CourseProductEntity product, List<LessonOccurrenceEntity> occurrences) {
-        if (product != null && "PER_SESSION".equals(product.getBillingType()) && product.getTotalSessions() != null) {
-            return product.getTotalSessions();
+    private int resolveClassTotalUnits(ClassGroupEntity classGroup, List<LessonOccurrenceEntity> occurrences) {
+        if ("PER_SESSION".equals(classGroup.getBillingType()) && classGroup.getTotalSessions() != null) {
+            return classGroup.getTotalSessions();
         }
         return occurrences.size();
     }
 
-    private int resolveStudentTotalUnits(ClassEnrollmentEntity enrollment, CourseProductEntity product, List<LessonOccurrenceEntity> occurrences) {
+    private int resolveStudentTotalUnits(ClassEnrollmentEntity enrollment, List<LessonOccurrenceEntity> occurrences) {
         if ("PER_SESSION".equals(enrollment.getBillingType()) && enrollment.getPurchasedQuantity() != null) {
-            return enrollment.getPurchasedQuantity();
-        }
-        if (product != null && "PER_SESSION".equals(product.getBillingType()) && enrollment.getPurchasedQuantity() != null) {
             return enrollment.getPurchasedQuantity();
         }
         return (int) occurrences.stream()
@@ -468,10 +463,12 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         return !lessonDate.isBefore(enrollment.getEnrollmentDate()) && !lessonDate.isAfter(enrollment.getExpiryDate());
     }
 
-    private LocalDate resolveClassStartDate(CourseProductEntity product, List<LessonOccurrenceEntity> occurrences) {
-        if (product != null) {
-            if (product.getStartDate() != null) return product.getStartDate();
-            if (product.getStartMonth() != null) return product.getStartMonth();
+    private LocalDate resolveClassStartDate(ClassGroupEntity classGroup, List<LessonOccurrenceEntity> occurrences) {
+        if (classGroup.getStartDate() != null) {
+            return classGroup.getStartDate();
+        }
+        if (classGroup.getStartMonth() != null) {
+            return classGroup.getStartMonth();
         }
         return occurrences.stream()
                 .map(LessonOccurrenceEntity::getPlannedStartAt)
@@ -481,9 +478,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .orElse(null);
     }
 
-    private LocalDate resolveClassEndDate(CourseProductEntity product, List<LessonOccurrenceEntity> occurrences) {
-        if (product != null && product.getEndMonth() != null) {
-            return product.getEndMonth();
+    private LocalDate resolveClassEndDate(ClassGroupEntity classGroup, List<LessonOccurrenceEntity> occurrences) {
+        if (classGroup.getEndMonth() != null) {
+            return classGroup.getEndMonth();
         }
         return occurrences.stream()
                 .map(LessonOccurrenceEntity::getPlannedStartAt)

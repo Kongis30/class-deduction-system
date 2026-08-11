@@ -85,23 +85,6 @@ export function deleteEnrollmentOrder(id: string | number) {
   return http.delete(`/v1/enrollment/orders/${id}`);
 }
 
-export interface ClassEnrollmentCreatePayload {
-  studentId: string | number;
-  classId?: string | number;
-  productId?: string | number;
-  sessions?: number;
-  startMonth?: string;
-  endMonth?: string;
-  handledByName?: string;
-  discountAmount: number;
-  receivedAmount: number;
-  remark?: string;
-}
-
-export function createClassEnrollmentOrder(data: ClassEnrollmentCreatePayload) {
-  return http.post('/v1/enrollment/orders/class-enroll', data);
-}
-
 // ─── Registration Intake ──────────────────────────────
 export interface RegistrationStudentPayload {
   studentName: string;
@@ -142,6 +125,7 @@ export interface RegistrationCourseItemPayload {
   initialLessonEndAt?: string;
   teacherId?: EntityId;
   sessions?: number;
+  purchasedMonths?: number;
   startMonth?: string;
   endMonth?: string;
   remark?: string;

@@ -40,7 +40,7 @@ test.describe.serial('Acceptance - Financial business flow', () => {
     const originalReceiptPayload = await getRegistrationReceiptPayload(orderId);
 
     await loginAsAdmin(page);
-    await recordFollowUpPaymentFromDataSummary(page, studentName, 400);
+    await recordFollowUpPaymentFromEnrollmentHistory(page, studentName, 400);
     let receiptDialog = visibleDialog(page).filter({ hasText: 'Payment Receipt' }).last();
     await expect(receiptDialog.locator('.el-dialog__title')).toHaveText('Payment Receipt');
     await expect(receiptDialog.getByText(registration.enrollmentNo)).toBeVisible();
@@ -91,19 +91,20 @@ test.describe.serial('Acceptance - Financial business flow', () => {
   });
 });
 
-async function recordFollowUpPaymentFromDataSummary(page: Page, studentName: string, amount: number): Promise<void> {
-  await page.goto('/data-summary');
-  await page.getByPlaceholder('Search student, guardian phone, or course').fill(studentName);
-  await page.getByRole('button', { name: 'Search' }).click();
-  const row = page.locator('.check-table__row').filter({ hasText: studentName }).first();
+async function recordFollowUpPaymentFromEnrollmentHistory(page: Page, studentName: string, amount: number): Promise<void> {
+  await page.goto('/enrollment/orders');
+  await page.getByPlaceholder('Order no. or student name').fill(studentName);
+  const row = page.locator('.el-table__row').filter({ hasText: studentName }).first();
   await expect(row).toBeVisible();
-  await row.getByRole('button', { name: 'Record payment' }).click();
+  await row.locator('.order-action-more').click();
+  await page.getByRole('menuitem', { name: 'Pay' }).click();
 
-  const dialog = visibleDialog(page).filter({ hasText: 'Outstanding balance' }).last();
+  const dialog = visibleDialog(page).filter({ hasText: 'Outstanding Balance' }).last();
   await expect(dialog.getByRole('heading', { name: 'Record Payment' })).toBeVisible();
   await dialog.getByRole('spinbutton').fill(String(amount));
-  await dialog.getByLabel('Notes').fill(`${ACCEPTANCE_MARKER} follow-up payment`);
-  await dialog.getByRole('button', { name: 'Record payment' }).click();
+  await dialog.getByPlaceholder('Handler').fill('System Admin');
+  await dialog.getByPlaceholder('Notes').fill(`${ACCEPTANCE_MARKER} follow-up payment`);
+  await dialog.getByRole('button', { name: 'Record Payment' }).click();
 }
 
 async function refundFromStudentDetail(page: Page, studentName: string, amount: number): Promise<void> {

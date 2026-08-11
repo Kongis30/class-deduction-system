@@ -14,13 +14,11 @@ import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.entity.CourseProductScheduleSlotEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
-import com.classdeduction.system.modules.base.mapper.CourseProductScheduleSlotMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeRequest;
@@ -92,7 +90,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final CampusMapper campusMapper;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
     private final CourseProductMapper courseProductMapper;
-    private final CourseProductScheduleSlotMapper courseProductScheduleSlotMapper;
     private final TeacherMapper teacherMapper;
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
@@ -255,12 +252,13 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.teacherId = item.getTeacherId();
             line.classId = firstNonNull(item.getClassId(), option.getClassId());
             line.sessions = item.getSessions();
+            line.purchasedMonths = item.getPurchasedMonths();
             line.startMonth = item.getStartMonth();
             line.endMonth = item.getEndMonth();
             line.remark = item.getRemark();
             line.product = product;
             line.oneOnOne = isOneOnOneLine(line, product);
-            applyLinePricing(line, item, configuredUnitPrice);
+            applyLinePricing(line, item, configuredUnitPrice, option.getOneOnOneHours());
 
             validateResolvedLine(line);
             lines.add(line);
@@ -270,15 +268,17 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
 
     private void applyLinePricing(ResolvedCourseLine line,
                                   RegistrationIntakeRequest.CourseItemPayload item,
-                                  BigDecimal configuredUnitPrice) {
+                                  BigDecimal configuredUnitPrice,
+                                  BigDecimal configuredOneOnOneHours) {
         boolean manualPriceOverride = Boolean.TRUE.equals(item.getManualPriceOverride());
-        BigDecimal configuredPrice = line.oneOnOne ? configuredUnitPrice : configuredUnitPrice.multiply(
-                BigDecimal.valueOf(resolveGroupPurchasedQuantity(line)));
+        BigDecimal configuredPrice = line.oneOnOne
+                ? calculateOneOnOnePrice(configuredUnitPrice, configuredOneOnOneHours, line.oneOnOneHours)
+                : configuredUnitPrice.multiply(BigDecimal.valueOf(resolveGroupPurchasedQuantity(line)));
         if (!manualPriceOverride && configuredPrice.compareTo(ZERO_AMOUNT) <= 0) {
             throw new BusinessException("COURSE_LINE_PRICE_REQUIRED",
                     "Manual course line price is required for a $0 course template.");
         }
-        line.originalPriceAmount = defaultAmount(firstNonNull(item.getOriginalPriceAmount(), configuredPrice));
+        line.originalPriceAmount = defaultAmount(configuredPrice);
         line.priceAmount = manualPriceOverride
                 ? requirePositiveAmount(item.getPriceAmount(), "COURSE_LINE_PRICE_REQUIRED",
                         "Manual course line price is required.")
@@ -286,32 +286,36 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         line.manualPriceOverride = manualPriceOverride;
     }
 
+    private BigDecimal calculateOneOnOnePrice(BigDecimal configuredPrice,
+                                               BigDecimal configuredHours,
+                                               BigDecimal purchasedHours) {
+        if (configuredHours == null || configuredHours.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("ONE_ON_ONE_HOURS_REQUIRED",
+                    "Configured one-on-one hours must be greater than zero.");
+        }
+        if (purchasedHours == null || purchasedHours.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("ONE_ON_ONE_HOURS_REQUIRED",
+                    "Enter purchased one-on-one hours.");
+        }
+        return configuredPrice
+                .divide(configuredHours, 8, RoundingMode.HALF_UP)
+                .multiply(purchasedHours)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
     private int resolveGroupPurchasedQuantity(ResolvedCourseLine line) {
         if (line.oneOnOne) {
             return 1;
         }
-        String billingType = line.product == null ? null : line.product.getBillingType();
-        if ("MONTHLY".equals(billingType)
-                || (!"PER_SESSION".equals(billingType)
-                && (StringUtils.hasText(line.startMonth) || StringUtils.hasText(line.endMonth)))) {
-            if (!StringUtils.hasText(line.startMonth) || !StringUtils.hasText(line.endMonth)) {
-                throw new BusinessException("REGISTRATION_DURATION_MISSING",
-                        "Enter purchased months on the registration form.");
-            }
-            YearMonth start = parseRegistrationMonth(line.startMonth, "start month");
-            YearMonth end = parseRegistrationMonth(line.endMonth, "end month");
-            long months = ChronoUnit.MONTHS.between(start, end) + 1;
-            if (months < 1) {
-                throw new BusinessException("REGISTRATION_DURATION_INVALID",
-                        "Selected end month cannot be earlier than start month.");
-            }
-            return Math.toIntExact(months);
-        }
-        if (line.sessions == null || line.sessions < 1) {
+        if (line.purchasedMonths == null) {
             throw new BusinessException("REGISTRATION_DURATION_MISSING",
-                    "Enter purchased sessions on the registration form.");
+                    "Enter purchased months on the registration form.");
         }
-        return line.sessions;
+        if (line.purchasedMonths < 1 || line.purchasedMonths > 36) {
+            throw new BusinessException("REGISTRATION_DURATION_INVALID",
+                    "Purchased months must be between 1 and 36.");
+        }
+        return line.purchasedMonths;
     }
 
     private BigDecimal requirePositiveAmount(BigDecimal amount, String code, String message) {
@@ -361,6 +365,13 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     "Manual course price requires a reason.");
         }
         if (line.oneOnOne) {
+            if (line.oneOnOneHours == null
+                    || line.oneOnOneHours.compareTo(new BigDecimal("0.5")) < 0
+                    || line.oneOnOneHours.compareTo(new BigDecimal("400")) > 0
+                    || line.oneOnOneHours.multiply(BigDecimal.valueOf(2)).stripTrailingZeros().scale() > 0) {
+                throw new BusinessException("ONE_ON_ONE_HOURS_INVALID",
+                        "One-on-one hours must be between 0.5 and 400 in 0.5-hour increments.");
+            }
             if (line.teacherId != null) {
                 requireTeacher(line.teacherId);
             }
@@ -857,6 +868,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             item.put("groupStartMonth", line.classGroup == null ? null : formatRegistrationMonth(line.classGroup.getStartMonth()));
             item.put("groupEndMonth", line.classGroup == null ? null : formatRegistrationMonth(line.classGroup.getEndMonth()));
             item.put("sessions", line.sessions);
+            item.put("purchasedMonths", line.purchasedMonths);
             item.put("startMonth", line.startMonth);
             item.put("endMonth", line.endMonth);
         }
@@ -1050,16 +1062,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             }
             return existing;
         }
-        ClassGroupEntity classGroup = new ClassGroupEntity();
-        classGroup.setClassName(product.getProductName() + " · " + normalizedGradeBand);
-        classGroup.setGradeBand(normalizedGradeBand);
-        classGroup.setListPrice(ZERO_AMOUNT);
-        classGroup.setProductId(product.getId());
-        classGroup.setTeacherId(product.getDefaultTeacherId());
-        classGroup.setClassroomId(product.getDefaultClassroomId());
-        classGroup.setStatus("ACTIVE");
-        classGroupMapper.insert(classGroup);
-        return classGroup;
+        throw new BusinessException("GRADE_CLASS_NOT_CONFIGURED",
+                "Grade class is not configured. Add the grade class in Price Matrix before registration.");
     }
 
     private ClassBillingResult computeClassBilling(ClassGroupEntity classGroup,
@@ -1067,29 +1071,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                     LocalDate signupDate) {
         String billingType = classGroup.getBillingType();
         LocalDate today = signupDate == null ? LocalDate.now(AppTime.APP_ZONE_ID) : signupDate;
-        List<CourseProductScheduleSlotEntity> slots = loadClassSlots(classGroup);
+        List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup);
         if (slots.isEmpty()) {
             throw new BusinessException("GRADE_CLASS_NO_SLOTS", "Grade class has no schedule slots.");
         }
 
-        if ("PER_SESSION".equals(billingType)) {
-            Integer totalSessions = classGroup.getTotalSessions();
-            if (totalSessions == null || totalSessions < 1 || classGroup.getStartDate() == null) {
-                throw new BusinessException("GRADE_CLASS_BILLING_INCOMPLETE",
-                        "Per-session grade class is missing start date or total sessions.");
-            }
-            if (line.sessions == null || line.sessions < 1) {
-                throw new BusinessException("REGISTRATION_DURATION_MISSING",
-                        "Enter purchased sessions on the registration form.");
-            }
-            if (line.sessions > totalSessions) {
-                throw new BusinessException("SESSIONS_EXCEED_TOTAL", "Selected sessions exceed the grade class total sessions.");
-            }
-            LocalDate expiry = computeNthSessionDate(classGroup.getStartDate(), slots, line.sessions);
-            LocalDate windowStart = classGroup.getStartDate().isAfter(today) ? classGroup.getStartDate() : today;
-            LocalDate windowEnd = computeNthSessionDate(classGroup.getStartDate(), slots, totalSessions);
-            return new ClassBillingResult(classGroup.getStartDate(), expiry, windowStart, windowEnd, line.sessions);
-        }
         if ("MONTHLY".equals(billingType)) {
             if (classGroup.getStartMonth() == null || classGroup.getEndMonth() == null) {
                 throw new BusinessException("GRADE_CLASS_BILLING_INCOMPLETE",
@@ -1097,34 +1083,36 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             }
             YearMonth productStart = YearMonth.from(classGroup.getStartMonth());
             YearMonth productEnd = YearMonth.from(classGroup.getEndMonth());
-            if (!StringUtils.hasText(line.startMonth) || !StringUtils.hasText(line.endMonth)) {
+            if (line.purchasedMonths == null) {
                 throw new BusinessException("REGISTRATION_DURATION_MISSING",
                         "Enter purchased months on the registration form.");
             }
-            YearMonth selectedStart = parseRegistrationMonth(line.startMonth, "start month");
-            YearMonth selectedEnd = parseRegistrationMonth(line.endMonth, "end month");
+            int months = line.purchasedMonths;
+            if (months < 1 || months > 36) {
+                throw new BusinessException("REGISTRATION_DURATION_INVALID",
+                        "Purchased months must be between 1 and 36.");
+            }
+            LocalDate classStart = classGroup.getStartMonth();
+            LocalDate enrollmentDate = classStart != null && classStart.isAfter(today) ? classStart : today;
+            YearMonth selectedStart = YearMonth.from(enrollmentDate);
+            YearMonth selectedEnd = selectedStart.plusMonths(months - 1L);
             if (selectedStart.isBefore(productStart) || selectedEnd.isAfter(productEnd)) {
                 throw new BusinessException("REGISTRATION_DURATION_OUT_OF_RANGE",
-                        "Selected months extend beyond the grade class month range.");
-            }
-            if (selectedEnd.isBefore(selectedStart)) {
-                throw new BusinessException("REGISTRATION_DURATION_INVALID",
-                        "Selected end month cannot be earlier than start month.");
+                        "Purchased months extend beyond the grade class month range.");
             }
             LocalDate productStartDay = productStart.atDay(1);
             LocalDate windowStart = productStartDay.isAfter(today) ? productStartDay : today;
             LocalDate windowEnd = productEnd.atEndOfMonth();
-            int months = (int) ChronoUnit.MONTHS.between(selectedStart, selectedEnd) + 1;
-            return new ClassBillingResult(selectedStart.atDay(1), selectedEnd.atEndOfMonth(), windowStart, windowEnd, months);
+            return new ClassBillingResult(enrollmentDate, selectedEnd.atEndOfMonth(), windowStart, windowEnd, months);
         }
-        throw new BusinessException("INVALID_BILLING_TYPE", "Unknown billing type for group product.");
+        throw new BusinessException("INVALID_BILLING_TYPE", "Group class registration supports monthly billing only.");
     }
 
     private int ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
                                                CourseProductEntity product,
                                                LocalDate windowStart,
                                                LocalDate horizonEnd) {
-        List<CourseProductScheduleSlotEntity> slots = loadClassSlots(classGroup);
+        List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup);
         if (slots.isEmpty()) {
             throw new BusinessException("GRADE_CLASS_NO_SLOTS", "Grade class has no schedule slots.");
         }
@@ -1144,7 +1132,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
         for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
             int weekday = date.getDayOfWeek().getValue();
-            for (CourseProductScheduleSlotEntity slot : slots) {
+            for (ClassGroupScheduleSlotEntity slot : slots) {
                 if (!Objects.equals(slot.getWeekday(), weekday) || !slot.getEndTime().isAfter(slot.getStartTime())) {
                     continue;
                 }
@@ -1157,7 +1145,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 occurrence.setLessonNo(generateClassLessonNo());
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(classGroup.getTeacherId());
+                occurrence.setPlannedTeacherId(slot.getTeacherId() == null
+                        ? classGroup.getTeacherId()
+                        : slot.getTeacherId());
                 occurrence.setPlannedClassroomId(classGroup.getClassroomId());
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
@@ -1170,7 +1160,12 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
 
         if (!occurrences.isEmpty()) {
             occurrences.sort(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt));
-            ensureNoConflicts(occurrences, null, classGroup.getTeacherId(), classGroup.getClassroomId());
+            ensureNoConflicts(occurrences, null, null, classGroup.getClassroomId());
+            occurrences.stream()
+                    .filter(item -> item.getPlannedTeacherId() != null)
+                    .collect(Collectors.groupingBy(LessonOccurrenceEntity::getPlannedTeacherId))
+                    .forEach((teacherId, teacherOccurrences) ->
+                            ensureNoConflicts(teacherOccurrences, null, teacherId, null));
             occurrences.forEach(lessonOccurrenceMapper::insert);
         }
         return occurrences.size();
@@ -1263,31 +1258,16 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         return teacher == null ? null : teacher.getTeacherName();
     }
 
-    private List<CourseProductScheduleSlotEntity> loadProductSlots(Long productId) {
-        return courseProductScheduleSlotMapper.selectList(new LambdaQueryWrapper<CourseProductScheduleSlotEntity>()
-                .eq(CourseProductScheduleSlotEntity::getProductId, productId)
-                .eq(CourseProductScheduleSlotEntity::getIsDeleted, 0));
-    }
-
-    private List<CourseProductScheduleSlotEntity> loadClassSlots(ClassGroupEntity classGroup) {
+    private List<ClassGroupScheduleSlotEntity> loadClassSlots(ClassGroupEntity classGroup) {
         return classGroupScheduleSlotMapper.selectList(
-                        new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
-                                .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId())
-                                .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0))
-                .stream()
-                .map(slot -> {
-                    CourseProductScheduleSlotEntity mapped = new CourseProductScheduleSlotEntity();
-                    mapped.setWeekday(slot.getWeekday());
-                    mapped.setStartTime(slot.getStartTime());
-                    mapped.setEndTime(slot.getEndTime());
-                    return mapped;
-                })
-                .toList();
+                new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                        .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId())
+                        .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
     }
 
-    private LocalDate computeNthSessionDate(LocalDate startDate, List<CourseProductScheduleSlotEntity> slots, int n) {
+    private LocalDate computeNthSessionDate(LocalDate startDate, List<ClassGroupScheduleSlotEntity> slots, int n) {
         Set<Integer> weekdays = slots.stream()
-                .map(CourseProductScheduleSlotEntity::getWeekday)
+                .map(ClassGroupScheduleSlotEntity::getWeekday)
                 .collect(Collectors.toCollection(java.util.TreeSet::new));
         int count = 0;
         LocalDate limit = startDate.plusYears(10);
@@ -1549,6 +1529,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private Long teacherId;
         private String remark;
         private Integer sessions;
+        private Integer purchasedMonths;
         private String startMonth;
         private String endMonth;
         private boolean oneOnOne;

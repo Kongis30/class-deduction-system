@@ -46,6 +46,10 @@ public class CoursePriceOptionEntity extends BaseEntity {
 
     private BigDecimal priceAmount;
 
+    private BigDecimal groupTotalPrice;
+
+    private BigDecimal groupSessionPrice;
+
     private String currencyCode;
 
     private Long courseProductId;

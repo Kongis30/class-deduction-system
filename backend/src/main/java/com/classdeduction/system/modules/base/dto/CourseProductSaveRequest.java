@@ -3,12 +3,7 @@ package com.classdeduction.system.modules.base.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
 import lombok.Data;
-
-import java.math.BigDecimal;
-import java.time.LocalDate;
-import java.util.List;
 
 /**
  * Course product save request.
@@ -45,50 +40,9 @@ public class CourseProductSaveRequest {
     @Schema(description = "Default 30-minute units per lesson (required for ONE_ON_ONE, null for GROUP)", example = "4")
     private Integer defaultLessonUnits;
 
-    @Schema(description = "GROUP billing type: PER_SESSION / MONTHLY", example = "PER_SESSION")
-    private String billingType;
-
-    @Schema(description = "GROUP PER_SESSION start date (ISO date)", example = "2026-09-01")
-    private LocalDate startDate;
-
-    @Min(value = 1, message = "Total sessions must be at least 1")
-    @Schema(description = "GROUP PER_SESSION total session count", example = "20")
-    private Integer totalSessions;
-
-    @Schema(description = "GROUP MONTHLY start month (yyyy-MM)", example = "2026-09")
-    private String startMonth;
-
-    @Schema(description = "GROUP MONTHLY end month (yyyy-MM)", example = "2027-06")
-    private String endMonth;
-
-    @Schema(description = "Default classroom ID (for GROUP)", example = "6101")
-    private Long defaultClassroomId;
-
-    @Schema(description = "Default teacher ID (for GROUP)", example = "7001")
-    private Long defaultTeacherId;
-
-    @Schema(description = "Legacy reference price. Registration prices are defined by course price rows.", example = "0.00")
-    private BigDecimal listPrice;
-
     @Schema(description = "Course product status", example = "ACTIVE")
     private String status;
 
     @Schema(description = "Internal notes")
     private String notes;
-
-    @Schema(description = "Schedule slots for class group products")
-    private List<ProductScheduleSlotDTO> slots;
-
-    @Data
-    @Schema(description = "Schedule slot definition")
-    public static class ProductScheduleSlotDTO {
-        @Schema(description = "Weekday: 1=Mon..7=Sun", example = "1")
-        private Integer weekday;
-
-        @Schema(description = "Start time (HH:mm)", example = "09:00")
-        private String startTime;
-
-        @Schema(description = "End time (HH:mm)", example = "10:30")
-        private String endTime;
-    }
 }

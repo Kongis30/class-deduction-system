@@ -90,6 +90,9 @@ public class CoursePriceOptionSaveRequest {
     @Schema(description = "Grade class total sessions for per-session billing")
     private Integer groupTotalSessions;
 
+    @Schema(description = "Total price used to derive group session and monthly prices")
+    private BigDecimal groupTotalPrice;
+
     @Schema(description = "Grade class first month for monthly billing (yyyy-MM)")
     private String groupStartMonth;
 
@@ -108,6 +111,7 @@ public class CoursePriceOptionSaveRequest {
 
     @Data
     public static class GroupScheduleSlotDTO {
+        private Long teacherId;
         private Integer weekday;
         private String startTime;
         private String endTime;

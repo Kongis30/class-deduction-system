@@ -28,6 +28,8 @@ public class RecurringScheduleSlotEntity extends BaseEntity {
 
     private Long ruleId;
 
+    private Long teacherId;
+
     private Integer weekday;
 
     private LocalTime startTime;

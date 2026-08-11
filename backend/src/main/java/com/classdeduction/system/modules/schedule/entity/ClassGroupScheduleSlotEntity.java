@@ -19,6 +19,8 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
 
     private Long classGroupId;
 
+    private Long teacherId;
+
     private Integer weekday;
 
     private LocalTime startTime;
