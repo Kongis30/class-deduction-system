@@ -191,7 +191,7 @@ const guideCopy: Record<GuideLang, GuideCopy> = {
         title: 'Partial paid 订单继续付款',
         summary: '所有操作都针对报名订单，不直接针对学生资料。',
         steps: [
-          { order: '1', title: '找到未付清订单', detail: '进入 Enrollment History，用 Payment 表头筛选 Unpaid 或 Partial，也可以从 Data Summary 的红色 Balance 反查订单。' },
+          { order: '1', title: '找到未付清订单', detail: '进入 Enrollment History，用 Payment 表头筛选 Unpaid 或 Partial；也可以先在 Data Summary 按 Balance 降序或设置欠款区间，找到学生和课程后回到 Enrollment History 处理订单。' },
           { order: '2', title: 'Record payment', detail: '在订单 Actions 中选择 Pay / Record payment，填写本次支付方式、金额、日期、经手人和备注。可以一次录入多个 payment split。' },
           { order: '3', title: '确认余额和凭证', detail: '保存后订单的 Paid、Balance 和 Payment status 会更新。继续点击 View receipt 或付款记录中的 statement 查看本次付款凭证。' },
         ],
@@ -210,12 +210,12 @@ const guideCopy: Record<GuideLang, GuideCopy> = {
       {
         id: 'follow-up',
         badge: '跟进',
-        title: '处理欠款和续费',
-        summary: 'Data Summary 只展示需要关注的记录，不用逐个打开学生。',
+        title: '使用 Data Summary 做运营检查',
+        summary: 'Data Summary 是按学生和课程明细展开的工作表，用来集中核对报名、付款、欠款、接送和续费风险。',
         steps: [
-          { order: '1', title: '打开 Data Summary', detail: '先看红色欠款，再看临近到期和剩余两节课以内的一对一课包。Tuition 表示课程明细原价，不含接送费，也未扣除 discount。' },
-          { order: '2', title: '使用表头筛选', detail: '点击每个表头筛选。文字列可搜索，日期列可选区间，金额列可设置 min/max，并支持 Asc 或 Desc 排序。' },
-          { order: '3', title: '完成后续处理', detail: '补款进入报名订单；续费从学生列表点击 Register 创建新报名。处理完成后提醒会自动更新。' },
+          { order: '1', title: '理解金额列', detail: 'Tuition 是课程明细原价，不含 pickup/drop-off，也未扣 discount。Paid 是订单已收金额，Balance 为负数时表示仍有欠款。' },
+          { order: '2', title: '使用表头筛选和排序', detail: '点击表头筛选：文字列可搜索，日期列可选区间，金额列可设置 min/max，并支持 Asc 或 Desc。用 Balance 排序查欠款，用 Tuition/Paid 区间核对收费。' },
+          { order: '3', title: '回到业务页面处理', detail: 'Data Summary 用来定位问题，不直接改订单。补款、退款进入 Enrollment History；续费从学生列表点击 Register 创建新报名。处理完成后 Data Summary 会随数据更新。' },
         ],
       },
       {
@@ -308,7 +308,7 @@ const guideCopy: Record<GuideLang, GuideCopy> = {
         title: 'Finish a Partial Paid Order',
         summary: 'These actions belong to an enrollment order, not directly to a student profile.',
         steps: [
-          { order: '1', title: 'Find the unpaid order', detail: 'Open Enrollment History and filter Payment by Unpaid or Partial. You can also start from the red Balance column in Data Summary and trace back to the order.' },
+          { order: '1', title: 'Find the unpaid order', detail: 'Open Enrollment History and filter Payment by Unpaid or Partial. You can also start from Data Summary, sort or range-filter Balance, then return to Enrollment History for the order action.' },
           { order: '2', title: 'Record payment', detail: 'Choose Pay / Record payment from order Actions. Enter payment method, amount, date, handler, and notes. Multiple payment splits can be recorded in one submission.' },
           { order: '3', title: 'Confirm balance and proof', detail: 'After saving, Paid, Balance, and Payment status update on the order. Use View receipt or the payment statement to review the payment proof.' },
         ],
@@ -327,12 +327,12 @@ const guideCopy: Record<GuideLang, GuideCopy> = {
       {
         id: 'follow-up',
         badge: 'Follow-up',
-        title: 'Handle Balances and Renewals',
-        summary: 'Data Summary shows only records that need attention.',
+        title: 'Use Data Summary for Operations Review',
+        summary: 'Data Summary is a student-and-course workbook for reviewing registration, payment, balances, transportation, and renewal risks in one place.',
         steps: [
-          { order: '1', title: 'Open Data Summary', detail: 'Start with red unpaid balances, then review expiring registrations and 1-on-1 packages with two or fewer lessons left. Tuition means the course line price before discounts and before pickup/drop-off fees.' },
-          { order: '2', title: 'Use header filters', detail: 'Select each table header to filter. Text columns search, date columns use ranges, and amount columns support min/max plus Asc or Desc sorting.' },
-          { order: '3', title: 'Complete the follow-up', detail: 'Record payment on the enrollment order. For renewal, select Register from the student list to create a new enrollment.' },
+          { order: '1', title: 'Read the amount columns', detail: 'Tuition is the course line price before discounts and before pickup/drop-off fees. Paid is the order received amount. A negative Balance means money is still owed.' },
+          { order: '2', title: 'Use header filters and sorting', detail: 'Select each table header to filter. Text columns search, date columns use ranges, and amount columns support min/max plus Asc or Desc. Sort Balance for unpaid follow-up, or range-filter Tuition/Paid for charge review.' },
+          { order: '3', title: 'Go back to the workflow page', detail: 'Data Summary is for finding issues, not editing orders. Record payments or refunds from Enrollment History. For renewal, select Register from the student list to create a new enrollment.' },
         ],
       },
       {

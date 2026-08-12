@@ -139,6 +139,7 @@
               <td class="workbook-column--class workbook-class-cell">
                 {{ rowIndex === 0 ? group.label : '' }}
               </td>
+              <td class="workbook-cell--center">{{ displayText(row.campusName) }}</td>
               <td class="workbook-column--studentName">{{ displayText(row.studentName) }}</td>
               <td>{{ displayText(row.school) }}</td>
               <td class="workbook-cell--center">{{ displayText(row.grade) }}</td>
@@ -200,6 +201,7 @@ import { extractErrorMessage } from '@/api/http';
 
 type ColumnKey =
   | 'class'
+  | 'campus'
   | 'studentName'
   | 'school'
   | 'grade'
@@ -247,6 +249,7 @@ interface WorkbookGroup {
 
 const columns: WorkbookColumn[] = [
   { key: 'class', label: 'Class', width: 90, filterType: 'select' },
+  { key: 'campus', label: 'Campus', width: 112, filterType: 'select' },
   { key: 'studentName', label: 'Student Name', width: 150, filterType: 'text' },
   { key: 'school', label: 'School', width: 110, filterType: 'text' },
   { key: 'grade', label: 'Grade', width: 76, filterType: 'select' },
@@ -380,6 +383,8 @@ function columnValue(row: DataSummaryRow, key: ColumnKey): string | number | und
   switch (key) {
     case 'class':
       return classLabel(row);
+    case 'campus':
+      return row.campusName;
     case 'studentName':
       return row.studentName;
     case 'school':

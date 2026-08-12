@@ -48,7 +48,6 @@ public class CoursePriceOptionSaveRequest {
     @Schema(description = "Time slot label", example = "Sat 09:00-12:00")
     private String timeSlotLabel;
 
-    @NotBlank(message = "Detail text is required")
     @Size(max = 500, message = "Detail text must not exceed 500 characters")
     @Schema(description = "Detail text used by registration and receipt")
     private String detailText;

@@ -298,7 +298,7 @@
             <el-table-column
               v-if="canConfirmLessons || canManageLessonResources"
               label="Action"
-              width="250"
+              width="280"
               fixed="right"
               class-name="no-print"
               align="center"
@@ -306,49 +306,47 @@
             >
               <template #default="{ row }">
                 <div class="oo-action-cell">
-                  <el-button
-                    v-if="canAdjustLesson(row)"
-                    size="small"
-                    plain
-                    @click="openAdjustDialog(row)"
-                  >
-                    Adjust
-                  </el-button>
-                  <el-button
-                    v-if="canManageLessonResources && needsLessonResources(row)"
-                    class="action-primary"
-                    type="primary"
-                    size="small"
-                    @click="openAssignmentDialog(row)"
-                  >
-                    Set teacher
-                  </el-button>
-                  <span
-                    v-if="needsLessonResources(row)"
-                    class="oo-action-reason"
-                  >
-                    Teacher required before deduction.
-                  </span>
-                  <el-button
-                    v-else-if="canAdminConfirm(row)"
-                    class="action-primary"
-                    type="warning"
-                    size="small"
-                    @click="openConfirm(row, 'admin')"
-                  >
-                    Review & deduct
-                  </el-button>
-                  <el-button
-                    v-else-if="canInitialConfirm(row)"
-                    class="action-primary"
-                    type="success"
-                    size="small"
-                    plain
-                    @click="openConfirm(row, 'normal')"
-                  >
-                    Submit attendance
-                  </el-button>
-                  <span v-else-if="!canAdjustLesson(row)" class="oo-no-action">{{ taskLabel(row) }}</span>
+                  <div class="oo-action-slot oo-action-slot--adjust">
+                    <el-button
+                      v-if="canAdjustLesson(row)"
+                      size="small"
+                      plain
+                      @click="openAdjustDialog(row)"
+                    >
+                      Adjust
+                    </el-button>
+                  </div>
+                  <div class="oo-action-slot oo-action-slot--primary">
+                    <el-tooltip
+                      v-if="needsLessonResources(row)"
+                      content="Set a teacher before deduction."
+                      placement="top"
+                    >
+                      <span class="oo-action-reason">
+                        <el-icon><WarningFilled /></el-icon>
+                      </span>
+                    </el-tooltip>
+                    <el-button
+                      v-else-if="canAdminConfirm(row)"
+                      class="action-primary"
+                      type="warning"
+                      size="small"
+                      @click="openConfirm(row, 'admin')"
+                    >
+                      Review & deduct
+                    </el-button>
+                    <el-button
+                      v-else-if="canInitialConfirm(row)"
+                      class="action-primary"
+                      type="success"
+                      size="small"
+                      plain
+                      @click="openConfirm(row, 'normal')"
+                    >
+                      Submit attendance
+                    </el-button>
+                    <span v-else-if="!canAdjustLesson(row)" class="oo-no-action">{{ taskLabel(row) }}</span>
+                  </div>
                 </div>
               </template>
             </el-table-column>
@@ -413,11 +411,22 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="adjustDialogVisible" title="Adjust Lesson Time" width="520px" :close-on-click-modal="false" class="no-print">
+    <el-dialog v-model="adjustDialogVisible" title="Adjust Lesson" width="560px" :close-on-click-modal="false" class="no-print">
       <p class="oo-form-hint">
-        Change only this lesson's class time. The recurring schedule will not be changed.
+        Change only this lesson's time or teacher. The recurring schedule will not be changed.
       </p>
       <el-form label-width="110px">
+        <el-form-item label="Teacher">
+          <el-select
+            v-model="adjustForm.teacherId"
+            clearable
+            filterable
+            placeholder="Select teacher"
+            style="width: 100%"
+          >
+            <el-option v-for="teacher in teacherOptions" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="Start Time" required>
           <el-date-picker
             v-model="adjustForm.plannedStartAt"
@@ -436,8 +445,8 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="Reason" required>
-          <el-input v-model="adjustForm.reason" type="textarea" :rows="2" placeholder="Why is this lesson adjusted?" />
+        <el-form-item label="Reason">
+          <el-input v-model="adjustForm.reason" type="textarea" :rows="2" placeholder="Optional note for this adjustment" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -472,6 +481,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
+import { WarningFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { fetchAllClassrooms, fetchAllTeachers, fetchStudents } from '@/api/base-data';
@@ -738,6 +748,7 @@ const assignmentForm = reactive({
   classroomId: undefined as EntityId | undefined,
 });
 const adjustForm = reactive({
+  teacherId: undefined as EntityId | undefined,
   plannedStartAt: '',
   plannedEndAt: '',
   reason: '',
@@ -987,6 +998,7 @@ function openAssignmentDialog(row: OneOnOneLesson) {
 
 function openAdjustDialog(row: OneOnOneLesson) {
   adjustLesson.value = row;
+  adjustForm.teacherId = findSelectableResourceId(teacherOptions.value, row.plannedTeacherId);
   adjustForm.plannedStartAt = row.plannedStartAt;
   adjustForm.plannedEndAt = row.plannedEndAt;
   adjustForm.reason = '';
@@ -1048,16 +1060,13 @@ async function submitAdjustLesson() {
     return;
   }
   const reason = adjustForm.reason.trim();
-  if (!reason) {
-    ElMessage.warning('Adjustment reason is required.');
-    return;
-  }
 
   adjusting.value = true;
   try {
     await createScheduleAdjustment({
       occurrenceId: adjustLesson.value.occurrenceId,
       adjustmentType: 'RESCHEDULE',
+      plannedTeacherId: adjustForm.teacherId,
       plannedStartAt: adjustForm.plannedStartAt,
       plannedEndAt: adjustForm.plannedEndAt,
       plannedUnits,
@@ -1799,15 +1808,39 @@ onMounted(async () => {
 }
 
 .oo-action-cell {
-  display: flex;
-  flex-wrap: nowrap;
+  display: inline-grid;
+  grid-template-columns: 96px 148px;
+  align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
+  width: 100%;
+}
+
+.oo-action-slot {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.oo-action-slot--adjust {
+  justify-content: flex-end;
+}
+
+.oo-action-slot--primary {
+  justify-content: flex-start;
 }
 
 .oo-action-cell :deep(.el-button) {
   margin-left: 0;
   white-space: nowrap;
+}
+
+.oo-action-slot--adjust :deep(.el-button) {
+  min-width: 96px;
+}
+
+.oo-action-slot--primary :deep(.el-button) {
+  min-width: 148px;
 }
 
 .oo-no-action {
@@ -1818,12 +1851,23 @@ onMounted(async () => {
 }
 
 .oo-action-reason {
-  max-width: 110px;
-  color: #b45309;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.25;
-  white-space: normal;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #c2410c;
+  line-height: 1;
+  cursor: help;
+  transform: translateX(8px);
+}
+
+.oo-action-reason :deep(.el-icon) {
+  font-size: 14px;
 }
 
 :deep(.oo-row--next) {

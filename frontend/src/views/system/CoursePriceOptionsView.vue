@@ -9,10 +9,6 @@
         </div>
         <div class="header-actions">
           <el-button @click="loadAll">Reload</el-button>
-          <el-button type="primary" :disabled="!query.courseProductId" @click="openDialog()">
-            <el-icon><Plus /></el-icon>
-            Add price row
-          </el-button>
         </div>
       </div>
 
@@ -112,7 +108,6 @@
                   <strong>{{ group.productName }}</strong>
                   <span>{{ group.registerClass }} · {{ group.rows.length }} price row{{ group.rows.length === 1 ? '' : 's' }}</span>
                 </div>
-                <el-button text type="primary" @click="openPriceForProduct(group.productId)">Add price row</el-button>
               </header>
 
               <el-table
@@ -271,9 +266,13 @@
               v-model="form.gradeBand"
               filterable
               allow-create
+              clearable
               default-first-option
+              reserve-keyword
+              placeholder="Select or type grade / level"
+              no-match-text="Press Enter to use this grade / level"
+              no-data-text="Type a grade / level and press Enter"
               style="width: 100%;"
-              @change="syncDetailText"
             >
               <el-option
                 v-for="grade in gradeOptionsForForm"
@@ -326,10 +325,10 @@
           </div>
           <div class="form-grid form-grid--two">
             <el-form-item label="First month">
-              <el-date-picker v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" @change="syncDetailText" />
+              <el-date-picker v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
             <el-form-item label="Last month">
-              <el-date-picker v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" @change="syncDetailText" />
+              <el-date-picker v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
           </div>
           <div class="form-grid form-grid--two">
@@ -390,8 +389,8 @@
 
         <el-collapse class="advanced-settings">
           <el-collapse-item title="Advanced settings" name="advanced">
-            <el-form-item label="Registration detail" prop="detailText">
-              <el-input v-model="form.detailText" type="textarea" :rows="2" />
+            <el-form-item label="Registration detail">
+              <el-input v-model="form.detailText" type="textarea" :rows="2" placeholder="Optional" />
             </el-form-item>
           </el-collapse-item>
         </el-collapse>
@@ -412,7 +411,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, InfoFilled, Plus } from '@element-plus/icons-vue';
+import { ArrowLeft, InfoFilled } from '@element-plus/icons-vue';
 import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
 import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -553,7 +552,6 @@ const rules = {
     },
     trigger: 'change',
   }],
-  detailText: [{ required: true, message: 'Detail is required' }],
   priceAmount: [{
     validator: (_rule: unknown, value: number, callback: (error?: Error) => void) => {
       callback(value > 0 ? undefined : new Error('Price must be greater than zero'));
@@ -847,18 +845,6 @@ function openDialog(option?: CoursePriceOptionItem) {
   form.sortOrder = option?.sortOrder ?? 0;
   form.status = option?.status ?? 'ACTIVE';
   dialogVisible.value = true;
-  if (!form.detailText) {
-    syncDetailText();
-  }
-}
-
-function openPriceForProduct(productId?: EntityId) {
-  if (!productId) {
-    ElMessage.warning('Link this price row to a course product before adding more prices.');
-    return;
-  }
-  query.courseProductId = productId;
-  openDialog();
 }
 
 function handleFormProductChange() {
@@ -866,7 +852,6 @@ function handleFormProductChange() {
   if (product) {
     form.courseType = (product.courseType as CourseTypeValue) || form.courseType;
     form.registerClass = product.registerClass || product.productName;
-    syncDetailText();
   }
 }
 
@@ -875,7 +860,6 @@ function selectOneOnOneHours(value: string) {
     form.oneOnOneHours = undefined;
     form.customOneOnOneHours = undefined;
     form.durationLabel = '';
-    syncDetailText();
     return;
   }
   form.oneOnOneHours = Number(value);
@@ -900,18 +884,6 @@ function syncOneOnOneDuration() {
   } else {
     form.durationLabel = `${formatHours(form.oneOnOneHours)} hours`;
   }
-  syncDetailText();
-}
-
-function syncDetailText() {
-  const groupBillingDetail = 'Monthly';
-  const detailParts = formTeachingMode.value === 'GROUP'
-    ? [form.registerClass, form.gradeBand, groupBillingDetail]
-    : [form.registerClass, form.gradeBand, form.durationLabel];
-  const parts = detailParts
-    .map(value => String(value ?? '').trim())
-    .filter(Boolean);
-  form.detailText = parts.join(' · ');
 }
 
 function buildPayload(status = form.status): CoursePriceOptionSavePayload {
@@ -923,7 +895,7 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     periodLabel: formTeachingMode.value === 'ONE_ON_ONE' ? form.periodLabel.trim() || undefined : undefined,
     durationLabel: formTeachingMode.value === 'ONE_ON_ONE' ? form.durationLabel.trim() || undefined : undefined,
     timeSlotLabel: undefined,
-    detailText: form.detailText.trim(),
+    detailText: form.detailText.trim() || undefined,
     oneOnOneHours: formTeachingMode.value === 'ONE_ON_ONE' ? form.oneOnOneHours : undefined,
     priceAmount: formTeachingMode.value === 'GROUP' ? groupMonthlyPrice.value : form.priceAmount,
     currencyCode: 'USD',

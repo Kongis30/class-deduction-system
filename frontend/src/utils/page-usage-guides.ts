@@ -138,13 +138,13 @@ const guides: Record<string, PageUsageGuide> = {
   },
   'data-summary': {
     eyebrow: 'Operations review',
-    title: 'Use this page to find work that needs follow-up.',
-    description: 'Data Summary combines registration, payment, low-balance, and renewal review.',
+    title: 'Review registration, payment, and renewal risk in one workbook.',
+    description: 'Data Summary is a read-only operations workbook. Use it to find issues, then complete actions on the related workflow page.',
     steps: [
-      'Use each column header to filter the workbook. Text columns search, date columns use ranges, and amount columns support min/max ranges.',
-      'Use Asc or Desc inside amount column filters to sort Tuition, Pickup/Dropoff, Discount, Paid, or Balance.',
-      'Tuition is the course line price before discounts and before pickup/drop-off fees.',
-      'Open the related order when payment or refund review is needed.',
+      'Read Tuition as the course line price before discounts and before pickup/drop-off fees.',
+      'Use each column header to filter. Text columns search, date columns use ranges, and amount columns support min/max plus Asc or Desc sorting.',
+      'Sort or range-filter Balance to find unpaid follow-up; negative Balance means money is still owed.',
+      'Use Enrollment History for payment or refund actions, and Registration for renewals.',
     ],
     actions: [
       { label: 'New registration', to: '/registration' },
