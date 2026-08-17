@@ -136,10 +136,10 @@
               :key="rowKey(row)"
               class="workbook-data-row"
             >
+              <td class="workbook-cell--center">{{ displayText(row.campusName) }}</td>
               <td class="workbook-column--class workbook-class-cell">
                 {{ rowIndex === 0 ? group.label : '' }}
               </td>
-              <td class="workbook-cell--center">{{ displayText(row.campusName) }}</td>
               <td class="workbook-column--studentName">{{ displayText(row.studentName) }}</td>
               <td>{{ displayText(row.school) }}</td>
               <td class="workbook-cell--center">{{ displayText(row.grade) }}</td>
@@ -248,8 +248,8 @@ interface WorkbookGroup {
 }
 
 const columns: WorkbookColumn[] = [
-  { key: 'class', label: 'Class', width: 90, filterType: 'select' },
   { key: 'campus', label: 'Campus', width: 112, filterType: 'select' },
+  { key: 'class', label: 'Class', width: 90, filterType: 'select' },
   { key: 'studentName', label: 'Student Name', width: 150, filterType: 'text' },
   { key: 'school', label: 'School', width: 110, filterType: 'text' },
   { key: 'grade', label: 'Grade', width: 76, filterType: 'select' },

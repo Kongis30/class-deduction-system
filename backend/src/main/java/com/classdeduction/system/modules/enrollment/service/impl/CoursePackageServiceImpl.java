@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
@@ -14,10 +15,13 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
@@ -26,7 +30,11 @@ import com.classdeduction.system.modules.enrollment.vo.GroupClassPackageProgress
 import com.classdeduction.system.modules.enrollment.vo.GroupClassStudentProgressVO;
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
+import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
+import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
@@ -55,6 +63,7 @@ import java.util.stream.Collectors;
 public class CoursePackageServiceImpl implements CoursePackageService {
 
     private final CoursePackageMapper coursePackageMapper;
+    private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
@@ -63,6 +72,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
+    private final HourLedgerMapper hourLedgerMapper;
+    private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
 
     @Override
     public PageResponse<CoursePackageListItemVO> pagePackages(CoursePackagePageQuery query) {
@@ -199,6 +210,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         }
         StudentEntity student = studentMapper.selectById(coursePackage.getStudentId());
         CourseProductEntity courseProduct = courseProductMapper.selectById(coursePackage.getCourseProductId());
+        EnrollmentOrderItemEntity orderItem = coursePackage.getEnrollmentOrderItemId() == null
+                ? null
+                : enrollmentOrderItemMapper.selectById(coursePackage.getEnrollmentOrderItemId());
         List<PackageTeacherAssignmentEntity> assignments = packageTeacherAssignmentMapper.selectList(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
                 .eq(PackageTeacherAssignmentEntity::getPackageId, id)
                 .orderByDesc(PackageTeacherAssignmentEntity::getEffectiveFrom));
@@ -207,6 +221,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 : teacherMapper.selectBatchIds(assignments.stream().map(PackageTeacherAssignmentEntity::getTeacherId).toList())
                 .stream()
                 .collect(Collectors.toMap(TeacherEntity::getId, item -> item));
+        Map<Long, Integer> consumedUnitsByTeacher = loadConsumedUnitsByTeacher(id);
 
         return CoursePackageDetailVO.builder()
                 .id(coursePackage.getId())
@@ -219,10 +234,13 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .packageName(coursePackage.getPackageName())
                 .subjectName(coursePackage.getSubjectName())
                 .teachingMode(coursePackage.getTeachingMode())
+                .purchasedHours(resolvePurchasedHours(coursePackage, orderItem))
                 .totalUnits(UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()))
                 .defaultLessonUnits(coursePackage.getDefaultLessonUnits())
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
+                .allocatedTeacherHours(activeAllocatedHours(assignments))
+                .unallocatedTeacherHours(Math.max(0.0, UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()) - activeAllocatedHours(assignments)))
                 .originalAmount(coursePackage.getOriginalAmount())
                 .discountAmount(coursePackage.getDiscountAmount())
                 .receivedAmount(coursePackage.getReceivedAmount())
@@ -230,10 +248,32 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .startDate(coursePackage.getStartDate())
                 .estimatedEndDate(coursePackage.getEstimatedEndDate())
                 .remark(coursePackage.getRemark())
-                .teacherAssignments(assignments.stream().map(item -> toAssignmentVO(item, teacherMap.get(item.getTeacherId()))).toList())
+                .teacherAssignments(assignments.stream()
+                        .map(item -> toAssignmentVO(
+                                item,
+                                teacherMap.get(item.getTeacherId()),
+                                consumedUnitsByTeacher.getOrDefault(item.getTeacherId(), 0)))
+                        .toList())
                 .createdAt(coursePackage.getCreatedAt())
                 .updatedAt(coursePackage.getUpdatedAt())
                 .build();
+    }
+
+    private double resolvePurchasedHours(CoursePackageEntity coursePackage, EnrollmentOrderItemEntity orderItem) {
+        if (orderItem != null && orderItem.getOneOnOneUnits() != null) {
+            return UnitConverter.toHoursDecimal(orderItem.getOneOnOneUnits());
+        }
+        return UnitConverter.toHoursDecimal(coursePackage.getTotalUnits());
+    }
+
+    private double activeAllocatedHours(List<PackageTeacherAssignmentEntity> assignments) {
+        int allocatedUnits = assignments.stream()
+                .filter(item -> "ACTIVE".equals(item.getAssignmentStatus()))
+                .map(PackageTeacherAssignmentEntity::getAllocatedUnits)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .sum();
+        return UnitConverter.toHoursDecimal(allocatedUnits);
     }
 
     private Map<Long, String> buildPrimaryTeacherNameMap(List<Long> packageIds) {
@@ -269,7 +309,6 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         }
         return packageTeacherAssignmentMapper.selectList(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
                         .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
-                        .eq(PackageTeacherAssignmentEntity::getIsPrimary, 1)
                         .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE"))
                 .stream()
                 .map(PackageTeacherAssignmentEntity::getPackageId)
@@ -526,12 +565,34 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .build();
     }
 
-    private PackageTeacherAssignmentVO toAssignmentVO(PackageTeacherAssignmentEntity item, TeacherEntity teacher) {
+    private Map<Long, Integer> loadConsumedUnitsByTeacher(Long packageId) {
+        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .eq(LessonRecordEntity::getPackageId, packageId)
+                        .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .filter(item -> item.getActualTeacherId() != null)
+                .collect(Collectors.groupingBy(
+                        LessonRecordEntity::getActualTeacherId,
+                        Collectors.summingInt(item -> item.getActualUnits() == null ? 0 : item.getActualUnits())));
+    }
+
+    private PackageTeacherAssignmentVO toAssignmentVO(PackageTeacherAssignmentEntity item,
+                                                       TeacherEntity teacher,
+                                                       int consumedUnits) {
+        Integer allocatedUnits = item.getAllocatedUnits();
         return PackageTeacherAssignmentVO.builder()
                 .id(item.getId())
                 .teacherId(item.getTeacherId())
                 .teacherNo(teacher == null ? null : teacher.getTeacherNo())
                 .teacherName(teacher == null ? null : teacher.getTeacherName())
+                .allocatedHours(allocatedUnits == null
+                        ? null
+                        : UnitConverter.toHoursDecimal(allocatedUnits))
+                .consumedHours(UnitConverter.toHoursDecimal(consumedUnits))
+                .remainingHours(allocatedUnits == null
+                        ? null
+                        : UnitConverter.toHoursDecimal(Math.max(allocatedUnits - consumedUnits, 0)))
                 .primary(item.getIsPrimary() != null && item.getIsPrimary() == 1)
                 .assignmentStatus(item.getAssignmentStatus())
                 .effectiveFrom(item.getEffectiveFrom())
@@ -568,6 +629,82 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         }
 
         coursePackageMapper.updateById(coursePackage);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void adjustPackageHours(Long id, CoursePackageHoursAdjustmentRequest request, Long operatorId) {
+        CoursePackageEntity coursePackage = requireCoursePackage(id);
+        if (!"ONE_ON_ONE".equals(coursePackage.getTeachingMode())) {
+            throw new BusinessException("PACKAGE_HOURS_NOT_SUPPORTED", "Hour adjustments are only available for 1-on-1 packages.");
+        }
+        int changeUnits = UnitConverter.toHalfHourUnits(request.getChangeHours());
+        if (changeUnits == 0) {
+            throw new BusinessException("ZERO_HOUR_ADJUSTMENT", "Hour change cannot be zero.");
+        }
+        if ("BONUS_HOURS".equals(request.getAdjustmentType()) && changeUnits < 0) {
+            throw new BusinessException("INVALID_BONUS_HOURS", "Bonus hours must increase the available total.");
+        }
+        int newTotalUnits = coursePackage.getTotalUnits() + changeUnits;
+        int newRemainingUnits = coursePackage.getRemainingUnits() + changeUnits;
+        if (newTotalUnits < coursePackage.getConsumedUnits() || newRemainingUnits < 0) {
+            throw new BusinessException("INSUFFICIENT_PACKAGE_HOURS", "The adjustment cannot reduce hours below the consumed balance.");
+        }
+        int activeAllocatedUnits = packageTeacherAssignmentMapper.selectList(
+                        new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                                .eq(PackageTeacherAssignmentEntity::getPackageId, id)
+                                .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE"))
+                .stream()
+                .map(PackageTeacherAssignmentEntity::getAllocatedUnits)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .sum();
+        if (newTotalUnits < activeAllocatedUnits) {
+            throw new BusinessException("HOURS_BELOW_TEACHER_ALLOCATION",
+                    "Reduce teacher allocations before reducing package hours.");
+        }
+
+        coursePackage.setTotalUnits(newTotalUnits);
+        coursePackage.setRemainingUnits(newRemainingUnits);
+        if (newRemainingUnits > 0 && "COMPLETED".equals(coursePackage.getPackageStatus())) {
+            coursePackage.setPackageStatus("ACTIVE");
+            coursePackage.setCompletedAt(null);
+        }
+        if (coursePackageMapper.updateById(coursePackage) != 1) {
+            throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
+        }
+
+        HourLedgerEntity ledger = new HourLedgerEntity();
+        ledger.setPackageId(id);
+        ledger.setLedgerType("MANUAL_ADJUST");
+        ledger.setChangeUnits(changeUnits);
+        ledger.setBalanceAfterUnits(newRemainingUnits);
+        ledger.setBusinessDate(AppTime.nowLocalDateTime().toLocalDate());
+        ledger.setReasonCode(request.getAdjustmentType());
+        ledger.setReasonDesc(StringUtils.hasText(request.getReason()) ? request.getReason().trim() : null);
+        ledger.setOperatedBy(operatorId);
+        ledger.setOperatedAt(AppTime.nowLocalDateTime());
+        hourLedgerMapper.insert(ledger);
+        upsertBalanceSnapshot(coursePackage, ledger.getId());
+    }
+
+    private void upsertBalanceSnapshot(CoursePackageEntity coursePackage, Long lastLedgerId) {
+        PackageBalanceSnapshotEntity snapshot = packageBalanceSnapshotMapper.selectById(coursePackage.getId());
+        boolean insert = snapshot == null;
+        if (insert) {
+            snapshot = new PackageBalanceSnapshotEntity();
+            snapshot.setPackageId(coursePackage.getId());
+        }
+        snapshot.setTotalUnits(coursePackage.getTotalUnits());
+        snapshot.setConsumedUnits(coursePackage.getConsumedUnits());
+        snapshot.setRemainingUnits(coursePackage.getRemainingUnits());
+        snapshot.setLastLedgerId(lastLedgerId);
+        snapshot.setSnapshotAt(AppTime.nowLocalDateTime());
+        if (insert) {
+            packageBalanceSnapshotMapper.insert(snapshot);
+        } else {
+            packageBalanceSnapshotMapper.updateById(snapshot);
+        }
     }
 
     @Override

@@ -16,7 +16,9 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
@@ -69,6 +71,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private final LessonStatusRuleMapper lessonStatusRuleMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final CoursePackageMapper coursePackageMapper;
+    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -755,6 +758,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                                                              LessonRecordEntity record,
                                                              Long operatorId,
                                                              ConfirmationDecision decision) {
+        validateTeacherAllocation(
+                coursePackage.getId(), record.getId(), decision.actualTeacherId(), decision.actualUnits());
         int newConsumedUnits = coursePackage.getConsumedUnits() + decision.deductedUnits();
         int newRemainingUnits = coursePackage.getRemainingUnits() - decision.deductedUnits();
         boolean packageCompleted = newRemainingUnits == 0;
@@ -787,6 +792,41 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
         upsertBalanceSnapshot(coursePackage, ledger.getId());
         return new PackageUpdateResult(ledger.getId(), newRemainingUnits, packageCompleted);
+    }
+
+    private void validateTeacherAllocation(Long packageId,
+                                           Long currentRecordId,
+                                           Long teacherId,
+                                           int actualUnits) {
+        if (teacherId == null || actualUnits <= 0) {
+            return;
+        }
+        PackageTeacherAssignmentEntity assignment = packageTeacherAssignmentMapper.selectOne(
+                new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                        .eq(PackageTeacherAssignmentEntity::getPackageId, packageId)
+                        .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
+                        .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
+                        .isNotNull(PackageTeacherAssignmentEntity::getAllocatedUnits)
+                        .orderByDesc(PackageTeacherAssignmentEntity::getEffectiveFrom)
+                        .last("LIMIT 1"));
+        if (assignment == null) {
+            return;
+        }
+        int consumedUnits = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .eq(LessonRecordEntity::getPackageId, packageId)
+                        .eq(LessonRecordEntity::getActualTeacherId, teacherId)
+                        .ne(currentRecordId != null, LessonRecordEntity::getId, currentRecordId)
+                        .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_CONFIRMED)
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .map(LessonRecordEntity::getActualUnits)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .sum();
+        if (consumedUnits + actualUnits > assignment.getAllocatedUnits()) {
+            throw new BusinessException("TEACHER_ALLOCATION_EXCEEDED",
+                    "This lesson exceeds the teacher's allocated hours. Adjust the teacher allocation first.");
+        }
     }
 
     /**

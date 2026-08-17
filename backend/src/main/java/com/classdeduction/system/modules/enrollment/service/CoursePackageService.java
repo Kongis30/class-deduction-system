@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.enrollment.service;
 
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
@@ -36,6 +37,11 @@ public interface CoursePackageService {
      * 更新课时包。
      */
     void updatePackage(Long id, CoursePackageUpdateRequest request);
+
+    /**
+     * Adjust available package hours without changing order charges.
+     */
+    void adjustPackageHours(Long id, CoursePackageHoursAdjustmentRequest request, Long operatorId);
 
     /**
      * 获取课时包余额。

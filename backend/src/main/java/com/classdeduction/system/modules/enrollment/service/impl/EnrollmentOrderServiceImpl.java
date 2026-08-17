@@ -376,7 +376,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         List<String> receiptNos = new ArrayList<>();
 
         if (primaryTeacher != null) {
-            createPrimaryTeacherAssignment(coursePackage.getId(), primaryTeacher.getId(), request);
+            createPrimaryTeacherAssignment(
+                    coursePackage.getId(),
+                    primaryTeacher.getId(),
+                    coursePackage.getTotalUnits(),
+                    request);
         }
 
         // Auto-create schedule if slots are provided
@@ -497,10 +501,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return coursePackage;
     }
 
-    private void createPrimaryTeacherAssignment(Long packageId, Long teacherId, EnrollmentCreateRequest request) {
+    private void createPrimaryTeacherAssignment(Long packageId,
+                                                Long teacherId,
+                                                Integer allocatedUnits,
+                                                EnrollmentCreateRequest request) {
         PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
         assignment.setPackageId(packageId);
         assignment.setTeacherId(teacherId);
+        assignment.setAllocatedUnits(allocatedUnits);
         assignment.setIsPrimary(1);
         assignment.setEffectiveFrom(request.getAssignmentEffectiveFrom() != null ? request.getAssignmentEffectiveFrom() : AppTime.nowLocalDateTime());
         assignment.setAssignmentStatus("ACTIVE");

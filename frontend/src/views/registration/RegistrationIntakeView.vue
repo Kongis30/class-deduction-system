@@ -291,14 +291,14 @@
                         >
                           <div class="price-option-row">
                             <span>{{ durationOptionLabel(option) }}</span>
-                            <small>{{ formatMoney(numeric(option.priceAmount)) }}</small>
+                            <small>{{ formatMoney(packageBasePrice(option, defaultAttendanceOption(option))) }}</small>
                           </div>
                         </el-option>
                       </el-select>
                       <strong class="print-only print-course-value">{{ printCourseScheduleLabel(line) }}</strong>
                     </label>
                     <label v-if="showDurationInput(line)" class="course-control">
-                      <span>Duration &amp; schedule</span>
+                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : 'Package' }}</span>
                       <el-input-number
                         v-if="isOneOnOneLine(line)"
                         v-model="line.oneOnOneHours"
@@ -311,28 +311,27 @@
                         :disabled="isReadOnly"
                         @change="() => handleRegistrationDurationChange(line)"
                       />
-                      <div v-else class="group-duration-picker">
-                        <el-select
-                          v-model="line.groupDurationMode"
-                          :disabled="isReadOnly"
-                          @change="() => applyGroupDurationMode(line)"
-                        >
-                          <el-option label="2 months" value="2" />
-                          <el-option label="6 months" value="6" />
-                          <el-option label="10 months" value="10" />
-                          <el-option label="Custom" value="CUSTOM" />
-                        </el-select>
-                        <el-input-number
-                          v-if="line.groupDurationMode === 'CUSTOM'"
-                          v-model="line.groupPurchasedMonths"
-                          :min="1"
-                          :max="36"
-                          :precision="0"
-                          :controls="true"
-                          @change="() => handleRegistrationDurationChange(line)"
-                        />
+                      <div v-else class="class-schedule-summary">
+                        {{ printRegistrationDurationLabel(line) }}
                       </div>
                       <strong class="print-only print-course-value">{{ printRegistrationDurationLabel(line) }}</strong>
+                    </label>
+                    <label v-if="!isOneOnOneLine(line) && attendanceOptionsForLine(line).length > 0" class="course-control">
+                      <span>Attendance</span>
+                      <el-select
+                        v-model="line.attendanceOption"
+                        class="table-select"
+                        placeholder="Select attendance"
+                        :disabled="isReadOnly"
+                        @change="() => handleAttendanceChange(line)"
+                      >
+                        <el-option
+                          v-for="option in attendanceOptionsForLine(line)"
+                          :key="option.value"
+                          :label="option.label"
+                          :value="option.value"
+                        />
+                      </el-select>
                     </label>
                   </div>
                     <div class="teacher-class-line">
@@ -626,6 +625,11 @@ interface RegistrationCourseLine {
   periodLabel: string;
   durationLabel: string;
   timeSlotLabel: string;
+  packageUnit?: string;
+  packageQuantity?: number;
+  packageTotalPrice?: number;
+  attendanceOption?: 'FULL_DAY' | 'MORNING' | 'AFTERNOON' | 'CUSTOM' | 'NONE';
+  attendanceScheduleJson?: string;
   priceAmount: number;
   originalPriceAmount?: number;
   manualPriceOverride: boolean;
@@ -1110,6 +1114,11 @@ function toHistoricalCourseLine(
     periodLabel,
     durationLabel: '',
     timeSlotLabel: getString(item, 'timeSlotLabel') || getString(fallback, 'timeSlotLabel'),
+    packageUnit: getString(item, 'packageUnit') || getString(fallback, 'packageUnit') || undefined,
+    packageQuantity: optionalNumber(item, 'packageQuantity') ?? optionalNumber(fallback, 'packageQuantity'),
+    packageTotalPrice: optionalNumber(item, 'packageTotalPrice') ?? optionalNumber(fallback, 'packageTotalPrice'),
+    attendanceOption: (getString(item, 'attendanceOption') || getString(fallback, 'attendanceOption') || 'NONE') as RegistrationCourseLine['attendanceOption'],
+    attendanceScheduleJson: getString(item, 'attendanceScheduleJson') || getString(fallback, 'attendanceScheduleJson') || undefined,
     priceAmount: firstPositiveNumber(getNumber(item, 'priceAmount'), getNumber(fallback, 'priceAmount')),
     originalPriceAmount: optionalNumber(item, 'originalPriceAmount') ?? optionalNumber(fallback, 'originalPriceAmount'),
     manualPriceOverride: getBoolean(item, 'manualPriceOverride', false),
@@ -1171,6 +1180,11 @@ function createCourseLine(): RegistrationCourseLine {
     periodLabel: '',
     durationLabel: '',
     timeSlotLabel: '',
+    packageUnit: undefined,
+    packageQuantity: undefined,
+    packageTotalPrice: undefined,
+    attendanceOption: 'NONE',
+    attendanceScheduleJson: undefined,
     priceAmount: 0,
     manualPriceOverride: false,
     groupBillingType: undefined,
@@ -1316,7 +1330,7 @@ function handleCourseProductChange(line: RegistrationCourseLine) {
   line.gradeBand = '';
   line.periodKey = '';
   clearSelectedOption(line);
-  line.courseType = product?.courseType || firstOption?.courseType || '';
+  line.courseType = product?.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : (firstOption?.courseType || 'GROUP');
   line.registerClass = product?.registerClass || firstOption?.registerClass || '';
 }
 
@@ -1348,6 +1362,9 @@ function handleOptionChange(line: RegistrationCourseLine) {
   line.durationLabel = option.durationLabel ?? '';
   line.periodKey = buildPeriodKey(option);
   line.timeSlotLabel = option.timeSlotLabel ?? '';
+  line.packageUnit = option.packageUnit;
+  line.packageQuantity = option.packageQuantity;
+  line.packageTotalPrice = packageBasePrice(option, line.attendanceOption);
   line.detail = option.detailText;
   line.courseProductId = option.courseProductId;
   line.oneOnOneHours = option.oneOnOneHours;
@@ -1369,6 +1386,10 @@ function handleOptionChange(line: RegistrationCourseLine) {
     line.groupDurationMode = durationModeForMonths(line.groupPurchasedMonths);
     line.groupRegistrationStartMonth = undefined;
     line.groupRegistrationEndMonth = undefined;
+  }
+  if (!isOneOnOneLine(line)) {
+    line.attendanceOption = defaultAttendanceOption(option);
+    line.packageTotalPrice = packageBasePrice(option, line.attendanceOption);
   }
   line.manualPriceOverride = false;
   handleRegistrationDurationChange(line);
@@ -1402,9 +1423,10 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
   const configuredHours = numeric(option.oneOnOneHours);
   const computedPrice = isOneOnOneLine(line)
     ? configuredHours > 0
-      ? roundMoney(numeric(option.priceAmount) / configuredHours * numeric(line.oneOnOneHours))
+      ? roundMoney(numeric(packageBasePrice(option, line.attendanceOption)) / configuredHours * numeric(line.oneOnOneHours))
       : 0
-    : roundMoney(numeric(option.priceAmount) * numeric(line.groupPurchasedMonths));
+    : packageBasePrice(option, line.attendanceOption);
+  line.packageTotalPrice = computedPrice;
   line.originalPriceAmount = computedPrice;
   if (!line.manualPriceOverride) {
     line.priceAmount = computedPrice;
@@ -1420,6 +1442,11 @@ function clearSelectedOption(line: RegistrationCourseLine) {
   line.periodLabel = '';
   line.durationLabel = '';
   line.timeSlotLabel = '';
+  line.packageUnit = undefined;
+  line.packageQuantity = undefined;
+  line.packageTotalPrice = undefined;
+  line.attendanceOption = 'NONE';
+  line.attendanceScheduleJson = undefined;
   line.priceAmount = 0;
   line.originalPriceAmount = undefined;
   line.manualPriceOverride = false;
@@ -1521,7 +1548,6 @@ function productOptionLabel(product: CourseProductItem) {
   const labels: string[] = [];
   appendDistinctCourseLabel(labels, product.productName);
   appendDistinctCourseLabel(labels, product.registerClass);
-  appendDistinctCourseLabel(labels, formatCourseType(product.courseType || ''));
   return labels.join(' · ') || 'Course';
 }
 
@@ -1567,7 +1593,11 @@ function printRegistrationDurationLabel(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line)) {
     return line.oneOnOneHours ? `${formatHours(line.oneOnOneHours)} hours` : '—';
   }
-  return line.groupPurchasedMonths ? `${line.groupPurchasedMonths} months` : '—';
+  if (line.packageQuantity && line.packageUnit) {
+    const unit = line.packageUnit.toLowerCase();
+    return `${line.packageQuantity} ${Number(line.packageQuantity) === 1 ? unit : `${unit}s`}`;
+  }
+  return line.periodLabel || '—';
 }
 
 function printTuitionOptionLabel(line: RegistrationCourseLine) {
@@ -1608,13 +1638,69 @@ function printTeacherOrClassLabel(line: RegistrationCourseLine) {
 
 function durationOptionLabel(option: CoursePriceOptionItem) {
   if (option.courseType !== 'ONE_ON_ONE') {
-    return option.groupTotalSessions ? `${option.groupTotalSessions} total sessions` : 'Class tuition';
+    return [
+      option.periodLabel,
+      packageLengthLabel(option),
+    ].filter(Boolean).join(' · ') || 'Class package';
   }
   return [
     option.durationLabel,
     option.periodLabel,
     option.timeSlotLabel,
   ].filter(Boolean).join(' · ') || option.detailText;
+}
+
+function packageLengthLabel(option: CoursePriceOptionItem) {
+  if (!option.packageUnit || !option.packageQuantity) {
+    return option.durationLabel;
+  }
+  const unit = option.packageUnit.toLowerCase();
+  const plural = Number(option.packageQuantity) === 1 ? unit : `${unit}s`;
+  return `${option.packageQuantity} ${plural}`;
+}
+
+function defaultAttendanceOption(option?: CoursePriceOptionItem): RegistrationCourseLine['attendanceOption'] {
+  if (!option || option.courseType === 'ONE_ON_ONE') {
+    return 'NONE';
+  }
+  if (option.fullDayPrice != null) {
+    return 'FULL_DAY';
+  }
+  if (option.halfDayPrice != null) {
+    return 'MORNING';
+  }
+  return 'NONE';
+}
+
+function packageBasePrice(option: CoursePriceOptionItem, attendanceOption?: string) {
+  const normalized = attendanceOption || 'NONE';
+  if ((normalized === 'MORNING' || normalized === 'AFTERNOON' || normalized === 'CUSTOM') && option.halfDayPrice != null) {
+    return roundMoney(option.halfDayPrice);
+  }
+  if (normalized === 'FULL_DAY' && option.fullDayPrice != null) {
+    return roundMoney(option.fullDayPrice);
+  }
+  return roundMoney(option.totalPrice ?? option.groupTotalPrice ?? option.priceAmount);
+}
+
+function attendanceOptionsForLine(line: RegistrationCourseLine) {
+  const option = findOption(line.coursePriceOptionId);
+  if (!option || isOneOnOneLine(line)) {
+    return [];
+  }
+  const options: Array<{ label: string; value: RegistrationCourseLine['attendanceOption'] }> = [];
+  if (option.fullDayPrice != null) {
+    options.push({ label: `Full day (${formatMoney(option.fullDayPrice)})`, value: 'FULL_DAY' });
+  }
+  if (option.halfDayPrice != null) {
+    options.push({ label: `Morning half day (${formatMoney(option.halfDayPrice)})`, value: 'MORNING' });
+    options.push({ label: `Afternoon half day (${formatMoney(option.halfDayPrice)})`, value: 'AFTERNOON' });
+  }
+  return options;
+}
+
+function handleAttendanceChange(line: RegistrationCourseLine) {
+  recalculateLinePrice(line);
 }
 
 function classSelectPlaceholder(line: RegistrationCourseLine) {
@@ -1633,6 +1719,10 @@ function classScheduleLabel(line: RegistrationCourseLine) {
 }
 
 function isOneOnOneLine(line: RegistrationCourseLine) {
+  const product = courseProducts.value.find((item) => String(item.id) === String(line.courseProductId));
+  if (product) {
+    return product.teachingMode === 'ONE_ON_ONE';
+  }
   const normalizedRegisterClass = line.registerClass.toUpperCase().replace(/[^A-Z0-9]/g, '');
   return line.courseType === 'ONE_ON_ONE'
     || normalizedRegisterClass === 'ONEONONE'
@@ -1818,10 +1908,10 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
     return invalid;
   }
 
-  const months = numeric(line.groupPurchasedMonths);
-  const invalid = months < 1 || months > 36 || !Number.isInteger(months);
+  const quantity = numeric(line.packageQuantity);
+  const invalid = quantity <= 0;
   if (invalid) {
-    errors.push(`${label}: select 2, 6, 10, or enter 1 to 36 months.`);
+    errors.push(`${label}: select a package with a valid duration.`);
   }
   return invalid;
 }
@@ -1868,13 +1958,17 @@ function buildPayload(): RegistrationIntakePayload {
       gradeBand: line.gradeBand || undefined,
       periodLabel: line.periodLabel || undefined,
       timeSlotLabel: line.timeSlotLabel || undefined,
+      packageUnit: line.packageUnit,
+      packageQuantity: line.packageQuantity,
+      packageTotalPrice: line.packageTotalPrice,
+      attendanceOption: line.attendanceOption,
+      attendanceScheduleJson: line.attendanceScheduleJson,
       priceAmount: roundMoney(line.priceAmount),
       originalPriceAmount: line.originalPriceAmount,
       manualPriceOverride: line.manualPriceOverride,
       oneOnOneHours: isOneOnOneLine(line) ? line.oneOnOneHours : undefined,
       oneOnOneUnits: isOneOnOneLine(line) ? line.oneOnOneUnits : undefined,
       teacherId: isOneOnOneLine(line) ? line.teacherId : undefined,
-      purchasedMonths: !isOneOnOneLine(line) ? line.groupPurchasedMonths : undefined,
       remark: line.remark,
     })),
     pickupFeeCharged: form.pickupFeeCharged,

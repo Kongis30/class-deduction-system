@@ -124,6 +124,12 @@ export interface CoursePriceOptionItem {
   durationLabel?: string;
   timeSlotLabel?: string;
   detailText: string;
+  packageUnit?: 'MONTH' | 'WEEK' | 'SESSION' | 'HOUR' | string;
+  packageQuantity?: number;
+  totalPrice?: number;
+  derivedUnitPrice?: number;
+  fullDayPrice?: number;
+  halfDayPrice?: number;
   oneOnOneHours?: number;
   priceAmount: number;
   currencyCode: string;
@@ -131,7 +137,15 @@ export interface CoursePriceOptionItem {
   classId?: EntityId;
   groupTeacherId?: EntityId;
   groupClassroomId?: EntityId;
-  groupScheduleSlots?: Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string }>;
+  groupScheduleSlots?: Array<{
+    teacherId?: EntityId;
+    weekday: number;
+    startTime: string;
+    endTime: string;
+    morningEndTime?: string;
+    afternoonStartTime?: string;
+    attendanceOptions?: string;
+  }>;
   groupBillingType?: string;
   groupStartDate?: string;
   groupTotalSessions?: number;
@@ -269,6 +283,11 @@ export interface EnrollmentOrderLineItem {
   gradeBand?: string;
   periodLabel?: string;
   timeSlotLabel?: string;
+  packageUnit?: string;
+  packageQuantity?: number;
+  packageTotalPrice?: number;
+  attendanceOption?: string;
+  attendanceScheduleJson?: string;
   priceAmount?: number;
   originalPriceAmount?: number;
   manualPriceOverride?: boolean;
@@ -294,15 +313,34 @@ export interface CoursePackageItem {
   packageName: string;
   subjectName?: string;
   teachingMode?: string;
+  purchasedHours?: number;
   totalUnits: number;
   consumedUnits: number;
   remainingUnits: number;
+  allocatedTeacherHours?: number;
+  unallocatedTeacherHours?: number;
   receivedAmount: number;
   packageStatus: string;
   startDate?: string;
   estimatedEndDate?: string;
   primaryTeacherName?: string;
+  teacherAssignments?: PackageTeacherAssignmentItem[];
   createdAt: string;
+}
+
+export interface PackageTeacherAssignmentItem {
+  id: EntityId;
+  teacherId: EntityId;
+  teacherNo?: string;
+  teacherName?: string;
+  allocatedHours?: number;
+  consumedHours?: number;
+  remainingHours?: number;
+  primary: boolean;
+  assignmentStatus: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  changeReason?: string;
 }
 
 export interface GroupClassPackageProgressItem {

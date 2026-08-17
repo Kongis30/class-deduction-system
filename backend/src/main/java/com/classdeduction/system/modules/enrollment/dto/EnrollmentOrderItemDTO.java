@@ -48,6 +48,21 @@ public class EnrollmentOrderItemDTO {
     @Schema(description = "Time slot label", example = "10:00-12:00")
     private String timeSlotLabel;
 
+    @Schema(description = "Package unit snapshot: MONTH/WEEK/SESSION/HOUR")
+    private String packageUnit;
+
+    @Schema(description = "Package quantity snapshot")
+    private BigDecimal packageQuantity;
+
+    @Schema(description = "Package total price snapshot")
+    private BigDecimal packageTotalPrice;
+
+    @Schema(description = "Attendance option: FULL_DAY/MORNING/AFTERNOON/CUSTOM/NONE")
+    private String attendanceOption;
+
+    @Schema(description = "Per-day attendance schedule JSON")
+    private String attendanceScheduleJson;
+
     @DecimalMin(value = "0.00", message = "Price amount cannot be negative")
     @Schema(description = "Final line price", example = "1299.00")
     private BigDecimal priceAmount;

@@ -1,5 +1,10 @@
 package com.classdeduction.system.common.util;
 
+import com.classdeduction.system.common.exception.BusinessException;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
 /**
  * 半课时单位（1单位=0.5h）与小时之间的转换工具。
  * 内部存储统一使用半课时单位（int），对外暴露（API/前端）统一使用小时。
@@ -46,5 +51,20 @@ public final class UnitConverter {
      */
     public static int toHalfHourUnits(int hours) {
         return hours * 2;
+    }
+
+    /**
+     * Convert externally supplied hours to internal half-hour units.
+     */
+    public static int toHalfHourUnits(BigDecimal hours) {
+        if (hours == null) {
+            throw new BusinessException("HOURS_REQUIRED", "Hours are required.");
+        }
+        BigDecimal units = hours.multiply(BigDecimal.valueOf(2));
+        try {
+            return units.setScale(0, RoundingMode.UNNECESSARY).intValueExact();
+        } catch (ArithmeticException ex) {
+            throw new BusinessException("INVALID_HOUR_INCREMENT", "Hours must use 0.5-hour increments.");
+        }
     }
 }

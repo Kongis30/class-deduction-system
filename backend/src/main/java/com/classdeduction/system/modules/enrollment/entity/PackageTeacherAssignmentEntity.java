@@ -30,6 +30,8 @@ public class PackageTeacherAssignmentEntity extends BaseEntity {
 
     private Long teacherId;
 
+    private Integer allocatedUnits;
+
     private Integer isPrimary;
 
     private LocalDateTime effectiveFrom;

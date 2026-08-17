@@ -26,4 +26,10 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
     private LocalTime startTime;
 
     private LocalTime endTime;
+
+    private LocalTime morningEndTime;
+
+    private LocalTime afternoonStartTime;
+
+    private String attendanceOptions;
 }

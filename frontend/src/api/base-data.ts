@@ -231,6 +231,11 @@ export interface CoursePriceOptionSavePayload {
   durationLabel?: string;
   timeSlotLabel?: string;
   detailText: string;
+  packageUnit?: string;
+  packageQuantity?: number;
+  totalPrice?: number;
+  fullDayPrice?: number;
+  halfDayPrice?: number;
   oneOnOneHours?: number;
   priceAmount: number;
   currencyCode?: string;
@@ -238,7 +243,15 @@ export interface CoursePriceOptionSavePayload {
   classId?: EntityId;
   groupTeacherId?: EntityId;
   groupClassroomId?: EntityId;
-  groupScheduleSlots?: { teacherId?: EntityId; weekday: number; startTime: string; endTime: string }[];
+  groupScheduleSlots?: {
+    teacherId?: EntityId;
+    weekday: number;
+    startTime: string;
+    endTime: string;
+    morningEndTime?: string;
+    afternoonStartTime?: string;
+    attendanceOptions?: string;
+  }[];
   groupBillingType?: string;
   groupStartDate?: string;
   groupTotalSessions?: number;

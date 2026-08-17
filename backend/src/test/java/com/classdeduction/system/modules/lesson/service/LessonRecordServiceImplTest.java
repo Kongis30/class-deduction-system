@@ -10,7 +10,9 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
@@ -77,6 +79,9 @@ class LessonRecordServiceImplTest {
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
+    private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
+
+    @Mock
     private StudentMapper studentMapper;
 
     @Mock
@@ -124,6 +129,7 @@ class LessonRecordServiceImplTest {
                 lessonStatusRuleMapper,
                 lessonOccurrenceMapper,
                 coursePackageMapper,
+                packageTeacherAssignmentMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
@@ -164,6 +170,39 @@ class LessonRecordServiceImplTest {
         assertThat(result.ledgerId()).isEqualTo(3001L);
         assertThat(result.remainingUnits()).isEqualTo(3.0);
         assertThat(result.packageCompleted()).isFalse();
+    }
+
+    @Test
+    void shouldRejectLessonThatExceedsTeacherAllocation() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("COMPLETED");
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(teacherMapper.selectById(701L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(801L)).thenReturn(buildClassroom());
+        PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
+        assignment.setPackageId(501L);
+        assignment.setTeacherId(701L);
+        assignment.setAllocatedUnits(6);
+        assignment.setAssignmentStatus("ACTIVE");
+        when(packageTeacherAssignmentMapper.selectOne(any())).thenReturn(assignment);
+
+        LessonRecordEntity historicalLesson = new LessonRecordEntity();
+        historicalLesson.setActualTeacherId(701L);
+        historicalLesson.setActualUnits(4);
+        historicalLesson.setConfirmStage("CONFIRMED");
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(historicalLesson));
+        stubRecordInsertedId(2001L);
+
+        assertThatThrownBy(() -> lessonRecordService.confirmLesson(request, currentStaffUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("exceeds the teacher's allocated hours");
+        verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
     }
 
     @Test

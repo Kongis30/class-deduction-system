@@ -3,8 +3,10 @@ package com.classdeduction.system.modules.enrollment.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAllocationRequest;
 import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAssignmentRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
@@ -12,6 +14,8 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.service.PackageTeacherAssignmentService;
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,8 +23,10 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -33,6 +39,7 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final TeacherMapper teacherMapper;
+    private final LessonRecordMapper lessonRecordMapper;
 
     @Override
     public List<PackageTeacherAssignmentVO> listByPackageId(Long packageId) {
@@ -51,14 +58,22 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
                         assignments.stream().map(PackageTeacherAssignmentEntity::getTeacherId).collect(Collectors.toSet()))
                 .stream()
                 .collect(Collectors.toMap(TeacherEntity::getId, item -> item));
-        return assignments.stream().map(item -> toVO(item, teacherMap.get(item.getTeacherId()))).toList();
+        Map<Long, Integer> consumedUnitsByTeacher = loadConsumedUnitsByTeacher(packageId);
+        return assignments.stream()
+                .map(item -> toVO(
+                        item,
+                        teacherMap.get(item.getTeacherId()),
+                        consumedUnitsByTeacher.getOrDefault(item.getTeacherId(), 0)))
+                .toList();
     }
 
     @Override
     public PackageTeacherAssignmentVO getAssignment(Long id) {
         PackageTeacherAssignmentEntity assignment = requireAssignment(id);
         TeacherEntity teacher = teacherMapper.selectById(assignment.getTeacherId());
-        return toVO(assignment, teacher);
+        int consumedUnits = loadConsumedUnitsByTeacher(assignment.getPackageId())
+                .getOrDefault(assignment.getTeacherId(), 0);
+        return toVO(assignment, teacher, consumedUnits);
     }
 
     @Override
@@ -79,6 +94,9 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
         PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
         assignment.setPackageId(request.getPackageId());
         assignment.setTeacherId(request.getTeacherId());
+        assignment.setAllocatedUnits(request.getAllocatedHours() == null
+                ? null
+                : UnitConverter.toHalfHourUnits(request.getAllocatedHours()));
         assignment.setIsPrimary(Boolean.TRUE.equals(request.getIsPrimary()) ? 1 : 0);
         assignment.setEffectiveFrom(request.getEffectiveFrom() != null ? request.getEffectiveFrom() : AppTime.nowLocalDateTime());
         assignment.setEffectiveTo(request.getEffectiveTo());
@@ -118,11 +136,85 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
         PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
         assignment.setPackageId(packageId);
         assignment.setTeacherId(newTeacherId);
+        assignment.setAllocatedUnits(null);
         assignment.setIsPrimary(1);
         assignment.setEffectiveFrom(AppTime.nowLocalDateTime());
         assignment.setAssignmentStatus("ACTIVE");
         assignment.setChangeReason(StringUtils.hasText(changeReason) ? changeReason : "TEACHER_CHANGE");
         packageTeacherAssignmentMapper.insert(assignment);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void replaceAllocations(Long packageId, PackageTeacherAllocationRequest request) {
+        CoursePackageEntity coursePackage = requireCoursePackage(packageId);
+        if (!"ONE_ON_ONE".equals(coursePackage.getTeachingMode())) {
+            throw new BusinessException("TEACHER_ALLOCATION_NOT_SUPPORTED",
+                    "Teacher-hour allocations are only available for 1-on-1 packages.");
+        }
+
+        Set<Long> teacherIds = new HashSet<>();
+        int totalAllocatedUnits = 0;
+        int primaryCount = 0;
+        Map<Long, Integer> consumedUnitsByTeacher = loadConsumedUnitsByTeacher(packageId);
+        for (PackageTeacherAllocationRequest.AllocationItem item : request.getAllocations()) {
+            if (!teacherIds.add(item.getTeacherId())) {
+                throw new BusinessException("DUPLICATE_TEACHER_ALLOCATION",
+                        "Each teacher can only appear once in an allocation.");
+            }
+            requireTeacher(item.getTeacherId());
+            int allocatedUnits = UnitConverter.toHalfHourUnits(item.getAllocatedHours());
+            int consumedUnits = consumedUnitsByTeacher.getOrDefault(item.getTeacherId(), 0);
+            if (allocatedUnits < consumedUnits) {
+                throw new BusinessException("TEACHER_ALLOCATION_BELOW_CONSUMED",
+                        "A teacher's allocation cannot be lower than their confirmed teaching hours.");
+            }
+            totalAllocatedUnits += allocatedUnits;
+            if (Boolean.TRUE.equals(item.getPrimary())) {
+                primaryCount++;
+            }
+        }
+        if (totalAllocatedUnits > coursePackage.getTotalUnits()) {
+            throw new BusinessException("TEACHER_ALLOCATION_EXCEEDS_PACKAGE",
+                    "Allocated teacher hours cannot exceed the package's available total hours.");
+        }
+        if (primaryCount > 1) {
+            throw new BusinessException("MULTIPLE_PRIMARY_TEACHERS", "Only one teacher can be primary.");
+        }
+        if (consumedUnitsByTeacher.keySet().stream().anyMatch(teacherId -> !teacherIds.contains(teacherId))) {
+            throw new BusinessException("CONSUMED_TEACHER_ALLOCATION_REQUIRED",
+                    "Teachers with confirmed teaching hours must remain in the allocation.");
+        }
+
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<PackageTeacherAssignmentEntity> currentAssignments = packageTeacherAssignmentMapper.selectList(
+                new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                        .eq(PackageTeacherAssignmentEntity::getPackageId, packageId)
+                        .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE"));
+        for (PackageTeacherAssignmentEntity current : currentAssignments) {
+            current.setAssignmentStatus("ENDED");
+            current.setEffectiveTo(now);
+            current.setChangeReason(StringUtils.hasText(request.getReason())
+                    ? request.getReason().trim()
+                    : "ALLOCATION_ADJUSTMENT");
+            packageTeacherAssignmentMapper.updateById(current);
+        }
+
+        boolean first = true;
+        for (PackageTeacherAllocationRequest.AllocationItem item : request.getAllocations()) {
+            PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
+            assignment.setPackageId(packageId);
+            assignment.setTeacherId(item.getTeacherId());
+            assignment.setAllocatedUnits(UnitConverter.toHalfHourUnits(item.getAllocatedHours()));
+            assignment.setIsPrimary(Boolean.TRUE.equals(item.getPrimary()) || (primaryCount == 0 && first) ? 1 : 0);
+            assignment.setEffectiveFrom(now);
+            assignment.setAssignmentStatus("ACTIVE");
+            assignment.setChangeReason(StringUtils.hasText(request.getReason())
+                    ? request.getReason().trim()
+                    : "ALLOCATION_ADJUSTMENT");
+            packageTeacherAssignmentMapper.insert(assignment);
+            first = false;
+        }
     }
 
     /**
@@ -168,12 +260,34 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
         return teacher;
     }
 
-    private PackageTeacherAssignmentVO toVO(PackageTeacherAssignmentEntity item, TeacherEntity teacher) {
+    private Map<Long, Integer> loadConsumedUnitsByTeacher(Long packageId) {
+        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .eq(LessonRecordEntity::getPackageId, packageId)
+                        .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .filter(item -> item.getActualTeacherId() != null)
+                .collect(Collectors.groupingBy(
+                        LessonRecordEntity::getActualTeacherId,
+                        Collectors.summingInt(item -> item.getActualUnits() == null ? 0 : item.getActualUnits())));
+    }
+
+    private PackageTeacherAssignmentVO toVO(PackageTeacherAssignmentEntity item,
+                                            TeacherEntity teacher,
+                                            int consumedUnits) {
+        Integer allocatedUnits = item.getAllocatedUnits();
         return PackageTeacherAssignmentVO.builder()
                 .id(item.getId())
                 .teacherId(item.getTeacherId())
                 .teacherNo(teacher == null ? null : teacher.getTeacherNo())
                 .teacherName(teacher == null ? null : teacher.getTeacherName())
+                .allocatedHours(allocatedUnits == null
+                        ? null
+                        : UnitConverter.toHoursDecimal(allocatedUnits))
+                .consumedHours(UnitConverter.toHoursDecimal(consumedUnits))
+                .remainingHours(allocatedUnits == null
+                        ? null
+                        : UnitConverter.toHoursDecimal(Math.max(allocatedUnits - consumedUnits, 0)))
                 .primary(item.getIsPrimary() != null && item.getIsPrimary() == 1)
                 .assignmentStatus(item.getAssignmentStatus())
                 .effectiveFrom(item.getEffectiveFrom())

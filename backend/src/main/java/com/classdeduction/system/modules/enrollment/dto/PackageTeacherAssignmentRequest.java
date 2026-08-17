@@ -4,8 +4,10 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Positive;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -25,6 +27,10 @@ public class PackageTeacherAssignmentRequest {
 
     @Schema(description = "是否为主老师", example = "true")
     private Boolean isPrimary;
+
+    @Positive(message = "Allocated hours must be greater than 0")
+    @Schema(description = "Allocated teaching hours", example = "30.0")
+    private BigDecimal allocatedHours;
 
     @PastOrPresent(message = "Effective time cannot be in the future")
     @Schema(description = "生效时间", example = "2026-04-07T09:00:00")

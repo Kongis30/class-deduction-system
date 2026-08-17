@@ -116,6 +116,11 @@ export interface RegistrationCourseItemPayload {
   gradeBand?: string;
   periodLabel?: string;
   timeSlotLabel?: string;
+  packageUnit?: string;
+  packageQuantity?: number;
+  packageTotalPrice?: number;
+  attendanceOption?: string;
+  attendanceScheduleJson?: string;
   priceAmount?: number;
   originalPriceAmount?: number;
   manualPriceOverride?: boolean;
@@ -269,6 +274,29 @@ export function fetchCoursePackage(id: string | number) {
 
 export function closeCoursePackage(id: string | number) {
   return http.post(`/v1/enrollment/packages/${id}/close`);
+}
+
+export interface CoursePackageHoursAdjustmentPayload {
+  changeHours: number;
+  adjustmentType: 'BONUS_HOURS' | 'MANUAL_CORRECTION';
+  reason?: string;
+}
+
+export function adjustCoursePackageHours(id: EntityId, data: CoursePackageHoursAdjustmentPayload) {
+  return http.post(`/v1/enrollment/packages/${id}/adjust-hours`, data);
+}
+
+export interface PackageTeacherAllocationPayload {
+  allocations: Array<{
+    teacherId: EntityId;
+    allocatedHours: number;
+    primary?: boolean;
+  }>;
+  reason?: string;
+}
+
+export function replacePackageTeacherAllocations(id: EntityId, data: PackageTeacherAllocationPayload) {
+  return http.put(`/v1/enrollment/package-teachers/package/${id}/allocations`, data);
 }
 
 // ─── Payment Records ─────────────────────────────────

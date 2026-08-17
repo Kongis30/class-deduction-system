@@ -127,7 +127,7 @@
                       <div class="matrix-class-cell__title">
                         <strong>{{ row.gradeBand || 'Grade not set' }}</strong>
                         <el-tag v-if="isGroupRow(row)" size="small" type="info" effect="plain">
-                          {{ groupBillingTypeLabel(row) }}
+                          {{ packageUnitText(row.packageUnit || row.groupBillingType || 'MONTH') }}
                         </el-tag>
                       </div>
                       <template v-if="isGroupRow(row)">
@@ -154,10 +154,13 @@
                   </template>
                   <template #default="{ row }">
                     <div class="price-cell">
-                      <strong>{{ formatMoney(row.priceAmount) }}</strong>
+                      <strong>{{ formatMoney(row.totalPrice ?? row.priceAmount) }}</strong>
                       <span>{{ priceUnitLabel(row) }}</span>
-                      <small v-if="row.groupTotalPrice">
-                        {{ formatMoney(row.groupTotalPrice) }} total · {{ formatMoney(row.groupSessionPrice) }}/session
+                      <small v-if="row.derivedUnitPrice">
+                        {{ formatMoney(row.derivedUnitPrice) }} / {{ packageUnitText(row.packageUnit || row.groupBillingType || 'package').toLowerCase() }}
+                      </small>
+                      <small v-if="row.halfDayPrice">
+                        Half day {{ formatMoney(row.halfDayPrice) }}
                       </small>
                     </div>
                   </template>
@@ -238,9 +241,9 @@
     >
       <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
         <div class="pricing-context">
-          <span>Course type</span>
-          <strong>{{ selectedTypeLabelFor(form.courseType) }}</strong>
-          <small>The price row will only be available for this course type.</small>
+          <span>Product</span>
+          <strong>{{ selectedFormProductName }}</strong>
+          <small>Create one package row for each grade, period, or attendance price that students can choose at registration.</small>
         </div>
 
         <el-form-item label="Course product" prop="courseProductId">
@@ -282,52 +285,75 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="formTeachingMode === 'ONE_ON_ONE'" :label="priceFieldLabel" prop="priceAmount">
+          <el-form-item v-if="formTeachingMode === 'ONE_ON_ONE'" label="Package price" prop="priceAmount">
             <el-input-number v-model="form.priceAmount" :min="0" :precision="2" :controls="false" style="width: 100%;" />
           </el-form-item>
         </div>
 
         <section v-if="formTeachingMode === 'GROUP'" class="grade-class-settings">
           <div class="grade-class-settings__head">
-            <strong>Grade class arrangement</strong>
-            <small>Students who choose this grade join this class. It owns the class run and schedule.</small>
+            <strong>Package and class arrangement</strong>
+            <small>Set the package students buy, then set the weekly class time used for attendance deduction.</small>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Total price">
+            <el-form-item label="Package unit">
+              <el-select v-model="form.packageUnit" style="width: 100%;">
+                <el-option
+                  v-for="unit in groupPackageUnits"
+                  :key="unit.value"
+                  :label="unit.label"
+                  :value="unit.value"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item :label="packageQuantityLabel">
               <el-input-number
-                v-model="form.groupTotalPrice"
+                v-model="form.packageQuantity"
+                :min="1"
+                :precision="form.packageUnit === 'SESSION' ? 0 : 1"
+                :step="1"
+                :controls="false"
+                style="width: 100%;"
+              />
+            </el-form-item>
+          </div>
+          <div class="form-grid form-grid--two">
+            <el-form-item label="Package total price">
+              <el-input-number
+                v-model="form.totalPrice"
                 :min="0"
                 :precision="2"
                 :controls="false"
                 style="width: 100%;"
               />
             </el-form-item>
-            <el-form-item label="Total sessions">
+            <el-form-item label="Half-day package price">
               <el-input-number
-                v-model="form.groupTotalSessions"
-                :min="1"
-                :precision="0"
+                v-model="form.halfDayPrice"
+                :min="0"
+                :precision="2"
                 :controls="false"
+                placeholder="Optional"
                 style="width: 100%;"
               />
             </el-form-item>
           </div>
           <div class="form-grid form-grid--two calculated-price-grid">
             <div class="calculated-price">
-              <span>Price per session</span>
-              <strong>{{ formatMoney(groupSessionPrice) }}</strong>
+              <span>{{ derivedUnitLabel }}</span>
+              <strong>{{ formatMoney(derivedUnitPrice) }}</strong>
             </div>
             <div class="calculated-price">
-              <span>Monthly price</span>
-              <strong>{{ formatMoney(groupMonthlyPrice) }}</strong>
-              <small>Based on {{ form.groupScheduleSlots.length }} weekly slot(s)</small>
+              <span>Registration price</span>
+              <strong>{{ formatMoney(defaultRegistrationPrice) }}</strong>
+              <small>Half-day uses its own price when filled.</small>
             </div>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="First month">
+            <el-form-item label="Class start month">
               <el-date-picker v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
-            <el-form-item label="Last month">
+            <el-form-item label="Class end month">
               <el-date-picker v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
           </div>
@@ -413,7 +439,7 @@
 <script setup lang="ts">
 import { ArrowLeft, InfoFilled } from '@element-plus/icons-vue';
 import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
-import { computed, defineComponent, h, onMounted, reactive, ref } from 'vue';
+import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
@@ -432,6 +458,7 @@ import type { ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProduc
 
 type CourseMode = 'ONE_ON_ONE' | 'GROUP';
 type CourseTypeValue = 'AFTER_SCHOOL' | 'SATURDAY' | 'SUMMER' | 'SPRINT' | 'ONE_ON_ONE';
+type PackageUnit = 'MONTH' | 'WEEK' | 'SESSION' | 'HOUR';
 
 interface CourseTypeDef {
   value: CourseTypeValue;
@@ -483,6 +510,11 @@ const courseModes: CourseModeDef[] = [
 const route = useRoute();
 const router = useRouter();
 const oneOnOneHourChoices = [20, 40, 60, 80, 100, 120];
+const groupPackageUnits: Array<{ value: Exclude<PackageUnit, 'HOUR'>; label: string }> = [
+  { value: 'MONTH', label: 'Month package' },
+  { value: 'WEEK', label: 'Week package' },
+  { value: 'SESSION', label: 'Session package' },
+];
 const pptGradeOptions: Record<CourseTypeValue, string[]> = {
   AFTER_SCHOOL: ['G1-G5', 'G6-G8', 'ESL'],
   SATURDAY: ['G1-2', 'G3-G6', 'SHSAT', 'PSAT', 'SAT'],
@@ -525,11 +557,14 @@ const form = reactive({
   oneOnOneHoursMode: '40' as string,
   customOneOnOneHours: undefined as number | undefined,
   priceAmount: 0,
+  packageUnit: 'MONTH' as PackageUnit,
+  packageQuantity: 2 as number | undefined,
+  totalPrice: undefined as number | undefined,
+  halfDayPrice: undefined as number | undefined,
   courseProductId: undefined as EntityId | undefined,
   groupTeacherId: undefined as EntityId | undefined,
   groupClassroomId: undefined as EntityId | undefined,
   groupScheduleSlots: [] as Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string; plannedUnits: number }>,
-  groupBillingType: 'MONTHLY' as 'PER_SESSION' | 'MONTHLY',
   groupStartDate: '',
   groupTotalSessions: 13 as number | undefined,
   groupTotalPrice: undefined as number | undefined,
@@ -540,7 +575,6 @@ const form = reactive({
 });
 
 const rules = {
-  courseType: [{ required: true, message: 'Course type is required' }],
   courseProductId: [{ required: true, message: 'Course product is required' }],
   registerClass: [{ required: true, message: 'Register Class is required' }],
   gradeBand: [{ required: true, message: 'Grade or level is required' }],
@@ -561,16 +595,16 @@ const rules = {
 };
 
 const gradeOptionsForForm = computed(() => pptGradeOptions[form.courseType] ?? []);
-const groupSessionPrice = computed(() => {
-  const totalPrice = Number(form.groupTotalPrice ?? 0);
-  const totalSessions = Number(form.groupTotalSessions ?? 0);
-  return totalPrice > 0 && totalSessions > 0
-    ? Math.round((totalPrice / totalSessions) * 100) / 100
+const derivedUnitPrice = computed(() => {
+  const totalPrice = Number(form.totalPrice ?? 0);
+  const quantity = Number(form.packageQuantity ?? 0);
+  return totalPrice > 0 && quantity > 0
+    ? Math.round((totalPrice / quantity) * 100) / 100
     : 0;
 });
-const groupMonthlyPrice = computed(() =>
-  Math.round((groupSessionPrice.value * form.groupScheduleSlots.length * 52 / 12) * 100) / 100
-);
+const derivedUnitLabel = computed(() => `${packageUnitText(form.packageUnit)} price`);
+const defaultRegistrationPrice = computed(() => Number(form.totalPrice ?? 0));
+const packageQuantityLabel = computed(() => `${packageUnitText(form.packageUnit)} count`);
 
 const selectedMode = ref<CourseMode>('ONE_ON_ONE');
 const selectedModeLabel = computed(() =>
@@ -691,17 +725,26 @@ const primaryColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
 const billingColumnLabel = computed(() => selectedMode.value === 'ONE_ON_ONE' ? 'Package' : 'Billing window');
 const billingColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
   ? 'Package size sold to the student, measured in hours.'
-  : 'Monthly billing period configured for this grade class.');
+  : 'Package length students buy, such as 2 months, 13 weeks, or 20 sessions.');
 const priceColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
   ? 'Total package price for the selected private lesson hours.'
-  : 'Monthly tuition used during registration; totals are calculated from selected months.');
-const priceFieldLabel = computed(() => {
-  if (formTeachingMode.value !== 'GROUP') return 'Price';
-  return form.groupBillingType === 'MONTHLY' ? 'Price per month' : 'Price per session';
-});
+  : 'Total package price. Registration uses this configured package price directly.');
 const formProductChoices = computed(() =>
-  courseProducts.value.filter(product => productMatchesCourseType(product, form.courseType))
+  courseProducts.value.filter(product => product.teachingMode === formTeachingMode.value)
 );
+const selectedFormProductName = computed(() =>
+  form.courseProductId ? productName(form.courseProductId) : 'Select course product'
+);
+
+watch(() => form.packageUnit, (unit) => {
+  if (formTeachingMode.value !== 'GROUP') {
+    return;
+  }
+  if (!form.packageQuantity || form.packageQuantity <= 0) {
+    form.packageQuantity = defaultPackageQuantity(unit);
+  }
+  form.groupTotalSessions = Math.ceil(Number(form.packageQuantity ?? defaultPackageQuantity(unit)));
+});
 
 onMounted(initializePage);
 
@@ -807,19 +850,19 @@ function openDialog(option?: CoursePriceOptionItem) {
   editingId.value = option?.id ?? null;
   form.optionCode = option?.optionCode ?? '';
   form.courseType = (option?.courseType as CourseTypeValue) ?? query.courseType;
-  form.registerClass = option?.registerClass ?? selectedTypeLabelFor(form.courseType);
+  form.registerClass = option?.registerClass ?? selectedProduct.value?.registerClass ?? selectedProduct.value?.productName ?? selectedTypeLabelFor(form.courseType);
   form.gradeBand = option?.gradeBand ?? '';
   form.periodLabel = option?.periodLabel ?? '';
   form.durationLabel = option?.durationLabel ?? '';
   form.timeSlotLabel = option?.timeSlotLabel ?? '';
   form.detailText = option?.detailText ?? '';
-  form.oneOnOneHours = option?.oneOnOneHours;
+  form.oneOnOneHours = option?.packageQuantity ?? option?.oneOnOneHours;
   form.customOneOnOneHours = undefined;
   form.oneOnOneHoursMode = oneOnOneHourChoices.includes(Number(option?.oneOnOneHours))
     ? String(option?.oneOnOneHours)
     : 'CUSTOM';
   if (form.oneOnOneHoursMode === 'CUSTOM') {
-    form.customOneOnOneHours = option?.oneOnOneHours;
+    form.customOneOnOneHours = option?.packageQuantity ?? option?.oneOnOneHours;
   }
   if (!option) {
     if (formTeachingMode.value === 'ONE_ON_ONE') {
@@ -828,7 +871,13 @@ function openDialog(option?: CoursePriceOptionItem) {
       syncOneOnOneDuration();
     }
   }
-  form.priceAmount = option?.priceAmount ?? 0;
+  form.priceAmount = option?.totalPrice ?? option?.priceAmount ?? 0;
+  form.packageUnit = normalizePackageUnit(option?.packageUnit, formTeachingMode.value);
+  form.packageQuantity = option?.packageQuantity
+    ?? (formTeachingMode.value === 'GROUP' ? option?.groupTotalSessions : option?.oneOnOneHours)
+    ?? defaultPackageQuantity(form.packageUnit);
+  form.totalPrice = option?.totalPrice ?? option?.groupTotalPrice ?? option?.priceAmount;
+  form.halfDayPrice = option?.halfDayPrice;
   form.courseProductId = option?.courseProductId ?? (query.courseProductId || undefined);
   form.groupTeacherId = option?.groupTeacherId;
   form.groupClassroomId = option?.groupClassroomId;
@@ -836,10 +885,9 @@ function openDialog(option?: CoursePriceOptionItem) {
     ...slot,
     plannedUnits: Math.round((timeToMinutes(slot.endTime) - timeToMinutes(slot.startTime)) / 30),
   }));
-  form.groupBillingType = 'MONTHLY';
   form.groupStartDate = option?.groupStartDate ?? '';
-  form.groupTotalSessions = option?.groupTotalSessions ?? 13;
-  form.groupTotalPrice = option?.groupTotalPrice;
+  form.groupTotalSessions = Number(form.packageQuantity ?? option?.groupTotalSessions ?? 13);
+  form.groupTotalPrice = option?.totalPrice ?? option?.groupTotalPrice;
   form.groupStartMonth = option?.groupStartMonth ?? '';
   form.groupEndMonth = option?.groupEndMonth ?? '';
   form.sortOrder = option?.sortOrder ?? 0;
@@ -852,7 +900,33 @@ function handleFormProductChange() {
   if (product) {
     form.courseType = (product.courseType as CourseTypeValue) || form.courseType;
     form.registerClass = product.registerClass || product.productName;
+    if (product.teachingMode === 'ONE_ON_ONE') {
+      form.packageUnit = 'HOUR';
+    } else if (form.packageUnit === 'HOUR') {
+      form.packageUnit = 'MONTH';
+      form.packageQuantity = defaultPackageQuantity(form.packageUnit);
+    }
   }
+}
+
+function normalizePackageUnit(unit: string | undefined, mode: CourseMode): PackageUnit {
+  if (mode === 'ONE_ON_ONE') {
+    return 'HOUR';
+  }
+  const normalized = String(unit || '').toUpperCase();
+  return normalized === 'WEEK' || normalized === 'SESSION' ? normalized : 'MONTH';
+}
+
+function defaultPackageQuantity(unit: string) {
+  const normalized = String(unit || '').toUpperCase();
+  if (normalized === 'WEEK') return 13;
+  if (normalized === 'SESSION') return 13;
+  if (normalized === 'HOUR') return 40;
+  return 2;
+}
+
+function optionalPositive(value?: number) {
+  return value != null && value > 0 ? value : undefined;
 }
 
 function selectOneOnOneHours(value: string) {
@@ -887,6 +961,13 @@ function syncOneOnOneDuration() {
 }
 
 function buildPayload(status = form.status): CoursePriceOptionSavePayload {
+  const packageUnit = formTeachingMode.value === 'ONE_ON_ONE' ? 'HOUR' : form.packageUnit;
+  const packageQuantity = formTeachingMode.value === 'ONE_ON_ONE'
+    ? form.oneOnOneHours
+    : form.packageQuantity;
+  const packageTotalPrice = formTeachingMode.value === 'ONE_ON_ONE'
+    ? form.priceAmount
+    : form.totalPrice;
   return {
     optionCode: form.optionCode.trim() || undefined,
     courseType: form.courseType,
@@ -896,8 +977,13 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     durationLabel: formTeachingMode.value === 'ONE_ON_ONE' ? form.durationLabel.trim() || undefined : undefined,
     timeSlotLabel: undefined,
     detailText: form.detailText.trim() || undefined,
+    packageUnit,
+    packageQuantity,
+    totalPrice: packageTotalPrice,
+    fullDayPrice: formTeachingMode.value === 'GROUP' ? packageTotalPrice : undefined,
+    halfDayPrice: formTeachingMode.value === 'GROUP' ? optionalPositive(form.halfDayPrice) : undefined,
     oneOnOneHours: formTeachingMode.value === 'ONE_ON_ONE' ? form.oneOnOneHours : undefined,
-    priceAmount: formTeachingMode.value === 'GROUP' ? groupMonthlyPrice.value : form.priceAmount,
+    priceAmount: packageTotalPrice ?? 0,
     currencyCode: 'USD',
     courseProductId: form.courseProductId,
     groupTeacherId: formTeachingMode.value === 'GROUP' ? form.groupTeacherId : undefined,
@@ -907,10 +993,10 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
           teacherId, weekday, startTime, endTime,
         }))
       : undefined,
-    groupBillingType: formTeachingMode.value === 'GROUP' ? 'MONTHLY' : undefined,
+    groupBillingType: formTeachingMode.value === 'GROUP' ? packageUnit : undefined,
     groupStartDate: undefined,
-    groupTotalSessions: formTeachingMode.value === 'GROUP' ? form.groupTotalSessions : undefined,
-    groupTotalPrice: formTeachingMode.value === 'GROUP' ? form.groupTotalPrice : undefined,
+    groupTotalSessions: formTeachingMode.value === 'GROUP' ? Math.ceil(Number(packageQuantity ?? 0)) : undefined,
+    groupTotalPrice: formTeachingMode.value === 'GROUP' ? packageTotalPrice : undefined,
     groupStartMonth: formTeachingMode.value === 'GROUP' ? form.groupStartMonth || undefined : undefined,
     groupEndMonth: formTeachingMode.value === 'GROUP' ? form.groupEndMonth || undefined : undefined,
     sortOrder: form.sortOrder,
@@ -928,6 +1014,11 @@ function payloadFromRow(row: CoursePriceOptionItem, status: string): CoursePrice
     durationLabel: row.durationLabel,
     timeSlotLabel: row.timeSlotLabel,
     detailText: row.detailText,
+    packageUnit: row.packageUnit,
+    packageQuantity: row.packageQuantity,
+    totalPrice: row.totalPrice,
+    fullDayPrice: row.fullDayPrice,
+    halfDayPrice: row.halfDayPrice,
     oneOnOneHours: row.oneOnOneHours,
     priceAmount: row.priceAmount,
     currencyCode: row.currencyCode || 'USD',
@@ -958,9 +1049,9 @@ async function saveOption() {
     return;
   }
   if (formTeachingMode.value === 'GROUP'
-      && (!form.groupTotalPrice || form.groupTotalPrice <= 0
-        || !form.groupTotalSessions || form.groupTotalSessions <= 0)) {
-    ElMessage.warning('Add a total price and total sessions for this grade class.');
+      && (!form.totalPrice || form.totalPrice <= 0
+        || !form.packageQuantity || form.packageQuantity <= 0)) {
+    ElMessage.warning('Add a package total price and package count.');
     return;
   }
   if (formTeachingMode.value === 'GROUP' && (!form.groupStartMonth || !form.groupEndMonth)) {
@@ -1038,9 +1129,7 @@ function modeForCourseType(value: string): CourseMode {
 }
 
 function productMatchesCourseType(product: CourseProductItem, courseType: CourseTypeValue) {
-  return product.courseType
-    ? product.courseType === courseType
-    : product.teachingMode === modeForCourseType(courseType);
+  return product.teachingMode === modeForCourseType(courseType);
 }
 
 function queryValue(value: unknown) {
@@ -1053,12 +1142,9 @@ function formatCourseType(value: string) {
 
 function formatGroupBilling(row: CoursePriceOptionItem) {
   if (row.courseType === 'ONE_ON_ONE') {
-    return row.oneOnOneHours ? `${row.oneOnOneHours} hours` : '-';
+    return packageLengthLabel(row) || '-';
   }
-  if (row.groupBillingType === 'MONTHLY') {
-    return [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ') || 'Monthly';
-  }
-  return row.groupTotalSessions ? `${row.groupTotalSessions} total sessions` : 'Per session';
+  return packageLengthLabel(row) || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ') || 'Package';
 }
 
 function isGroupRow(row: CoursePriceOptionItem) {
@@ -1067,13 +1153,41 @@ function isGroupRow(row: CoursePriceOptionItem) {
 
 function billingSubtitle(row: CoursePriceOptionItem) {
   if (isGroupRow(row)) {
-    return row.groupTotalSessions ? `${row.groupTotalSessions} total sessions` : '';
+    const window = [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ');
+    return window || '';
   }
   return row.notes || '';
 }
 
 function groupBillingTypeLabel(row: CoursePriceOptionItem) {
-  return row.groupBillingType === 'MONTHLY' ? 'Monthly' : 'Per session';
+  return packageUnitText(row.packageUnit || row.groupBillingType || 'MONTH');
+}
+
+function packageLengthLabel(row: CoursePriceOptionItem) {
+  const quantity = row.packageQuantity ?? row.oneOnOneHours ?? row.groupTotalSessions;
+  const unit = row.packageUnit || row.groupBillingType || (row.courseType === 'ONE_ON_ONE' ? 'HOUR' : 'MONTH');
+  if (!quantity || quantity <= 0) {
+    return row.durationLabel || '';
+  }
+  return `${formatQuantity(quantity)} ${packageUnitPlural(unit, quantity)}`;
+}
+
+function packageUnitText(unit?: string) {
+  const normalized = String(unit || '').toUpperCase();
+  if (normalized === 'MONTH' || normalized === 'MONTHLY') return 'Month';
+  if (normalized === 'WEEK') return 'Week';
+  if (normalized === 'SESSION' || normalized === 'PER_SESSION') return 'Session';
+  if (normalized === 'HOUR') return 'Hour';
+  return 'Package';
+}
+
+function packageUnitPlural(unit: string, quantity: number) {
+  const text = packageUnitText(unit).toLowerCase();
+  return Number(quantity) === 1 ? text : `${text}s`;
+}
+
+function formatQuantity(value: number) {
+  return Number.isInteger(Number(value)) ? String(Number(value)) : Number(value).toFixed(1);
 }
 
 function formatGroupSchedule(row: CoursePriceOptionItem) {
@@ -1112,9 +1226,9 @@ function hasRowIssue(row: CoursePriceOptionItem) {
     return true;
   }
   return product.teachingMode !== modeForCourseType(row.courseType)
-    || row.priceAmount === undefined
-    || row.priceAmount === null
-    || Number(row.priceAmount) === 0
+    || row.totalPrice === undefined
+    || row.totalPrice === null
+    || Number(row.totalPrice) === 0
     || (product.teachingMode === 'GROUP' && !hasClassGroup(product.id))
     || (modeForCourseType(row.courseType) === 'GROUP' && (row.groupScheduleSlots ?? []).length === 0);
 }
@@ -1122,7 +1236,7 @@ function hasRowIssue(row: CoursePriceOptionItem) {
 function priceUnitLabel(row: CoursePriceOptionItem) {
   const currency = row.currencyCode || 'USD';
   if (modeForCourseType(row.courseType) === 'GROUP') {
-    return row.groupBillingType === 'MONTHLY' ? `${currency} / month` : `${currency} / session`;
+    return `${currency} / package`;
   }
   return `${currency} / package`;
 }

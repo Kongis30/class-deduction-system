@@ -125,6 +125,7 @@ test('Data Summary 应只展示 Excel 式宽表并支持组合表头筛选', asy
   const workbook = page.getByTestId('data-summary-workbook');
   await expect(workbook).toBeVisible();
   await expect(workbook.getByRole('columnheader')).toHaveCount(16);
+  await expect(workbook.getByRole('columnheader').first()).toHaveText('Campus');
   await expect(workbook.locator('.workbook-data-row')).toHaveCount(3);
   await expect(page.getByRole('tab')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Record payment' })).toHaveCount(0);

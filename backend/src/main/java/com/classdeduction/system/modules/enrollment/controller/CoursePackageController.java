@@ -7,6 +7,7 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
@@ -82,6 +83,16 @@ public class CoursePackageController {
             @Valid @RequestBody CoursePackageUpdateRequest request) {
         coursePackageService.updatePackage(id, request);
         return ApiResponse.success("Updated successfully.", null);
+    }
+
+    @PostMapping("/{id}/adjust-hours")
+    @Operation(summary = "Adjust available package hours without changing order charges")
+    public ApiResponse<Void> adjustPackageHours(
+            @PathVariable Long id,
+            @Valid @RequestBody CoursePackageHoursAdjustmentRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        coursePackageService.adjustPackageHours(id, request, currentUser.userId());
+        return ApiResponse.success("Package hours adjusted successfully.", null);
     }
 
     @GetMapping("/{id}/balance")

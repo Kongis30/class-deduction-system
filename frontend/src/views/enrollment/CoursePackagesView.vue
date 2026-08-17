@@ -426,10 +426,17 @@
             </div>
 
             <div class="detail-section">
-              <h4 class="detail-section__title">Hours Summary</h4>
+              <div class="detail-section__heading">
+                <h4 class="detail-section__title">Hours Summary</h4>
+                <el-button size="small" plain @click="openHoursAdjustment">Adjust hours</el-button>
+              </div>
               <div class="detail-grid">
                 <div class="detail-field">
-                  <label>Total Hours</label>
+                  <label>Purchased</label>
+                  <span>{{ detailData.purchasedHours ?? detailData.totalUnits }}</span>
+                </div>
+                <div class="detail-field">
+                  <label>Available Total</label>
                   <span>{{ detailData.totalUnits }}</span>
                 </div>
                 <div class="detail-field">
@@ -445,6 +452,40 @@
                   <span>${{ (detailData.receivedAmount ?? 0).toFixed(2) }}</span>
                 </div>
               </div>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-section__heading">
+                <h4 class="detail-section__title">Teacher Allocation</h4>
+                <el-button size="small" plain @click="openTeacherAllocation">Adjust allocation</el-button>
+              </div>
+              <div class="allocation-summary">
+                <span>{{ detailData.allocatedTeacherHours ?? 0 }}h allocated</span>
+                <span>{{ detailData.unallocatedTeacherHours ?? detailData.totalUnits }}h unallocated</span>
+              </div>
+              <el-table
+                :data="activeTeacherAssignments"
+                size="small"
+                class="allocation-table"
+                empty-text="No teacher hours allocated."
+              >
+                <el-table-column label="Teacher" min-width="160" prop="teacherName" />
+                <el-table-column label="Allocated" width="100" align="center">
+                  <template #default="{ row }">{{ row.allocatedHours ?? '—' }}h</template>
+                </el-table-column>
+                <el-table-column label="Taught" width="90" align="center">
+                  <template #default="{ row }">{{ row.consumedHours ?? 0 }}h</template>
+                </el-table-column>
+                <el-table-column label="Remaining" width="105" align="center">
+                  <template #default="{ row }">{{ row.remainingHours ?? '—' }}h</template>
+                </el-table-column>
+                <el-table-column label="Role" width="90" align="center">
+                  <template #default="{ row }">
+                    <el-tag v-if="row.primary" size="small" type="info">Primary</el-tag>
+                    <span v-else>—</span>
+                  </template>
+                </el-table-column>
+              </el-table>
             </div>
 
             <div class="detail-section">
@@ -512,6 +553,124 @@
             Close Package
           </el-button>
         </div>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="hoursAdjustmentVisible"
+      title="Adjust Available Hours"
+      width="480px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="detailData" class="adjustment-current">
+        <span>Purchased {{ detailData.purchasedHours ?? detailData.totalUnits }}h</span>
+        <strong>Available {{ detailData.totalUnits }}h</strong>
+      </div>
+      <el-form label-width="130px">
+        <el-form-item label="Adjustment type">
+          <el-select v-model="hoursAdjustmentForm.adjustmentType" style="width: 100%">
+            <el-option label="Bonus hours" value="BONUS_HOURS" />
+            <el-option label="Manual correction" value="MANUAL_CORRECTION" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Hour change">
+          <el-input-number
+            v-model="hoursAdjustmentForm.changeHours"
+            :step="0.5"
+            :precision="1"
+            :min="-10000"
+            :max="10000"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="Reason">
+          <el-input
+            v-model="hoursAdjustmentForm.reason"
+            type="textarea"
+            :rows="2"
+            placeholder="Optional note"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="hoursAdjustmentVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="hoursAdjustmentSaving" @click="submitHoursAdjustment">
+          Save adjustment
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="teacherAllocationVisible"
+      title="Adjust Teacher Allocation"
+      width="680px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="detailData" class="allocation-dialog-summary">
+        <span>Available total <strong>{{ detailData.totalUnits }}h</strong></span>
+        <span>Allocated <strong>{{ allocationFormTotal }}h</strong></span>
+        <span>Unallocated <strong>{{ allocationFormUnallocated }}h</strong></span>
+      </div>
+      <el-table :data="teacherAllocationRows" row-key="key" size="small" class="allocation-edit-table">
+        <el-table-column label="Teacher" min-width="240">
+          <template #default="{ row }">
+            <el-select v-model="row.teacherId" filterable placeholder="Select teacher" style="width: 100%">
+              <el-option
+                v-for="teacher in teachers"
+                :key="teacher.id"
+                :label="teacher.teacherName"
+                :value="teacher.id"
+              />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="Hours" width="150">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.allocatedHours"
+              :min="0.5"
+              :step="0.5"
+              :precision="1"
+              style="width: 125px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="Taught" width="90" align="center">
+          <template #default="{ row }">{{ row.consumedHours }}h</template>
+        </el-table-column>
+        <el-table-column label="Primary" width="90" align="center">
+          <template #default="{ row }">
+            <el-radio
+              v-model="primaryAllocationKey"
+              :value="row.key"
+              @change="setPrimaryAllocation(row.key)"
+            >
+              <span class="sr-only">Primary</span>
+            </el-radio>
+          </template>
+        </el-table-column>
+        <el-table-column width="56" align="center">
+          <template #default="{ row }">
+            <el-button text type="danger" @click="removeTeacherAllocation(row.key)">×</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-button class="add-allocation-button" plain @click="addTeacherAllocation">Add teacher</el-button>
+      <el-form label-width="90px" class="allocation-reason-form">
+        <el-form-item label="Reason">
+          <el-input
+            v-model="teacherAllocationReason"
+            type="textarea"
+            :rows="2"
+            placeholder="Optional note"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="teacherAllocationVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="teacherAllocationSaving" @click="submitTeacherAllocation">
+          Save allocation
+        </el-button>
       </template>
     </el-dialog>
 
@@ -621,14 +780,16 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 
 import {
+  adjustCoursePackageHours,
   closeCoursePackage,
   fetchCoursePackage,
   fetchCoursePackages,
   fetchGroupClassPackageProgress,
   fetchGroupClassStudentProgress,
+  replacePackageTeacherAllocations,
   type CoursePackageQuery,
 } from '@/api/enrollment';
 import {
@@ -636,8 +797,17 @@ import {
   fetchLessonRecords,
   type LessonRecordQuery,
 } from '@/api/lesson';
-import { fetchAllStudents } from '@/api/base-data';
-import type { CoursePackageItem, EntityId, GroupClassPackageProgressItem, GroupClassStudentProgressItem, LessonRecordDetailItem, LessonRecordItem } from '@/types/domain';
+import { fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
+import type {
+  CoursePackageItem,
+  EntityId,
+  GroupClassPackageProgressItem,
+  GroupClassStudentProgressItem,
+  LessonRecordDetailItem,
+  LessonRecordItem,
+  PackageTeacherAssignmentItem,
+  TeacherItem,
+} from '@/types/domain';
 
 const loading = ref(false);
 const groupLoading = ref(false);
@@ -647,6 +817,38 @@ const detailTab = ref('overview');
 const detailData = ref<CoursePackageItem | null>(null);
 
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
+const teachers = ref<TeacherItem[]>([]);
+const hoursAdjustmentVisible = ref(false);
+const hoursAdjustmentSaving = ref(false);
+const hoursAdjustmentForm = reactive({
+  adjustmentType: 'BONUS_HOURS' as 'BONUS_HOURS' | 'MANUAL_CORRECTION',
+  changeHours: 0.5,
+  reason: '',
+});
+const teacherAllocationVisible = ref(false);
+const teacherAllocationSaving = ref(false);
+const teacherAllocationReason = ref('');
+const primaryAllocationKey = ref('');
+let allocationRowSequence = 0;
+
+interface TeacherAllocationRow {
+  key: string;
+  teacherId?: EntityId;
+  allocatedHours: number;
+  consumedHours: number;
+  primary: boolean;
+}
+
+const teacherAllocationRows = ref<TeacherAllocationRow[]>([]);
+const activeTeacherAssignments = computed<PackageTeacherAssignmentItem[]>(() =>
+  (detailData.value?.teacherAssignments ?? []).filter(item => item.assignmentStatus === 'ACTIVE'),
+);
+const allocationFormTotal = computed(() =>
+  roundHours(teacherAllocationRows.value.reduce((sum, row) => sum + Number(row.allocatedHours || 0), 0)),
+);
+const allocationFormUnallocated = computed(() =>
+  roundHours(Math.max(0, Number(detailData.value?.totalUnits ?? 0) - allocationFormTotal.value)),
+);
 
 // Lesson History
 const lessonHistoryLoading = ref(false);
@@ -1067,6 +1269,15 @@ async function loadStudents() {
   }
 }
 
+async function loadTeachers() {
+  try {
+    const res = await fetchAllTeachers();
+    teachers.value = res.data.data;
+  } catch {
+    // Silent fail
+  }
+}
+
 // ─── Package Detail ──────────────────────────────────
 async function openDetailDialog(row: CoursePackageItem) {
   try {
@@ -1078,6 +1289,145 @@ async function openDetailDialog(row: CoursePackageItem) {
   } catch {
     ElMessage.error('Failed to load package detail.');
   }
+}
+
+async function reloadPackageDetail() {
+  if (!detailData.value) return;
+  const res = await fetchCoursePackage(detailData.value.id);
+  detailData.value = res.data.data;
+}
+
+function openHoursAdjustment() {
+  hoursAdjustmentForm.adjustmentType = 'BONUS_HOURS';
+  hoursAdjustmentForm.changeHours = 0.5;
+  hoursAdjustmentForm.reason = '';
+  hoursAdjustmentVisible.value = true;
+}
+
+async function submitHoursAdjustment() {
+  if (!detailData.value) return;
+  if (!hoursAdjustmentForm.changeHours) {
+    ElMessage.warning('Hour change cannot be zero.');
+    return;
+  }
+  hoursAdjustmentSaving.value = true;
+  try {
+    await adjustCoursePackageHours(detailData.value.id, {
+      changeHours: hoursAdjustmentForm.changeHours,
+      adjustmentType: hoursAdjustmentForm.adjustmentType,
+      reason: hoursAdjustmentForm.reason.trim() || undefined,
+    });
+    await reloadPackageDetail();
+    await loadData();
+    hoursAdjustmentVisible.value = false;
+    ElMessage.success('Available hours updated.');
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to adjust available hours.');
+  } finally {
+    hoursAdjustmentSaving.value = false;
+  }
+}
+
+function openTeacherAllocation() {
+  teacherAllocationRows.value = activeTeacherAssignments.value.map(item => ({
+    key: nextAllocationKey(),
+    teacherId: item.teacherId,
+    allocatedHours: item.allocatedHours ?? 0.5,
+    consumedHours: item.consumedHours ?? 0,
+    primary: item.primary,
+  }));
+  if (teacherAllocationRows.value.length === 0) {
+    addTeacherAllocation();
+  }
+  const primaryRow = teacherAllocationRows.value.find(row => row.primary) ?? teacherAllocationRows.value[0];
+  primaryAllocationKey.value = primaryRow?.key ?? '';
+  setPrimaryAllocation(primaryAllocationKey.value);
+  teacherAllocationReason.value = '';
+  teacherAllocationVisible.value = true;
+}
+
+function addTeacherAllocation() {
+  const row: TeacherAllocationRow = {
+    key: nextAllocationKey(),
+    teacherId: undefined,
+    allocatedHours: 0.5,
+    consumedHours: 0,
+    primary: teacherAllocationRows.value.length === 0,
+  };
+  teacherAllocationRows.value.push(row);
+  if (row.primary) {
+    primaryAllocationKey.value = row.key;
+  }
+}
+
+function removeTeacherAllocation(key: string) {
+  teacherAllocationRows.value = teacherAllocationRows.value.filter(row => row.key !== key);
+  if (primaryAllocationKey.value === key) {
+    primaryAllocationKey.value = teacherAllocationRows.value[0]?.key ?? '';
+    setPrimaryAllocation(primaryAllocationKey.value);
+  }
+}
+
+function setPrimaryAllocation(key: string | number | boolean | undefined) {
+  const normalizedKey = String(key ?? '');
+  primaryAllocationKey.value = normalizedKey;
+  teacherAllocationRows.value.forEach((row) => {
+    row.primary = row.key === normalizedKey;
+  });
+}
+
+async function submitTeacherAllocation() {
+  if (!detailData.value) return;
+  if (teacherAllocationRows.value.length === 0) {
+    ElMessage.warning('Add at least one teacher.');
+    return;
+  }
+  if (teacherAllocationRows.value.some(row => row.teacherId == null)) {
+    ElMessage.warning('Select a teacher for every allocation row.');
+    return;
+  }
+  const teacherIds = teacherAllocationRows.value.map(row => String(row.teacherId));
+  if (new Set(teacherIds).size !== teacherIds.length) {
+    ElMessage.warning('Each teacher can only appear once.');
+    return;
+  }
+  if (allocationFormTotal.value > detailData.value.totalUnits) {
+    ElMessage.warning('Allocated hours cannot exceed available total hours.');
+    return;
+  }
+  if (teacherAllocationRows.value.some(row => row.allocatedHours < row.consumedHours)) {
+    ElMessage.warning('A teacher allocation cannot be lower than confirmed teaching hours.');
+    return;
+  }
+
+  teacherAllocationSaving.value = true;
+  try {
+    await replacePackageTeacherAllocations(detailData.value.id, {
+      allocations: teacherAllocationRows.value.map(row => ({
+        teacherId: row.teacherId as EntityId,
+        allocatedHours: row.allocatedHours,
+        primary: row.primary,
+      })),
+      reason: teacherAllocationReason.value.trim() || undefined,
+    });
+    await reloadPackageDetail();
+    await loadData();
+    teacherAllocationVisible.value = false;
+    ElMessage.success('Teacher allocation updated.');
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to update teacher allocation.');
+  } finally {
+    teacherAllocationSaving.value = false;
+  }
+}
+
+function nextAllocationKey(): string {
+  allocationRowSequence += 1;
+  return `allocation-${allocationRowSequence}`;
+}
+
+function roundHours(value: number): number {
+  return Math.round(value * 10) / 10;
 }
 
 async function handleClosePackage() {
@@ -1155,6 +1505,7 @@ function resultStatusLabel(status: string) {
 // ─── Init ───────────────────────────────────────────
 loadData();
 loadStudents();
+loadTeachers();
 </script>
 
 <style scoped>
@@ -1423,15 +1774,75 @@ loadStudents();
 /* Detail layout */
 .package-detail { display: flex; flex-direction: column; gap: 16px; }
 .detail-section { display: flex; flex-direction: column; gap: 8px; }
+.detail-section__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #f0f0f0;
+  padding-bottom: 6px;
+}
 .detail-section__title {
   margin: 0; font-size: 13px; font-weight: 600; color: #303133;
   padding-bottom: 6px; border-bottom: 1px solid #f0f0f0;
+}
+.detail-section__heading .detail-section__title {
+  border-bottom: 0;
+  padding-bottom: 0;
 }
 .detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px 20px; }
 .detail-field { display: flex; flex-direction: column; gap: 4px; }
 .detail-field label { color: #909399; font-size: 12px; }
 .detail-field span, .detail-field strong { color: #303133; font-size: 13px; }
 .remaining-badge { color: #f56c6c; font-size: 14px; font-weight: 600; }
+.allocation-summary,
+.allocation-dialog-summary,
+.adjustment-current {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  color: #64748b;
+  font-size: 12px;
+}
+.allocation-summary span:last-child {
+  color: #b45309;
+}
+.allocation-table,
+.allocation-edit-table {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.allocation-dialog-summary,
+.adjustment-current {
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid #dbe7f5;
+  border-radius: 6px;
+  background: #f8fbff;
+}
+.allocation-dialog-summary strong,
+.adjustment-current strong {
+  color: #303133;
+}
+.add-allocation-button {
+  margin-top: 12px;
+}
+.allocation-reason-form {
+  margin-top: 16px;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Lesson History */
 .lesson-history { min-height: 80px; }

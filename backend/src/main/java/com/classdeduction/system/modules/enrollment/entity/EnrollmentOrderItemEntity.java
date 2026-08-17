@@ -49,6 +49,16 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
 
     private String timeSlotLabel;
 
+    private String packageUnit;
+
+    private BigDecimal packageQuantity;
+
+    private BigDecimal packageTotalPrice;
+
+    private String attendanceOption;
+
+    private String attendanceScheduleJson;
+
     private BigDecimal priceAmount;
 
     private BigDecimal originalPriceAmount;

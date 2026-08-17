@@ -52,6 +52,26 @@ public class CoursePriceOptionSaveRequest {
     @Schema(description = "Detail text used by registration and receipt")
     private String detailText;
 
+    @Size(max = 16, message = "Package unit must not exceed 16 characters")
+    @Schema(description = "Package unit: MONTH/WEEK/SESSION/HOUR")
+    private String packageUnit;
+
+    @DecimalMin(value = "0.00", message = "Package quantity must be 0 or greater")
+    @Schema(description = "Package quantity, e.g. 13 weeks or 40 hours")
+    private BigDecimal packageQuantity;
+
+    @DecimalMin(value = "0.00", message = "Total price must be 0 or greater")
+    @Schema(description = "Package total price used for billing")
+    private BigDecimal totalPrice;
+
+    @DecimalMin(value = "0.00", message = "Full day price must be 0 or greater")
+    @Schema(description = "Full day package price for group products")
+    private BigDecimal fullDayPrice;
+
+    @DecimalMin(value = "0.00", message = "Half day price must be 0 or greater")
+    @Schema(description = "Half day package price for group products")
+    private BigDecimal halfDayPrice;
+
     @DecimalMin(value = "0.00", message = "One on one hours must be 0 or greater")
     @Schema(description = "One on one purchased hours")
     private BigDecimal oneOnOneHours;
@@ -114,5 +134,8 @@ public class CoursePriceOptionSaveRequest {
         private Integer weekday;
         private String startTime;
         private String endTime;
+        private String morningEndTime;
+        private String afternoonStartTime;
+        private String attendanceOptions;
     }
 }

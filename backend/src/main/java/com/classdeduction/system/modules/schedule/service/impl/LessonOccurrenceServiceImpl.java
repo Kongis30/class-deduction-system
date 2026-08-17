@@ -616,7 +616,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
         LinkedHashMap<Long, LinkedHashMap<Long, List<CoursePackageEntity>>> grouped = new LinkedHashMap<>();
         for (CoursePackageEntity coursePackage : packages) {
-            Long groupTeacherId = resolveOneOnOneGroupTeacherId(coursePackage, assignmentMap, occurrenceMap);
+            Long groupTeacherId = resolveOneOnOneGroupTeacherId(
+                    coursePackage, assignmentMap, occurrenceMap, teacherId);
             grouped.computeIfAbsent(groupTeacherId, key -> new LinkedHashMap<>())
                     .computeIfAbsent(coursePackage.getStudentId(), key -> new ArrayList<>())
                     .add(coursePackage);
@@ -837,7 +838,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         }
         Set<Long> packageIds = packageTeacherAssignmentMapper.selectList(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
                         .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
-                        .eq(PackageTeacherAssignmentEntity::getIsPrimary, 1)
                         .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE"))
                 .stream()
                 .map(PackageTeacherAssignmentEntity::getPackageId)
@@ -976,7 +976,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
     private Long resolveOneOnOneGroupTeacherId(CoursePackageEntity coursePackage,
                                                Map<Long, PackageTeacherAssignmentEntity> assignmentMap,
-                                               Map<Long, List<LessonOccurrenceEntity>> occurrenceMap) {
+                                               Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
+                                               Long requestedTeacherId) {
+        if (requestedTeacherId != null) {
+            return requestedTeacherId;
+        }
         PackageTeacherAssignmentEntity assignment = assignmentMap.get(coursePackage.getId());
         if (assignment != null && assignment.getTeacherId() != null) {
             return assignment.getTeacherId();

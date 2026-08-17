@@ -42,6 +42,18 @@ public class CoursePriceOptionEntity extends BaseEntity {
 
     private String detailText;
 
+    private String packageUnit;
+
+    private BigDecimal packageQuantity;
+
+    private BigDecimal totalPrice;
+
+    private BigDecimal derivedUnitPrice;
+
+    private BigDecimal fullDayPrice;
+
+    private BigDecimal halfDayPrice;
+
     private BigDecimal oneOnOneHours;
 
     private BigDecimal priceAmount;

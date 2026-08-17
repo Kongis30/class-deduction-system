@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.enrollment.controller;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAssignmentRequest;
+import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAllocationRequest;
 import com.classdeduction.system.modules.enrollment.service.PackageTeacherAssignmentService;
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -65,5 +66,14 @@ public class PackageTeacherAssignmentController {
             @Parameter(description = "变更原因") @RequestParam(required = false) String changeReason) {
         packageTeacherAssignmentService.switchPrimaryTeacher(packageId, newTeacherId, changeReason);
         return ApiResponse.success("Primary teacher changed successfully.", null);
+    }
+
+    @PutMapping("/package/{packageId}/allocations")
+    @Operation(summary = "Replace active teacher-hour allocations")
+    public ApiResponse<Void> replaceAllocations(
+            @PathVariable Long packageId,
+            @Valid @RequestBody PackageTeacherAllocationRequest request) {
+        packageTeacherAssignmentService.replaceAllocations(packageId, request);
+        return ApiResponse.success("Teacher allocations updated successfully.", null);
     }
 }

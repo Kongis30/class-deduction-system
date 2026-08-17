@@ -22,6 +22,12 @@ public record CoursePriceOptionVO(
         String durationLabel,
         String timeSlotLabel,
         String detailText,
+        String packageUnit,
+        BigDecimal packageQuantity,
+        BigDecimal totalPrice,
+        BigDecimal derivedUnitPrice,
+        BigDecimal fullDayPrice,
+        BigDecimal halfDayPrice,
         BigDecimal oneOnOneHours,
         BigDecimal priceAmount,
         BigDecimal groupTotalPrice,
@@ -46,6 +52,14 @@ public record CoursePriceOptionVO(
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
-    public record GroupScheduleSlotVO(Long teacherId, Integer weekday, String startTime, String endTime) {
+    public record GroupScheduleSlotVO(
+            Long teacherId,
+            Integer weekday,
+            String startTime,
+            String endTime,
+            String morningEndTime,
+            String afternoonStartTime,
+            String attendanceOptions
+    ) {
     }
 }
