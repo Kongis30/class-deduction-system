@@ -120,7 +120,7 @@
                     <strong>{{ groupPackageTitle(group) }}</strong>
                     <span>{{ selectedMode === 'GROUP' ? formatGroupSchedule(group.rows[0]) : 'Private lesson package' }}</span>
                   </div>
-                  <small v-if="selectedMode === 'GROUP'">{{ formatGroupResources(group.rows[0]) }}</small>
+                  <small v-if="selectedMode === 'GROUP'">{{ formatGroupClassroom(group.rows[0]) }}</small>
                 </div>
 
                 <el-table
@@ -396,12 +396,7 @@
               <el-date-picker v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
           </div>
-          <div class="form-grid form-grid--two">
-            <el-form-item label="Default teacher">
-              <el-select v-model="form.groupTeacherId" clearable placeholder="Assign later" style="width: 100%;">
-                <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-              </el-select>
-            </el-form-item>
+          <div class="form-grid form-grid--one">
             <el-form-item label="Classroom">
               <el-select v-model="form.groupClassroomId" clearable placeholder="Assign later" style="width: 100%;">
                 <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
@@ -429,7 +424,7 @@
                 v-model="slot.teacherId"
                 clearable
                 filterable
-                placeholder="Use default teacher"
+                placeholder="Select teacher"
               >
                 <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
               </el-select>
@@ -638,7 +633,6 @@ const form = reactive({
   totalPrice: undefined as number | undefined,
   halfDayPrice: undefined as number | undefined,
   courseProductId: undefined as EntityId | undefined,
-  groupTeacherId: undefined as EntityId | undefined,
   groupClassroomId: undefined as EntityId | undefined,
   groupScheduleSlots: [] as Array<{
     teacherId?: EntityId;
@@ -975,7 +969,6 @@ function openDialog(option?: CoursePriceOptionItem, gradeLabel = '') {
   form.totalPrice = option?.totalPrice ?? option?.groupTotalPrice ?? option?.priceAmount;
   form.halfDayPrice = option?.halfDayPrice;
   form.courseProductId = option?.courseProductId ?? (query.courseProductId || undefined);
-  form.groupTeacherId = option?.groupTeacherId;
   form.groupClassroomId = option?.groupClassroomId;
   form.groupScheduleSlots = (option?.groupScheduleSlots ?? []).map(slot => ({
     ...slot,
@@ -1083,7 +1076,7 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     priceAmount: packageTotalPrice ?? 0,
     currencyCode: 'USD',
     courseProductId: form.courseProductId,
-    groupTeacherId: formTeachingMode.value === 'GROUP' ? form.groupTeacherId : undefined,
+    groupTeacherId: undefined,
     groupClassroomId: formTeachingMode.value === 'GROUP' ? form.groupClassroomId : undefined,
     groupScheduleSlots: formTeachingMode.value === 'GROUP'
       ? form.groupScheduleSlots.map(({ teacherId, subjectName, weekday, startTime, endTime, attendanceOptions, hourlyRateSnapshot }) => ({
@@ -1127,7 +1120,7 @@ function payloadFromRow(row: CoursePriceOptionItem, status: string): CoursePrice
     currencyCode: row.currencyCode || 'USD',
     courseProductId: row.courseProductId,
     classId: row.classId,
-    groupTeacherId: row.groupTeacherId,
+    groupTeacherId: undefined,
     groupClassroomId: row.groupClassroomId,
     groupScheduleSlots: row.groupScheduleSlots,
     groupBillingType: row.groupBillingType,
@@ -1327,10 +1320,9 @@ function groupSlotLabel(slot: { weekday: number; startTime: string; endTime: str
   return `${weekday} ${slot.startTime}-${slot.endTime}`;
 }
 
-function formatGroupResources(row: CoursePriceOptionItem) {
-  const teacher = teacherName(row.groupTeacherId);
+function formatGroupClassroom(row: CoursePriceOptionItem) {
   const room = classroomName(row.groupClassroomId);
-  return `Teacher: ${teacher} · Room: ${room}`;
+  return `Room: ${room}`;
 }
 
 function teacherName(id?: EntityId) {
