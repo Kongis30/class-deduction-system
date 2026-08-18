@@ -9,8 +9,8 @@
       <div class="panel-header">
         <div>
           <span class="panel-header__eyebrow">Course setup</span>
-          <h2 class="panel-header__title">Course Products</h2>
-          <p class="panel-header__desc">Create course families first, then set grade and price rows.</p>
+          <h2 class="panel-header__title">Courses</h2>
+          <p class="panel-header__desc">Create the course name first, then add grades and package prices.</p>
         </div>
         <div class="panel-header__actions">
           <el-button type="primary" @click="openProductDialog()">
@@ -28,7 +28,7 @@
         </div>
         <div class="setup-path-card__actions">
           <el-button type="primary" @click="openPriceMatrixForCurrentTab">
-            Go to grade & price setup
+            Set package prices
           </el-button>
         </div>
       </section>
@@ -37,7 +37,7 @@
         <div class="product-toolbar__filters">
           <el-input
             v-model="filters.productName"
-            placeholder="Search product, subject, or label"
+            placeholder="Search course or subject"
             clearable
             @input="handleFilterChange"
           />
@@ -53,7 +53,7 @@
         </div>
         <div class="product-toolbar__links">
           <el-button text type="primary" @click="openSubjectDialog()">Manage subjects</el-button>
-          <el-button text type="primary" @click="$router.push('/admin/config/course-prices')">Price matrix</el-button>
+          <el-button text type="primary" @click="$router.push('/admin/config/course-prices')">Package prices</el-button>
         </div>
       </div>
 
@@ -78,14 +78,14 @@
             class="product-table"
             :show-empty="true"
           >
-            <el-table-column label="Product name" min-width="220">
+            <el-table-column label="Course name" min-width="220">
               <template #default="{ row }">
                 <div class="cell-stack">
                   <strong class="product-title">
                     {{ row.productName }}
                   </strong>
                   <span>
-                    {{ row.defaultTotalUnits }} hours · {{ row.registerClass || row.subjectName || 'No display label' }}
+                    {{ row.subjectName || 'No subject' }}
                     <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
                       {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                     </el-tag>
@@ -95,13 +95,16 @@
             </el-table-column>
             <el-table-column label="Next step" min-width="150">
               <template #default>
-                <span class="next-step-text">Add grade/hour prices</span>
+                <span class="next-step-text">Add hour packages</span>
               </template>
+            </el-table-column>
+            <el-table-column label="Sort" width="80" align="center">
+              <template #default="{ row }">{{ row.sortOrder ?? 99 }}</template>
             </el-table-column>
             <el-table-column label="Actions" width="190">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button type="primary" link @click="openProductPrices(row)">Set prices</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set packages</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -118,7 +121,7 @@
             class="product-table"
             :show-empty="true"
           >
-            <el-table-column label="Course product" min-width="260">
+            <el-table-column label="Course name" min-width="260">
               <template #default="{ row }">
                 <div class="cell-stack">
                   <strong>
@@ -127,7 +130,7 @@
                       {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                     </el-tag>
                   </strong>
-                  <span>{{ formatCourseType(row.courseType) }} · {{ row.registerClass || row.subjectName || 'No display label' }}</span>
+                  <span>{{ row.subjectName || 'No subject' }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -141,14 +144,17 @@
                   >
                     {{ groupSetupLabel(row) }}
                   </el-tag>
-                  <span>{{ groupClassCount(row) > 0 ? 'Ready for schedules and enrollment' : 'Add grade classes and prices first' }}</span>
+                  <span>{{ groupClassCount(row) > 0 ? 'Ready for registration' : 'Add package prices and schedule first' }}</span>
                 </div>
               </template>
+            </el-table-column>
+            <el-table-column label="Sort" width="80" align="center">
+              <template #default="{ row }">{{ row.sortOrder ?? 99 }}</template>
             </el-table-column>
             <el-table-column label="Actions" width="210">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button type="primary" link @click="openProductPrices(row)">Set grade & price</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set packages</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -177,42 +183,51 @@
         <section class="product-step">
           <div class="product-step__head">
             <strong>Course details</strong>
+            <small v-if="form.teachingMode === 'ONE_ON_ONE'">
+              Only create the 1-on-1 course here. Hour packages and prices are added after saving.
+            </small>
           </div>
           <div class="product-form__row">
-            <el-form-item label="Product name" prop="productName" class="product-form__full">
-              <el-input v-model="form.productName" placeholder="e.g. Saturday Class / 1-on-1 Private" />
-            </el-form-item>
-            <el-form-item label="Registration label" prop="registerClass">
-              <el-input v-model="form.registerClass" placeholder="Shown on registration" />
+            <el-form-item label="Course name" prop="productName" class="product-form__full">
+              <el-input v-model="form.productName" :placeholder="courseNamePlaceholder" />
             </el-form-item>
             <el-form-item label="Subject" prop="subjectName">
               <el-select v-model="form.subjectName" placeholder="Select subject" filterable style="width: 100%;">
                 <el-option v-for="subj in subjects" :key="subj.subjectName" :label="subj.subjectName" :value="subj.subjectName" />
               </el-select>
             </el-form-item>
+            <el-form-item>
+              <template #label>
+                <span class="form-label-with-tip">
+                  Sort
+                  <el-tooltip
+                    content="Controls course display order in lists. Smaller numbers appear first. Default is 99."
+                    placement="top"
+                    :show-after="300"
+                  >
+                    <el-icon class="form-label-with-tip__icon"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </span>
+              </template>
+              <el-input-number v-model="form.sortOrder" :min="0" :max="9999" :controls="false" style="width: 100%;" />
+            </el-form-item>
           </div>
         </section>
 
-        <section class="product-step">
-          <div class="product-step__head">
-            <strong>Private lesson defaults</strong>
-          </div>
-          <div v-if="form.teachingMode === 'ONE_ON_ONE'" class="product-form__row">
-            <el-form-item label="Total hours" prop="defaultTotalUnits">
-              <el-input-number v-model="form.defaultTotalUnits" :min="1" :step="1" :precision="0" :controls="false" style="width: 100%;" />
-            </el-form-item>
-            <el-form-item label="Default lesson hours">
-              <el-input-number v-model="defaultLessonHours" :min="0.5" :step="0.5" :precision="1" :controls="false" style="width: 100%;" />
-            </el-form-item>
-          </div>
-        </section>
+        <el-alert
+          v-if="form.teachingMode === 'ONE_ON_ONE'"
+          type="info"
+          :closable="false"
+          show-icon
+          title="After saving, add packages such as 40 hours, 60 hours, and 120 hours with their prices."
+        />
 
         <el-alert
           v-if="form.teachingMode === 'GROUP'"
           type="info"
           :closable="false"
           show-icon
-          title="Set the grade, class run, teacher, classroom, and weekly schedule in Price Matrix after creating this product."
+          title="After creating the course, add grades, package prices, and weekly schedule."
         />
 
         <section class="product-step product-step--settings">
@@ -316,7 +331,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus } from '@element-plus/icons-vue';
+import { Plus, QuestionFilled } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -456,47 +471,45 @@ const pagination = reactive({
 const tableData = ref<CourseProductItem[]>([]);
 const activeTab = ref(route.query.tab === 'group' ? 'GROUP' : 'ONE_ON_ONE');
 
-const courseTypeOptions = [
-  { value: 'AFTER_SCHOOL', label: 'After School', hint: 'Group course. Add grade/month price rows later.', mode: 'GROUP', registerClass: 'After School' },
-  { value: 'SATURDAY', label: 'Saturday Class', hint: 'Group course. Add season and half/full day rows later.', mode: 'GROUP', registerClass: 'Saturday Class' },
-  { value: 'SUMMER', label: 'Summer Class', hint: 'Group course. Add 7-week and time-slot rows later.', mode: 'GROUP', registerClass: 'Summer Class' },
-  { value: 'SPRINT', label: 'Sprint Class', hint: 'Group course. Matrix still needs product confirmation.', mode: 'GROUP', registerClass: 'Sprint Class' },
-  { value: 'ONE_ON_ONE', label: '1-on-1', hint: 'Private course. Add 40/60/120 hour price rows later.', mode: 'ONE_ON_ONE', registerClass: '1 on 1' },
-] as const;
-
 const oneOnOneData = computed(() =>
-  tableData.value.filter(p => p.teachingMode === 'ONE_ON_ONE')
+  sortCourseProducts(tableData.value.filter(p => p.teachingMode === 'ONE_ON_ONE'))
 );
 
 const groupData = computed(() =>
-  tableData.value.filter(p => p.teachingMode === 'GROUP')
+  sortCourseProducts(tableData.value.filter(p => p.teachingMode === 'GROUP'))
 );
 
 const createCourseButtonLabel = computed(() =>
-  activeTab.value === 'ONE_ON_ONE' ? 'Create 1-on-1 product' : 'Create group class product'
+  activeTab.value === 'ONE_ON_ONE' ? 'Create 1-on-1 course' : 'Create group class course'
+);
+
+const courseNamePlaceholder = computed(() =>
+  form.teachingMode === 'ONE_ON_ONE'
+    ? 'e.g. 1-on-1 Math / Private Tutoring'
+    : 'e.g. Saturday Class / Summer Class'
 );
 
 const setupPathTitle = computed(() =>
   activeTab.value === 'GROUP'
-    ? 'Create product first, then immediately set grade, schedule, and price.'
-    : 'Create product first, then add grade and package-hour prices.'
+    ? 'Create the course first, then add package prices and schedule.'
+    : 'Create the course first, then add hour packages.'
 );
 
 const setupPathDescription = computed(() =>
   activeTab.value === 'GROUP'
-    ? 'A group product is only the parent course. It becomes usable after at least one grade class and price row is added in Price Matrix.'
-    : 'A 1-on-1 product becomes available for registration after its grade/hour price rows are added in Price Matrix.'
+    ? 'A group course becomes available for registration after at least one grade has a package price and weekly schedule.'
+    : 'A 1-on-1 course becomes available for registration after its grade and hour packages are added.'
 );
 
 const productDialogTitle = computed(() => {
-  if (editingId.value) return 'Edit course product';
-  return form.teachingMode === 'ONE_ON_ONE' ? 'New 1-on-1 product' : 'New group class product';
+  if (editingId.value) return 'Edit course';
+  return form.teachingMode === 'ONE_ON_ONE' ? 'Create 1-on-1 course' : 'Create group class course';
 });
 
 const productDialogSubtitle = computed(() =>
   form.teachingMode === 'ONE_ON_ONE'
-    ? 'Step 1 of 2: create the private course family. After saving, add grade and package-hour prices.'
-    : 'Step 1 of 3: create the group course family. After saving, add grade classes, prices, and schedules.'
+    ? 'Step 1: name the course. Step 2: add 40/60/120-hour packages and prices.'
+    : 'Step 1 of 3: create the group course. After saving, add package prices and schedules.'
 );
 
 const productSaveButtonLabel = computed(() => {
@@ -564,6 +577,13 @@ function groupSetupLabel(product: CourseProductItem) {
   return `${classLabel} · ${studentCount} student${studentCount === 1 ? '' : 's'}`;
 }
 
+function sortCourseProducts(products: CourseProductItem[]) {
+  return [...products].sort((left, right) =>
+    (left.sortOrder ?? 99) - (right.sortOrder ?? 99)
+    || left.productName.localeCompare(right.productName)
+  );
+}
+
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
@@ -585,7 +605,7 @@ async function loadData() {
     pagination.total = data.total;
     await loadClassGroups();
   } catch {
-    ElMessage.error('Failed to load course products.');
+    ElMessage.error('Failed to load courses.');
   } finally {
     loading.value = false;
   }
@@ -617,31 +637,24 @@ const form = reactive<CourseProductSavePayload>({
   productCode: '',
   productName: '',
   courseType: undefined,
-  registerClass: 'Group Class',
+  registerClass: '',
   subjectName: '',
   teachingMode: 'GROUP',
+  sortOrder: 99,
   defaultTotalUnits: 40,
   defaultLessonUnits: 4,
   status: 'ACTIVE',
   notes: '',
 });
 
-const defaultLessonHours = computed({
-  get: () => (form.defaultLessonUnits ?? 4) / 2,
-  set: (hours: number) => {
-    form.defaultLessonUnits = Math.round(hours * 2);
-  },
-});
-
 const formRules = {
-  productName: [{ required: true, message: 'Product name is required' }],
-  registerClass: [{ required: true, message: 'Registration label is required' }],
+  productName: [{ required: true, message: 'Course name is required' }],
   teachingMode: [{ required: true, message: 'Teaching format is required' }],
   defaultTotalUnits: [
     {
       validator: (_rule: any, value: any, callback: any) => {
         if (form.teachingMode === 'ONE_ON_ONE' && (value === undefined || value === null)) {
-          callback(new Error('Total hours is required'));
+          callback(new Error('Default package size is required'));
         } else if (form.teachingMode === 'ONE_ON_ONE' && (value * 2) % 1 !== 0) {
           callback(new Error('Must be a multiple of 0.5'));
         } else {
@@ -662,6 +675,7 @@ function openProductDialog(row?: CourseProductItem) {
       registerClass: row.registerClass ?? row.productName,
       subjectName: row.subjectName ?? '',
       teachingMode: row.teachingMode,
+      sortOrder: row.sortOrder ?? 99,
       defaultTotalUnits: row.defaultTotalUnits,
       defaultLessonUnits: row.defaultLessonUnits,
       status: row.status,
@@ -674,9 +688,10 @@ function openProductDialog(row?: CourseProductItem) {
       productCode: '',
       productName: '',
       courseType: mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : undefined,
-      registerClass: mode === 'ONE_ON_ONE' ? '1-on-1' : 'Group Class',
+      registerClass: '',
       subjectName: '',
       teachingMode: mode,
+      sortOrder: 99,
       defaultTotalUnits: 40,
       defaultLessonUnits: 4,
       status: 'ACTIVE',
@@ -698,20 +713,21 @@ async function handleSubmit() {
       productCode: form.productCode,
       productName: form.productName,
       courseType: form.courseType,
-      registerClass: form.registerClass,
+      registerClass: editingId.value ? (form.registerClass || form.productName) : form.productName,
       subjectName: form.subjectName,
       teachingMode: form.teachingMode,
+      sortOrder: form.sortOrder ?? 99,
       status: form.status,
       notes: form.notes,
     };
     if (form.teachingMode === 'ONE_ON_ONE') {
-      payload.defaultTotalUnits = form.defaultTotalUnits;
-      payload.defaultLessonUnits = form.defaultLessonUnits;
+      payload.defaultTotalUnits = form.defaultTotalUnits || 40;
+      payload.defaultLessonUnits = form.defaultLessonUnits || 4;
     }
 
     if (editingId.value) {
       await updateCourseProduct(editingId.value, payload);
-      ElMessage.success('Course product updated.');
+      ElMessage.success('Course updated.');
       dialogVisible.value = false;
       await loadData();
     } else {
@@ -723,7 +739,7 @@ async function handleSubmit() {
         courseType: form.courseType,
         description: form.teachingMode === 'ONE_ON_ONE'
           ? 'Next, add grade, package hours, and price. You can do it now or come back later.'
-          : 'Next, add grade class, billing, schedule, and price. You can do it now or come back later.',
+          : 'Next, add grade, package price, and schedule. You can do it now or come back later.',
       };
       ElMessage.success('Course created.');
       dialogVisible.value = false;
@@ -754,11 +770,6 @@ async function handleDelete(row: CourseProductItem) {
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
   }
-}
-
-
-function formatCourseType(type?: string): string {
-  return type ? courseTypeOptions.find(item => item.value === type)?.label ?? 'Unclassified' : 'Any group type';
 }
 
 
@@ -1107,6 +1118,23 @@ loadSubjects();
 .product-step__head strong {
   color: #102a43;
   font-size: 14px;
+}
+
+.form-label-with-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.form-label-with-tip__icon {
+  color: #909399;
+  cursor: help;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.form-label-with-tip__icon:hover {
+  color: #409eff;
 }
 
 .planning-defaults {

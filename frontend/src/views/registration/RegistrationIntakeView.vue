@@ -209,8 +209,8 @@
                       class="table-select table-select--primary"
                       :placeholder="productSelectPlaceholder(line)"
                       :disabled="isReadOnly || productOptionsForLine(line).length === 0"
-                      no-data-text="No linked products"
-                      no-match-text="No matching product"
+                      no-data-text="No linked courses"
+                      no-match-text="No matching course"
                       filterable
                       @change="() => handleCourseProductChange(line)"
                     >
@@ -240,7 +240,7 @@
                     <strong>{{ line.gradeBand || '—' }}</strong>
                   </div>
                   <div>
-                    <span>{{ isOneOnOneLine(line) ? 'Tuition option' : 'Schedule' }}</span>
+                    <span>{{ isOneOnOneLine(line) ? 'Package' : 'Schedule' }}</span>
                     <strong>{{ printCourseScheduleLabel(line) }}</strong>
                   </div>
                   <div v-if="showDurationInput(line)">
@@ -271,8 +271,8 @@
                       </el-select>
                       <strong class="print-only print-course-value">{{ line.gradeBand || '—' }}</strong>
                     </label>
-                    <label v-if="isOneOnOneLine(line)" class="course-control">
-                      <span>Tuition option</span>
+                    <label class="course-control">
+                      <span>{{ isOneOnOneLine(line) ? 'Package' : 'Payment option' }}</span>
                       <el-select
                         v-model="line.coursePriceOptionId"
                         class="table-select option"
@@ -298,7 +298,7 @@
                       <strong class="print-only print-course-value">{{ printCourseScheduleLabel(line) }}</strong>
                     </label>
                     <label v-if="showDurationInput(line)" class="course-control">
-                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : 'Package' }}</span>
+                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : 'Package length' }}</span>
                       <el-input-number
                         v-if="isOneOnOneLine(line)"
                         v-model="line.oneOnOneHours"
@@ -315,6 +315,19 @@
                         {{ printRegistrationDurationLabel(line) }}
                       </div>
                       <strong class="print-only print-course-value">{{ printRegistrationDurationLabel(line) }}</strong>
+                    </label>
+                    <label v-if="isOneOnOneLine(line)" class="course-control">
+                      <span>Already used</span>
+                      <el-input-number
+                        v-model="line.openingUsedHours"
+                        class="table-price"
+                        :min="0"
+                        :max="line.oneOnOneHours || 400"
+                        :step="0.5"
+                        :precision="1"
+                        :controls="true"
+                        :disabled="isReadOnly || !line.coursePriceOptionId"
+                      />
                     </label>
                     <label v-if="!isOneOnOneLine(line) && attendanceOptionsForLine(line).length > 0" class="course-control">
                       <span>Attendance</span>
@@ -372,7 +385,7 @@
                     <div><span>Grade</span><strong>{{ line.gradeBand || '—' }}</strong></div>
                     <div><span>Registration</span><strong>{{ printRegistrationDurationLabel(line) }}</strong></div>
                     <div>
-                      <span>{{ isOneOnOneLine(line) ? 'Tuition option' : 'Sessions' }}</span>
+                      <span>{{ isOneOnOneLine(line) ? 'Package' : 'Sessions' }}</span>
                       <strong>{{ printTuitionOptionLabel(line) }}</strong>
                     </div>
                     <div>
@@ -634,6 +647,7 @@ interface RegistrationCourseLine {
   originalPriceAmount?: number;
   manualPriceOverride: boolean;
   oneOnOneHours?: number;
+  openingUsedHours?: number;
   oneOnOneUnits?: number;
   groupBillingType?: string;
   groupTotalSessions?: number;
@@ -1123,6 +1137,7 @@ function toHistoricalCourseLine(
     originalPriceAmount: optionalNumber(item, 'originalPriceAmount') ?? optionalNumber(fallback, 'originalPriceAmount'),
     manualPriceOverride: getBoolean(item, 'manualPriceOverride', false),
     oneOnOneHours: optionalNumber(item, 'oneOnOneHours') ?? optionalNumber(fallback, 'oneOnOneHours'),
+    openingUsedHours: optionalNumber(item, 'openingUsedHours') ?? optionalNumber(fallback, 'openingUsedHours') ?? 0,
     oneOnOneUnits: optionalNumber(item, 'oneOnOneUnits') ?? optionalNumber(fallback, 'oneOnOneUnits'),
     groupBillingType: getString(item, 'groupBillingType') || undefined,
     groupSessionCount: optionalNumber(item, 'sessions'),
@@ -1187,6 +1202,7 @@ function createCourseLine(): RegistrationCourseLine {
     attendanceScheduleJson: undefined,
     priceAmount: 0,
     manualPriceOverride: false,
+    openingUsedHours: 0,
     groupBillingType: undefined,
     groupTotalSessions: undefined,
     groupStartMonth: undefined,
@@ -1337,16 +1353,6 @@ function handleCourseProductChange(line: RegistrationCourseLine) {
 function handleGradeChange(line: RegistrationCourseLine) {
   line.periodKey = '';
   clearSelectedOption(line);
-  autoSelectPriceOptionForLine(line);
-}
-
-function autoSelectPriceOptionForLine(line: RegistrationCourseLine) {
-  const option = optionChoicesForLine(line)[0];
-  if (!option) {
-    return;
-  }
-  line.coursePriceOptionId = option.id;
-  handleOptionChange(line);
 }
 
 function handleOptionChange(line: RegistrationCourseLine) {
@@ -1368,6 +1374,7 @@ function handleOptionChange(line: RegistrationCourseLine) {
   line.detail = option.detailText;
   line.courseProductId = option.courseProductId;
   line.oneOnOneHours = option.oneOnOneHours;
+  line.openingUsedHours = Math.min(numeric(line.openingUsedHours), numeric(option.oneOnOneHours));
   line.oneOnOneUnits = option.oneOnOneHours ? Math.round(option.oneOnOneHours * 2) : undefined;
   line.classId = option.classId;
   line.groupBillingType = option.groupBillingType;
@@ -1404,6 +1411,9 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line)) {
     line.oneOnOneUnits = line.oneOnOneHours ? Math.round(line.oneOnOneHours * 2) : undefined;
     line.durationLabel = line.oneOnOneHours ? `${formatHours(line.oneOnOneHours)} hours` : '';
+    if (numeric(line.openingUsedHours) > numeric(line.oneOnOneHours)) {
+      line.openingUsedHours = line.oneOnOneHours;
+    }
   } else {
     line.durationLabel = printRegistrationDurationLabel(line);
   }
@@ -1487,7 +1497,7 @@ function productOptionsForLine(line: RegistrationCourseLine) {
     priceOptionsWithProduct.value
       .map((option) => String(option.courseProductId))
   );
-  return courseProducts.value.filter((product) => linkedProductIds.has(String(product.id)));
+  return sortCourseProducts(courseProducts.value.filter((product) => linkedProductIds.has(String(product.id))));
 }
 
 function productOptionGroupsForLine(line: RegistrationCourseLine) {
@@ -1516,7 +1526,9 @@ function detailSelectPlaceholder(line: RegistrationCourseLine) {
   if (!line.gradeBand) {
     return 'Select grade first';
   }
-  return optionChoicesForLine(line).length > 0 ? 'Select tuition option' : 'No tuition option';
+  return optionChoicesForLine(line).length > 0
+    ? isOneOnOneLine(line) ? 'Select package' : 'Select payment option'
+    : isOneOnOneLine(line) ? 'No package' : 'No payment option';
 }
 
 function courseLineHint(line: RegistrationCourseLine) {
@@ -1533,9 +1545,9 @@ function courseLineHint(line: RegistrationCourseLine) {
   if (!line.coursePriceOptionId) {
     return optionChoicesForLine(line).length > 0
       ? isOneOnOneLine(line)
-        ? 'Select a grade and tuition option.'
-        : 'Select a grade.'
-      : 'Course pricing is missing for this product.';
+        ? 'Select a grade and package.'
+        : 'Select a payment option.'
+      : 'Course pricing is missing for this course.';
   }
   return 'Detail will appear here.';
 }
@@ -1545,31 +1557,14 @@ function productSelectPlaceholder(line: RegistrationCourseLine) {
 }
 
 function productOptionLabel(product: CourseProductItem) {
-  const labels: string[] = [];
-  appendDistinctCourseLabel(labels, product.productName);
-  appendDistinctCourseLabel(labels, product.registerClass);
-  return labels.join(' · ') || 'Course';
+  return product.productName || 'Course';
 }
 
-function appendDistinctCourseLabel(labels: string[], value?: string) {
-  const label = value?.trim();
-  if (!label) {
-    return;
-  }
-  const normalized = normalizeCourseLabel(label);
-  const duplicated = labels.some((existing) => {
-    const existingNormalized = normalizeCourseLabel(existing);
-    return existingNormalized === normalized
-      || existingNormalized.includes(normalized)
-      || normalized.includes(existingNormalized);
-  });
-  if (!duplicated) {
-    labels.push(label);
-  }
-}
-
-function normalizeCourseLabel(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
+function sortCourseProducts(products: CourseProductItem[]) {
+  return [...products].sort((left, right) =>
+    (left.sortOrder ?? 99) - (right.sortOrder ?? 99)
+    || left.productName.localeCompare(right.productName)
+  );
 }
 
 function printCourseProductLabel(line: RegistrationCourseLine) {
@@ -1713,7 +1708,7 @@ function classSelectPlaceholder(line: RegistrationCourseLine) {
 function classScheduleLabel(line: RegistrationCourseLine) {
   const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
   if (!classGroup) {
-    return line.coursePriceOptionId ? 'Class schedule will be assigned from this grade price row.' : 'Select a price row first';
+    return line.coursePriceOptionId ? 'Class schedule will be assigned from this payment option.' : 'Select a payment option first';
   }
   return formatClassLabel(classGroup);
 }
@@ -1854,8 +1849,8 @@ function validateForm() {
     }
     if (!line.coursePriceOptionId) {
       errors.push(isOneOnOneLine(line)
-        ? `${label}: select a grade and tuition option.`
-        : `${label}: select a grade with configured monthly pricing.`);
+        ? `${label}: select a grade and package.`
+        : `${label}: select a payment option.`);
     }
     if (!line.detail.trim()) {
       errors.push(`${label}: course detail is missing. Reselect the course option.`);
@@ -1901,11 +1896,16 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
   }
   if (isOneOnOneLine(line)) {
     const hours = numeric(line.oneOnOneHours);
+    const openingUsedHours = numeric(line.openingUsedHours);
     const invalid = hours < 0.5 || hours > 400 || !Number.isInteger(hours * 2);
     if (invalid) {
       errors.push(`${label}: enter 0.5 to 400 hours using 0.5-hour increments.`);
     }
-    return invalid;
+    const invalidOpeningUsed = openingUsedHours < 0 || openingUsedHours > hours || !Number.isInteger(openingUsedHours * 2);
+    if (invalidOpeningUsed) {
+      errors.push(`${label}: already used hours must be between 0 and package hours using 0.5-hour increments.`);
+    }
+    return invalid || invalidOpeningUsed;
   }
 
   const quantity = numeric(line.packageQuantity);
@@ -1967,6 +1967,7 @@ function buildPayload(): RegistrationIntakePayload {
       originalPriceAmount: line.originalPriceAmount,
       manualPriceOverride: line.manualPriceOverride,
       oneOnOneHours: isOneOnOneLine(line) ? line.oneOnOneHours : undefined,
+      openingUsedHours: isOneOnOneLine(line) && numeric(line.openingUsedHours) > 0 ? line.openingUsedHours : undefined,
       oneOnOneUnits: isOneOnOneLine(line) ? line.oneOnOneUnits : undefined,
       teacherId: isOneOnOneLine(line) ? line.teacherId : undefined,
       remark: line.remark,

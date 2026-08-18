@@ -104,11 +104,11 @@ class CoursePriceOptionServiceImplTest {
 
         assertThatThrownBy(() -> coursePriceOptionService.createOption(request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("Grade classes require at least one weekly time slot to calculate monthly price.");
+                .hasMessage("Grade classes require at least one weekly time slot.");
     }
 
     @Test
-    void shouldCreateGroupOptionWithFutureClassOccurrencesWithoutRecurringSlotReference() {
+    void shouldCreateGroupOptionWithFutureClassOccurrencesUsingScheduleSlotSnapshot() {
         CoursePriceOptionSaveRequest request = groupOption();
         when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
         when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
@@ -128,19 +128,26 @@ class CoursePriceOptionServiceImplTest {
 
         ArgumentCaptor<CoursePriceOptionEntity> optionCaptor =
                 ArgumentCaptor.forClass(CoursePriceOptionEntity.class);
+        ArgumentCaptor<ClassGroupScheduleSlotEntity> slotCaptor =
+                ArgumentCaptor.forClass(ClassGroupScheduleSlotEntity.class);
         ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor =
                 ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
         verify(coursePriceOptionMapper).insert(optionCaptor.capture());
+        verify(classGroupScheduleSlotMapper).insert(slotCaptor.capture());
         verify(lessonOccurrenceMapper, times(13)).insert(occurrenceCaptor.capture());
         assertThat(optionCaptor.getValue().getGroupTotalPrice()).isEqualByComparingTo("1300.00");
-        assertThat(optionCaptor.getValue().getGroupSessionPrice()).isEqualByComparingTo("100.00");
-        assertThat(optionCaptor.getValue().getPriceAmount()).isEqualByComparingTo("433.33");
+        assertThat(optionCaptor.getValue().getGroupSessionPrice()).isEqualByComparingTo("433.33");
+        assertThat(optionCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1300.00");
+        assertThat(slotCaptor.getValue().getTeacherId()).isEqualTo(702L);
+        assertThat(slotCaptor.getValue().getSubjectName()).isEqualTo("Chemistry");
+        assertThat(slotCaptor.getValue().getHourlyRateSnapshot()).isEqualByComparingTo("25.00");
         assertThat(occurrenceCaptor.getAllValues())
                 .allSatisfy(occurrence -> {
                     assertThat(occurrence.getClassGroupId()).isEqualTo(401L);
-                    assertThat(occurrence.getScheduleSlotId()).isNull();
+                    assertThat(occurrence.getScheduleSlotId()).isEqualTo(501L);
                     assertThat(occurrence.getPlannedTeacherId()).isEqualTo(702L);
                     assertThat(occurrence.getPlannedClassroomId()).isEqualTo(801L);
+                    assertThat(occurrence.getHourlyRateSnapshot()).isEqualByComparingTo("25.00");
                     assertThat(occurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
                 });
     }
@@ -149,17 +156,19 @@ class CoursePriceOptionServiceImplTest {
     void shouldRejectOneOnOneOptionWithoutHours() {
         CoursePriceOptionSaveRequest request = oneOnOneOption();
         request.setOneOnOneHours(null);
+        request.setPackageQuantity(null);
         when(courseProductMapper.selectById(201L)).thenReturn(oneOnOneProduct());
 
         assertThatThrownBy(() -> coursePriceOptionService.createOption(request))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("One-on-one price option requires purchased hours.");
+                .hasMessage("Active course price option requires a package quantity greater than zero.");
     }
 
     @Test
     void shouldRejectOneOnOneHoursOutsideHalfHourIncrements() {
         CoursePriceOptionSaveRequest request = oneOnOneOption();
         request.setOneOnOneHours(new BigDecimal("40.25"));
+        request.setPackageQuantity(new BigDecimal("40.25"));
         when(courseProductMapper.selectById(201L)).thenReturn(oneOnOneProduct());
 
         assertThatThrownBy(() -> coursePriceOptionService.createOption(request))
@@ -212,6 +221,9 @@ class CoursePriceOptionServiceImplTest {
         request.setPeriodLabel("60 hours");
         request.setTimeSlotLabel("By schedule");
         request.setDetailText("1 on 1 G6-G8 60 hours");
+        request.setPackageUnit("HOUR");
+        request.setPackageQuantity(new BigDecimal("60.00"));
+        request.setTotalPrice(new BigDecimal("3600.00"));
         request.setOneOnOneHours(new BigDecimal("60.00"));
         request.setPriceAmount(new BigDecimal("3600.00"));
         request.setCourseProductId(201L);
@@ -251,6 +263,9 @@ class CoursePriceOptionServiceImplTest {
         request.setPriceAmount(new BigDecimal("433.33"));
         request.setCourseProductId(301L);
         request.setGroupBillingType("MONTHLY");
+        request.setPackageUnit("MONTH");
+        request.setPackageQuantity(new BigDecimal("3"));
+        request.setTotalPrice(new BigDecimal("1300.00"));
         request.setGroupTotalSessions(13);
         request.setGroupTotalPrice(new BigDecimal("1300.00"));
         request.setGroupStartMonth("2026-09");
@@ -260,6 +275,8 @@ class CoursePriceOptionServiceImplTest {
         CoursePriceOptionSaveRequest.GroupScheduleSlotDTO slot =
                 new CoursePriceOptionSaveRequest.GroupScheduleSlotDTO();
         slot.setTeacherId(702L);
+        slot.setSubjectName(" Chemistry ");
+        slot.setHourlyRateSnapshot(new BigDecimal("25.00"));
         slot.setWeekday(6);
         slot.setStartTime("09:00");
         slot.setEndTime("12:00");

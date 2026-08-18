@@ -139,12 +139,14 @@ export interface CoursePriceOptionItem {
   groupClassroomId?: EntityId;
   groupScheduleSlots?: Array<{
     teacherId?: EntityId;
+    subjectName?: string;
     weekday: number;
     startTime: string;
     endTime: string;
     morningEndTime?: string;
     afternoonStartTime?: string;
     attendanceOptions?: string;
+    hourlyRateSnapshot?: number;
   }>;
   groupBillingType?: string;
   groupStartDate?: string;
@@ -171,6 +173,7 @@ export interface CourseProductItem {
   registerClass?: string;
   subjectName?: string;
   teachingMode: string;
+  sortOrder?: number;
   defaultTotalUnits: number;
   defaultLessonUnits: number;
   status: string;
@@ -333,9 +336,11 @@ export interface PackageTeacherAssignmentItem {
   teacherId: EntityId;
   teacherNo?: string;
   teacherName?: string;
+  subjectName?: string;
   allocatedHours?: number;
   consumedHours?: number;
   remainingHours?: number;
+  hourlyRateSnapshot?: number;
   primary: boolean;
   assignmentStatus: string;
   effectiveFrom?: string;

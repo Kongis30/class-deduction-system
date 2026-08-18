@@ -54,6 +54,8 @@ public record CoursePriceOptionVO(
 ) {
     public record GroupScheduleSlotVO(
             Long teacherId,
+            String subjectName,
+            BigDecimal hourlyRateSnapshot,
             Integer weekday,
             String startTime,
             String endTime,

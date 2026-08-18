@@ -73,9 +73,9 @@ class PackageTeacherAssignmentServiceImplTest {
         PackageTeacherAllocationRequest request = new PackageTeacherAllocationRequest();
         request.setReason("Custom allocation");
         request.setAllocations(List.of(
-                allocation(201L, "30.0", true),
-                allocation(202L, "10.0", false),
-                allocation(203L, "20.0", false)
+                allocation(201L, "Chemistry", "25.00", "30.0", true),
+                allocation(202L, "Global I", "25.00", "10.0", false),
+                allocation(203L, "Algebra II", "28.00", "20.0", false)
         ));
 
         service.replaceAllocations(101L, request);
@@ -86,6 +86,16 @@ class PackageTeacherAssignmentServiceImplTest {
         assertThat(captor.getAllValues())
                 .extracting(PackageTeacherAssignmentEntity::getAllocatedUnits)
                 .containsExactly(60, 20, 40);
+        assertThat(captor.getAllValues())
+                .extracting(PackageTeacherAssignmentEntity::getSubjectName)
+                .containsExactly("Chemistry", "Global I", "Algebra II");
+        assertThat(captor.getAllValues())
+                .extracting(PackageTeacherAssignmentEntity::getHourlyRateSnapshot)
+                .containsExactly(
+                        new BigDecimal("25.00"),
+                        new BigDecimal("25.00"),
+                        new BigDecimal("28.00")
+                );
         assertThat(captor.getAllValues())
                 .extracting(PackageTeacherAssignmentEntity::getIsPrimary)
                 .containsExactly(1, 0, 0);
@@ -108,18 +118,22 @@ class PackageTeacherAssignmentServiceImplTest {
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(confirmed));
 
         PackageTeacherAllocationRequest request = new PackageTeacherAllocationRequest();
-        request.setAllocations(List.of(allocation(201L, "9.5", true)));
+        request.setAllocations(List.of(allocation(201L, "Chemistry", "25.00", "9.5", true)));
 
         assertThatThrownBy(() -> service.replaceAllocations(101L, request))
                 .hasMessageContaining("confirmed teaching hours");
     }
 
     private PackageTeacherAllocationRequest.AllocationItem allocation(Long teacherId,
+                                                                      String subjectName,
+                                                                      String hourlyRate,
                                                                       String hours,
                                                                       boolean primary) {
         PackageTeacherAllocationRequest.AllocationItem item =
                 new PackageTeacherAllocationRequest.AllocationItem();
         item.setTeacherId(teacherId);
+        item.setSubjectName(subjectName);
+        item.setHourlyRateSnapshot(new BigDecimal(hourlyRate));
         item.setAllocatedHours(new BigDecimal(hours));
         item.setPrimary(primary);
         return item;

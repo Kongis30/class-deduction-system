@@ -252,6 +252,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.attendanceOption = normalizeAttendanceOption(item.getAttendanceOption());
             line.attendanceScheduleJson = item.getAttendanceScheduleJson();
             line.oneOnOneHours = firstNonNull(item.getOneOnOneHours(), option == null ? null : option.getOneOnOneHours());
+            line.openingUsedHours = item.getOpeningUsedHours();
             line.oneOnOneUnits = item.getOneOnOneUnits();
             line.initialLessonStartAt = item.getInitialLessonStartAt();
             line.initialLessonEndAt = item.getInitialLessonEndAt();
@@ -387,6 +388,16 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             if (resolveOneOnOneUnits(line) <= 0) {
                 throw new BusinessException("ONE_ON_ONE_UNITS_REQUIRED", "One-on-one purchased hours or units are required.");
             }
+            int openingUsedUnits = resolveOpeningUsedUnits(line);
+            if (openingUsedUnits > resolveOneOnOneUnits(line)) {
+                throw new BusinessException("OPENING_USED_HOURS_EXCEED_PACKAGE",
+                        "Already used hours cannot exceed purchased package hours.");
+            }
+            if (line.openingUsedHours != null
+                    && line.openingUsedHours.multiply(BigDecimal.valueOf(2)).stripTrailingZeros().scale() > 0) {
+                throw new BusinessException("OPENING_USED_HOURS_INVALID",
+                        "Already used hours must use 0.5-hour increments.");
+            }
             return;
         }
         resolveGroupClass(line);
@@ -520,6 +531,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.setOriginalPriceAmount(line.originalPriceAmount);
         item.setManualPriceOverride(line.manualPriceOverride);
         item.setOneOnOneHours(line.oneOnOneHours);
+        item.setOpeningUsedHours(line.openingUsedHours);
         item.setOneOnOneUnits(resolveLineOneOnOneUnits(line));
         item.setInitialLessonStartAt(line.initialLessonStartAt);
         item.setInitialLessonEndAt(line.initialLessonEndAt);
@@ -544,10 +556,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         coursePackage.setSubjectName(line.product.getSubjectName());
         coursePackage.setTeachingMode("ONE_ON_ONE");
         int totalUnits = resolveOneOnOneUnits(line);
+        int openingUsedUnits = resolveOpeningUsedUnits(line);
         coursePackage.setTotalUnits(totalUnits);
         coursePackage.setDefaultLessonUnits(resolveDefaultLessonUnits(line.product, totalUnits));
-        coursePackage.setConsumedUnits(0);
-        coursePackage.setRemainingUnits(totalUnits);
+        coursePackage.setConsumedUnits(openingUsedUnits);
+        coursePackage.setRemainingUnits(totalUnits - openingUsedUnits);
         coursePackage.setOriginalAmount(line.priceAmount);
         coursePackage.setDiscountAmount(ZERO_AMOUNT);
         coursePackage.setReceivedAmount(allocatedPaid);
@@ -561,7 +574,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
             assignment.setPackageId(coursePackage.getId());
             assignment.setTeacherId(line.teacherId);
-            assignment.setAllocatedUnits(totalUnits);
+            assignment.setAllocatedUnits(totalUnits - openingUsedUnits);
             assignment.setIsPrimary(1);
             assignment.setEffectiveFrom(AppTime.nowLocalDateTime());
             assignment.setAssignmentStatus("ACTIVE");
@@ -633,7 +646,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         ensureClassOccurrencesThrough(line.classGroup, line.product,
                 billing.occurrenceWindowStart(), billing.occurrenceWindowEnd());
         ensureNoStudentClassEnrollmentConflicts(student.getId(), line.classId,
-                billing.occurrenceWindowStart(), billing.occurrenceWindowEnd());
+                billing.occurrenceWindowStart(), billing.occurrenceWindowEnd(), line.attendanceOption);
 
         ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
         enrollment.setClassId(line.classId);
@@ -643,6 +656,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         enrollment.setExpiryDate(billing.expiryDate());
         enrollment.setBillingType(line.packageUnit);
         enrollment.setPurchasedQuantity(billing.purchasedQuantity());
+        enrollment.setAttendanceOption(normalizeAttendanceOption(line.attendanceOption));
         enrollment.setStatus("ACTIVE");
         classEnrollmentMapper.insert(enrollment);
 
@@ -658,7 +672,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private void ensureNoStudentClassEnrollmentConflicts(Long studentId,
                                                          Long targetClassId,
                                                          LocalDate windowStart,
-                                                         LocalDate windowEnd) {
+                                                         LocalDate windowEnd,
+                                                         String attendanceOption) {
         LocalDateTime startAt = windowStart.atStartOfDay();
         LocalDateTime endAt = windowEnd.plusDays(1).atStartOfDay();
         List<LessonOccurrenceEntity> targetOccurrences = lessonOccurrenceMapper.selectList(
@@ -694,15 +709,22 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         .gt(LessonOccurrenceEntity::getPlannedEndAt, startAt));
 
         for (LessonOccurrenceEntity target : targetOccurrences) {
+            ClassGroupScheduleSlotEntity targetSlot = target.getScheduleSlotId() == null
+                    ? null
+                    : classGroupScheduleSlotMapper.selectById(target.getScheduleSlotId());
+            if (!attendanceMatches(attendanceOption, targetSlot)) {
+                continue;
+            }
             LessonOccurrenceEntity conflict = firstOverlap(target, oneOnOneOccurrences);
             if (conflict != null) {
                 throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the selected class.",
                         List.of(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), conflict)));
             }
             conflict = existingClassOccurrences.stream()
-                    .filter(existing -> isEnrollmentEffectiveOn(
+                    .filter(existing -> isEnrollmentEffectiveOnAndMatchesAttendance(
                             enrollmentsByClassId.get(existing.getClassGroupId()),
-                            target.getPlannedStartAt().toLocalDate()))
+                            target.getPlannedStartAt().toLocalDate(),
+                            existing))
                     .filter(existing -> overlaps(target, existing))
                     .findFirst()
                     .orElse(null);
@@ -713,10 +735,41 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
     }
 
+    private boolean isEnrollmentEffectiveOnAndMatchesAttendance(List<ClassEnrollmentEntity> enrollments,
+                                                                LocalDate date,
+                                                                LessonOccurrenceEntity occurrence) {
+        if (enrollments == null || enrollments.isEmpty()) {
+            return false;
+        }
+        ClassGroupScheduleSlotEntity slot = occurrence.getScheduleSlotId() == null
+                ? null
+                : classGroupScheduleSlotMapper.selectById(occurrence.getScheduleSlotId());
+        return enrollments.stream().anyMatch(enrollment ->
+                (enrollment.getEnrollmentDate() == null || !date.isBefore(enrollment.getEnrollmentDate()))
+                        && (enrollment.getExpiryDate() == null || !date.isAfter(enrollment.getExpiryDate()))
+                        && attendanceMatches(enrollment.getAttendanceOption(), slot));
+    }
+
     private boolean isEnrollmentEffectiveOn(List<ClassEnrollmentEntity> enrollments, LocalDate date) {
         return enrollments != null && enrollments.stream().anyMatch(enrollment ->
                 (enrollment.getEnrollmentDate() == null || !date.isBefore(enrollment.getEnrollmentDate()))
                         && (enrollment.getExpiryDate() == null || !date.isAfter(enrollment.getExpiryDate())));
+    }
+
+    private boolean attendanceMatches(String enrollmentAttendance, ClassGroupScheduleSlotEntity slot) {
+        String attendance = normalizeAttendanceOption(enrollmentAttendance);
+        String segment = slot == null ? null : slot.getAttendanceOptions();
+        if (!StringUtils.hasText(segment)) {
+            return true;
+        }
+        String normalizedSegment = segment.trim().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(normalizedSegment) || "FULL_DAY,MORNING,AFTERNOON".equals(normalizedSegment)) {
+            return true;
+        }
+        if ("FULL_DAY".equals(attendance)) {
+            return "MORNING".equals(normalizedSegment) || "AFTERNOON".equals(normalizedSegment);
+        }
+        return Objects.equals(attendance, normalizedSegment);
     }
 
     private boolean overlaps(LessonOccurrenceEntity left, LessonOccurrenceEntity right) {
@@ -873,6 +926,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("originalPriceAmount", line.originalPriceAmount);
         item.put("manualPriceOverride", line.manualPriceOverride);
         item.put("oneOnOneHours", line.oneOnOneHours);
+        item.put("openingUsedHours", line.openingUsedHours);
+        item.put("openingRemainingHours", line.oneOnOne ? BigDecimal.valueOf(resolveOneOnOneUnits(line) - resolveOpeningUsedUnits(line))
+                .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP) : null);
         item.put("oneOnOneUnits", resolveLineOneOnOneUnits(line));
         item.put("initialLessonStartAt", line.initialLessonStartAt);
         item.put("initialLessonEndAt", line.initialLessonEndAt);
@@ -1151,6 +1207,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
                 occurrence.setLessonNo(generateClassLessonNo());
                 occurrence.setClassGroupId(classGroup.getId());
+                occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(slot.getTeacherId() == null
                         ? classGroup.getTeacherId()
@@ -1159,6 +1216,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
                 occurrence.setPlannedUnits((int) (minutes / 30));
+                occurrence.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 occurrences.add(occurrence);
@@ -1484,6 +1542,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         return line.oneOnOne ? resolveOneOnOneUnits(line) : 0;
     }
 
+    private int resolveOpeningUsedUnits(ResolvedCourseLine line) {
+        if (!line.oneOnOne || line.openingUsedHours == null || line.openingUsedHours.compareTo(BigDecimal.ZERO) <= 0) {
+            return 0;
+        }
+        return line.openingUsedHours.multiply(BigDecimal.valueOf(2))
+                .setScale(0, RoundingMode.HALF_UP)
+                .intValue();
+    }
+
     private int resolveDefaultLessonUnits(CourseProductEntity product, int totalUnits) {
         int defaultUnits = product.getDefaultLessonUnits() == null ? 2 : product.getDefaultLessonUnits();
         if (defaultUnits <= 0 || defaultUnits > totalUnits) {
@@ -1597,6 +1664,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private BigDecimal originalPriceAmount;
         private Boolean manualPriceOverride;
         private BigDecimal oneOnOneHours;
+        private BigDecimal openingUsedHours;
         private Integer oneOnOneUnits;
         private LocalDateTime initialLessonStartAt;
         private LocalDateTime initialLessonEndAt;

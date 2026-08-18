@@ -40,5 +40,7 @@ public class ClassEnrollmentEntity extends BaseEntity {
     /** 购买数量快照：课次数（PER_SESSION）或月数（MONTHLY）。 */
     private Integer purchasedQuantity;
 
+    private String attendanceOption;
+
     private String status;
 }

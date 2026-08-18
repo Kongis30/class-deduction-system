@@ -125,6 +125,7 @@ export interface RegistrationCourseItemPayload {
   originalPriceAmount?: number;
   manualPriceOverride?: boolean;
   oneOnOneHours?: number;
+  openingUsedHours?: number;
   oneOnOneUnits?: number;
   initialLessonStartAt?: string;
   initialLessonEndAt?: string;
@@ -276,6 +277,18 @@ export function closeCoursePackage(id: string | number) {
   return http.post(`/v1/enrollment/packages/${id}/close`);
 }
 
+export function pauseCoursePackage(id: string | number) {
+  return http.post(`/v1/enrollment/packages/${id}/pause`);
+}
+
+export interface CoursePackageResumePayload {
+  startDate: string;
+}
+
+export function resumeCoursePackage(id: string | number, data: CoursePackageResumePayload) {
+  return http.post(`/v1/enrollment/packages/${id}/resume`, data);
+}
+
 export interface CoursePackageHoursAdjustmentPayload {
   changeHours: number;
   adjustmentType: 'BONUS_HOURS' | 'MANUAL_CORRECTION';
@@ -289,7 +302,9 @@ export function adjustCoursePackageHours(id: EntityId, data: CoursePackageHoursA
 export interface PackageTeacherAllocationPayload {
   allocations: Array<{
     teacherId: EntityId;
+    subjectName?: string;
     allocatedHours: number;
+    hourlyRateSnapshot?: number;
     primary?: boolean;
   }>;
   reason?: string;

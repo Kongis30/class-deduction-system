@@ -23,6 +23,7 @@ import com.classdeduction.system.modules.schedule.dto.PendingClassroomBackfillRe
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.LessonOccurrenceServiceImpl;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
@@ -85,6 +86,9 @@ class LessonOccurrenceServiceImplTest {
     @Mock
     private ClassEnrollmentMapper classEnrollmentMapper;
 
+    @Mock
+    private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+
     private LessonOccurrenceServiceImpl lessonOccurrenceService;
 
     @BeforeEach
@@ -101,7 +105,8 @@ class LessonOccurrenceServiceImplTest {
                 classroomMapper,
                 courseProductMapper,
                 classGroupMapper,
-                classEnrollmentMapper
+                classEnrollmentMapper,
+                classGroupScheduleSlotMapper
         );
     }
 

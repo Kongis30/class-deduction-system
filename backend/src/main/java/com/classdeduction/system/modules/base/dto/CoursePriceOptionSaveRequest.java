@@ -131,6 +131,9 @@ public class CoursePriceOptionSaveRequest {
     @Data
     public static class GroupScheduleSlotDTO {
         private Long teacherId;
+        @Size(max = 128, message = "Subject name must not exceed 128 characters")
+        private String subjectName;
+        private BigDecimal hourlyRateSnapshot;
         private Integer weekday;
         private String startTime;
         private String endTime;

@@ -4,8 +4,8 @@
       <div class="config-panel__header">
         <div>
           <span class="config-panel__eyebrow">Course setup</span>
-          <h2>Course Pricing Matrix</h2>
-          <p>Set up each grade class first, then add its registration prices.</p>
+          <h2>Course Package Setup</h2>
+          <p>Set up each course by grade, then add one package with the payment options students can choose.</p>
         </div>
         <div class="header-actions">
           <el-button @click="loadAll">Reload</el-button>
@@ -27,7 +27,7 @@
 
       <div class="matrix-layout">
         <aside class="navigation-sidebar">
-          <span class="navigation-sidebar__label">{{ selectedModeLabel }} products</span>
+          <span class="navigation-sidebar__label">{{ selectedModeLabel }} courses</span>
           <el-tooltip
             v-for="product in productChoices"
             :key="product.id"
@@ -46,16 +46,16 @@
           <el-empty
             v-if="!loadingProducts && productChoices.length === 0"
             :image-size="44"
-            description="No products"
+            description="No courses"
           />
         </aside>
 
         <div class="matrix-content">
           <section v-if="!query.courseProductId" class="matrix-empty-guide">
             <span>Step 2</span>
-            <strong>Choose a course product on the left to set grade and price.</strong>
+            <strong>Choose a course on the left to set grades and package prices.</strong>
             <p>{{ emptyGuideDescription }}</p>
-            <el-button v-if="fromProductSetup" @click="goToCourseProducts">Back to Course Products</el-button>
+            <el-button v-if="fromProductSetup" @click="goToCourseProducts">Back to Courses</el-button>
           </section>
 
           <template v-else>
@@ -81,140 +81,144 @@
             <section class="matrix-step-strip">
               <div class="matrix-step-strip__item matrix-step-strip__item--done">
                 <span>1</span>
-                <strong>Product created</strong>
+                <strong>Course created</strong>
                 <small>{{ selectedProduct?.productName }}</small>
               </div>
               <div class="matrix-step-strip__item matrix-step-strip__item--active">
                 <span>2</span>
-                <strong>{{ selectedMode === 'GROUP' ? 'Add grade class & price' : 'Add grade/hour price' }}</strong>
-                <small>{{ visibleOptions.length }} row{{ visibleOptions.length === 1 ? '' : 's' }} configured</small>
+                <strong>{{ selectedMode === 'GROUP' ? 'Set grades and payment options' : 'Set grade and hour packages' }}</strong>
+                <small>{{ configuredGradeCount }} grade{{ configuredGradeCount === 1 ? '' : 's' }}, {{ visibleOptions.length }} payment option{{ visibleOptions.length === 1 ? '' : 's' }}</small>
               </div>
               <div class="matrix-step-strip__item">
                 <span>3</span>
                 <strong>Use in registration</strong>
-                <small>Only active rows appear in registration.</small>
+                <small>Only active packages appear in registration.</small>
               </div>
             </section>
 
-            <el-empty v-if="!loading && groupedOptions.length === 0" description="No price rows for this course product." />
+            <el-empty v-if="!loading && groupedOptions.length === 0" description="No packages for this course yet." />
 
             <section
               v-for="group in groupedOptions"
-              :key="group.productId"
+              :key="group.key"
               class="product-price-group"
             >
               <header class="product-price-group__header">
                 <div>
-                  <strong>{{ group.productName }}</strong>
-                  <span>{{ group.registerClass }} · {{ group.rows.length }} price row{{ group.rows.length === 1 ? '' : 's' }}</span>
+                  <span>{{ selectedProduct?.productName }}</span>
+                  <strong>{{ group.gradeLabel }}</strong>
+                  <small>{{ group.rows.length }} payment option{{ group.rows.length === 1 ? '' : 's' }}</small>
                 </div>
+                <el-button size="small" type="primary" plain @click="openDialog(undefined, group.gradeLabel)">
+                  Add payment option
+                </el-button>
               </header>
 
-              <el-table
-                v-loading="loading || loadingProducts"
-                :data="group.rows"
-                row-key="id"
-                class="config-table price-matrix-table"
-                size="small"
-                border
-              >
-                <el-table-column :label="primaryColumnLabel" min-width="220">
-                  <template #header>
-                    <header-tip :label="primaryColumnLabel" :tip="primaryColumnTip" />
-                  </template>
-                  <template #default="{ row }">
-                    <div class="matrix-class-cell">
-                      <div class="matrix-class-cell__title">
-                        <strong>{{ row.gradeBand || 'Grade not set' }}</strong>
-                        <el-tag v-if="isGroupRow(row)" size="small" type="info" effect="plain">
-                          {{ packageUnitText(row.packageUnit || row.groupBillingType || 'MONTH') }}
+              <div v-loading="loading || loadingProducts" class="grade-package-card">
+                <div class="grade-package-card__summary">
+                  <div>
+                    <strong>{{ groupPackageTitle(group) }}</strong>
+                    <span>{{ selectedMode === 'GROUP' ? formatGroupSchedule(group.rows[0]) : 'Private lesson package' }}</span>
+                  </div>
+                  <small v-if="selectedMode === 'GROUP'">{{ formatGroupResources(group.rows[0]) }}</small>
+                </div>
+
+                <el-table
+                  :data="group.rows"
+                  row-key="id"
+                  class="config-table price-matrix-table payment-option-table"
+                  size="small"
+                  border
+                >
+                  <el-table-column label="Payment option" min-width="180">
+                    <template #header>
+                      <header-tip label="Payment option" tip="A way to pay for this package, such as 2 months, 6 months, or 13 sessions." />
+                    </template>
+                    <template #default="{ row }">
+                      <div class="matrix-class-cell">
+                        <div class="matrix-class-cell__title">
+                          <strong>{{ paymentOptionName(row) }}</strong>
+                        </div>
+                        <span>{{ packageLengthLabel(row) || '-' }}</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column :label="selectedMode === 'GROUP' ? 'Full-day price' : 'Price'" min-width="150" align="right">
+                    <template #header>
+                      <header-tip :label="selectedMode === 'GROUP' ? 'Full-day price' : 'Price'" :tip="priceColumnTip" />
+                    </template>
+                    <template #default="{ row }">
+                      <div class="price-cell">
+                        <strong>{{ formatMoney(row.totalPrice ?? row.priceAmount) }}</strong>
+                        <span>{{ priceUnitLabel(row) }}</span>
+                        <small v-if="row.derivedUnitPrice">
+                          {{ formatMoney(row.derivedUnitPrice) }} / {{ packageUnitText(row.packageUnit || row.groupBillingType || 'package').toLowerCase() }}
+                        </small>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column v-if="selectedMode === 'GROUP'" label="Half-day price" min-width="140" align="right">
+                    <template #header>
+                      <header-tip label="Half-day price" tip="Optional price used when a student signs up for morning or afternoon only." />
+                    </template>
+                    <template #default="{ row }">
+                      <div class="price-cell">
+                        <strong>{{ row.halfDayPrice ? formatMoney(row.halfDayPrice) : '-' }}</strong>
+                        <span v-if="row.halfDayPrice">USD / package</span>
+                      </div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="Usage" width="120">
+                    <template #header>
+                      <header-tip label="Usage" tip="Whether this payment option has already been used by registrations." />
+                    </template>
+                    <template #default="{ row }">
+                      <div class="usage-cell">
+                        <el-tag size="small" :type="row.referenced ? 'warning' : 'info'" effect="plain">
+                          {{ row.referenced ? `Used ${row.referenceCount ?? 0}` : 'Not used' }}
+                        </el-tag>
+                        <el-tag
+                          v-if="hasRowIssue(row)"
+                          size="small"
+                          type="danger"
+                          effect="plain"
+                        >
+                          Needs setup
                         </el-tag>
                       </div>
-                      <template v-if="isGroupRow(row)">
-                        <span>{{ formatGroupSchedule(row) }}</span>
-                        <small>{{ formatGroupResources(row) }}</small>
-                      </template>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column :label="billingColumnLabel" min-width="150">
-                  <template #header>
-                    <header-tip :label="billingColumnLabel" :tip="billingColumnTip" />
-                  </template>
-                  <template #default="{ row }">
-                    <div class="cell-stack">
-                      <strong>{{ formatGroupBilling(row) }}</strong>
-                      <span v-if="billingSubtitle(row)">{{ billingSubtitle(row) }}</span>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="Price" min-width="150" align="right">
-                  <template #header>
-                    <header-tip label="Price" :tip="priceColumnTip" />
-                  </template>
-                  <template #default="{ row }">
-                    <div class="price-cell">
-                      <strong>{{ formatMoney(row.totalPrice ?? row.priceAmount) }}</strong>
-                      <span>{{ priceUnitLabel(row) }}</span>
-                      <small v-if="row.derivedUnitPrice">
-                        {{ formatMoney(row.derivedUnitPrice) }} / {{ packageUnitText(row.packageUnit || row.groupBillingType || 'package').toLowerCase() }}
-                      </small>
-                      <small v-if="row.halfDayPrice">
-                        Half day {{ formatMoney(row.halfDayPrice) }}
-                      </small>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="Usage" width="120">
-                  <template #header>
-                    <header-tip label="Usage" tip="Whether this price row has already been used by registrations or packages." />
-                  </template>
-                  <template #default="{ row }">
-                    <div class="usage-cell">
-                      <el-tag size="small" :type="row.referenced ? 'warning' : 'info'" effect="plain">
-                        {{ row.referenced ? `Used ${row.referenceCount ?? 0}` : 'Not used' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="Status" width="96" align="center">
+                    <template #header>
+                      <header-tip label="Status" tip="Only active payment options are available during registration." />
+                    </template>
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
+                        {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                       </el-tag>
-                      <el-tag
-                        v-if="hasRowIssue(row)"
-                        size="small"
-                        type="danger"
-                        effect="plain"
-                      >
-                        Needs setup
-                      </el-tag>
-                    </div>
-                  </template>
-                </el-table-column>
-                <el-table-column label="Status" width="96" align="center">
-                  <template #header>
-                    <header-tip label="Status" tip="Only active rows are available during registration." />
-                  </template>
-                  <template #default="{ row }">
-                    <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
-                      {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-                    </el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column label="Actions" width="124" align="center">
-                  <template #header>
-                    <header-tip label="Actions" tip="Edit the row, deactivate it, or delete unused setup rows." />
-                  </template>
-                  <template #default="{ row }">
-                    <div class="matrix-actions">
-                      <el-button size="small" type="primary" plain @click="openDialog(row)">Edit</el-button>
-                      <el-dropdown trigger="click">
-                        <el-button size="small" text>More</el-button>
-                        <template #dropdown>
-                          <el-dropdown-menu>
-                            <el-dropdown-item v-if="row.status === 'ACTIVE'" @click="deactivateOption(row)">Deactivate</el-dropdown-item>
-                            <el-dropdown-item divided class="danger-menu-item" @click="removeOption(row.id)">Delete</el-dropdown-item>
-                          </el-dropdown-menu>
-                        </template>
-                      </el-dropdown>
-                    </div>
-                  </template>
-                </el-table-column>
-              </el-table>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="Actions" width="124" align="center">
+                    <template #header>
+                      <header-tip label="Actions" tip="Edit, deactivate, or delete this payment option." />
+                    </template>
+                    <template #default="{ row }">
+                      <div class="matrix-actions">
+                        <el-button size="small" type="primary" plain @click="openDialog(row)">Edit</el-button>
+                        <el-dropdown trigger="click">
+                          <el-button size="small" text>More</el-button>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item v-if="row.status === 'ACTIVE'" @click="deactivateOption(row)">Deactivate</el-dropdown-item>
+                              <el-dropdown-item divided class="danger-menu-item" @click="removeOption(row.id)">Delete</el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                      </div>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
             </section>
 
             <div class="pagination-row">
@@ -237,66 +241,79 @@
       v-model="dialogVisible"
       width="860px"
       :close-on-click-modal="false"
-      :title="editingId ? 'Edit price matrix row' : priceDialogTitle"
+      :title="priceDialogTitle"
     >
       <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
         <div class="pricing-context">
-          <span>Product</span>
+          <span>{{ formTeachingMode === 'GROUP' ? 'Add a registration choice for' : 'Add a purchasable package for' }}</span>
           <strong>{{ selectedFormProductName }}</strong>
-          <small>Create one package row for each grade, period, or attendance price that students can choose at registration.</small>
+          <small>{{ formTeachingMode === 'GROUP'
+            ? 'Example: Grade 3 can have choices like 2 months, 6 months, Fall 13 sessions, or Full year.'
+            : 'Example: Grade 6 can have packages like 40 hours, 60 hours, or 120 hours.' }}</small>
         </div>
 
-        <el-form-item label="Course product" prop="courseProductId">
-          <el-select
-            v-model="form.courseProductId"
-            filterable
-            placeholder="Select the course to price"
-            style="width: 100%;"
-            @change="handleFormProductChange"
-          >
-            <el-option
-              v-for="product in formProductChoices"
-              :key="product.id"
-              :label="productLabel(product)"
-              :value="product.id"
-            />
-          </el-select>
-        </el-form-item>
-
-        <div class="form-grid form-grid--two">
-          <el-form-item label="Grade / Level" prop="gradeBand">
-            <el-select
-              v-model="form.gradeBand"
-              filterable
-              allow-create
-              clearable
-              default-first-option
-              reserve-keyword
-              placeholder="Select or type grade / level"
-              no-match-text="Press Enter to use this grade / level"
-              no-data-text="Type a grade / level and press Enter"
-              style="width: 100%;"
-            >
-              <el-option
-                v-for="grade in gradeOptionsForForm"
-                :key="grade"
-                :label="grade"
-                :value="grade"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="formTeachingMode === 'ONE_ON_ONE'" label="Package price" prop="priceAmount">
-            <el-input-number v-model="form.priceAmount" :min="0" :precision="2" :controls="false" style="width: 100%;" />
-          </el-form-item>
-        </div>
+        <section class="price-dialog-section">
+          <div class="price-dialog-section__head">
+            <span class="section-step">1</span>
+            <div>
+              <strong>Choose grade</strong>
+              <small>All payment choices for the same grade will be grouped together.</small>
+            </div>
+          </div>
+          <div class="form-grid">
+            <el-form-item v-if="!query.courseProductId" label="Course" prop="courseProductId">
+              <el-select
+                v-model="form.courseProductId"
+                filterable
+                placeholder="Select course"
+                style="width: 100%;"
+                @change="handleFormProductChange"
+              >
+                <el-option
+                  v-for="product in formProductChoices"
+                  :key="product.id"
+                  :label="productLabel(product)"
+                  :value="product.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="Grade" prop="gradeBand">
+              <el-select
+                v-model="form.gradeBand"
+                filterable
+                allow-create
+                clearable
+                default-first-option
+                reserve-keyword
+                placeholder="Select or type grade"
+                no-match-text="Press Enter to use this grade"
+                no-data-text="Type a grade and press Enter"
+                style="width: 100%;"
+              >
+                <el-option
+                  v-for="grade in gradeOptionsForForm"
+                  :key="grade"
+                  :label="grade"
+                  :value="grade"
+                />
+              </el-select>
+            </el-form-item>
+          </div>
+        </section>
 
         <section v-if="formTeachingMode === 'GROUP'" class="grade-class-settings">
           <div class="grade-class-settings__head">
-            <strong>Package and class arrangement</strong>
-            <small>Set the package students buy, then set the weekly class time used for attendance deduction.</small>
+            <span class="section-step">2</span>
+            <div>
+              <strong>Define what the student can buy</strong>
+              <small>This is the choice staff will select during registration.</small>
+            </div>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Package unit">
+            <el-form-item label="Name shown in registration">
+              <el-input v-model="form.periodLabel" :placeholder="paymentOptionPlaceholder" />
+            </el-form-item>
+            <el-form-item label="How to count this choice">
               <el-select v-model="form.packageUnit" style="width: 100%;">
                 <el-option
                   v-for="unit in groupPackageUnits"
@@ -306,6 +323,8 @@
                 />
               </el-select>
             </el-form-item>
+          </div>
+          <div class="form-grid form-grid--two">
             <el-form-item :label="packageQuantityLabel">
               <el-input-number
                 v-model="form.packageQuantity"
@@ -317,8 +336,18 @@
               />
             </el-form-item>
           </div>
+        </section>
+
+        <section v-if="formTeachingMode === 'GROUP'" class="grade-class-settings">
+          <div class="grade-class-settings__head">
+            <span class="section-step">3</span>
+            <div>
+              <strong>Set price</strong>
+              <small>Enter the total amount paid for this choice. The per-unit price is calculated for reference.</small>
+            </div>
+          </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Package total price">
+            <el-form-item :label="form.halfDayPrice && form.halfDayPrice > 0 ? 'Full-day price' : 'Price'">
               <el-input-number
                 v-model="form.totalPrice"
                 :min="0"
@@ -327,7 +356,7 @@
                 style="width: 100%;"
               />
             </el-form-item>
-            <el-form-item label="Half-day package price">
+            <el-form-item label="Half-day price (optional)">
               <el-input-number
                 v-model="form.halfDayPrice"
                 :min="0"
@@ -344,16 +373,26 @@
               <strong>{{ formatMoney(derivedUnitPrice) }}</strong>
             </div>
             <div class="calculated-price">
-              <span>Registration price</span>
+              <span>Price used in registration</span>
               <strong>{{ formatMoney(defaultRegistrationPrice) }}</strong>
               <small>Half-day uses its own price when filled.</small>
             </div>
           </div>
+        </section>
+
+        <section v-if="formTeachingMode === 'GROUP'" class="grade-class-settings">
+          <div class="grade-class-settings__head">
+            <span class="section-step">4</span>
+            <div>
+              <strong>Set weekly schedule</strong>
+              <small>Month and week choices deduct lessons according to this weekly calendar.</small>
+            </div>
+          </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Class start month">
+            <el-form-item label="Schedule start month">
               <el-date-picker v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
-            <el-form-item label="Class end month">
+            <el-form-item label="Schedule end month">
               <el-date-picker v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
           </div>
@@ -378,6 +417,15 @@
             >
               <span>{{ groupSlotLabel(slot) }}</span>
               <el-select
+                v-model="slot.attendanceOptions"
+                placeholder="Students"
+                style="width: 150px"
+              >
+                <el-option label="All students" value="ALL" />
+                <el-option label="Morning only" value="MORNING" />
+                <el-option label="Afternoon only" value="AFTERNOON" />
+              </el-select>
+              <el-select
                 v-model="slot.teacherId"
                 clearable
                 filterable
@@ -385,33 +433,62 @@
               >
                 <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
               </el-select>
+              <el-input
+                v-model="slot.subjectName"
+                maxlength="128"
+                placeholder="Subject, e.g. Chemistry"
+                clearable
+              />
+              <el-input-number
+                v-model="slot.hourlyRateSnapshot"
+                :min="0"
+                :precision="2"
+                :step="1"
+                controls-position="right"
+                placeholder="Rate"
+                style="width: 130px"
+              />
             </div>
           </div>
         </section>
 
-        <el-form-item v-else label="1-on-1 package hours" prop="oneOnOneHours">
-          <el-radio-group v-model="form.oneOnOneHoursMode" class="hours-presets" @change="selectOneOnOneHours">
-            <el-radio-button v-for="hours in oneOnOneHourChoices" :key="hours" :value="String(hours)">
-              {{ hours }}h
-            </el-radio-button>
-            <el-radio-button value="CUSTOM">Custom</el-radio-button>
-          </el-radio-group>
-          <div v-if="form.oneOnOneHoursMode === 'CUSTOM'" class="custom-hours">
-            <el-input-number
-              v-model="form.customOneOnOneHours"
-              :min="0.5"
-              :max="400"
-              :step="0.5"
-              :precision="1"
-              :controls="true"
-              @change="applyCustomOneOnOneHours"
-            />
-            <span>hours</span>
+        <section v-else class="grade-class-settings">
+          <div class="grade-class-settings__head">
+            <span class="section-step">2</span>
+            <div>
+              <strong>Set hour package and price</strong>
+              <small>Enter the package from the tuition sheet, such as 40 hours or 60 hours.</small>
+            </div>
           </div>
-          <small class="field-help">
-            Choose a standard package when possible. Custom packages use 0.5-hour increments.
-          </small>
-        </el-form-item>
+          <div class="form-grid form-grid--two">
+            <el-form-item label="Package name">
+              <el-input v-model="form.periodLabel" placeholder="e.g. 40 hours, 60 hours, 120 hours" />
+            </el-form-item>
+            <el-form-item label="Package hours" prop="oneOnOneHours">
+              <el-radio-group v-model="form.oneOnOneHoursMode" class="hours-presets" @change="selectOneOnOneHours">
+                <el-radio-button v-for="hours in oneOnOneHourChoices" :key="hours" :value="String(hours)">
+                  {{ hours }}h
+                </el-radio-button>
+                <el-radio-button value="CUSTOM">Custom</el-radio-button>
+              </el-radio-group>
+              <div v-if="form.oneOnOneHoursMode === 'CUSTOM'" class="custom-hours">
+                <el-input-number
+                  v-model="form.customOneOnOneHours"
+                  :min="0.5"
+                  :max="400"
+                  :step="0.5"
+                  :precision="1"
+                  :controls="true"
+                  @change="applyCustomOneOnOneHours"
+                />
+                <span>hours</span>
+              </div>
+            </el-form-item>
+            <el-form-item label="Package price" prop="priceAmount">
+              <el-input-number v-model="form.priceAmount" :min="0" :precision="2" :controls="false" style="width: 100%;" />
+            </el-form-item>
+          </div>
+        </section>
 
         <el-collapse class="advanced-settings">
           <el-collapse-item title="Advanced settings" name="advanced">
@@ -422,10 +499,10 @@
         </el-collapse>
 
         <div class="dialog-hint">
-          <strong>Usage note:</strong>
+          <strong>Registration result:</strong>
           {{ formTeachingMode === 'ONE_ON_ONE'
-            ? 'This row will create a private package with hours converted to 0.5-hour units.'
-            : 'This row controls billing. Students still need a concrete class group for schedule and deduction.' }}
+            ? 'Registration will show this grade and hour package under the selected course.'
+            : 'Registration will show this grade package, then let staff choose one payment option.' }}
         </div>
       </el-form>
       <template #footer>
@@ -472,9 +549,8 @@ interface CourseModeDef {
 }
 
 interface ProductPriceGroup {
-  productId: EntityId | undefined;
-  productName: string;
-  registerClass: string;
+  key: string;
+  gradeLabel: string;
   rows: CoursePriceOptionItem[];
 }
 
@@ -511,9 +587,9 @@ const route = useRoute();
 const router = useRouter();
 const oneOnOneHourChoices = [20, 40, 60, 80, 100, 120];
 const groupPackageUnits: Array<{ value: Exclude<PackageUnit, 'HOUR'>; label: string }> = [
-  { value: 'MONTH', label: 'Month package' },
-  { value: 'WEEK', label: 'Week package' },
-  { value: 'SESSION', label: 'Session package' },
+  { value: 'MONTH', label: 'By month' },
+  { value: 'WEEK', label: 'By week' },
+  { value: 'SESSION', label: 'By session' },
 ];
 const pptGradeOptions: Record<CourseTypeValue, string[]> = {
   AFTER_SCHOOL: ['G1-G5', 'G6-G8', 'ESL'],
@@ -564,7 +640,16 @@ const form = reactive({
   courseProductId: undefined as EntityId | undefined,
   groupTeacherId: undefined as EntityId | undefined,
   groupClassroomId: undefined as EntityId | undefined,
-  groupScheduleSlots: [] as Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string; plannedUnits: number }>,
+  groupScheduleSlots: [] as Array<{
+    teacherId?: EntityId;
+    subjectName?: string;
+    weekday: number;
+    startTime: string;
+    endTime: string;
+    plannedUnits: number;
+    attendanceOptions?: string;
+    hourlyRateSnapshot?: number;
+  }>,
   groupStartDate: '',
   groupTotalSessions: 13 as number | undefined,
   groupTotalPrice: undefined as number | undefined,
@@ -575,8 +660,7 @@ const form = reactive({
 });
 
 const rules = {
-  courseProductId: [{ required: true, message: 'Course product is required' }],
-  registerClass: [{ required: true, message: 'Register Class is required' }],
+  courseProductId: [{ required: true, message: 'Course is required' }],
   gradeBand: [{ required: true, message: 'Grade or level is required' }],
   oneOnOneHours: [{
     validator: (_rule: unknown, value: number | undefined, callback: (error?: Error) => void) => {
@@ -604,7 +688,24 @@ const derivedUnitPrice = computed(() => {
 });
 const derivedUnitLabel = computed(() => `${packageUnitText(form.packageUnit)} price`);
 const defaultRegistrationPrice = computed(() => Number(form.totalPrice ?? 0));
-const packageQuantityLabel = computed(() => `${packageUnitText(form.packageUnit)} count`);
+const packageQuantityLabel = computed(() => {
+  if (form.packageUnit === 'MONTH') {
+    return 'Number of months';
+  }
+  if (form.packageUnit === 'WEEK') {
+    return 'Number of weeks';
+  }
+  return 'Number of sessions';
+});
+const paymentOptionPlaceholder = computed(() => {
+  if (form.packageUnit === 'MONTH') {
+    return 'e.g. 2 months, 6 months, Full year';
+  }
+  if (form.packageUnit === 'WEEK') {
+    return 'e.g. 7 weeks, Summer 7 weeks';
+  }
+  return 'e.g. Fall 13 sessions, Spring 20 sessions';
+});
 
 const selectedMode = ref<CourseMode>('ONE_ON_ONE');
 const selectedModeLabel = computed(() =>
@@ -615,7 +716,7 @@ const selectedProduct = computed(() => query.courseProductId ? productMap.value.
 const startedFromProductCreate = computed(() => queryValue(route.query.create) === '1');
 const fromProductSetup = computed(() => queryValue(route.query.from) === 'course-products');
 const productChoices = computed(() =>
-  courseProducts.value.filter(product => product.teachingMode === selectedMode.value)
+  sortCourseProducts(courseProducts.value.filter(product => product.teachingMode === selectedMode.value))
 );
 const visibleOptions = computed(() => {
   return options.value.filter((option) => {
@@ -635,48 +736,48 @@ const visibleOptions = computed(() => {
 const matrixFlowTitle = computed(() => {
   if (selectedMode.value === 'ONE_ON_ONE') {
     return visibleOptions.value.length === 0
-      ? 'Step 2: add grade, package hours, and price'
-      : 'Add more grade/hour price rows when needed';
+      ? 'Step 2: add a grade and hour package'
+      : 'Review grades and hour packages';
   }
   return visibleOptions.value.length === 0
-    ? 'Step 2: add grade class, billing, schedule, and price'
-    : 'Review grade classes, schedules, and prices';
+    ? 'Step 2: add a grade'
+    : 'Review grade packages and payment options';
 });
 
 const matrixFlowEyebrow = computed(() => {
   if (startedFromProductCreate.value) {
     return 'You just created the course';
   }
-  return fromProductSetup.value ? 'Continue from Course Products' : 'Course setup flow';
+  return fromProductSetup.value ? 'Continue from Courses' : 'Course setup flow';
 });
 
 const matrixFlowDescription = computed(() => {
   if (selectedMode.value === 'ONE_ON_ONE') {
-    return 'Each row becomes one registration option, such as G1-G5 / 40 hours / $price.';
+    return 'Choose the course, set a grade, then add the hour packages students can buy.';
   }
-  return 'Each row creates one grade class for enrollment. Add grade, billing run, weekly time, teacher or room if known, and price.';
+  return 'A group course can have multiple grades. Each grade has one package, and that package can have multiple payment options such as 2 months, 6 months, or full year.';
 });
 
 const emptyGuideDescription = computed(() =>
   selectedMode.value === 'GROUP'
-    ? 'Products are only parent courses. Pick one here, then add the grade, billing period, weekly time, teacher, room, and price.'
-    : 'Pick a 1-on-1 product here, then add grade, package hours, and price rows.'
+    ? 'Pick a course, then create a grade under it. After that, add payment options and prices inside that grade package.'
+    : 'Pick a 1-on-1 course, then add the grade and hour package students can buy.'
 );
 
 const contextBackLabel = computed(() =>
-  fromProductSetup.value ? 'Back to Course Products' : 'Choose another product'
+  fromProductSetup.value ? 'Back to Courses' : 'Choose another course'
 );
 
 const matrixPrimaryActionLabel = computed(() =>
   selectedMode.value === 'ONE_ON_ONE'
-    ? 'Add grade and price'
-    : 'Add grade class and price'
+    ? 'Add hour package'
+    : groupedOptions.value.length === 0 ? 'Add grade package' : 'Add payment option'
 );
 
 const priceDialogTitle = computed(() =>
   selectedMode.value === 'ONE_ON_ONE'
-    ? 'Step 2: Add grade and package price'
-    : 'Step 2: Add grade class and price'
+    ? 'Add 1-on-1 package'
+    : editingId.value ? 'Edit payment option' : 'Add payment option'
 );
 
 const priceSaveButtonLabel = computed(() => {
@@ -684,23 +785,23 @@ const priceSaveButtonLabel = computed(() => {
     return 'Save changes';
   }
   return selectedMode.value === 'ONE_ON_ONE'
-    ? 'Save price row'
-    : 'Save grade class';
+    ? 'Save hour package'
+    : 'Save payment option';
 });
 
 const groupedOptions = computed<ProductPriceGroup[]>(() => {
   const groups = new Map<string, ProductPriceGroup>();
   visibleOptions.value.forEach((option) => {
-    const key = String(option.courseProductId ?? 'unlinked');
+    const gradeLabel = option.gradeBand || 'Grade not set';
+    const key = gradeLabel.toLowerCase();
     const existing = groups.get(key);
     if (existing) {
       existing.rows.push(option);
       return;
     }
     groups.set(key, {
-      productId: option.courseProductId,
-      productName: productName(option.courseProductId),
-      registerClass: option.registerClass || 'Course',
+      key,
+      gradeLabel,
       rows: [option],
     });
   });
@@ -710,30 +811,24 @@ const groupedOptions = computed<ProductPriceGroup[]>(() => {
       ...group,
       rows: [...group.rows].sort((left, right) =>
         left.sortOrder - right.sortOrder
-        || String(left.gradeBand ?? '').localeCompare(String(right.gradeBand ?? ''))
+        || String(left.periodLabel ?? '').localeCompare(String(right.periodLabel ?? ''))
         || String(left.durationLabel ?? '').localeCompare(String(right.durationLabel ?? ''))
       ),
     }))
-    .sort((left, right) => left.productName.localeCompare(right.productName));
+    .sort((left, right) => left.gradeLabel.localeCompare(right.gradeLabel));
 });
 
+const configuredGradeCount = computed(() => groupedOptions.value.length);
+
 const formTeachingMode = computed<CourseMode>(() => courseTypes.find(item => item.value === form.courseType)?.mode ?? 'GROUP');
-const primaryColumnLabel = computed(() => selectedMode.value === 'ONE_ON_ONE' ? 'Grade' : 'Class schedule');
-const primaryColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
-  ? 'Grade range that can use this private lesson package.'
-  : 'Grade class setup used for registration, including weekly schedule and assigned resources.');
-const billingColumnLabel = computed(() => selectedMode.value === 'ONE_ON_ONE' ? 'Package' : 'Billing window');
-const billingColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
-  ? 'Package size sold to the student, measured in hours.'
-  : 'Package length students buy, such as 2 months, 13 weeks, or 20 sessions.');
 const priceColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
   ? 'Total package price for the selected private lesson hours.'
-  : 'Total package price. Registration uses this configured package price directly.');
+  : 'Total price for this payment option. Registration uses this configured price directly.');
 const formProductChoices = computed(() =>
-  courseProducts.value.filter(product => product.teachingMode === formTeachingMode.value)
+  sortCourseProducts(courseProducts.value.filter(product => product.teachingMode === formTeachingMode.value))
 );
 const selectedFormProductName = computed(() =>
-  form.courseProductId ? productName(form.courseProductId) : 'Select course product'
+  form.courseProductId ? productName(form.courseProductId) : 'Select course'
 );
 
 watch(() => form.packageUnit, (unit) => {
@@ -782,7 +877,7 @@ async function loadProductsAndClasses() {
     teachers.value = teachersRes.data.data ?? [];
     classrooms.value = classroomsRes.data.data ?? [];
   } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Failed to load course products.');
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to load courses.');
   } finally {
     loadingProducts.value = false;
   }
@@ -846,12 +941,13 @@ function selectCourseProduct(product: CourseProductItem) {
   reloadFirstPage();
 }
 
-function openDialog(option?: CoursePriceOptionItem) {
+function openDialog(option?: CoursePriceOptionItem, gradeLabel = '') {
+  const presetGrade = gradeLabel === 'Grade not set' ? '' : gradeLabel;
   editingId.value = option?.id ?? null;
   form.optionCode = option?.optionCode ?? '';
   form.courseType = (option?.courseType as CourseTypeValue) ?? query.courseType;
   form.registerClass = option?.registerClass ?? selectedProduct.value?.registerClass ?? selectedProduct.value?.productName ?? selectedTypeLabelFor(form.courseType);
-  form.gradeBand = option?.gradeBand ?? '';
+  form.gradeBand = option?.gradeBand ?? presetGrade;
   form.periodLabel = option?.periodLabel ?? '';
   form.durationLabel = option?.durationLabel ?? '';
   form.timeSlotLabel = option?.timeSlotLabel ?? '';
@@ -884,6 +980,7 @@ function openDialog(option?: CoursePriceOptionItem) {
   form.groupScheduleSlots = (option?.groupScheduleSlots ?? []).map(slot => ({
     ...slot,
     plannedUnits: Math.round((timeToMinutes(slot.endTime) - timeToMinutes(slot.startTime)) / 30),
+    attendanceOptions: normalizeSlotAttendance(slot.attendanceOptions),
   }));
   form.groupStartDate = option?.groupStartDate ?? '';
   form.groupTotalSessions = Number(form.packageQuantity ?? option?.groupTotalSessions ?? 13);
@@ -973,7 +1070,7 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     courseType: form.courseType,
     registerClass: form.registerClass.trim(),
     gradeBand: form.gradeBand.trim() || undefined,
-    periodLabel: formTeachingMode.value === 'ONE_ON_ONE' ? form.periodLabel.trim() || undefined : undefined,
+    periodLabel: form.periodLabel.trim() || undefined,
     durationLabel: formTeachingMode.value === 'ONE_ON_ONE' ? form.durationLabel.trim() || undefined : undefined,
     timeSlotLabel: undefined,
     detailText: form.detailText.trim() || undefined,
@@ -989,8 +1086,14 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     groupTeacherId: formTeachingMode.value === 'GROUP' ? form.groupTeacherId : undefined,
     groupClassroomId: formTeachingMode.value === 'GROUP' ? form.groupClassroomId : undefined,
     groupScheduleSlots: formTeachingMode.value === 'GROUP'
-      ? form.groupScheduleSlots.map(({ teacherId, weekday, startTime, endTime }) => ({
-          teacherId, weekday, startTime, endTime,
+      ? form.groupScheduleSlots.map(({ teacherId, subjectName, weekday, startTime, endTime, attendanceOptions, hourlyRateSnapshot }) => ({
+          teacherId,
+          subjectName: subjectName?.trim() || undefined,
+          weekday,
+          startTime,
+          endTime,
+          attendanceOptions: normalizeSlotAttendance(attendanceOptions),
+          hourlyRateSnapshot: optionalPositive(hourlyRateSnapshot),
         }))
       : undefined,
     groupBillingType: formTeachingMode.value === 'GROUP' ? packageUnit : undefined,
@@ -1069,7 +1172,7 @@ async function saveOption() {
     } else {
       await createCoursePriceOption(buildPayload());
     }
-    ElMessage.success(editingId.value ? 'Course price row updated.' : 'Course price row created.');
+    ElMessage.success(editingId.value ? 'Payment option updated.' : 'Payment option created.');
     dialogVisible.value = false;
     await loadOptions();
   } catch (err: any) {
@@ -1081,9 +1184,9 @@ async function saveOption() {
 
 async function deactivateOption(row: CoursePriceOptionItem) {
   try {
-    await ElMessageBox.confirm('Deactivate this course price row?', 'Confirm', { type: 'warning' });
+    await ElMessageBox.confirm('Deactivate this payment option?', 'Confirm', { type: 'warning' });
     await updateCoursePriceOption(row.id, payloadFromRow(row, 'INACTIVE'));
-    ElMessage.success('Course price row deactivated.');
+    ElMessage.success('Payment option deactivated.');
     await loadOptions();
   } catch (err: any) {
     if (err !== 'cancel') {
@@ -1094,7 +1197,7 @@ async function deactivateOption(row: CoursePriceOptionItem) {
 
 async function removeOption(id: EntityId) {
   try {
-    await ElMessageBox.confirm('Delete this course price row?', 'Confirm', { type: 'warning' });
+    await ElMessageBox.confirm('Delete this payment option?', 'Confirm', { type: 'warning' });
     await deleteCoursePriceOption(id);
     ElMessage.success('Deleted.');
     await loadOptions();
@@ -1118,6 +1221,13 @@ function productName(id?: EntityId) {
 
 function productLabel(product: CourseProductItem) {
   return product.productName;
+}
+
+function sortCourseProducts(products: CourseProductItem[]) {
+  return [...products].sort((left, right) =>
+    (left.sortOrder ?? 99) - (right.sortOrder ?? 99)
+    || left.productName.localeCompare(right.productName)
+  );
 }
 
 function selectedTypeLabelFor(value: string) {
@@ -1147,6 +1257,23 @@ function formatGroupBilling(row: CoursePriceOptionItem) {
   return packageLengthLabel(row) || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ') || 'Package';
 }
 
+function groupPackageTitle(group: ProductPriceGroup) {
+  if (selectedMode.value === 'ONE_ON_ONE') {
+    return `${group.gradeLabel} hour package`;
+  }
+  const first = group.rows[0];
+  const unit = packageUnitText(first?.packageUnit || first?.groupBillingType || 'MONTH');
+  return `${group.gradeLabel} package (${unit.toLowerCase()} payment)`;
+}
+
+function packageDisplayName(row: CoursePriceOptionItem) {
+  return row.periodLabel || row.durationLabel || packageLengthLabel(row) || 'Standard package';
+}
+
+function paymentOptionName(row: CoursePriceOptionItem) {
+  return row.periodLabel || packageLengthLabel(row) || 'Standard payment';
+}
+
 function isGroupRow(row: CoursePriceOptionItem) {
   return modeForCourseType(row.courseType) === 'GROUP';
 }
@@ -1157,10 +1284,6 @@ function billingSubtitle(row: CoursePriceOptionItem) {
     return window || '';
   }
   return row.notes || '';
-}
-
-function groupBillingTypeLabel(row: CoursePriceOptionItem) {
-  return packageUnitText(row.packageUnit || row.groupBillingType || 'MONTH');
 }
 
 function packageLengthLabel(row: CoursePriceOptionItem) {
@@ -1252,6 +1375,11 @@ function formatHours(value: number) {
 function timeToMinutes(value: string) {
   const [hours, minutes] = value.split(':').map(Number);
   return (hours * 60) + minutes;
+}
+
+function normalizeSlotAttendance(value?: string) {
+  const normalized = String(value || '').trim().toUpperCase();
+  return normalized === 'MORNING' || normalized === 'AFTERNOON' ? normalized : 'ALL';
 }
 </script>
 
@@ -1588,6 +1716,49 @@ function timeToMinutes(value: string) {
   font-size: 12px;
 }
 
+.product-price-group__header small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.grade-package-card {
+  padding: 12px;
+  background: #fff;
+}
+
+.grade-package-card__summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e8edf2;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.grade-package-card__summary div {
+  display: grid;
+  gap: 3px;
+}
+
+.grade-package-card__summary strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.grade-package-card__summary span,
+.grade-package-card__summary small {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.payment-option-table {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
 .cell-stack {
   display: flex;
   flex-direction: column;
@@ -1705,9 +1876,9 @@ function timeToMinutes(value: string) {
   display: grid;
   gap: 3px;
   padding: 10px 12px;
-  border: 1px solid #bfdbfe;
+  border: 1px solid #dbeafe;
   border-radius: 8px;
-  background: #fff;
+  background: #f8fbff;
 }
 
 .calculated-price span,
@@ -1726,21 +1897,55 @@ function timeToMinutes(value: string) {
   gap: 12px;
   margin: 16px 0;
   padding: 14px;
-  border: 1px solid #dbeafe;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #f8fbff;
+  background: #fff;
 }
 
+.price-dialog-section {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.price-dialog-section__head,
 .grade-class-settings__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.price-dialog-section__head div,
+.grade-class-settings__head div {
   display: grid;
   gap: 3px;
 }
 
+.section-step {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.price-dialog-section__head strong,
 .grade-class-settings__head strong {
-  color: #1e3a5f;
+  color: #1f2937;
   font-size: 13px;
 }
 
+.price-dialog-section__head small,
 .grade-class-settings__head small {
   color: #64748b;
   font-size: 12px;
@@ -1753,7 +1958,7 @@ function timeToMinutes(value: string) {
 
 .slot-teacher-row {
   display: grid;
-  grid-template-columns: minmax(150px, 0.8fr) minmax(220px, 1.2fr);
+  grid-template-columns: minmax(150px, 0.8fr) minmax(150px, 0.7fr) minmax(200px, 1fr) minmax(180px, 1fr) 130px;
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
@@ -1809,12 +2014,12 @@ function timeToMinutes(value: string) {
 
 .pricing-context {
   display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 10px;
+  gap: 3px;
   margin-bottom: 16px;
-  padding: 10px 12px;
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #f5f7fa;
+  background: #f8fafc;
 }
 
 .pricing-context span,
@@ -1823,8 +2028,9 @@ function timeToMinutes(value: string) {
   font-size: 12px;
 }
 
-.pricing-context small {
-  grid-column: 1 / -1;
+.pricing-context strong {
+  color: #111827;
+  font-size: 15px;
 }
 
 .advanced-settings {

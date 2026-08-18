@@ -67,6 +67,8 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
 
     private BigDecimal oneOnOneHours;
 
+    private BigDecimal openingUsedHours;
+
     private Integer oneOnOneUnits;
 
     private LocalDateTime initialLessonStartAt;

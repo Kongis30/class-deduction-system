@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.enrollment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
@@ -16,6 +17,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
@@ -38,21 +40,30 @@ import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMap
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
@@ -71,6 +82,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
@@ -586,6 +599,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .teacherId(item.getTeacherId())
                 .teacherNo(teacher == null ? null : teacher.getTeacherNo())
                 .teacherName(teacher == null ? null : teacher.getTeacherName())
+                .subjectName(item.getSubjectName())
                 .allocatedHours(allocatedUnits == null
                         ? null
                         : UnitConverter.toHoursDecimal(allocatedUnits))
@@ -593,6 +607,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .remainingHours(allocatedUnits == null
                         ? null
                         : UnitConverter.toHoursDecimal(Math.max(allocatedUnits - consumedUnits, 0)))
+                .hourlyRateSnapshot(item.getHourlyRateSnapshot())
                 .primary(item.getIsPrimary() != null && item.getIsPrimary() == 1)
                 .assignmentStatus(item.getAssignmentStatus())
                 .effectiveFrom(item.getEffectiveFrom())
@@ -688,6 +703,88 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         upsertBalanceSnapshot(coursePackage, ledger.getId());
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void pausePackage(Long id) {
+        CoursePackageEntity coursePackage = requireOneOnOnePackage(id);
+        if ("PAUSED".equals(coursePackage.getPackageStatus())) {
+            throw new BusinessException("PACKAGE_ALREADY_PAUSED", "Course package is already paused.");
+        }
+        if (!List.of("ACTIVE", "COMPLETED").contains(coursePackage.getPackageStatus())) {
+            throw new BusinessException("PACKAGE_PAUSE_NOT_ALLOWED", "Only active or completed 1-on-1 packages can be paused.");
+        }
+
+        coursePackage.setPackageStatus("PAUSED");
+        coursePackageMapper.updateById(coursePackage);
+
+        List<RecurringScheduleRuleEntity> rules = listPackageRules(id);
+        if (!rules.isEmpty()) {
+            recurringScheduleRuleMapper.update(null, new LambdaUpdateWrapper<RecurringScheduleRuleEntity>()
+                    .eq(RecurringScheduleRuleEntity::getPackageId, id)
+                    .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                    .set(RecurringScheduleRuleEntity::getRuleStatus, "PAUSED"));
+        }
+        cancelFutureUnrecordedOccurrences(id);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void resumePackage(Long id, CoursePackageResumeRequest request) {
+        CoursePackageEntity coursePackage = requireOneOnOnePackage(id);
+        if (!"PAUSED".equals(coursePackage.getPackageStatus())) {
+            throw new BusinessException("PACKAGE_NOT_PAUSED", "Only paused 1-on-1 packages can be resumed.");
+        }
+        if (coursePackage.getRemainingUnits() == null || coursePackage.getRemainingUnits() <= 0) {
+            throw new BusinessException("PACKAGE_NO_REMAINING_HOURS", "This package has no remaining hours to schedule.");
+        }
+
+        List<RecurringScheduleRuleEntity> rules = listPackageRules(id);
+        if (rules.isEmpty()) {
+            throw new BusinessException("PACKAGE_SCHEDULE_NOT_FOUND", "No recurring schedule is available for this package.");
+        }
+        RecurringScheduleRuleEntity rule = rules.stream()
+                .filter(item -> "PAUSED".equals(item.getRuleStatus()) || "ACTIVE".equals(item.getRuleStatus()))
+                .max(Comparator.comparing(RecurringScheduleRuleEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(rules.get(0));
+
+        List<RecurringScheduleSlotEntity> slots = recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                .eq(RecurringScheduleSlotEntity::getRuleId, rule.getId())
+                .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE")
+                .orderByAsc(RecurringScheduleSlotEntity::getWeekday)
+                .orderByAsc(RecurringScheduleSlotEntity::getStartTime));
+        if (slots.isEmpty()) {
+            throw new BusinessException("PACKAGE_SCHEDULE_SLOT_NOT_FOUND", "No active schedule slot is available for this package.");
+        }
+
+        cancelFutureUnrecordedOccurrences(id);
+
+        coursePackage.setStartDate(request.getStartDate());
+        coursePackage.setCompletedAt(null);
+        coursePackage.setPackageStatus("ACTIVE");
+
+        rule.setRuleStatus("ACTIVE");
+        rule.setStartDate(request.getStartDate());
+        rule.setEndDate(resolveResumeEndDate(request.getStartDate(), slots, coursePackage.getRemainingUnits()));
+        rule.setGenerationHorizonDays(Math.max(1, (int) java.time.temporal.ChronoUnit.DAYS.between(rule.getStartDate(), rule.getEndDate()) + 1));
+        recurringScheduleRuleMapper.updateById(rule);
+
+        List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(id);
+        Set<LocalDateTime> existingStarts = existingOccurrences.stream()
+                .map(LessonOccurrenceEntity::getPlannedStartAt)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> generated = buildResumeOccurrences(rule, slots, coursePackage, existingStarts);
+        ensureNoConflicts(generated, coursePackage.getStudentId(), rule.getPrimaryTeacherId(), rule.getDefaultClassroomId(), rule.getId());
+        generated.forEach(lessonOccurrenceMapper::insert);
+
+        generated.stream()
+                .map(LessonOccurrenceEntity::getPlannedEndAt)
+                .filter(Objects::nonNull)
+                .max(LocalDateTime::compareTo)
+                .ifPresent(endAt -> coursePackage.setEstimatedEndDate(endAt.toLocalDate()));
+        coursePackageMapper.updateById(coursePackage);
+    }
+
     private void upsertBalanceSnapshot(CoursePackageEntity coursePackage, Long lastLedgerId) {
         PackageBalanceSnapshotEntity snapshot = packageBalanceSnapshotMapper.selectById(coursePackage.getId());
         boolean insert = snapshot == null;
@@ -735,8 +832,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         // Define valid transitions: DRAFT -> ACTIVE -> COMPLETED -> CLOSED
         Map<String, Set<String>> validTransitions = Map.of(
                 "DRAFT", Set.of("ACTIVE", "CLOSED"),
-                "ACTIVE", Set.of("COMPLETED", "CLOSED"),
-                "COMPLETED", Set.of("ACTIVE", "CLOSED"),
+                "ACTIVE", Set.of("COMPLETED", "PAUSED", "CLOSED"),
+                "PAUSED", Set.of("ACTIVE", "CLOSED"),
+                "COMPLETED", Set.of("ACTIVE", "PAUSED", "CLOSED"),
                 "CLOSED", Set.of()
         );
 
@@ -753,5 +851,201 @@ public class CoursePackageServiceImpl implements CoursePackageService {
             throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
         }
         return packageEntity;
+    }
+
+    private CoursePackageEntity requireOneOnOnePackage(Long id) {
+        CoursePackageEntity coursePackage = requireCoursePackage(id);
+        if (!"ONE_ON_ONE".equals(coursePackage.getTeachingMode())) {
+            throw new BusinessException("PACKAGE_PAUSE_NOT_SUPPORTED", "Pause and resume are only available for 1-on-1 packages.");
+        }
+        return coursePackage;
+    }
+
+    private List<RecurringScheduleRuleEntity> listPackageRules(Long packageId) {
+        return recurringScheduleRuleMapper.selectList(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                .eq(RecurringScheduleRuleEntity::getPackageId, packageId)
+                .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt));
+    }
+
+    private void cancelFutureUnrecordedOccurrences(Long packageId) {
+        List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .ge(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
+        if (futureOccurrences.isEmpty()) {
+            return;
+        }
+        Set<Long> occurrenceIdsWithRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, futureOccurrences.stream().map(LessonOccurrenceEntity::getId).toList())
+                        .ne(LessonRecordEntity::getConfirmStage, "REJECTED")
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .map(LessonRecordEntity::getOccurrenceId)
+                .collect(Collectors.toSet());
+        List<Long> cancellableIds = futureOccurrences.stream()
+                .filter(item -> !occurrenceIdsWithRecords.contains(item.getId()))
+                .map(LessonOccurrenceEntity::getId)
+                .toList();
+        if (cancellableIds.isEmpty()) {
+            return;
+        }
+        lessonOccurrenceMapper.update(null, new LambdaUpdateWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getId, cancellableIds)
+                .set(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .set(LessonOccurrenceEntity::getNotes, "Cancelled when package was paused."));
+    }
+
+    private List<LessonOccurrenceEntity> listActivePackageOccurrences(Long packageId) {
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
+    }
+
+    private LocalDate resolveResumeEndDate(LocalDate startDate,
+                                           List<RecurringScheduleSlotEntity> slots,
+                                           int remainingUnits) {
+        int weeklyUnits = slots.stream()
+                .filter(item -> "ACTIVE".equals(item.getSlotStatus()))
+                .map(RecurringScheduleSlotEntity::getPlannedUnits)
+                .filter(Objects::nonNull)
+                .mapToInt(Integer::intValue)
+                .sum();
+        int weeks = Math.max(1, (int) Math.ceil((double) remainingUnits / Math.max(weeklyUnits, 1)));
+        return startDate.plusDays(weeks * 7L);
+    }
+
+    private List<LessonOccurrenceEntity> buildResumeOccurrences(RecurringScheduleRuleEntity rule,
+                                                                List<RecurringScheduleSlotEntity> slots,
+                                                                CoursePackageEntity coursePackage,
+                                                                Set<LocalDateTime> existingStarts) {
+        LocalDate generationStart = Collections.max(List.of(rule.getStartDate(), AppTime.nowLocalDateTime().toLocalDate()));
+        LocalDate generationEnd = rule.getEndDate();
+        if (generationEnd == null || generationEnd.isBefore(generationStart)) {
+            return Collections.emptyList();
+        }
+        int accumulatedUnits = 0;
+        int remainingUnits = coursePackage.getRemainingUnits();
+        List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
+        outer:
+        for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
+            int weekday = toWeekday(date.getDayOfWeek());
+            for (RecurringScheduleSlotEntity slot : slots) {
+                if (!"ACTIVE".equals(slot.getSlotStatus()) || !Objects.equals(slot.getWeekday(), weekday)) {
+                    continue;
+                }
+                int slotUnits = slot.getPlannedUnits();
+                int unitsLeft = remainingUnits - accumulatedUnits;
+                if (unitsLeft <= 0) {
+                    break outer;
+                }
+                LocalDateTime plannedStart = LocalDateTime.of(date, slot.getStartTime());
+                if (existingStarts.contains(plannedStart)) {
+                    continue;
+                }
+                int actualUnits = Math.min(slotUnits, unitsLeft);
+                LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+                occurrence.setLessonNo(generateLessonNo());
+                occurrence.setPackageId(coursePackage.getId());
+                occurrence.setStudentId(coursePackage.getStudentId());
+                occurrence.setScheduleRuleId(rule.getId());
+                occurrence.setScheduleSlotId(slot.getId());
+                occurrence.setOccurrenceType("REGULAR");
+                occurrence.setPlannedTeacherId(slot.getTeacherId() == null ? rule.getPrimaryTeacherId() : slot.getTeacherId());
+                occurrence.setPlannedClassroomId(rule.getDefaultClassroomId());
+                occurrence.setPlannedStartAt(plannedStart);
+                occurrence.setPlannedUnits(actualUnits);
+                if (actualUnits < slotUnits) {
+                    long slotDurationMinutes = java.time.Duration.between(slot.getStartTime(), slot.getEndTime()).toMinutes();
+                    long actualDurationMinutes = Math.max(1, slotDurationMinutes * actualUnits / slotUnits);
+                    occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getStartTime().plusMinutes(actualDurationMinutes)));
+                } else {
+                    occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
+                }
+                occurrence.setPlanningStatus("SCHEDULED");
+                occurrence.setConflictChecked(1);
+                occurrences.add(occurrence);
+                accumulatedUnits += actualUnits;
+            }
+        }
+        return occurrences;
+    }
+
+    private void ensureNoConflicts(List<LessonOccurrenceEntity> candidates,
+                                   Long studentId,
+                                   Long teacherId,
+                                   Long classroomId,
+                                   Long excludeRuleId) {
+        if (candidates.isEmpty()) {
+            return;
+        }
+        LocalDateTime windowStart = candidates.stream().map(LessonOccurrenceEntity::getPlannedStartAt).min(LocalDateTime::compareTo).orElseThrow();
+        LocalDateTime windowEnd = candidates.stream().map(LessonOccurrenceEntity::getPlannedEndAt).max(LocalDateTime::compareTo).orElseThrow();
+        List<LessonOccurrenceEntity> studentOccurrences = studentId == null ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getStudentId, studentId)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .ne(excludeRuleId != null, LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+        Set<Long> teacherIds = candidates.stream()
+                .map(LessonOccurrenceEntity::getPlannedTeacherId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> teacherOccurrences = teacherIds.isEmpty() ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPlannedTeacherId, teacherIds)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .ne(excludeRuleId != null, LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+        List<LessonOccurrenceEntity> classroomOccurrences = classroomId == null ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPlannedClassroomId, classroomId)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .ne(excludeRuleId != null, LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+
+        List<String> conflicts = new ArrayList<>();
+        for (LessonOccurrenceEntity candidate : candidates) {
+            if (studentId != null && hasOverlap(candidate, studentOccurrences)) {
+                conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
+            }
+            Long candidateTeacherId = candidate.getPlannedTeacherId();
+            if (candidateTeacherId != null && hasOverlap(candidate, teacherOccurrences.stream()
+                    .filter(existing -> Objects.equals(existing.getPlannedTeacherId(), candidateTeacherId))
+                    .toList())) {
+                conflicts.add("Teacher conflict at " + candidate.getPlannedStartAt());
+            }
+            if (classroomId != null && hasOverlap(candidate, classroomOccurrences)) {
+                conflicts.add("Classroom conflict at " + candidate.getPlannedStartAt());
+            }
+            if (conflicts.size() >= 3) {
+                break;
+            }
+        }
+        if (!conflicts.isEmpty()) {
+            throw new BusinessException("SCHEDULE_CONFLICT", String.join("; ", conflicts));
+        }
+    }
+
+    private boolean hasOverlap(LessonOccurrenceEntity candidate, List<LessonOccurrenceEntity> existingOccurrences) {
+        return existingOccurrences.stream().anyMatch(existing ->
+                candidate.getPlannedStartAt().isBefore(existing.getPlannedEndAt())
+                        && candidate.getPlannedEndAt().isAfter(existing.getPlannedStartAt()));
+    }
+
+    private int toWeekday(DayOfWeek dayOfWeek) {
+        return switch (dayOfWeek) {
+            case MONDAY -> 1;
+            case TUESDAY -> 2;
+            case WEDNESDAY -> 3;
+            case THURSDAY -> 4;
+            case FRIDAY -> 5;
+            case SATURDAY -> 6;
+            case SUNDAY -> 7;
+        };
+    }
+
+    private String generateLessonNo() {
+        return "LS" + AppTime.nowLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
     }
 }

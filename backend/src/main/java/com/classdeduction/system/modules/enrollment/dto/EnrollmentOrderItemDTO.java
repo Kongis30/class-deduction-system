@@ -78,6 +78,10 @@ public class EnrollmentOrderItemDTO {
     @Schema(description = "One-on-one purchased hours", example = "20")
     private BigDecimal oneOnOneHours;
 
+    @DecimalMin(value = "0.00", message = "Opening used hours cannot be negative")
+    @Schema(description = "Already used one-on-one hours before this system starts tracking lessons", example = "12")
+    private BigDecimal openingUsedHours;
+
     @Min(value = 0, message = "One-on-one units cannot be negative")
     @Schema(description = "One-on-one units, 1 unit = 0.5 hour", example = "40")
     private Integer oneOnOneUnits;

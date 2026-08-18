@@ -13,7 +13,9 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.finance.dto.TeacherPaymentCreateRequest;
 import com.classdeduction.system.modules.finance.dto.UnpaidLessonQuery;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
@@ -60,6 +62,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
     private final TeacherPaymentItemMapper paymentItemMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
 
     @Override
     public List<UnpaidLessonVO> queryUnpaidLessons(UnpaidLessonQuery query) {
@@ -184,7 +187,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 // 班课没有 packageId，从 class_group 获取 productId
                 ClassGroupEntity cg = classGroupMap.get(occurrence.getClassGroupId());
                 Long productId = cg != null ? cg.getProductId() : null;
-                BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, null);
+                BigDecimal hourlyRate = firstPositive(
+                        occurrence.getHourlyRateSnapshot(),
+                        resolvePayRate(rateMap, query.getTeacherId(), productId, null));
 
                 BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                         .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
@@ -218,7 +223,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             // 非班课：一条记录一行
             CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
             Long productId = pkg != null ? pkg.getCourseProductId() : null;
-            BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, rec.getStudentId());
+            BigDecimal hourlyRate = firstPositive(
+                    resolveAllocationRateSnapshot(rec.getPackageId(), query.getTeacherId()),
+                    resolvePayRate(rateMap, query.getTeacherId(), productId, rec.getStudentId()));
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                     .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
             BigDecimal amount = hours.multiply(hourlyRate).setScale(2, RoundingMode.HALF_UP);
@@ -319,8 +326,15 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ClassGroupEntity cg = occ != null ? classGroupMap.get(occ.getClassGroupId()) : null;
                 productId = cg != null ? cg.getProductId() : null;
             }
-            BigDecimal hr = requirePayRate(rateMap, request.getTeacherId(), productId,
-                    rec.getPackageId() == null ? null : rec.getStudentId());
+            LessonOccurrenceEntity occ = occurrenceMap.get(rec.getOccurrenceId());
+            BigDecimal hr = requirePayRate(
+                    firstPositive(
+                            rec.getPackageId() == null
+                                    ? (occ == null ? null : occ.getHourlyRateSnapshot())
+                                    : resolveAllocationRateSnapshot(rec.getPackageId(), request.getTeacherId()),
+                            resolvePayRate(rateMap, request.getTeacherId(), productId,
+                                    rec.getPackageId() == null ? null : rec.getStudentId())),
+                    productId);
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                     .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
             BigDecimal amount = hours.multiply(hr).setScale(2, RoundingMode.HALF_UP);
@@ -428,8 +442,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         return rateMap;
     }
 
-    private BigDecimal requirePayRate(Map<String, BigDecimal> rateMap, Long teacherId, Long productId, Long studentId) {
-        BigDecimal rate = resolvePayRate(rateMap, teacherId, productId, studentId);
+    private BigDecimal requirePayRate(BigDecimal rate, Long productId) {
         if (productId == null || rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException("TEACHER_PAY_RATE_REQUIRED",
                     "Configure a positive teacher pay rate for every selected course before creating payment.");
@@ -445,6 +458,24 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             }
         }
         return rateMap.getOrDefault(rateKey(teacherId, productId, null), BigDecimal.ZERO);
+    }
+
+    private BigDecimal resolveAllocationRateSnapshot(Long packageId, Long teacherId) {
+        if (packageId == null || teacherId == null) {
+            return null;
+        }
+        PackageTeacherAssignmentEntity assignment = packageTeacherAssignmentMapper.selectOne(
+                new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                        .eq(PackageTeacherAssignmentEntity::getPackageId, packageId)
+                        .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
+                        .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
+                        .eq(PackageTeacherAssignmentEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+        return assignment == null ? null : assignment.getHourlyRateSnapshot();
+    }
+
+    private BigDecimal firstPositive(BigDecimal preferred, BigDecimal fallback) {
+        return preferred != null && preferred.compareTo(BigDecimal.ZERO) > 0 ? preferred : fallback;
     }
 
     private String rateKey(Long teacherId, Long productId, Long studentId) {

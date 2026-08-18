@@ -8,6 +8,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
@@ -93,6 +94,22 @@ public class CoursePackageController {
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         coursePackageService.adjustPackageHours(id, request, currentUser.userId());
         return ApiResponse.success("Package hours adjusted successfully.", null);
+    }
+
+    @PostMapping("/{id}/pause")
+    @Operation(summary = "Pause a 1-on-1 package and cancel future unrecorded lessons")
+    public ApiResponse<Void> pausePackage(@PathVariable Long id) {
+        coursePackageService.pausePackage(id);
+        return ApiResponse.success("Package paused successfully.", null);
+    }
+
+    @PostMapping("/{id}/resume")
+    @Operation(summary = "Resume a paused 1-on-1 package from a new start date")
+    public ApiResponse<Void> resumePackage(
+            @PathVariable Long id,
+            @Valid @RequestBody CoursePackageResumeRequest request) {
+        coursePackageService.resumePackage(id, request);
+        return ApiResponse.success("Package resumed successfully.", null);
     }
 
     @GetMapping("/{id}/balance")

@@ -7,6 +7,7 @@ import com.classdeduction.system.common.model.BaseEntity;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.math.BigDecimal;
 import java.time.LocalTime;
 
 @Getter
@@ -21,6 +22,8 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
 
     private Long teacherId;
 
+    private String subjectName;
+
     private Integer weekday;
 
     private LocalTime startTime;
@@ -32,4 +35,6 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
     private LocalTime afternoonStartTime;
 
     private String attendanceOptions;
+
+    private BigDecimal hourlyRateSnapshot;
 }

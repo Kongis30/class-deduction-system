@@ -32,9 +32,11 @@ import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.LessonOccurrenceService;
 import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
@@ -82,6 +84,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private final CourseProductMapper courseProductMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
     @Override
     public PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query) {
@@ -154,7 +157,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (result.getRecords().isEmpty()) {
             return PageResponse.empty(query.getPageNum(), query.getPageSize());
         }
-        return PageResponse.of(toOccurrenceVOs(result.getRecords()), result.getTotal(), result.getCurrent(), result.getSize());
+        List<LessonOccurrenceEntity> records = filterStudentClassOccurrences(result.getRecords(), query.getStudentId());
+        return PageResponse.of(toOccurrenceVOs(records), result.getTotal(), result.getCurrent(), result.getSize());
     }
 
     @Override
@@ -830,6 +834,76 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .eq(ClassEnrollmentEntity::getStudentId, studentId)
                 .eq(ClassEnrollmentEntity::getClassId, classGroupId)
                 .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")) > 0;
+    }
+
+    private List<LessonOccurrenceEntity> filterStudentClassOccurrences(List<LessonOccurrenceEntity> records, Long studentId) {
+        if (studentId == null || records.isEmpty()) {
+            return records;
+        }
+        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+        Map<Long, List<ClassEnrollmentEntity>> enrollmentsByClass = enrollments.stream()
+                .collect(Collectors.groupingBy(ClassEnrollmentEntity::getClassId));
+        Map<Long, ClassGroupScheduleSlotEntity> slotMap = listSlotsByIds(records.stream()
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet()));
+        return records.stream()
+                .filter(record -> record.getClassGroupId() == null
+                        || classOccurrenceVisibleToStudent(record, enrollmentsByClass.get(record.getClassGroupId()), slotMap))
+                .toList();
+    }
+
+    private boolean classOccurrenceVisibleToStudent(LessonOccurrenceEntity occurrence,
+                                                    List<ClassEnrollmentEntity> enrollments,
+                                                    Map<Long, ClassGroupScheduleSlotEntity> slotMap) {
+        if (enrollments == null || enrollments.isEmpty() || occurrence.getPlannedStartAt() == null) {
+            return false;
+        }
+        LocalDateTime startAt = occurrence.getPlannedStartAt();
+        ClassGroupScheduleSlotEntity slot = occurrence.getScheduleSlotId() == null ? null : slotMap.get(occurrence.getScheduleSlotId());
+        return enrollments.stream().anyMatch(enrollment ->
+                (enrollment.getEnrollmentDate() == null || !startAt.toLocalDate().isBefore(enrollment.getEnrollmentDate()))
+                        && (enrollment.getExpiryDate() == null || !startAt.toLocalDate().isAfter(enrollment.getExpiryDate()))
+                        && attendanceMatches(enrollment.getAttendanceOption(), slot));
+    }
+
+    private boolean attendanceMatches(String enrollmentAttendance, ClassGroupScheduleSlotEntity slot) {
+        String attendance = normalizeAttendanceOption(enrollmentAttendance);
+        String segment = slot == null ? null : slot.getAttendanceOptions();
+        if (!StringUtils.hasText(segment)) {
+            return true;
+        }
+        String normalizedSegment = segment.trim().toUpperCase(Locale.ROOT);
+        if ("ALL".equals(normalizedSegment) || "FULL_DAY,MORNING,AFTERNOON".equals(normalizedSegment)) {
+            return true;
+        }
+        if ("FULL_DAY".equals(attendance)) {
+            return "MORNING".equals(normalizedSegment) || "AFTERNOON".equals(normalizedSegment);
+        }
+        return Objects.equals(attendance, normalizedSegment);
+    }
+
+    private String normalizeAttendanceOption(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "FULL_DAY";
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "MORNING", "AFTERNOON", "FULL_DAY" -> normalized;
+            default -> "FULL_DAY";
+        };
+    }
+
+    private Map<Long, ClassGroupScheduleSlotEntity> listSlotsByIds(Set<Long> ids) {
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return classGroupScheduleSlotMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(ClassGroupScheduleSlotEntity::getId, Function.identity()));
     }
 
     private List<Long> findOneOnOnePackageIdsByPrimaryTeacher(Long teacherId) {

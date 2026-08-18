@@ -245,12 +245,14 @@ export interface CoursePriceOptionSavePayload {
   groupClassroomId?: EntityId;
   groupScheduleSlots?: {
     teacherId?: EntityId;
+    subjectName?: string;
     weekday: number;
     startTime: string;
     endTime: string;
     morningEndTime?: string;
     afternoonStartTime?: string;
     attendanceOptions?: string;
+    hourlyRateSnapshot?: number;
   }[];
   groupBillingType?: string;
   groupStartDate?: string;
@@ -301,6 +303,7 @@ export interface CourseProductSavePayload {
   registerClass?: string;
   subjectName?: string;
   teachingMode: string;
+  sortOrder?: number;
   defaultTotalUnits?: number;
   defaultLessonUnits?: number;
   status?: string;

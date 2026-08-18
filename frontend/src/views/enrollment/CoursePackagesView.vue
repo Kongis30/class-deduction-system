@@ -36,6 +36,7 @@
             @change="handleFilterChange"
           >
             <el-option label="Active" value="ACTIVE" />
+            <el-option label="Paused" value="PAUSED" />
             <el-option label="Closed" value="CLOSED" />
             <el-option label="Pending" value="PENDING" />
           </el-select>
@@ -137,6 +138,7 @@
                           </template>
                           <div class="header-popover-menu">
                             <button type="button" @click="setPackageStatusFilter(row.id, 'ACTIVE')">Active only</button>
+                            <button type="button" @click="setPackageStatusFilter(row.id, 'PAUSED')">Paused only</button>
                             <button type="button" @click="setPackageStatusFilter(row.id, 'ALL')">All statuses</button>
                             <button type="button" @click="setPackageStatusFilter(row.id, 'INACTIVE')">Inactive only</button>
                           </div>
@@ -470,6 +472,14 @@
                 empty-text="No teacher hours allocated."
               >
                 <el-table-column label="Teacher" min-width="160" prop="teacherName" />
+                <el-table-column label="Subject" min-width="130">
+                  <template #default="{ row }">{{ row.subjectName || '—' }}</template>
+                </el-table-column>
+                <el-table-column label="Rate" width="90" align="center">
+                  <template #default="{ row }">
+                    {{ row.hourlyRateSnapshot != null ? `$${Number(row.hourlyRateSnapshot).toFixed(2)}` : '—' }}
+                  </template>
+                </el-table-column>
                 <el-table-column label="Allocated" width="100" align="center">
                   <template #default="{ row }">{{ row.allocatedHours ?? '—' }}h</template>
                 </el-table-column>
@@ -549,6 +559,12 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="detailDialogVisible = false">Close</el-button>
+          <el-button v-if="detailData?.packageStatus === 'ACTIVE'" :loading="packageStatusSaving" @click="handlePausePackage">
+            Pause Package
+          </el-button>
+          <el-button v-if="detailData?.packageStatus === 'PAUSED'" type="primary" @click="openResumePackage">
+            Resume Package
+          </el-button>
           <el-button v-if="detailData?.packageStatus === 'ACTIVE'" type="danger" @click="handleClosePackage">
             Close Package
           </el-button>
@@ -612,7 +628,7 @@
         <span>Unallocated <strong>{{ allocationFormUnallocated }}h</strong></span>
       </div>
       <el-table :data="teacherAllocationRows" row-key="key" size="small" class="allocation-edit-table">
-        <el-table-column label="Teacher" min-width="240">
+        <el-table-column label="Teacher" min-width="190">
           <template #default="{ row }">
             <el-select v-model="row.teacherId" filterable placeholder="Select teacher" style="width: 100%">
               <el-option
@@ -624,7 +640,24 @@
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="Hours" width="150">
+        <el-table-column label="Subject" min-width="150">
+          <template #default="{ row }">
+            <el-input v-model="row.subjectName" placeholder="e.g. Algebra II" />
+          </template>
+        </el-table-column>
+        <el-table-column label="Rate" width="130">
+          <template #default="{ row }">
+            <el-input-number
+              v-model="row.hourlyRateSnapshot"
+              :min="0"
+              :precision="2"
+              :step="1"
+              controls-position="right"
+              style="width: 112px"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="Hours" width="135">
           <template #default="{ row }">
             <el-input-number
               v-model="row.allocatedHours"
@@ -670,6 +703,30 @@
         <el-button @click="teacherAllocationVisible = false">Cancel</el-button>
         <el-button type="primary" :loading="teacherAllocationSaving" @click="submitTeacherAllocation">
           Save allocation
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="resumePackageVisible"
+      title="Resume Package"
+      width="420px"
+      :close-on-click-modal="false"
+    >
+      <el-form label-width="120px">
+        <el-form-item label="Starting date">
+          <el-date-picker
+            v-model="resumePackageForm.startDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="resumePackageVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="packageStatusSaving" @click="submitResumePackage">
+          Resume
         </el-button>
       </template>
     </el-dialog>
@@ -789,7 +846,9 @@ import {
   fetchCoursePackages,
   fetchGroupClassPackageProgress,
   fetchGroupClassStudentProgress,
+  pauseCoursePackage,
   replacePackageTeacherAllocations,
+  resumeCoursePackage,
   type CoursePackageQuery,
 } from '@/api/enrollment';
 import {
@@ -829,12 +888,19 @@ const teacherAllocationVisible = ref(false);
 const teacherAllocationSaving = ref(false);
 const teacherAllocationReason = ref('');
 const primaryAllocationKey = ref('');
+const resumePackageVisible = ref(false);
+const packageStatusSaving = ref(false);
+const resumePackageForm = reactive({
+  startDate: '',
+});
 let allocationRowSequence = 0;
 
 interface TeacherAllocationRow {
   key: string;
   teacherId?: EntityId;
+  subjectName?: string;
   allocatedHours: number;
+  hourlyRateSnapshot?: number;
   consumedHours: number;
   primary: boolean;
 }
@@ -904,7 +970,7 @@ interface OneOnOneProductRow {
   packages: CoursePackageItem[];
 }
 
-type PackageProgressFilter = 'ACTIVE' | 'ALL' | 'INACTIVE';
+type PackageProgressFilter = 'ACTIVE' | 'PAUSED' | 'ALL' | 'INACTIVE';
 type PackageSortField = 'createdAt' | 'progress' | 'startDate' | 'estimatedEndDate';
 type GroupStudentSortField = 'remainingUnits' | 'progress' | 'enrollmentDate' | 'expiryDate' | 'enrollmentStatus';
 type PackageSortOrder = 'asc' | 'desc';
@@ -954,7 +1020,7 @@ function getPackageStatusFilter(rowId: string): PackageProgressFilter {
 }
 
 function setPackageStatusFilter(rowId: string, value: string | number | boolean | undefined) {
-  if (value === 'ACTIVE' || value === 'ALL' || value === 'INACTIVE') {
+  if (value === 'ACTIVE' || value === 'PAUSED' || value === 'ALL' || value === 'INACTIVE') {
     packageStatusFilters[rowId] = value;
   }
 }
@@ -978,6 +1044,7 @@ function setPackageSort(rowId: string, field: PackageSortField, order: PackageSo
 function packageStatusFilterLabel(rowId: string): string {
   const filter = getPackageStatusFilter(rowId);
   if (filter === 'ALL') return 'All statuses';
+  if (filter === 'PAUSED') return 'Paused only';
   if (filter === 'INACTIVE') return 'Inactive only';
   return 'Active only';
 }
@@ -987,6 +1054,7 @@ function getVisiblePackages(row: OneOnOneProductRow): CoursePackageItem[] {
   const packages = row.packages.filter((pkg) => {
     if (filter === 'ALL') return true;
     if (filter === 'INACTIVE') return pkg.packageStatus !== 'ACTIVE';
+    if (filter === 'PAUSED') return pkg.packageStatus === 'PAUSED';
     return pkg.packageStatus === 'ACTIVE';
   });
 
@@ -1120,13 +1188,14 @@ function classTypeClass(billingType?: string): string {
 
 function packageStatusType(status: string) {
   if (status === 'ACTIVE') return 'success';
+  if (status === 'PAUSED') return 'warning';
   if (status === 'CLOSED') return 'info';
   return 'warning';
 }
 
 function packageStatusLabel(status: string) {
   const map: Record<string, string> = {
-    ACTIVE: 'Active', CLOSED: 'Closed', PENDING: 'Pending', SUSPENDED: 'Suspended', INACTIVE: 'Inactive', MIXED: 'Mixed',
+    ACTIVE: 'Active', PAUSED: 'Paused', CLOSED: 'Closed', PENDING: 'Pending', SUSPENDED: 'Suspended', INACTIVE: 'Inactive', MIXED: 'Mixed',
   };
   return map[status] ?? status;
 }
@@ -1332,7 +1401,9 @@ function openTeacherAllocation() {
   teacherAllocationRows.value = activeTeacherAssignments.value.map(item => ({
     key: nextAllocationKey(),
     teacherId: item.teacherId,
+    subjectName: item.subjectName ?? '',
     allocatedHours: item.allocatedHours ?? 0.5,
+    hourlyRateSnapshot: item.hourlyRateSnapshot,
     consumedHours: item.consumedHours ?? 0,
     primary: item.primary,
   }));
@@ -1350,7 +1421,9 @@ function addTeacherAllocation() {
   const row: TeacherAllocationRow = {
     key: nextAllocationKey(),
     teacherId: undefined,
+    subjectName: '',
     allocatedHours: 0.5,
+    hourlyRateSnapshot: undefined,
     consumedHours: 0,
     primary: teacherAllocationRows.value.length === 0,
   };
@@ -1405,7 +1478,9 @@ async function submitTeacherAllocation() {
     await replacePackageTeacherAllocations(detailData.value.id, {
       allocations: teacherAllocationRows.value.map(row => ({
         teacherId: row.teacherId as EntityId,
+        subjectName: row.subjectName?.trim() || undefined,
         allocatedHours: row.allocatedHours,
+        hourlyRateSnapshot: row.hourlyRateSnapshot != null && row.hourlyRateSnapshot > 0 ? row.hourlyRateSnapshot : undefined,
         primary: row.primary,
       })),
       reason: teacherAllocationReason.value.trim() || undefined,
@@ -1439,6 +1514,46 @@ async function handleClosePackage() {
     loadData();
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
+  }
+}
+
+async function handlePausePackage() {
+  if (!detailData.value) return;
+  packageStatusSaving.value = true;
+  try {
+    await pauseCoursePackage(detailData.value.id);
+    await reloadPackageDetail();
+    await loadData();
+    ElMessage.success('Package paused.');
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to pause package.');
+  } finally {
+    packageStatusSaving.value = false;
+  }
+}
+
+function openResumePackage() {
+  resumePackageForm.startDate = new Date().toISOString().slice(0, 10);
+  resumePackageVisible.value = true;
+}
+
+async function submitResumePackage() {
+  if (!detailData.value) return;
+  if (!resumePackageForm.startDate) {
+    ElMessage.warning('Select a starting date.');
+    return;
+  }
+  packageStatusSaving.value = true;
+  try {
+    await resumeCoursePackage(detailData.value.id, { startDate: resumePackageForm.startDate });
+    resumePackageVisible.value = false;
+    await reloadPackageDetail();
+    await loadData();
+    ElMessage.success('Package resumed.');
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to resume package.');
+  } finally {
+    packageStatusSaving.value = false;
   }
 }
 

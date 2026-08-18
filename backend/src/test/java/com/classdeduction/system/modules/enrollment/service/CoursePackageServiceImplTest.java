@@ -26,6 +26,8 @@ import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -83,6 +85,12 @@ class CoursePackageServiceImplTest {
     private LessonOccurrenceMapper lessonOccurrenceMapper;
 
     @Mock
+    private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+
+    @Mock
+    private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+
+    @Mock
     private LessonRecordMapper lessonRecordMapper;
 
     @Mock
@@ -111,6 +119,8 @@ class CoursePackageServiceImplTest {
                 classGroupMapper,
                 classEnrollmentMapper,
                 lessonOccurrenceMapper,
+                recurringScheduleRuleMapper,
+                recurringScheduleSlotMapper,
                 lessonRecordMapper,
                 hourLedgerMapper,
                 packageBalanceSnapshotMapper

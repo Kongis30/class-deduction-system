@@ -28,6 +28,7 @@ import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -468,7 +469,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                                                        LessonOccurrenceEntity occurrence,
                                                        Map<Long, List<LocalDate>> confirmedLessonDatesByStudent) {
         if (occurrence.getPlannedStartAt() == null) {
-            return true;
+            return attendanceMatches(enrollment.getAttendanceOption(), occurrence);
+        }
+        if (!attendanceMatches(enrollment.getAttendanceOption(), occurrence)) {
+            return false;
         }
         LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
         if (enrollment.getEnrollmentDate() != null && lessonDate.isBefore(enrollment.getEnrollmentDate())) {
@@ -482,6 +486,41 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
         long usedSessions = countUsedSessions(enrollment, confirmedLessonDatesByStudent);
         return usedSessions < enrollment.getPurchasedQuantity();
+    }
+
+    private boolean attendanceMatches(String enrollmentAttendance, LessonOccurrenceEntity occurrence) {
+        String attendance = normalizeAttendanceOption(enrollmentAttendance);
+        String segment = occurrenceScheduleSegment(occurrence);
+        if (!StringUtils.hasText(segment)
+                || "ALL".equals(segment)
+                || "FULL_DAY,MORNING,AFTERNOON".equals(segment)) {
+            return true;
+        }
+        if ("FULL_DAY".equals(attendance)) {
+            return "MORNING".equals(segment) || "AFTERNOON".equals(segment);
+        }
+        return Objects.equals(attendance, segment);
+    }
+
+    private String occurrenceScheduleSegment(LessonOccurrenceEntity occurrence) {
+        if (occurrence == null || occurrence.getScheduleSlotId() == null) {
+            return "ALL";
+        }
+        ClassGroupScheduleSlotEntity slot = classGroupScheduleSlotMapper.selectById(occurrence.getScheduleSlotId());
+        return slot == null || !StringUtils.hasText(slot.getAttendanceOptions())
+                ? "ALL"
+                : slot.getAttendanceOptions().trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeAttendanceOption(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "FULL_DAY";
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "MORNING", "AFTERNOON", "FULL_DAY" -> normalized;
+            default -> "FULL_DAY";
+        };
     }
 
     private long countUsedSessions(ClassEnrollmentEntity enrollment,
@@ -1138,6 +1177,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
                 occurrence.setLessonNo(generateClassLessonNo());
                 occurrence.setClassGroupId(classGroup.getId());
+                occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(slot.getTeacherId() == null
                         ? classGroup.getTeacherId()
@@ -1146,6 +1186,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                occurrence.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
                 occurrence.setPlanningStatus("SCHEDULED");
                 ensureNoGeneratedClassOccurrenceConflicts(occurrence);
                 occurrence.setConflictChecked(1);

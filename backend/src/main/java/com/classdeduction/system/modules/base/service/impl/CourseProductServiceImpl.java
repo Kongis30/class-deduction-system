@@ -58,6 +58,7 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .eq(StringUtils.hasText(query.getStatus()), CourseProductEntity::getStatus, query.getStatus())
                 .eq(StringUtils.hasText(query.getTeachingMode()), CourseProductEntity::getTeachingMode, query.getTeachingMode())
                 .eq(StringUtils.hasText(query.getCourseType()), CourseProductEntity::getCourseType, query.getCourseType())
+                .orderByAsc(CourseProductEntity::getSortOrder)
                 .orderByDesc(CourseProductEntity::getCreatedAt);
         IPage<CourseProductEntity> result = courseProductMapper.selectPage(page, wrapper);
 
@@ -304,6 +305,7 @@ public class CourseProductServiceImpl implements CourseProductService {
         entity.setRegisterClass(normalizeRegisterClass(request));
         entity.setSubjectName(request.getSubjectName());
         entity.setTeachingMode(request.getTeachingMode());
+        entity.setSortOrder(request.getSortOrder() == null ? 99 : request.getSortOrder());
         entity.setDefaultTotalUnits(request.getDefaultTotalUnits());
         entity.setDefaultLessonUnits(request.getDefaultLessonUnits());
         entity.setBillingType(null);
@@ -330,6 +332,7 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .registerClass(entity.getRegisterClass())
                 .subjectName(entity.getSubjectName())
                 .teachingMode(entity.getTeachingMode())
+                .sortOrder(entity.getSortOrder() == null ? 99 : entity.getSortOrder())
                 .defaultTotalUnits(entity.getDefaultTotalUnits())
                 .defaultLessonUnits(entity.getDefaultLessonUnits())
                 .status(entity.getStatus())

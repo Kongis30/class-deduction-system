@@ -39,6 +39,8 @@ public class CourseProductEntity extends BaseEntity {
 
     private String teachingMode;
 
+    private Integer sortOrder;
+
     private Integer defaultTotalUnits;
 
     private Integer defaultLessonUnits;

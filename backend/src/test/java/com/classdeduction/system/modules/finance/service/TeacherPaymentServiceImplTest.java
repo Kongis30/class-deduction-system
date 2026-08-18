@@ -9,6 +9,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.finance.dto.TeacherPaymentCreateRequest;
 import com.classdeduction.system.modules.finance.dto.UnpaidLessonQuery;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
@@ -84,6 +85,9 @@ class TeacherPaymentServiceImplTest {
     @Mock
     private ClassGroupMapper classGroupMapper;
 
+    @Mock
+    private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
+
     @Captor
     private ArgumentCaptor<LambdaQueryWrapper<LessonRecordEntity>> recordQueryCaptor;
 
@@ -113,7 +117,8 @@ class TeacherPaymentServiceImplTest {
                 paymentMapper,
                 paymentItemMapper,
                 lessonOccurrenceMapper,
-                classGroupMapper
+                classGroupMapper,
+                packageTeacherAssignmentMapper
         );
     }
 

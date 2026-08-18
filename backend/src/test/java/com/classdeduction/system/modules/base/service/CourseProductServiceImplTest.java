@@ -56,7 +56,7 @@ class CourseProductServiceImplTest {
         courseProductService.createCourseProduct(request);
 
         verify(courseProductMapper).insert(argThat((CourseProductEntity product) ->
-                product.getListPrice().signum() == 0
+                product.getListPrice() == null
                         && product.getDefaultTeacherId() == null
                         && product.getDefaultClassroomId() == null
                         && product.getBillingType() == null

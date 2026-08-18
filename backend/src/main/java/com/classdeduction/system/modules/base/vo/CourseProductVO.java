@@ -19,6 +19,7 @@ public record CourseProductVO(
         String registerClass,
         String subjectName,
         String teachingMode,
+        Integer sortOrder,
         Integer defaultTotalUnits,
         Integer defaultLessonUnits,
         String status,

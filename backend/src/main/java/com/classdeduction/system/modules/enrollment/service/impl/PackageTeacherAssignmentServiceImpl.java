@@ -206,6 +206,8 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
             assignment.setPackageId(packageId);
             assignment.setTeacherId(item.getTeacherId());
             assignment.setAllocatedUnits(UnitConverter.toHalfHourUnits(item.getAllocatedHours()));
+            assignment.setSubjectName(StringUtils.hasText(item.getSubjectName()) ? item.getSubjectName().trim() : null);
+            assignment.setHourlyRateSnapshot(item.getHourlyRateSnapshot());
             assignment.setIsPrimary(Boolean.TRUE.equals(item.getPrimary()) || (primaryCount == 0 && first) ? 1 : 0);
             assignment.setEffectiveFrom(now);
             assignment.setAssignmentStatus("ACTIVE");
@@ -281,6 +283,7 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
                 .teacherId(item.getTeacherId())
                 .teacherNo(teacher == null ? null : teacher.getTeacherNo())
                 .teacherName(teacher == null ? null : teacher.getTeacherName())
+                .subjectName(item.getSubjectName())
                 .allocatedHours(allocatedUnits == null
                         ? null
                         : UnitConverter.toHoursDecimal(allocatedUnits))
@@ -288,6 +291,7 @@ public class PackageTeacherAssignmentServiceImpl implements PackageTeacherAssign
                 .remainingHours(allocatedUnits == null
                         ? null
                         : UnitConverter.toHoursDecimal(Math.max(allocatedUnits - consumedUnits, 0)))
+                .hourlyRateSnapshot(item.getHourlyRateSnapshot())
                 .primary(item.getIsPrimary() != null && item.getIsPrimary() == 1)
                 .assignmentStatus(item.getAssignmentStatus())
                 .effectiveFrom(item.getEffectiveFrom())

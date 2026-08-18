@@ -229,6 +229,90 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldInitializeOneOnOneOpeningBalanceFromAlreadyUsedHours() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOpeningUsedHours(new BigDecimal("3.5"));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        ArgumentCaptor<com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity>
+                assignmentCaptor = ArgumentCaptor.forClass(
+                com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity.class);
+        verify(packageTeacherAssignmentMapper).insert(assignmentCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getOpeningUsedHours()).isEqualByComparingTo("3.5");
+        assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(20);
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(7);
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(13);
+        assertThat(assignmentCaptor.getValue().getAllocatedUnits()).isEqualTo(13);
+    }
+
+    @Test
+    void shouldAllowOpeningUsedHoursEqualToPurchasedHours() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOpeningUsedHours(new BigDecimal("10.0"));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(20);
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isZero();
+    }
+
+    @Test
+    void shouldRejectOpeningUsedHoursExceedingPurchasedHours() {
+        stubStudentCreationOnly();
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
+        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+        lenient().when(teacherMapper.selectById(301L)).thenReturn(buildTeacher());
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOpeningUsedHours(new BigDecimal("10.5"));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("OPENING_USED_HOURS_EXCEED_PACKAGE");
+        verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+    }
+
+    @Test
+    void shouldRejectOpeningUsedHoursOutsideHalfHourIncrement() {
+        stubStudentCreationOnly();
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
+        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+        lenient().when(teacherMapper.selectById(301L)).thenReturn(buildTeacher());
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOpeningUsedHours(new BigDecimal("3.25"));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("OPENING_USED_HOURS_INVALID");
+        verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+    }
+
+    @Test
+    void shouldAcceptHistoricalStartDateForLegacyIntake() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.setPeriodStartDate(LocalDate.of(2025, 1, 15));
+        request.setPeriodEndDate(LocalDate.of(2026, 12, 31));
+        request.getItems().get(0).setInitialLessonStartAt(null);
+        request.getItems().get(0).setInitialLessonEndAt(null);
+        request.getItems().get(0).setOpeningUsedHours(new BigDecimal("2.0"));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        assertThat(coursePackageCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2025, 1, 15));
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(4);
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
     void shouldUseNormalizedTeacherPhoneAsInitialPassword() {
         stubSuccessfulIntake(false);
         TeacherEntity teacher = buildTeacher();
@@ -518,12 +602,13 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldCreateRollingMonthlyGroupEnrollmentFromPurchasedMonths() {
+    void shouldCreateCalendarMonthGroupEnrollmentFromSelectedPackage() {
         stubMonthlyGroupClassIntake();
         RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setSignupDate(LocalDate.of(2026, 5, 15));
         RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
-        item.setSessions(null);
-        item.setPurchasedMonths(6);
+        item.setPackageUnit("MONTH");
+        item.setPackageQuantity(new BigDecimal("2"));
 
         registrationIntakeService.submitIntake(request);
 
@@ -531,11 +616,11 @@ class RegistrationIntakeServiceImplTest {
                 ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
-        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("4800.00");
-        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(6);
-        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 1));
-        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2027, 2, 28));
-        assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("MONTHLY");
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("800.00");
+        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(2);
+        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 5, 15));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 6, 30));
+        assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("MONTH");
     }
 
     private void stubSuccessfulIntake(boolean duplicateStudentUsername) {
@@ -630,6 +715,8 @@ class RegistrationIntakeServiceImplTest {
         CoursePriceOptionEntity option = buildOption("15:30-17:00");
         option.setCourseType("GROUP");
         option.setRegisterClass("Group class");
+        option.setPackageUnit("MONTH");
+        option.setPackageQuantity(new BigDecimal("2"));
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
         ClassGroupEntity classGroup = new ClassGroupEntity();
@@ -726,7 +813,6 @@ class RegistrationIntakeServiceImplTest {
         item.setInitialLessonEndAt(null);
         item.setClassId(501L);
         item.setOneOnOneUnits(null);
-        item.setPurchasedMonths(1);
         request.setItems(List.of(item));
         return request;
     }

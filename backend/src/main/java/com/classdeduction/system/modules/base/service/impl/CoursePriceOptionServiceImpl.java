@@ -484,6 +484,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             ClassGroupScheduleSlotEntity entity = new ClassGroupScheduleSlotEntity();
             entity.setClassGroupId(classGroup.getId());
             entity.setTeacherId(slot.getTeacherId());
+            entity.setSubjectName(StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName().trim() : null);
+            entity.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
             entity.setWeekday(slot.getWeekday());
             entity.setStartTime(start);
             entity.setEndTime(end);
@@ -494,8 +496,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                     ? LocalTime.parse(slot.getAfternoonStartTime())
                     : null);
             entity.setAttendanceOptions(StringUtils.hasText(slot.getAttendanceOptions())
-                    ? slot.getAttendanceOptions()
-                    : "FULL_DAY,MORNING,AFTERNOON");
+                    ? slot.getAttendanceOptions().trim().toUpperCase(Locale.ROOT)
+                    : "ALL");
             classGroupScheduleSlotMapper.insert(entity);
             slots.add(entity);
         }
@@ -537,6 +539,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
                 occurrence.setLessonNo(generateClassLessonNo());
                 occurrence.setClassGroupId(classGroup.getId());
+                occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(slot.getTeacherId() == null
                         ? classGroup.getTeacherId()
@@ -545,6 +548,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 occurrence.setPlannedStartAt(startAt);
                 occurrence.setPlannedEndAt(endAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                occurrence.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 lessonOccurrenceMapper.insert(occurrence);
@@ -733,7 +737,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                                 .orderByAsc(ClassGroupScheduleSlotEntity::getStartTime))
                         .stream()
                         .map(slot -> new CoursePriceOptionVO.GroupScheduleSlotVO(
-                                slot.getTeacherId(), slot.getWeekday(),
+                                slot.getTeacherId(), slot.getSubjectName(), slot.getHourlyRateSnapshot(), slot.getWeekday(),
                                 slot.getStartTime().toString(), slot.getEndTime().toString(),
                                 slot.getMorningEndTime() == null ? null : slot.getMorningEndTime().toString(),
                                 slot.getAfternoonStartTime() == null ? null : slot.getAfternoonStartTime().toString(),
