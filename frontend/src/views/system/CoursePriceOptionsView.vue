@@ -4,8 +4,8 @@
       <div class="config-panel__header">
         <div>
           <span class="config-panel__eyebrow">Course setup</span>
-          <h2>Course Package Setup</h2>
-          <p>Set up each course by grade, then add one package with the payment options students can choose.</p>
+          <h2>Set Grades & Prices</h2>
+          <p>Choose a course, add the grades it accepts, then enter the registration choices, prices, and schedule.</p>
         </div>
         <div class="header-actions">
           <el-button @click="loadAll">Reload</el-button>
@@ -53,7 +53,7 @@
         <div class="matrix-content">
           <section v-if="!query.courseProductId" class="matrix-empty-guide">
             <span>Step 2</span>
-            <strong>Choose a course on the left to set grades and package prices.</strong>
+            <strong>Choose a course on the left to set grades, prices, and schedule.</strong>
             <p>{{ emptyGuideDescription }}</p>
             <el-button v-if="fromProductSetup" @click="goToCourseProducts">Back to Courses</el-button>
           </section>
@@ -86,8 +86,8 @@
               </div>
               <div class="matrix-step-strip__item matrix-step-strip__item--active">
                 <span>2</span>
-                <strong>{{ selectedMode === 'GROUP' ? 'Set grades and payment options' : 'Set grade and hour packages' }}</strong>
-                <small>{{ configuredGradeCount }} grade{{ configuredGradeCount === 1 ? '' : 's' }}, {{ visibleOptions.length }} payment option{{ visibleOptions.length === 1 ? '' : 's' }}</small>
+                <strong>{{ selectedMode === 'GROUP' ? 'Set grades and registration options' : 'Set grades and hour packages' }}</strong>
+                <small>{{ configuredGradeCount }} grade{{ configuredGradeCount === 1 ? '' : 's' }}, {{ visibleOptions.length }} registration option{{ visibleOptions.length === 1 ? '' : 's' }}</small>
               </div>
               <div class="matrix-step-strip__item">
                 <span>3</span>
@@ -107,10 +107,10 @@
                 <div>
                   <span>{{ selectedProduct?.productName }}</span>
                   <strong>{{ group.gradeLabel }}</strong>
-                  <small>{{ group.rows.length }} payment option{{ group.rows.length === 1 ? '' : 's' }}</small>
+                  <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }}</small>
                 </div>
                 <el-button size="small" type="primary" plain @click="openDialog(undefined, group.gradeLabel)">
-                  Add payment option
+                  Add registration option
                 </el-button>
               </header>
 
@@ -130,9 +130,9 @@
                   size="small"
                   border
                 >
-                  <el-table-column label="Payment option" min-width="180">
+                  <el-table-column label="Registration option" min-width="180">
                     <template #header>
-                      <header-tip label="Payment option" tip="A way to pay for this package, such as 2 months, 6 months, or 13 sessions." />
+                      <header-tip label="Registration option" tip="What the student is buying, such as 2 months, 6 months, or Fall 13 sessions." />
                     </template>
                     <template #default="{ row }">
                       <div class="matrix-class-cell">
@@ -170,7 +170,7 @@
                   </el-table-column>
                   <el-table-column label="Usage" width="120">
                     <template #header>
-                      <header-tip label="Usage" tip="Whether this payment option has already been used by registrations." />
+                      <header-tip label="Usage" tip="Whether this registration option has already been used by registrations." />
                     </template>
                     <template #default="{ row }">
                       <div class="usage-cell">
@@ -190,7 +190,7 @@
                   </el-table-column>
                   <el-table-column label="Status" width="96" align="center">
                     <template #header>
-                      <header-tip label="Status" tip="Only active payment options are available during registration." />
+                      <header-tip label="Status" tip="Only active registration options are available during registration." />
                     </template>
                     <template #default="{ row }">
                       <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
@@ -200,7 +200,7 @@
                   </el-table-column>
                   <el-table-column label="Actions" width="124" align="center">
                     <template #header>
-                      <header-tip label="Actions" tip="Edit, deactivate, or delete this payment option." />
+                      <header-tip label="Actions" tip="Edit, deactivate, or delete this registration option." />
                     </template>
                     <template #default="{ row }">
                       <div class="matrix-actions">
@@ -245,7 +245,7 @@
     >
       <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
         <div class="pricing-context">
-          <span>{{ formTeachingMode === 'GROUP' ? 'Add a registration choice for' : 'Add a purchasable package for' }}</span>
+          <span>{{ formTeachingMode === 'GROUP' ? 'Add a registration choice for' : 'Add an hour package for' }}</span>
           <strong>{{ selectedFormProductName }}</strong>
           <small>{{ formTeachingMode === 'GROUP'
             ? 'Example: Grade 3 can have choices like 2 months, 6 months, Fall 13 sessions, or Full year.'
@@ -306,14 +306,14 @@
             <span class="section-step">2</span>
             <div>
               <strong>Define what the student can buy</strong>
-              <small>This is the choice staff will select during registration.</small>
+              <small>This is the registration choice staff will select later.</small>
             </div>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Name shown in registration">
+            <el-form-item label="Registration option name">
               <el-input v-model="form.periodLabel" :placeholder="paymentOptionPlaceholder" />
             </el-form-item>
-            <el-form-item label="How to count this choice">
+            <el-form-item label="Count by">
               <el-select v-model="form.packageUnit" style="width: 100%;">
                 <el-option
                   v-for="unit in groupPackageUnits"
@@ -389,10 +389,10 @@
             </div>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Schedule start month">
+            <el-form-item label="Class calendar starts">
               <el-date-picker v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
-            <el-form-item label="Schedule end month">
+            <el-form-item label="Class calendar ends">
               <el-date-picker v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
           </div>
@@ -413,7 +413,7 @@
               <span>{{ groupSlotLabel(slot) }}</span>
               <el-select
                 v-model="slot.attendanceOptions"
-                placeholder="Students"
+                placeholder="Applies to"
                 style="width: 150px"
               >
                 <el-option label="All students" value="ALL" />
@@ -431,7 +431,7 @@
               <el-input
                 v-model="slot.subjectName"
                 maxlength="128"
-                placeholder="Subject, e.g. Chemistry"
+                placeholder="Taught subject"
                 clearable
               />
               <el-input-number
@@ -440,7 +440,7 @@
                 :precision="2"
                 :step="1"
                 controls-position="right"
-                placeholder="Rate"
+                placeholder="Pay / hr"
                 style="width: 130px"
               />
             </div>
@@ -487,7 +487,7 @@
 
         <el-collapse class="advanced-settings">
           <el-collapse-item title="Advanced settings" name="advanced">
-            <el-form-item label="Registration detail">
+            <el-form-item label="Notes">
               <el-input v-model="form.detailText" type="textarea" :rows="2" placeholder="Optional" />
             </el-form-item>
           </el-collapse-item>
@@ -497,7 +497,7 @@
           <strong>Registration result:</strong>
           {{ formTeachingMode === 'ONE_ON_ONE'
             ? 'Registration will show this grade and hour package under the selected course.'
-            : 'Registration will show this grade package, then let staff choose one payment option.' }}
+            : 'Registration will show this grade and registration option.' }}
         </div>
       </el-form>
       <template #footer>
@@ -735,7 +735,7 @@ const matrixFlowTitle = computed(() => {
   }
   return visibleOptions.value.length === 0
     ? 'Step 2: add a grade'
-    : 'Review grade packages and payment options';
+    : 'Review grades and registration options';
 });
 
 const matrixFlowEyebrow = computed(() => {
@@ -749,12 +749,12 @@ const matrixFlowDescription = computed(() => {
   if (selectedMode.value === 'ONE_ON_ONE') {
     return 'Choose the course, set a grade, then add the hour packages students can buy.';
   }
-  return 'A group course can have multiple grades. Each grade has one package, and that package can have multiple payment options such as 2 months, 6 months, or full year.';
+  return 'A group course can have multiple grades. Each grade can offer registration choices such as 2 months, 6 months, Fall 13 sessions, or full year.';
 });
 
 const emptyGuideDescription = computed(() =>
   selectedMode.value === 'GROUP'
-    ? 'Pick a course, then create a grade under it. After that, add payment options and prices inside that grade package.'
+    ? 'Pick a course, then add a grade. After that, enter the registration choices, prices, and schedule for that grade.'
     : 'Pick a 1-on-1 course, then add the grade and hour package students can buy.'
 );
 
@@ -765,13 +765,13 @@ const contextBackLabel = computed(() =>
 const matrixPrimaryActionLabel = computed(() =>
   selectedMode.value === 'ONE_ON_ONE'
     ? 'Add hour package'
-    : groupedOptions.value.length === 0 ? 'Add grade package' : 'Add payment option'
+    : groupedOptions.value.length === 0 ? 'Add grade' : 'Add registration option'
 );
 
 const priceDialogTitle = computed(() =>
   selectedMode.value === 'ONE_ON_ONE'
     ? 'Add 1-on-1 package'
-    : editingId.value ? 'Edit payment option' : 'Add payment option'
+    : editingId.value ? 'Edit registration option' : 'Add registration option'
 );
 
 const priceSaveButtonLabel = computed(() => {
@@ -780,7 +780,7 @@ const priceSaveButtonLabel = computed(() => {
   }
   return selectedMode.value === 'ONE_ON_ONE'
     ? 'Save hour package'
-    : 'Save payment option';
+    : 'Save registration option';
 });
 
 const groupedOptions = computed<ProductPriceGroup[]>(() => {
@@ -817,7 +817,7 @@ const configuredGradeCount = computed(() => groupedOptions.value.length);
 const formTeachingMode = computed<CourseMode>(() => courseTypes.find(item => item.value === form.courseType)?.mode ?? 'GROUP');
 const priceColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
   ? 'Total package price for the selected private lesson hours.'
-  : 'Total price for this payment option. Registration uses this configured price directly.');
+  : 'Total price for this registration option. Registration uses this configured price directly.');
 const formProductChoices = computed(() =>
   sortCourseProducts(courseProducts.value.filter(product => product.teachingMode === formTeachingMode.value))
 );
@@ -1165,7 +1165,7 @@ async function saveOption() {
     } else {
       await createCoursePriceOption(buildPayload());
     }
-    ElMessage.success(editingId.value ? 'Payment option updated.' : 'Payment option created.');
+    ElMessage.success(editingId.value ? 'Registration option updated.' : 'Registration option created.');
     dialogVisible.value = false;
     await loadOptions();
   } catch (err: any) {
@@ -1177,9 +1177,9 @@ async function saveOption() {
 
 async function deactivateOption(row: CoursePriceOptionItem) {
   try {
-    await ElMessageBox.confirm('Deactivate this payment option?', 'Confirm', { type: 'warning' });
+    await ElMessageBox.confirm('Deactivate this registration option?', 'Confirm', { type: 'warning' });
     await updateCoursePriceOption(row.id, payloadFromRow(row, 'INACTIVE'));
-    ElMessage.success('Payment option deactivated.');
+    ElMessage.success('Registration option deactivated.');
     await loadOptions();
   } catch (err: any) {
     if (err !== 'cancel') {
@@ -1190,7 +1190,7 @@ async function deactivateOption(row: CoursePriceOptionItem) {
 
 async function removeOption(id: EntityId) {
   try {
-    await ElMessageBox.confirm('Delete this payment option?', 'Confirm', { type: 'warning' });
+    await ElMessageBox.confirm('Delete this registration option?', 'Confirm', { type: 'warning' });
     await deleteCoursePriceOption(id);
     ElMessage.success('Deleted.');
     await loadOptions();

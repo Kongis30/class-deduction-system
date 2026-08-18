@@ -10,7 +10,7 @@
         <div>
           <span class="panel-header__eyebrow">Course setup</span>
           <h2 class="panel-header__title">Courses</h2>
-          <p class="panel-header__desc">Create the course name first, then add grades and package prices.</p>
+          <p class="panel-header__desc">Create the course first, then set the grades, prices, and schedule.</p>
         </div>
         <div class="panel-header__actions">
           <el-button type="primary" @click="openProductDialog()">
@@ -28,7 +28,7 @@
         </div>
         <div class="setup-path-card__actions">
           <el-button type="primary" @click="openPriceMatrixForCurrentTab">
-            Set package prices
+            Set grades & prices
           </el-button>
         </div>
       </section>
@@ -53,7 +53,7 @@
         </div>
         <div class="product-toolbar__links">
           <el-button text type="primary" @click="openSubjectDialog()">Manage subjects</el-button>
-          <el-button text type="primary" @click="$router.push('/admin/config/course-prices')">Package prices</el-button>
+          <el-button text type="primary" @click="$router.push('/admin/config/course-prices')">Grades & prices</el-button>
         </div>
       </div>
 
@@ -104,7 +104,7 @@
             <el-table-column label="Actions" width="190">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button type="primary" link @click="openProductPrices(row)">Set packages</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set grades & prices</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -130,7 +130,6 @@
                       {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                     </el-tag>
                   </strong>
-                  <span>{{ row.subjectName || 'No subject' }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -144,7 +143,7 @@
                   >
                     {{ groupSetupLabel(row) }}
                   </el-tag>
-                  <span>{{ groupClassCount(row) > 0 ? 'Ready for registration' : 'Add package prices and schedule first' }}</span>
+                  <span>{{ groupClassCount(row) > 0 ? 'Ready for registration' : 'Add grades, prices, and schedule first' }}</span>
                 </div>
               </template>
             </el-table-column>
@@ -154,7 +153,7 @@
             <el-table-column label="Actions" width="210">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button type="primary" link @click="openProductPrices(row)">Set packages</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set grades & prices</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -183,15 +182,15 @@
         <section class="product-step">
           <div class="product-step__head">
             <strong>Course details</strong>
-            <small v-if="form.teachingMode === 'ONE_ON_ONE'">
-              Only create the 1-on-1 course here. Hour packages and prices are added after saving.
+            <small>
+              Save the course name first. Grades, prices, and schedules are set on the next page.
             </small>
           </div>
           <div class="product-form__row">
             <el-form-item label="Course name" prop="productName" class="product-form__full">
               <el-input v-model="form.productName" :placeholder="courseNamePlaceholder" />
             </el-form-item>
-            <el-form-item label="Subject" prop="subjectName">
+            <el-form-item v-if="form.teachingMode === 'ONE_ON_ONE'" label="Subject (optional)">
               <el-select v-model="form.subjectName" placeholder="Select subject" filterable style="width: 100%;">
                 <el-option v-for="subj in subjects" :key="subj.subjectName" :label="subj.subjectName" :value="subj.subjectName" />
               </el-select>
@@ -219,7 +218,7 @@
           type="info"
           :closable="false"
           show-icon
-          title="After saving, add packages such as 40 hours, 60 hours, and 120 hours with their prices."
+          title="After saving, add grades, hour packages, and prices."
         />
 
         <el-alert
@@ -227,7 +226,7 @@
           type="info"
           :closable="false"
           show-icon
-          title="After creating the course, add grades, package prices, and weekly schedule."
+          title="After saving, add grades, registration options, prices, and weekly schedule."
         />
 
         <section class="product-step product-step--settings">
@@ -491,8 +490,8 @@ const courseNamePlaceholder = computed(() =>
 
 const setupPathTitle = computed(() =>
   activeTab.value === 'GROUP'
-    ? 'Create the course first, then add package prices and schedule.'
-    : 'Create the course first, then add hour packages.'
+    ? 'Create the course first, then add grades, prices, and schedule.'
+    : 'Create the course first, then add grades, hour packages, and prices.'
 );
 
 const setupPathDescription = computed(() =>
@@ -508,8 +507,8 @@ const productDialogTitle = computed(() => {
 
 const productDialogSubtitle = computed(() =>
   form.teachingMode === 'ONE_ON_ONE'
-    ? 'Step 1: name the course. Step 2: add 40/60/120-hour packages and prices.'
-    : 'Step 1 of 3: create the group course. After saving, add package prices and schedules.'
+    ? 'Step 1: name the course. Step 2: add grades, hour packages, and prices.'
+    : 'Step 1: name the group course. Step 2: add grades, registration options, prices, and schedule.'
 );
 
 const productSaveButtonLabel = computed(() => {
@@ -673,7 +672,7 @@ function openProductDialog(row?: CourseProductItem) {
       productName: row.productName,
       courseType: row.courseType ?? (row.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL'),
       registerClass: row.registerClass ?? row.productName,
-      subjectName: row.subjectName ?? '',
+      subjectName: row.teachingMode === 'ONE_ON_ONE' ? row.subjectName ?? '' : '',
       teachingMode: row.teachingMode,
       sortOrder: row.sortOrder ?? 99,
       defaultTotalUnits: row.defaultTotalUnits,
@@ -714,7 +713,7 @@ async function handleSubmit() {
       productName: form.productName,
       courseType: form.courseType,
       registerClass: editingId.value ? (form.registerClass || form.productName) : form.productName,
-      subjectName: form.subjectName,
+      subjectName: form.teachingMode === 'ONE_ON_ONE' ? form.subjectName : '',
       teachingMode: form.teachingMode,
       sortOrder: form.sortOrder ?? 99,
       status: form.status,
@@ -738,8 +737,8 @@ async function handleSubmit() {
         productName: form.productName,
         courseType: form.courseType,
         description: form.teachingMode === 'ONE_ON_ONE'
-          ? 'Next, add grade, package hours, and price. You can do it now or come back later.'
-          : 'Next, add grade, package price, and schedule. You can do it now or come back later.',
+          ? 'Next, add grades, hour packages, and prices. You can do it now or come back later.'
+          : 'Next, add grades, registration options, prices, and schedule. You can do it now or come back later.',
       };
       ElMessage.success('Course created.');
       dialogVisible.value = false;
