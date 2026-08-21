@@ -125,6 +125,7 @@ CREATE TABLE `class_enrollment` (
   `expiry_date` date NOT NULL COMMENT 'Expiry date',
   `billing_type` varchar(32) DEFAULT NULL COMMENT 'Snapshot of product billing type: PER_SESSION/MONTHLY',
   `purchased_quantity` int DEFAULT NULL COMMENT 'Purchased quantity: session count (PER_SESSION) or month count (MONTHLY)',
+  `attendance_option` varchar(32) NOT NULL DEFAULT 'FULL_DAY' COMMENT 'Registration attendance option: FULL_DAY/MORNING/AFTERNOON/NONE',
   `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/EXPIRED/CANCELLED',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
   `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
@@ -165,6 +166,7 @@ CREATE TABLE `class_group` (
   `grade_band` varchar(64) DEFAULT NULL COMMENT 'Grade band served by this class',
   `billing_type` varchar(32) DEFAULT NULL COMMENT 'PER_SESSION or MONTHLY',
   `start_date` date DEFAULT NULL COMMENT 'First date for a per-session grade class',
+  `end_date` date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class',
   `total_sessions` int DEFAULT NULL COMMENT 'Total sessions for a per-session grade class',
   `start_month` date DEFAULT NULL COMMENT 'First month for a monthly grade class',
   `end_month` date DEFAULT NULL COMMENT 'Last month for a monthly grade class',
@@ -197,12 +199,15 @@ DROP TABLE IF EXISTS `class_group_schedule_slot`;
 CREATE TABLE `class_group_schedule_slot` (
   `id` bigint NOT NULL,
   `class_group_id` bigint NOT NULL,
+  `teacher_id` bigint DEFAULT NULL COMMENT 'Optional teacher override for this weekly slot',
+  `subject_name` varchar(128) DEFAULT NULL COMMENT 'Subject taught in this weekly class slot',
   `weekday` tinyint NOT NULL,
   `start_time` time NOT NULL,
   `end_time` time NOT NULL,
   `morning_end_time` time DEFAULT NULL COMMENT 'Morning half-day end time',
   `afternoon_start_time` time DEFAULT NULL COMMENT 'Afternoon half-day start time',
   `attendance_options` varchar(64) DEFAULT NULL COMMENT 'Available attendance options',
+  `hourly_rate_snapshot` decimal(10,2) DEFAULT NULL COMMENT 'Teacher hourly pay-rate snapshot for this weekly class slot',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   `created_by` bigint DEFAULT NULL,
   `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
@@ -213,7 +218,9 @@ CREATE TABLE `class_group_schedule_slot` (
   `version` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
   KEY `idx_class_group_schedule_slot` (`class_group_id`,`weekday`),
-  CONSTRAINT `fk_class_group_schedule_slot_group` FOREIGN KEY (`class_group_id`) REFERENCES `class_group` (`id`)
+  KEY `idx_class_group_schedule_slot_teacher` (`teacher_id`,`weekday`,`start_time`),
+  CONSTRAINT `fk_class_group_schedule_slot_group` FOREIGN KEY (`class_group_id`) REFERENCES `class_group` (`id`),
+  CONSTRAINT `fk_class_group_schedule_slot_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -270,13 +277,13 @@ CREATE TABLE `course_package` (
   `subject_name` varchar(64) DEFAULT NULL COMMENT 'Subject name snapshot',
   `teaching_mode` varchar(32) NOT NULL COMMENT 'Teaching mode snapshot',
   `total_units` int NOT NULL COMMENT 'Total units, 1=0.5 hours',
-  `default_lesson_units` int NOT NULL COMMENT 'Default lesson units',
+  `default_lesson_units` int DEFAULT NULL COMMENT 'Legacy default lesson units; new schedules define duration per slot',
   `consumed_units` int NOT NULL DEFAULT '0' COMMENT 'Consumed units',
   `remaining_units` int NOT NULL DEFAULT '0' COMMENT 'Remaining units',
   `original_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Original amount snapshot',
   `discount_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Discount amount',
   `received_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Received amount',
-  `package_status` varchar(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'Course package status: DRAFT/ACTIVE/COMPLETED/CLOSED',
+  `package_status` varchar(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'Course package status: DRAFT/ACTIVE/PAUSED/COMPLETED/CLOSED',
   `start_date` date DEFAULT NULL COMMENT 'Start date',
   `estimated_end_date` date DEFAULT NULL COMMENT 'Estimated end date',
   `completed_at` datetime(3) DEFAULT NULL COMMENT 'Completed at',
@@ -300,7 +307,7 @@ CREATE TABLE `course_package` (
   CONSTRAINT `fk_package_order_item` FOREIGN KEY (`enrollment_order_item_id`) REFERENCES `enrollment_order_item` (`id`),
   CONSTRAINT `fk_package_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`),
   CONSTRAINT `fk_package_student` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`),
-  CONSTRAINT `chk_course_package_units` CHECK (((`total_units` >= 0) and (`default_lesson_units` > 0) and (`consumed_units` >= 0) and (`remaining_units` >= 0)))
+  CONSTRAINT `chk_course_package_units` CHECK (((`total_units` >= 0) and (`consumed_units` >= 0) and (`remaining_units` >= 0)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Course package table created after enrollment for a student''s independent lesson balance account';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -331,6 +338,8 @@ CREATE TABLE `course_price_option` (
   `group_session_count` int DEFAULT NULL COMMENT 'Purchased sessions for a per-session grade class',
   `group_month_count` int DEFAULT NULL COMMENT 'Purchased months for a monthly grade class',
   `price_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Default list price for this option',
+  `group_total_price` decimal(12,2) DEFAULT NULL COMMENT 'User-entered total group class price',
+  `group_session_price` decimal(12,2) DEFAULT NULL COMMENT 'Derived group class price per session',
   `currency_code` varchar(16) NOT NULL DEFAULT 'USD' COMMENT 'Currency code',
   `course_product_id` bigint DEFAULT NULL COMMENT 'Optional linked course product template ID',
   `class_id` bigint DEFAULT NULL COMMENT 'Generated grade class for group price option',
@@ -371,8 +380,7 @@ CREATE TABLE `course_product` (
   `register_class` varchar(64) DEFAULT NULL COMMENT 'Register Class label shown on registration',
   `subject_name` varchar(64) DEFAULT NULL COMMENT 'Subject name',
   `teaching_mode` varchar(32) NOT NULL COMMENT 'Teaching mode: ONE_ON_ONE/GROUP',
-  `default_total_units` int DEFAULT NULL COMMENT 'Default total units, null for class group',
-  `default_lesson_units` int DEFAULT NULL COMMENT 'Default lesson units, null for class group',
+  `sort_order` int NOT NULL DEFAULT '99' COMMENT 'Display order for course list sorting',
   `billing_type` varchar(32) DEFAULT NULL COMMENT 'GROUP billing type: PER_SESSION/MONTHLY',
   `start_date` date DEFAULT NULL COMMENT 'GROUP PER_SESSION start date',
   `total_sessions` int DEFAULT NULL COMMENT 'GROUP PER_SESSION total session count',
@@ -395,7 +403,8 @@ CREATE TABLE `course_product` (
   UNIQUE KEY `uk_course_product_code` (`product_code`),
   KEY `idx_course_product_name` (`product_name`),
   KEY `idx_course_product_status` (`status`),
-  KEY `idx_course_product_type` (`course_type`,`status`)
+  KEY `idx_course_product_type` (`course_type`,`status`),
+  KEY `idx_course_product_sort_order` (`sort_order`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Course product templates';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -538,6 +547,7 @@ CREATE TABLE `enrollment_order_item` (
   `grade_band` varchar(64) DEFAULT NULL COMMENT 'Grade or level option snapshot',
   `period_label` varchar(128) DEFAULT NULL COMMENT 'Period or package option snapshot',
   `time_slot_label` varchar(128) DEFAULT NULL COMMENT 'Time slot option snapshot',
+  `start_date` date DEFAULT NULL COMMENT 'Course line enrollment start date',
   `package_unit` varchar(16) DEFAULT NULL COMMENT 'Package unit snapshot',
   `package_quantity` decimal(8,2) DEFAULT NULL COMMENT 'Package quantity snapshot',
   `package_total_price` decimal(12,2) DEFAULT NULL COMMENT 'Package total price snapshot',
@@ -547,6 +557,7 @@ CREATE TABLE `enrollment_order_item` (
   `original_price_amount` decimal(12,2) DEFAULT NULL COMMENT 'Original configured price before manual override',
   `manual_price_override` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Manual price override flag: 0=no, 1=yes',
   `one_on_one_hours` decimal(6,2) DEFAULT NULL COMMENT 'One-on-one purchased hours',
+  `opening_used_hours` decimal(6,2) DEFAULT NULL COMMENT 'Already used one-on-one hours before system tracking',
   `one_on_one_units` int DEFAULT NULL COMMENT 'One-on-one units snapshot, 1 unit = 0.5 hour',
   `initial_lesson_start_at` datetime(3) DEFAULT NULL COMMENT 'Structured first one-on-one lesson start time',
   `initial_lesson_end_at` datetime(3) DEFAULT NULL COMMENT 'Structured first one-on-one lesson end time',
@@ -575,6 +586,7 @@ CREATE TABLE `enrollment_order_item` (
   CONSTRAINT `fk_enrollment_order_item_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`),
   CONSTRAINT `chk_enrollment_order_item_amount` CHECK (((`price_amount` >= 0) and ((`original_price_amount` is null) or (`original_price_amount` >= 0)))),
   CONSTRAINT `chk_enrollment_order_item_hours` CHECK (((`one_on_one_hours` is null) or (`one_on_one_hours` >= 0))),
+  CONSTRAINT `chk_enrollment_order_item_opening_used_hours` CHECK (((`opening_used_hours` is null) or (`opening_used_hours` >= 0))),
   CONSTRAINT `chk_enrollment_order_item_units` CHECK (((`one_on_one_units` is null) or (`one_on_one_units` >= 0)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Enrollment order line items for multi-course registration intake';
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -665,6 +677,7 @@ CREATE TABLE `lesson_occurrence` (
   `planned_start_at` datetime(3) NOT NULL COMMENT 'Planned start time',
   `planned_end_at` datetime(3) NOT NULL COMMENT 'Planned end time',
   `planned_units` int NOT NULL COMMENT 'Planned units',
+  `hourly_rate_snapshot` decimal(10,2) DEFAULT NULL COMMENT 'Teacher hourly pay-rate snapshot copied from schedule/allocation',
   `planning_status` varchar(32) NOT NULL DEFAULT 'SCHEDULED' COMMENT 'Planning status: SCHEDULED/ADJUSTED/CANCELLED/MERGED',
   `source_occurrence_id` bigint DEFAULT NULL COMMENT 'Source occurrence ID used for makeup lessons or adjustments',
   `conflict_checked` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Conflict check completed: 0=no, 1=yes',
@@ -967,6 +980,8 @@ CREATE TABLE `package_teacher_assignment` (
   `package_id` bigint NOT NULL COMMENT 'Course package ID',
   `teacher_id` bigint NOT NULL COMMENT 'Teacher ID',
   `allocated_units` int DEFAULT NULL COMMENT 'Allocated teaching units; 1 unit = 0.5 hour',
+  `subject_name` varchar(128) DEFAULT NULL COMMENT 'Subject assigned to this teacher allocation',
+  `hourly_rate_snapshot` decimal(10,2) DEFAULT NULL COMMENT 'Teacher hourly pay-rate snapshot for this allocation',
   `is_primary` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'Primary teacher flag: 0=no, 1=yes',
   `effective_from` datetime(3) NOT NULL COMMENT 'Effective from',
   `effective_to` datetime(3) DEFAULT NULL COMMENT 'Effective to',
@@ -1131,10 +1146,13 @@ DROP TABLE IF EXISTS `recurring_schedule_slot`;
 CREATE TABLE `recurring_schedule_slot` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `rule_id` bigint NOT NULL COMMENT 'Rule ID',
+  `teacher_id` bigint DEFAULT NULL COMMENT 'Teacher assigned to this recurring weekly slot',
+  `subject_name` varchar(128) DEFAULT NULL COMMENT 'Course/subject name taught in this recurring weekly slot',
   `weekday` tinyint NOT NULL COMMENT 'Weekday: 1-7',
   `start_time` time NOT NULL COMMENT 'Start time',
   `end_time` time NOT NULL COMMENT 'End time',
   `planned_units` int NOT NULL COMMENT 'Planned units',
+  `allocated_units` int DEFAULT NULL COMMENT 'Units (1 unit = 0.5h) allocated to this slot; existing schedules must be completed before further generation',
   `slot_status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Slot status: ACTIVE/INACTIVE',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
   `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
@@ -1146,7 +1164,9 @@ CREATE TABLE `recurring_schedule_slot` (
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
   KEY `idx_schedule_slot_rule` (`rule_id`,`weekday`,`start_time`),
+  KEY `idx_schedule_slot_teacher` (`teacher_id`,`weekday`,`start_time`),
   CONSTRAINT `fk_schedule_slot_rule` FOREIGN KEY (`rule_id`) REFERENCES `recurring_schedule_rule` (`id`),
+  CONSTRAINT `fk_schedule_slot_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`),
   CONSTRAINT `chk_schedule_slot_units` CHECK ((`planned_units` > 0)),
   CONSTRAINT `chk_schedule_slot_weekday` CHECK ((`weekday` between 1 and 7))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Recurring schedule slots';
@@ -1515,8 +1535,10 @@ DROP TABLE IF EXISTS `teacher_pay_rate`;
 CREATE TABLE `teacher_pay_rate` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `teacher_id` bigint NOT NULL COMMENT 'Teacher ID',
-  `course_product_id` bigint NOT NULL COMMENT 'Course product ID',
+  `course_product_id` bigint DEFAULT NULL COMMENT 'Optional course product scope; NULL applies to all products',
   `student_id` bigint DEFAULT NULL COMMENT 'Optional student-specific pay-rate override',
+  `grade_band` varchar(64) DEFAULT NULL COMMENT 'Optional grade/level scope for this teacher pay rate',
+  `delivery_mode` varchar(16) DEFAULT NULL COMMENT 'Optional delivery scope: ONLINE, OFFLINE, or NULL for any',
   `hourly_rate` decimal(10,2) NOT NULL COMMENT 'Per-hour rate in dollars',
   `notes` varchar(500) DEFAULT NULL COMMENT 'Notes',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
@@ -1528,7 +1550,7 @@ CREATE TABLE `teacher_pay_rate` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_teacher_product_student` (`teacher_id`,`course_product_id`,`student_id`,`is_deleted`),
+  UNIQUE KEY `uk_teacher_product_student_scope` (`teacher_id`,`course_product_id`,`student_id`,`grade_band`,`delivery_mode`,`is_deleted`),
   KEY `idx_pay_rate_teacher` (`teacher_id`),
   KEY `idx_pay_rate_product` (`course_product_id`),
   KEY `idx_pay_rate_student` (`student_id`),
