@@ -252,10 +252,10 @@ export interface CoursePriceOptionSavePayload {
     morningEndTime?: string;
     afternoonStartTime?: string;
     attendanceOptions?: string;
-    hourlyRateSnapshot?: number;
   }[];
   groupBillingType?: string;
   groupStartDate?: string;
+  groupEndDate?: string;
   groupTotalSessions?: number;
   groupTotalPrice?: number;
   groupSessionPrice?: number;
@@ -304,8 +304,6 @@ export interface CourseProductSavePayload {
   subjectName?: string;
   teachingMode: string;
   sortOrder?: number;
-  defaultTotalUnits?: number;
-  defaultLessonUnits?: number;
   status?: string;
   notes?: string;
 }

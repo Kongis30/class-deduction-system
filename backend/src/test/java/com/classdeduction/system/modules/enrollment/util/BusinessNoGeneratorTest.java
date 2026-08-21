@@ -102,4 +102,22 @@ class BusinessNoGeneratorTest {
         int sequence = Integer.parseInt(sequenceStr);
         assertThat(sequence).isBetween(0, 9999);
     }
+
+    @Test
+    @DisplayName("Should generate collision-free lesson occurrence numbers in a large batch")
+    void shouldGenerateCollisionFreeLessonOccurrenceNumbersInLargeBatch() {
+        Set<String> lessonNumbers = new HashSet<>();
+        Set<String> classLessonNumbers = new HashSet<>();
+
+        for (int index = 0; index < 20_000; index++) {
+            lessonNumbers.add(BusinessNoGenerator.generateLessonOccurrenceNo());
+            classLessonNumbers.add(BusinessNoGenerator.generateClassLessonOccurrenceNo());
+        }
+
+        assertThat(lessonNumbers).hasSize(20_000);
+        assertThat(classLessonNumbers).hasSize(20_000);
+        assertThat(classLessonNumbers).allMatch(number -> number.startsWith("CLS"));
+        assertThat(lessonNumbers).allMatch(number -> number.startsWith("LS") && number.length() <= 32);
+        assertThat(classLessonNumbers).allMatch(number -> number.length() <= 32);
+    }
 }

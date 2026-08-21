@@ -41,10 +41,6 @@ public class CourseProductEntity extends BaseEntity {
 
     private Integer sortOrder;
 
-    private Integer defaultTotalUnits;
-
-    private Integer defaultLessonUnits;
-
     /** GROUP 计费类型：PER_SESSION（课次收费）/ MONTHLY（月收费）。 */
     private String billingType;
 

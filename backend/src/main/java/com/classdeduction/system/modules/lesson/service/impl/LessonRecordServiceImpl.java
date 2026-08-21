@@ -19,6 +19,7 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
@@ -425,7 +426,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             return null;
         }
         LessonOccurrenceEntity makeup = new LessonOccurrenceEntity();
-        makeup.setLessonNo(generateLessonNo());
+        makeup.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
         makeup.setPackageId(coursePackage.getId());
         makeup.setStudentId(student.getId());
         makeup.setScheduleRuleId(lastOccurrence.getScheduleRuleId());
@@ -1368,11 +1369,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         boolean actualHappened() {
             return actualStartAt != null || actualEndAt != null || actualUnits > 0;
         }
-    }
-
-    private String generateLessonNo() {
-        return "LS" + AppTime.nowLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 10000));
     }
 
     private record ConfirmationDecision(Long actualTeacherId,

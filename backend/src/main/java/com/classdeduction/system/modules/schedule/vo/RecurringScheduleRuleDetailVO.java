@@ -19,8 +19,6 @@ public record RecurringScheduleRuleDetailVO(
         String packageName,
         Long studentId,
         String studentName,
-        Long primaryTeacherId,
-        String primaryTeacherName,
         Long defaultClassroomId,
         String defaultClassroomName,
         String ruleStatus,

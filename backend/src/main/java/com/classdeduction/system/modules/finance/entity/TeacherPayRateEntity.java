@@ -13,7 +13,8 @@ import lombok.ToString;
 import java.math.BigDecimal;
 
 /**
- * 课时单价配置 — 每个老师+产品的组合有一个课时单价。
+ * Teacher hourly pay rate. A row can be scoped by grade level, delivery mode,
+ * course product, and optionally one student. Blank scopes are treated as ANY.
  */
 @Getter
 @Setter
@@ -31,9 +32,13 @@ public class TeacherPayRateEntity extends BaseEntity {
     private Long courseProductId;
 
     /**
-     * Optional student-specific override. A null value is the default product rate.
+     * Optional student-specific override. A null value applies to all students.
      */
     private Long studentId;
+
+    private String gradeBand;
+
+    private String deliveryMode;
 
     private BigDecimal hourlyRate;
 

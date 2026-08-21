@@ -40,6 +40,7 @@ public record CoursePriceOptionVO(
         List<GroupScheduleSlotVO> groupScheduleSlots,
         String groupBillingType,
         String groupStartDate,
+        String groupEndDate,
         Integer groupTotalSessions,
         String groupStartMonth,
         String groupEndMonth,
@@ -55,7 +56,6 @@ public record CoursePriceOptionVO(
     public record GroupScheduleSlotVO(
             Long teacherId,
             String subjectName,
-            BigDecimal hourlyRateSnapshot,
             Integer weekday,
             String startTime,
             String endTime,

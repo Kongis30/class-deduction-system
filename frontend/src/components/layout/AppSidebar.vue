@@ -7,15 +7,6 @@
         <strong>{{ APP_SHORT_NAME }}</strong>
         <span>JIN BEST TUTORING</span>
       </div>
-      <el-button
-        v-if="!appStore.sidebarCollapsed"
-        text
-        class="sidebar__hide-button"
-        aria-label="Hide navigation"
-        @click="appStore.toggleSidebar"
-      >
-        <el-icon><Fold /></el-icon>
-      </el-button>
     </div>
 
     <div class="sidebar__menu-area">
@@ -57,7 +48,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Calendar, DataAnalysis, Files, Fold, Tickets } from '@element-plus/icons-vue';
+import { Calendar, DataAnalysis, Files, Tickets } from '@element-plus/icons-vue';
 import { useRoute } from 'vue-router';
 
 import { APP_SHORT_NAME } from '@/config/app-config';
@@ -102,17 +93,4 @@ function resolveIcon(icon?: keyof typeof iconMap) {
   font-weight: 700;
 }
 
-.sidebar__hide-button {
-  width: 30px;
-  height: 30px;
-  margin-left: auto;
-  border-radius: 8px;
-  color: rgba(255, 255, 255, 0.72);
-}
-
-.sidebar__hide-button:hover,
-.sidebar__hide-button:focus {
-  background: rgba(255, 255, 255, 0.12);
-  color: #ffffff;
-}
 </style>

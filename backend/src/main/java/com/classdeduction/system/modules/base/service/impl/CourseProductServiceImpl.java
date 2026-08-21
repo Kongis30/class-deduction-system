@@ -174,28 +174,6 @@ public class CourseProductServiceImpl implements CourseProductService {
          if ("GROUP".equals(request.getTeachingMode()) && "ONE_ON_ONE".equals(request.getCourseType())) {
              throw new BusinessException("COURSE_TYPE_MODE_MISMATCH", "Group products cannot use ONE_ON_ONE course type.");
          }
-        if ("GROUP".equals(request.getTeachingMode())) {
-            if (request.getDefaultTotalUnits() != null) {
-                throw new BusinessException("GROUP product should not have total units.");
-            }
-            if (request.getDefaultLessonUnits() != null) {
-                throw new BusinessException("GROUP product should not have lesson units.");
-            }
-        } else {
-            // ONE_ON_ONE
-            if (request.getDefaultTotalUnits() == null) {
-                throw new BusinessException("Default total units is required for ONE_ON_ONE products.");
-            }
-            if (request.getDefaultLessonUnits() == null) {
-                throw new BusinessException("Default lesson units is required for ONE_ON_ONE products.");
-            }
-            if (request.getDefaultTotalUnits() <= 0
-                    || request.getDefaultLessonUnits() <= 0
-                    || request.getDefaultLessonUnits() > request.getDefaultTotalUnits() * 2) {
-                throw new BusinessException("INVALID_LESSON_UNITS",
-                        "Default lesson hours must be greater than zero and cannot exceed total hours.");
-            }
-        }
     }
 
      private void protectReferencedProductCriticalFields(CourseProductEntity existing, CourseProductSaveRequest request) {
@@ -206,8 +184,6 @@ public class CourseProductServiceImpl implements CourseProductService {
          addIfChanged(changedFields, "course type", existing.getCourseType(), normalizeCourseType(request));
          addIfChanged(changedFields, "register class", existing.getRegisterClass(), normalizeRegisterClass(request));
          addIfChanged(changedFields, "teaching format", existing.getTeachingMode(), request.getTeachingMode());
-         addIfChanged(changedFields, "default total hours", existing.getDefaultTotalUnits(), request.getDefaultTotalUnits());
-         addIfChanged(changedFields, "default lesson units", existing.getDefaultLessonUnits(), request.getDefaultLessonUnits());
          if (!changedFields.isEmpty()) {
              throw new BusinessException("PRODUCT_ALREADY_REFERENCED",
                      "This course product is already used. Create a new product to change: "
@@ -306,8 +282,6 @@ public class CourseProductServiceImpl implements CourseProductService {
         entity.setSubjectName(request.getSubjectName());
         entity.setTeachingMode(request.getTeachingMode());
         entity.setSortOrder(request.getSortOrder() == null ? 99 : request.getSortOrder());
-        entity.setDefaultTotalUnits(request.getDefaultTotalUnits());
-        entity.setDefaultLessonUnits(request.getDefaultLessonUnits());
         entity.setBillingType(null);
         entity.setStartDate(null);
         entity.setTotalSessions(null);
@@ -333,8 +307,6 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .subjectName(entity.getSubjectName())
                 .teachingMode(entity.getTeachingMode())
                 .sortOrder(entity.getSortOrder() == null ? 99 : entity.getSortOrder())
-                .defaultTotalUnits(entity.getDefaultTotalUnits())
-                .defaultLessonUnits(entity.getDefaultLessonUnits())
                 .status(entity.getStatus())
                 .notes(entity.getNotes())
                 .referenced(countProductReferences(entity.getId()) > 0)

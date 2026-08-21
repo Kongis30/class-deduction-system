@@ -15,6 +15,7 @@ import com.classdeduction.system.modules.finance.vo.TeacherPayRateVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.util.Collections;
 import java.util.List;
@@ -38,21 +39,27 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
                         .eq(teacherId != null, TeacherPayRateEntity::getTeacherId, teacherId)
                         .eq(courseProductId != null, TeacherPayRateEntity::getCourseProductId, courseProductId)
                         .orderByAsc(TeacherPayRateEntity::getTeacherId)
+                        .orderByAsc(TeacherPayRateEntity::getCourseProductId)
+                        .orderByAsc(TeacherPayRateEntity::getGradeBand)
+                        .orderByAsc(TeacherPayRateEntity::getDeliveryMode)
         );
         if (rates.isEmpty()) {
             return Collections.emptyList();
         }
 
         Set<Long> teacherIds = rates.stream().map(TeacherPayRateEntity::getTeacherId).collect(Collectors.toSet());
-        Set<Long> productIds = rates.stream().map(TeacherPayRateEntity::getCourseProductId).collect(Collectors.toSet());
+        Set<Long> productIds = rates.stream().map(TeacherPayRateEntity::getCourseProductId)
+                .filter(java.util.Objects::nonNull)
+                .collect(Collectors.toSet());
         Set<Long> studentIds = rates.stream().map(TeacherPayRateEntity::getStudentId)
                 .filter(java.util.Objects::nonNull)
                 .collect(Collectors.toSet());
 
         Map<Long, TeacherEntity> teacherMap = teacherMapper.selectBatchIds(teacherIds).stream()
                 .collect(Collectors.toMap(TeacherEntity::getId, t -> t));
-        Map<Long, CourseProductEntity> productMap = courseProductMapper.selectBatchIds(productIds).stream()
-                .collect(Collectors.toMap(CourseProductEntity::getId, p -> p));
+        Map<Long, CourseProductEntity> productMap = productIds.isEmpty() ? Collections.emptyMap()
+                : courseProductMapper.selectBatchIds(productIds).stream()
+                        .collect(Collectors.toMap(CourseProductEntity::getId, p -> p));
         Map<Long, String> studentNameMap = studentIds.isEmpty() ? Collections.emptyMap()
                 : studentMapper.selectBatchIds(studentIds).stream()
                         .collect(Collectors.toMap(item -> item.getId(), item -> item.getStudentName()));
@@ -71,6 +78,8 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
                     .subjectName(product == null ? null : product.getSubjectName())
                     .studentId(rate.getStudentId())
                     .studentName(studentNameMap.get(rate.getStudentId()))
+                    .gradeBand(rate.getGradeBand())
+                    .deliveryMode(rate.getDeliveryMode())
                     .hourlyRate(rate.getHourlyRate())
                     .notes(rate.getNotes())
                     .build();
@@ -84,21 +93,29 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
         if (teacherMapper.selectById(request.getTeacherId()) == null) {
             throw new BusinessException("TEACHER_NOT_FOUND", "Teacher not found.");
         }
-        // 检查产品存在
-        if (courseProductMapper.selectById(request.getCourseProductId()) == null) {
+        if (request.getCourseProductId() != null
+                && courseProductMapper.selectById(request.getCourseProductId()) == null) {
             throw new BusinessException("PRODUCT_NOT_FOUND", "Course product not found.");
         }
         if (request.getStudentId() != null && studentMapper.selectById(request.getStudentId()) == null) {
             throw new BusinessException("STUDENT_NOT_FOUND", "Student not found.");
         }
+        String gradeBand = normalizeGradeBand(request.getGradeBand());
+        String deliveryMode = normalizeDeliveryMode(request.getDeliveryMode());
 
         // Upsert: 存在则更新，不存在则创建
         TeacherPayRateEntity existing = payRateMapper.selectOne(
                 new LambdaQueryWrapper<TeacherPayRateEntity>()
                         .eq(TeacherPayRateEntity::getTeacherId, request.getTeacherId())
-                        .eq(TeacherPayRateEntity::getCourseProductId, request.getCourseProductId())
+                        .eq(request.getCourseProductId() != null,
+                                TeacherPayRateEntity::getCourseProductId, request.getCourseProductId())
+                        .isNull(request.getCourseProductId() == null, TeacherPayRateEntity::getCourseProductId)
                         .eq(request.getStudentId() != null, TeacherPayRateEntity::getStudentId, request.getStudentId())
                         .isNull(request.getStudentId() == null, TeacherPayRateEntity::getStudentId)
+                        .eq(gradeBand != null, TeacherPayRateEntity::getGradeBand, gradeBand)
+                        .isNull(gradeBand == null, TeacherPayRateEntity::getGradeBand)
+                        .eq(deliveryMode != null, TeacherPayRateEntity::getDeliveryMode, deliveryMode)
+                        .isNull(deliveryMode == null, TeacherPayRateEntity::getDeliveryMode)
                         .last("LIMIT 1"));
 
         if (existing != null) {
@@ -112,6 +129,8 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
         entity.setTeacherId(request.getTeacherId());
         entity.setCourseProductId(request.getCourseProductId());
         entity.setStudentId(request.getStudentId());
+        entity.setGradeBand(gradeBand);
+        entity.setDeliveryMode(deliveryMode);
         entity.setHourlyRate(request.getHourlyRate());
         entity.setNotes(request.getNotes());
         payRateMapper.insert(entity);
@@ -126,5 +145,30 @@ public class TeacherPayRateServiceImpl implements TeacherPayRateService {
             throw new BusinessException("PAY_RATE_NOT_FOUND", "Pay rate not found.");
         }
         payRateMapper.deleteById(id);
+    }
+
+    private String normalizeGradeBand(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return switch (value.trim().toUpperCase()) {
+            case "K-5", "K TO 5", "K-5 GRADE", "ELEMENTARY SCHOOL" -> "K-5";
+            case "6-8", "6 TO 8", "MIDDLE SCHOOL" -> "6-8";
+            case "9-12", "9 TO 12", "HIGH SCHOOL" -> "9-12";
+            case "AP", "AP LEVEL" -> "AP LEVEL";
+            default -> throw new BusinessException("INVALID_GRADE_BAND",
+                    "Grade band must be K-5, 6-8, 9-12, or AP Level.");
+        };
+    }
+
+    private String normalizeDeliveryMode(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim().toUpperCase();
+        if (!"ONLINE".equals(normalized) && !"OFFLINE".equals(normalized)) {
+            throw new BusinessException("INVALID_DELIVERY_MODE", "Delivery mode must be Online or Offline.");
+        }
+        return normalized;
     }
 }

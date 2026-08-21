@@ -18,6 +18,7 @@ export interface OneOnOneLesson {
   packageId: EntityId;
   plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
+  subjectName?: string;
   plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
   plannedStartAt: string;
@@ -48,11 +49,9 @@ export interface OneOnOnePackage {
   courseProductName?: string;
   gradeBand?: string;
   packageName: string;
-  subjectName?: string;
   totalUnits: number;
   consumedUnits: number;
   remainingUnits: number;
-  defaultLessonUnits?: number;
   renewalReminder: boolean;
   packageStatus: string;
   startDate?: string;

@@ -16,6 +16,11 @@
       </el-button>
     </div>
 
+    <div class="app-header__page">
+      <span v-if="currentPageSection">{{ currentPageSection }}</span>
+      <strong>{{ currentPageTitle }}</strong>
+    </div>
+
     <div class="app-header__right">
       <PageUsageGuide />
 
@@ -145,6 +150,8 @@ const authStore = useAuthStore();
 const adminToolGroups = computed(() => getSecondaryMenusForUser(authStore.currentUser));
 const adminIconMap = { DataAnalysis, Files, Money, Setting, Tickets, User };
 const showBackButton = computed(() => route.path !== '/dashboard');
+const currentPageTitle = computed(() => String(route.meta.title || 'Dashboard'));
+const currentPageSection = computed(() => String(route.meta.section || ''));
 
 function resolveAdminIcon(icon?: string) {
   return adminIconMap[icon as keyof typeof adminIconMap] ?? Setting;

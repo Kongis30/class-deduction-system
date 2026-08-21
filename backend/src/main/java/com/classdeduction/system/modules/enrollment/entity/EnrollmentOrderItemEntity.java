@@ -11,6 +11,7 @@ import lombok.Setter;
 import lombok.ToString;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -48,6 +49,8 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
     private String periodLabel;
 
     private String timeSlotLabel;
+
+    private LocalDate startDate;
 
     private String packageUnit;
 

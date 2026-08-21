@@ -16,7 +16,11 @@ public interface TeacherPaymentService {
 
     PageResponse<TeacherPaymentVO> pagePayments(Long teacherId, String status, int pageNum, int pageSize);
 
+    PageResponse<TeacherPaymentVO> pagePaymentsForTeacher(Long teacherId, String status, int pageNum, int pageSize);
+
     TeacherPaymentVO getPaymentDetail(Long id);
+
+    TeacherPaymentVO getPaymentDetailForTeacher(Long id, Long teacherId);
 
     void confirmPayment(Long id, Long userId);
 }

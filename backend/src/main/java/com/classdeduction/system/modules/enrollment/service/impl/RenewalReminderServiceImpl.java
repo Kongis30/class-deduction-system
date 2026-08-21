@@ -163,9 +163,8 @@ public class RenewalReminderServiceImpl implements RenewalReminderService {
 
             LocalDate endDate = coursePackage.getEstimatedEndDate();
             Integer daysUntilEnd = endDate == null ? null : (int) ChronoUnit.DAYS.between(today, endDate);
-            int lessonUnits = positive(coursePackage.getDefaultLessonUnits()) ? coursePackage.getDefaultLessonUnits() : 4;
             int remainingUnits = safeUnits(coursePackage.getRemainingUnits());
-            int remainingLessons = (int) Math.ceil((double) remainingUnits / lessonUnits);
+            int remainingLessons = (int) Math.ceil((double) remainingUnits / 4);
             boolean expiring = daysUntilEnd != null && daysUntilEnd <= settings.expiryReminderDays();
             boolean lowLessons = remainingLessons <= settings.oneOnOneRemainingLessons();
             if (!expiring && !lowLessons) {

@@ -10,6 +10,9 @@ import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest;
@@ -32,7 +35,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -54,8 +56,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService {
 
-    private static final DateTimeFormatter LESSON_NO_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
-
     // 本周临时调整支持的动作类型：修改、新增、删除（取消）。
     private static final String ACTION_UPDATE = "UPDATE";
     private static final String ACTION_CREATE = "CREATE";
@@ -65,6 +65,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final CoursePackageMapper coursePackageMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -74,6 +75,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     @Transactional(rollbackFor = Exception.class)
     public ScheduleAdjustmentResultVO adjust(ScheduleAdjustmentRequest request) {
         LessonOccurrenceEntity source = requireOccurrence(request.getOccurrenceId());
+        ensureOneOnOnePackageActive(source.getPackageId());
         Map<String, Object> beforeSnapshot = toSnapshot(source);
         validateAdjustmentType(request.getAdjustmentType());
         validateResourceAssignment(request);
@@ -129,6 +131,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     public WeeklyScheduleAdjustmentResultVO adjustWeekly(WeeklyScheduleAdjustmentRequest request) {
         LocalDate currentWeekStartDate = currentWeekStartDate();
         validateCurrentWeekRequest(request.getWeekStartDate(), currentWeekStartDate);
+        ensureOneOnOnePackageActive(request.getPackageId());
 
         LocalDateTime weekStart = currentWeekStartDate.atStartOfDay();
         LocalDateTime weekEnd = currentWeekStartDate.plusDays(7).atStartOfDay();
@@ -234,7 +237,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
     private LessonOccurrenceEntity createMakeupOccurrence(LessonOccurrenceEntity source, ScheduleAdjustmentRequest request) {
         LessonOccurrenceEntity newOccurrence = new LessonOccurrenceEntity();
-        newOccurrence.setLessonNo(generateLessonNo());
+        newOccurrence.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
         newOccurrence.setPackageId(source.getPackageId());
         newOccurrence.setClassGroupId(source.getClassGroupId());
         newOccurrence.setStudentId(source.getStudentId());
@@ -432,6 +435,25 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         }
     }
 
+    /**
+     * 暂停中的 1 对 1 课包只允许修改周期排课配置，不允许通过临时调课产生或变更课次。
+     * 恢复课程后由恢复流程统一按最新时段配置重新生成课次，避免暂停期间绕过课时分配。
+     */
+    private void ensureOneOnOnePackageActive(Long packageId) {
+        if (packageId == null) {
+            return;
+        }
+        CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
+        if (coursePackage == null) {
+            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
+        }
+        if ("ONE_ON_ONE".equals(coursePackage.getTeachingMode())
+                && !"ACTIVE".equals(coursePackage.getPackageStatus())) {
+            throw new BusinessException("PACKAGE_NOT_ACTIVE",
+                    "Schedule adjustments are unavailable while this 1-on-1 package is paused or inactive. Resume the package first.");
+        }
+    }
+
     private void ensureNoLessonRecords(List<Long> occurrenceIds) {
         Long recordCount = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
                 .in(LessonRecordEntity::getOccurrenceId, occurrenceIds));
@@ -490,7 +512,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                                                           LocalDateTime weekStart,
                                                           LocalDateTime weekEnd) {
         LessonOccurrenceEntity created = new LessonOccurrenceEntity();
-        created.setLessonNo(generateLessonNo());
+        created.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
         created.setPackageId(packageId);
         created.setStudentId(studentId);
         created.setScheduleRuleId(null);
@@ -731,7 +753,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         if (occurrence.getClassGroupId() == null) {
             return Set.of();
         }
-        return activeStudentIdsByClass(occurrence.getClassGroupId());
+        return activeStudentIdsByClassOnDate(occurrence.getClassGroupId(), occurrence.getPlannedStartAt());
     }
 
     private Set<Long> activeStudentIdsByClass(Long classGroupId) {
@@ -743,6 +765,31 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 .map(ClassEnrollmentEntity::getStudentId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private Set<Long> activeStudentIdsByClassOnDate(Long classGroupId, LocalDateTime lessonStartAt) {
+        if (lessonStartAt == null) {
+            return activeStudentIdsByClass(classGroupId);
+        }
+        LocalDate lessonDate = lessonStartAt.toLocalDate();
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classGroupId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .le(ClassEnrollmentEntity::getEnrollmentDate, lessonDate)
+                        .ge(ClassEnrollmentEntity::getExpiryDate, lessonDate))
+                .stream()
+                .filter(enrollment -> enrollmentIncludesLessonDate(enrollment, lessonDate))
+                .map(ClassEnrollmentEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private boolean enrollmentIncludesLessonDate(ClassEnrollmentEntity enrollment, LocalDate lessonDate) {
+        if (enrollment == null || lessonDate == null || enrollment.getCreatedAt() == null) {
+            return true;
+        }
+        return !lessonDate.isBefore(enrollment.getCreatedAt().toLocalDate());
     }
 
     private Set<Long> collectResourceIds(List<LessonOccurrenceEntity> occurrences,
@@ -782,7 +829,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         if (target.getClassGroupId() == null) {
             return;
         }
-        for (Long studentId : activeStudentIdsByClass(target.getClassGroupId())) {
+        for (Long studentId : activeStudentIdsByClassOnDate(target.getClassGroupId(), target.getPlannedStartAt())) {
             if (hasStudentConflict(target, studentId, ignoredOccurrenceId)) {
                 throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted class occurrence.");
             }
@@ -1035,8 +1082,4 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 .build();
     }
 
-    private String generateLessonNo() {
-        return "LS" + LESSON_NO_FORMATTER.format(AppTime.nowLocalDateTime())
-                + String.format("%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 10000));
-    }
 }

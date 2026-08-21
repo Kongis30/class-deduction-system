@@ -498,8 +498,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     }
 
     private int renewalReminderUnits(CoursePackageEntity coursePackage) {
-        int lessonUnits = safeUnits(coursePackage.getDefaultLessonUnits());
-        return lessonUnits > 0 ? lessonUnits * 2 : 8;
+        return 8;
     }
 
     private Long teacherIdByPackage(Long packageId, Context context) {

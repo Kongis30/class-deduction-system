@@ -36,14 +36,6 @@ public class CourseProductSaveRequest {
     @Schema(description = "Display sort order. Lower numbers appear first.", example = "10")
     private Integer sortOrder;
 
-    @Min(value = 1, message = "Default total units must be at least 1")
-    @Schema(description = "Default total units in hours (required for ONE_ON_ONE, null for GROUP)", example = "24")
-    private Integer defaultTotalUnits;
-
-    @Min(value = 1, message = "Default lesson units must be at least 1")
-    @Schema(description = "Default 30-minute units per lesson (required for ONE_ON_ONE, null for GROUP)", example = "4")
-    private Integer defaultLessonUnits;
-
     @Schema(description = "Course product status", example = "ACTIVE")
     private String status;
 

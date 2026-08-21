@@ -10,14 +10,29 @@ export interface AuthUser {
   studentId?: EntityId;
 }
 
+/**
+ * A login account has exactly one workspace identity.  This must come from
+ * `userType`; role codes authorize actions but never change the workspace.
+ */
+export type UserWorkspace = 'TEACHER' | 'STUDENT' | 'STAFF';
+
+export function getUserWorkspace(user: AuthUser | null): UserWorkspace {
+  switch (user?.userType) {
+    case 'TEACHER':
+      return 'TEACHER';
+    case 'STUDENT':
+      return 'STUDENT';
+    default:
+      return 'STAFF';
+  }
+}
+
 export function isTeacherUser(user: AuthUser | null): boolean {
-  if (!user) return false;
-  return user.userType === 'TEACHER' || (user.roleCodes ?? []).includes('TEACHER');
+  return getUserWorkspace(user) === 'TEACHER';
 }
 
 export function isStudentUser(user: AuthUser | null): boolean {
-  if (!user) return false;
-  return user.userType === 'STUDENT' || (user.roleCodes ?? []).includes('STUDENT');
+  return getUserWorkspace(user) === 'STUDENT';
 }
 
 export function isAdminUser(user: AuthUser | null): boolean {
@@ -35,8 +50,13 @@ export function isAdminOrStaffUser(user: AuthUser | null): boolean {
 }
 
 export function getDefaultLandingPath(user: AuthUser | null): string {
-  if (isStudentUser(user) || isTeacherUser(user)) return '/calendar';
-  return '/registration';
+  switch (getUserWorkspace(user)) {
+    case 'TEACHER':
+    case 'STUDENT':
+      return '/calendar';
+    default:
+      return '/registration';
+  }
 }
 
 export interface LoginPayload {

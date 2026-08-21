@@ -6,16 +6,20 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
+import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
-import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.finance.dto.TeacherPaymentCreateRequest;
 import com.classdeduction.system.modules.finance.dto.UnpaidLessonQuery;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
@@ -57,12 +61,14 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final CourseProductMapper courseProductMapper;
+    private final ClassroomMapper classroomMapper;
+    private final EnrollmentOrderMapper enrollmentOrderMapper;
+    private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final TeacherPayRateMapper payRateMapper;
     private final TeacherPaymentMapper paymentMapper;
     private final TeacherPaymentItemMapper paymentItemMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassGroupMapper classGroupMapper;
-    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
 
     @Override
     public List<UnpaidLessonVO> queryUnpaidLessons(UnpaidLessonQuery query) {
@@ -115,14 +121,24 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         }
 
         // 3. 批量加载关联数据
-        Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).collect(Collectors.toSet());
-        Set<Long> studentIds = records.stream().map(LessonRecordEntity::getStudentId).collect(Collectors.toSet());
-        Set<Long> occurrenceIds = records.stream().map(LessonRecordEntity::getOccurrenceId).collect(Collectors.toSet());
+        Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<Long> studentIds = records.stream().map(LessonRecordEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<Long> occurrenceIds = records.stream().map(LessonRecordEntity::getOccurrenceId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
 
-        Map<Long, CoursePackageEntity> packageMap = coursePackageMapper.selectBatchIds(packageIds).stream()
-                .collect(Collectors.toMap(CoursePackageEntity::getId, p -> p));
-        Map<Long, StudentEntity> studentMap = studentMapper.selectBatchIds(studentIds).stream()
-                .collect(Collectors.toMap(StudentEntity::getId, s -> s));
+        Map<Long, CoursePackageEntity> packageMap = !packageIds.isEmpty()
+                ? coursePackageMapper.selectBatchIds(packageIds).stream()
+                .collect(Collectors.toMap(CoursePackageEntity::getId, p -> p))
+                : Collections.emptyMap();
+        Map<Long, StudentEntity> studentMap = !studentIds.isEmpty()
+                ? studentMapper.selectBatchIds(studentIds).stream()
+                .collect(Collectors.toMap(StudentEntity::getId, s -> s))
+                : Collections.emptyMap();
 
         // 3a. 查询 occurrence 信息（occurrenceType + classGroupId）
         Map<Long, LessonOccurrenceEntity> occurrenceMap = !occurrenceIds.isEmpty()
@@ -139,6 +155,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ? classGroupMapper.selectBatchIds(classGroupIds).stream()
                 .collect(Collectors.toMap(ClassGroupEntity::getId, cg -> cg))
                 : Collections.emptyMap();
+        Map<Long, EnrollmentOrderItemEntity> orderItemMap = loadOrderItems(packageMap.values());
+        Map<Long, EnrollmentOrderEntity> orderMap = loadOrders(packageMap.values());
+        Map<Long, ClassroomEntity> classroomMap = loadClassrooms(occurrenceMap.values(), classGroupMap.values());
 
         // 4. 获取产品的 productId 集合（包括 1v1 课包和班课产品）
         Set<Long> productIds = packageMap.values().stream()
@@ -187,9 +206,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 // 班课没有 packageId，从 class_group 获取 productId
                 ClassGroupEntity cg = classGroupMap.get(occurrence.getClassGroupId());
                 Long productId = cg != null ? cg.getProductId() : null;
-                BigDecimal hourlyRate = firstPositive(
-                        occurrence.getHourlyRateSnapshot(),
-                        resolvePayRate(rateMap, query.getTeacherId(), productId, null));
+                BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, null,
+                        resolveGradeBand(null, null, cg),
+                        resolveDeliveryMode(occurrence, cg, null, classroomMap));
 
                 BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                         .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
@@ -223,9 +242,11 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             // 非班课：一条记录一行
             CoursePackageEntity pkg = packageMap.get(rec.getPackageId());
             Long productId = pkg != null ? pkg.getCourseProductId() : null;
-            BigDecimal hourlyRate = firstPositive(
-                    resolveAllocationRateSnapshot(rec.getPackageId(), query.getTeacherId()),
-                    resolvePayRate(rateMap, query.getTeacherId(), productId, rec.getStudentId()));
+            EnrollmentOrderItemEntity orderItem = pkg == null ? null : orderItemMap.get(pkg.getEnrollmentOrderItemId());
+            EnrollmentOrderEntity order = pkg == null ? null : orderMap.get(pkg.getEnrollmentOrderId());
+            BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, rec.getStudentId(),
+                    resolveGradeBand(orderItem, studentMap.get(rec.getStudentId()), null),
+                    resolveDeliveryMode(occurrence, null, order, classroomMap));
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                     .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
             BigDecimal amount = hours.multiply(hourlyRate).setScale(2, RoundingMode.HALF_UP);
@@ -302,8 +323,14 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         validateRepresentativeClassRecords(records, occurrenceMap);
 
         Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).filter(Objects::nonNull).collect(Collectors.toSet());
-        Map<Long, CoursePackageEntity> packageMap = coursePackageMapper.selectBatchIds(packageIds).stream()
-                .collect(Collectors.toMap(CoursePackageEntity::getId, p -> p));
+        Map<Long, CoursePackageEntity> packageMap = !packageIds.isEmpty()
+                ? coursePackageMapper.selectBatchIds(packageIds).stream()
+                .collect(Collectors.toMap(CoursePackageEntity::getId, p -> p))
+                : Collections.emptyMap();
+        Map<Long, StudentEntity> studentMap = loadStudents(records);
+        Map<Long, EnrollmentOrderItemEntity> orderItemMap = loadOrderItems(packageMap.values());
+        Map<Long, EnrollmentOrderEntity> orderMap = loadOrders(packageMap.values());
+        Map<Long, ClassroomEntity> classroomMap = loadClassrooms(occurrenceMap.values(), classGroupMap.values());
 
         List<TeacherPayRateEntity> rates = payRateMapper.selectList(
                 new LambdaQueryWrapper<TeacherPayRateEntity>()
@@ -327,13 +354,15 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 productId = cg != null ? cg.getProductId() : null;
             }
             LessonOccurrenceEntity occ = occurrenceMap.get(rec.getOccurrenceId());
+            CoursePackageEntity pkg = rec.getPackageId() == null ? null : packageMap.get(rec.getPackageId());
+            ClassGroupEntity cg = occ == null ? null : classGroupMap.get(occ.getClassGroupId());
+            EnrollmentOrderItemEntity orderItem = pkg == null ? null : orderItemMap.get(pkg.getEnrollmentOrderItemId());
+            EnrollmentOrderEntity order = pkg == null ? null : orderMap.get(pkg.getEnrollmentOrderId());
             BigDecimal hr = requirePayRate(
-                    firstPositive(
-                            rec.getPackageId() == null
-                                    ? (occ == null ? null : occ.getHourlyRateSnapshot())
-                                    : resolveAllocationRateSnapshot(rec.getPackageId(), request.getTeacherId()),
-                            resolvePayRate(rateMap, request.getTeacherId(), productId,
-                                    rec.getPackageId() == null ? null : rec.getStudentId())),
+                    resolvePayRate(rateMap, request.getTeacherId(), productId,
+                            rec.getPackageId() == null ? null : rec.getStudentId(),
+                            resolveGradeBand(orderItem, studentMap.get(rec.getStudentId()), cg),
+                            resolveDeliveryMode(occ, cg, order, classroomMap)),
                     productId);
             BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                     .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
@@ -437,7 +466,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
     private Map<String, BigDecimal> toRateMap(List<TeacherPayRateEntity> rates) {
         Map<String, BigDecimal> rateMap = new HashMap<>();
         for (TeacherPayRateEntity rate : rates) {
-            rateMap.put(rateKey(rate.getTeacherId(), rate.getCourseProductId(), rate.getStudentId()), rate.getHourlyRate());
+            rateMap.put(rateKey(rate.getTeacherId(), rate.getCourseProductId(), rate.getStudentId(),
+                    rate.getGradeBand(), rate.getDeliveryMode()), rate.getHourlyRate());
         }
         return rateMap;
     }
@@ -450,36 +480,186 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         return rate;
     }
 
-    private BigDecimal resolvePayRate(Map<String, BigDecimal> rateMap, Long teacherId, Long productId, Long studentId) {
+    private BigDecimal resolvePayRate(Map<String, BigDecimal> rateMap,
+                                      Long teacherId,
+                                      Long productId,
+                                      Long studentId,
+                                      String gradeBand,
+                                      String deliveryMode) {
         if (studentId != null) {
-            BigDecimal studentOverride = rateMap.get(rateKey(teacherId, productId, studentId));
+            BigDecimal studentOverride = resolveScopedRate(rateMap, teacherId, productId, studentId,
+                    gradeBand, deliveryMode);
             if (studentOverride != null) {
                 return studentOverride;
             }
         }
-        return rateMap.getOrDefault(rateKey(teacherId, productId, null), BigDecimal.ZERO);
+        BigDecimal defaultRate = resolveScopedRate(rateMap, teacherId, productId, null, gradeBand, deliveryMode);
+        return defaultRate == null ? BigDecimal.ZERO : defaultRate;
     }
 
-    private BigDecimal resolveAllocationRateSnapshot(Long packageId, Long teacherId) {
-        if (packageId == null || teacherId == null) {
+    private BigDecimal resolveScopedRate(Map<String, BigDecimal> rateMap,
+                                         Long teacherId,
+                                         Long productId,
+                                         Long studentId,
+                                         String gradeBand,
+                                         String deliveryMode) {
+        List<String> gradeCandidates = scopeCandidates(gradeBand);
+        List<String> deliveryCandidates = scopeCandidates(deliveryMode);
+        for (Long productCandidate : productCandidates(productId)) {
+            for (String grade : gradeCandidates) {
+                for (String delivery : deliveryCandidates) {
+                    BigDecimal rate = rateMap.get(rateKey(teacherId, productCandidate, studentId, grade, delivery));
+                    if (rate != null) {
+                        return rate;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private List<Long> productCandidates(Long productId) {
+        return productId == null ? Collections.singletonList(null) : Arrays.asList(productId, null);
+    }
+
+    private List<String> scopeCandidates(String value) {
+        String normalized = normalizeScope(value);
+        return normalized == null ? List.of("ANY") : List.of(normalized, "ANY");
+    }
+
+    private String rateKey(Long teacherId, Long productId, Long studentId, String gradeBand, String deliveryMode) {
+        return teacherId + ":" + (productId == null ? "ANY_PRODUCT" : productId)
+                + ":" + (studentId == null ? "DEFAULT" : studentId)
+                + ":" + scopeKey(gradeBand) + ":" + scopeKey(deliveryMode);
+    }
+
+    private String scopeKey(String value) {
+        String normalized = normalizeScope(value);
+        return normalized == null ? "ANY" : normalized;
+    }
+
+    private String normalizeScope(String value) {
+        if (!StringUtils.hasText(value)) {
             return null;
         }
-        PackageTeacherAssignmentEntity assignment = packageTeacherAssignmentMapper.selectOne(
-                new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
-                        .eq(PackageTeacherAssignmentEntity::getPackageId, packageId)
-                        .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
-                        .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
-                        .eq(PackageTeacherAssignmentEntity::getIsDeleted, 0)
-                        .last("LIMIT 1"));
-        return assignment == null ? null : assignment.getHourlyRateSnapshot();
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "ELEMENTARY SCHOOL", "K TO 5" -> "K-5";
+            case "MIDDLE SCHOOL", "6 TO 8" -> "6-8";
+            case "HIGH SCHOOL", "9 TO 12" -> "9-12";
+            case "AP", "AP LEVEL" -> "AP LEVEL";
+            default -> normalized;
+        };
     }
 
-    private BigDecimal firstPositive(BigDecimal preferred, BigDecimal fallback) {
-        return preferred != null && preferred.compareTo(BigDecimal.ZERO) > 0 ? preferred : fallback;
+    private String resolveGradeBand(EnrollmentOrderItemEntity orderItem, StudentEntity student, ClassGroupEntity classGroup) {
+        if (orderItem != null && StringUtils.hasText(orderItem.getGradeBand())) {
+            return toPayGradeBand(orderItem.getGradeBand());
+        }
+        if (classGroup != null && StringUtils.hasText(classGroup.getGradeBand())) {
+            return toPayGradeBand(classGroup.getGradeBand());
+        }
+        return student == null ? null : toPayGradeBand(student.getGrade());
     }
 
-    private String rateKey(Long teacherId, Long productId, Long studentId) {
-        return teacherId + ":" + productId + ":" + (studentId == null ? "DEFAULT" : studentId);
+    private String toPayGradeBand(String value) {
+        String normalized = normalizeScope(value);
+        if (normalized == null) {
+            return null;
+        }
+        if ("AP LEVEL".equals(normalized) || normalized.contains("AP")) {
+            return "AP LEVEL";
+        }
+        if ("K-5".equals(normalized) || "6-8".equals(normalized) || "9-12".equals(normalized)) {
+            return normalized;
+        }
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("G?(\\d{1,2})").matcher(normalized);
+        if (!matcher.find()) {
+            return normalized;
+        }
+        int grade = Integer.parseInt(matcher.group(1));
+        if (grade <= 5) {
+            return "K-5";
+        }
+        if (grade <= 8) {
+            return "6-8";
+        }
+        return "9-12";
+    }
+
+    private String resolveDeliveryMode(LessonOccurrenceEntity occurrence,
+                                       ClassGroupEntity classGroup,
+                                       EnrollmentOrderEntity order,
+                                       Map<Long, ClassroomEntity> classroomMap) {
+        ClassroomEntity plannedRoom = occurrence == null ? null : classroomMap.get(occurrence.getPlannedClassroomId());
+        if (plannedRoom != null) {
+            return isOnlineText(plannedRoom.getRoomName(), plannedRoom.getCampus(), plannedRoom.getNotes())
+                    ? "ONLINE" : "OFFLINE";
+        }
+        ClassroomEntity classRoom = classGroup == null ? null : classroomMap.get(classGroup.getClassroomId());
+        if (classRoom != null) {
+            return isOnlineText(classRoom.getRoomName(), classRoom.getCampus(), classRoom.getNotes())
+                    ? "ONLINE" : "OFFLINE";
+        }
+        if (order != null && StringUtils.hasText(order.getCampusNameSnapshot())) {
+            return isOnlineText(order.getCampusNameSnapshot()) ? "ONLINE" : "OFFLINE";
+        }
+        return null;
+    }
+
+    private boolean isOnlineText(String... values) {
+        for (String value : values) {
+            if (StringUtils.hasText(value) && value.toLowerCase(Locale.ROOT).contains("online")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Map<Long, StudentEntity> loadStudents(List<LessonRecordEntity> records) {
+        Set<Long> studentIds = records.stream()
+                .map(LessonRecordEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return studentIds.isEmpty() ? Collections.emptyMap()
+                : studentMapper.selectBatchIds(studentIds).stream()
+                        .collect(Collectors.toMap(StudentEntity::getId, s -> s));
+    }
+
+    private Map<Long, EnrollmentOrderItemEntity> loadOrderItems(Collection<CoursePackageEntity> packages) {
+        Set<Long> itemIds = packages.stream()
+                .map(CoursePackageEntity::getEnrollmentOrderItemId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return itemIds.isEmpty() ? Collections.emptyMap()
+                : enrollmentOrderItemMapper.selectBatchIds(itemIds).stream()
+                        .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, item -> item, (left, right) -> left));
+    }
+
+    private Map<Long, EnrollmentOrderEntity> loadOrders(Collection<CoursePackageEntity> packages) {
+        Set<Long> orderIds = packages.stream()
+                .map(CoursePackageEntity::getEnrollmentOrderId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return orderIds.isEmpty() ? Collections.emptyMap()
+                : enrollmentOrderMapper.selectBatchIds(orderIds).stream()
+                        .collect(Collectors.toMap(EnrollmentOrderEntity::getId, order -> order, (left, right) -> left));
+    }
+
+    private Map<Long, ClassroomEntity> loadClassrooms(Collection<LessonOccurrenceEntity> occurrences,
+                                                      Collection<ClassGroupEntity> classGroups) {
+        Set<Long> classroomIds = new HashSet<>();
+        occurrences.stream()
+                .map(LessonOccurrenceEntity::getPlannedClassroomId)
+                .filter(Objects::nonNull)
+                .forEach(classroomIds::add);
+        classGroups.stream()
+                .map(ClassGroupEntity::getClassroomId)
+                .filter(Objects::nonNull)
+                .forEach(classroomIds::add);
+        return classroomIds.isEmpty() ? Collections.emptyMap()
+                : classroomMapper.selectBatchIds(classroomIds).stream()
+                        .collect(Collectors.toMap(ClassroomEntity::getId, classroom -> classroom, (left, right) -> left));
     }
 
     private void validatePaymentPeriod(TeacherPaymentCreateRequest request, List<LessonRecordEntity> records) {
@@ -530,6 +710,14 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
     }
 
     @Override
+    public PageResponse<TeacherPaymentVO> pagePaymentsForTeacher(Long teacherId, String status, int pageNum, int pageSize) {
+        if (teacherId == null) {
+            throw new BusinessException("TEACHER_BINDING_REQUIRED", "This account is not linked to a teacher profile.");
+        }
+        return pagePayments(teacherId, status, pageNum, pageSize);
+    }
+
+    @Override
     public TeacherPaymentVO getPaymentDetail(Long id) {
         TeacherPaymentEntity payment = paymentMapper.selectById(id);
         if (payment == null) {
@@ -545,6 +733,18 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         List<TeacherPaymentItemVO> itemVOs = toItemVOs(items);
 
         return toPaymentVO(payment, teacher, itemVOs);
+    }
+
+    @Override
+    public TeacherPaymentVO getPaymentDetailForTeacher(Long id, Long teacherId) {
+        if (teacherId == null) {
+            throw new BusinessException("TEACHER_BINDING_REQUIRED", "This account is not linked to a teacher profile.");
+        }
+        TeacherPaymentVO detail = getPaymentDetail(id);
+        if (!Objects.equals(detail.teacherId(), teacherId)) {
+            throw new BusinessException("PAYMENT_NOT_FOUND", "Payment not found.");
+        }
+        return detail;
     }
 
     @Override

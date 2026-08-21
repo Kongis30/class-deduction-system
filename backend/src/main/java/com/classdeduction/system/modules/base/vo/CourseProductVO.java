@@ -20,8 +20,6 @@ public record CourseProductVO(
         String subjectName,
         String teachingMode,
         Integer sortOrder,
-        Integer defaultTotalUnits,
-        Integer defaultLessonUnits,
         String status,
         String notes,
         Boolean referenced,

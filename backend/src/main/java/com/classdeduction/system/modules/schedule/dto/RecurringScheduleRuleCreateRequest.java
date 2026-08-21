@@ -22,9 +22,6 @@ public class RecurringScheduleRuleCreateRequest {
     @Schema(description = "Course package ID", example = "1880000000000000001")
     private Long packageId;
 
-    @Schema(description = "Default primary teacher ID", example = "1880000000000000002")
-    private Long primaryTeacherId;
-
     @Schema(description = "Default classroom ID", example = "1880000000000000003")
     private Long defaultClassroomId;
 

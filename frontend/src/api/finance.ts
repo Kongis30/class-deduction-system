@@ -6,8 +6,10 @@ import type { EntityId, TeacherPayRateItem, TeacherPaymentItem, UnpaidLessonItem
 
 export interface TeacherPayRateSavePayload {
   teacherId: EntityId;
-  courseProductId: EntityId;
+  courseProductId?: EntityId;
   studentId?: EntityId;
+  gradeBand?: string;
+  deliveryMode?: string;
   hourlyRate: number;
   notes?: string;
 }
@@ -57,6 +59,18 @@ export function fetchPayments(params: {
 
 export function fetchPaymentDetail(id: EntityId) {
   return http.get<ApiResponse<TeacherPaymentItem>>(`/v1/finance/payments/${id}`);
+}
+
+export function fetchMyPayroll(params: {
+  status?: string;
+  pageNum?: number;
+  pageSize?: number;
+}) {
+  return http.get<ApiResponse<PageResult<TeacherPaymentItem>>>('/v1/finance/my-payroll', { params });
+}
+
+export function fetchMyPayrollDetail(id: EntityId) {
+  return http.get<ApiResponse<TeacherPaymentItem>>(`/v1/finance/my-payroll/${id}`);
 }
 
 export function confirmPayment(id: EntityId) {

@@ -11,7 +11,6 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -53,8 +52,6 @@ public class LessonOccurrenceEntity extends BaseEntity {
     private LocalDateTime plannedEndAt;
 
     private Integer plannedUnits;
-
-    private BigDecimal hourlyRateSnapshot;
 
     private String planningStatus;
 

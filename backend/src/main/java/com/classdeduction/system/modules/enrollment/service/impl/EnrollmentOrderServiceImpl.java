@@ -83,11 +83,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
- * 报名服务：负责报名开单，并同步生成支付记录、课时包、主老师分配和收据。
+ * 报名服务：负责报名开单，并同步生成支付记录、课时包和收据。
+ *
+ * <p>1对1 的老师、课程和逐时段课时分配由排课服务负责，报名不再创建默认老师分配或自动排课。
  */
 @Service
 @Slf4j
@@ -351,8 +352,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         CourseProductEntity product = requireCourseProduct(request.getCourseProductId());
         validateOneOnOneProduct(product);
         validateOrderItemExists(request.getEnrollmentOrderItemId());
-        TeacherEntity primaryTeacher = request.getPrimaryTeacherId() == null ? null : requireTeacher(request.getPrimaryTeacherId());
-
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setEnrollmentNo(BusinessNoGenerator.generateEnrollmentNo());
         order.setStudentId(student.getId());
@@ -375,27 +374,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         List<Long> receiptIds = new ArrayList<>();
         List<String> receiptNos = new ArrayList<>();
 
-        if (primaryTeacher != null) {
-            createPrimaryTeacherAssignment(
-                    coursePackage.getId(),
-                    primaryTeacher.getId(),
-                    coursePackage.getTotalUnits(),
-                    request);
-        }
-
-        // Auto-create schedule if slots are provided
-        Long scheduleRuleId = null;
-        Integer generatedOccurrenceCount = null;
-        LocalDateTime firstLessonAt = null;
-        LocalDateTime lastLessonAt = null;
-        if (request.getSlots() != null && !request.getSlots().isEmpty() && request.getStartDate() != null) {
-            var scheduleResult = createScheduleForPackage(coursePackage, student, request);
-            scheduleRuleId = scheduleResult.ruleId();
-            generatedOccurrenceCount = scheduleResult.occurrenceCount();
-            firstLessonAt = scheduleResult.firstLessonAt();
-            lastLessonAt = scheduleResult.lastLessonAt();
-        }
-
         if (request.getReceivedAmount().compareTo(BigDecimal.ZERO) > 0) {
             PaymentRecordEntity paymentRecord = createPaymentRecord(order, request);
             paymentIds.add(paymentRecord.getId());
@@ -416,10 +394,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .paymentNos(paymentNos)
                 .receiptIds(receiptIds)
                 .receiptNos(receiptNos)
-                .scheduleRuleId(scheduleRuleId)
-                .generatedOccurrenceCount(generatedOccurrenceCount)
-                .firstLessonAt(firstLessonAt)
-                .lastLessonAt(lastLessonAt)
+                .scheduleRuleId(null)
+                .generatedOccurrenceCount(null)
+                .firstLessonAt(null)
+                .lastLessonAt(null)
                 .build();
     }
 
@@ -447,35 +425,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (request.getTotalUnits() != null && request.getTotalUnits() <= 0) {
             throw new BusinessException("INVALID_TOTAL_UNITS", "Total units must be greater than 0.");
         }
-        if (request.getDefaultLessonUnits() != null && request.getDefaultLessonUnits() <= 0) {
-            throw new BusinessException("INVALID_LESSON_UNITS", "Default lesson units must be greater than 0.");
-        }
-        if (request.getTotalUnits() != null
-                && request.getDefaultLessonUnits() != null
-                && request.getDefaultLessonUnits() > request.getTotalUnits()) {
-            throw new BusinessException("LESSON_UNITS_EXCEED_TOTAL", "Default lesson units cannot exceed total units.");
-        }
     }
 
     private CoursePackageEntity createCoursePackage(EnrollmentOrderEntity order,
                                                     CourseProductEntity product,
                                                     EnrollmentCreateRequest request,
                                                     StudentEntity student) {
-        int totalUnits = request.getTotalUnits() != null ? request.getTotalUnits() : product.getDefaultTotalUnits();
-        int defaultLessonUnits = request.getDefaultLessonUnits() != null
-                ? request.getDefaultLessonUnits()
-                : product.getDefaultLessonUnits();
-        if (defaultLessonUnits <= 0) {
-            throw new BusinessException("INVALID_LESSON_UNITS", "Default lesson units must be greater than 0.");
-        }
+        int totalUnits = request.getTotalUnits();
         if (totalUnits <= 0) {
             throw new BusinessException("INVALID_TOTAL_UNITS", "Total units must be greater than 0.");
         }
-        // totalUnits 从前端传入的是小时数，内部存储统一转为半课时单位（1单位=0.5h）
+        // totalUnits 从请求传入的是小时数，内部存储统一转为半课时单位（1单位=0.5h）。
         int halfHourUnits = totalUnits * 2;
-        if (defaultLessonUnits > halfHourUnits) {
-            throw new BusinessException("LESSON_UNITS_EXCEED_TOTAL", "Default lesson units cannot exceed total units.");
-        }
 
         CoursePackageEntity coursePackage = new CoursePackageEntity();
         coursePackage.setPackageNo(BusinessNoGenerator.generatePackageNo());
@@ -484,10 +445,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         coursePackage.setStudentId(student.getId());
         coursePackage.setCourseProductId(product.getId());
         coursePackage.setPackageName(StringUtils.hasText(request.getPackageName()) ? request.getPackageName() : product.getProductName());
-        coursePackage.setSubjectName(product.getSubjectName());
         coursePackage.setTeachingMode(product.getTeachingMode());
         coursePackage.setTotalUnits(halfHourUnits);
-        coursePackage.setDefaultLessonUnits(defaultLessonUnits);
         coursePackage.setConsumedUnits(0);
         coursePackage.setRemainingUnits(halfHourUnits);
         coursePackage.setOriginalAmount(order.getOriginalAmount());
@@ -499,145 +458,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         coursePackage.setRemark(request.getRemark());
         coursePackageMapper.insert(coursePackage);
         return coursePackage;
-    }
-
-    private void createPrimaryTeacherAssignment(Long packageId,
-                                                Long teacherId,
-                                                Integer allocatedUnits,
-                                                EnrollmentCreateRequest request) {
-        PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
-        assignment.setPackageId(packageId);
-        assignment.setTeacherId(teacherId);
-        assignment.setAllocatedUnits(allocatedUnits);
-        assignment.setIsPrimary(1);
-        assignment.setEffectiveFrom(request.getAssignmentEffectiveFrom() != null ? request.getAssignmentEffectiveFrom() : AppTime.nowLocalDateTime());
-        assignment.setAssignmentStatus("ACTIVE");
-        assignment.setChangeReason("INITIAL_ASSIGNMENT");
-        packageTeacherAssignmentMapper.insert(assignment);
-    }
-
-    /**
-     * Auto-create a recurring schedule rule, slots, and lesson occurrences
-     * from the enrollment request's slot definitions.
-     */
-    private ScheduleResult createScheduleForPackage(CoursePackageEntity coursePackage,
-                                                    StudentEntity student,
-                                                    EnrollmentCreateRequest request) {
-        List<EnrollmentCreateRequest.SlotDefinition> slotDefs = request.getSlots();
-        int totalUnits = coursePackage.getTotalUnits();                     // 总课时（半课时单位，1单位=0.5h）
-
-        // 按每周总半课时单位计算需要的周数
-        int weeklyHalfHourUnits = slotDefs.stream().mapToInt(EnrollmentCreateRequest.SlotDefinition::getPlannedUnits).sum();
-        int weeks = Math.max(1, (int) Math.ceil((double) totalUnits / weeklyHalfHourUnits));
-
-        LocalDate startDate = request.getStartDate();
-        LocalDate endDate = startDate.plusDays(weeks * 7L);
-
-        // Also set the package estimatedEndDate
-        coursePackage.setEstimatedEndDate(endDate);
-        coursePackageMapper.updateById(coursePackage);
-
-        // Build the rule entity
-        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
-        rule.setPackageId(coursePackage.getId());
-        rule.setPrimaryTeacherId(request.getPrimaryTeacherId());
-        rule.setDefaultClassroomId(request.getDefaultClassroomId());
-        rule.setRuleStatus("ACTIVE");
-        rule.setStartDate(startDate);
-        rule.setEndDate(endDate);
-        rule.setGenerationHorizonDays(weeks * 7);
-        rule.setNotes("Auto-created from enrollment");
-        recurringScheduleRuleMapper.insert(rule);
-
-        // Build slot entities
-        List<RecurringScheduleSlotEntity> slots = new ArrayList<>();
-        for (var slotDef : slotDefs) {
-            RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
-            slot.setRuleId(rule.getId());
-            slot.setWeekday(slotDef.getWeekday());
-            slot.setStartTime(LocalTime.parse(slotDef.getStartTime(), DateTimeFormatter.ofPattern("HH:mm")));
-            slot.setEndTime(LocalTime.parse(slotDef.getEndTime(), DateTimeFormatter.ofPattern("HH:mm")));
-            slot.setPlannedUnits(slotDef.getPlannedUnits());
-            slot.setSlotStatus("ACTIVE");
-            recurringScheduleSlotMapper.insert(slot);
-            slots.add(slot);
-        }
-
-        // Build occurrences
-        List<LessonOccurrenceEntity> occurrences = buildOccurrences(rule, slots, coursePackage, student.getId());
-        if (!occurrences.isEmpty()) {
-            ensureNoConflicts(occurrences, student.getId(), rule.getPrimaryTeacherId(), rule.getDefaultClassroomId());
-            occurrences.forEach(lessonOccurrenceMapper::insert);
-        }
-
-        LocalDateTime firstStart = occurrences.stream()
-                .map(LessonOccurrenceEntity::getPlannedStartAt).min(Comparator.naturalOrder()).orElse(null);
-        LocalDateTime lastEnd = occurrences.stream()
-                .map(LessonOccurrenceEntity::getPlannedEndAt).max(Comparator.naturalOrder()).orElse(null);
-
-        return new ScheduleResult(rule.getId(), occurrences.size(), firstStart, lastEnd);
-    }
-
-    private record ScheduleResult(Long ruleId, int occurrenceCount, LocalDateTime firstLessonAt, LocalDateTime lastLessonAt) {}
-
-    private List<LessonOccurrenceEntity> buildOccurrences(RecurringScheduleRuleEntity rule,
-                                                          List<RecurringScheduleSlotEntity> slots,
-                                                          CoursePackageEntity coursePackage,
-                                                          Long studentId) {
-        LocalDate generationStart = Collections.max(List.of(rule.getStartDate(), AppTime.nowLocalDateTime().toLocalDate()));
-        LocalDate naturalWindowEnd = generationStart.plusDays(rule.getGenerationHorizonDays() - 1L);
-        LocalDate generationEnd = rule.getEndDate() == null ? naturalWindowEnd
-                : Collections.min(List.of(rule.getEndDate(), naturalWindowEnd));
-        if (generationEnd.isBefore(generationStart)) {
-            return Collections.emptyList();
-        }
-
-        int totalUnits = coursePackage.getTotalUnits();                     // 总课时（半课时单位）
-        int accumulatedUnits = 0;
-
-        List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
-        outer:
-        for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
-            int weekday = toWeekday(date.getDayOfWeek());
-            for (RecurringScheduleSlotEntity slot : slots) {
-                if (!"ACTIVE".equals(slot.getSlotStatus()) || !java.util.Objects.equals(slot.getWeekday(), weekday)) {
-                    continue;
-                }
-
-                int slotUnits = slot.getPlannedUnits();
-                int remainingUnits = totalUnits - accumulatedUnits;
-                if (remainingUnits <= 0) break outer;
-
-                int actualUnits = Math.min(slotUnits, remainingUnits);
-
-                LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(generateLessonNo());
-                occurrence.setPackageId(coursePackage.getId());
-                occurrence.setStudentId(studentId);
-                occurrence.setScheduleRuleId(rule.getId());
-                occurrence.setScheduleSlotId(slot.getId());
-                occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(rule.getPrimaryTeacherId());
-                occurrence.setPlannedClassroomId(rule.getDefaultClassroomId());
-                occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
-                occurrence.setPlannedUnits(actualUnits);
-
-                if (actualUnits < slotUnits) {
-                    // 最后一次课：按剩余课时比例缩短 endTime
-                    long slotDurationMinutes = java.time.Duration.between(slot.getStartTime(), slot.getEndTime()).toMinutes();
-                    long actualDurationMinutes = Math.max(1, slotDurationMinutes * actualUnits / slotUnits);
-                    occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getStartTime().plusMinutes(actualDurationMinutes)));
-                } else {
-                    occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
-                }
-
-                occurrence.setPlanningStatus("SCHEDULED");
-                occurrence.setConflictChecked(1);
-                occurrences.add(occurrence);
-                accumulatedUnits += actualUnits;
-            }
-        }
-        return occurrences;
     }
 
     private void ensureNoConflicts(List<LessonOccurrenceEntity> generatedOccurrences,
@@ -709,11 +529,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         };
     }
 
-    private String generateLessonNo() {
-        return "LS" + AppTime.nowLocalDateTime().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
-    }
-
     private PaymentRecordEntity createPaymentRecord(EnrollmentOrderEntity order, EnrollmentCreateRequest request) {
         PaymentRecordEntity paymentRecord = new PaymentRecordEntity();
         paymentRecord.setEnrollmentOrderId(order.getId());
@@ -765,7 +580,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         payload.put("discountAmount", order.getDiscountAmount());
         payload.put("receivedAmount", order.getReceivedAmount());
         payload.put("totalUnits", coursePackage.getTotalUnits());
-        payload.put("defaultLessonUnits", coursePackage.getDefaultLessonUnits());
         return jsonHelper.toJson(payload);
     }
 
@@ -1020,14 +834,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .gradeBand(item.getGradeBand())
                 .periodLabel(item.getPeriodLabel())
                 .timeSlotLabel(item.getTimeSlotLabel())
+                .startDate(item.getStartDate())
                 .priceAmount(item.getPriceAmount())
                 .originalPriceAmount(item.getOriginalPriceAmount())
                 .manualPriceOverride(Boolean.TRUE.equals(item.getManualPriceOverride()))
                 .oneOnOneHours(item.getOneOnOneHours())
                 .oneOnOneUnits(item.getOneOnOneUnits())
-                .initialLessonStartAt(item.getInitialLessonStartAt())
-                .initialLessonEndAt(item.getInitialLessonEndAt())
-                .teacherId(item.getTeacherId())
                 .itemStatus(item.getItemStatus())
                 .remark(item.getRemark())
                 .createdAt(item.getCreatedAt())
@@ -1523,6 +1335,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private LocalDate[] resolveClassOccurrenceWindow(ClassGroupEntity group, LocalDate today) {
+        if (group.getStartDate() != null && group.getEndDate() != null) {
+            LocalDate start = group.getStartDate().isAfter(today) ? group.getStartDate() : today;
+            return group.getEndDate().isBefore(start) ? null : new LocalDate[]{start, group.getEndDate()};
+        }
         LocalDate classStartDay = group.getStartMonth();
         LocalDate classEndDay = group.getEndMonth();
         if (classStartDay == null || classEndDay == null) {
@@ -1567,7 +1383,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 }
                 long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
                 LessonOccurrenceEntity occ = new LessonOccurrenceEntity();
-                occ.setLessonNo(generateClassLessonNo());
+                occ.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
                 occ.setClassGroupId(classGroup.getId());
                 occ.setOccurrenceType("REGULAR");
                 occ.setPlannedTeacherId(slot.getTeacherId() == null ? classGroup.getTeacherId() : slot.getTeacherId());
@@ -1644,15 +1460,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .stream()
                 .map(ClassGroupEntity::getId)
                 .toList();
-    }
-
-    /**
-     * 生成班课排课编号：CLS + yyyyMMddHHmmss + 4 位随机数
-     */
-    private String generateClassLessonNo() {
-        return "CLS" + AppTime.nowLocalDateTime()
-                .format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
     }
 
     private List<ClassGroupScheduleSlotEntity> loadClassSlots(Long classGroupId) {

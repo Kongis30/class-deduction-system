@@ -25,14 +25,12 @@ import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeReques
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
-import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
@@ -62,6 +60,7 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -70,7 +69,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
@@ -95,7 +93,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final CoursePackageMapper coursePackageMapper;
-    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
@@ -135,10 +132,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
 
         List<RegistrationIntakeResultVO.PaymentResultVO> payments = createPayments(order, request, money);
         RegistrationIntakeResultVO.AccountResultVO studentAccount = null;
-        List<RegistrationIntakeResultVO.AccountResultVO> teacherAccounts = Collections.emptyList();
         if (lines.stream().anyMatch(line -> line.oneOnOne)) {
             studentAccount = ensureStudentAccount(studentResolution.student());
-            teacherAccounts = ensureTeacherAccounts(lines);
         }
 
         ReceiptResult receipt = createReceiptIfNeeded(order, studentResolution.student(), request, lines, money, payments, artifacts);
@@ -151,7 +146,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .studentName(studentResolution.student().getStudentName())
                 .studentReused(studentResolution.reused())
                 .studentAccount(studentAccount)
-                .teacherAccounts(teacherAccounts)
+                .teacherAccounts(Collections.emptyList())
                 .courseArtifacts(artifacts)
                 .payments(payments)
                 .receiptId(receipt.receiptId())
@@ -242,10 +237,13 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.courseProductId = productId;
             line.registerClass = firstText(item.getRegisterClass(), option == null ? null : option.getRegisterClass());
             line.courseType = firstText(item.getCourseType(), option == null ? null : option.getCourseType());
-            line.detail = firstText(item.getDetail(), option == null ? null : option.getDetailText());
+            line.detail = firstText(
+                    firstText(item.getDetail(), option == null ? null : option.getDetailText()),
+                    product == null ? null : product.getProductName());
             line.gradeBand = firstText(item.getGradeBand(), option == null ? null : option.getGradeBand());
             line.periodLabel = firstText(item.getPeriodLabel(), option == null ? null : option.getPeriodLabel());
             line.timeSlotLabel = firstText(item.getTimeSlotLabel(), option == null ? null : option.getTimeSlotLabel());
+            line.startDate = item.getStartDate();
             line.packageUnit = firstText(item.getPackageUnit(), resolveOptionPackageUnit(option));
             line.packageQuantity = firstNonNull(item.getPackageQuantity(), resolveOptionPackageQuantity(option));
             line.packageTotalPrice = firstNonNull(item.getPackageTotalPrice(), resolveOptionTotalPrice(option));
@@ -254,9 +252,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.oneOnOneHours = firstNonNull(item.getOneOnOneHours(), option == null ? null : option.getOneOnOneHours());
             line.openingUsedHours = item.getOpeningUsedHours();
             line.oneOnOneUnits = item.getOneOnOneUnits();
-            line.initialLessonStartAt = item.getInitialLessonStartAt();
-            line.initialLessonEndAt = item.getInitialLessonEndAt();
-            line.teacherId = item.getTeacherId();
             line.classId = firstNonNull(item.getClassId(), option.getClassId());
             line.sessions = item.getSessions();
             line.purchasedMonths = item.getPurchasedMonths();
@@ -361,9 +356,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if (!StringUtils.hasText(line.registerClass)) {
             throw new BusinessException("REGISTER_CLASS_REQUIRED", "Register Class is required for every course line.");
         }
-        if (!StringUtils.hasText(line.detail)) {
-            throw new BusinessException("DETAIL_REQUIRED", "Course detail is required for every course line.");
-        }
         if (line.priceAmount.compareTo(ZERO_AMOUNT) < 0) {
             throw new BusinessException("INVALID_LINE_PRICE", "Course line price cannot be negative.");
         }
@@ -378,9 +370,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     || line.oneOnOneHours.multiply(BigDecimal.valueOf(2)).stripTrailingZeros().scale() > 0) {
                 throw new BusinessException("ONE_ON_ONE_HOURS_INVALID",
                         "One-on-one hours must be between 0.5 and 400 in 0.5-hour increments.");
-            }
-            if (line.teacherId != null) {
-                requireTeacher(line.teacherId);
             }
             if (line.product == null || !"ONE_ON_ONE".equals(line.product.getTeachingMode()) || !"ACTIVE".equals(line.product.getStatus())) {
                 throw new BusinessException("ONE_ON_ONE_PRODUCT_REQUIRED", "Active one-on-one course product is required.");
@@ -522,6 +511,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.setGradeBand(line.gradeBand);
         item.setPeriodLabel(line.periodLabel);
         item.setTimeSlotLabel(line.timeSlotLabel);
+        item.setStartDate(line.startDate);
         item.setPackageUnit(line.packageUnit);
         item.setPackageQuantity(line.packageQuantity);
         item.setPackageTotalPrice(line.packageTotalPrice);
@@ -533,9 +523,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.setOneOnOneHours(line.oneOnOneHours);
         item.setOpeningUsedHours(line.openingUsedHours);
         item.setOneOnOneUnits(resolveLineOneOnOneUnits(line));
-        item.setInitialLessonStartAt(line.initialLessonStartAt);
-        item.setInitialLessonEndAt(line.initialLessonEndAt);
-        item.setTeacherId(line.teacherId);
+        item.setInitialLessonStartAt(null);
+        item.setInitialLessonEndAt(null);
+        item.setTeacherId(null);
         item.setItemStatus("ACTIVE");
         item.setRemark(line.remark);
         enrollmentOrderItemMapper.insert(item);
@@ -553,12 +543,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         coursePackage.setStudentId(student.getId());
         coursePackage.setCourseProductId(line.courseProductId);
         coursePackage.setPackageName(StringUtils.hasText(line.detail) ? line.detail : line.product.getProductName());
-        coursePackage.setSubjectName(line.product.getSubjectName());
         coursePackage.setTeachingMode("ONE_ON_ONE");
         int totalUnits = resolveOneOnOneUnits(line);
         int openingUsedUnits = resolveOpeningUsedUnits(line);
         coursePackage.setTotalUnits(totalUnits);
-        coursePackage.setDefaultLessonUnits(resolveDefaultLessonUnits(line.product, totalUnits));
         coursePackage.setConsumedUnits(openingUsedUnits);
         coursePackage.setRemainingUnits(totalUnits - openingUsedUnits);
         coursePackage.setOriginalAmount(line.priceAmount);
@@ -570,24 +558,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         coursePackage.setRemark(line.remark);
         coursePackageMapper.insert(coursePackage);
 
-        if (line.teacherId != null) {
-            PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
-            assignment.setPackageId(coursePackage.getId());
-            assignment.setTeacherId(line.teacherId);
-            assignment.setAllocatedUnits(totalUnits - openingUsedUnits);
-            assignment.setIsPrimary(1);
-            assignment.setEffectiveFrom(AppTime.nowLocalDateTime());
-            assignment.setAssignmentStatus("ACTIVE");
-            assignment.setChangeReason("REGISTRATION_INTAKE");
-            packageTeacherAssignmentMapper.insert(assignment);
-        }
-
-        if (line.initialLessonStartAt != null) {
-            LessonOccurrenceEntity occurrence = buildInitialOneOnOneOccurrence(coursePackage, student, line, order);
-            ensureNoConflicts(List.of(occurrence), student.getId(), line.teacherId, null);
-            lessonOccurrenceMapper.insert(occurrence);
-        }
-
         return RegistrationIntakeResultVO.CourseArtifactVO.builder()
                 .orderItemId(line.orderItemId)
                 .lineNo(line.lineNo)
@@ -595,37 +565,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .packageId(coursePackage.getId())
                 .packageNo(coursePackage.getPackageNo())
                 .build();
-    }
-
-    private LessonOccurrenceEntity buildInitialOneOnOneOccurrence(CoursePackageEntity coursePackage,
-                                                                   StudentEntity student,
-                                                                   ResolvedCourseLine line,
-                                                                   EnrollmentOrderEntity order) {
-        InitialLessonTime lessonTime = resolveInitialOneOnOneLessonTime(order, line, coursePackage.getDefaultLessonUnits());
-        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-        occurrence.setLessonNo(generateOneOnOneLessonNo());
-        occurrence.setPackageId(coursePackage.getId());
-        occurrence.setStudentId(student.getId());
-        occurrence.setOccurrenceType("REGULAR");
-        occurrence.setPlannedTeacherId(line.teacherId);
-        occurrence.setPlannedStartAt(lessonTime.startAt());
-        occurrence.setPlannedEndAt(lessonTime.endAt());
-        occurrence.setPlannedUnits(lessonTime.units());
-        occurrence.setPlanningStatus("SCHEDULED");
-        occurrence.setConflictChecked(1);
-        return occurrence;
-    }
-
-    private InitialLessonTime resolveInitialOneOnOneLessonTime(EnrollmentOrderEntity order,
-                                                               ResolvedCourseLine line,
-                                                               Integer defaultLessonUnits) {
-        if (line.initialLessonStartAt == null) {
-            throw new BusinessException("ONE_ON_ONE_INITIAL_LESSON_REQUIRED",
-                    "Please select the first one-on-one lesson start time.");
-        }
-        int units = defaultLessonUnits == null ? 2 : defaultLessonUnits;
-        LocalDateTime endAt = line.initialLessonStartAt.plusMinutes(units * 30L);
-        return new InitialLessonTime(line.initialLessonStartAt, endAt, units);
     }
 
     private RegistrationIntakeResultVO.CourseArtifactVO createGroupClassArtifact(EnrollmentOrderEntity order,
@@ -763,13 +702,19 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             return true;
         }
         String normalizedSegment = segment.trim().toUpperCase(Locale.ROOT);
-        if ("ALL".equals(normalizedSegment) || "FULL_DAY,MORNING,AFTERNOON".equals(normalizedSegment)) {
+        Set<String> segments = Arrays.stream(normalizedSegment.split(","))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+        if (segments.isEmpty() || segments.contains("ALL")) {
             return true;
         }
         if ("FULL_DAY".equals(attendance)) {
-            return "MORNING".equals(normalizedSegment) || "AFTERNOON".equals(normalizedSegment);
+            return segments.contains("FULL_DAY")
+                    || segments.contains("MORNING")
+                    || segments.contains("AFTERNOON");
         }
-        return Objects.equals(attendance, normalizedSegment);
+        return segments.contains(attendance);
     }
 
     private boolean overlaps(LessonOccurrenceEntity left, LessonOccurrenceEntity right) {
@@ -917,6 +862,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("gradeBand", firstText(line.gradeBand, line.classGroup == null ? null : line.classGroup.getGradeBand()));
         item.put("periodLabel", line.periodLabel);
         item.put("timeSlotLabel", line.timeSlotLabel);
+        item.put("startDate", line.startDate);
         item.put("packageUnit", line.packageUnit);
         item.put("packageQuantity", line.packageQuantity);
         item.put("packageTotalPrice", line.packageTotalPrice);
@@ -930,9 +876,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("openingRemainingHours", line.oneOnOne ? BigDecimal.valueOf(resolveOneOnOneUnits(line) - resolveOpeningUsedUnits(line))
                 .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP) : null);
         item.put("oneOnOneUnits", resolveLineOneOnOneUnits(line));
-        item.put("initialLessonStartAt", line.initialLessonStartAt);
-        item.put("initialLessonEndAt", line.initialLessonEndAt);
-        item.put("teacherId", line.teacherId);
         item.put("classId", line.classId);
         item.put("className", line.classGroup == null ? null : line.classGroup.getClassName());
         if (!line.oneOnOne) {
@@ -973,44 +916,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         userAccountMapper.insert(account);
         ensureRoleBinding(account.getId(), "STUDENT");
         return toAccountResult(account, true, rawPassword);
-    }
-
-    private List<RegistrationIntakeResultVO.AccountResultVO> ensureTeacherAccounts(List<ResolvedCourseLine> lines) {
-        List<Long> teacherIds = lines.stream()
-                .filter(line -> line.oneOnOne)
-                .map(line -> line.teacherId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        List<RegistrationIntakeResultVO.AccountResultVO> result = new ArrayList<>();
-        for (Long teacherId : teacherIds) {
-            TeacherEntity teacher = requireTeacher(teacherId);
-            UserAccountEntity existing = userAccountMapper.selectOne(new LambdaQueryWrapper<UserAccountEntity>()
-                    .eq(UserAccountEntity::getUserType, "TEACHER")
-                    .eq(UserAccountEntity::getTeacherId, teacherId)
-                    .eq(UserAccountEntity::getIsDeleted, 0)
-                    .last("LIMIT 1"));
-            if (existing != null) {
-                activateExistingAccount(existing);
-                ensureRoleBinding(existing.getId(), "TEACHER");
-                result.add(toAccountResult(existing, false, null));
-                continue;
-            }
-            String rawPassword = resolveInitialAccountPassword(teacher.getMobile());
-            UserAccountEntity account = new UserAccountEntity();
-            account.setUsername(generateUniqueJinUsername(teacher.getTeacherName(), teacher.getTeacherNo()));
-            account.setPasswordHash(passwordEncoder.encode(rawPassword));
-            account.setUserType("TEACHER");
-            account.setDisplayName(teacher.getTeacherName());
-            account.setMobile(teacher.getMobile());
-            account.setEmail(teacher.getEmail());
-            account.setTeacherId(teacher.getId());
-            account.setStatus("ACTIVE");
-            userAccountMapper.insert(account);
-            ensureRoleBinding(account.getId(), "TEACHER");
-            result.add(toAccountResult(account, true, rawPassword));
-        }
-        return result;
     }
 
     private RegistrationIntakeResultVO.AccountResultVO toAccountResult(UserAccountEntity account,
@@ -1155,8 +1060,29 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("REGISTRATION_DURATION_INVALID",
                     "Selected package quantity must be greater than zero.");
         }
-        LocalDate enrollmentDate = today;
+        LocalDate enrollmentDate = line.startDate == null ? today : line.startDate;
         LocalDate expiryDate;
+        LocalDate configuredStart = classGroup.getStartDate();
+        LocalDate configuredEnd = classGroup.getEndDate();
+        if (configuredStart != null && configuredEnd != null && configuredEnd.isBefore(configuredStart)) {
+            throw new BusinessException("INVALID_GROUP_DATE_RANGE",
+                    "Class end date cannot be earlier than the start date.");
+        }
+        if (configuredStart != null) {
+            if (line.startDate != null && line.startDate.isBefore(configuredStart)) {
+                throw new BusinessException("ENROLLMENT_START_OUT_OF_RANGE",
+                        "Enrollment start date must be within the class date range.");
+            }
+            if (line.startDate == null && enrollmentDate.isBefore(configuredStart)) {
+                enrollmentDate = configuredStart;
+            }
+        }
+        if (configuredEnd != null) {
+            if (enrollmentDate.isAfter(configuredEnd)) {
+                throw new BusinessException("ENROLLMENT_START_OUT_OF_RANGE",
+                        "Enrollment start date must be within the class date range.");
+            }
+        }
         if ("MONTH".equals(unit)) {
             YearMonth selectedEnd = YearMonth.from(enrollmentDate).plusMonths(quantity - 1L);
             expiryDate = selectedEnd.atEndOfMonth();
@@ -1167,6 +1093,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         } else {
             throw new BusinessException("INVALID_PACKAGE_UNIT",
                     "Group class package unit must be MONTH, WEEK, or SESSION.");
+        }
+        if (configuredEnd != null && expiryDate.isAfter(configuredEnd)) {
+            throw new BusinessException("ENROLLMENT_DURATION_OUT_OF_RANGE",
+                    "Selected package duration exceeds the class date range.");
         }
         return new ClassBillingResult(enrollmentDate, expiryDate, enrollmentDate, expiryDate, quantity);
     }
@@ -1205,7 +1135,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 }
                 long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(generateClassLessonNo());
+                occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
@@ -1216,7 +1146,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
                 occurrence.setPlannedUnits((int) (minutes / 30));
-                occurrence.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 occurrences.add(occurrence);
@@ -1356,16 +1285,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         } catch (RuntimeException ex) {
             throw new BusinessException("INVALID_MONTH", "Schedule " + fieldName + " must use yyyy-MM format.");
         }
-    }
-
-    private String generateClassLessonNo() {
-        return "CLS" + AppTime.nowLocalDateTime().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
-    }
-
-    private String generateOneOnOneLessonNo() {
-        return "O2O" + AppTime.nowLocalDateTime().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
     }
 
     private CoursePriceOptionEntity resolvePriceOption(Long id) {
@@ -1529,12 +1448,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     .setScale(0, RoundingMode.HALF_UP)
                     .intValue();
         }
-        if (line.oneOnOneUnits != null && line.oneOnOneUnits > 0) {
-            return line.oneOnOneUnits;
-        }
-        if (line.product != null && line.product.getDefaultTotalUnits() != null) {
-            return line.product.getDefaultTotalUnits() * 2;
-        }
         return 0;
     }
 
@@ -1549,14 +1462,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         return line.openingUsedHours.multiply(BigDecimal.valueOf(2))
                 .setScale(0, RoundingMode.HALF_UP)
                 .intValue();
-    }
-
-    private int resolveDefaultLessonUnits(CourseProductEntity product, int totalUnits) {
-        int defaultUnits = product.getDefaultLessonUnits() == null ? 2 : product.getDefaultLessonUnits();
-        if (defaultUnits <= 0 || defaultUnits > totalUnits) {
-            throw new BusinessException("INVALID_LESSON_UNITS", "Default lesson units must be greater than zero and not exceed total units.");
-        }
-        return defaultUnits;
     }
 
     private BigDecimal sumFeeLines(List<RegistrationIntakeRequest.FeeLinePayload> lines) {
@@ -1636,13 +1541,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     ) {
     }
 
-    private record InitialLessonTime(
-            LocalDateTime startAt,
-            LocalDateTime endAt,
-            int units
-    ) {
-    }
-
     private static class ResolvedCourseLine {
         private Long orderItemId;
         private Integer lineNo;
@@ -1655,6 +1553,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private String gradeBand;
         private String periodLabel;
         private String timeSlotLabel;
+        private LocalDate startDate;
         private String packageUnit;
         private BigDecimal packageQuantity;
         private BigDecimal packageTotalPrice;
@@ -1666,9 +1565,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private BigDecimal oneOnOneHours;
         private BigDecimal openingUsedHours;
         private Integer oneOnOneUnits;
-        private LocalDateTime initialLessonStartAt;
-        private LocalDateTime initialLessonEndAt;
-        private Long teacherId;
         private String remark;
         private Integer sessions;
         private Integer purchasedMonths;

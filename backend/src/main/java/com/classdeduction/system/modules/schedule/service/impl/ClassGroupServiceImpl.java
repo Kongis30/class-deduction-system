@@ -15,6 +15,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
@@ -107,6 +108,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("productName", product == null ? null : product.getProductName());
             item.put("registerClass", product == null ? null : product.getRegisterClass());
             item.put("courseType", product == null ? null : product.getCourseType());
+            item.put("startDate", clz.getStartDate());
+            item.put("endDate", clz.getEndDate());
             item.put("status", clz.getStatus());
             item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
             item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
@@ -475,6 +478,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             return false;
         }
         LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
+        if (!enrollmentIncludesOccurrence(enrollment, occurrence)) {
+            return false;
+        }
         if (enrollment.getEnrollmentDate() != null && lessonDate.isBefore(enrollment.getEnrollmentDate())) {
             return false;
         }
@@ -488,18 +494,33 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return usedSessions < enrollment.getPurchasedQuantity();
     }
 
+    private boolean enrollmentIncludesOccurrence(ClassEnrollmentEntity enrollment, LessonOccurrenceEntity occurrence) {
+        if (enrollment == null || occurrence == null || occurrence.getPlannedStartAt() == null) {
+            return false;
+        }
+        LocalDateTime enrolledAt = enrollment.getCreatedAt();
+        return enrolledAt == null || !occurrence.getPlannedStartAt().isBefore(enrolledAt);
+    }
+
     private boolean attendanceMatches(String enrollmentAttendance, LessonOccurrenceEntity occurrence) {
         String attendance = normalizeAttendanceOption(enrollmentAttendance);
         String segment = occurrenceScheduleSegment(occurrence);
-        if (!StringUtils.hasText(segment)
-                || "ALL".equals(segment)
-                || "FULL_DAY,MORNING,AFTERNOON".equals(segment)) {
+        if (!StringUtils.hasText(segment)) {
+            return true;
+        }
+        Set<String> segments = Arrays.stream(segment.split(","))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+        if (segments.isEmpty() || segments.contains("ALL")) {
             return true;
         }
         if ("FULL_DAY".equals(attendance)) {
-            return "MORNING".equals(segment) || "AFTERNOON".equals(segment);
+            return segments.contains("FULL_DAY")
+                    || segments.contains("MORNING")
+                    || segments.contains("AFTERNOON");
         }
-        return Objects.equals(attendance, segment);
+        return segments.contains(attendance);
     }
 
     private String occurrenceScheduleSegment(LessonOccurrenceEntity occurrence) {
@@ -1162,8 +1183,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private int generateFutureClassOccurrences(ClassGroupEntity classGroup,
                                                List<ClassGroupScheduleSlotEntity> slots,
                                                Set<LocalDate> preservedDates) {
-        LocalDate startDate = AppTime.nowLocalDateTime().toLocalDate();
-        LocalDate endDate = resolveClassScheduleHorizon(classGroup.getId(), startDate);
+        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
+        LocalDate configuredStart = classGroup.getStartDate();
+        LocalDate configuredEnd = classGroup.getEndDate();
+        LocalDate startDate = configuredStart == null || configuredStart.isBefore(today) ? today : configuredStart;
+        LocalDate endDate = configuredEnd != null
+                ? configuredEnd
+                : resolveClassScheduleHorizon(classGroup.getId(), startDate);
+        if (endDate.isBefore(startDate)) {
+            return 0;
+        }
         int count = 0;
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
             if (preservedDates.contains(date)) {
@@ -1175,7 +1204,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                     continue;
                 }
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(generateClassLessonNo());
+                occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
@@ -1186,7 +1215,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
-                occurrence.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
                 occurrence.setPlanningStatus("SCHEDULED");
                 ensureNoGeneratedClassOccurrenceConflicts(occurrence);
                 occurrence.setConflictChecked(1);
@@ -1208,7 +1236,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId()))) {
             throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the new class schedule.");
         }
-        for (Long studentId : activeStudentIdsByClass(occurrence.getClassGroupId())) {
+        for (Long studentId : activeStudentIdsByClassOnDate(occurrence.getClassGroupId(), startAt.toLocalDate())) {
             if (hasStudentConflictForClassSchedule(studentId, startAt, endAt)) {
                 throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the new class schedule.");
             }
@@ -1252,6 +1280,28 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .filter(Objects::nonNull)
                 .distinct()
                 .toList();
+    }
+
+    private List<Long> activeStudentIdsByClassOnDate(Long classId, LocalDate lessonDate) {
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .le(lessonDate != null, ClassEnrollmentEntity::getEnrollmentDate, lessonDate)
+                        .ge(lessonDate != null, ClassEnrollmentEntity::getExpiryDate, lessonDate))
+                .stream()
+                .filter(enrollment -> enrollmentIncludesLessonDate(enrollment, lessonDate))
+                .map(ClassEnrollmentEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+    }
+
+    private boolean enrollmentIncludesLessonDate(ClassEnrollmentEntity enrollment, LocalDate lessonDate) {
+        if (enrollment == null || lessonDate == null || enrollment.getCreatedAt() == null) {
+            return true;
+        }
+        return !lessonDate.isBefore(enrollment.getCreatedAt().toLocalDate());
     }
 
     private void lockClassScheduleResources(Long classId, Long teacherId, Long classroomId) {
@@ -1356,11 +1406,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             case 7 -> "Sun";
             default -> "?";
         };
-    }
-
-    private String generateClassLessonNo() {
-        return "CLS" + AppTime.nowLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 10000));
     }
 
     private String resolveTeacherName(Long teacherId, Map<Long, TeacherEntity> teacherMap) {

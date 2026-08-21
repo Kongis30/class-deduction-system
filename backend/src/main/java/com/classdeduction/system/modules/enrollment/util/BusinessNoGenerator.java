@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.enrollment.util;
 
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.classdeduction.system.common.time.AppTime;
 
 import java.time.LocalDate;
@@ -60,6 +61,24 @@ public final class BusinessNoGenerator {
      */
     public static String generateReceiptNo() {
         return generate("RCP");
+    }
+
+    /**
+     * Generate a globally unique lesson occurrence number.
+     *
+     * <p>The previous second-level timestamp plus random suffix could collide
+     * while batch-generating class occurrences. The Snowflake ID is unique
+     * across concurrent requests and application restarts.
+     */
+    public static String generateLessonOccurrenceNo() {
+        return "LS" + IdWorker.getIdStr();
+    }
+
+    /**
+     * Generate a globally unique group-class lesson occurrence number.
+     */
+    public static String generateClassLessonOccurrenceNo() {
+        return "CLS" + IdWorker.getIdStr();
     }
 
     /**

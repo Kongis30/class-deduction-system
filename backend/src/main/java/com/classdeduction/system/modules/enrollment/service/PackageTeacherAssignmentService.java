@@ -1,7 +1,5 @@
 package com.classdeduction.system.modules.enrollment.service;
 
-import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAssignmentRequest;
-import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAllocationRequest;
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
 
 import java.util.List;
@@ -21,23 +19,4 @@ public interface PackageTeacherAssignmentService {
      */
     PackageTeacherAssignmentVO getAssignment(Long id);
 
-    /**
-     * 创建老师分配记录。
-     */
-    Long createAssignment(PackageTeacherAssignmentRequest request);
-
-    /**
-     * 更新分配记录状态（结束分配）。
-     */
-    void endAssignment(Long id, String changeReason);
-
-    /**
-     * 切换主老师。
-     */
-    void switchPrimaryTeacher(Long packageId, Long newTeacherId, String changeReason);
-
-    /**
-     * Replace active teacher-hour allocations while preserving assignment history.
-     */
-    void replaceAllocations(Long packageId, PackageTeacherAllocationRequest request);
 }

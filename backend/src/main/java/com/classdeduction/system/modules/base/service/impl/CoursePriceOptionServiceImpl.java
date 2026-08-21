@@ -16,6 +16,7 @@ import com.classdeduction.system.modules.base.service.CoursePriceOptionService;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
+import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -237,18 +238,43 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
 
     private void validateGroupScheduleRequest(CoursePriceOptionSaveRequest request) {
         if (request.getGroupScheduleSlots() == null || request.getGroupScheduleSlots().isEmpty()) {
+            if (hasExistingGradeClass(request)) {
+                return;
+            }
             throw new BusinessException("GROUP_SCHEDULE_REQUIRED",
                     "Grade classes require at least one weekly time slot.");
+        }
+        String billingType = request.getPackageUnit();
+        if (isWeekBilling(billingType) || isSessionBilling(billingType)) {
+            if (request.getGroupStartDate() == null || request.getGroupEndDate() == null) {
+                throw new BusinessException("GROUP_DATE_RANGE_REQUIRED",
+                        "Weekly and session classes need a start date and end date.");
+            }
+            if (request.getGroupEndDate().isBefore(request.getGroupStartDate())) {
+                throw new BusinessException("INVALID_GROUP_DATE_RANGE",
+                        "Class end date cannot be earlier than the start date.");
+            }
+            return;
         }
         LocalDate startMonth = parseMonth(request.getGroupStartMonth(), "start month");
         LocalDate endMonth = parseMonth(request.getGroupEndMonth(), "end month");
         if (startMonth == null || endMonth == null) {
             throw new BusinessException("GROUP_BILLING_REQUIRED",
-                    "Grade classes need a class start month and class end month.");
+                    "Monthly grade classes need a class start month and class end month.");
         }
         if (endMonth.isBefore(startMonth)) {
             throw new BusinessException("INVALID_GROUP_BILLING", "End month cannot be earlier than start month.");
         }
+    }
+
+    private boolean hasExistingGradeClass(CoursePriceOptionSaveRequest request) {
+        if (request.getCourseProductId() == null || !StringUtils.hasText(request.getGradeBand())) {
+            return false;
+        }
+        return classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, request.getCourseProductId())
+                .eq(ClassGroupEntity::getGradeBand, request.getGradeBand().trim())
+                .eq(ClassGroupEntity::getIsDeleted, 0)) > 0;
     }
 
     private String resolveRequestPackageUnit(CoursePriceOptionSaveRequest request, CourseProductEntity product) {
@@ -387,7 +413,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         entity.setPeriodLabel(normalizeBlank(request.getPeriodLabel()));
         entity.setDurationLabel(normalizeBlank(request.getDurationLabel()));
         entity.setTimeSlotLabel(null);
-        entity.setDetailText(request.getDetailText());
+        entity.setDetailText(normalizeNullableText(request.getDetailText()));
         entity.setPackageUnit(packageUnit);
         entity.setPackageQuantity(packageQuantity);
         entity.setTotalPrice(totalPrice);
@@ -456,19 +482,20 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     }
 
     private void applyGroupSchedule(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request) {
+        if (request.getGroupScheduleSlots() == null || request.getGroupScheduleSlots().isEmpty()) {
+            return;
+        }
         classGroup.setTeacherId(request.getGroupTeacherId());
         classGroup.setClassroomId(request.getGroupClassroomId());
         classGroup.setBillingType(StringUtils.hasText(request.getPackageUnit())
                 ? request.getPackageUnit().trim().toUpperCase(Locale.ROOT)
                 : "MONTH");
-        classGroup.setStartDate(null);
+        classGroup.setStartDate(request.getGroupStartDate());
+        classGroup.setEndDate(request.getGroupEndDate());
         classGroup.setTotalSessions(request.getGroupTotalSessions());
         classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
         classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
         classGroupMapper.updateById(classGroup);
-        if (request.getGroupScheduleSlots() == null) {
-            return;
-        }
         classGroupScheduleSlotMapper.delete(new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
                 .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId()));
         List<ClassGroupScheduleSlotEntity> slots = new ArrayList<>();
@@ -485,7 +512,6 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             entity.setClassGroupId(classGroup.getId());
             entity.setTeacherId(slot.getTeacherId());
             entity.setSubjectName(StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName().trim() : null);
-            entity.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
             entity.setWeekday(slot.getWeekday());
             entity.setStartTime(start);
             entity.setEndTime(end);
@@ -537,7 +563,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                     continue;
                 }
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(generateClassLessonNo());
+                occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
@@ -548,7 +574,6 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 occurrence.setPlannedStartAt(startAt);
                 occurrence.setPlannedEndAt(endAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
-                occurrence.setHourlyRateSnapshot(slot.getHourlyRateSnapshot());
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 lessonOccurrenceMapper.insert(occurrence);
@@ -600,7 +625,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
 
     private LocalDate resolveOccurrenceStartDate(ClassGroupEntity classGroup) {
         LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
-        LocalDate configuredStart = isMonthBilling(classGroup.getBillingType()) || isWeekBilling(classGroup.getBillingType()) || isSessionBilling(classGroup.getBillingType())
+        LocalDate configuredStart = isMonthBilling(classGroup.getBillingType())
                 ? classGroup.getStartMonth()
                 : classGroup.getStartDate();
         if (configuredStart == null || configuredStart.isBefore(today)) {
@@ -610,6 +635,9 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     }
 
     private LocalDate resolveOccurrenceEndDate(ClassGroupEntity classGroup, LocalDate startDate) {
+        if (classGroup.getEndDate() != null) {
+            return classGroup.getEndDate();
+        }
         if (isSessionBilling(classGroup.getBillingType()) && classGroup.getTotalSessions() != null) {
             return startDate.plusDays(370);
         }
@@ -640,10 +668,6 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
 
     private String occurrenceKey(LocalDateTime startAt, LocalDateTime endAt) {
         return startAt + "|" + endAt;
-    }
-
-    private String generateClassLessonNo() {
-        return "CLS-" + System.currentTimeMillis() + "-" + java.util.UUID.randomUUID().toString().substring(0, 6).toUpperCase(Locale.ROOT);
     }
 
     private LocalDate parseMonth(String value, String fieldName) {
@@ -713,6 +737,10 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         return StringUtils.hasText(value) ? value.trim() : null;
     }
 
+    private String normalizeNullableText(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "";
+    }
+
     private String nullToEmpty(String value) {
         return value == null ? "" : value;
     }
@@ -737,7 +765,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                                 .orderByAsc(ClassGroupScheduleSlotEntity::getStartTime))
                         .stream()
                         .map(slot -> new CoursePriceOptionVO.GroupScheduleSlotVO(
-                                slot.getTeacherId(), slot.getSubjectName(), slot.getHourlyRateSnapshot(), slot.getWeekday(),
+                                slot.getTeacherId(), slot.getSubjectName(), slot.getWeekday(),
                                 slot.getStartTime().toString(), slot.getEndTime().toString(),
                                 slot.getMorningEndTime() == null ? null : slot.getMorningEndTime().toString(),
                                 slot.getAfternoonStartTime() == null ? null : slot.getAfternoonStartTime().toString(),
@@ -772,6 +800,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 .groupBillingType(classGroup == null ? null : classGroup.getBillingType())
                 .groupStartDate(classGroup == null || classGroup.getStartDate() == null
                         ? null : classGroup.getStartDate().toString())
+                .groupEndDate(classGroup == null || classGroup.getEndDate() == null
+                        ? null : classGroup.getEndDate().toString())
                 .groupTotalSessions(classGroup == null ? null : classGroup.getTotalSessions())
                 .groupStartMonth(classGroup == null || classGroup.getStartMonth() == null
                         ? null : YearMonth.from(classGroup.getStartMonth()).toString())

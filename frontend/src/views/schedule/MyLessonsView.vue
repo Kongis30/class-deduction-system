@@ -100,7 +100,7 @@
           <el-select v-model="confirmForm.resultStatus" style="width: 100%">
             <el-option label="Completed" value="COMPLETED" />
             <el-option label="Formal Leave" value="FORMAL_LEAVE" />
-            <el-option label="No Show" value="NO_SHOW" />
+            <el-option label="Last minute cancel or no show" value="NO_SHOW" />
           </el-select>
         </el-form-item>
         <el-form-item label="Actual start">
@@ -318,7 +318,8 @@ function resultStatusLabel(status?: string) {
   return {
     COMPLETED: 'Completed',
     FORMAL_LEAVE: 'Formal Leave',
-    NO_SHOW: 'No Show',
+    NO_SHOW: 'Last minute cancel or no show',
+    CANCELLED: 'Last minute cancel or no show',
   }[status || ''] || status || 'Confirmed';
 }
 

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
@@ -11,21 +12,24 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
-import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.schedule.dto.LessonOccurrencePageQuery;
 import com.classdeduction.system.modules.schedule.dto.OneOnOneDeductionQuery;
 import com.classdeduction.system.modules.schedule.dto.PendingClassroomBackfillRequest;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.impl.LessonOccurrenceServiceImpl;
+import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import org.junit.jupiter.api.BeforeEach;
@@ -66,9 +70,6 @@ class LessonOccurrenceServiceImplTest {
     private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
 
     @Mock
-    private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
-
-    @Mock
     private StudentMapper studentMapper;
 
     @Mock
@@ -89,6 +90,9 @@ class LessonOccurrenceServiceImplTest {
     @Mock
     private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
+    @Mock
+    private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+
     private LessonOccurrenceServiceImpl lessonOccurrenceService;
 
     @BeforeEach
@@ -99,14 +103,14 @@ class LessonOccurrenceServiceImplTest {
                 lessonStatusRuleMapper,
                 coursePackageMapper,
                 enrollmentOrderItemMapper,
-                packageTeacherAssignmentMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
                 courseProductMapper,
                 classGroupMapper,
                 classEnrollmentMapper,
-                classGroupScheduleSlotMapper
+                classGroupScheduleSlotMapper,
+                recurringScheduleSlotMapper
         );
     }
 
@@ -162,20 +166,120 @@ class LessonOccurrenceServiceImplTest {
         occurrence.setStudentId(null);
         occurrence.setClassGroupId(7001L);
         when(lessonOccurrenceMapper.selectById(4001L)).thenReturn(occurrence);
-        when(classEnrollmentMapper.selectCount(any())).thenReturn(1L);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(buildClassEnrollment(
+                LocalDate.of(2026, 9, 1),
+                LocalDate.of(2026, 10, 31),
+                LocalDateTime.of(2026, 9, 1, 9, 0))));
         when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
 
         assertThat(lessonOccurrenceService.getOccurrence(4001L, studentUser()).id()).isEqualTo(4001L);
     }
 
     @Test
+    void shouldRejectStudentClassOccurrenceDetailBeforeEnrollmentStartDate() {
+        LessonOccurrenceEntity occurrence = buildClassOccurrence(LocalDateTime.of(2026, 9, 12, 9, 0));
+        when(lessonOccurrenceMapper.selectById(4001L)).thenReturn(occurrence);
+
+        assertThatThrownBy(() -> lessonOccurrenceService.getOccurrence(4001L, studentUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Students can only view their own calendar.");
+    }
+
+    @Test
+    void shouldHideClassOccurrencesBeforeStudentEnrollmentStartDate() {
+        LessonOccurrenceEntity beforeEnrollment = buildClassOccurrence(LocalDateTime.of(2026, 9, 12, 9, 0));
+        LessonOccurrenceEntity afterEnrollment = buildClassOccurrence(LocalDateTime.of(2026, 9, 19, 9, 0));
+        afterEnrollment.setId(4002L);
+        afterEnrollment.setLessonNo("CLS202609190001");
+        ClassEnrollmentEntity enrollment = buildClassEnrollment(
+                LocalDate.of(2026, 9, 15),
+                LocalDate.of(2026, 10, 31),
+                LocalDateTime.of(2026, 9, 15, 10, 0));
+
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(beforeEnrollment, afterEnrollment));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+
+        LessonOccurrencePageQuery query = new LessonOccurrencePageQuery();
+        query.setStudentId(101L);
+        query.setStartAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+        query.setEndAt(LocalDateTime.of(2026, 9, 30, 23, 59));
+        query.setPageNum(1);
+        query.setPageSize(10);
+
+        List<LessonOccurrenceVO> records = lessonOccurrenceService.pageOccurrences(query).records();
+
+        assertThat(records).extracting(LessonOccurrenceVO::id).containsExactly(4002L);
+    }
+
+    @Test
+    void shouldHideClassOccurrencesBeforeEnrollmentWasCreatedWhenStartDateIsBackdated() {
+        LessonOccurrenceEntity beforeSignup = buildClassOccurrence(LocalDateTime.of(2026, 9, 10, 15, 0));
+        LessonOccurrenceEntity afterSignupPast = buildClassOccurrence(LocalDateTime.of(2026, 9, 18, 15, 0));
+        afterSignupPast.setId(4002L);
+        afterSignupPast.setLessonNo("CLS202609180001");
+        ClassEnrollmentEntity enrollment = buildClassEnrollment(
+                LocalDate.of(2026, 9, 1),
+                LocalDate.of(2026, 10, 31),
+                LocalDateTime.of(2026, 9, 15, 10, 0));
+
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(beforeSignup, afterSignupPast));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+
+        LessonOccurrencePageQuery query = new LessonOccurrencePageQuery();
+        query.setStudentId(101L);
+        query.setStartAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+        query.setEndAt(LocalDateTime.of(2026, 9, 30, 23, 59));
+        query.setPageNum(1);
+        query.setPageSize(10);
+
+        List<LessonOccurrenceVO> records = lessonOccurrenceService.pageOccurrences(query).records();
+
+        assertThat(records).extracting(LessonOccurrenceVO::id).containsExactly(4002L);
+    }
+
+    @Test
+    void shouldExposeClassSlotTaughtSubjectInStudentSchedule() {
+        LessonOccurrenceEntity occurrence = buildClassOccurrence(LocalDateTime.of(2026, 9, 19, 9, 0));
+        ClassEnrollmentEntity enrollment = buildClassEnrollment(
+                LocalDate.of(2026, 9, 15),
+                LocalDate.of(2026, 10, 31),
+                LocalDateTime.of(2026, 9, 15, 10, 0));
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setId(8001L);
+        slot.setClassGroupId(7001L);
+        slot.setSubjectName("SHSAT Reading");
+
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(classGroupScheduleSlotMapper.selectBatchIds(any())).thenReturn(List.of(slot));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(buildClassGroup()));
+        when(courseProductMapper.selectBatchIds(any())).thenReturn(List.of(buildCourseProduct()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        LessonOccurrencePageQuery query = new LessonOccurrencePageQuery();
+        query.setStudentId(101L);
+        query.setStartAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+        query.setEndAt(LocalDateTime.of(2026, 9, 30, 23, 59));
+        query.setPageNum(1);
+        query.setPageSize(10);
+
+        List<LessonOccurrenceVO> records = lessonOccurrenceService.pageOccurrences(query).records();
+
+        assertThat(records).singleElement()
+                .satisfies(record -> {
+                    assertThat(record.className()).isEqualTo("SHSAT Sprint");
+                    assertThat(record.productName()).isEqualTo("SHSAT Prep");
+                    assertThat(record.subjectName()).isEqualTo("SHSAT Reading");
+                });
+    }
+
+    @Test
     void shouldExposeOneOnOneOccurrencesInDeductionQuery() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
-        PackageTeacherAssignmentEntity assignment = buildPrimaryAssignment();
         LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
-        when(packageTeacherAssignmentMapper.selectList(any())).thenReturn(List.of(assignment));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence), List.of(occurrence));
         when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
         when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
@@ -205,11 +309,10 @@ class LessonOccurrenceServiceImplTest {
     void shouldRemindRenewalWhenTwoLessonsRemain() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         coursePackage.setRemainingUnits(6);
+        LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
-        when(packageTeacherAssignmentMapper.selectList(any())).thenReturn(List.of(buildPrimaryAssignment()));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence), Collections.emptyList());
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
-        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
 
         OneOnOneDeductionQuery query = new OneOnOneDeductionQuery();
         query.setTeacherId(301L);
@@ -288,20 +391,10 @@ class LessonOccurrenceServiceImplTest {
         coursePackage.setTotalUnits(20);
         coursePackage.setConsumedUnits(0);
         coursePackage.setRemainingUnits(20);
-        coursePackage.setDefaultLessonUnits(3);
         coursePackage.setPackageStatus("ACTIVE");
         coursePackage.setStartDate(LocalDate.of(2026, 9, 1));
         coursePackage.setEstimatedEndDate(LocalDate.of(2026, 12, 31));
         return coursePackage;
-    }
-
-    private PackageTeacherAssignmentEntity buildPrimaryAssignment() {
-        PackageTeacherAssignmentEntity assignment = new PackageTeacherAssignmentEntity();
-        assignment.setPackageId(3001L);
-        assignment.setTeacherId(301L);
-        assignment.setIsPrimary(1);
-        assignment.setAssignmentStatus("ACTIVE");
-        return assignment;
     }
 
     private LessonOccurrenceEntity buildOneOnOneOccurrence() {
@@ -316,6 +409,49 @@ class LessonOccurrenceServiceImplTest {
         occurrence.setPlannedUnits(3);
         occurrence.setPlanningStatus("SCHEDULED");
         return occurrence;
+    }
+
+    private LessonOccurrenceEntity buildClassOccurrence(LocalDateTime startAt) {
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(4001L);
+        occurrence.setLessonNo("CLS202609120001");
+        occurrence.setClassGroupId(7001L);
+        occurrence.setScheduleSlotId(8001L);
+        occurrence.setPlannedTeacherId(301L);
+        occurrence.setPlannedStartAt(startAt);
+        occurrence.setPlannedEndAt(startAt.plusHours(3));
+        occurrence.setPlannedUnits(6);
+        occurrence.setPlanningStatus("SCHEDULED");
+        return occurrence;
+    }
+
+    private ClassGroupEntity buildClassGroup() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(7001L);
+        classGroup.setClassName("SHSAT Sprint");
+        classGroup.setProductId(9001L);
+        classGroup.setStatus("ACTIVE");
+        return classGroup;
+    }
+
+    private CourseProductEntity buildCourseProduct() {
+        CourseProductEntity product = new CourseProductEntity();
+        product.setId(9001L);
+        product.setProductName("SHSAT Prep");
+        return product;
+    }
+
+    private ClassEnrollmentEntity buildClassEnrollment(LocalDate enrollmentDate,
+                                                       LocalDate expiryDate,
+                                                       LocalDateTime createdAt) {
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setClassId(7001L);
+        enrollment.setStudentId(101L);
+        enrollment.setEnrollmentDate(enrollmentDate);
+        enrollment.setExpiryDate(expiryDate);
+        enrollment.setStatus("ACTIVE");
+        enrollment.setCreatedAt(createdAt);
+        return enrollment;
     }
 
     private StudentEntity buildStudent() {

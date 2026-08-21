@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 import java.time.LocalTime;
@@ -15,8 +16,13 @@ import java.time.LocalTime;
 @Schema(description = "Recurring schedule slot request")
 public class RecurringScheduleSlotRequest {
 
-    @Schema(description = "Teacher assigned to this slot; inherits the rule's default teacher when omitted")
+    @NotNull(message = "Teacher is required for every slot")
+    @Schema(description = "Teacher assigned to this slot")
     private Long teacherId;
+
+    @NotBlank(message = "Course/subject name is required for every slot")
+    @Schema(description = "Course/subject name taught in this slot, e.g. History, Chemistry")
+    private String subjectName;
 
     @NotNull(message = "Weekday is required")
     @Min(value = 1, message = "Weekday must be between 1 and 7")
@@ -36,4 +42,9 @@ public class RecurringScheduleSlotRequest {
     @Min(value = 1, message = "Planned units must be at least 1")
     @Schema(description = "Planned units where 1 unit = 0.5 hour", example = "4")
     private Integer plannedUnits;
+
+    @NotNull(message = "Allocated units are required for every slot")
+    @Min(value = 1, message = "Allocated units must be at least 1")
+    @Schema(description = "Total units (1 unit = 0.5h) allocated to this slot", example = "20")
+    private Integer allocatedUnits;
 }

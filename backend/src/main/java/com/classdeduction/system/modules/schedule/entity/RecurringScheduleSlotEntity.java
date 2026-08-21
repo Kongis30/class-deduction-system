@@ -30,6 +30,8 @@ public class RecurringScheduleSlotEntity extends BaseEntity {
 
     private Long teacherId;
 
+    private String subjectName;
+
     private Integer weekday;
 
     private LocalTime startTime;
@@ -37,6 +39,8 @@ public class RecurringScheduleSlotEntity extends BaseEntity {
     private LocalTime endTime;
 
     private Integer plannedUnits;
+
+    private Integer allocatedUnits;
 
     private String slotStatus;
 }

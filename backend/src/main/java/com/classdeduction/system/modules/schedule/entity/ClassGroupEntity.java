@@ -48,6 +48,8 @@ public class ClassGroupEntity extends BaseEntity {
 
     private LocalDate startDate;
 
+    private LocalDate endDate;
+
     private Integer totalSessions;
 
     private LocalDate startMonth;

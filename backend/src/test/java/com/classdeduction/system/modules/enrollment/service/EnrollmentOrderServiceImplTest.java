@@ -62,7 +62,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 报名开单服务测试：覆盖报名后自动生成课时包、支付、收据和主老师分配的主链路。
+ * 报名开单服务测试：覆盖报名后生成课时包、支付和收据的主链路。
  */
 @ExtendWith(MockitoExtension.class)
 class EnrollmentOrderServiceImplTest {
@@ -133,9 +133,6 @@ class EnrollmentOrderServiceImplTest {
     @Captor
     private ArgumentCaptor<ReceiptRecordEntity> receiptCaptor;
 
-    @Captor
-    private ArgumentCaptor<PackageTeacherAssignmentEntity> assignmentCaptor;
-
     private EnrollmentOrderServiceImpl enrollmentOrderService;
 
     @BeforeAll
@@ -173,25 +170,22 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldCreateOrderPackagePaymentReceiptAndTeacherAssignment() {
+    void shouldCreateOrderPackagePaymentAndReceipt() {
         EnrollmentCreateRequest request = buildCreateRequest();
         when(studentMapper.selectById(101L)).thenReturn(buildStudent());
         when(courseProductMapper.selectById(201L)).thenReturn(buildCourseProduct());
-        when(teacherMapper.selectById(301L)).thenReturn(buildTeacher());
         when(jsonHelper.toJson(any())).thenReturn("{\"receipt\":true}");
-        stubGeneratedIds(true, true);
+        stubGeneratedIds(true);
 
         EnrollmentCreateResultVO result = enrollmentOrderService.createOrder(request);
 
         verify(enrollmentOrderMapper).insert(orderCaptor.capture());
         verify(coursePackageMapper).insert(packageCaptor.capture());
-        verify(packageTeacherAssignmentMapper).insert(assignmentCaptor.capture());
         verify(paymentRecordMapper).insert(paymentCaptor.capture());
         verify(receiptRecordMapper).insert(receiptCaptor.capture());
 
         EnrollmentOrderEntity order = orderCaptor.getValue();
         CoursePackageEntity coursePackage = packageCaptor.getValue();
-        PackageTeacherAssignmentEntity assignment = assignmentCaptor.getValue();
         PaymentRecordEntity payment = paymentCaptor.getValue();
         ReceiptRecordEntity receipt = receiptCaptor.getValue();
 
@@ -199,10 +193,7 @@ class EnrollmentOrderServiceImplTest {
         assertThat(order.getPaymentStatus()).isEqualTo("PAID");
         assertThat(coursePackage.getPackageNo()).startsWith("PK");
         assertThat(coursePackage.getTotalUnits()).isEqualTo(160);
-        assertThat(coursePackage.getDefaultLessonUnits()).isEqualTo(4);
         assertThat(coursePackage.getRemainingUnits()).isEqualTo(160);
-        assertThat(assignment.getPackageId()).isEqualTo(3001L);
-        assertThat(assignment.getTeacherId()).isEqualTo(301L);
         assertThat(payment.getPaymentNo()).startsWith("PMT");
         assertThat(payment.getPaymentStatus()).isEqualTo("PAID");
         assertThat(receipt.getReceiptNo()).startsWith("RCP");
@@ -218,11 +209,10 @@ class EnrollmentOrderServiceImplTest {
         EnrollmentCreateRequest request = buildCreateRequest();
         request.setDiscountAmount(new BigDecimal("1200.00"));
         request.setReceivedAmount(BigDecimal.ZERO);
-        request.setPrimaryTeacherId(null);
         when(studentMapper.selectById(101L)).thenReturn(buildStudent());
         when(courseProductMapper.selectById(201L)).thenReturn(buildCourseProduct());
         when(jsonHelper.toJson(any())).thenReturn("{\"receipt\":true}");
-        stubGeneratedIds(false, false);
+        stubGeneratedIds(false);
 
         EnrollmentCreateResultVO result = enrollmentOrderService.createOrder(request);
 
@@ -256,17 +246,6 @@ class EnrollmentOrderServiceImplTest {
         assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Only 1:1 course products can be used for new enrollment.");
-    }
-
-    @Test
-    void shouldRejectWhenDefaultLessonUnitsExceedTotalUnits() {
-        EnrollmentCreateRequest request = buildCreateRequest();
-        request.setTotalUnits(4);
-        request.setDefaultLessonUnits(6);
-
-        assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Default lesson units cannot exceed total units.");
     }
 
     @Test
@@ -687,7 +666,7 @@ class EnrollmentOrderServiceImplTest {
                 .isEqualTo(receipt.getReceiptPayload());
     }
 
-    private void stubGeneratedIds(boolean includeAssignmentInsert, boolean includePaymentInsert) {
+    private void stubGeneratedIds(boolean includePaymentInsert) {
         doAnswer(invocation -> {
             EnrollmentOrderEntity entity = invocation.getArgument(0);
             entity.setId(2001L);
@@ -698,13 +677,6 @@ class EnrollmentOrderServiceImplTest {
             entity.setId(3001L);
             return 1;
         }).when(coursePackageMapper).insert(any(CoursePackageEntity.class));
-        if (includeAssignmentInsert) {
-            doAnswer(invocation -> {
-                PackageTeacherAssignmentEntity entity = invocation.getArgument(0);
-                entity.setId(4001L);
-                return 1;
-            }).when(packageTeacherAssignmentMapper).insert(any(PackageTeacherAssignmentEntity.class));
-        }
         if (includePaymentInsert) {
             doAnswer(invocation -> {
                 PaymentRecordEntity entity = invocation.getArgument(0);
@@ -723,14 +695,12 @@ class EnrollmentOrderServiceImplTest {
         EnrollmentCreateRequest request = new EnrollmentCreateRequest();
         request.setStudentId(101L);
         request.setCourseProductId(201L);
-        request.setPrimaryTeacherId(301L);
         request.setCashierUserId(401L);
         request.setHandledByName("Amy");
         request.setCurrencyCode("USD");
         request.setPackageName("SHSAT Math Premium");
         request.setStartDate(LocalDate.of(2026, 4, 7));
         request.setEstimatedEndDate(LocalDate.of(2026, 7, 7));
-        request.setAssignmentEffectiveFrom(LocalDateTime.of(2026, 4, 7, 9, 0));
         request.setPaidAt(LocalDateTime.of(2026, 4, 7, 10, 0));
         request.setIssueReceipt(true);
         request.setTemplateCode("DEFAULT_RECEIPT");
@@ -738,7 +708,6 @@ class EnrollmentOrderServiceImplTest {
         request.setDiscountAmount(new BigDecimal("100.00"));
         request.setReceivedAmount(new BigDecimal("1100.00"));
         request.setTotalUnits(80);
-        request.setDefaultLessonUnits(4);
         request.setRemark("first enrollment");
         return request;
     }
@@ -759,8 +728,6 @@ class EnrollmentOrderServiceImplTest {
         product.setSubjectName("SHSAT Math");
         product.setTeachingMode("ONE_ON_ONE");
         product.setStatus("ACTIVE");
-        product.setDefaultTotalUnits(80);
-        product.setDefaultLessonUnits(4);
         return product;
     }
 

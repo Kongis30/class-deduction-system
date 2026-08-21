@@ -4,8 +4,8 @@
       <div class="config-panel__header">
         <div>
           <span class="config-panel__eyebrow">Course setup</span>
-          <h2>Set Grades & Prices</h2>
-          <p>Choose a course, add the grades it accepts, then enter the registration choices, prices, and schedule.</p>
+          <h2>Set Grade Classes & Registration Options</h2>
+          <p>Choose a course, create one class for each grade, then add the monthly, weekly, or session registration options for that class.</p>
         </div>
         <div class="header-actions">
           <el-button @click="loadAll">Reload</el-button>
@@ -59,44 +59,17 @@
           </section>
 
           <template v-else>
-            <div class="matrix-content__context">
-              <el-button text type="primary" @click="handleContextBack">
+            <div class="matrix-toolbar">
+              <el-button v-if="fromProductSetup" text type="primary" @click="handleContextBack">
                 <el-icon><ArrowLeft /></el-icon>
-                {{ contextBackLabel }}
+                Back to Courses
               </el-button>
-              <strong>{{ selectedProduct?.productName }}</strong>
-            </div>
-
-            <section class="matrix-flow-card">
-              <div>
-                <span>{{ matrixFlowEyebrow }}</span>
-                <strong>{{ matrixFlowTitle }}</strong>
-                <p>{{ matrixFlowDescription }}</p>
-              </div>
               <el-button type="primary" @click="openDialog()">
                 {{ matrixPrimaryActionLabel }}
               </el-button>
-            </section>
+            </div>
 
-            <section class="matrix-step-strip">
-              <div class="matrix-step-strip__item matrix-step-strip__item--done">
-                <span>1</span>
-                <strong>Course created</strong>
-                <small>{{ selectedProduct?.productName }}</small>
-              </div>
-              <div class="matrix-step-strip__item matrix-step-strip__item--active">
-                <span>2</span>
-                <strong>{{ selectedMode === 'GROUP' ? 'Set grades and registration options' : 'Set grades and hour packages' }}</strong>
-                <small>{{ configuredGradeCount }} grade{{ configuredGradeCount === 1 ? '' : 's' }}, {{ visibleOptions.length }} registration option{{ visibleOptions.length === 1 ? '' : 's' }}</small>
-              </div>
-              <div class="matrix-step-strip__item">
-                <span>3</span>
-                <strong>Use in registration</strong>
-                <small>Only active packages appear in registration.</small>
-              </div>
-            </section>
-
-            <el-empty v-if="!loading && groupedOptions.length === 0" description="No packages for this course yet." />
+            <el-empty v-if="!loading && groupedOptions.length === 0" description="No grade classes for this course yet." />
 
             <section
               v-for="group in groupedOptions"
@@ -105,22 +78,24 @@
             >
               <header class="product-price-group__header">
                 <div>
-                  <span>{{ selectedProduct?.productName }}</span>
-                  <strong>{{ group.gradeLabel }}</strong>
-                  <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }}</small>
+                  <strong>{{ group.gradeLabel }} class</strong>
+                  <span v-if="selectedMode === 'GROUP'">{{ formatGroupSchedule(group.rows[0]) }}</span>
+                  <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }} for this grade</small>
                 </div>
-                <el-button size="small" type="primary" plain @click="openDialog(undefined, group.gradeLabel)">
-                  Add registration option
-                </el-button>
+                <div class="product-price-group__actions">
+                  <small v-if="selectedMode === 'GROUP'">{{ formatGroupClassroom(group.rows[0]) }}</small>
+                  <el-button size="small" type="primary" plain @click="openDialog(undefined, group.gradeLabel)">
+                    Add registration option
+                  </el-button>
+                </div>
               </header>
 
               <div v-loading="loading || loadingProducts" class="grade-package-card">
-                <div class="grade-package-card__summary">
+                <div v-if="selectedMode === 'ONE_ON_ONE'" class="grade-package-card__summary">
                   <div>
                     <strong>{{ groupPackageTitle(group) }}</strong>
-                    <span>{{ selectedMode === 'GROUP' ? formatGroupSchedule(group.rows[0]) : 'Private lesson package' }}</span>
+                    <span>Private lesson package</span>
                   </div>
-                  <small v-if="selectedMode === 'GROUP'">{{ formatGroupClassroom(group.rows[0]) }}</small>
                 </div>
 
                 <el-table
@@ -239,14 +214,15 @@
 
     <el-dialog
       v-model="dialogVisible"
-      width="860px"
+      width="min(1080px, calc(100vw - 48px))"
       :close-on-click-modal="false"
       :title="priceDialogTitle"
+      class="registration-option-dialog"
     >
-      <el-form ref="formRef" label-position="top" :model="form" :rules="rules">
+      <el-form ref="formRef" label-position="top" :model="form" :rules="rules" class="registration-option-form">
         <div class="pricing-context">
-          <span>{{ formTeachingMode === 'GROUP' ? 'Add a registration choice for' : 'Add an hour package for' }}</span>
-          <strong>{{ selectedFormProductName }}</strong>
+          <span>{{ formTeachingMode === 'GROUP' ? 'Add a registration option for this grade class' : 'Add an hour package for' }}</span>
+          <strong>{{ selectedFormProductName }} · {{ form.gradeBand || 'selected grade' }}</strong>
           <small>{{ formTeachingMode === 'GROUP'
             ? 'Example: Grade 3 can have choices like 2 months, 6 months, Fall 13 sessions, or Full year.'
             : 'Example: Grade 6 can have packages like 40 hours, 60 hours, or 120 hours.' }}</small>
@@ -256,8 +232,8 @@
           <div class="price-dialog-section__head">
             <span class="section-step">1</span>
             <div>
-              <strong>Choose grade</strong>
-              <small>All payment choices for the same grade will be grouped together.</small>
+              <strong>Choose grade class</strong>
+              <small>One Product + Grade is one class. All monthly, weekly, or session choices for this grade belong to this class.</small>
             </div>
           </div>
           <div class="form-grid">
@@ -305,14 +281,11 @@
           <div class="grade-class-settings__head">
             <span class="section-step">2</span>
             <div>
-              <strong>Define what the student can buy</strong>
-              <small>This is the registration choice staff will select later.</small>
+              <strong>Set registration option</strong>
+              <small>Each row is one way a student can register for this grade class.</small>
             </div>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Registration option name">
-              <el-input v-model="form.periodLabel" :placeholder="paymentOptionPlaceholder" />
-            </el-form-item>
             <el-form-item label="Count by">
               <el-select v-model="form.packageUnit" style="width: 100%;">
                 <el-option
@@ -323,8 +296,6 @@
                 />
               </el-select>
             </el-form-item>
-          </div>
-          <div class="form-grid form-grid--two">
             <el-form-item :label="packageQuantityLabel">
               <el-input-number
                 v-model="form.packageQuantity"
@@ -336,18 +307,22 @@
               />
             </el-form-item>
           </div>
+          <div class="registration-choice-preview">
+            <span>Registration label</span>
+            <strong>{{ registrationChoiceLabel }}</strong>
+          </div>
         </section>
 
         <section v-if="formTeachingMode === 'GROUP'" class="grade-class-settings">
           <div class="grade-class-settings__head">
             <span class="section-step">3</span>
             <div>
-              <strong>Set price</strong>
+              <strong>Set registration price</strong>
               <small>Enter the total amount paid for this choice. The per-unit price is calculated for reference.</small>
             </div>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item :label="form.halfDayPrice && form.halfDayPrice > 0 ? 'Full-day price' : 'Price'">
+            <el-form-item label="Full-day price">
               <el-input-number
                 v-model="form.totalPrice"
                 :min="0"
@@ -367,16 +342,12 @@
               />
             </el-form-item>
           </div>
-          <div class="form-grid form-grid--two calculated-price-grid">
-            <div class="calculated-price">
-              <span>{{ derivedUnitLabel }}</span>
-              <strong>{{ formatMoney(derivedUnitPrice) }}</strong>
-            </div>
-            <div class="calculated-price">
-              <span>Price used in registration</span>
-              <strong>{{ formatMoney(defaultRegistrationPrice) }}</strong>
-              <small>Half-day uses its own price when filled.</small>
-            </div>
+          <div class="calculated-price">
+            <span>Calculated {{ derivedUnitLabel.toLowerCase() }}</span>
+            <strong>{{ formatMoney(derivedUnitPrice) }}</strong>
+            <small v-if="form.halfDayPrice && form.halfDayPrice > 0">
+              Half-day registration uses {{ formatMoney(form.halfDayPrice) }}.
+            </small>
           </div>
         </section>
 
@@ -384,16 +355,30 @@
           <div class="grade-class-settings__head">
             <span class="section-step">4</span>
             <div>
-              <strong>Set weekly schedule</strong>
-              <small>Month and week choices deduct lessons according to this weekly calendar.</small>
+              <strong>Set grade class schedule</strong>
+              <small>This calendar belongs to the grade class and is shared by all registration options.</small>
             </div>
           </div>
           <div class="form-grid form-grid--two">
-            <el-form-item label="Class calendar starts">
-              <el-date-picker v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
+            <el-form-item :label="fixedDateGroup ? 'Class starts' : 'Class calendar starts'">
+              <el-date-picker
+                v-if="fixedDateGroup"
+                v-model="form.groupStartDate"
+                type="date"
+                value-format="YYYY-MM-DD"
+                style="width: 100%;"
+              />
+              <el-date-picker v-else v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
-            <el-form-item label="Class calendar ends">
-              <el-date-picker v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
+            <el-form-item :label="fixedDateGroup ? 'Class ends' : 'Class calendar ends'">
+              <el-date-picker
+                v-if="fixedDateGroup"
+                v-model="form.groupEndDate"
+                type="date"
+                value-format="YYYY-MM-DD"
+                style="width: 100%;"
+              />
+              <el-date-picker v-else v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
             </el-form-item>
           </div>
           <div class="form-grid form-grid--one">
@@ -403,46 +388,50 @@
               </el-select>
             </el-form-item>
           </div>
-          <WeeklyTimeSelector v-model="form.groupScheduleSlots" />
+          <div class="weekly-schedule-panel">
+            <WeeklyTimeSelector v-model="form.groupScheduleSlots" />
+          </div>
           <div v-if="form.groupScheduleSlots.length > 0" class="slot-teacher-list">
             <div
               v-for="(slot, index) in form.groupScheduleSlots"
               :key="`${slot.weekday}-${slot.startTime}-${index}`"
               class="slot-teacher-row"
             >
-              <span>{{ groupSlotLabel(slot) }}</span>
-              <el-select
-                v-model="slot.attendanceOptions"
-                placeholder="Applies to"
-                style="width: 150px"
-              >
-                <el-option label="All students" value="ALL" />
-                <el-option label="Morning only" value="MORNING" />
-                <el-option label="Afternoon only" value="AFTERNOON" />
-              </el-select>
-              <el-select
-                v-model="slot.teacherId"
-                clearable
-                filterable
-                placeholder="Select teacher"
-              >
-                <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-              </el-select>
-              <el-input
-                v-model="slot.subjectName"
-                maxlength="128"
-                placeholder="Taught subject"
-                clearable
-              />
-              <el-input-number
-                v-model="slot.hourlyRateSnapshot"
-                :min="0"
-                :precision="2"
-                :step="1"
-                controls-position="right"
-                placeholder="Pay / hr"
-                style="width: 130px"
-              />
+              <div class="slot-time-cell">
+                <small>Time</small>
+                <strong>{{ groupSlotLabel(slot) }}</strong>
+              </div>
+              <label class="slot-field">
+                <span>Applies to</span>
+                <el-select
+                  v-model="slot.attendanceOptions"
+                  placeholder="Select"
+                >
+                  <el-option label="All students" value="ALL" />
+                  <el-option label="Morning only" value="MORNING" />
+                  <el-option label="Afternoon only" value="AFTERNOON" />
+                </el-select>
+              </label>
+              <label class="slot-field">
+                <span>Teacher</span>
+                <el-select
+                  v-model="slot.teacherId"
+                  clearable
+                  filterable
+                  placeholder="Select teacher"
+                >
+                  <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+                </el-select>
+              </label>
+              <label class="slot-field">
+                <span>Taught subject</span>
+                <el-input
+                  v-model="slot.subjectName"
+                  maxlength="128"
+                  placeholder="e.g. Chemistry"
+                  clearable
+                />
+              </label>
             </div>
           </div>
         </section>
@@ -451,8 +440,8 @@
           <div class="grade-class-settings__head">
             <span class="section-step">2</span>
             <div>
-              <strong>Set hour package and price</strong>
-              <small>Enter the package from the tuition sheet, such as 40 hours or 60 hours.</small>
+              <strong>Set hour registration option</strong>
+              <small>Each 1-on-1 hour package is a separate registration option for the selected grade.</small>
             </div>
           </div>
           <div class="form-grid form-grid--two">
@@ -487,6 +476,10 @@
 
         <el-collapse class="advanced-settings">
           <el-collapse-item title="Advanced settings" name="advanced">
+            <el-form-item v-if="formTeachingMode === 'GROUP'" label="Custom registration label">
+              <el-input v-model="form.periodLabel" :placeholder="paymentOptionPlaceholder" />
+              <span class="field-help">Leave blank to use “{{ registrationChoiceLabel }}”.</span>
+            </el-form-item>
             <el-form-item label="Notes">
               <el-input v-model="form.detailText" type="textarea" :rows="2" placeholder="Optional" />
             </el-form-item>
@@ -642,9 +635,9 @@ const form = reactive({
     endTime: string;
     plannedUnits: number;
     attendanceOptions?: string;
-    hourlyRateSnapshot?: number;
   }>,
   groupStartDate: '',
+  groupEndDate: '',
   groupTotalSessions: 13 as number | undefined,
   groupTotalPrice: undefined as number | undefined,
   groupStartMonth: '',
@@ -681,7 +674,6 @@ const derivedUnitPrice = computed(() => {
     : 0;
 });
 const derivedUnitLabel = computed(() => `${packageUnitText(form.packageUnit)} price`);
-const defaultRegistrationPrice = computed(() => Number(form.totalPrice ?? 0));
 const packageQuantityLabel = computed(() => {
   if (form.packageUnit === 'MONTH') {
     return 'Number of months';
@@ -700,6 +692,12 @@ const paymentOptionPlaceholder = computed(() => {
   }
   return 'e.g. Fall 13 sessions, Spring 20 sessions';
 });
+const registrationChoiceLabel = computed(() => {
+  const quantity = Number(form.packageQuantity ?? 0);
+  return quantity > 0
+    ? `${formatQuantity(quantity)} ${packageUnitPlural(form.packageUnit, quantity)}`
+    : `Choose a ${packageUnitText(form.packageUnit).toLowerCase()} count`;
+});
 
 const selectedMode = ref<CourseMode>('ONE_ON_ONE');
 const selectedModeLabel = computed(() =>
@@ -707,7 +705,6 @@ const selectedModeLabel = computed(() =>
 );
 const productMap = computed(() => new Map(courseProducts.value.map(item => [String(item.id), item])));
 const selectedProduct = computed(() => query.courseProductId ? productMap.value.get(String(query.courseProductId)) : undefined);
-const startedFromProductCreate = computed(() => queryValue(route.query.create) === '1');
 const fromProductSetup = computed(() => queryValue(route.query.from) === 'course-products');
 const productChoices = computed(() =>
   sortCourseProducts(courseProducts.value.filter(product => product.teachingMode === selectedMode.value))
@@ -727,39 +724,10 @@ const visibleOptions = computed(() => {
   });
 });
 
-const matrixFlowTitle = computed(() => {
-  if (selectedMode.value === 'ONE_ON_ONE') {
-    return visibleOptions.value.length === 0
-      ? 'Step 2: add a grade and hour package'
-      : 'Review grades and hour packages';
-  }
-  return visibleOptions.value.length === 0
-    ? 'Step 2: add a grade'
-    : 'Review grades and registration options';
-});
-
-const matrixFlowEyebrow = computed(() => {
-  if (startedFromProductCreate.value) {
-    return 'You just created the course';
-  }
-  return fromProductSetup.value ? 'Continue from Courses' : 'Course setup flow';
-});
-
-const matrixFlowDescription = computed(() => {
-  if (selectedMode.value === 'ONE_ON_ONE') {
-    return 'Choose the course, set a grade, then add the hour packages students can buy.';
-  }
-  return 'A group course can have multiple grades. Each grade can offer registration choices such as 2 months, 6 months, Fall 13 sessions, or full year.';
-});
-
 const emptyGuideDescription = computed(() =>
   selectedMode.value === 'GROUP'
     ? 'Pick a course, then add a grade. After that, enter the registration choices, prices, and schedule for that grade.'
     : 'Pick a 1-on-1 course, then add the grade and hour package students can buy.'
-);
-
-const contextBackLabel = computed(() =>
-  fromProductSetup.value ? 'Back to Courses' : 'Choose another course'
 );
 
 const matrixPrimaryActionLabel = computed(() =>
@@ -812,9 +780,19 @@ const groupedOptions = computed<ProductPriceGroup[]>(() => {
     .sort((left, right) => left.gradeLabel.localeCompare(right.gradeLabel));
 });
 
-const configuredGradeCount = computed(() => groupedOptions.value.length);
+const existingGradeClass = computed(() => {
+  if (selectedMode.value !== 'GROUP' || editingId.value || !form.courseProductId || !form.gradeBand.trim()) {
+    return false;
+  }
+  return options.value.some(option =>
+    String(option.courseProductId) === String(form.courseProductId)
+      && String(option.gradeBand || '').trim().toLowerCase() === form.gradeBand.trim().toLowerCase()
+      && option.classId != null
+  );
+});
 
 const formTeachingMode = computed<CourseMode>(() => courseTypes.find(item => item.value === form.courseType)?.mode ?? 'GROUP');
+const fixedDateGroup = computed(() => form.packageUnit === 'WEEK' || form.packageUnit === 'SESSION');
 const priceColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
   ? 'Total package price for the selected private lesson hours.'
   : 'Total price for this registration option. Registration uses this configured price directly.');
@@ -847,7 +825,11 @@ async function initializePage() {
 
   const requestedProductId = queryValue(route.query.courseProductId);
   const requestedProduct = requestedProductId ? productMap.value.get(requestedProductId) : undefined;
-  if (requestedProduct && productMatchesCourseType(requestedProduct, query.courseType)) {
+  if (requestedProduct) {
+    selectedMode.value = requestedProduct.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'GROUP';
+    query.courseType = requestedProduct.teachingMode === 'ONE_ON_ONE'
+      ? 'ONE_ON_ONE'
+      : normalizeGroupCourseType(requestedProduct.courseType);
     query.courseProductId = requestedProduct.id;
   }
   await loadOptions();
@@ -931,7 +913,9 @@ function handleContextBack() {
 
 function selectCourseProduct(product: CourseProductItem) {
   query.courseProductId = product.id;
-  query.courseType = (product.courseType as CourseTypeValue) ?? query.courseType;
+  query.courseType = product.teachingMode === 'ONE_ON_ONE'
+    ? 'ONE_ON_ONE'
+    : normalizeGroupCourseType(product.courseType);
   reloadFirstPage();
 }
 
@@ -976,6 +960,7 @@ function openDialog(option?: CoursePriceOptionItem, gradeLabel = '') {
     attendanceOptions: normalizeSlotAttendance(slot.attendanceOptions),
   }));
   form.groupStartDate = option?.groupStartDate ?? '';
+  form.groupEndDate = option?.groupEndDate ?? '';
   form.groupTotalSessions = Number(form.packageQuantity ?? option?.groupTotalSessions ?? 13);
   form.groupTotalPrice = option?.totalPrice ?? option?.groupTotalPrice;
   form.groupStartMonth = option?.groupStartMonth ?? '';
@@ -988,7 +973,9 @@ function openDialog(option?: CoursePriceOptionItem, gradeLabel = '') {
 function handleFormProductChange() {
   const product = form.courseProductId ? productMap.value.get(String(form.courseProductId)) : undefined;
   if (product) {
-    form.courseType = (product.courseType as CourseTypeValue) || form.courseType;
+    form.courseType = product.teachingMode === 'ONE_ON_ONE'
+      ? 'ONE_ON_ONE'
+      : normalizeGroupCourseType(product.courseType);
     form.registerClass = product.registerClass || product.productName;
     if (product.teachingMode === 'ONE_ON_ONE') {
       form.packageUnit = 'HOUR';
@@ -1005,6 +992,13 @@ function normalizePackageUnit(unit: string | undefined, mode: CourseMode): Packa
   }
   const normalized = String(unit || '').toUpperCase();
   return normalized === 'WEEK' || normalized === 'SESSION' ? normalized : 'MONTH';
+}
+
+function normalizeGroupCourseType(courseType?: string): CourseTypeValue {
+  const normalized = String(courseType || '').toUpperCase();
+  return courseTypes.some(item => item.value === normalized && item.mode === 'GROUP')
+    ? normalized as CourseTypeValue
+    : 'AFTER_SCHOOL';
 }
 
 function defaultPackageQuantity(unit: string) {
@@ -1066,7 +1060,7 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     periodLabel: form.periodLabel.trim() || undefined,
     durationLabel: formTeachingMode.value === 'ONE_ON_ONE' ? form.durationLabel.trim() || undefined : undefined,
     timeSlotLabel: undefined,
-    detailText: form.detailText.trim() || undefined,
+    detailText: form.detailText.trim(),
     packageUnit,
     packageQuantity,
     totalPrice: packageTotalPrice,
@@ -1079,18 +1073,18 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     groupTeacherId: undefined,
     groupClassroomId: formTeachingMode.value === 'GROUP' ? form.groupClassroomId : undefined,
     groupScheduleSlots: formTeachingMode.value === 'GROUP'
-      ? form.groupScheduleSlots.map(({ teacherId, subjectName, weekday, startTime, endTime, attendanceOptions, hourlyRateSnapshot }) => ({
+      ? form.groupScheduleSlots.map(({ teacherId, subjectName, weekday, startTime, endTime, attendanceOptions }) => ({
           teacherId,
           subjectName: subjectName?.trim() || undefined,
           weekday,
           startTime,
           endTime,
           attendanceOptions: normalizeSlotAttendance(attendanceOptions),
-          hourlyRateSnapshot: optionalPositive(hourlyRateSnapshot),
         }))
       : undefined,
     groupBillingType: formTeachingMode.value === 'GROUP' ? packageUnit : undefined,
-    groupStartDate: undefined,
+    groupStartDate: formTeachingMode.value === 'GROUP' && fixedDateGroup.value ? form.groupStartDate || undefined : undefined,
+    groupEndDate: formTeachingMode.value === 'GROUP' && fixedDateGroup.value ? form.groupEndDate || undefined : undefined,
     groupTotalSessions: formTeachingMode.value === 'GROUP' ? Math.ceil(Number(packageQuantity ?? 0)) : undefined,
     groupTotalPrice: formTeachingMode.value === 'GROUP' ? packageTotalPrice : undefined,
     groupStartMonth: formTeachingMode.value === 'GROUP' ? form.groupStartMonth || undefined : undefined,
@@ -1125,6 +1119,7 @@ function payloadFromRow(row: CoursePriceOptionItem, status: string): CoursePrice
     groupScheduleSlots: row.groupScheduleSlots,
     groupBillingType: row.groupBillingType,
     groupStartDate: row.groupStartDate,
+    groupEndDate: row.groupEndDate,
     groupTotalSessions: row.groupTotalSessions,
     groupTotalPrice: row.groupTotalPrice,
     groupStartMonth: row.groupStartMonth,
@@ -1140,7 +1135,7 @@ async function saveOption() {
   if (!valid) {
     return;
   }
-  if (formTeachingMode.value === 'GROUP' && form.groupScheduleSlots.length === 0) {
+  if (formTeachingMode.value === 'GROUP' && !existingGradeClass.value && form.groupScheduleSlots.length === 0) {
     ElMessage.warning('Add at least one weekly schedule slot for this grade class.');
     return;
   }
@@ -1150,8 +1145,18 @@ async function saveOption() {
     ElMessage.warning('Add a package total price and package count.');
     return;
   }
-  if (formTeachingMode.value === 'GROUP' && (!form.groupStartMonth || !form.groupEndMonth)) {
-    ElMessage.warning('Add the first and last month for this grade class.');
+  if (formTeachingMode.value === 'GROUP' && !existingGradeClass.value
+      && (fixedDateGroup.value
+        ? (!form.groupStartDate || !form.groupEndDate)
+        : (!form.groupStartMonth || !form.groupEndMonth))) {
+    ElMessage.warning(fixedDateGroup.value
+      ? 'Add the first and last date for this class.'
+      : 'Add the first and last month for this grade class.');
+    return;
+  }
+  if (formTeachingMode.value === 'GROUP' && fixedDateGroup.value
+      && form.groupEndDate < form.groupStartDate) {
+    ElMessage.warning('Class end date cannot be earlier than the start date.');
     return;
   }
   if (formTeachingMode.value === 'ONE_ON_ONE' && (!form.oneOnOneHours || form.oneOnOneHours <= 0)) {
@@ -1247,12 +1252,15 @@ function formatGroupBilling(row: CoursePriceOptionItem) {
   if (row.courseType === 'ONE_ON_ONE') {
     return packageLengthLabel(row) || '-';
   }
-  return packageLengthLabel(row) || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ') || 'Package';
+  return packageLengthLabel(row)
+    || [row.groupStartDate, row.groupEndDate].filter(Boolean).join(' to ')
+    || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ')
+    || 'Package';
 }
 
 function groupPackageTitle(group: ProductPriceGroup) {
   if (selectedMode.value === 'ONE_ON_ONE') {
-    return `${group.gradeLabel} hour package`;
+    return 'Hour packages';
   }
   const first = group.rows[0];
   const unit = packageUnitText(first?.packageUnit || first?.groupBillingType || 'MONTH');
@@ -1273,7 +1281,8 @@ function isGroupRow(row: CoursePriceOptionItem) {
 
 function billingSubtitle(row: CoursePriceOptionItem) {
   if (isGroupRow(row)) {
-    const window = [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ');
+    const window = [row.groupStartDate, row.groupEndDate].filter(Boolean).join(' to ')
+      || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ');
     return window || '';
   }
   return row.notes || '';
@@ -1500,20 +1509,12 @@ function normalizeSlotAttendance(value?: string) {
   white-space: nowrap;
 }
 
-.matrix-content__context {
+.matrix-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   margin: 0 0 10px;
-}
-
-.matrix-content__context strong {
-  min-width: 0;
-  overflow: hidden;
-  color: #1e293b;
-  font-size: 15px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .matrix-empty-guide {
@@ -1544,104 +1545,6 @@ function normalizeSlotAttendance(value?: string) {
   color: #606266;
   font-size: 13px;
   line-height: 1.5;
-}
-
-.matrix-flow-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 12px;
-  padding: 12px 14px;
-  border: 1px solid #d8e7ff;
-  border-radius: 10px;
-  background: #f7fbff;
-}
-
-.matrix-flow-card div {
-  min-width: 0;
-}
-
-.matrix-flow-card span {
-  display: block;
-  color: #409eff;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.matrix-flow-card strong {
-  display: block;
-  margin-top: 3px;
-  color: #1f2937;
-  font-size: 14px;
-}
-
-.matrix-flow-card p {
-  margin: 3px 0 0;
-  color: #606266;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.matrix-step-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.matrix-step-strip__item {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 3px 8px;
-  align-items: start;
-  padding: 10px 12px;
-  border: 1px solid #e8edf2;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.matrix-step-strip__item--done,
-.matrix-step-strip__item--active {
-  border-color: #c9ead5;
-  background: #effaf3;
-}
-
-.matrix-step-strip__item span {
-  grid-row: span 2;
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: #cbd5e1;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.matrix-step-strip__item--done span,
-.matrix-step-strip__item--active span {
-  background: #18a058;
-}
-
-.matrix-step-strip__item strong {
-  overflow: hidden;
-  color: #1f2937;
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.matrix-step-strip__item small {
-  overflow: hidden;
-  color: #64748b;
-  font-size: 11px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .config-table {
@@ -1711,6 +1614,13 @@ function normalizeSlotAttendance(value?: string) {
 .product-price-group__header small {
   color: #64748b;
   font-size: 12px;
+}
+
+.product-price-group__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 
 .grade-package-card {
@@ -1851,6 +1761,21 @@ function normalizeSlotAttendance(value?: string) {
   margin-top: 14px;
 }
 
+.registration-option-dialog :deep(.el-dialog__body) {
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.registration-option-dialog :deep(.el-dialog__footer) {
+  border-top: 1px solid #e5e7eb;
+  padding: 12px 20px;
+}
+
+.registration-option-form {
+  min-width: 0;
+}
+
 .form-grid {
   display: grid;
   gap: 14px;
@@ -1860,12 +1785,10 @@ function normalizeSlotAttendance(value?: string) {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.calculated-price-grid {
-  gap: 12px;
-}
-
 .calculated-price {
   display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
   gap: 3px;
   padding: 10px 12px;
   border: 1px solid #dbeafe;
@@ -1882,6 +1805,10 @@ function normalizeSlotAttendance(value?: string) {
 .calculated-price strong {
   color: #1d4ed8;
   font-size: 18px;
+}
+
+.calculated-price small {
+  text-align: right;
 }
 
 .grade-class-settings {
@@ -1948,21 +1875,61 @@ function normalizeSlotAttendance(value?: string) {
   gap: 8px;
 }
 
-.slot-teacher-row {
-  display: grid;
-  grid-template-columns: minmax(150px, 0.8fr) minmax(150px, 0.7fr) minmax(200px, 1fr) minmax(180px, 1fr) 130px;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
-  border: 1px solid #dbeafe;
-  border-radius: 6px;
-  background: #fff;
+.weekly-schedule-panel {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
 }
 
-.slot-teacher-row > span {
+.weekly-schedule-panel :deep(.weekly-time-selector) {
+  min-width: 760px;
+}
+
+.slot-teacher-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(130px, 0.75fr) minmax(160px, 1fr) minmax(160px, 1fr) minmax(112px, 0.65fr);
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.slot-time-cell,
+.slot-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.slot-time-cell small,
+.slot-field span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.slot-time-cell strong {
+  overflow: hidden;
   color: #334155;
   font-size: 13px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-field :deep(.el-select),
+.slot-field :deep(.el-input),
+.slot-field :deep(.el-input-number) {
+  width: 100%;
+}
+
+.slot-field :deep(.el-input-number .el-input__inner) {
+  text-align: left;
 }
 
 .custom-hours {
@@ -2002,6 +1969,25 @@ function normalizeSlotAttendance(value?: string) {
   display: block;
   margin-top: 6px;
   line-height: 1.45;
+}
+
+.registration-choice-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.registration-choice-preview span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.registration-choice-preview strong {
+  color: #1e293b;
+  font-size: 13px;
 }
 
 .pricing-context {
@@ -2044,6 +2030,24 @@ function normalizeSlotAttendance(value?: string) {
   }
 
   .form-grid--two {
+    grid-template-columns: 1fr;
+  }
+
+  .slot-teacher-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .slot-time-cell {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .registration-option-dialog :deep(.el-dialog__body) {
+    padding: 12px;
+  }
+
+  .slot-teacher-row {
     grid-template-columns: 1fr;
   }
 }

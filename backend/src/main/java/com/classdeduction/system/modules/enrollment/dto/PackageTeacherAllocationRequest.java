@@ -11,8 +11,14 @@ import lombok.Data;
 import java.math.BigDecimal;
 import java.util.List;
 
+/**
+ * Historical payload retained for controlled migration only.
+ *
+ * <p>There is no active write endpoint for this request. Current 1-on-1
+ * teacher and hour allocation is defined by recurring schedule slots.</p>
+ */
 @Data
-@Schema(description = "Course package teacher-hours allocation request")
+@Schema(description = "Legacy course package teacher-hours allocation request")
 public class PackageTeacherAllocationRequest {
 
     @NotEmpty(message = "At least one teacher allocation is required")
@@ -37,10 +43,6 @@ public class PackageTeacherAllocationRequest {
         @DecimalMin(value = "0.5", message = "Allocated hours must be at least 0.5")
         @Schema(description = "Hours allocated to this teacher in 0.5-hour increments", example = "30.0")
         private BigDecimal allocatedHours;
-
-        @DecimalMin(value = "0.01", message = "Hourly rate must be greater than 0")
-        @Schema(description = "Teacher hourly pay-rate snapshot for this allocation", example = "25.00")
-        private BigDecimal hourlyRateSnapshot;
 
         @Schema(description = "Primary teacher flag")
         private Boolean primary;

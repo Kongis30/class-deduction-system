@@ -10,7 +10,7 @@
         <div>
           <span class="panel-header__eyebrow">Course setup</span>
           <h2 class="panel-header__title">Courses</h2>
-          <p class="panel-header__desc">Create the course first, then set the grades, prices, and schedule.</p>
+          <p class="panel-header__desc">Create the course product first. Set packages and prices before registration.</p>
         </div>
         <div class="panel-header__actions">
           <el-button type="primary" @click="openProductDialog()">
@@ -22,14 +22,9 @@
 
       <section class="setup-path-card">
         <div>
-          <span>{{ activeTab === 'GROUP' ? 'Group class setup path' : '1-on-1 setup path' }}</span>
+          <span>What to do next</span>
           <strong>{{ setupPathTitle }}</strong>
           <p>{{ setupPathDescription }}</p>
-        </div>
-        <div class="setup-path-card__actions">
-          <el-button type="primary" @click="openPriceMatrixForCurrentTab">
-            Set grades & prices
-          </el-button>
         </div>
       </section>
 
@@ -37,7 +32,7 @@
         <div class="product-toolbar__filters">
           <el-input
             v-model="filters.productName"
-            placeholder="Search course or subject"
+            placeholder="Search course"
             clearable
             @input="handleFilterChange"
           />
@@ -50,10 +45,6 @@
             <el-option label="Active" value="ACTIVE" />
             <el-option label="Inactive" value="INACTIVE" />
           </el-select>
-        </div>
-        <div class="product-toolbar__links">
-          <el-button text type="primary" @click="openSubjectDialog()">Manage subjects</el-button>
-          <el-button text type="primary" @click="$router.push('/admin/config/course-prices')">Grades & prices</el-button>
         </div>
       </div>
 
@@ -85,7 +76,6 @@
                     {{ row.productName }}
                   </strong>
                   <span>
-                    {{ row.subjectName || 'No subject' }}
                     <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
                       {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                     </el-tag>
@@ -93,18 +83,10 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Next step" min-width="150">
-              <template #default>
-                <span class="next-step-text">Add hour packages</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Sort" width="80" align="center">
-              <template #default="{ row }">{{ row.sortOrder ?? 99 }}</template>
-            </el-table-column>
             <el-table-column label="Actions" width="190">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button type="primary" link @click="openProductPrices(row)">Set grades & prices</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set packages & prices</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -147,13 +129,10 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Sort" width="80" align="center">
-              <template #default="{ row }">{{ row.sortOrder ?? 99 }}</template>
-            </el-table-column>
             <el-table-column label="Actions" width="210">
               <template #default="{ row }">
                 <div class="table-actions">
-                  <el-button type="primary" link @click="openProductPrices(row)">Set grades & prices</el-button>
+                  <el-button type="primary" link @click="openProductPrices(row)">Set grades & schedule</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -183,17 +162,12 @@
           <div class="product-step__head">
             <strong>Course details</strong>
             <small>
-              Save the course name first. Grades, prices, and schedules are set on the next page.
+            Save the course product first. Package hours and prices are configured next; teachers and lesson names are assigned when you schedule lessons.
             </small>
           </div>
           <div class="product-form__row">
             <el-form-item label="Course name" prop="productName" class="product-form__full">
               <el-input v-model="form.productName" :placeholder="courseNamePlaceholder" />
-            </el-form-item>
-            <el-form-item v-if="form.teachingMode === 'ONE_ON_ONE'" label="Subject (optional)">
-              <el-select v-model="form.subjectName" placeholder="Select subject" filterable style="width: 100%;">
-                <el-option v-for="subj in subjects" :key="subj.subjectName" :label="subj.subjectName" :value="subj.subjectName" />
-              </el-select>
             </el-form-item>
             <el-form-item>
               <template #label>
@@ -218,7 +192,7 @@
           type="info"
           :closable="false"
           show-icon
-          title="After saving, add grades, hour packages, and prices."
+          title="After saving, add grades, package sizes, and prices. Assign the teacher, lesson name, and weekly times after enrollment."
         />
 
         <el-alert
@@ -253,79 +227,6 @@
       </template>
     </el-dialog>
 
-
-    <el-dialog
-      v-model="subjectDialogVisible"
-      width="720px"
-      :close-on-click-modal="false"
-      class="subject-dialog"
-    >
-      <template #header>
-        <h3>Manage subjects</h3>
-      </template>
-
-
-      <el-table :data="subjectTableData" row-key="id" size="small" class="subject-table">
-        <el-table-column label="Display order" width="110" align="center">
-          <template #default="{ row }">{{ row.displayOrder }}</template>
-        </el-table-column>
-        <el-table-column label="Subject name" min-width="140">
-          <template #default="{ row }">
-            <strong>{{ row.subjectName }}</strong>
-          </template>
-        </el-table-column>
-        <el-table-column label="Status" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">
-              {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Notes" min-width="160">
-          <template #default="{ row }">
-            <span class="notes-text">{{ row.notes ?? '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Actions" width="110" align="center" fixed="right">
-          <template #default="{ row }">
-            <el-button text type="primary" size="small" @click="openSubjectEditDialog(row)">Edit</el-button>
-            <el-button text type="danger" size="small" @click="handleSubjectDelete(row)">Delete</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-
-      <div class="subject-form">
-        <h4 class="subject-form__title">
-          {{ subjectEditingId ? 'Edit subject' : 'Add new subject' }}
-        </h4>
-        <el-form ref="subjectFormRef" :model="subjectForm" :rules="subjectFormRules" inline>
-          <el-form-item label="Subject name" prop="subjectName" style="flex: 1;">
-            <el-input v-model="subjectForm.subjectName" placeholder="e.g. Art" style="width: 160px;" />
-          </el-form-item>
-          <el-form-item label="Display order">
-            <el-input-number v-model="subjectForm.displayOrder" :min="1" :max="999" :controls="false" style="width: 80px;" />
-          </el-form-item>
-          <el-form-item label="Status">
-            <el-select v-model="subjectForm.status" style="width: 110px;">
-              <el-option label="Active" value="ACTIVE" />
-              <el-option label="Inactive" value="INACTIVE" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="Notes">
-            <el-input v-model="subjectForm.notes" placeholder="Optional" style="width: 160px;" />
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" size="small" @click="handleSubjectSave">
-              {{ subjectEditingId ? 'Update' : 'Add' }}
-            </el-button>
-            <el-button v-if="subjectEditingId" size="small" @click="() => { subjectEditingId = null; Object.assign(subjectForm, { subjectName: '', displayOrder: 99, status: 'ACTIVE', notes: '' }); }">
-              Cancel
-            </el-button>
-          </el-form-item>
-        </el-form>
-      </div>
-    </el-dialog>
   </div>
 </template>
 
@@ -337,18 +238,14 @@ import { useRoute, useRouter } from 'vue-router';
 
 import {
   createCourseProduct,
-  createSubject,
   deleteCourseProduct,
-  deleteSubject,
   fetchCourseProducts,
-  fetchSubjects,
   updateCourseProduct,
-  updateSubject,
   type CourseProductQuery,
   type CourseProductSavePayload,
 } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
-import type { ClassGroupItem, CourseProductItem, EntityId, SubjectItem } from '@/types/domain';
+import type { ClassGroupItem, CourseProductItem, EntityId } from '@/types/domain';
 
 const router = useRouter();
 const route = useRoute();
@@ -365,90 +262,6 @@ const createdNextStep = ref<{
   courseType?: string;
   description: string;
 } | null>(null);
-
-
-const subjectDialogVisible = ref(false);
-const subjectTableData = ref<SubjectItem[]>([]);
-const subjectFormRef = ref();
-const subjectEditingId = ref<EntityId | null>(null);
-
-const subjectForm = reactive({
-  subjectName: '',
-  displayOrder: 99,
-  status: 'ACTIVE',
-  notes: '',
-});
-
-const subjectFormRules = {
-  subjectName: [{ required: true, message: 'Subject name is required' }],
-};
-
-function openSubjectDialog() {
-  subjectEditingId.value = null;
-  Object.assign(subjectForm, { subjectName: '', displayOrder: 99, status: 'ACTIVE', notes: '' });
-  loadSubjectsForDialog();
-  subjectDialogVisible.value = true;
-}
-
-async function loadSubjectsForDialog() {
-  try {
-    const res = await fetchSubjects();
-    subjectTableData.value = res.data.data;
-  } catch (error) {
-    console.error('Failed to load subjects:', error);
-    ElMessage.error('Failed to load subjects.');
-  }
-}
-
-function openSubjectEditDialog(row: SubjectItem) {
-  subjectEditingId.value = row.id;
-  Object.assign(subjectForm, {
-    subjectName: row.subjectName,
-    displayOrder: row.displayOrder,
-    status: row.status,
-    notes: row.notes ?? '',
-  });
-}
-
-async function handleSubjectSave() {
-  const valid = await subjectFormRef.value?.validate().catch(() => false);
-  if (!valid) return;
-  try {
-    if (subjectEditingId.value) {
-      await updateSubject(subjectEditingId.value, { ...subjectForm });
-      ElMessage.success('Subject updated.');
-    } else {
-      await createSubject({ ...subjectForm });
-      ElMessage.success('Subject created.');
-    }
-    await loadSubjectsForDialog();
-    subjectEditingId.value = null;
-    Object.assign(subjectForm, { subjectName: '', displayOrder: 99, status: 'ACTIVE', notes: '' });
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
-  }
-}
-
-async function handleSubjectDelete(row: SubjectItem) {
-  try {
-    await ElMessageBox.confirm(
-      `Delete subject "${row.subjectName}"?`,
-      'Confirm delete',
-      { type: 'warning' },
-    );
-    await deleteSubject(row.id);
-    ElMessage.success('Deleted.');
-    await loadSubjectsForDialog();
-
-    if (subjectEditingId.value === row.id) {
-      subjectEditingId.value = null;
-      Object.assign(subjectForm, { subjectName: '', displayOrder: 99, status: 'ACTIVE', notes: '' });
-    }
-  } catch {
-
-  }
-}
-
 
 const filters = reactive({
   productName: '',
@@ -490,14 +303,14 @@ const courseNamePlaceholder = computed(() =>
 
 const setupPathTitle = computed(() =>
   activeTab.value === 'GROUP'
-    ? 'Create the course first, then add grades, prices, and schedule.'
-    : 'Create the course first, then add grades, hour packages, and prices.'
+    ? 'Create one group class course, then set each grade, price, and weekly schedule.'
+    : 'Create one private course, then set each grade, hour package, and price.'
 );
 
 const setupPathDescription = computed(() =>
   activeTab.value === 'GROUP'
-    ? 'A group course becomes available for registration after at least one grade has a package price and weekly schedule.'
-    : 'A 1-on-1 course becomes available for registration after its grade and hour packages are added.'
+    ? 'Use the row action after saving the course. Students can register after a grade has a price and schedule.'
+    : 'Use the row action after saving the course. Students can register after a grade has at least one hour package.'
 );
 
 const productDialogTitle = computed(() => {
@@ -525,16 +338,6 @@ function openProductPrices(product: CourseProductItem) {
       from: 'course-products',
       ...(product.courseType ? { courseType: product.courseType } : {}),
       courseProductId: product.id,
-    },
-  });
-}
-
-function openPriceMatrixForCurrentTab() {
-  router.push({
-    name: 'admin-config-course-prices',
-    query: {
-      from: 'course-products',
-      courseType: activeTab.value === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL',
     },
   });
 }
@@ -611,17 +414,6 @@ async function loadData() {
 }
 
 
-const subjects = ref<SubjectItem[]>([]);
-
-async function loadSubjects() {
-  try {
-    const res = await fetchSubjects();
-    subjects.value = res.data.data;
-  } catch {
-    ElMessage.error('Failed to load subjects.');
-  }
-}
-
 async function loadClassGroups() {
   try {
     const res = await fetchClassGroups();
@@ -637,11 +429,8 @@ const form = reactive<CourseProductSavePayload>({
   productName: '',
   courseType: undefined,
   registerClass: '',
-  subjectName: '',
   teachingMode: 'GROUP',
   sortOrder: 99,
-  defaultTotalUnits: 40,
-  defaultLessonUnits: 4,
   status: 'ACTIVE',
   notes: '',
 });
@@ -649,19 +438,6 @@ const form = reactive<CourseProductSavePayload>({
 const formRules = {
   productName: [{ required: true, message: 'Course name is required' }],
   teachingMode: [{ required: true, message: 'Teaching format is required' }],
-  defaultTotalUnits: [
-    {
-      validator: (_rule: any, value: any, callback: any) => {
-        if (form.teachingMode === 'ONE_ON_ONE' && (value === undefined || value === null)) {
-          callback(new Error('Default package size is required'));
-        } else if (form.teachingMode === 'ONE_ON_ONE' && (value * 2) % 1 !== 0) {
-          callback(new Error('Must be a multiple of 0.5'));
-        } else {
-          callback();
-        }
-      }, trigger: 'change',
-    },
-  ],
 };
 
 function openProductDialog(row?: CourseProductItem) {
@@ -672,11 +448,8 @@ function openProductDialog(row?: CourseProductItem) {
       productName: row.productName,
       courseType: row.courseType ?? (row.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL'),
       registerClass: row.registerClass ?? row.productName,
-      subjectName: row.teachingMode === 'ONE_ON_ONE' ? row.subjectName ?? '' : '',
       teachingMode: row.teachingMode,
       sortOrder: row.sortOrder ?? 99,
-      defaultTotalUnits: row.defaultTotalUnits,
-      defaultLessonUnits: row.defaultLessonUnits,
       status: row.status,
       notes: row.notes ?? '',
     });
@@ -688,11 +461,8 @@ function openProductDialog(row?: CourseProductItem) {
       productName: '',
       courseType: mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : undefined,
       registerClass: '',
-      subjectName: '',
       teachingMode: mode,
       sortOrder: 99,
-      defaultTotalUnits: 40,
-      defaultLessonUnits: 4,
       status: 'ACTIVE',
       notes: '',
     });
@@ -713,17 +483,11 @@ async function handleSubmit() {
       productName: form.productName,
       courseType: form.courseType,
       registerClass: editingId.value ? (form.registerClass || form.productName) : form.productName,
-      subjectName: form.teachingMode === 'ONE_ON_ONE' ? form.subjectName : '',
       teachingMode: form.teachingMode,
       sortOrder: form.sortOrder ?? 99,
       status: form.status,
       notes: form.notes,
     };
-    if (form.teachingMode === 'ONE_ON_ONE') {
-      payload.defaultTotalUnits = form.defaultTotalUnits || 40;
-      payload.defaultLessonUnits = form.defaultLessonUnits || 4;
-    }
-
     if (editingId.value) {
       await updateCourseProduct(editingId.value, payload);
       ElMessage.success('Course updated.');
@@ -773,7 +537,6 @@ async function handleDelete(row: CourseProductItem) {
 
 
 loadData();
-loadSubjects();
 </script>
 
 <style scoped>
@@ -865,12 +628,6 @@ loadSubjects();
   line-height: 1.45;
 }
 
-.setup-path-card__actions {
-  display: flex;
-  flex: none;
-  gap: 8px;
-}
-
 .product-toolbar {
   display: flex;
   align-items: center;
@@ -958,11 +715,6 @@ loadSubjects();
 .cell-stack span :deep(.el-tag) {
   margin-left: 6px;
   vertical-align: 1px;
-}
-
-.next-step-text {
-  color: #64748b;
-  font-size: 12px;
 }
 
 .setup-cell {
@@ -1205,51 +957,4 @@ loadSubjects();
   padding: 12px 20px;
 }
 
-/* Subject dialog */
-.subject-table {
-  margin-bottom: 12px;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid #ebeef5;
-}
-
-.notes-text {
-  color: #909399;
-  font-size: 12px;
-}
-
-.subject-form {
-  border-top: 1px solid #ebeef5;
-  padding-top: 12px;
-}
-
-.subject-form__title {
-  margin: 0 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.subject-dialog :deep(.el-dialog__body) {
-  max-height: 65vh;
-  overflow-y: auto;
-  padding: 16px 20px;
-}
-
-.subject-dialog :deep(.el-dialog__header) {
-  border-bottom: 1px solid #ebeef5;
-  padding: 16px 20px;
-}
-
-.subject-dialog :deep(.el-dialog__header h3) {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.subject-dialog :deep(.el-dialog__footer) {
-  border-top: 1px solid #ebeef5;
-  padding: 12px 20px;
-}
 </style>

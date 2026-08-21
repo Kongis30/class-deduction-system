@@ -203,6 +203,41 @@ a {
   gap: 16px;
 }
 
+.app-header__left {
+  flex: 0 0 auto;
+}
+
+.app-header__page {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+
+.app-header__page span {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.app-header__page strong {
+  overflow: hidden;
+  color: #102a43;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-header__right {
+  flex: 0 0 auto;
+}
+
 .app-header__toggle {
   width: 36px;
   height: 36px;
@@ -860,8 +895,17 @@ a {
   }
 
   .app-header {
-    flex-direction: row;
+    flex-wrap: wrap;
     align-items: center;
+  }
+
+  .app-header__page {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .app-header__page strong {
+    white-space: normal;
   }
 
   .app-header__right {

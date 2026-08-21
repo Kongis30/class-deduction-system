@@ -304,7 +304,15 @@ export async function createRecurringScheduleByApi(
     defaultClassroomId: classroomId,
     startDate: todayInNewYork(),
     notes: ACCEPTANCE_MARKER,
-    slots: [{ weekday: weekdayForApi(todayInNewYork()), startTime: '10:00', endTime: '12:00', plannedUnits: 4 }],
+    slots: [{
+      weekday: weekdayForApi(todayInNewYork()),
+      startTime: '10:00',
+      endTime: '12:00',
+      plannedUnits: 4,
+      teacherId,
+      subjectName: 'Math coaching',
+      allocatedUnits: 80,
+    }],
   });
 }
 

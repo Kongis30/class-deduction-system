@@ -30,84 +30,143 @@
 
       <template v-else-if="selectedTeacher">
         <div class="pr-content__header">
-          <div class="pr-content__title">
-            <strong>{{ selectedTeacher.teacherName }}</strong>
-            <span class="pr-content__no">{{ selectedTeacher.teacherNo }}</span>
+          <div>
+            <div class="pr-content__title">
+              <strong>{{ selectedTeacher.teacherName }}</strong>
+              <span class="pr-content__no">{{ selectedTeacher.teacherNo }}</span>
+            </div>
+            <div class="pr-content__hint">
+              Most teachers need one standard hourly rate. Add an exception only when their pay varies by grade band, delivery, course, or student.
+            </div>
           </div>
-          <div class="pr-content__hint">
-            Set a default hourly rate by course, then add a student override only when a one-on-one student has a different rate.
+          <div class="pr-summary">
+            <span><strong>{{ defaultRate ? formatMoney(defaultRate.hourlyRate) : 'Not set' }}</strong> standard rate</span>
+            <span><strong>{{ rateExceptionRows.length }}</strong> exceptions</span>
           </div>
         </div>
 
-        <el-table
-          v-loading="loading"
-          :data="rateRows"
-          row-key="productId"
-          class="pr-table"
-        >
-          <el-table-column label="Course Product" min-width="180">
-            <template #default="{ row }">
-              <div class="pr-product-cell">
-                <span class="pr-product-cell__name">{{ row.productName }}</span>
-                <span class="pr-product-cell__subject">{{ row.subjectName }}</span>
-              </div>
-            </template>
-          </el-table-column>
-          <el-table-column label="Hourly Rate ($)" width="150" align="center">
-            <template #header>
-              <span class="pr-header-with-info">
-                Hourly Rate ($)
-                <el-tooltip
-                  content="The amount paid to the teacher per hour of class. Only products with a rate set will be included in payment calculations."
-                  placement="top"
-                >
-                  <el-icon class="pr-info-icon"><InfoFilled /></el-icon>
-                </el-tooltip>
-              </span>
-            </template>
-            <template #default="{ row }">
-              <span :class="{ 'pr-rate--set': row.hourlyRate > 0, 'pr-rate--unset': row.hourlyRate === 0 }">
-                {{ row.hourlyRate > 0 ? '$' + row.hourlyRate.toFixed(2) : '—' }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column label="Status" width="100" align="center">
-            <template #default="{ row }">
-              <el-tag v-if="row.hourlyRate > 0" size="small" type="success">Set</el-tag>
-              <el-tag v-else size="small" type="info">Not set</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="Actions" width="120" fixed="right" align="center">
-            <template #default="{ row }">
-              <el-button
-                text
-                type="primary"
-                size="small"
-                @click="openEditDialog(row)"
-              >
-                Edit
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <section class="pr-overrides">
-          <div class="pr-overrides__heading">
-            <strong>Student-specific overrides</strong>
-            <span>Overrides take precedence over the default course rate during 1-on-1 settlement.</span>
+        <div class="pr-rule-strip">
+          <div class="pr-rule-step">
+            <small>Default</small>
+            <strong>Teacher standard rate</strong>
+            <span>Used for every course unless an exception applies.</span>
           </div>
-          <el-table :data="studentOverrideRows" size="small" class="pr-table" empty-text="No student-specific overrides.">
-            <el-table-column label="Student" min-width="160" prop="studentName" />
-            <el-table-column label="Course product" min-width="180" prop="productName" />
-            <el-table-column label="Hourly rate" width="130" align="right">
-              <template #default="{ row }">${{ row.hourlyRate.toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column label="Action" width="90" fixed="right">
-              <template #default="{ row }">
-                <el-button text type="primary" size="small" @click="openOverrideDialog(row)">Edit</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <div class="pr-rule-step">
+            <small>Product</small>
+            <strong>Product default rate</strong>
+            <span>Overrides the standard rate for one course product.</span>
+          </div>
+          <div class="pr-rule-step">
+            <small>Special</small>
+            <strong>Grade, delivery, or student</strong>
+            <span>Used only when a matching scope exists.</span>
+          </div>
+        </div>
+
+        <section class="pr-section">
+              <div class="pr-section__heading">
+                <div>
+                  <strong>Teacher rates</strong>
+                  <span>Each product shows its effective default rate. Expand a row to review or edit its special rates.</span>
+                </div>
+                <div class="pr-section__actions">
+                  <el-button size="small" @click="openStandardRateDialog">
+                    {{ defaultRate ? 'Edit standard rate' : 'Set standard rate' }}
+                  </el-button>
+                  <el-button size="small" type="primary" plain @click="openAddExceptionDialog">
+                    Add special rate
+                  </el-button>
+                </div>
+              </div>
+              <el-table
+                v-loading="loading"
+                :data="rateGroups"
+                row-key="key"
+                size="small"
+                class="pr-table"
+                empty-text="Set a standard hourly rate to begin."
+              >
+                <el-table-column type="expand" width="42">
+                  <template #default="{ row }">
+                    <div class="pr-nested-rate">
+                      <div class="pr-nested-rate__heading">
+                        <span>Special rates for {{ row.productName }}</span>
+                        <el-button size="small" type="primary" plain @click="openAddExceptionDialog(row.productId)">
+                          Add special rate
+                        </el-button>
+                      </div>
+                      <el-table
+                        :data="row.exceptions"
+                        size="small"
+                        class="pr-nested-rate__table"
+                        empty-text="No special rates. The effective default rate above will be used."
+                      >
+                        <el-table-column label="Grade level" min-width="130">
+                          <template #default="{ row: rate }">{{ rate.gradeBand || 'Any grade' }}</template>
+                        </el-table-column>
+                        <el-table-column label="Delivery" width="120">
+                          <template #default="{ row: rate }">{{ formatDelivery(rate.deliveryMode) }}</template>
+                        </el-table-column>
+                        <el-table-column label="Student" min-width="150">
+                          <template #default="{ row: rate }">{{ rate.studentName || 'All students' }}</template>
+                        </el-table-column>
+                        <el-table-column label="Hourly rate" width="130" align="right">
+                          <template #default="{ row: rate }">{{ formatMoney(rate.hourlyRate) }}</template>
+                        </el-table-column>
+                        <el-table-column label="Action" width="90" fixed="right">
+                          <template #default="{ row: rate }">
+                            <el-button text type="primary" size="small" @click="openEditDialog(rate)">Edit</el-button>
+                          </template>
+                        </el-table-column>
+                      </el-table>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Course product" min-width="240">
+                  <template #default="{ row }">
+                    <div class="pr-product-cell">
+                      <span class="pr-product-cell__name">{{ row.productName }}</span>
+                      <span v-if="row.subjectName" class="pr-product-cell__subject">{{ row.subjectName }}</span>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Effective default rate" min-width="180" align="right">
+                  <template #default="{ row }">
+                    <span :class="{ 'pr-rate--set': row.effectiveRate > 0, 'pr-rate--unset': !row.effectiveRate }">
+                      {{ formatMoney(row.effectiveRate) }}
+                    </span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Special rates" width="130" align="center">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="row.exceptions.length ? 'warning' : 'info'">
+                      {{ row.exceptions.length }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="Action" width="140" fixed="right">
+                  <template #default="{ row }">
+                    <el-button
+                      v-if="row.baseRate"
+                      text
+                      type="primary"
+                      size="small"
+                      @click="openEditDialog(row.baseRate)"
+                    >
+                      Edit default
+                    </el-button>
+                    <el-button
+                      v-else-if="row.productId"
+                      text
+                      type="primary"
+                      size="small"
+                      @click="openProductRateDialog(row)"
+                    >
+                      Set product rate
+                    </el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
         </section>
       </template>
     </main>
@@ -125,13 +184,49 @@
 
       <template v-if="editingRow">
         <div class="pr-dialog__product">
-          <strong>{{ editingRow.productName }}</strong>
-          <span>{{ editingRow.subjectName }}</span>
+          <template v-if="addingScopedRate">
+            <strong>{{ standardRateDialog ? 'Standard hourly rate' : productDefaultDialog ? 'Product default rate' : 'New special rate' }}</strong>
+            <span>{{ standardRateDialog
+              ? 'Applies to all courses, grades, delivery types, and students.'
+              : productDefaultDialog
+                ? 'Applies to this product unless a more specific rate applies.'
+                : 'Add grade band and delivery first. Course and student are optional advanced scopes.' }}</span>
+          </template>
+          <template v-else>
+            <strong>{{ editingRow.productName || 'Teacher-wide rate' }}</strong>
+            <span>{{ scopeSummary(editingRow) }}</span>
+          </template>
         </div>
         <el-form label-position="top" class="pr-dialog__form">
-          <el-form-item label="Rate scope">
-            <el-select v-model="editingStudentId" clearable placeholder="Default for all students" style="width: 100%;">
-              <el-option label="Default for all students" :value="undefined" />
+          <div v-if="!standardRateDialog && !productDefaultDialog" class="pr-scope-grid">
+            <el-form-item label="Grade band">
+              <el-select v-model="editingGradeBand" clearable placeholder="Any grade" style="width: 100%;">
+                <el-option label="Any grade" :value="undefined" />
+                <el-option v-for="grade in gradeScopeOptions" :key="grade" :label="grade" :value="grade" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="Delivery">
+              <el-select v-model="editingDeliveryMode" clearable placeholder="Any delivery" style="width: 100%;">
+                <el-option label="Any delivery" :value="undefined" />
+                <el-option label="Online" value="ONLINE" />
+                <el-option label="Offline" value="OFFLINE" />
+              </el-select>
+            </el-form-item>
+          </div>
+          <el-form-item v-if="!standardRateDialog && !productDefaultDialog" label="Course product (optional)">
+            <el-select v-model="editingProductId" clearable filterable placeholder="All courses" style="width: 100%;">
+              <el-option label="All courses" :value="undefined" />
+              <el-option
+                v-for="product in allProducts"
+                :key="product.id"
+                :label="product.productName"
+                :value="product.id"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="!standardRateDialog && !productDefaultDialog" label="Student (optional)">
+            <el-select v-model="editingStudentId" clearable placeholder="All students" style="width: 100%;">
+              <el-option label="All students" :value="undefined" />
               <el-option
                 v-for="student in allStudents"
                 :key="student.id"
@@ -139,7 +234,7 @@
                 :value="student.id"
               />
             </el-select>
-            <div class="pr-dialog__hint">Choose a student only to create a 1-on-1 override.</div>
+            <div class="pr-dialog__hint">Only use this for an exceptional one-on-one arrangement.</div>
           </el-form-item>
           <el-form-item label="Hourly Rate ($)">
             <el-input-number
@@ -151,8 +246,7 @@
               style="width: 100%;"
             />
             <div class="pr-dialog__hint">
-              The amount paid to the teacher per hour of class for this course product.
-              Set to $0 to exclude this product from payment calculation.
+              Saved teacher payments keep their original amount. Unpaid lessons use the current matching rate.
             </div>
           </el-form-item>
         </el-form>
@@ -174,12 +268,10 @@
 
 <script setup lang="ts">
 import { ElMessage } from 'element-plus';
-import { InfoFilled } from '@element-plus/icons-vue';
 import { computed, onMounted, ref } from 'vue';
 
 import { fetchPayRates, savePayRate, type TeacherPayRateSavePayload } from '@/api/finance';
-import { fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
-import { fetchCourseProducts } from '@/api/base-data';
+import { fetchAllStudents, fetchAllTeachers, fetchCourseProducts } from '@/api/base-data';
 import type { EntityId } from '@/types/domain';
 
 const teacherKeyword = ref('');
@@ -194,7 +286,7 @@ const selectedTeacherId = ref<EntityId | null>(null);
 
 // Row type: a product with editable rate
 interface RateRow {
-  productId: EntityId;
+  productId?: EntityId;
   productCode: string;
   productName: string;
   subjectName: string;
@@ -204,30 +296,109 @@ interface RateRow {
   notes?: string;
   studentId?: EntityId;
   studentName?: string;
+  gradeBand?: string;
+  deliveryMode?: string;
 }
 
-const rateRows = ref<RateRow[]>([]);
-const studentOverrideRows = ref<RateRow[]>([]);
+interface RateGroup {
+  key: string;
+  productId?: EntityId;
+  productName: string;
+  subjectName?: string;
+  effectiveRate?: number;
+  baseRate?: RateRow;
+  exceptions: RateRow[];
+}
+
+const defaultRate = ref<RateRow | null>(null);
+const rateExceptionRows = ref<RateRow[]>([]);
 const savingProductId = ref<EntityId | null>(null);
 
 
 
 const editDialogVisible = ref(false);
 const editingRow = ref<RateRow | null>(null);
+const editingProductId = ref<EntityId | undefined>();
 const editingRate = ref(0);
 const editingStudentId = ref<EntityId | undefined>();
+const editingGradeBand = ref<string | undefined>();
+const editingDeliveryMode = ref<string | undefined>();
+const addingScopedRate = ref(false);
+const standardRateDialog = ref(false);
+const productDefaultDialog = ref(false);
+
+const gradeScopeOptions = ['K-5', '6-8', '9-12', 'AP Level'];
 
 function openEditDialog(row: RateRow) {
+  addingScopedRate.value = false;
+  standardRateDialog.value = false;
+  productDefaultDialog.value = false;
   editingRow.value = row;
+  editingProductId.value = row.productId;
   editingRate.value = row.hourlyRate;
-  editingStudentId.value = undefined;
+  editingStudentId.value = row.studentId;
+  editingGradeBand.value = row.gradeBand || undefined;
+  editingDeliveryMode.value = row.deliveryMode || undefined;
   editDialogVisible.value = true;
 }
 
-function openOverrideDialog(row: RateRow) {
-  editingRow.value = row;
-  editingRate.value = row.hourlyRate;
-  editingStudentId.value = row.studentId;
+function openStandardRateDialog() {
+  addingScopedRate.value = true;
+  standardRateDialog.value = true;
+  productDefaultDialog.value = false;
+  editingRow.value = defaultRate.value ?? {
+    productId: undefined,
+    productCode: '',
+    productName: '',
+    subjectName: '',
+    hourlyRate: 0,
+    originalRate: 0,
+  };
+  editingProductId.value = undefined;
+  editingRate.value = defaultRate.value?.hourlyRate ?? 0;
+  editingStudentId.value = undefined;
+  editingGradeBand.value = undefined;
+  editingDeliveryMode.value = undefined;
+  editDialogVisible.value = true;
+}
+
+function openAddExceptionDialog(productId?: EntityId) {
+  addingScopedRate.value = true;
+  standardRateDialog.value = false;
+  productDefaultDialog.value = false;
+  editingRow.value = {
+    productId,
+    productCode: '',
+    productName: '',
+    subjectName: '',
+    hourlyRate: 0,
+    originalRate: 0,
+  };
+  editingProductId.value = productId;
+  editingRate.value = 0;
+  editingStudentId.value = undefined;
+  editingGradeBand.value = undefined;
+  editingDeliveryMode.value = undefined;
+  editDialogVisible.value = true;
+}
+
+function openProductRateDialog(group: RateGroup) {
+  addingScopedRate.value = true;
+  standardRateDialog.value = false;
+  productDefaultDialog.value = true;
+  editingRow.value = {
+    productId: group.productId,
+    productCode: '',
+    productName: group.productName,
+    subjectName: group.subjectName || '',
+    hourlyRate: group.effectiveRate || 0,
+    originalRate: group.effectiveRate || 0,
+  };
+  editingProductId.value = group.productId;
+  editingRate.value = group.effectiveRate || 0;
+  editingStudentId.value = undefined;
+  editingGradeBand.value = undefined;
+  editingDeliveryMode.value = undefined;
   editDialogVisible.value = true;
 }
 
@@ -235,19 +406,22 @@ async function handleEditSave() {
   if (!editingRow.value || !selectedTeacherId.value) return;
   const row = editingRow.value;
   const newRate = editingRate.value;
-  savingProductId.value = row.productId;
+  const productId = addingScopedRate.value ? editingProductId.value : row.productId;
+  savingProductId.value = productId ?? 0;
   try {
     const payload: TeacherPayRateSavePayload = {
       teacherId: selectedTeacherId.value,
-      courseProductId: row.productId,
+      courseProductId: productId,
       studentId: editingStudentId.value,
+      gradeBand: editingGradeBand.value?.trim() || undefined,
+      deliveryMode: editingDeliveryMode.value || undefined,
       hourlyRate: newRate,
       notes: undefined,
     };
-    const res = await savePayRate(payload);
+    await savePayRate(payload);
     await loadRates();
     editDialogVisible.value = false;
-    ElMessage.success(`Rate saved for ${row.productName}.`);
+    ElMessage.success(standardRateDialog.value ? 'Standard rate saved.' : 'Rate exception saved.');
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to save rate.');
   } finally {
@@ -268,7 +442,49 @@ const selectedTeacher = computed(() =>
   allTeachers.value.find(t => t.id === selectedTeacherId.value),
 );
 
+const rateGroups = computed<RateGroup[]>(() => {
+  const courseDefaults = new Map<EntityId, RateRow>();
+  const exceptionsByProduct = new Map<string, RateRow[]>();
 
+  rateExceptionRows.value.forEach((rate) => {
+    const isProductDefault = rate.productId != null
+      && rate.studentId == null
+      && !rate.gradeBand
+      && !rate.deliveryMode;
+    if (isProductDefault) {
+      courseDefaults.set(rate.productId, rate);
+      return;
+    }
+    const groupKey = rate.productId == null ? 'all-courses' : String(rate.productId);
+    const exceptions = exceptionsByProduct.get(groupKey) ?? [];
+    exceptions.push(rate);
+    exceptionsByProduct.set(groupKey, exceptions);
+  });
+
+  const productRateRows = allProducts.value.map((product): RateGroup => {
+    const baseRate = courseDefaults.get(product.id);
+    return {
+      key: String(product.id),
+      productId: product.id,
+      productName: product.productName,
+      subjectName: product.subjectName,
+      effectiveRate: baseRate?.hourlyRate ?? defaultRate.value?.hourlyRate,
+      baseRate,
+      exceptions: exceptionsByProduct.get(String(product.id)) ?? [],
+    };
+  });
+
+  const allCoursesGroup: RateGroup = {
+    key: 'all-courses',
+    productName: 'All courses',
+    subjectName: 'Teacher-wide rate',
+    effectiveRate: defaultRate.value?.hourlyRate,
+    baseRate: defaultRate.value ?? undefined,
+    exceptions: exceptionsByProduct.get('all-courses') ?? [],
+  };
+
+  return [allCoursesGroup, ...productRateRows];
+});
 
 async function selectTeacher(id: EntityId) {
   selectedTeacherId.value = id;
@@ -286,45 +502,49 @@ async function loadRates() {
     const existingRates = ratesRes.data.data;
 
 
-    const rateMap = new Map<string, any>();
-    for (const r of existingRates) {
-      if (r.studentId == null) {
-        rateMap.set(String(r.courseProductId), r);
-      }
-    }
-
-    rateRows.value = allProducts.value.map(p => {
-      const existing = rateMap.get(String(p.id));
-      return {
-        productId: p.id,
-        productCode: p.productCode,
-        productName: p.productName,
-        subjectName: p.subjectName || '',
-        rateId: existing?.id,
-        hourlyRate: existing?.hourlyRate ?? 0,
-        originalRate: existing?.hourlyRate ?? 0,
-        notes: existing?.notes,
-      };
+    const toRow = (rate: any): RateRow => ({
+      productId: rate.courseProductId,
+      productCode: rate.productCode || '',
+      productName: rate.productName || '',
+      subjectName: rate.subjectName || '',
+      rateId: rate.id,
+      hourlyRate: rate.hourlyRate,
+      originalRate: rate.hourlyRate,
+      notes: rate.notes,
+      studentId: rate.studentId,
+      studentName: rate.studentName,
+      gradeBand: rate.gradeBand,
+      deliveryMode: rate.deliveryMode,
     });
-    studentOverrideRows.value = existingRates
-      .filter(rate => rate.studentId != null)
-      .map(rate => ({
-        productId: rate.courseProductId,
-        productCode: rate.productCode,
-        productName: rate.productName,
-        subjectName: rate.subjectName || '',
-        rateId: rate.id,
-        hourlyRate: rate.hourlyRate,
-        originalRate: rate.hourlyRate,
-        notes: rate.notes,
-        studentId: rate.studentId,
-        studentName: rate.studentName,
-      }));
+    const teacherWideDefault = existingRates.find(rate =>
+      rate.courseProductId == null
+        && rate.studentId == null
+        && !rate.gradeBand
+        && !rate.deliveryMode,
+    );
+    defaultRate.value = teacherWideDefault ? toRow(teacherWideDefault) : null;
+    rateExceptionRows.value = existingRates
+      .filter(rate => rate.id !== teacherWideDefault?.id)
+      .map(toRow);
   } catch {
     ElMessage.error('Failed to load pay rates.');
   } finally {
     loading.value = false;
   }
+}
+
+function formatDelivery(value?: string) {
+  if (value === 'ONLINE') return 'Online';
+  if (value === 'OFFLINE') return 'Offline';
+  return 'Any delivery';
+}
+
+function scopeSummary(row: RateRow) {
+  return [row.gradeBand || 'Any grade', formatDelivery(row.deliveryMode)].join(' · ');
+}
+
+function formatMoney(value?: number) {
+  return value && value > 0 ? `$${Number(value).toFixed(2)}` : '—';
 }
 
 
@@ -441,6 +661,10 @@ onMounted(async () => {
 }
 
 .pr-content__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 16px;
 }
 
@@ -461,6 +685,96 @@ onMounted(async () => {
   color: #909399;
 }
 
+.pr-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pr-summary span {
+  border: 1px solid #d8e0ea;
+  border-radius: 6px;
+  padding: 5px 8px;
+  color: #606266;
+  font-size: 12px;
+  line-height: 1;
+  background: #fafcff;
+}
+
+.pr-summary strong {
+  color: #303133;
+}
+
+.pr-rule-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.pr-rule-step {
+  border: 1px solid #dfe7f0;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbfdff;
+}
+
+.pr-rule-step small,
+.pr-rule-step span {
+  display: block;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pr-rule-step strong {
+  display: block;
+  margin: 3px 0;
+  color: #303133;
+  font-size: 13px;
+}
+
+.pr-section {
+  display: grid;
+  gap: 10px;
+}
+
+.pr-section__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pr-section__heading strong,
+.pr-section__heading span {
+  display: block;
+}
+
+.pr-section__heading strong {
+  color: #303133;
+  font-size: 13px;
+}
+
+.pr-section__heading span {
+  margin-top: 2px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pr-section__heading--spaced {
+  margin-top: 8px;
+}
+
+.pr-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 /* ─── Table ──────────────────────────────────────────── */
 
 .pr-table {
@@ -469,25 +783,25 @@ onMounted(async () => {
   border: 1px solid #ebeef5;
 }
 
-.pr-overrides {
-  margin-top: 20px;
+.pr-nested-rate {
+  padding: 10px 12px;
+  background: #f8fafc;
 }
 
-.pr-overrides__heading {
+.pr-nested-rate__heading {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 8px;
-}
-
-.pr-overrides__heading strong {
-  color: #303133;
-  font-size: 13px;
-}
-
-.pr-overrides__heading span {
-  color: #909399;
+  color: #606266;
   font-size: 12px;
+}
+
+.pr-nested-rate__table {
+  border: 1px solid #e6ebf1;
+  border-radius: 4px;
+  overflow: hidden;
 }
 
 .pr-product-cell {
@@ -530,6 +844,11 @@ onMounted(async () => {
 
 .pr-rate--unset {
   color: #c0c4cc;
+}
+
+.pr-muted {
+  color: #909399;
+  font-size: 12px;
 }
 
 /* ─── Edit dialog ─────────────────────────────────────── */
@@ -578,10 +897,44 @@ onMounted(async () => {
   margin-bottom: 0;
 }
 
+.pr-scope-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
 .pr-dialog__hint {
   margin-top: 6px;
   font-size: 12px;
   color: #909399;
   line-height: 1.5;
+}
+
+@media (max-width: 980px) {
+  .pr-page,
+  .pr-content__header {
+    flex-direction: column;
+  }
+
+  .pr-sidebar {
+    width: 100%;
+    max-height: 240px;
+  }
+
+  .pr-summary {
+    justify-content: flex-start;
+  }
+
+  .pr-section__actions {
+    justify-content: flex-start;
+  }
+
+  .pr-rule-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .pr-scope-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

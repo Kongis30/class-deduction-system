@@ -48,8 +48,6 @@ public class CoursePackageEntity extends BaseEntity {
 
     private Integer totalUnits;
 
-    private Integer defaultLessonUnits;
-
     private Integer consumedUnits;
 
     private Integer remainingUnits;

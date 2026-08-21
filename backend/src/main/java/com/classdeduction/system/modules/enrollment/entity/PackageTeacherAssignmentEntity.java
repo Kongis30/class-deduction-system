@@ -10,7 +10,6 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -34,8 +33,6 @@ public class PackageTeacherAssignmentEntity extends BaseEntity {
     private Integer allocatedUnits;
 
     private String subjectName;
-
-    private BigDecimal hourlyRateSnapshot;
 
     private Integer isPrimary;
 

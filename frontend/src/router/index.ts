@@ -3,7 +3,7 @@ import { createRouter, createWebHistory, createWebHashHistory, type RouteRecordR
 import AppLayout from '@/components/layout/AppLayout.vue';
 import { APP_SYSTEM_NAME } from '@/config/app-config';
 import { getStoredAuthToken, getStoredAuthUser } from '@/utils/auth-storage';
-import { getDefaultLandingPath, isAdminOrStaffUser, isStudentUser, isTeacherUser, type AuthUser } from '@/types/auth';
+import { getDefaultLandingPath, getUserWorkspace, isAdminOrStaffUser, type AuthUser } from '@/types/auth';
 
 // Route-level lazy loading keeps the initial admin bundle smaller.
 const LoginView = () => import('@/views/LoginView.vue');
@@ -32,6 +32,7 @@ const PaymentMethodsView = () => import('@/views/system/PaymentMethodsView.vue')
 const UserGuideView = () => import('@/views/system/UserGuideView.vue');
 const TeacherPayRatesView = () => import('@/views/finance/TeacherPayRatesView.vue');
 const TeacherPaymentsView = () => import('@/views/finance/TeacherPaymentsView.vue');
+const MyPayrollView = () => import('@/views/finance/MyPayrollView.vue');
 
 const routes: RouteRecordRaw[] = [
   {
@@ -116,6 +117,16 @@ const routes: RouteRecordRaw[] = [
         },
       },
       {
+        path: 'my-payroll',
+        name: 'my-payroll',
+        component: MyPayrollView,
+        meta: {
+          title: 'Payment History',
+          section: 'Payment History',
+          description: 'Review your own payment history and lesson payment details.',
+        },
+      },
+      {
         path: 'group-class-lessons',
         name: 'group-class-lessons',
         component: ScheduleAdjustmentsView,
@@ -197,8 +208,8 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-config-people',
         component: PeopleView,
         meta: {
-          title: 'People',
-          section: 'Admin Configuration',
+          title: 'Students & teachers',
+          section: 'People',
           description: 'Manage student and teacher records with login access in one place.',
         },
       },
@@ -217,8 +228,8 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-config-course-prices',
         component: CoursePriceOptionsView,
         meta: {
-          title: 'Course Pricing',
-          section: 'Settings',
+          title: 'Prices',
+          section: 'Courses',
           description: 'Configure structured course price options used by registration.',
         },
       },
@@ -227,8 +238,8 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-config-payment-methods',
         component: PaymentMethodsView,
         meta: {
-          title: 'Payment Methods',
-          section: 'Settings',
+          title: 'Payment methods',
+          section: 'Finance',
           description: 'Manage the payment method dictionary used by registration and enrollment.',
         },
       },
@@ -238,7 +249,7 @@ const routes: RouteRecordRaw[] = [
         component: BrandSettingsView,
         meta: {
           title: 'Brand & receipts',
-          section: 'Settings',
+          section: 'System',
           description: 'Manage brand name, receipt footer text, and EIN settings.',
         },
       },
@@ -248,7 +259,7 @@ const routes: RouteRecordRaw[] = [
         component: CampusesView,
         meta: {
           title: 'Campuses',
-          section: 'Settings',
+          section: 'System',
           description: 'Manage campus locations for classroom assignment.',
         },
       },
@@ -262,8 +273,8 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-config-notifications',
         component: NotificationSettingsView,
         meta: {
-          title: 'Notifications',
-          section: 'Settings',
+          title: 'Alerts',
+          section: 'System',
           description: 'Configure templates, delivery settings, and retry behavior.',
         },
       },
@@ -282,9 +293,9 @@ const routes: RouteRecordRaw[] = [
         name: 'admin-config-teacher-pay-rates',
         component: TeacherPayRatesView,
         meta: {
-          title: 'Teacher Pay',
-          section: 'Settings',
-          description: 'Configure per-teacher, per-product hourly pay rates.',
+          title: 'Pay rates',
+          section: 'Finance',
+          description: 'Configure standard teacher hourly rates and optional special rates.',
         },
       },
       {
@@ -312,8 +323,8 @@ const routes: RouteRecordRaw[] = [
         name: 'course-products',
         component: CourseProductsView,
         meta: {
-          title: 'Course Products',
-          section: 'Base Data',
+          title: 'Products',
+          section: 'Courses',
           description: 'Configure course templates, default lesson units, and standard pricing.',
         },
       },
@@ -332,7 +343,7 @@ const routes: RouteRecordRaw[] = [
         name: 'enrollment-orders',
         component: EnrollmentOrdersView,
         meta: {
-          title: 'Enrollment History',
+          title: 'Enrollments',
           section: 'Enrollment',
           description: 'Review historical registrations, record later payments, and open each saved receipt.',
         },
@@ -342,7 +353,7 @@ const routes: RouteRecordRaw[] = [
         name: 'course-packages',
         component: CoursePackagesView,
         meta: {
-          title: 'Course Packages',
+          title: 'Packages',
           section: 'Enrollment',
           description: 'Track package balance, assigned instructor, and estimated end dates.',
         },
@@ -352,7 +363,7 @@ const routes: RouteRecordRaw[] = [
         name: 'receipt-records',
         component: ReceiptRecordsView,
         meta: {
-          title: 'Registration Receipts',
+          title: 'Receipts',
           section: 'Enrollment',
           description: 'Find each student, then open or print their saved receipts.',
         },
@@ -362,8 +373,8 @@ const routes: RouteRecordRaw[] = [
         name: 'recurring-schedule',
         component: RecurringScheduleView,
         meta: {
-          title: 'Schedule 1-on-1 Lessons',
-          section: 'Scheduling',
+          title: 'Schedule',
+          section: 'Courses',
           description: 'Create and adjust weekly lesson schedules for individual course packages.',
         },
       },
@@ -412,8 +423,8 @@ const routes: RouteRecordRaw[] = [
         name: 'notification-settings',
         component: NotificationSettingsView,
         meta: {
-          title: 'Notifications',
-          section: 'Settings',
+          title: 'Alerts',
+          section: 'System',
           description: 'Configure templates, delivery settings, and retry behavior.',
         },
       },
@@ -437,9 +448,9 @@ const routes: RouteRecordRaw[] = [
         name: 'pay-rates',
         component: TeacherPayRatesView,
         meta: {
-          title: 'Teacher Pay Rates',
+          title: 'Pay rates',
           section: 'Finance',
-          description: 'Configure per-teacher, per-product hourly pay rates.',
+          description: 'Configure standard teacher hourly rates and optional special rates.',
         },
       },
       {
@@ -447,7 +458,7 @@ const routes: RouteRecordRaw[] = [
         name: 'teacher-payments',
         component: TeacherPaymentsView,
         meta: {
-          title: 'Teacher Payments',
+          title: 'Teacher payroll',
           section: 'Finance',
           description: 'Settle teacher payments based on confirmed lesson records.',
         },
@@ -468,7 +479,7 @@ declare global {
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI?.platform !== undefined;
 
-const teacherSelfServicePaths = new Set(['/my-lessons', '/calendar']);
+const teacherSelfServicePaths = new Set(['/my-lessons', '/my-payroll', '/calendar']);
 const studentSelfServicePaths = new Set(['/calendar']);
 const adminConfigurationPaths = new Set([
   '/admin/config/people',
@@ -486,13 +497,14 @@ const adminConfigurationPaths = new Set([
 ]);
 
 function getSelfServiceFallbackPath(user: AuthUser | null, path: string): string | null {
-  if (isTeacherUser(user)) {
-    return teacherSelfServicePaths.has(path) ? null : getDefaultLandingPath(user);
+  switch (getUserWorkspace(user)) {
+    case 'TEACHER':
+      return teacherSelfServicePaths.has(path) ? null : getDefaultLandingPath(user);
+    case 'STUDENT':
+      return studentSelfServicePaths.has(path) ? null : getDefaultLandingPath(user);
+    default:
+      return null;
   }
-  if (isStudentUser(user)) {
-    return studentSelfServicePaths.has(path) ? null : getDefaultLandingPath(user);
-  }
-  return null;
 }
 
 const router = createRouter({

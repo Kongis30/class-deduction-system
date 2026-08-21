@@ -2,14 +2,11 @@ package com.classdeduction.system.modules.enrollment.controller;
 
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
-import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAssignmentRequest;
-import com.classdeduction.system.modules.enrollment.dto.PackageTeacherAllocationRequest;
 import com.classdeduction.system.modules.enrollment.service.PackageTeacherAssignmentService;
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -43,37 +40,4 @@ public class PackageTeacherAssignmentController {
         return ApiResponse.success(packageTeacherAssignmentService.getAssignment(id));
     }
 
-    @PostMapping
-    @Operation(summary = "创建老师分配记录")
-    public ApiResponse<Long> createAssignment(@Valid @RequestBody PackageTeacherAssignmentRequest request) {
-        return ApiResponse.success("Assignment created successfully.", packageTeacherAssignmentService.createAssignment(request));
-    }
-
-    @PutMapping("/{id}/end")
-    @Operation(summary = "结束老师分配")
-    public ApiResponse<Void> endAssignment(
-            @Parameter(description = "分配ID") @PathVariable Long id,
-            @Parameter(description = "变更原因") @RequestParam(required = false) String changeReason) {
-        packageTeacherAssignmentService.endAssignment(id, changeReason);
-        return ApiResponse.success("Assignment ended successfully.", null);
-    }
-
-    @PutMapping("/package/{packageId}/switch")
-    @Operation(summary = "切换主老师")
-    public ApiResponse<Void> switchPrimaryTeacher(
-            @Parameter(description = "课时包ID") @PathVariable Long packageId,
-            @Parameter(description = "新老师ID") @RequestParam Long newTeacherId,
-            @Parameter(description = "变更原因") @RequestParam(required = false) String changeReason) {
-        packageTeacherAssignmentService.switchPrimaryTeacher(packageId, newTeacherId, changeReason);
-        return ApiResponse.success("Primary teacher changed successfully.", null);
-    }
-
-    @PutMapping("/package/{packageId}/allocations")
-    @Operation(summary = "Replace active teacher-hour allocations")
-    public ApiResponse<Void> replaceAllocations(
-            @PathVariable Long packageId,
-            @Valid @RequestBody PackageTeacherAllocationRequest request) {
-        packageTeacherAssignmentService.replaceAllocations(packageId, request);
-        return ApiResponse.success("Teacher allocations updated successfully.", null);
-    }
 }

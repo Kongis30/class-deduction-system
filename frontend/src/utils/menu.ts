@@ -1,5 +1,5 @@
 import type { AppMenuItem } from '@/types/menu';
-import { isAdminOrStaffUser, isStudentUser, isTeacherUser, type AuthUser } from '@/types/auth';
+import { getUserWorkspace, isAdminOrStaffUser, type AuthUser } from '@/types/auth';
 
 export const dailyMenus: AppMenuItem[] = [
   {
@@ -80,7 +80,8 @@ export const adminFinanceMenu: AppMenuItem = {
   icon: 'Money',
   children: [
     { key: 'config-teacher-pay-rates', title: 'Pay rates', description: 'Teacher hourly rates', path: '/admin/config/teacher-pay-rates' },
-    { key: 'config-payment-methods', title: 'Payments', description: 'Payment options', path: '/admin/config/payment-methods' },
+    { key: 'teacher-payments', title: 'Teacher payroll', description: 'Settle teacher pay', path: '/finance/payments' },
+    { key: 'config-payment-methods', title: 'Payment methods', description: 'Accepted payment options', path: '/admin/config/payment-methods' },
   ],
 };
 
@@ -113,6 +114,12 @@ export function getTeacherMenus(): AppMenuItem[] {
       icon: 'Calendar',
       path: '/my-lessons',
     },
+    {
+      key: 'my-payroll',
+      title: 'Payment History',
+      icon: 'DataAnalysis',
+      path: '/my-payroll',
+    },
   ];
 }
 
@@ -144,11 +151,12 @@ export function getSecondaryMenusForUser(user: AuthUser | null): AppMenuItem[] {
  * Returns the appropriate menus for the current user.
  */
 export function getMenusForUser(user: AuthUser | null): AppMenuItem[] {
-  if (isStudentUser(user)) {
-    return getStudentMenus();
+  switch (getUserWorkspace(user)) {
+    case 'TEACHER':
+      return getTeacherMenus();
+    case 'STUDENT':
+      return getStudentMenus();
+    default:
+      return dailyMenus;
   }
-  if (isTeacherUser(user)) {
-    return getTeacherMenus();
-  }
-  return dailyMenus;
 }

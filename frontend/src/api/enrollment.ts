@@ -31,17 +31,9 @@ export function fetchEnrollmentOrder(id: string | number) {
   return http.get<ApiResponse<EnrollmentOrderDetailItem>>(`/v1/enrollment/orders/${id}`);
 }
 
-export interface SlotPayload {
-  weekday: number;
-  startTime: string;
-  endTime: string;
-  plannedUnits: number;
-}
-
 export interface EnrollmentOrderSavePayload {
   studentId: string | number;
   courseProductId: string | number;
-  primaryTeacherId?: string | number;
   cashierUserId?: EntityId;
   handledByName: string;
   currencyCode?: string;
@@ -54,11 +46,8 @@ export interface EnrollmentOrderSavePayload {
   originalAmount: number;
   discountAmount: number;
   receivedAmount: number;
-  totalUnits?: number;
-  defaultLessonUnits?: number;
+  totalUnits: number;
   remark?: string;
-  slots?: SlotPayload[];
-  defaultClassroomId?: string | number;
 }
 
 export function createEnrollmentOrder(data: EnrollmentOrderSavePayload) {
@@ -116,6 +105,7 @@ export interface RegistrationCourseItemPayload {
   gradeBand?: string;
   periodLabel?: string;
   timeSlotLabel?: string;
+  startDate?: string;
   packageUnit?: string;
   packageQuantity?: number;
   packageTotalPrice?: number;
@@ -127,8 +117,6 @@ export interface RegistrationCourseItemPayload {
   oneOnOneHours?: number;
   openingUsedHours?: number;
   oneOnOneUnits?: number;
-  initialLessonStartAt?: string;
-  initialLessonEndAt?: string;
   teacherId?: EntityId;
   sessions?: number;
   purchasedMonths?: number;
@@ -297,21 +285,6 @@ export interface CoursePackageHoursAdjustmentPayload {
 
 export function adjustCoursePackageHours(id: EntityId, data: CoursePackageHoursAdjustmentPayload) {
   return http.post(`/v1/enrollment/packages/${id}/adjust-hours`, data);
-}
-
-export interface PackageTeacherAllocationPayload {
-  allocations: Array<{
-    teacherId: EntityId;
-    subjectName?: string;
-    allocatedHours: number;
-    hourlyRateSnapshot?: number;
-    primary?: boolean;
-  }>;
-  reason?: string;
-}
-
-export function replacePackageTeacherAllocations(id: EntityId, data: PackageTeacherAllocationPayload) {
-  return http.put(`/v1/enrollment/package-teachers/package/${id}/allocations`, data);
 }
 
 // ─── Payment Records ─────────────────────────────────

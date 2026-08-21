@@ -3,7 +3,6 @@ package com.classdeduction.system.modules.enrollment.vo;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
-import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -20,7 +19,6 @@ public record PackageTeacherAssignmentVO(
         Double allocatedHours,
         Double consumedHours,
         Double remainingHours,
-        BigDecimal hourlyRateSnapshot,
         boolean primary,
         String assignmentStatus,
         LocalDateTime effectiveFrom,

@@ -18,10 +18,8 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
-import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.schedule.dto.ClassroomOccupancyPageQuery;
 import com.classdeduction.system.modules.schedule.dto.LessonOccurrencePageQuery;
 import com.classdeduction.system.modules.schedule.dto.OneOnOneDeductionQuery;
@@ -34,10 +32,12 @@ import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.LessonOccurrenceService;
 import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
@@ -49,6 +49,7 @@ import com.classdeduction.system.modules.schedule.vo.PendingClassroomAssignmentV
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -65,6 +66,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
     private static final int DEFAULT_OCCURRENCE_WINDOW_DAYS = 30;
@@ -77,7 +79,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private final LessonStatusRuleMapper lessonStatusRuleMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
-    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -85,6 +86,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
 
     @Override
     public PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query) {
@@ -133,7 +135,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     List<Long> enrolledClassGroupIds = classEnrollmentMapper.selectList(
                                     new LambdaQueryWrapper<ClassEnrollmentEntity>()
                                             .eq(ClassEnrollmentEntity::getStudentId, query.getStudentId())
-                                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE"))
+                                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                                            .eq(ClassEnrollmentEntity::getIsDeleted, 0))
                             .stream().map(ClassEnrollmentEntity::getClassId)
                             .filter(Objects::nonNull).toList();
                     if (!enrolledClassGroupIds.isEmpty()) {
@@ -153,12 +156,26 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             wrapper.in(LessonOccurrenceEntity::getPlanningStatus, planningStatuses);
         }
 
+        if (query.getStudentId() != null) {
+            List<LessonOccurrenceEntity> visibleRecords = filterStudentClassOccurrences(
+                    lessonOccurrenceMapper.selectList(wrapper), query.getStudentId());
+            long fromIndex = Math.max((query.getPageNum() - 1) * query.getPageSize(), 0);
+            if (fromIndex >= visibleRecords.size()) {
+                return PageResponse.empty(query.getPageNum(), query.getPageSize());
+            }
+            long toIndex = Math.min(fromIndex + query.getPageSize(), visibleRecords.size());
+            return PageResponse.of(
+                    toOccurrenceVOs(visibleRecords.subList((int) fromIndex, (int) toIndex)),
+                    visibleRecords.size(),
+                    query.getPageNum(),
+                    query.getPageSize());
+        }
+
         IPage<LessonOccurrenceEntity> result = lessonOccurrenceMapper.selectPage(page, wrapper);
         if (result.getRecords().isEmpty()) {
             return PageResponse.empty(query.getPageNum(), query.getPageSize());
         }
-        List<LessonOccurrenceEntity> records = filterStudentClassOccurrences(result.getRecords(), query.getStudentId());
-        return PageResponse.of(toOccurrenceVOs(records), result.getTotal(), result.getCurrent(), result.getSize());
+        return PageResponse.of(toOccurrenceVOs(result.getRecords()), result.getTotal(), result.getCurrent(), result.getSize());
     }
 
     @Override
@@ -200,6 +217,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, TeacherEntity> teacherMap = listTeachersByIds(result.getRecords().stream().map(LessonOccurrenceEntity::getPlannedTeacherId).filter(Objects::nonNull).collect(Collectors.toSet()));
         Map<Long, ClassroomEntity> classroomMap = listClassroomsByIds(result.getRecords().stream().map(LessonOccurrenceEntity::getPlannedClassroomId).filter(Objects::nonNull).collect(Collectors.toSet()));
         Map<Long, ClassGroupEntity> classGroupMap = listClassGroupsByIds(result.getRecords().stream().map(LessonOccurrenceEntity::getClassGroupId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        Map<Long, RecurringScheduleSlotEntity> recurringSlotMap = loadRecurringSlotMap(result.getRecords());
+        Map<Long, ClassGroupScheduleSlotEntity> classSlotMap = loadClassSlotMap(result.getRecords());
 
         List<ClassroomOccupancyVO> records = result.getRecords().stream()
                 .map(item -> {
@@ -226,6 +245,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .planningStatus(item.getPlanningStatus())
                             .classGroupId(item.getClassGroupId())
                             .className(classGroup == null ? null : classGroup.getClassName())
+                            .subjectName(resolveOccurrenceSubjectName(item, recurringSlotMap, classSlotMap))
                             .build();
                 })
                 .toList();
@@ -567,7 +587,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             return Collections.emptyList();
         }
 
-        List<Long> teacherPackageIds = teacherId == null ? Collections.emptyList() : findOneOnOnePackageIdsByPrimaryTeacher(teacherId);
+        List<Long> teacherPackageIds = teacherId == null ? Collections.emptyList() : findOneOnOnePackageIdsByTeacher(teacherId);
         if (teacherId != null && teacherPackageIds.isEmpty()) {
             return Collections.emptyList();
         }
@@ -594,7 +614,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         }
 
         List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
-        Map<Long, PackageTeacherAssignmentEntity> assignmentMap = loadPrimaryAssignments(packageIds);
         Map<Long, List<LessonOccurrenceEntity>> occurrenceMap = loadOneOnOneOccurrenceMap(packageIds, safeQuery.getStartAt(), safeQuery.getEndAt());
         Set<Long> occurrenceIds = occurrenceMap.values().stream()
                 .flatMap(List::stream)
@@ -606,7 +625,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .map(CoursePackageEntity::getStudentId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet()));
-        Map<Long, TeacherEntity> teacherMap = loadOneOnOneTeachers(packages, assignmentMap, occurrenceMap, recordMap);
+        Map<Long, TeacherEntity> teacherMap = loadOneOnOneTeachers(occurrenceMap, recordMap);
         Map<Long, ClassroomEntity> classroomMap = loadOneOnOneClassrooms(occurrenceMap, recordMap);
         Map<Long, CourseProductEntity> courseProductMap = listCourseProductsByIds(packages.stream()
                 .map(CoursePackageEntity::getCourseProductId)
@@ -620,8 +639,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
         LinkedHashMap<Long, LinkedHashMap<Long, List<CoursePackageEntity>>> grouped = new LinkedHashMap<>();
         for (CoursePackageEntity coursePackage : packages) {
-            Long groupTeacherId = resolveOneOnOneGroupTeacherId(
-                    coursePackage, assignmentMap, occurrenceMap, teacherId);
+            Long groupTeacherId = resolveOneOnOneGroupTeacherId(coursePackage, occurrenceMap, teacherId);
             grouped.computeIfAbsent(groupTeacherId, key -> new LinkedHashMap<>())
                     .computeIfAbsent(coursePackage.getStudentId(), key -> new ArrayList<>())
                     .add(coursePackage);
@@ -642,6 +660,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, ClassroomEntity> classroomMap = listClassroomsByIds(occurrences.stream().map(LessonOccurrenceEntity::getPlannedClassroomId).filter(Objects::nonNull).collect(Collectors.toSet()));
         // 班课名称
         Map<Long, ClassGroupEntity> classGroupMap = listClassGroupsByIds(occurrences.stream().map(LessonOccurrenceEntity::getClassGroupId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        Map<Long, RecurringScheduleSlotEntity> recurringSlotMap = loadRecurringSlotMap(occurrences);
+        Map<Long, ClassGroupScheduleSlotEntity> classSlotMap = loadClassSlotMap(occurrences);
+        Map<Long, CourseProductEntity> courseProductMap = listCourseProductsByIds(collectCourseProductIds(packageMap.values(), classGroupMap.values()));
 
         Map<Long, LessonRecordEntity> recordMap = loadLatestRecordByOccurrence(occurrenceIds);
         Map<String, String> statusNameMap = loadStatusNames(recordMap.values());
@@ -662,8 +683,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .packageId(item.getPackageId())
                             .packageNo(coursePackage == null ? null : coursePackage.getPackageNo())
                             .packageName(coursePackage == null ? null : coursePackage.getPackageName())
+                            .productName(resolveProductName(coursePackage, classGroup, courseProductMap))
                             .classGroupId(item.getClassGroupId())
                             .className(classGroup == null ? null : classGroup.getClassName())
+                            .subjectName(resolveOccurrenceSubjectName(item, recurringSlotMap, classSlotMap))
                             .studentId(item.getStudentId())
                             .studentName(student == null ? null : student.getStudentName())
                             .scheduleRuleId(item.getScheduleRuleId())
@@ -822,18 +845,27 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             if (Objects.equals(entity.getStudentId(), currentUser.studentId())) {
                 return;
             }
-            if (entity.getClassGroupId() != null && isStudentEnrolledInClass(currentUser.studentId(), entity.getClassGroupId())) {
+            if (entity.getClassGroupId() != null && isStudentEnrolledInClassForOccurrence(
+                    currentUser.studentId(), entity)) {
                 return;
             }
             throw new BusinessException("FORBIDDEN", "Students can only view their own calendar.");
         }
     }
 
-    private boolean isStudentEnrolledInClass(Long studentId, Long classGroupId) {
-        return classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                .eq(ClassEnrollmentEntity::getStudentId, studentId)
-                .eq(ClassEnrollmentEntity::getClassId, classGroupId)
-                .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")) > 0;
+    private boolean isStudentEnrolledInClassForOccurrence(Long studentId, LessonOccurrenceEntity occurrence) {
+        if (occurrence.getPlannedStartAt() == null) {
+            return false;
+        }
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getClassId, occurrence.getClassGroupId())
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .le(ClassEnrollmentEntity::getEnrollmentDate, occurrence.getPlannedStartAt().toLocalDate())
+                        .ge(ClassEnrollmentEntity::getExpiryDate, occurrence.getPlannedStartAt().toLocalDate()))
+                .stream()
+                .anyMatch(enrollment -> enrollmentIncludesOccurrence(enrollment, occurrence));
     }
 
     private List<LessonOccurrenceEntity> filterStudentClassOccurrences(List<LessonOccurrenceEntity> records, Long studentId) {
@@ -866,9 +898,19 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         LocalDateTime startAt = occurrence.getPlannedStartAt();
         ClassGroupScheduleSlotEntity slot = occurrence.getScheduleSlotId() == null ? null : slotMap.get(occurrence.getScheduleSlotId());
         return enrollments.stream().anyMatch(enrollment ->
-                (enrollment.getEnrollmentDate() == null || !startAt.toLocalDate().isBefore(enrollment.getEnrollmentDate()))
+                enrollmentIncludesOccurrence(enrollment, occurrence)
+                        && (enrollment.getEnrollmentDate() == null || !startAt.toLocalDate().isBefore(enrollment.getEnrollmentDate()))
                         && (enrollment.getExpiryDate() == null || !startAt.toLocalDate().isAfter(enrollment.getExpiryDate()))
                         && attendanceMatches(enrollment.getAttendanceOption(), slot));
+    }
+
+    private boolean enrollmentIncludesOccurrence(ClassEnrollmentEntity enrollment, LessonOccurrenceEntity occurrence) {
+        if (enrollment == null || occurrence == null || occurrence.getPlannedStartAt() == null) {
+            return false;
+        }
+        LocalDateTime enrolledAt = enrollment.getCreatedAt();
+        return enrolledAt == null
+                || !occurrence.getPlannedStartAt().toLocalDate().isBefore(enrolledAt.toLocalDate());
     }
 
     private boolean attendanceMatches(String enrollmentAttendance, ClassGroupScheduleSlotEntity slot) {
@@ -878,13 +920,19 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             return true;
         }
         String normalizedSegment = segment.trim().toUpperCase(Locale.ROOT);
-        if ("ALL".equals(normalizedSegment) || "FULL_DAY,MORNING,AFTERNOON".equals(normalizedSegment)) {
+        Set<String> segments = Arrays.stream(normalizedSegment.split(","))
+                .map(String::trim)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.toSet());
+        if (segments.isEmpty() || segments.contains("ALL")) {
             return true;
         }
         if ("FULL_DAY".equals(attendance)) {
-            return "MORNING".equals(normalizedSegment) || "AFTERNOON".equals(normalizedSegment);
+            return segments.contains("FULL_DAY")
+                    || segments.contains("MORNING")
+                    || segments.contains("AFTERNOON");
         }
-        return Objects.equals(attendance, normalizedSegment);
+        return segments.contains(attendance);
     }
 
     private String normalizeAttendanceOption(String value) {
@@ -906,42 +954,18 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toMap(ClassGroupScheduleSlotEntity::getId, Function.identity()));
     }
 
-    private List<Long> findOneOnOnePackageIdsByPrimaryTeacher(Long teacherId) {
+    private List<Long> findOneOnOnePackageIdsByTeacher(Long teacherId) {
         if (teacherId == null) {
             return Collections.emptyList();
         }
-        Set<Long> packageIds = packageTeacherAssignmentMapper.selectList(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
-                        .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
-                        .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE"))
-                .stream()
-                .map(PackageTeacherAssignmentEntity::getPackageId)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .select(LessonOccurrenceEntity::getPackageId)
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getPlannedTeacherId, teacherId)
                         .isNotNull(LessonOccurrenceEntity::getPackageId)
                         .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"))
                 .stream()
                 .map(LessonOccurrenceEntity::getPackageId)
-                .forEach(packageIds::add);
-        return packageIds.stream().toList();
-    }
-
-    private Map<Long, PackageTeacherAssignmentEntity> loadPrimaryAssignments(List<Long> packageIds) {
-        if (packageIds.isEmpty()) {
-            return Collections.emptyMap();
-        }
-        List<PackageTeacherAssignmentEntity> assignments = packageTeacherAssignmentMapper.selectList(
-                new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
-                        .in(PackageTeacherAssignmentEntity::getPackageId, packageIds)
-                        .eq(PackageTeacherAssignmentEntity::getIsPrimary, 1)
-                        .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
-                        .orderByDesc(PackageTeacherAssignmentEntity::getEffectiveFrom));
-        Map<Long, PackageTeacherAssignmentEntity> result = new LinkedHashMap<>();
-        for (PackageTeacherAssignmentEntity assignment : assignments) {
-            result.putIfAbsent(assignment.getPackageId(), assignment);
-        }
-        return result;
+                .distinct()
+                .toList();
     }
 
     private Map<Long, List<LessonOccurrenceEntity>> loadOneOnOneOccurrenceMap(List<Long> packageIds,
@@ -988,17 +1012,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         return record.getCreatedAt();
     }
 
-    private Map<Long, TeacherEntity> loadOneOnOneTeachers(List<CoursePackageEntity> packages,
-                                                          Map<Long, PackageTeacherAssignmentEntity> assignmentMap,
-                                                          Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
+    private Map<Long, TeacherEntity> loadOneOnOneTeachers(Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
                                                           Map<Long, LessonRecordEntity> recordMap) {
         Set<Long> teacherIds = new LinkedHashSet<>();
-        packages.stream()
-                .map(item -> assignmentMap.get(item.getId()))
-                .filter(Objects::nonNull)
-                .map(PackageTeacherAssignmentEntity::getTeacherId)
-                .filter(Objects::nonNull)
-                .forEach(teacherIds::add);
         occurrenceMap.values().stream()
                 .flatMap(List::stream)
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
@@ -1049,15 +1065,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     }
 
     private Long resolveOneOnOneGroupTeacherId(CoursePackageEntity coursePackage,
-                                               Map<Long, PackageTeacherAssignmentEntity> assignmentMap,
                                                Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
                                                Long requestedTeacherId) {
         if (requestedTeacherId != null) {
             return requestedTeacherId;
-        }
-        PackageTeacherAssignmentEntity assignment = assignmentMap.get(coursePackage.getId());
-        if (assignment != null && assignment.getTeacherId() != null) {
-            return assignment.getTeacherId();
         }
         return occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList()).stream()
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
@@ -1137,8 +1148,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
                                                   Map<Long, LessonRecordEntity> recordMap,
                                                   Map<String, String> statusNameMap) {
-        List<OneOnOneLessonVO> lessons = occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList()).stream()
-                .map(item -> toOneOnOneLessonVO(item, recordMap.get(item.getId()), teacherMap, classroomMap, statusNameMap))
+        List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList());
+        Map<Long, RecurringScheduleSlotEntity> recurringSlotMap = loadRecurringSlotMap(occurrences);
+        List<OneOnOneLessonVO> lessons = occurrences.stream()
+                .map(item -> toOneOnOneLessonVO(item, recordMap.get(item.getId()), teacherMap, classroomMap,
+                        recurringSlotMap, statusNameMap))
                 .toList();
         EnrollmentOrderItemEntity orderItem = orderItemMap.get(coursePackage.getEnrollmentOrderItemId());
         return OneOnOnePackageVO.builder()
@@ -1152,11 +1166,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         .orElse(null))
                 .gradeBand(orderItem == null ? null : orderItem.getGradeBand())
                 .packageName(coursePackage.getPackageName())
-                .subjectName(coursePackage.getSubjectName())
                 .totalUnits(UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()))
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
-                .defaultLessonUnits(UnitConverter.toHoursDecimal(coursePackage.getDefaultLessonUnits()))
                 .renewalReminder(safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage))
                 .packageStatus(coursePackage.getPackageStatus())
                 .startDate(coursePackage.getStartDate())
@@ -1166,14 +1178,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     }
 
     private int renewalReminderUnits(CoursePackageEntity coursePackage) {
-        int lessonUnits = safeUnits(coursePackage.getDefaultLessonUnits());
-        return lessonUnits > 0 ? lessonUnits * 2 : 8;
+        return 8;
     }
 
     private OneOnOneLessonVO toOneOnOneLessonVO(LessonOccurrenceEntity occurrence,
                                                 LessonRecordEntity record,
                                                 Map<Long, TeacherEntity> teacherMap,
                                                 Map<Long, ClassroomEntity> classroomMap,
+                                                Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
                                                 Map<String, String> statusNameMap) {
         Long plannedTeacherId = record == null ? occurrence.getPlannedTeacherId() : record.getPlannedTeacherId();
         Long actualTeacherId = record == null ? null : record.getActualTeacherId();
@@ -1191,6 +1203,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .packageId(occurrence.getPackageId())
                 .plannedTeacherId(plannedTeacherId)
                 .plannedTeacherName(plannedTeacher == null ? null : plannedTeacher.getTeacherName())
+                .subjectName(resolveOccurrenceSubjectName(occurrence, recurringSlotMap))
                 .plannedClassroomId(plannedClassroomId)
                 .plannedClassroomName(plannedClassroom == null ? null : plannedClassroom.getRoomName())
                 .plannedStartAt(occurrence.getPlannedStartAt())
@@ -1213,6 +1226,88 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .rejectReason(record == null ? null : record.getRejectReason())
                 .notes(record == null ? occurrence.getNotes() : record.getNotes())
                 .build();
+    }
+
+    private Map<Long, RecurringScheduleSlotEntity> loadRecurringSlotMap(List<LessonOccurrenceEntity> occurrences) {
+        List<Long> slotIds = occurrences.stream()
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (slotIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        try {
+            return recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                            .in(RecurringScheduleSlotEntity::getId, slotIds))
+                    .stream()
+                    .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, Function.identity()));
+        } catch (RuntimeException ex) {
+            log.warn("Unable to load recurring schedule slot metadata for one-on-one deductions; "
+                    + "returning lessons without slot lesson names.", ex);
+            return Collections.emptyMap();
+        }
+    }
+
+    private String resolveOccurrenceSubjectName(LessonOccurrenceEntity occurrence,
+                                                Map<Long, RecurringScheduleSlotEntity> recurringSlotMap) {
+        return resolveOccurrenceSubjectName(occurrence, recurringSlotMap, Collections.emptyMap());
+    }
+
+    private Map<Long, ClassGroupScheduleSlotEntity> loadClassSlotMap(List<LessonOccurrenceEntity> occurrences) {
+        Set<Long> slotIds = occurrences.stream()
+                .filter(item -> item.getClassGroupId() != null)
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (slotIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        try {
+            return listSlotsByIds(slotIds);
+        } catch (RuntimeException ex) {
+            log.warn("Unable to load class schedule slot metadata; returning class lessons without taught subjects.", ex);
+            return Collections.emptyMap();
+        }
+    }
+
+    private Set<Long> collectCourseProductIds(Collection<CoursePackageEntity> packages,
+                                              Collection<ClassGroupEntity> classGroups) {
+        Set<Long> productIds = new LinkedHashSet<>();
+        packages.stream()
+                .map(CoursePackageEntity::getCourseProductId)
+                .filter(Objects::nonNull)
+                .forEach(productIds::add);
+        classGroups.stream()
+                .map(ClassGroupEntity::getProductId)
+                .filter(Objects::nonNull)
+                .forEach(productIds::add);
+        return productIds;
+    }
+
+    private String resolveProductName(CoursePackageEntity coursePackage,
+                                      ClassGroupEntity classGroup,
+                                      Map<Long, CourseProductEntity> courseProductMap) {
+        Long productId = coursePackage != null ? coursePackage.getCourseProductId() : null;
+        if (productId == null && classGroup != null) {
+            productId = classGroup.getProductId();
+        }
+        CourseProductEntity product = productId == null ? null : courseProductMap.get(productId);
+        return product == null ? null : product.getProductName();
+    }
+
+    private String resolveOccurrenceSubjectName(LessonOccurrenceEntity occurrence,
+                                                Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
+                                                Map<Long, ClassGroupScheduleSlotEntity> classSlotMap) {
+        if (occurrence.getScheduleSlotId() == null) {
+            return null;
+        }
+        if (occurrence.getClassGroupId() != null) {
+            ClassGroupScheduleSlotEntity classSlot = classSlotMap.get(occurrence.getScheduleSlotId());
+            return classSlot == null || !StringUtils.hasText(classSlot.getSubjectName()) ? null : classSlot.getSubjectName();
+        }
+        RecurringScheduleSlotEntity slot = recurringSlotMap.get(occurrence.getScheduleSlotId());
+        return slot == null || !StringUtils.hasText(slot.getSubjectName()) ? null : slot.getSubjectName();
     }
 
     private int safeUnits(Integer units) {

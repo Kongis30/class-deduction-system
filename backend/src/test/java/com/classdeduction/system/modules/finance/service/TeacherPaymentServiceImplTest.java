@@ -4,12 +4,16 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
+import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.finance.dto.TeacherPaymentCreateRequest;
 import com.classdeduction.system.modules.finance.dto.UnpaidLessonQuery;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
@@ -22,6 +26,7 @@ import com.classdeduction.system.modules.finance.service.impl.TeacherPaymentServ
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -71,6 +76,15 @@ class TeacherPaymentServiceImplTest {
     private CourseProductMapper courseProductMapper;
 
     @Mock
+    private ClassroomMapper classroomMapper;
+
+    @Mock
+    private EnrollmentOrderMapper enrollmentOrderMapper;
+
+    @Mock
+    private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
+
+    @Mock
     private TeacherPayRateMapper payRateMapper;
 
     @Mock
@@ -84,9 +98,6 @@ class TeacherPaymentServiceImplTest {
 
     @Mock
     private ClassGroupMapper classGroupMapper;
-
-    @Mock
-    private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
 
     @Captor
     private ArgumentCaptor<LambdaQueryWrapper<LessonRecordEntity>> recordQueryCaptor;
@@ -113,12 +124,14 @@ class TeacherPaymentServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 courseProductMapper,
+                classroomMapper,
+                enrollmentOrderMapper,
+                enrollmentOrderItemMapper,
                 payRateMapper,
                 paymentMapper,
                 paymentItemMapper,
                 lessonOccurrenceMapper,
-                classGroupMapper,
-                packageTeacherAssignmentMapper
+                classGroupMapper
         );
     }
 
@@ -252,6 +265,214 @@ class TeacherPaymentServiceImplTest {
     }
 
     @Test
+    void shouldUseGradeAndDeliveryScopedRateBeforeDefaultProductRate() {
+        LessonRecordEntity record = payableRecord();
+        record.setPackageId(3001L);
+        record.setOccurrenceId(4001L);
+        record.setStudentId(801L);
+        record.setActualUnits(4);
+
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setId(701L);
+        teacher.setTeacherNo("T701");
+        teacher.setStatus("ACTIVE");
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setCourseProductId(202L);
+        coursePackage.setEnrollmentOrderId(9001L);
+        coursePackage.setEnrollmentOrderItemId(9101L);
+
+        EnrollmentOrderItemEntity orderItem = new EnrollmentOrderItemEntity();
+        orderItem.setId(9101L);
+        orderItem.setGradeBand("High School");
+
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(9001L);
+        order.setCampusNameSnapshot("Online Class");
+
+        TeacherPayRateEntity defaultRate = new TeacherPayRateEntity();
+        defaultRate.setTeacherId(701L);
+        defaultRate.setCourseProductId(202L);
+        defaultRate.setHourlyRate(new BigDecimal("40.00"));
+
+        TeacherPayRateEntity scopedRate = new TeacherPayRateEntity();
+        scopedRate.setTeacherId(701L);
+        scopedRate.setCourseProductId(202L);
+        scopedRate.setGradeBand("High School");
+        scopedRate.setDeliveryMode("ONLINE");
+        scopedRate.setHourlyRate(new BigDecimal("70.00"));
+
+        TeacherPaymentCreateRequest request = new TeacherPaymentCreateRequest();
+        request.setTeacherId(701L);
+        request.setLessonRecordIds(List.of(record.getId()));
+        request.setPeriodStart(LocalDate.of(2026, 7, 1));
+        request.setPeriodEnd(LocalDate.of(2026, 7, 31));
+
+        when(teacherMapper.selectById(701L)).thenReturn(teacher);
+        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
+        when(enrollmentOrderItemMapper.selectBatchIds(any())).thenReturn(List.of(orderItem));
+        when(enrollmentOrderMapper.selectBatchIds(any())).thenReturn(List.of(order));
+        when(payRateMapper.selectList(any())).thenReturn(List.of(defaultRate, scopedRate));
+
+        teacherPaymentService.createPayment(request, 1L);
+
+        verify(paymentItemMapper).insert(paymentItemCaptor.capture());
+        assertThat(paymentItemCaptor.getValue().getHourlyRate()).isEqualByComparingTo(new BigDecimal("70.00"));
+        assertThat(paymentItemCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("140.00"));
+    }
+
+    @Test
+    void shouldUseCourseSpecificRateBeforeTeacherWideDefaultRate() {
+        LessonRecordEntity record = payableRecord();
+        record.setPackageId(3001L);
+        record.setOccurrenceId(4001L);
+        record.setActualUnits(4);
+
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setId(701L);
+        teacher.setTeacherNo("T701");
+        teacher.setStatus("ACTIVE");
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setCourseProductId(202L);
+
+        TeacherPayRateEntity teacherWideDefault = new TeacherPayRateEntity();
+        teacherWideDefault.setTeacherId(701L);
+        teacherWideDefault.setHourlyRate(new BigDecimal("40.00"));
+
+        TeacherPayRateEntity courseException = new TeacherPayRateEntity();
+        courseException.setTeacherId(701L);
+        courseException.setCourseProductId(202L);
+        courseException.setHourlyRate(new BigDecimal("55.00"));
+
+        TeacherPaymentCreateRequest request = new TeacherPaymentCreateRequest();
+        request.setTeacherId(701L);
+        request.setLessonRecordIds(List.of(record.getId()));
+        request.setPeriodStart(LocalDate.of(2026, 7, 1));
+        request.setPeriodEnd(LocalDate.of(2026, 7, 31));
+
+        when(teacherMapper.selectById(701L)).thenReturn(teacher);
+        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
+        when(payRateMapper.selectList(any())).thenReturn(List.of(teacherWideDefault, courseException));
+
+        teacherPaymentService.createPayment(request, 1L);
+
+        verify(paymentItemMapper).insert(paymentItemCaptor.capture());
+        assertThat(paymentItemCaptor.getValue().getHourlyRate()).isEqualByComparingTo(new BigDecimal("55.00"));
+    }
+
+    @Test
+    void shouldUseTeacherWideK5OnlineRateBeforeTeacherWideStandardRate() {
+        LessonRecordEntity record = payableRecord();
+        record.setPackageId(3001L);
+        record.setOccurrenceId(4001L);
+        record.setStudentId(801L);
+        record.setActualUnits(4);
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setCourseProductId(202L);
+        coursePackage.setEnrollmentOrderId(9001L);
+        coursePackage.setEnrollmentOrderItemId(9101L);
+        EnrollmentOrderItemEntity orderItem = new EnrollmentOrderItemEntity();
+        orderItem.setId(9101L);
+        orderItem.setGradeBand("G4");
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(9001L);
+        order.setCampusNameSnapshot("Online Class");
+
+        TeacherPayRateEntity standardRate = new TeacherPayRateEntity();
+        standardRate.setTeacherId(701L);
+        standardRate.setHourlyRate(new BigDecimal("40.00"));
+        TeacherPayRateEntity k5OnlineRate = new TeacherPayRateEntity();
+        k5OnlineRate.setTeacherId(701L);
+        k5OnlineRate.setGradeBand("K-5");
+        k5OnlineRate.setDeliveryMode("ONLINE");
+        k5OnlineRate.setHourlyRate(new BigDecimal("52.00"));
+
+        TeacherPaymentCreateRequest request = paymentRequest(record);
+        stubTeacherAndRecords(request, record);
+        when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
+        when(enrollmentOrderItemMapper.selectBatchIds(any())).thenReturn(List.of(orderItem));
+        when(enrollmentOrderMapper.selectBatchIds(any())).thenReturn(List.of(order));
+        when(payRateMapper.selectList(any())).thenReturn(List.of(standardRate, k5OnlineRate));
+
+        teacherPaymentService.createPayment(request, 1L);
+
+        verify(paymentItemMapper).insert(paymentItemCaptor.capture());
+        assertThat(paymentItemCaptor.getValue().getHourlyRate()).isEqualByComparingTo(new BigDecimal("52.00"));
+        assertThat(paymentItemCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("104.00"));
+    }
+
+    @Test
+    void shouldIgnoreGroupClassSlotRateSnapshotAndUseConfiguredTeacherRate() {
+        LessonRecordEntity record = payableRecord();
+        record.setPackageId(null);
+        record.setOccurrenceId(4001L);
+        record.setActualUnits(4);
+
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(4001L);
+        occurrence.setClassGroupId(5001L);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(5001L);
+        classGroup.setProductId(202L);
+        TeacherPayRateEntity configuredRate = new TeacherPayRateEntity();
+        configuredRate.setTeacherId(701L);
+        configuredRate.setHourlyRate(new BigDecimal("40.00"));
+
+        TeacherPaymentCreateRequest request = paymentRequest(record);
+        stubTeacherAndRecords(request, record);
+        when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(List.of(occurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
+        when(payRateMapper.selectList(any())).thenReturn(List.of(configuredRate));
+
+        teacherPaymentService.createPayment(request, 1L);
+
+        verify(paymentItemMapper).insert(paymentItemCaptor.capture());
+        assertThat(paymentItemCaptor.getValue().getHourlyRate()).isEqualByComparingTo(new BigDecimal("40.00"));
+        assertThat(paymentItemCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("80.00"));
+        verifyNoInteractions(coursePackageMapper);
+    }
+
+    @Test
+    void shouldIgnoreOneOnOnePackageRateSnapshotAndUseConfiguredTeacherRate() {
+        LessonRecordEntity record = payableRecord();
+        record.setPackageId(3001L);
+        record.setOccurrenceId(4001L);
+        record.setActualUnits(4);
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setCourseProductId(202L);
+        TeacherPayRateEntity configuredRate = new TeacherPayRateEntity();
+        configuredRate.setTeacherId(701L);
+        configuredRate.setHourlyRate(new BigDecimal("40.00"));
+
+        TeacherPaymentCreateRequest request = paymentRequest(record);
+        stubTeacherAndRecords(request, record);
+        when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(coursePackage));
+        when(payRateMapper.selectList(any())).thenReturn(List.of(configuredRate));
+
+        teacherPaymentService.createPayment(request, 1L);
+
+        verify(paymentItemMapper).insert(paymentItemCaptor.capture());
+        assertThat(paymentItemCaptor.getValue().getHourlyRate()).isEqualByComparingTo(new BigDecimal("40.00"));
+        assertThat(paymentItemCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("80.00"));
+    }
+
+    @Test
     void shouldRejectMultipleStudentRecordsFromTheSameClassOccurrence() {
         LessonRecordEntity first = payableRecord();
         first.setId(1001L);
@@ -319,5 +540,24 @@ class TeacherPaymentServiceImplTest {
         record.setResultStatus("COMPLETED");
         record.setConfirmedAt(LocalDateTime.of(2026, 7, 15, 12, 0));
         return record;
+    }
+
+    private TeacherPaymentCreateRequest paymentRequest(LessonRecordEntity record) {
+        TeacherPaymentCreateRequest request = new TeacherPaymentCreateRequest();
+        request.setTeacherId(701L);
+        request.setLessonRecordIds(List.of(record.getId()));
+        request.setPeriodStart(LocalDate.of(2026, 7, 1));
+        request.setPeriodEnd(LocalDate.of(2026, 7, 31));
+        return request;
+    }
+
+    private void stubTeacherAndRecords(TeacherPaymentCreateRequest request, LessonRecordEntity record) {
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setId(701L);
+        teacher.setTeacherNo("T701");
+        teacher.setStatus("ACTIVE");
+        when(teacherMapper.selectById(701L)).thenReturn(teacher);
+        when(lessonRecordMapper.selectBatchIds(request.getLessonRecordIds())).thenReturn(List.of(record));
+        when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
     }
 }

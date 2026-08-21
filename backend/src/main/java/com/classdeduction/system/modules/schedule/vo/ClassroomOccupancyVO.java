@@ -27,6 +27,7 @@ public record ClassroomOccupancyVO(
         Integer plannedUnits,
         String planningStatus,
         Long classGroupId,
-        String className
+        String className,
+        String subjectName
 ) {
 }

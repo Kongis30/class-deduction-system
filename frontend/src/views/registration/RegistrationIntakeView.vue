@@ -188,11 +188,19 @@
       </el-alert>
 
       <section class="course-table-wrap">
+        <el-alert
+          v-if="!isReadOnly && courseLines.some(isOneOnOneLine)"
+          type="info"
+          :closable="false"
+          show-icon
+          class="one-on-one-registration-alert no-print"
+          title="1-on-1 registration records the package only. Schedule the teacher, subject, and weekly lesson times after saving."
+        />
         <table class="course-table">
           <thead>
             <tr>
               <th>1. Course</th>
-              <th>2. Grade, duration & schedule</th>
+              <th>2. Grade & package details</th>
               <th>3. Price</th>
             </tr>
           </thead>
@@ -316,6 +324,18 @@
                       </div>
                       <strong class="print-only print-course-value">{{ printRegistrationDurationLabel(line) }}</strong>
                     </label>
+                    <label v-if="!isOneOnOneLine(line) && line.coursePriceOptionId" class="course-control">
+                      <span>Start Date</span>
+                      <el-date-picker
+                        v-model="line.startDate"
+                        type="date"
+                        value-format="YYYY-MM-DD"
+                        :placeholder="classStartDatePlaceholder(line)"
+                        :disabled="isReadOnly"
+                        class="line-date"
+                        @change="() => handleRegistrationDurationChange(line)"
+                      />
+                    </label>
                     <label v-if="isOneOnOneLine(line)" class="course-control">
                       <span>Already used</span>
                       <el-input-number
@@ -347,30 +367,18 @@
                       </el-select>
                     </label>
                   </div>
-                    <div class="teacher-class-line">
-                    <label class="course-control course-control--wide">
-                      <span>{{ isOneOnOneLine(line) ? 'Teacher (optional)' : 'Class' }}</span>
-                      <el-select
-                        v-if="isOneOnOneLine(line)"
-                        v-model="line.teacherId"
-                        class="table-select"
-                        placeholder="Assign later"
-                        :disabled="isReadOnly || !line.coursePriceOptionId || teachers.length === 0"
-                        no-data-text="No active teachers"
-                        filterable
-                        clearable
-                      >
-                        <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-                      </el-select>
-                      <div v-else class="class-schedule-summary">
+                    <div v-if="!isOneOnOneLine(line)" class="teacher-class-line">
+                      <label class="course-control course-control--wide">
+                        <span>Class</span>
+                        <div class="class-schedule-summary">
                         {{ classScheduleLabel(line) }}
-                      </div>
-                      <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
-                    </label>
-                    <span v-if="!line.coursePriceOptionId" class="course-detail-hint">{{ courseLineHint(line) }}</span>
-                  </div>
+                        </div>
+                        <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
+                      </label>
+                      <span v-if="!line.coursePriceOptionId" class="course-detail-hint">{{ courseLineHint(line) }}</span>
+                    </div>
                     <p v-if="isOneOnOneLine(line)" class="one-on-one-scheduling-hint">
-                      Arrange lesson times on the weekly calendar after this registration is saved.
+                      After saving, open the schedule calendar and assign each time slot its teacher, lesson name, and allocated hours.
                     </p>
                     <div v-if="!isReadOnly && line.manualPriceOverride" class="manual-price-line">
                       <el-tag size="small" type="warning">Manual price</el-tag>
@@ -638,6 +646,7 @@ interface RegistrationCourseLine {
   periodLabel: string;
   durationLabel: string;
   timeSlotLabel: string;
+  startDate?: string;
   packageUnit?: string;
   packageQuantity?: number;
   packageTotalPrice?: number;
@@ -658,8 +667,6 @@ interface RegistrationCourseLine {
   groupPurchasedMonths?: number;
   groupRegistrationStartMonth?: string;
   groupRegistrationEndMonth?: string;
-  initialLessonStartAt?: string;
-  initialLessonEndAt?: string;
   remark?: string;
 }
 
@@ -1128,6 +1135,7 @@ function toHistoricalCourseLine(
     periodLabel,
     durationLabel: '',
     timeSlotLabel: getString(item, 'timeSlotLabel') || getString(fallback, 'timeSlotLabel'),
+    startDate: normalizeDate(getString(item, 'startDate') || getString(fallback, 'startDate')) || undefined,
     packageUnit: getString(item, 'packageUnit') || getString(fallback, 'packageUnit') || undefined,
     packageQuantity: optionalNumber(item, 'packageQuantity') ?? optionalNumber(fallback, 'packageQuantity'),
     packageTotalPrice: optionalNumber(item, 'packageTotalPrice') ?? optionalNumber(fallback, 'packageTotalPrice'),
@@ -1147,8 +1155,6 @@ function toHistoricalCourseLine(
     groupEndMonth: getString(item, 'groupEndMonth') || getString(item, 'endMonth') || undefined,
     groupRegistrationStartMonth: getString(item, 'startMonth') || undefined,
     groupRegistrationEndMonth: getString(item, 'endMonth') || undefined,
-    initialLessonStartAt: getString(item, 'initialLessonStartAt') || undefined,
-    initialLessonEndAt: getString(item, 'initialLessonEndAt') || undefined,
     remark: getString(item, 'remark') || undefined,
   };
 }
@@ -1195,6 +1201,7 @@ function createCourseLine(): RegistrationCourseLine {
     periodLabel: '',
     durationLabel: '',
     timeSlotLabel: '',
+    startDate: undefined,
     packageUnit: undefined,
     packageQuantity: undefined,
     packageTotalPrice: undefined,
@@ -1212,8 +1219,6 @@ function createCourseLine(): RegistrationCourseLine {
     groupPurchasedMonths: 2,
     groupRegistrationStartMonth: undefined,
     groupRegistrationEndMonth: undefined,
-    initialLessonStartAt: undefined,
-    initialLessonEndAt: undefined,
   };
 }
 
@@ -1382,6 +1387,7 @@ function handleOptionChange(line: RegistrationCourseLine) {
   line.groupStartMonth = option.groupStartMonth;
   line.groupEndMonth = option.groupEndMonth;
   if (isOneOnOneLine(line)) {
+    line.startDate = undefined;
     line.groupSessionCount = undefined;
     line.groupPurchasedMonths = undefined;
     line.groupDurationMode = undefined;
@@ -1391,6 +1397,7 @@ function handleOptionChange(line: RegistrationCourseLine) {
     line.groupSessionCount = undefined;
     line.groupPurchasedMonths = line.groupPurchasedMonths || 2;
     line.groupDurationMode = durationModeForMonths(line.groupPurchasedMonths);
+    line.startDate = line.startDate || defaultGroupEnrollmentStartDate(line);
     line.groupRegistrationStartMonth = undefined;
     line.groupRegistrationEndMonth = undefined;
   }
@@ -1418,6 +1425,20 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
     line.durationLabel = printRegistrationDurationLabel(line);
   }
   recalculateLinePrice(line);
+}
+
+function selectedClassGroup(line: RegistrationCourseLine) {
+  return classGroups.value.find((item) => String(item.id) === String(line.classId));
+}
+
+function classStartDatePlaceholder(line: RegistrationCourseLine) {
+  return defaultGroupEnrollmentStartDate(line);
+}
+
+function defaultGroupEnrollmentStartDate(line: RegistrationCourseLine) {
+  const signup = form.signupDate || today;
+  const classStart = selectedClassGroup(line)?.startDate;
+  return classStart && signup < classStart ? classStart : signup;
 }
 
 function applyGroupDurationMode(line: RegistrationCourseLine) {
@@ -1452,6 +1473,7 @@ function clearSelectedOption(line: RegistrationCourseLine) {
   line.periodLabel = '';
   line.durationLabel = '';
   line.timeSlotLabel = '';
+  line.startDate = undefined;
   line.packageUnit = undefined;
   line.packageQuantity = undefined;
   line.packageTotalPrice = undefined;
@@ -1636,6 +1658,7 @@ function durationOptionLabel(option: CoursePriceOptionItem) {
     return [
       option.periodLabel,
       packageLengthLabel(option),
+      groupDateRangeLabel(option),
     ].filter(Boolean).join(' · ') || 'Class package';
   }
   return [
@@ -1643,6 +1666,11 @@ function durationOptionLabel(option: CoursePriceOptionItem) {
     option.periodLabel,
     option.timeSlotLabel,
   ].filter(Boolean).join(' · ') || option.detailText;
+}
+
+function groupDateRangeLabel(option: CoursePriceOptionItem) {
+  if (!option.groupStartDate || !option.groupEndDate) return '';
+  return `${option.groupStartDate} to ${option.groupEndDate}`;
 }
 
 function packageLengthLabel(option: CoursePriceOptionItem) {
@@ -1740,13 +1768,11 @@ async function submitForm() {
     notifyRegistrationSaved(saved);
     const scheduleArtifact = saved.courseArtifacts.find((artifact) => artifact.packageId);
     if (scheduleArtifact?.packageId) {
-      const teacherId = courseLines.value[scheduleArtifact.lineNo - 1]?.teacherId;
       await router.replace({
         name: 'recurring-schedule',
         query: {
           studentId: saved.studentId,
           packageId: scheduleArtifact.packageId,
-          teacherId: teacherId || undefined,
           startSchedule: '1',
         },
       });
@@ -1852,9 +1878,6 @@ function validateForm() {
         ? `${label}: select a grade and package.`
         : `${label}: select a payment option.`);
     }
-    if (!line.detail.trim()) {
-      errors.push(`${label}: course detail is missing. Reselect the course option.`);
-    }
     const durationInvalid = validateRegistrationDuration(line, label, errors);
     if (!durationInvalid && (line.originalPriceAmount === undefined || line.originalPriceAmount <= 0)) {
       if (!line.manualPriceOverride || line.priceAmount <= 0 || !line.remark?.trim()) {
@@ -1869,6 +1892,18 @@ function validateForm() {
     }
     if (!isOneOnOneLine(line) && classOptionsForLine(line).length > 0 && !line.classId) {
       errors.push(`${label}: select an active class for group registration.`);
+    }
+    if (!isOneOnOneLine(line) && line.coursePriceOptionId && !line.startDate) {
+      errors.push(`${label}: select the enrollment start date.`);
+    }
+    if (!isOneOnOneLine(line) && line.startDate) {
+      const classGroup = selectedClassGroup(line);
+      if (classGroup?.startDate && line.startDate < classGroup.startDate) {
+        errors.push(`${label}: start date cannot be earlier than the class start date.`);
+      }
+      if (classGroup?.endDate && line.startDate > classGroup.endDate) {
+        errors.push(`${label}: start date cannot be later than the class end date.`);
+      }
     }
   });
   validateMoneyLines(extraFees.value, 'Other fee', errors);
@@ -1958,6 +1993,7 @@ function buildPayload(): RegistrationIntakePayload {
       gradeBand: line.gradeBand || undefined,
       periodLabel: line.periodLabel || undefined,
       timeSlotLabel: line.timeSlotLabel || undefined,
+      startDate: isOneOnOneLine(line) ? undefined : line.startDate,
       packageUnit: line.packageUnit,
       packageQuantity: line.packageQuantity,
       packageTotalPrice: line.packageTotalPrice,
@@ -1969,7 +2005,7 @@ function buildPayload(): RegistrationIntakePayload {
       oneOnOneHours: isOneOnOneLine(line) ? line.oneOnOneHours : undefined,
       openingUsedHours: isOneOnOneLine(line) && numeric(line.openingUsedHours) > 0 ? line.openingUsedHours : undefined,
       oneOnOneUnits: isOneOnOneLine(line) ? line.oneOnOneUnits : undefined,
-      teacherId: isOneOnOneLine(line) ? line.teacherId : undefined,
+      teacherId: undefined,
       remark: line.remark,
     })),
     pickupFeeCharged: form.pickupFeeCharged,

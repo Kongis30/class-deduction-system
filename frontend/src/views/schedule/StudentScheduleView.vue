@@ -47,23 +47,33 @@
             <span>Loading schedule...</span>
           </div>
 
-          <!-- Student lesson list / staff calendar -->
+          <!-- Schedule calendar -->
           <template v-else>
             <template v-if="isStudent">
+              <div class="calendar-controls">
+                <div class="calendar-controls__nav">
+                  <el-button-group>
+                    <el-button :icon="ArrowLeft" @click="prevWeek" />
+                    <el-button :icon="ArrowRight" @click="nextWeek" />
+                  </el-button-group>
+                  <el-date-picker
+                    v-model="pickerDate"
+                    type="date"
+                    placeholder="Jump to week"
+                    value-format="YYYY-MM-DD"
+                    style="width: 150px;"
+                    @change="jumpToDate"
+                  />
+                  <span class="calendar-controls__label">{{ weekLabel }}</span>
+                  <el-tag size="small" type="info">{{ occurrences.length }} lessons this week</el-tag>
+                </div>
+              </div>
+
               <div v-if="studentPackages.length > 0" class="package-info-bar">
                 <div v-for="pkg in studentPackages" :key="pkg.id" class="package-info-chip">
                   <span class="package-info-chip__name">{{ pkg.packageName }}</span>
                   <span class="package-info-chip__meta">{{ pkg.remainingUnits ?? pkg.totalUnits }}h remaining</span>
                 </div>
-              </div>
-              <div class="student-lessons__toolbar">
-                <el-radio-group v-model="studentScheduleTab" @change="loadSchedule">
-                  <el-radio-button label="future">Future lessons</el-radio-button>
-                  <el-radio-button label="history">History</el-radio-button>
-                </el-radio-group>
-                <span class="student-lessons__range">
-                  {{ studentScheduleTab === 'future' ? 'Today through the next 30 days' : 'Previous 30 days' }}
-                </span>
               </div>
 
               <section v-if="conflictGroups.length" class="student-conflict-summary">
@@ -80,30 +90,14 @@
                 </div>
               </section>
 
-              <div v-if="occurrences.length === 0" class="student-lessons__empty">
-                No {{ studentScheduleTab === 'future' ? 'upcoming' : 'past' }} lessons in this period.
-              </div>
-              <div v-else class="student-lessons__list">
-                <article
-                  v-for="lesson in occurrences"
-                  :key="lesson.id"
-                  class="student-lesson-card"
-                  :class="{ 'student-lesson-card--conflict': conflictOccurrenceIds.has(lesson.id) }"
-                >
-                  <div class="student-lesson-card__time">{{ formatLessonTime(lesson) }}</div>
-                  <div class="student-lesson-card__course">{{ lessonCourseLabel(lesson) }}</div>
-                  <div class="student-lesson-card__detail">
-                    <span>Teacher: {{ lesson.plannedTeacherName || '—' }}</span>
-                    <span>Room: {{ lesson.plannedClassroomName || '—' }}</span>
-                  </div>
-                  <el-tag v-if="conflictOccurrenceIds.has(lesson.id)" size="small" type="danger">
-                    Conflict
-                  </el-tag>
-                  <el-tag v-else size="small" :type="planningStatusTag(lesson.planningStatus)">
-                    {{ planningStatusLabel(lesson.planningStatus) }}
-                  </el-tag>
-                </article>
-              </div>
+              <WeeklyTimeSelector
+                v-model="emptySlots"
+                :occupied-slots="occupiedSlots"
+                :week-start-date="weekMonday"
+                :readonly="true"
+                :hide-hint="true"
+                @cell-click="onCellClick"
+              />
             </template>
 
             <template v-else>
@@ -181,7 +175,6 @@
 
     <!-- Detail dialog -->
     <el-dialog
-      v-if="!isStudent"
       v-model="detailDialogVisible"
       title="Lesson Detail"
       width="540px"
@@ -281,7 +274,6 @@ const selectedStudentId = ref<EntityId | null>(null);
 const weekOffset = ref(0);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
-const studentScheduleTab = ref<'future' | 'history'>('future');
 
 // ─── Package info bar ──────────────────────────
 const studentPackages = ref<CoursePackageItem[]>([]);
@@ -413,8 +405,7 @@ const conflictOccurrenceIds = computed(() => {
 
 const conflictSummaryTitle = computed(() => {
   const count = conflictGroups.value.length;
-  const range = isStudent.value ? 'in this period' : 'this week';
-  return `${count} schedule conflict${count === 1 ? '' : 's'} ${range}`;
+  return `${count} schedule conflict${count === 1 ? '' : 's'} this week`;
 });
 
 // ─── Occupied slots ────────────────────────────
@@ -425,14 +416,19 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
     if (o.planningStatus === 'CANCELLED') continue;
     const start = dayjs(o.plannedStartAt);
     const weekday = start.day() === 0 ? 7 : start.day();
+    const lessonTitle = o.subjectName || o.className || o.packageName || 'Lesson';
     result.push({
       weekday,
       startTime: start.format('HH:mm'),
       endTime: dayjs(o.plannedEndAt).format('HH:mm'),
-      courseLabel: o.className || o.packageName || o.lessonNo || '',
+      courseLabel: o.className || o.packageName || o.lessonNo || 'Lesson',
+      displayTitle: lessonTitle,
+      subjectName: o.subjectName,
       studentName: o.studentName,
       teacherName: o.plannedTeacherName,
       classroomName: o.plannedClassroomName,
+      productName: o.productName || o.packageName,
+      showTimeInEvent: false,
     });
   }
   return result;
@@ -445,19 +441,14 @@ async function loadSchedule() {
   const studentId = selectedStudentId.value;
   loading.value = true;
   try {
-    const today = dayjs().startOf('day');
-    const startAt = isStudent.value
-      ? (studentScheduleTab.value === 'future' ? today : today.subtract(30, 'day')).format('YYYY-MM-DDTHH:mm:ss')
-      : dayjs(weekMonday.value).format('YYYY-MM-DDTHH:mm:ss');
-    const endAt = isStudent.value
-      ? (studentScheduleTab.value === 'future' ? today.add(30, 'day').endOf('day') : today).format('YYYY-MM-DDTHH:mm:ss')
-      : dayjs(weekMonday.value).add(6, 'day').endOf('day').format('YYYY-MM-DDTHH:mm:ss');
+    const startAt = dayjs(weekMonday.value).format('YYYY-MM-DDTHH:mm:ss');
+    const endAt = dayjs(weekMonday.value).add(6, 'day').endOf('day').format('YYYY-MM-DDTHH:mm:ss');
 
     const res = await fetchLessonOccurrences({
       studentId,
       startAt,
       endAt,
-      pageSize: isStudent.value ? 200 : 100,
+      pageSize: 100,
     });
     // Discard if a newer selection/week has superseded this request.
     if (requestId !== scheduleRequestSeq) return;
@@ -527,11 +518,6 @@ function planningStatusTag(status: string) {
 
 function planningStatusLabel(status: string) {
   return { SCHEDULED: 'Scheduled', ADJUSTED: 'Adjusted', CANCELLED: 'Cancelled', MERGED: 'Merged' }[status] ?? status;
-}
-
-function formatLessonTime(lesson: LessonOccurrenceItem) {
-  const start = dayjs(lesson.plannedStartAt);
-  return `${start.format('MMM D, YYYY HH:mm')} - ${dayjs(lesson.plannedEndAt).format('HH:mm')}`;
 }
 
 function lessonCourseLabel(lesson: LessonOccurrenceItem) {

@@ -108,7 +108,7 @@ class CoursePriceOptionServiceImplTest {
     }
 
     @Test
-    void shouldCreateGroupOptionWithFutureClassOccurrencesUsingScheduleSlotSnapshot() {
+    void shouldCreateGroupOptionWithFutureClassOccurrencesWithoutPayRateSnapshot() {
         CoursePriceOptionSaveRequest request = groupOption();
         when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
         when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
@@ -140,14 +140,12 @@ class CoursePriceOptionServiceImplTest {
         assertThat(optionCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1300.00");
         assertThat(slotCaptor.getValue().getTeacherId()).isEqualTo(702L);
         assertThat(slotCaptor.getValue().getSubjectName()).isEqualTo("Chemistry");
-        assertThat(slotCaptor.getValue().getHourlyRateSnapshot()).isEqualByComparingTo("25.00");
         assertThat(occurrenceCaptor.getAllValues())
                 .allSatisfy(occurrence -> {
                     assertThat(occurrence.getClassGroupId()).isEqualTo(401L);
                     assertThat(occurrence.getScheduleSlotId()).isEqualTo(501L);
                     assertThat(occurrence.getPlannedTeacherId()).isEqualTo(702L);
                     assertThat(occurrence.getPlannedClassroomId()).isEqualTo(801L);
-                    assertThat(occurrence.getHourlyRateSnapshot()).isEqualByComparingTo("25.00");
                     assertThat(occurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
                 });
     }
@@ -183,6 +181,21 @@ class CoursePriceOptionServiceImplTest {
         when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
 
         coursePriceOptionService.createOption(request);
+    }
+
+    @Test
+    void shouldSaveBlankDetailTextAsEmptyString() {
+        CoursePriceOptionSaveRequest request = oneOnOneOption();
+        request.setDetailText(null);
+        when(courseProductMapper.selectById(201L)).thenReturn(oneOnOneProduct());
+        when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
+
+        coursePriceOptionService.createOption(request);
+
+        ArgumentCaptor<CoursePriceOptionEntity> optionCaptor =
+                ArgumentCaptor.forClass(CoursePriceOptionEntity.class);
+        verify(coursePriceOptionMapper).insert(optionCaptor.capture());
+        assertThat(optionCaptor.getValue().getDetailText()).isEqualTo("");
     }
 
     @Test
@@ -276,7 +289,6 @@ class CoursePriceOptionServiceImplTest {
                 new CoursePriceOptionSaveRequest.GroupScheduleSlotDTO();
         slot.setTeacherId(702L);
         slot.setSubjectName(" Chemistry ");
-        slot.setHourlyRateSnapshot(new BigDecimal("25.00"));
         slot.setWeekday(6);
         slot.setStartTime("09:00");
         slot.setEndTime("12:00");

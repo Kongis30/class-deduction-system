@@ -7,7 +7,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 
 /**
  * Course line payload shared by future registration intake requests.
@@ -48,6 +48,9 @@ public class EnrollmentOrderItemDTO {
     @Schema(description = "Time slot label", example = "10:00-12:00")
     private String timeSlotLabel;
 
+    @Schema(description = "Enrollment start date for this course line", example = "2026-03-01")
+    private LocalDate startDate;
+
     @Schema(description = "Package unit snapshot: MONTH/WEEK/SESSION/HOUR")
     private String packageUnit;
 
@@ -85,15 +88,6 @@ public class EnrollmentOrderItemDTO {
     @Min(value = 0, message = "One-on-one units cannot be negative")
     @Schema(description = "One-on-one units, 1 unit = 0.5 hour", example = "40")
     private Integer oneOnOneUnits;
-
-    @Schema(description = "Structured first one-on-one lesson start time")
-    private LocalDateTime initialLessonStartAt;
-
-    @Schema(description = "Structured first one-on-one lesson end time")
-    private LocalDateTime initialLessonEndAt;
-
-    @Schema(description = "Required one-on-one teacher ID", example = "1880000000000000005")
-    private Long teacherId;
 
     @Schema(description = "Line item remark")
     private String remark;

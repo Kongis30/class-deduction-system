@@ -4,7 +4,7 @@
       <div class="config-panel__header">
         <div>
           <span class="config-panel__eyebrow">Settings</span>
-          <h2>Payment Methods</h2>
+          <h2>Payment methods</h2>
           <p>Set the payment methods staff can choose during registration.</p>
         </div>
         <el-button type="primary" @click="openDialog()">

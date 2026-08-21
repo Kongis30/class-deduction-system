@@ -17,11 +17,17 @@ public class TeacherPayRateSaveRequest {
     @NotNull(message = "Teacher ID is required")
     private Long teacherId;
 
-    @NotNull(message = "Course product ID is required")
+    @Schema(description = "Optional course product scope; blank means all course products")
     private Long courseProductId;
 
     @Schema(description = "Optional student ID for a one-on-one rate override")
     private Long studentId;
+
+    @Schema(description = "Optional grade or level scope; blank means any grade", example = "Middle School")
+    private String gradeBand;
+
+    @Schema(description = "Optional delivery scope: ONLINE, OFFLINE, or blank for any delivery", example = "ONLINE")
+    private String deliveryMode;
 
     @NotNull(message = "Hourly rate is required")
     @DecimalMin(value = "0.01", message = "Hourly rate must be greater than 0")

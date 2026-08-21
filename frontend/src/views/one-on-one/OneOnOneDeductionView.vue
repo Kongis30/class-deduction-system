@@ -7,7 +7,28 @@
       </div>
       <div class="oo-actions">
         <el-button class="action-primary" type="primary" :loading="loading" @click="loadData">Refresh</el-button>
-        <el-button class="action-print" :disabled="!activePackage" @click="printCurrentPackage">Print Student Sheet</el-button>
+        <el-button class="action-print" :disabled="!activePackage" @click="printCurrentPackage('parent')">Print Parent Sheet</el-button>
+        <el-dropdown
+          trigger="click"
+          :disabled="!activePackage || teacherSignatureSheets.length === 0"
+          @command="printTeacherSheet"
+        >
+          <el-button class="action-print" :disabled="!activePackage || teacherSignatureSheets.length === 0">
+            Print Teacher Sheet
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="__all__">All teacher sheets</el-dropdown-item>
+              <el-dropdown-item
+                v-for="option in teacherPrintOptions"
+                :key="option.key"
+                :command="option.key"
+              >
+                {{ option.teacher }}
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </section>
 
@@ -170,7 +191,15 @@
           ›
         </el-button>
 
-        <section v-if="activePackage && activeStudent" class="oo-print-area oo-record-panel" ref="printAreaRef">
+        <section
+          v-if="activePackage && activeStudent"
+          class="oo-print-area oo-record-panel"
+          :class="[
+            printMode === 'teacher' ? 'oo-print-area--teacher' : 'oo-print-area--parent',
+            printMode === 'teacher' && selectedTeacherPrintKey !== '__all__' ? 'oo-print-area--single-teacher' : '',
+          ]"
+          ref="printAreaRef"
+        >
           <div class="oo-student-context">
             <div>
               <strong>{{ activeStudent.studentName }}</strong>
@@ -183,37 +212,103 @@
             </div>
           </div>
 
-          <section class="oo-signature-sheet print-only">
+          <section class="oo-signature-sheet oo-parent-signature-sheet print-only">
             <div class="oo-signature-sheet__meta">
-              <p><strong>Student :</strong> {{ activeStudent.studentName }}</p>
-              <p><strong>Teacher:</strong> {{ signatureTeacherName }}</p>
-              <p><strong>Classtime:</strong> {{ signatureClassTime }}</p>
-              <p><strong>Total Hours :</strong> {{ formatHours(activePackage.totalUnits) }}</p>
-              <p><strong>Allocated Hours :</strong> {{ formatHours(signatureAllocatedHours) }}</p>
+              <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
+              <p><strong>Purchased Hours:</strong> {{ formatHours(activePackage.totalUnits) }}</p>
+              <p><strong>Bonus?</strong></p>
+              <p><strong>Total Hours:</strong>{{ formatHours(signatureAllocatedHours) }}</p>
             </div>
 
-            <table class="oo-signature-table">
+            <div class="oo-signature-subjects">
+              <div
+                v-for="summary in signatureSubjectSummaries"
+                :key="summary.subject"
+                class="oo-signature-subject-line"
+              >
+                <span><strong>Lesson name:</strong> {{ summary.subject }}</span>
+                <span><strong>Teacher:</strong> {{ summary.teacher }}</span>
+                <span><strong>Classtime:</strong> {{ summary.classTime }}</span>
+                <span><strong>Allocated Hours:</strong> {{ formatHours(summary.hours) }}</span>
+                <span><strong>Starting Date:</strong> {{ summary.startDate }}</span>
+              </div>
+            </div>
+
+            <div class="oo-signature-print-grid">
+              <table class="oo-signature-table oo-signature-table--detail">
+                <thead>
+                  <tr>
+                    <th>Lesson name</th>
+                    <th>Teacher</th>
+                    <th>Date</th>
+                    <th>Signature</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in signatureSheetRows" :key="row.occurrenceId">
+                    <td>{{ signatureSubjectLabel(row) }}</td>
+                    <td>{{ signatureLessonTeacher(row) }}</td>
+                    <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <table class="oo-signature-table oo-signature-table--matrix">
+                <thead>
+                  <tr>
+                    <th v-for="subject in signatureMatrixSubjects" :key="subject">{{ subject }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="row in signatureSheetRows" :key="`matrix-${row.occurrenceId}`">
+                    <td v-for="subject in signatureMatrixSubjects" :key="`${row.occurrenceId}-${subject}`">
+                      {{ signatureSubjectLabel(row) === subject ? formatCompactHours(row.plannedUnits) : '' }}
+                    </td>
+                  </tr>
+                  <tr class="oo-signature-table__total-row">
+                    <td v-for="subject in signatureMatrixSubjects" :key="`total-${subject}`">
+                      {{ formatCompactHours(signatureSubjectHours[subject] ?? 0) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section
+            v-for="sheet in teacherSignatureSheets"
+            :key="sheet.key"
+            class="oo-signature-sheet oo-teacher-signature-sheet print-only"
+            :class="{ 'oo-teacher-signature-sheet--selected': isSelectedTeacherSheet(sheet) }"
+          >
+            <div class="oo-teacher-sheet__meta">
+              <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
+              <p><strong>Lesson name:</strong> {{ sheet.subject }}</p>
+              <p><strong>Teacher:</strong> {{ sheet.teacher }}</p>
+              <p><strong>Classtime:</strong> {{ sheet.classTime }}</p>
+              <p><strong>Allocated Hours:</strong> {{ formatHours(sheet.hours) }}</p>
+              <p><strong>Starting Date:</strong>{{ sheet.startDate }}</p>
+            </div>
+
+            <table class="oo-signature-table oo-signature-table--teacher">
               <thead>
                 <tr>
-                  <th>Course</th>
+                  <th>Lesson name</th>
+                  <th>Teacher</th>
                   <th>Date</th>
                   <th>Signature</th>
-                  <th class="oo-signature-table__index"></th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(row, index) in signatureSheetRows" :key="row.occurrenceId">
-                  <td>{{ signatureCourseLabel }}</td>
+                <tr v-for="row in sheet.rows" :key="`teacher-${row.occurrenceId}`">
+                  <td>{{ sheet.subject }}</td>
+                  <td>{{ sheet.teacher }}</td>
                   <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
                   <td></td>
-                  <td class="oo-signature-table__index">{{ index + 1 }}</td>
                 </tr>
               </tbody>
             </table>
-
-            <p class="oo-signature-sheet__remaining">
-              <strong>Remaining Hours :</strong> {{ formatHours(activePackage.remainingUnits) }}
-            </p>
           </section>
 
           <div class="oo-action-line no-print" :class="{ 'oo-action-line--done': workflowComplete }">
@@ -273,7 +368,7 @@
             <el-table-column label="Course" min-width="150">
               <template #default="{ row }">
                 <div class="oo-simple-cell">
-                  <strong>{{ signatureCourseLabel }}</strong>
+                  <strong>{{ signatureCourseLabel(row) }}</strong>
                   <span v-if="row.actualTeacherName || row.plannedTeacherName">
                     {{ displayResourceName(row.actualTeacherName || row.plannedTeacherName) }}
                   </span>
@@ -374,8 +469,7 @@
           <el-select v-model="confirmForm.resultStatus" style="width: 100%">
             <el-option label="Completed" value="COMPLETED" />
             <el-option label="Formal Leave" value="FORMAL_LEAVE" />
-            <el-option label="No Show" value="NO_SHOW" />
-            <el-option v-if="isAdmin" label="Cancelled" value="CANCELLED" />
+            <el-option label="Last minute cancel or no show" value="NO_SHOW" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Actual Start">
@@ -514,6 +608,17 @@ interface StudentEntry {
   student: OneOnOneStudent;
 }
 
+interface SignatureSubjectSummary {
+  key: string;
+  subject: string;
+  teacher: string;
+  teacherKey?: string;
+  classTime: string;
+  hours: number;
+  startDate: string;
+  rows: OneOnOneLesson[];
+}
+
 const authStore = useAuthStore();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
@@ -531,6 +636,8 @@ const activeTeacher = ref<OneOnOneTeacher | null>(null);
 const activeStudent = ref<OneOnOneStudent | null>(null);
 const activePackage = ref<OneOnOnePackage | null>(null);
 const printAreaRef = ref<HTMLElement>();
+const printMode = ref<'parent' | 'teacher'>('parent');
+const selectedTeacherPrintKey = ref<string>('__all__');
 const selectedTeacherId = ref<EntityId>();
 const selectedCourseType = ref<string>();
 const selectedGradeBand = ref<string>();
@@ -643,34 +750,131 @@ const signatureSheetRows = computed(() =>
 const signatureAllocatedHours = computed(() =>
   signatureSheetRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
 );
-const signatureTeacherName = computed(() => {
-  if (activeTeacher.value?.teacherName) {
-    return displayResourceName(activeTeacher.value.teacherName);
-  }
-  const firstLesson = signatureSheetRows.value.find(row => row.plannedTeacherName || row.actualTeacherName);
-  return displayResourceName(firstLesson?.plannedTeacherName || firstLesson?.actualTeacherName);
+const signatureSubjectSummaries = computed<SignatureSubjectSummary[]>(() => {
+  const groups = new Map<string, SignatureSubjectSummary>();
+  signatureSheetRows.value.forEach((row) => {
+    const subject = signatureSubjectLabel(row);
+    const teacher = signatureLessonTeacher(row);
+    const key = subject;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.rows.push(row);
+      existing.hours += Number(row.plannedUnits ?? 0);
+      return;
+    }
+    groups.set(key, {
+      key,
+      subject,
+      teacher,
+      classTime: '',
+      hours: Number(row.plannedUnits ?? 0),
+      startDate: formatSignatureDate(row.plannedStartAt),
+      rows: [row],
+    });
+  });
+  return Array.from(groups.values()).map((group) => ({
+    ...group,
+    classTime: subjectClassTime(group.rows),
+    startDate: formatSignatureDate(group.rows[0]?.plannedStartAt ?? ''),
+  }));
 });
-const signatureCourseLabel = computed(() => {
+const teacherSignatureSheets = computed<SignatureSubjectSummary[]>(() => {
+  const groups = new Map<string, SignatureSubjectSummary>();
+  signatureSheetRows.value.forEach((row) => {
+    const subject = signatureSubjectLabel(row);
+    const teacher = signatureLessonTeacher(row);
+    const teacherKey = signatureTeacherKey(row, teacher);
+    const timeKey = signatureTimeOfDayKey(row) || 'To be scheduled';
+    const key = `${subject}__${teacherKey}__${timeKey}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.rows.push(row);
+      existing.hours += Number(row.plannedUnits ?? 0);
+      return;
+    }
+    groups.set(key, {
+      key,
+      subject,
+      teacher,
+      teacherKey,
+      classTime: '',
+      hours: Number(row.plannedUnits ?? 0),
+      startDate: formatSignatureDate(row.plannedStartAt),
+      rows: [row],
+    });
+  });
+  return Array.from(groups.values()).map((group) => {
+    const rows = [...group.rows].sort((left, right) =>
+      dayjs(left.plannedStartAt).valueOf() - dayjs(right.plannedStartAt).valueOf()
+    );
+    return {
+      ...group,
+      rows,
+      classTime: subjectClassTime(rows),
+      startDate: formatSignatureDate(rows[0]?.plannedStartAt ?? ''),
+    };
+  });
+});
+const teacherPrintOptions = computed(() => {
+  const options = new Map<string, { key: string; teacher: string }>();
+  for (const sheet of teacherSignatureSheets.value) {
+    const key = sheet.teacherKey || optionKey(sheet.teacher);
+    if (!options.has(key)) {
+      options.set(key, { key, teacher: sheet.teacher });
+    }
+  }
+  return Array.from(options.values()).sort((left, right) => left.teacher.localeCompare(right.teacher));
+});
+const signatureMatrixSubjects = computed(() =>
+  Array.from(new Set(signatureSubjectSummaries.value.map(item => item.subject)))
+);
+const signatureSubjectHours = computed<Record<string, number>>(() => {
+  return signatureMatrixSubjects.value.reduce((result, subject) => {
+    result[subject] = signatureSheetRows.value
+      .filter(row => signatureSubjectLabel(row) === subject)
+      .reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0);
+    return result;
+  }, {} as Record<string, number>);
+});
+function signatureCourseLabel(row?: OneOnOneLesson) {
   const pkg = activePackage.value;
   if (!pkg) {
     return '—';
   }
-  const subject = pkg.subjectName?.trim() || pkg.courseProductName?.trim();
+  const subject = row?.subjectName?.trim() || 'Unnamed lesson';
   const grade = pkg.gradeBand?.trim() || activeStudent.value?.grade?.trim();
   const label = [grade, subject].filter(Boolean).join(' ');
   return label || pkg.packageName;
-});
-const signatureClassTime = computed(() => {
-  const schedules = Array.from(new Set(
-    signatureSheetRows.value
-      .filter(row => row.plannedStartAt && row.plannedEndAt)
-      .map(row => `${dayjs(row.plannedStartAt).format('ddd h:mm')}-${dayjs(row.plannedEndAt).format('h:mma').toLowerCase()}`)
-  ));
-  if (schedules.length === 0) {
-    return 'To be scheduled';
-  }
-  return schedules.join(', ');
-});
+}
+function signatureSubjectLabel(row?: OneOnOneLesson) {
+  const pkg = activePackage.value;
+  return row?.subjectName?.trim()
+    || pkg?.subjectName?.trim()
+    || pkg?.courseProductName?.trim()
+    || pkg?.packageName
+    || 'Unnamed lesson';
+}
+function subjectClassTime(rows: OneOnOneLesson[]) {
+  const schedules = new Map<string, Set<number>>();
+  rows
+    .filter(row => row.plannedStartAt && row.plannedEndAt)
+    .forEach((row) => {
+      const timeKey = signatureTimeOfDayKey(row);
+      if (!timeKey) return;
+      const days = schedules.get(timeKey) ?? new Set<number>();
+      days.add(dayjs(row.plannedStartAt).day());
+      schedules.set(timeKey, days);
+    });
+  if (schedules.size === 0) return 'To be scheduled';
+  return Array.from(schedules.entries())
+    .map(([timeKey, days]) => {
+      const dayLabels = Array.from(days)
+        .sort((left, right) => left - right)
+        .map(signatureWeekdayLabel);
+      return `${dayLabels.join('&')} ${timeKey}`;
+    })
+    .join(', ');
+}
 const workflowComplete = computed(() => !nextActionLesson.value
   && !nextArrangementLesson.value
   && pendingTeacherCount.value === 0
@@ -873,7 +1077,7 @@ function normalizedGradeBand(value?: string) {
 }
 
 function courseTypeLabel(pkg: OneOnOnePackage) {
-  return pkg.courseProductName?.trim() || pkg.subjectName?.trim() || pkg.packageName;
+  return pkg.courseProductName?.trim() || pkg.packageName;
 }
 
 function matchesCandidateFilters(candidate: PackageCandidate) {
@@ -1152,9 +1356,27 @@ async function submitConfirm() {
   }
 }
 
-function printCurrentPackage() {
+function printCurrentPackage(mode: 'parent' | 'teacher') {
   if (!activePackage.value) return;
+  printMode.value = mode;
+  selectedTeacherPrintKey.value = '__all__';
   window.print();
+}
+
+function printTeacherSheet(command: string | number | object) {
+  if (!activePackage.value) return;
+  printMode.value = 'teacher';
+  selectedTeacherPrintKey.value = String(command || '__all__');
+  window.print();
+}
+
+function isSelectedTeacherSheet(sheet: SignatureSubjectSummary) {
+  return selectedTeacherPrintKey.value === '__all__'
+    || selectedTeacherPrintKey.value === (sheet.teacherKey || optionKey(sheet.teacher));
+}
+
+function signatureTeacherKey(row: OneOnOneLesson, teacherName: string) {
+  return entityKey(row.plannedTeacherId || row.actualTeacherId) || optionKey(teacherName);
 }
 
 function statusTag(row: OneOnOneLesson) {
@@ -1169,6 +1391,7 @@ function statusLabel(row: OneOnOneLesson) {
   if (row.confirmStage === 'REJECTED') return 'Rejected';
   if (row.planningStatus === 'CANCELLED') return 'Cancelled';
   if (row.confirmStage === 'CONFIRMED' && row.resultStatus === 'COMPLETED') return 'Completed';
+  if (row.resultStatus === 'NO_SHOW' || row.resultStatus === 'CANCELLED') return 'Last minute cancel or no show';
   if (row.confirmStage === 'CONFIRMED') return row.resultStatusName || 'Completed';
   if (row.resultStatusName) return row.resultStatusName;
   if (row.resultStatus) return row.resultStatus;
@@ -1198,10 +1421,7 @@ function nonAttendanceNotice(status: string) {
   if (status === 'FORMAL_LEAVE') {
     return 'Formal Leave does not deduct hours. The system automatically appends a replacement lesson to preserve the package total.';
   }
-  if (status === 'CANCELLED') {
-    return 'Cancelled lessons deduct the full planned hours and do not create a replacement lesson.';
-  }
-  return 'No Show deducts the full planned hours and does not create a replacement lesson.';
+  return 'Last minute cancel or no show deducts the full planned hours and does not create a replacement lesson.';
 }
 
 function isFutureScheduleReconciliationError(error: unknown) {
@@ -1213,12 +1433,37 @@ function formatHours(value?: number) {
   return Number(value ?? 0).toFixed(1);
 }
 
+function formatCompactHours(value?: number) {
+  const numberValue = Number(value ?? 0);
+  return Number.isInteger(numberValue) ? String(numberValue) : numberValue.toFixed(1);
+}
+
 function formatDate(value: string) {
   return value ? dayjs(value).format('MM/DD/YYYY') : '—';
 }
 
 function formatSignatureDate(value: string) {
   return value ? dayjs(value).format('M/D/YYYY') : '—';
+}
+
+function signatureWeeklyTime(row: OneOnOneLesson) {
+  if (!row.plannedStartAt || !row.plannedEndAt) return '';
+  return `${signatureWeekdayLabel(dayjs(row.plannedStartAt).day())} ${signatureTimeOfDayKey(row)}`;
+}
+
+function signatureTimeOfDayKey(row: OneOnOneLesson) {
+  if (!row.plannedStartAt || !row.plannedEndAt) return '';
+  const start = dayjs(row.plannedStartAt).format('h:mma').toLowerCase();
+  const end = dayjs(row.plannedEndAt).format('h:mma').toLowerCase().replace(':00', '');
+  return `${start}-${end}`;
+}
+
+function signatureWeekdayLabel(day: number) {
+  return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][day] ?? '';
+}
+
+function signatureLessonTeacher(row: OneOnOneLesson) {
+  return displayResourceName(row.plannedTeacherName || row.actualTeacherName);
 }
 
 function formatDateTime(value: string) {
@@ -1618,22 +1863,43 @@ onMounted(async () => {
 }
 
 .oo-signature-sheet__meta {
-  display: grid;
-  gap: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
   margin-bottom: 8px;
 }
 
-.oo-signature-sheet__meta p,
-.oo-signature-sheet__remaining {
+.oo-signature-sheet__meta p {
   margin: 0;
   color: #111;
-  font-size: 20px;
+  font-size: 16px;
   line-height: 1.22;
 }
 
-.oo-signature-sheet__meta strong,
-.oo-signature-sheet__remaining strong {
+.oo-signature-sheet__meta strong {
   font-weight: 800;
+}
+
+.oo-signature-subjects {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 30px;
+}
+
+.oo-signature-subject-line {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1.45fr 1fr 1fr;
+  gap: 16px;
+  color: #111;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.oo-signature-print-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(220px, 1fr);
+  gap: 60px;
+  align-items: start;
 }
 
 .oo-signature-table {
@@ -1641,27 +1907,57 @@ onMounted(async () => {
   border-collapse: collapse;
   table-layout: fixed;
   color: #111;
-  font-size: 18px;
+  font-size: 14px;
 }
 
 .oo-signature-table th,
 .oo-signature-table td {
-  height: 34px;
-  padding: 4px 8px;
+  height: 22px;
+  padding: 2px 4px;
   border: 1px solid #111;
-  text-align: center;
+  text-align: left;
   vertical-align: middle;
+  word-break: break-word;
 }
 
 .oo-signature-table th {
   font-weight: 700;
 }
 
-.oo-signature-table__index {
-  width: 28px;
-  border: 0 !important;
-  padding-left: 8px !important;
-  text-align: left !important;
+.oo-signature-table--matrix th,
+.oo-signature-table--matrix td {
+  text-align: center;
+}
+
+.oo-signature-table__total-row td {
+  font-weight: 800;
+}
+
+.oo-teacher-signature-sheet {
+  display: none;
+}
+
+.oo-teacher-sheet__meta {
+  display: grid;
+  grid-template-columns: auto auto auto;
+  gap: 6px 36px;
+  margin-bottom: 32px;
+}
+
+.oo-teacher-sheet__meta p {
+  margin: 0;
+  color: #111;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.oo-teacher-sheet__meta p:first-child {
+  grid-column: 1 / -1;
+}
+
+.oo-teacher-sheet__meta p:nth-child(4) {
+  grid-column: 1;
 }
 
 .oo-signature-sheet__remaining {
@@ -1973,6 +2269,26 @@ onMounted(async () => {
     display: block !important;
   }
 
+  .oo-print-area--parent .oo-teacher-signature-sheet {
+    display: none !important;
+  }
+
+  .oo-print-area--teacher .oo-parent-signature-sheet {
+    display: none !important;
+  }
+
+  .oo-print-area--teacher .oo-teacher-signature-sheet {
+    display: block !important;
+  }
+
+  .oo-print-area--teacher.oo-print-area--single-teacher .oo-teacher-signature-sheet {
+    display: none !important;
+  }
+
+  .oo-print-area--teacher.oo-print-area--single-teacher .oo-teacher-signature-sheet--selected {
+    display: block !important;
+  }
+
   .oo-print-area {
     color: #000;
   }
@@ -1994,24 +2310,33 @@ onMounted(async () => {
     font-family: Arial, Helvetica, sans-serif;
   }
 
-  .oo-signature-sheet__meta p,
-  .oo-signature-sheet__remaining {
-    font-size: 24px;
+  .oo-signature-sheet__meta p {
+    font-size: 16px;
+  }
+
+  .oo-signature-subject-line,
+  .oo-teacher-sheet__meta p {
+    font-size: 15px;
+  }
+
+  .oo-signature-subjects {
+    margin-bottom: 28px;
   }
 
   .oo-signature-table {
     margin-top: 6px;
-    font-size: 22px;
+    font-size: 14px;
   }
 
   .oo-signature-table th,
   .oo-signature-table td {
-    height: 38px;
-    border: 2px solid #111;
+    height: 22px;
+    border: 1px solid #111;
   }
 
-  .oo-signature-table__index {
-    border: 0 !important;
+  .oo-signature-print-grid {
+    grid-template-columns: minmax(0, 1.55fr) minmax(220px, 1fr);
+    gap: 60px;
   }
 }
 </style>

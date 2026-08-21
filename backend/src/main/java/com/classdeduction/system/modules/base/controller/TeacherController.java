@@ -36,6 +36,12 @@ public class TeacherController {
         return ApiResponse.success(teacherService.listAllActive());
     }
 
+    @GetMapping("/all")
+    @Operation(summary = "List all active instructors")
+    public ApiResponse<List<TeacherVO>> listAllActiveCompat() {
+        return ApiResponse.success(teacherService.listAllActive());
+    }
+
     @GetMapping("/deleted")
     @Operation(summary = "List soft-deleted instructor profiles")
     public ApiResponse<List<TeacherVO>> listDeleted() {

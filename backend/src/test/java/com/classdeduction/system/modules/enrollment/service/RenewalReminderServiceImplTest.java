@@ -76,7 +76,6 @@ class RenewalReminderServiceImplTest {
         packageEntity.setTeachingMode("ONE_ON_ONE");
         packageEntity.setPackageStatus("ACTIVE");
         packageEntity.setPackageName("Math 1-on-1");
-        packageEntity.setDefaultLessonUnits(2);
         packageEntity.setRemainingUnits(4); // Two one-hour lessons remain.
         packageEntity.setEstimatedEndDate(LocalDate.now().plusDays(90));
 

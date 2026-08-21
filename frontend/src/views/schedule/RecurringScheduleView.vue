@@ -136,8 +136,8 @@
                 <!-- Schedule summary -->
                 <div v-if="currentRule" class="schedule-summary">
                   <div class="summary-field">
-                    <label>Default Teacher</label>
-                    <span>{{ currentRule.primaryTeacherName ?? '—' }}</span>
+                    <label>Slot Teachers</label>
+                    <span>{{ slotTeacherNames(currentRule) }}</span>
                   </div>
                   <div class="summary-field">
                     <label>Classroom</label>
@@ -257,7 +257,9 @@
         <!-- Weekly time selector -->
         <el-divider content-position="left">Weekly Time Slots</el-divider>
         <p class="edit-schedule__hint">
-          Click and drag on the calendar to select class time slots. Each slot = one recurring weekly class.
+          Click and drag on the calendar to select class time slots. For each slot, assign a teacher,
+          lesson name, and the total hours allocated to it. Each slot is scheduled independently until
+          its allocated hours run out (the last class takes the remainder if it does not divide evenly).
         </p>
         <WeeklyTimeSelector
           v-model="editForm.slots"
@@ -271,19 +273,43 @@
             :key="`${slot.weekday}-${slot.startTime}-${index}`"
             class="slot-teacher-row"
           >
-            <span class="slot-teacher-row__time">{{ scheduleSlotLabel(slot) }}</span>
+            <div class="slot-teacher-row__time">
+              <strong>{{ scheduleSlotLabel(slot) }}</strong>
+              <small>Each lesson {{ formatSlotHours(slot.plannedUnits) }} · {{ slotLessonPlan(slot) }}</small>
+            </div>
             <el-select
               v-model="slot.teacherId"
-              clearable
               filterable
               placeholder="Select teacher"
             >
               <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
             </el-select>
+            <el-input
+              v-model="slot.subjectName"
+              placeholder="Lesson name"
+              maxlength="128"
+            />
+            <el-input-number
+              v-model="slot.allocatedHours"
+              :min="0.5"
+              :step="0.5"
+              :precision="1"
+              controls-position="right"
+              placeholder="Hours"
+            />
+            <span class="slot-teacher-row__unit">h</span>
           </div>
         </div>
         <div v-if="editForm.slots.length > 0" class="edit-schedule__summary">
-          {{ editForm.slots.length }} slot(s) · {{ totalSlotUnits }} total units/week
+          {{ editForm.slots.length }} slot(s) · {{ (totalSlotUnits * 0.5).toFixed(1) }}h scheduled each week
+          <span
+            class="edit-schedule__allocation"
+            :class="{ 'edit-schedule__allocation--over': allocationExceedsPackage }"
+          >
+            · Allocated {{ allocatedTotalHours.toFixed(1) }}h / {{ packageTotalHours.toFixed(1) }}h
+            ({{ remainingAllocationHours >= 0 ? 'remaining' : 'over by' }}
+            {{ Math.abs(remainingAllocationHours).toFixed(1) }}h)
+          </span>
         </div>
       </div>
 
@@ -590,8 +616,8 @@
               <span>{{ detailData.studentName }}</span>
             </div>
             <div class="detail-field">
-              <label>Teacher</label>
-              <span>{{ detailData.primaryTeacherName ?? '—' }}</span>
+              <label>Slot Teachers</label>
+              <span>{{ slotTeacherNames(detailData) }}</span>
             </div>
             <div class="detail-field">
               <label>Classroom</label>
@@ -716,6 +742,13 @@ const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
 const enrolledClassGroups = ref<any[]>([]);
 const classGroupLoading = ref(false);
 const classGroupOccupiedSlots = ref<OccupiedSlotDef[]>([]);
+
+function slotTeacherNames(rule: { slots?: Array<{ teacherId?: EntityId }> }): string {
+  const teacherNames = (rule.slots ?? [])
+    .map(slot => teachers.value.find(teacher => String(teacher.id) === String(slot.teacherId))?.teacherName)
+    .filter((name): name is string => Boolean(name));
+  return [...new Set(teacherNames)].join(', ') || '—';
+}
 
 // ─── All package rules (preloaded per student) ──
 const allPackageRules = ref<Record<string, any>>({});
@@ -1238,7 +1271,7 @@ const editForm = reactive({
   ruleStatus: undefined as string | undefined,
   startDate: '',
   notes: '',
-  slots: [] as Array<SlotDef & { teacherId?: EntityId }>,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; subjectName?: string; allocatedHours?: number }>,
 });
 
 const editFormRules: FormRules = {
@@ -1248,6 +1281,23 @@ const editFormRules: FormRules = {
 const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
 );
+
+// 课时包总课时（小时）：含赠送，作为逐时段分配的上限。
+const packageTotalHours = computed(() => {
+  const pkg = studentPackages.value.find(p => p.id === selectedPackageId.value);
+  return pkg?.totalUnits ?? 0;
+});
+
+// 已在各时段分配的课时合计（小时）。
+const allocatedTotalHours = computed(() =>
+  editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
+);
+
+const remainingAllocationHours = computed(() =>
+  Number((packageTotalHours.value - allocatedTotalHours.value).toFixed(1))
+);
+
+const allocationExceedsPackage = computed(() => remainingAllocationHours.value < 0);
 
 async function openCreateDialog() {
   isEditing.value = false;
@@ -1276,10 +1326,12 @@ async function openEditDialog() {
     notes: detail.notes || '',
     slots: (detail.slots || []).map((s: any) => ({
       teacherId: s.teacherId,
+      subjectName: s.subjectName,
       weekday: s.weekday,
       startTime: s.startTime,
       endTime: s.endTime,
       plannedUnits: s.plannedUnits,
+      allocatedHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
     })),
   });
   editDialogVisible.value = true;
@@ -1293,6 +1345,15 @@ function submitForm() {
   }
 }
 
+function validateSlotAllocations(): boolean {
+  const incompleteSlot = editForm.slots.find(slot =>
+    !slot.teacherId || !slot.subjectName?.trim() || !slot.allocatedHours || slot.allocatedHours <= 0
+  );
+  if (!incompleteSlot) return true;
+    ElMessage.warning('Each time slot requires a teacher, lesson name, and allocated hours.');
+  return false;
+}
+
 async function submitCreateForm() {
   if (!editFormRef.value) return;
   await editFormRef.value.validate(async (valid) => {
@@ -1301,6 +1362,11 @@ async function submitCreateForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
+    if (allocationExceedsPackage.value) {
+      ElMessage.warning('Allocated hours exceed the package total. Please reduce the allocation.');
+      return;
+    }
+    if (!validateSlotAllocations()) return;
     submitting.value = true;
     try {
       await createRecurringScheduleRule({
@@ -1310,10 +1376,12 @@ async function submitCreateForm() {
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
           teacherId: s.teacherId,
+          subjectName: s.subjectName || undefined,
           weekday: s.weekday,
           startTime: s.startTime,
           endTime: s.endTime,
           plannedUnits: s.plannedUnits,
+          allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
         })),
       });
       ElMessage.success('Schedule created and lessons generated.');
@@ -1336,6 +1404,11 @@ async function submitEditForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
+    if (allocationExceedsPackage.value) {
+      ElMessage.warning('Allocated hours exceed the package total. Please reduce the allocation.');
+      return;
+    }
+    if (!validateSlotAllocations()) return;
     submitting.value = true;
     try {
       const result = await updateRecurringScheduleRule(editingRuleId.value!, {
@@ -1345,10 +1418,12 @@ async function submitEditForm() {
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
           teacherId: s.teacherId,
+          subjectName: s.subjectName || undefined,
           weekday: s.weekday,
           startTime: s.startTime,
           endTime: s.endTime,
           plannedUnits: s.plannedUnits,
+          allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
         })),
       });
       const data = result.data.data;
@@ -1552,7 +1627,7 @@ function addWeeklyNewRow(startAt?: dayjs.Dayjs, hours = 1): WeeklyAdjustmentRow 
     plannedStartAt: base.format('YYYY-MM-DDTHH:mm:ss'),
     plannedEndAt: base.add(hours, 'hour').format('YYYY-MM-DDTHH:mm:ss'),
     plannedHours: hours,
-    plannedTeacherId: currentRule.value?.primaryTeacherId,
+    plannedTeacherId: currentRule.value?.slots?.[0]?.teacherId,
     plannedClassroomId: currentRule.value?.defaultClassroomId,
     markedForDelete: false,
     itemReason: '',
@@ -1651,6 +1726,22 @@ function weekdayLabel(w: number) {
 
 function scheduleSlotLabel(slot: SlotDef) {
   return `${weekdayLabel(slot.weekday)} ${slot.startTime}-${slot.endTime}`;
+}
+
+function formatSlotHours(units?: number) {
+  return units == null ? '—' : `${(units * 0.5).toFixed(1)}h`;
+}
+
+function slotLessonPlan(slot: SlotDef & { allocatedHours?: number }) {
+  const lessonHours = Number(slot.plannedUnits || 0) * 0.5;
+  const allocatedHours = Number(slot.allocatedHours || 0);
+  if (lessonHours <= 0 || allocatedHours <= 0) return 'Set allocated hours';
+  const fullLessons = Math.floor((allocatedHours + 0.0001) / lessonHours);
+  const remainder = Number((allocatedHours - fullLessons * lessonHours).toFixed(1));
+  if (remainder <= 0) {
+    return `${fullLessons} lesson${fullLessons === 1 ? '' : 's'}`;
+  }
+  return `${fullLessons + 1} lessons · last ${remainder.toFixed(1)}h`;
 }
 
 // ─── Init ────────────────────────────────────────
@@ -1971,6 +2062,14 @@ function disabledPastDate(date: Date) {
   font-weight: 500;
 }
 
+.edit-schedule__allocation {
+  color: #67c23a;
+}
+
+.edit-schedule__allocation--over {
+  color: #f56c6c;
+}
+
 .slot-teacher-list {
   display: grid;
   gap: 8px;
@@ -1979,7 +2078,7 @@ function disabledPastDate(date: Date) {
 
 .slot-teacher-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1fr) minmax(220px, 1fr);
+  grid-template-columns: minmax(170px, 1.1fr) minmax(160px, 1fr) minmax(150px, 1fr) 120px auto;
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
@@ -1992,6 +2091,11 @@ function disabledPastDate(date: Date) {
   color: #303133;
   font-size: 13px;
   font-weight: 500;
+}
+
+.slot-teacher-row__unit {
+  color: #909399;
+  font-size: 13px;
 }
 
 /* This week adjustment */

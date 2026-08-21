@@ -30,15 +30,16 @@ export function fetchRecurringScheduleRule(id: EntityId) {
 
 export interface RecurringScheduleSlotPayload {
   teacherId?: EntityId;
+  subjectName?: string;
   weekday: number;
   startTime: string;
   endTime: string;
   plannedUnits: number;
+  allocatedUnits?: number;
 }
 
 export interface RecurringScheduleRuleCreatePayload {
   packageId: EntityId;
-  primaryTeacherId?: EntityId;
   defaultClassroomId?: EntityId;
   startDate: string;
   notes?: string;
@@ -58,7 +59,6 @@ export function createRecurringScheduleRule(data: RecurringScheduleRuleCreatePay
 }
 
 export interface RecurringScheduleRuleUpdatePayload {
-  primaryTeacherId?: EntityId;
   defaultClassroomId?: EntityId;
   ruleStatus?: string;
   startDate: string;

@@ -146,10 +146,10 @@ export interface CoursePriceOptionItem {
     morningEndTime?: string;
     afternoonStartTime?: string;
     attendanceOptions?: string;
-    hourlyRateSnapshot?: number;
   }>;
   groupBillingType?: string;
   groupStartDate?: string;
+  groupEndDate?: string;
   groupTotalSessions?: number;
   groupTotalPrice?: number;
   groupSessionPrice?: number;
@@ -174,8 +174,6 @@ export interface CourseProductItem {
   subjectName?: string;
   teachingMode: string;
   sortOrder?: number;
-  defaultTotalUnits: number;
-  defaultLessonUnits: number;
   status: string;
   notes?: string;
   referenced?: boolean;
@@ -286,6 +284,7 @@ export interface EnrollmentOrderLineItem {
   gradeBand?: string;
   periodLabel?: string;
   timeSlotLabel?: string;
+  startDate?: string;
   packageUnit?: string;
   packageQuantity?: number;
   packageTotalPrice?: number;
@@ -296,9 +295,6 @@ export interface EnrollmentOrderLineItem {
   manualPriceOverride?: boolean;
   oneOnOneHours?: number;
   oneOnOneUnits?: number;
-  initialLessonStartAt?: string;
-  initialLessonEndAt?: string;
-  teacherId?: EntityId;
   itemStatus?: string;
   remark?: string;
   createdAt?: string;
@@ -320,8 +316,6 @@ export interface CoursePackageItem {
   totalUnits: number;
   consumedUnits: number;
   remainingUnits: number;
-  allocatedTeacherHours?: number;
-  unallocatedTeacherHours?: number;
   receivedAmount: number;
   packageStatus: string;
   startDate?: string;
@@ -340,7 +334,6 @@ export interface PackageTeacherAssignmentItem {
   allocatedHours?: number;
   consumedHours?: number;
   remainingHours?: number;
-  hourlyRateSnapshot?: number;
   primary: boolean;
   assignmentStatus: string;
   effectiveFrom?: string;
@@ -420,8 +413,6 @@ export interface RecurringScheduleRuleItem {
   packageNo: string;
   studentId: EntityId;
   studentName: string;
-  primaryTeacherId?: EntityId;
-  primaryTeacherName?: string;
   defaultClassroomId?: EntityId;
   defaultClassroomName?: string;
   ruleStatus: string;
@@ -437,10 +428,12 @@ export interface RecurringScheduleRuleItem {
 export interface RecurringScheduleSlotItem {
   id: EntityId;
   teacherId?: EntityId;
+  subjectName?: string;
   weekday: number;
   startTime: string;
   endTime: string;
   plannedUnits: number;
+  allocatedUnits?: number;
   slotStatus: string;
 }
 
@@ -460,8 +453,10 @@ export interface LessonOccurrenceItem {
   packageId: EntityId;
   packageNo: string;
   packageName?: string;
+  productName?: string;
   classGroupId?: EntityId;
   className?: string;
+  subjectName?: string;
   studentId: EntityId;
   studentName: string;
   scheduleRuleId?: EntityId;
@@ -517,6 +512,7 @@ export interface ClassroomOccupancyItem {
   planningStatus: string;
   classGroupId?: EntityId;
   className?: string;
+  subjectName?: string;
 }
 
 export interface PendingClassroomAssignmentItem {
@@ -553,6 +549,8 @@ export interface ClassGroupItem {
   teacherName?: string;
   classroomId?: EntityId;
   classroomName?: string;
+  startDate?: string;
+  endDate?: string;
   activeStudentCount: number;
   scheduleSlots?: Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string; plannedUnits?: number }>;
 }
@@ -745,12 +743,14 @@ export interface TeacherPayRateItem {
   teacherId: EntityId;
   teacherNo: string;
   teacherName: string;
-  courseProductId: EntityId;
-  productCode: string;
-  productName: string;
-  subjectName: string;
+  courseProductId?: EntityId;
+  productCode?: string;
+  productName?: string;
+  subjectName?: string;
   studentId?: EntityId;
   studentName?: string;
+  gradeBand?: string;
+  deliveryMode?: string;
   hourlyRate: number;
   notes?: string;
 }

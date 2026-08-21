@@ -20,8 +20,8 @@
       </el-tab-pane>
     </el-tabs>
 
-    <TeacherScheduleView v-else-if="isTeacher" />
-    <StudentScheduleView v-else-if="isStudent" />
+    <TeacherScheduleView v-else-if="workspace === 'TEACHER'" />
+    <StudentScheduleView v-else-if="workspace === 'STUDENT'" />
     <TeacherScheduleView v-else />
   </div>
 </template>
@@ -31,7 +31,7 @@ import { computed, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { useAuthStore } from '@/stores/auth';
-import { isStudentUser, isTeacherUser } from '@/types/auth';
+import { getUserWorkspace } from '@/types/auth';
 import ClassroomOccupancyView from './ClassroomOccupancyView.vue';
 import StudentScheduleView from './StudentScheduleView.vue';
 import TeacherScheduleView from './TeacherScheduleView.vue';
@@ -40,9 +40,8 @@ const authStore = useAuthStore();
 const route = useRoute();
 const activeTab = ref('teacher');
 
-const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
-const isStudent = computed(() => isStudentUser(authStore.currentUser));
-const canViewAllCalendars = computed(() => !isTeacher.value && !isStudent.value);
+const workspace = computed(() => getUserWorkspace(authStore.currentUser));
+const canViewAllCalendars = computed(() => workspace.value === 'STAFF');
 
 watch(
   () => route.query.tab,
@@ -55,15 +54,25 @@ watch(
 );
 
 const title = computed(() => {
-  if (isTeacher.value) return 'My Teaching Schedule';
-  if (isStudent.value) return 'My Class Schedule';
-  return 'School Schedule';
+  switch (workspace.value) {
+    case 'TEACHER':
+      return 'My Teaching Schedule';
+    case 'STUDENT':
+      return 'My Class Schedule';
+    default:
+      return 'School Schedule';
+  }
 });
 
 const description = computed(() => {
-  if (isTeacher.value) return 'View your own weekly lessons and room assignments.';
-  if (isStudent.value) return 'View your own weekly classes, teachers, and rooms.';
-  return 'View teacher, student, and room calendars from one place.';
+  switch (workspace.value) {
+    case 'TEACHER':
+      return 'View your own weekly lessons and room assignments.';
+    case 'STUDENT':
+      return 'View your own weekly classes, teachers, and rooms.';
+    default:
+      return 'View teacher, student, and room calendars from one place.';
+  }
 });
 </script>
 

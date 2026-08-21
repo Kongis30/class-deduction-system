@@ -14,7 +14,10 @@
           v-for="day in 7"
           :key="day"
           class="wts-cell"
-          :class="cellClass(day, time.hour, time.minute)"
+          :class="[
+            cellClass(day, time.hour, time.minute),
+            { 'wts-cell--event-start': occupiedEvent(day, time.hour, time.minute) },
+          ]"
           @mousedown.prevent="onMouseDown(day, time.hour, time.minute)"
           @mouseenter="onMouseEnter(day, time.hour, time.minute)"
           @click="onCellClick(day, time.hour, time.minute)"
@@ -26,15 +29,49 @@
             :show-after="200"
             raw-content
           >
-            <span v-if="occupiedLabel(day, time.hour, time.minute)" class="wts-cell__label">
-              {{ occupiedLabel(day, time.hour, time.minute) }}
-            </span>
+            <div
+              v-if="occupiedEvent(day, time.hour, time.minute)"
+              class="wts-event"
+              :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
+              :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
+            >
+              <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
+              <span
+                v-if="occupiedEvent(day, time.hour, time.minute)?.context"
+                class="wts-event__context"
+              >
+                {{ occupiedEvent(day, time.hour, time.minute)?.context }}
+              </span>
+              <span
+                v-if="occupiedEvent(day, time.hour, time.minute)?.showTime"
+                class="wts-event__time"
+              >
+                {{ occupiedEvent(day, time.hour, time.minute)?.timeLabel }}
+              </span>
+            </div>
             <span v-else class="wts-cell__fill" style="display:block;height:100%;width:100%"></span>
           </el-tooltip>
           <template v-else>
-            <span v-if="occupiedLabel(day, time.hour, time.minute)" class="wts-cell__label">
-              {{ occupiedLabel(day, time.hour, time.minute) }}
-            </span>
+            <div
+              v-if="occupiedEvent(day, time.hour, time.minute)"
+              class="wts-event"
+              :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
+              :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
+            >
+              <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
+              <span
+                v-if="occupiedEvent(day, time.hour, time.minute)?.context"
+                class="wts-event__context"
+              >
+                {{ occupiedEvent(day, time.hour, time.minute)?.context }}
+              </span>
+              <span
+                v-if="occupiedEvent(day, time.hour, time.minute)?.showTime"
+                class="wts-event__time"
+              >
+                {{ occupiedEvent(day, time.hour, time.minute)?.timeLabel }}
+              </span>
+            </div>
           </template>
         </div>
       </div>
@@ -77,9 +114,14 @@ export interface OccupiedSlotDef {
   startTime: string;
   endTime: string;
   courseLabel: string;
+  displayTitle?: string;
+  subjectName?: string;
+  contextLabel?: string;
   studentName?: string;
   teacherName?: string;
   classroomName?: string;
+  productName?: string;
+  showTimeInEvent?: boolean;
   /** When true, renders as a blue highlight instead of gray striped — used to mark the "current" package's own slots. */
   isCurrent?: boolean;
 }
@@ -177,30 +219,73 @@ function occupiedTooltipContent(day: number, hour: number, minute: number): stri
   ].join('<br><br>');
 }
 
-function occupiedLabel(day: number, hour: number, minute: number): string {
+interface OccupiedEvent {
+  title: string;
+  context?: string;
+  timeLabel?: string;
+  coveredCells: number;
+  isConflict?: boolean;
+  showTime: boolean;
+}
+
+function occupiedEvent(day: number, hour: number, minute: number): OccupiedEvent | null {
   const minuteVal = timeToMinutes(hour, minute);
   const slots = occupiedMap.value.get(`${day}:${minuteVal}`);
-  if (!slots?.length) return '';
+  if (!slots?.length) return null;
   if (slots.length > 1 && isConflictStart(day, minuteVal)) {
-    return `${slots.length} lessons conflict`;
+    return {
+      title: `${slots.length} lessons conflict`,
+      coveredCells: 1,
+      isConflict: true,
+      showTime: false,
+    };
   }
   const slot = slots[0];
-  // Show the label on the first calendar cell touched by the slot.
   if (minuteVal === Math.floor(parseTimeToMin(slot.startTime) / 30) * 30) {
-    return slot.courseLabel;
+    const durationMinutes = parseTimeToMin(slot.endTime) - parseTimeToMin(slot.startTime);
+    const coveredCells = Math.max(
+      1,
+      Math.ceil(parseTimeToMin(slot.endTime) / 30) - Math.floor(parseTimeToMin(slot.startTime) / 30),
+    );
+    return {
+      title: occupiedSlotTitle(slot),
+      context: slot.contextLabel,
+      timeLabel: `${slot.startTime}–${slot.endTime}`,
+      coveredCells,
+      showTime: slot.showTimeInEvent ?? durationMinutes >= 60,
+    };
   }
-  return '';
+  return null;
+}
+
+function occupiedEventHeight(event: OccupiedEvent): number {
+  return event.coveredCells * 27 - 1;
 }
 
 function occupiedSlotTooltip(slot: OccupiedSlotDef): string {
   const lines = [
-    `<b>${slot.courseLabel}</b>`,
-    `${slot.startTime}–${slot.endTime}`,
+    `<b>${escapeHtml(occupiedSlotTitle(slot))}</b>`,
+    `Time: ${escapeHtml(slot.startTime)}–${escapeHtml(slot.endTime)}`,
   ];
-  if (slot.studentName) lines.push(`Student: ${slot.studentName}`);
-  if (slot.teacherName) lines.push(`Teacher: ${slot.teacherName}`);
-  if (slot.classroomName) lines.push(`Room: ${slot.classroomName}`);
+  if (slot.courseLabel) lines.push(`Course: ${escapeHtml(slot.courseLabel)}`);
+  if (slot.studentName) lines.push(`Student: ${escapeHtml(slot.studentName)}`);
+  lines.push(`Teacher: ${escapeHtml(slot.teacherName || '—')}`);
+  lines.push(`Classroom: ${escapeHtml(slot.classroomName || '—')}`);
+  if (slot.productName) lines.push(`Product: ${escapeHtml(slot.productName)}`);
   return lines.join('<br>');
+}
+
+function occupiedSlotTitle(slot: OccupiedSlotDef): string {
+  return slot.displayTitle || slot.subjectName || slot.courseLabel || 'Lesson';
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function isConflictStart(day: number, minuteVal: number) {
@@ -513,29 +598,57 @@ function weekdayName(d: number) {
   cursor: default;
 }
 
-/* ─── Occupied cell label ─────────── */
-.wts-cell__label {
-  display: block;
-  font-size: 8px;
-  color: #666;
-  line-height: 26px;
-  padding: 0 0 0 4px;
-  white-space: nowrap;
-  overflow: hidden !important;
-  text-overflow: ellipsis;
+/* ─── Occupied event content ─────────── */
+.wts-cell--event-start {
+  overflow: visible;
+  z-index: 3;
+}
+.wts-event {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 5px;
+  overflow: hidden;
+  color: #6b3a3a;
+  line-height: 1.2;
   pointer-events: none;
-  font-weight: 600;
-  max-width: 100%;
-  width: 100%;
+  border-left: 3px solid #e67a73;
+  background: rgba(255, 248, 247, 0.94);
+  box-sizing: border-box;
 }
-.wts-cell--occupied .wts-cell__label {
-  color: #999;
+.wts-event__title,
+.wts-event__context,
+.wts-event__time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-
-.wts-cell--conflict .wts-cell__label {
-  color: #b42318;
-  font-size: 9px;
+.wts-event__title {
+  font-size: 11px;
   font-weight: 700;
+}
+.wts-event__context {
+  font-size: 10px;
+  color: #8a5b5b;
+}
+.wts-event__time {
+  margin-top: auto;
+  font-size: 10px;
+  color: #9a6b6b;
+  font-variant-numeric: tabular-nums;
+}
+.wts-event--conflict {
+  border-left-color: #f56c6c;
+  background: #fff1f0;
+  color: #b42318;
+}
+.wts-event--conflict .wts-event__title {
+  font-size: 10px;
 }
 
 /* ─── Summary ─────────── */

@@ -453,12 +453,14 @@ const guides: Record<string, PageUsageGuide> = {
     title: 'Set pay rates before running teacher payment review.',
     description: 'Pay rates are used together with confirmed lesson records.',
     steps: [
-      'Choose teacher, course product, and pay basis carefully.',
-      'Keep old rates inactive when pay changes need historical clarity.',
-      'Use Teacher Payments after lesson records are confirmed.',
+      'Set one standard hourly rate for the teacher first.',
+      'Add an exception only when pay differs for K-5, 6-8, 9-12, AP Level, or online/offline delivery.',
+      'Use course and student scopes only for rare special arrangements.',
+      'Unpaid lessons always use the current matching rate from this page.',
+      'Use Teacher payroll after lesson records are confirmed.',
     ],
     actions: [
-      { label: 'Teacher payments', to: '/finance/payments' },
+      { label: 'Teacher payroll', to: '/finance/payments' },
       { label: '1-on-1 lessons', to: '/one-on-one-deduction' },
       { label: 'People', to: '/admin/config/people?tab=teachers' },
     ],
@@ -468,17 +470,19 @@ const guides: Record<string, PageUsageGuide> = {
     title: 'Set pay rates before running teacher payment review.',
     description: 'Pay rates are used together with confirmed lesson records.',
     steps: [
-      'Choose teacher, course product, and pay basis carefully.',
-      'Keep old rates inactive when pay changes need historical clarity.',
-      'Use Teacher Payments after lesson records are confirmed.',
+      'Set one standard hourly rate for the teacher first.',
+      'Add an exception only when pay differs for K-5, 6-8, 9-12, AP Level, or online/offline delivery.',
+      'Use course and student scopes only for rare special arrangements.',
+      'Unpaid lessons always use the current matching rate from this page.',
+      'Use Teacher payroll after lesson records are confirmed.',
     ],
     actions: [
-      { label: 'Teacher payments', to: '/finance/payments' },
+      { label: 'Teacher payroll', to: '/finance/payments' },
       { label: '1-on-1 lessons', to: '/one-on-one-deduction' },
     ],
   },
   'teacher-payments': {
-    eyebrow: 'Teacher payments',
+    eyebrow: 'Teacher payroll',
     title: 'Review payable lessons after admin confirmation.',
     description: 'Use this page to prepare settlement based on confirmed lesson records and configured rates.',
     steps: [
@@ -490,6 +494,20 @@ const guides: Record<string, PageUsageGuide> = {
       { label: 'Pay rates', to: '/admin/config/teacher-pay-rates' },
       { label: '1-on-1 lessons', to: '/one-on-one-deduction' },
       { label: 'Group lessons', to: '/group-class-lessons' },
+    ],
+  },
+  'my-payroll': {
+    eyebrow: 'Payment history',
+    title: 'Review your payment history.',
+    description: 'This page is read-only and shows only payment records linked to your teacher account.',
+    steps: [
+      'Filter by payment status when needed.',
+      'Open details to review the lessons included in a payment record.',
+      'Ask staff if a confirmed lesson is missing from your payment history.',
+    ],
+    actions: [
+      { label: 'My lessons', to: '/my-lessons' },
+      { label: 'My calendar', to: '/calendar' },
     ],
   },
   'admin-guide': {

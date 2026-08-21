@@ -3,7 +3,7 @@
     <section class="table-page-header">
       <div>
         <span class="table-page-header__eyebrow">Finance</span>
-        <h2>Teacher Payments</h2>
+        <h2>Teacher payroll</h2>
         <p>Select a teacher, review confirmed unpaid lessons, then create and confirm the payment.</p>
       </div>
     </section>

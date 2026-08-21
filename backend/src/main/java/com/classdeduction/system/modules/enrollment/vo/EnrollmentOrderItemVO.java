@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -24,14 +25,12 @@ public record EnrollmentOrderItemVO(
         String gradeBand,
         String periodLabel,
         String timeSlotLabel,
+        LocalDate startDate,
         BigDecimal priceAmount,
         BigDecimal originalPriceAmount,
         Boolean manualPriceOverride,
         BigDecimal oneOnOneHours,
         Integer oneOnOneUnits,
-        LocalDateTime initialLessonStartAt,
-        LocalDateTime initialLessonEndAt,
-        Long teacherId,
         String itemStatus,
         String remark,
         LocalDateTime createdAt,

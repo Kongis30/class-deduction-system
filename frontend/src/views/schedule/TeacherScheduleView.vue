@@ -279,6 +279,8 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
       startTime: start.format('HH:mm'),
       endTime: dayjs(o.plannedEndAt).format('HH:mm'),
       courseLabel: o.className || o.packageName || o.lessonNo || '',
+      subjectName: o.subjectName,
+      contextLabel: [o.studentName, o.plannedClassroomName].filter(Boolean).join(' · '),
       studentName: o.studentName,
       teacherName: o.plannedTeacherName,
       classroomName: o.plannedClassroomName,

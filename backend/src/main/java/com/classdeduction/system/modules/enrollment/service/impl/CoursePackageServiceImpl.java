@@ -20,6 +20,7 @@ import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjust
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
@@ -63,7 +64,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
 
 /**
@@ -249,11 +249,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .teachingMode(coursePackage.getTeachingMode())
                 .purchasedHours(resolvePurchasedHours(coursePackage, orderItem))
                 .totalUnits(UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()))
-                .defaultLessonUnits(coursePackage.getDefaultLessonUnits())
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
-                .allocatedTeacherHours(activeAllocatedHours(assignments))
-                .unallocatedTeacherHours(Math.max(0.0, UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()) - activeAllocatedHours(assignments)))
                 .originalAmount(coursePackage.getOriginalAmount())
                 .discountAmount(coursePackage.getDiscountAmount())
                 .receivedAmount(coursePackage.getReceivedAmount())
@@ -277,16 +274,6 @@ public class CoursePackageServiceImpl implements CoursePackageService {
             return UnitConverter.toHoursDecimal(orderItem.getOneOnOneUnits());
         }
         return UnitConverter.toHoursDecimal(coursePackage.getTotalUnits());
-    }
-
-    private double activeAllocatedHours(List<PackageTeacherAssignmentEntity> assignments) {
-        int allocatedUnits = assignments.stream()
-                .filter(item -> "ACTIVE".equals(item.getAssignmentStatus()))
-                .map(PackageTeacherAssignmentEntity::getAllocatedUnits)
-                .filter(Objects::nonNull)
-                .mapToInt(Integer::intValue)
-                .sum();
-        return UnitConverter.toHoursDecimal(allocatedUnits);
     }
 
     private Map<Long, String> buildPrimaryTeacherNameMap(List<Long> packageIds) {
@@ -607,7 +594,6 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .remainingHours(allocatedUnits == null
                         ? null
                         : UnitConverter.toHoursDecimal(Math.max(allocatedUnits - consumedUnits, 0)))
-                .hourlyRateSnapshot(item.getHourlyRateSnapshot())
                 .primary(item.getIsPrimary() != null && item.getIsPrimary() == 1)
                 .assignmentStatus(item.getAssignmentStatus())
                 .effectiveFrom(item.getEffectiveFrom())
@@ -665,20 +651,6 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         if (newTotalUnits < coursePackage.getConsumedUnits() || newRemainingUnits < 0) {
             throw new BusinessException("INSUFFICIENT_PACKAGE_HOURS", "The adjustment cannot reduce hours below the consumed balance.");
         }
-        int activeAllocatedUnits = packageTeacherAssignmentMapper.selectList(
-                        new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
-                                .eq(PackageTeacherAssignmentEntity::getPackageId, id)
-                                .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE"))
-                .stream()
-                .map(PackageTeacherAssignmentEntity::getAllocatedUnits)
-                .filter(Objects::nonNull)
-                .mapToInt(Integer::intValue)
-                .sum();
-        if (newTotalUnits < activeAllocatedUnits) {
-            throw new BusinessException("HOURS_BELOW_TEACHER_ALLOCATION",
-                    "Reduce teacher allocations before reducing package hours.");
-        }
-
         coursePackage.setTotalUnits(newTotalUnits);
         coursePackage.setRemainingUnits(newRemainingUnits);
         if (newRemainingUnits > 0 && "COMPLETED".equals(coursePackage.getPackageStatus())) {
@@ -764,8 +736,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
         rule.setRuleStatus("ACTIVE");
         rule.setStartDate(request.getStartDate());
-        rule.setEndDate(resolveResumeEndDate(request.getStartDate(), slots, coursePackage.getRemainingUnits()));
-        rule.setGenerationHorizonDays(Math.max(1, (int) java.time.temporal.ChronoUnit.DAYS.between(rule.getStartDate(), rule.getEndDate()) + 1));
+        rule.setEndDate(null);
+        rule.setGenerationHorizonDays(180);
         recurringScheduleRuleMapper.updateById(rule);
 
         List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(id);
@@ -773,8 +745,10 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .map(LessonOccurrenceEntity::getPlannedStartAt)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        List<LessonOccurrenceEntity> generated = buildResumeOccurrences(rule, slots, coursePackage, existingStarts);
-        ensureNoConflicts(generated, coursePackage.getStudentId(), rule.getPrimaryTeacherId(), rule.getDefaultClassroomId(), rule.getId());
+        List<LessonOccurrenceEntity> generated = capResumeOccurrencesToPackageBalance(
+                buildResumeOccurrences(rule, slots, coursePackage, existingOccurrences, existingStarts),
+                coursePackage.getRemainingUnits());
+        ensureNoConflicts(generated, coursePackage.getStudentId(), null, rule.getDefaultClassroomId(), rule.getId());
         generated.forEach(lessonOccurrenceMapper::insert);
 
         generated.stream()
@@ -901,73 +875,88 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
     }
 
-    private LocalDate resolveResumeEndDate(LocalDate startDate,
-                                           List<RecurringScheduleSlotEntity> slots,
-                                           int remainingUnits) {
-        int weeklyUnits = slots.stream()
-                .filter(item -> "ACTIVE".equals(item.getSlotStatus()))
-                .map(RecurringScheduleSlotEntity::getPlannedUnits)
-                .filter(Objects::nonNull)
-                .mapToInt(Integer::intValue)
-                .sum();
-        int weeks = Math.max(1, (int) Math.ceil((double) remainingUnits / Math.max(weeklyUnits, 1)));
-        return startDate.plusDays(weeks * 7L);
-    }
-
     private List<LessonOccurrenceEntity> buildResumeOccurrences(RecurringScheduleRuleEntity rule,
                                                                 List<RecurringScheduleSlotEntity> slots,
                                                                 CoursePackageEntity coursePackage,
+                                                                List<LessonOccurrenceEntity> existingOccurrences,
                                                                 Set<LocalDateTime> existingStarts) {
         LocalDate generationStart = Collections.max(List.of(rule.getStartDate(), AppTime.nowLocalDateTime().toLocalDate()));
-        LocalDate generationEnd = rule.getEndDate();
-        if (generationEnd == null || generationEnd.isBefore(generationStart)) {
-            return Collections.emptyList();
-        }
-        int accumulatedUnits = 0;
-        int remainingUnits = coursePackage.getRemainingUnits();
+        LocalDate generationEnd = generationStart.plusDays(rule.getGenerationHorizonDays() - 1L);
+        Map<Long, Integer> scheduledUnitsBySlot = existingOccurrences.stream()
+                .filter(item -> item.getScheduleSlotId() != null)
+                .collect(Collectors.groupingBy(
+                        LessonOccurrenceEntity::getScheduleSlotId,
+                        Collectors.summingInt(item -> item.getPlannedUnits() == null ? 0 : item.getPlannedUnits())));
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
-        outer:
-        for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
-            int weekday = toWeekday(date.getDayOfWeek());
-            for (RecurringScheduleSlotEntity slot : slots) {
-                if (!"ACTIVE".equals(slot.getSlotStatus()) || !Objects.equals(slot.getWeekday(), weekday)) {
-                    continue;
+        for (RecurringScheduleSlotEntity slot : slots) {
+            requireCompleteSlotAllocation(slot);
+            int allocationRemaining = slot.getAllocatedUnits()
+                    - scheduledUnitsBySlot.getOrDefault(slot.getId(), 0);
+            if (allocationRemaining <= 0) {
+                continue;
+            }
+            for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
+                if (allocationRemaining <= 0) {
+                    break;
                 }
-                int slotUnits = slot.getPlannedUnits();
-                int unitsLeft = remainingUnits - accumulatedUnits;
-                if (unitsLeft <= 0) {
-                    break outer;
+                if (!Objects.equals(slot.getWeekday(), toWeekday(date.getDayOfWeek()))) {
+                    continue;
                 }
                 LocalDateTime plannedStart = LocalDateTime.of(date, slot.getStartTime());
                 if (existingStarts.contains(plannedStart)) {
                     continue;
                 }
-                int actualUnits = Math.min(slotUnits, unitsLeft);
+                int actualUnits = Math.min(slot.getPlannedUnits(), allocationRemaining);
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(generateLessonNo());
+                occurrence.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
                 occurrence.setPackageId(coursePackage.getId());
                 occurrence.setStudentId(coursePackage.getStudentId());
                 occurrence.setScheduleRuleId(rule.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(slot.getTeacherId() == null ? rule.getPrimaryTeacherId() : slot.getTeacherId());
+                occurrence.setPlannedTeacherId(slot.getTeacherId());
                 occurrence.setPlannedClassroomId(rule.getDefaultClassroomId());
                 occurrence.setPlannedStartAt(plannedStart);
                 occurrence.setPlannedUnits(actualUnits);
-                if (actualUnits < slotUnits) {
-                    long slotDurationMinutes = java.time.Duration.between(slot.getStartTime(), slot.getEndTime()).toMinutes();
-                    long actualDurationMinutes = Math.max(1, slotDurationMinutes * actualUnits / slotUnits);
-                    occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getStartTime().plusMinutes(actualDurationMinutes)));
-                } else {
-                    occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
-                }
+                occurrence.setPlannedEndAt(plannedStart.plusMinutes(actualUnits * 30L));
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 occurrences.add(occurrence);
-                accumulatedUnits += actualUnits;
+                allocationRemaining -= actualUnits;
             }
         }
+        occurrences.sort(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt));
         return occurrences;
+    }
+
+    private void requireCompleteSlotAllocation(RecurringScheduleSlotEntity slot) {
+        if (slot.getTeacherId() == null || !StringUtils.hasText(slot.getSubjectName())
+                || slot.getAllocatedUnits() == null || slot.getAllocatedUnits() <= 0) {
+            throw new BusinessException("INCOMPLETE_SLOT_ALLOCATION",
+                    "Each schedule slot requires a teacher, course/subject, and allocated hours. Update this schedule before resuming the package.");
+        }
+    }
+
+    private List<LessonOccurrenceEntity> capResumeOccurrencesToPackageBalance(
+            List<LessonOccurrenceEntity> candidates, int remainingPackageUnits) {
+        List<LessonOccurrenceEntity> result = new ArrayList<>();
+        int remaining = remainingPackageUnits;
+        for (LessonOccurrenceEntity candidate : candidates) {
+            if (remaining <= 0) {
+                break;
+            }
+            int plannedUnits = candidate.getPlannedUnits();
+            if (plannedUnits <= remaining) {
+                result.add(candidate);
+                remaining -= plannedUnits;
+                continue;
+            }
+            candidate.setPlannedUnits(remaining);
+            candidate.setPlannedEndAt(candidate.getPlannedStartAt().plusMinutes(remaining * 30L));
+            result.add(candidate);
+            break;
+        }
+        return result;
     }
 
     private void ensureNoConflicts(List<LessonOccurrenceEntity> candidates,
@@ -1044,8 +1033,4 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         };
     }
 
-    private String generateLessonNo() {
-        return "LS" + AppTime.nowLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", ThreadLocalRandom.current().nextInt(1000, 10000));
-    }
 }

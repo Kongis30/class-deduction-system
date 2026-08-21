@@ -8,6 +8,8 @@ import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest;
@@ -63,6 +65,9 @@ class ScheduleAdjustmentServiceImplTest {
     private ClassEnrollmentMapper classEnrollmentMapper;
 
     @Mock
+    private CoursePackageMapper coursePackageMapper;
+
+    @Mock
     private StudentMapper studentMapper;
 
     @Mock
@@ -89,13 +94,37 @@ class ScheduleAdjustmentServiceImplTest {
                 lessonAdjustmentLogMapper,
                 lessonRecordMapper,
                 classEnrollmentMapper,
+                coursePackageMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
                 jsonHelper
         );
+        lenient().when(coursePackageMapper.selectById(501L)).thenReturn(activeOneOnOnePackage());
         // 调课写入现在会校验受影响行数，默认让 updateById 返回成功，避免误报并发冲突。
         lenient().when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
+    }
+
+    @Test
+    void shouldRejectAdjustmentWhileOneOnOnePackageIsPaused() {
+        CoursePackageEntity pausedPackage = new CoursePackageEntity();
+        pausedPackage.setId(101L);
+        pausedPackage.setTeachingMode("ONE_ON_ONE");
+        pausedPackage.setPackageStatus("PAUSED");
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildSourceOccurrence());
+        when(coursePackageMapper.selectById(501L)).thenReturn(pausedPackage);
+
+        ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();
+        request.setOccurrenceId(1001L);
+        request.setAdjustmentType("TIME_ONLY");
+        request.setPlannedStartAt(LocalDateTime.of(2026, 4, 20, 18, 0));
+        request.setPlannedEndAt(LocalDateTime.of(2026, 4, 20, 20, 0));
+        request.setPlannedUnits(4);
+
+        assertThatThrownBy(() -> scheduleAdjustmentService.adjust(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("paused or inactive");
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).updateById(any(LessonOccurrenceEntity.class));
     }
 
     @Test
@@ -839,5 +868,13 @@ class ScheduleAdjustmentServiceImplTest {
         classroom.setId(4001L);
         classroom.setStatus("ACTIVE");
         return classroom;
+    }
+
+    private CoursePackageEntity activeOneOnOnePackage() {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(501L);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setPackageStatus("ACTIVE");
+        return coursePackage;
     }
 }

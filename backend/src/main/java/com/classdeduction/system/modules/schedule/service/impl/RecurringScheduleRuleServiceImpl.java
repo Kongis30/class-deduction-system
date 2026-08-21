@@ -13,9 +13,8 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
-import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleCreateRequest;
@@ -50,6 +49,16 @@ import java.util.stream.Collectors;
 
 /**
  * 排课规则服务：负责规则创建、时段校验、课次生成和冲突检测。
+ *
+ * <p>1对1 排课业务规则（逐时段独立分配课时）：
+ * <ul>
+ *   <li>报名确定课时包总课时 totalUnits = 购买 + 赠送（1 unit = 0.5h）。</li>
+ *   <li>每个排课时段（slot）自带老师、课程名和本段分配课时 allocatedUnits。</li>
+ *   <li>各时段相互独立按周排满：每次课时长取 min(plannedUnits, 剩余分配)，
+ *       除不尽时最后一次课只排余数（结束时间随之缩短）。</li>
+ *   <li>校验：各时段 allocatedUnits 之和 ≤ 课时包总课时；生成前再按当前包余额
+ *       进行安全校验，确保不会覆盖已保留课次。</li>
+ * </ul>
  */
 @Slf4j
 @Service
@@ -63,7 +72,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final CoursePackageMapper coursePackageMapper;
-    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -72,12 +80,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     public PageResponse<RecurringScheduleRuleListItemVO> pageRules(RecurringScheduleRulePageQuery query) {
         Page<RecurringScheduleRuleEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
         List<Long> matchedPackageIds = findMatchedPackageIds(query.getKeyword());
+        List<Long> matchedRuleIds = findMatchedRuleIdsBySlotTeacher(query.getTeacherId());
         LambdaQueryWrapper<RecurringScheduleRuleEntity> wrapper = new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                 .and(StringUtils.hasText(query.getKeyword()), nested -> nested
                         .like(RecurringScheduleRuleEntity::getNotes, query.getKeyword())
                         .or(!matchedPackageIds.isEmpty(), inner -> inner.in(RecurringScheduleRuleEntity::getPackageId, matchedPackageIds)))
                 .eq(StringUtils.hasText(query.getRuleStatus()), RecurringScheduleRuleEntity::getRuleStatus, query.getRuleStatus())
-                .eq(query.getTeacherId() != null, RecurringScheduleRuleEntity::getPrimaryTeacherId, query.getTeacherId())
+                .in(query.getTeacherId() != null, RecurringScheduleRuleEntity::getId, matchedRuleIds)
                 .eq(query.getClassroomId() != null, RecurringScheduleRuleEntity::getDefaultClassroomId, query.getClassroomId())
                 .eq(query.getPackageId() != null, RecurringScheduleRuleEntity::getPackageId, query.getPackageId())
                 .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt);
@@ -89,7 +98,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Set<Long> packageIds = result.getRecords().stream().map(RecurringScheduleRuleEntity::getPackageId).collect(Collectors.toSet());
         Map<Long, CoursePackageEntity> packageMap = listPackagesByIds(packageIds);
         Map<Long, StudentEntity> studentMap = listStudentsByIds(packageMap.values().stream().map(CoursePackageEntity::getStudentId).collect(Collectors.toSet()));
-        Map<Long, TeacherEntity> teacherMap = listTeachersByIds(result.getRecords().stream().map(RecurringScheduleRuleEntity::getPrimaryTeacherId).filter(Objects::nonNull).collect(Collectors.toSet()));
         Map<Long, ClassroomEntity> classroomMap = listClassroomsByIds(result.getRecords().stream().map(RecurringScheduleRuleEntity::getDefaultClassroomId).filter(Objects::nonNull).collect(Collectors.toSet()));
         Map<Long, Integer> slotCountMap = countSlotsByRuleId(result.getRecords().stream().map(RecurringScheduleRuleEntity::getId).toList());
         Map<Long, List<LessonOccurrenceEntity>> occurrenceGroup = listOccurrencesByRuleIds(result.getRecords().stream().map(RecurringScheduleRuleEntity::getId).toList());
@@ -99,7 +107,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .map(rule -> {
                     CoursePackageEntity coursePackage = packageMap.get(rule.getPackageId());
                     StudentEntity student = coursePackage == null ? null : studentMap.get(coursePackage.getStudentId());
-                    TeacherEntity teacher = teacherMap.get(rule.getPrimaryTeacherId());
                     ClassroomEntity classroom = classroomMap.get(rule.getDefaultClassroomId());
                     List<LessonOccurrenceEntity> occurrences = occurrenceGroup.getOrDefault(rule.getId(), Collections.emptyList());
                     LocalDateTime nextLessonStartAt = occurrences.stream()
@@ -114,8 +121,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                             .packageNo(coursePackage == null ? null : coursePackage.getPackageNo())
                             .studentId(coursePackage == null ? null : coursePackage.getStudentId())
                             .studentName(student == null ? null : student.getStudentName())
-                            .primaryTeacherId(rule.getPrimaryTeacherId())
-                            .primaryTeacherName(teacher == null ? null : teacher.getTeacherName())
                             .defaultClassroomId(rule.getDefaultClassroomId())
                             .defaultClassroomName(classroom == null ? null : classroom.getRoomName())
                             .ruleStatus(rule.getRuleStatus())
@@ -137,7 +142,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         RecurringScheduleRuleEntity rule = requireRule(id);
         CoursePackageEntity coursePackage = requirePackage(rule.getPackageId());
         StudentEntity student = studentMapper.selectById(coursePackage.getStudentId());
-        TeacherEntity teacher = rule.getPrimaryTeacherId() == null ? null : teacherMapper.selectById(rule.getPrimaryTeacherId());
         ClassroomEntity classroom = rule.getDefaultClassroomId() == null ? null : classroomMapper.selectById(rule.getDefaultClassroomId());
         List<RecurringScheduleSlotEntity> slots = recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                 .eq(RecurringScheduleSlotEntity::getRuleId, id)
@@ -159,8 +163,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .packageName(coursePackage.getPackageName())
                 .studentId(coursePackage.getStudentId())
                 .studentName(student == null ? null : student.getStudentName())
-                .primaryTeacherId(rule.getPrimaryTeacherId())
-                .primaryTeacherName(teacher == null ? null : teacher.getTeacherName())
                 .defaultClassroomId(rule.getDefaultClassroomId())
                 .defaultClassroomName(classroom == null ? null : classroom.getRoomName())
                 .ruleStatus(rule.getRuleStatus())
@@ -181,15 +183,15 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     public ScheduleRuleCreateResultVO createRule(RecurringScheduleRuleCreateRequest request) {
         CoursePackageEntity coursePackage = requireActivePackage(request.getPackageId());
         StudentEntity student = requireStudent(coursePackage.getStudentId());
-        TeacherEntity teacher = resolveTeacher(request, coursePackage.getId());
         ClassroomEntity classroom = resolveClassroom(request.getDefaultClassroomId());
         validateRuleDates(request);
         validateSlots(request.getSlots());
         validateSlotTeachers(request.getSlots());
+        validateSlotAllocations(request.getSlots(), coursePackage);
 
         RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
         rule.setPackageId(coursePackage.getId());
-        rule.setPrimaryTeacherId(teacher == null ? null : teacher.getId());
+        rule.setPrimaryTeacherId(null);
         rule.setDefaultClassroomId(classroom == null ? null : classroom.getId());
         rule.setRuleStatus("ACTIVE");
         rule.setStartDate(request.getStartDate());
@@ -296,11 +298,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         StudentEntity student = requireStudent(coursePackage.getStudentId());
 
         // c) Resolve teacher and classroom: use request value if provided, otherwise keep existing
-        TeacherEntity teacher = request.getPrimaryTeacherId() != null
-                ? resolveTeacherById(request.getPrimaryTeacherId())
-                : (existingRule.getPrimaryTeacherId() != null
-                        ? resolveTeacherById(existingRule.getPrimaryTeacherId())
-                        : null);
         ClassroomEntity classroom = request.getDefaultClassroomId() != null
                 ? resolveClassroom(request.getDefaultClassroomId())
                 : (existingRule.getDefaultClassroomId() != null
@@ -311,13 +308,18 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         validateUpdateRuleDates(request);
         validateSlots(request.getSlots());
         validateSlotTeachers(request.getSlots());
+        validateSlotAllocations(request.getSlots(), coursePackage);
 
         // e) Update rule entity
         String newStatus = request.getRuleStatus() != null ? request.getRuleStatus() : existingRule.getRuleStatus();
         if (!List.of("ACTIVE", "PAUSED", "ENDED").contains(newStatus)) {
             throw new BusinessException("INVALID_RULE_STATUS", "Rule status must be ACTIVE, PAUSED, or ENDED.");
         }
-        existingRule.setPrimaryTeacherId(teacher == null ? null : teacher.getId());
+        if ("PAUSED".equals(coursePackage.getPackageStatus()) && !"PAUSED".equals(newStatus)) {
+            throw new BusinessException("PACKAGE_PAUSED",
+                    "Keep this schedule paused while the 1-on-1 package is paused. Resume the package to generate lessons.");
+        }
+        existingRule.setPrimaryTeacherId(null);
         existingRule.setDefaultClassroomId(classroom == null ? null : classroom.getId());
         existingRule.setRuleStatus(newStatus);
         existingRule.setStartDate(request.getStartDate());
@@ -382,10 +384,15 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .toList();
         newSlots.forEach(recurringScheduleSlotMapper::insert);
 
-        // i) Build and insert new occurrences
-        List<LessonOccurrenceEntity> newOccurrences = buildOccurrences(existingRule, newSlots, coursePackage, student.getId());
-        newOccurrences = removeOccurrencesOverlappingPreserved(newOccurrences, toPreserve);
-        newOccurrences = capGeneratedOccurrencesToPackageBalance(newOccurrences, toPreserve, recordByOccurrenceId, coursePackage);
+        // i) Build and insert new occurrences only for an active package and rule.
+        // A paused package may update its future slot configuration, but lesson generation
+        // must wait for the explicit resume action so its restart date is respected.
+        List<LessonOccurrenceEntity> newOccurrences = Collections.emptyList();
+        if ("ACTIVE".equals(coursePackage.getPackageStatus()) && "ACTIVE".equals(existingRule.getRuleStatus())) {
+            newOccurrences = buildOccurrences(existingRule, newSlots, coursePackage, student.getId());
+            newOccurrences = removeOccurrencesOverlappingPreserved(newOccurrences, toPreserve);
+            newOccurrences = capGeneratedOccurrencesToPackageBalance(newOccurrences, toPreserve, recordByOccurrenceId, coursePackage);
+        }
 
         // j) Conflict check excluding this rule's preserved occurrences
         ensureNoConflictsExcludingRule(newOccurrences, student.getId(),
@@ -526,25 +533,23 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .forEach(this::resolveTeacherById);
     }
 
-    private TeacherEntity resolveTeacher(RecurringScheduleRuleCreateRequest request, Long packageId) {
-        Long teacherId = request.getPrimaryTeacherId();
-        if (teacherId == null) {
-            PackageTeacherAssignmentEntity assignment = packageTeacherAssignmentMapper.selectOne(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
-                    .eq(PackageTeacherAssignmentEntity::getPackageId, packageId)
-                    .eq(PackageTeacherAssignmentEntity::getIsPrimary, 1)
-                    .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
-                    .orderByDesc(PackageTeacherAssignmentEntity::getEffectiveFrom)
-                    .last("LIMIT 1"));
-            teacherId = assignment == null ? null : assignment.getTeacherId();
+    /**
+     * 校验各时段分配课时总和不超过课时包总课时（含赠送，即 totalUnits）。
+     */
+    private void validateSlotAllocations(List<RecurringScheduleSlotRequest> slots, CoursePackageEntity coursePackage) {
+        int allocatedSum = 0;
+        for (RecurringScheduleSlotRequest slot : slots) {
+            if (slot.getTeacherId() == null || !StringUtils.hasText(slot.getSubjectName())
+                    || slot.getAllocatedUnits() == null || slot.getAllocatedUnits() <= 0) {
+                throw new BusinessException("INCOMPLETE_SLOT_ALLOCATION",
+                        "Each schedule slot requires a teacher, course/subject, and allocated hours.");
+            }
+            allocatedSum += slot.getAllocatedUnits();
         }
-        if (teacherId == null) {
-            return null;
+        if (allocatedSum > coursePackage.getTotalUnits()) {
+            throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
+                    "Total allocated hours across slots cannot exceed the package's total hours.");
         }
-        TeacherEntity teacher = teacherMapper.selectById(teacherId);
-        if (teacher == null || !"ACTIVE".equalsIgnoreCase(teacher.getStatus())) {
-            throw new BusinessException("TEACHER_NOT_AVAILABLE", "The selected teacher does not exist or is not active.");
-        }
-        return teacher;
     }
 
     private ClassroomEntity resolveClassroom(Long classroomId) {
@@ -562,10 +567,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         RecurringScheduleSlotEntity entity = new RecurringScheduleSlotEntity();
         entity.setRuleId(ruleId);
         entity.setTeacherId(request.getTeacherId());
+        entity.setSubjectName(request.getSubjectName());
         entity.setWeekday(request.getWeekday());
         entity.setStartTime(request.getStartTime());
         entity.setEndTime(request.getEndTime());
         entity.setPlannedUnits(request.getPlannedUnits());
+        entity.setAllocatedUnits(request.getAllocatedUnits());
         entity.setSlotStatus("ACTIVE");
         return entity;
     }
@@ -581,32 +588,56 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return Collections.emptyList();
         }
 
+        // 逐时段独立生成：每个 slot 用自己的 allocatedUnits 排满，最后一次课不足整次时只排余数。
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
-        for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
-            int weekday = toWeekday(date.getDayOfWeek());
-            for (RecurringScheduleSlotEntity slot : slots) {
-                if (!"ACTIVE".equals(slot.getSlotStatus()) || !Objects.equals(slot.getWeekday(), weekday)) {
+        for (RecurringScheduleSlotEntity slot : slots) {
+            if (!"ACTIVE".equals(slot.getSlotStatus())) {
+                continue;
+            }
+            requireCompleteSlotAllocation(slot);
+            int plannedUnits = slot.getPlannedUnits() == null ? 0 : slot.getPlannedUnits();
+            if (plannedUnits <= 0) {
+                continue;
+            }
+            int remaining = slot.getAllocatedUnits();
+            for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
+                if (remaining <= 0) {
+                    break;
+                }
+                if (!Objects.equals(slot.getWeekday(), toWeekday(date.getDayOfWeek()))) {
                     continue;
                 }
+                int thisUnits = Math.min(plannedUnits, remaining);
+                LocalDateTime start = LocalDateTime.of(date, slot.getStartTime());
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(generateLessonNo());
+                occurrence.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
                 occurrence.setPackageId(coursePackage.getId());
                 occurrence.setStudentId(studentId);
                 occurrence.setScheduleRuleId(rule.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(
-                        slot.getTeacherId() != null ? slot.getTeacherId() : rule.getPrimaryTeacherId());
+                occurrence.setPlannedTeacherId(slot.getTeacherId());
                 occurrence.setPlannedClassroomId(rule.getDefaultClassroomId());
-                occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
-                occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
-                occurrence.setPlannedUnits(slot.getPlannedUnits());
+                occurrence.setPlannedStartAt(start);
+                // 末次课不足整次时按余数收尾，结束时间随之缩短（每 unit = 30 分钟）。
+                occurrence.setPlannedEndAt(start.plusMinutes(thisUnits * 30L));
+                occurrence.setPlannedUnits(thisUnits);
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 occurrences.add(occurrence);
+                remaining -= thisUnits;
             }
         }
+        occurrences.sort(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt));
         return occurrences;
+    }
+
+    private void requireCompleteSlotAllocation(RecurringScheduleSlotEntity slot) {
+        if (slot.getTeacherId() == null || !StringUtils.hasText(slot.getSubjectName())
+                || slot.getAllocatedUnits() == null || slot.getAllocatedUnits() <= 0) {
+            throw new BusinessException("INCOMPLETE_SLOT_ALLOCATION",
+                    "Each schedule slot requires a teacher, course/subject, and allocated hours. Update this schedule before generating more lessons.");
+        }
     }
 
     private List<LessonOccurrenceEntity> listActivePackageOccurrences(Long packageId) {
@@ -643,6 +674,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .toList();
     }
 
+    /**
+     * 按当前课时包余额限制生成课次，避免新课次覆盖已保留或已确认课次的课时。
+     */
     private List<LessonOccurrenceEntity> capGeneratedOccurrencesToPackageBalance(List<LessonOccurrenceEntity> candidates,
                                                                                  List<LessonOccurrenceEntity> preservedOccurrences,
                                                                                  Map<Long, LessonRecordEntity> recordByOccurrenceId,
@@ -808,11 +842,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return startA.isBefore(endB) && endA.isAfter(startB);
     }
 
-    private String generateLessonNo() {
-        return "LS" + AppTime.nowLocalDateTime().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + String.format("%04d", java.util.concurrent.ThreadLocalRandom.current().nextInt(1000, 10000));
-    }
-
     private int toWeekday(DayOfWeek dayOfWeek) {
         return switch (dayOfWeek) {
             case MONDAY -> 1;
@@ -842,13 +871,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     }
 
     private CoursePackageEntity requirePackage(Long packageId) {
-        log.info("requirePackage: looking up packageId={}", packageId);
         CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
         if (coursePackage == null) {
-            log.warn("requirePackage: course package NOT FOUND for packageId={}", packageId);
             throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
         }
-        log.info("requirePackage: found package packageNo={}, status={}", coursePackage.getPackageNo(), coursePackage.getPackageStatus());
         return coursePackage;
     }
 
@@ -934,14 +960,29 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .toList();
     }
 
+    private List<Long> findMatchedRuleIdsBySlotTeacher(Long teacherId) {
+        if (teacherId == null) {
+            return Collections.emptyList();
+        }
+        return recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .eq(RecurringScheduleSlotEntity::getTeacherId, teacherId)
+                        .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"))
+                .stream()
+                .map(RecurringScheduleSlotEntity::getRuleId)
+                .distinct()
+                .toList();
+    }
+
     private RecurringScheduleSlotVO toSlotVO(RecurringScheduleSlotEntity slot) {
         return RecurringScheduleSlotVO.builder()
                 .id(slot.getId())
                 .teacherId(slot.getTeacherId())
+                .subjectName(slot.getSubjectName())
                 .weekday(slot.getWeekday())
                 .startTime(slot.getStartTime())
                 .endTime(slot.getEndTime())
                 .plannedUnits(slot.getPlannedUnits())
+                .allocatedUnits(slot.getAllocatedUnits())
                 .slotStatus(slot.getSlotStatus())
                 .build();
     }

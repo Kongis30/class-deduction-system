@@ -12,7 +12,6 @@ import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
-import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
@@ -26,7 +25,6 @@ import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
@@ -40,7 +38,6 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
-import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -97,9 +94,6 @@ class RegistrationIntakeServiceImplTest {
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
-    private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
-
-    @Mock
     private ClassGroupMapper classGroupMapper;
 
     @Mock
@@ -136,9 +130,6 @@ class RegistrationIntakeServiceImplTest {
     private JsonHelper jsonHelper;
 
     @Captor
-    private ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor;
-
-    @Captor
     private ArgumentCaptor<CoursePackageEntity> coursePackageCaptor;
 
     @Captor
@@ -164,7 +155,6 @@ class RegistrationIntakeServiceImplTest {
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
                 coursePackageMapper,
-                packageTeacherAssignmentMapper,
                 classGroupMapper,
                 classGroupScheduleSlotMapper,
                 classEnrollmentMapper,
@@ -181,36 +171,41 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldCreateOneOnOneOccurrenceAndStudentAccountFromIntake() {
+    void shouldCreateOneOnOnePackageAndStudentAccountWithoutScheduling() {
         stubSuccessfulIntake(false);
 
-        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(buildOneOnOneRequest());
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
 
-        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
-        LessonOccurrenceEntity occurrence = occurrenceCaptor.getValue();
-        assertThat(occurrence.getPackageId()).isEqualTo(3001L);
-        assertThat(occurrence.getStudentId()).isEqualTo(101L);
-        assertThat(occurrence.getPlannedTeacherId()).isEqualTo(301L);
-        assertThat(occurrence.getPlannedStartAt()).isEqualTo(LocalDateTime.of(2026, 9, 1, 15, 30));
-        assertThat(occurrence.getPlannedEndAt()).isEqualTo(LocalDateTime.of(2026, 9, 1, 17, 0));
-        assertThat(occurrence.getPlannedUnits()).isEqualTo(3);
-        assertThat(occurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
         assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(20);
         assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(20);
         assertThat(coursePackageCaptor.getValue().getOriginalAmount()).isEqualByComparingTo("800.00");
         assertThat(orderItemCaptor.getValue().getOriginalPriceAmount()).isEqualByComparingTo("800.00");
         assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("800.00");
         assertThat(orderItemCaptor.getValue().getOneOnOneUnits()).isEqualTo(20);
-        assertThat(orderItemCaptor.getValue().getInitialLessonStartAt()).isEqualTo(LocalDateTime.of(2026, 9, 1, 15, 30));
-        assertThat(orderItemCaptor.getValue().getInitialLessonEndAt()).isEqualTo(LocalDateTime.of(2026, 9, 1, 17, 0));
 
         verify(userAccountMapper).insert(userAccountCaptor.capture());
         assertThat(userAccountCaptor.getValue().getUsername()).isEqualTo("jint@jin");
         assertThat(userAccountCaptor.getValue().getPasswordHash()).isEqualTo("encoded");
         assertThat(result.studentAccount().username()).isEqualTo("jint@jin");
         assertThat(result.studentAccount().initialPassword()).isEqualTo("9175550101");
+        assertThat(result.teacherAccounts()).isEmpty();
+    }
+
+    @Test
+    void shouldUseProductNameWhenCourseOptionDetailIsBlank() {
+        stubSuccessfulIntake(false);
+        CoursePriceOptionEntity option = buildOption("15:30-17:00");
+        option.setDetailText("");
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+
+        registrationIntakeService.submitIntake(buildOneOnOneRequest());
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getDetail()).isEqualTo("1:1 Algebra");
     }
 
     @Test
@@ -238,15 +233,11 @@ class RegistrationIntakeServiceImplTest {
 
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
-        ArgumentCaptor<com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity>
-                assignmentCaptor = ArgumentCaptor.forClass(
-                com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity.class);
-        verify(packageTeacherAssignmentMapper).insert(assignmentCaptor.capture());
         assertThat(orderItemCaptor.getValue().getOpeningUsedHours()).isEqualByComparingTo("3.5");
         assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(20);
         assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(7);
         assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(13);
-        assertThat(assignmentCaptor.getValue().getAllocatedUnits()).isEqualTo(13);
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
     }
 
     @Test
@@ -267,7 +258,6 @@ class RegistrationIntakeServiceImplTest {
         stubStudentCreationOnly();
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
         when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
-        lenient().when(teacherMapper.selectById(301L)).thenReturn(buildTeacher());
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         request.getItems().get(0).setOpeningUsedHours(new BigDecimal("10.5"));
 
@@ -283,7 +273,6 @@ class RegistrationIntakeServiceImplTest {
         stubStudentCreationOnly();
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
         when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
-        lenient().when(teacherMapper.selectById(301L)).thenReturn(buildTeacher());
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         request.getItems().get(0).setOpeningUsedHours(new BigDecimal("3.25"));
 
@@ -300,8 +289,6 @@ class RegistrationIntakeServiceImplTest {
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         request.setPeriodStartDate(LocalDate.of(2025, 1, 15));
         request.setPeriodEndDate(LocalDate.of(2026, 12, 31));
-        request.getItems().get(0).setInitialLessonStartAt(null);
-        request.getItems().get(0).setInitialLessonEndAt(null);
         request.getItems().get(0).setOpeningUsedHours(new BigDecimal("2.0"));
 
         registrationIntakeService.submitIntake(request);
@@ -310,55 +297,6 @@ class RegistrationIntakeServiceImplTest {
         assertThat(coursePackageCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2025, 1, 15));
         assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(4);
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
-    }
-
-    @Test
-    void shouldUseNormalizedTeacherPhoneAsInitialPassword() {
-        stubSuccessfulIntake(false);
-        TeacherEntity teacher = buildTeacher();
-        teacher.setMobile("(917) 555-0202");
-        when(teacherMapper.selectById(301L)).thenReturn(teacher);
-        when(userAccountMapper.selectOne(any())).thenReturn(
-                (UserAccountEntity) null,
-                (UserAccountEntity) null);
-        when(passwordEncoder.encode("9175550101")).thenReturn("student-password");
-        when(passwordEncoder.encode("9175550202")).thenReturn("teacher-password");
-
-        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(buildOneOnOneRequest());
-
-        verify(userAccountMapper, times(2)).insert(userAccountCaptor.capture());
-        UserAccountEntity teacherAccount = userAccountCaptor.getAllValues().stream()
-                .filter(account -> "TEACHER".equals(account.getUserType()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(teacherAccount.getPasswordHash()).isEqualTo("teacher-password");
-        assertThat(result.teacherAccounts()).singleElement()
-                .extracting(RegistrationIntakeResultVO.AccountResultVO::initialPassword)
-                .isEqualTo("9175550202");
-    }
-
-    @Test
-    void shouldUseFixedFallbackWhenTeacherPhoneIsMissing() {
-        stubSuccessfulIntake(false);
-        TeacherEntity teacher = buildTeacher();
-        teacher.setMobile(null);
-        when(teacherMapper.selectById(301L)).thenReturn(teacher);
-        when(userAccountMapper.selectOne(any())).thenReturn(
-                (UserAccountEntity) null,
-                (UserAccountEntity) null);
-        when(passwordEncoder.encode("9297019872")).thenReturn("fallback-password");
-
-        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(buildOneOnOneRequest());
-
-        verify(userAccountMapper, times(2)).insert(userAccountCaptor.capture());
-        UserAccountEntity teacherAccount = userAccountCaptor.getAllValues().stream()
-                .filter(account -> "TEACHER".equals(account.getUserType()))
-                .findFirst()
-                .orElseThrow();
-        assertThat(teacherAccount.getPasswordHash()).isEqualTo("fallback-password");
-        assertThat(result.teacherAccounts()).singleElement()
-                .extracting(RegistrationIntakeResultVO.AccountResultVO::initialPassword)
-                .isEqualTo("9297019872");
     }
 
     @Test
@@ -376,16 +314,14 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldCreateOneOnOneCourseWithoutInitialTeacherAssignment() {
+    void shouldIgnoreLegacyTeacherAndInitialLessonFieldsForOneOnOneRegistration() {
         stubSuccessfulIntake(false);
         RegistrationIntakeRequest request = buildOneOnOneRequest();
-        request.getItems().get(0).setTeacherId(null);
 
         registrationIntakeService.submitIntake(request);
 
-        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
-        verify(packageTeacherAssignmentMapper, never()).insert(any(com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity.class));
-        assertThat(occurrenceCaptor.getValue().getPlannedTeacherId()).isNull();
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
     }
 
     @Test
@@ -402,31 +338,13 @@ class RegistrationIntakeServiceImplTest {
     @Test
     void shouldCreateOneOnOnePackageWithoutInitialLesson() {
         stubSuccessfulIntake(false);
-        RegistrationIntakeRequest request = buildOneOnOneRequest();
-        request.getItems().get(0).setInitialLessonStartAt(null);
-        request.getItems().get(0).setInitialLessonEndAt(null);
 
-        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(buildOneOnOneRequest());
 
         assertThat(result.courseArtifacts()).singleElement()
                 .extracting(RegistrationIntakeResultVO.CourseArtifactVO::packageId)
                 .isEqualTo(3001L);
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
-    }
-
-    @Test
-    void shouldDeriveInitialLessonEndFromProductDefaultDuration() {
-        stubSuccessfulIntake(true);
-        RegistrationIntakeRequest request = buildOneOnOneRequest();
-        request.getItems().get(0).setInitialLessonEndAt(LocalDateTime.of(2026, 9, 1, 20, 0));
-
-        registrationIntakeService.submitIntake(request);
-
-        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
-        // Product defaultLessonUnits=3, so the 15:30 start always produces a 17:00 end.
-        assertThat(occurrenceCaptor.getValue().getPlannedEndAt())
-                .isEqualTo(LocalDateTime.of(2026, 9, 1, 17, 0));
-        assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(3);
     }
 
     @Test
@@ -494,36 +412,6 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldRejectInitialOneOnOneLessonWhenStudentScheduleConflicts() {
-        stubSuccessfulIntakeUntilInitialConflict();
-        LessonOccurrenceEntity existing = new LessonOccurrenceEntity();
-        existing.setId(9001L);
-        existing.setLessonNo("O2O-CONFLICT");
-        existing.setPlannedStartAt(LocalDateTime.of(2026, 9, 1, 16, 0));
-        existing.setPlannedEndAt(LocalDateTime.of(2026, 9, 1, 17, 30));
-        when(lessonOccurrenceMapper.selectList(any()))
-                .thenReturn(Collections.singletonList(existing))
-                .thenReturn(Collections.emptyList());
-        when(studentMapper.selectById(101L)).thenReturn(buildExistingStudent());
-
-        assertThatThrownBy(() -> registrationIntakeService.submitIntake(buildOneOnOneRequest()))
-                .isInstanceOf(BusinessException.class)
-                .satisfies(error -> {
-                    BusinessException businessError = (BusinessException) error;
-                    assertThat(businessError.getCode()).isEqualTo("SCHEDULE_CONFLICT");
-                    assertThat((java.util.List<?>) businessError.getData())
-                            .singleElement()
-                            .satisfies(detail -> {
-                                ScheduleConflictDetailVO conflict = (ScheduleConflictDetailVO) detail;
-                                assertThat(conflict.resourceType()).isEqualTo("STUDENT");
-                                assertThat(conflict.resourceId()).isEqualTo(101L);
-                                assertThat(conflict.resourceName()).isEqualTo("Jin Tang");
-                                assertThat(conflict.existingOccurrenceId()).isEqualTo(9001L);
-                            });
-                });
-    }
-
-    @Test
     void shouldRejectGroupClassIntakeWhenStudentScheduleConflicts() {
         stubStudentCreationOnly();
         CoursePriceOptionEntity option = buildOption("15:30-17:00");
@@ -564,7 +452,7 @@ class RegistrationIntakeServiceImplTest {
         when(lessonOccurrenceMapper.selectList(any()))
                 .thenReturn(Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
                         List.of(targetOccurrence), List.of(existingOccurrence));
-        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        lenient().when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
         when(studentMapper.selectById(101L)).thenReturn(buildExistingStudent());
         doAnswer(invocation -> {
             EnrollmentOrderEntity order = invocation.getArgument(0);
@@ -623,6 +511,43 @@ class RegistrationIntakeServiceImplTest {
         assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("MONTH");
     }
 
+    @Test
+    void shouldUseCourseLineStartDateForMidTermGroupEnrollment() {
+        stubMonthlyGroupClassIntake();
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setSignupDate(LocalDate.of(2026, 1, 10));
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setStartDate(LocalDate.of(2026, 3, 15));
+        item.setPackageUnit("MONTH");
+        item.setPackageQuantity(new BigDecimal("2"));
+
+        registrationIntakeService.submitIntake(request);
+
+        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
+                ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2026, 3, 15));
+        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 3, 15));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 4, 30));
+    }
+
+    @Test
+    void shouldRejectGroupEnrollmentStartDateOutsideClassRange() {
+        stubMonthlyGroupClassIntake();
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setStartDate(LocalDate.of(2025, 12, 31));
+        item.setPackageUnit("MONTH");
+        item.setPackageQuantity(new BigDecimal("2"));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("ENROLLMENT_START_OUT_OF_RANGE");
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
     private void stubSuccessfulIntake(boolean duplicateStudentUsername) {
         stubSuccessfulIntake(duplicateStudentUsername, "15:30-17:00");
     }
@@ -632,14 +557,11 @@ class RegistrationIntakeServiceImplTest {
         when(studentMapper.selectReusableStudent("Jin Tang", "9175550101")).thenReturn(null);
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption(timeSlotLabel));
         when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
-        lenient().when(teacherMapper.selectById(301L)).thenReturn(buildTeacher());
         when(campusMapper.selectById(1L)).thenReturn(buildCampus());
         when(jsonHelper.toJson(any())).thenReturn("{}");
         when(passwordEncoder.encode("9175550101")).thenReturn("encoded");
         when(roleMapper.selectOne(any())).thenReturn(buildRole(1L, "STUDENT"), buildRole(2L, "TEACHER"));
-        when(userAccountMapper.selectOne(any()))
-                .thenReturn(null)
-                .thenReturn(buildExistingTeacherAccount());
+        when(userAccountMapper.selectOne(any())).thenReturn(null);
         lenient().when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(userAccountMapper.selectCount(any())).thenReturn(duplicateStudentUsername ? 1L : 0L, 0L);
 
@@ -663,11 +585,6 @@ class RegistrationIntakeServiceImplTest {
             coursePackage.setId(3001L);
             return 1;
         }).when(coursePackageMapper).insert(any(CoursePackageEntity.class));
-        lenient().doAnswer(invocation -> {
-            LessonOccurrenceEntity occurrence = invocation.getArgument(0);
-            occurrence.setId(4001L);
-            return 1;
-        }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
         doAnswer(invocation -> {
             ReceiptRecordEntity receipt = invocation.getArgument(0);
             receipt.setId(5001L);
@@ -678,36 +595,6 @@ class RegistrationIntakeServiceImplTest {
             account.setId(6001L);
             return 1;
         }).when(userAccountMapper).insert(any(UserAccountEntity.class));
-    }
-
-    private void stubSuccessfulIntakeUntilInitialConflict() {
-        when(studentNoGenerator.generate()).thenReturn("STU202609010001");
-        when(studentMapper.selectReusableStudent("Jin Tang", "9175550101")).thenReturn(null);
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
-        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
-        when(teacherMapper.selectById(301L)).thenReturn(buildTeacher());
-        when(campusMapper.selectById(1L)).thenReturn(buildCampus());
-        when(jsonHelper.toJson(any())).thenReturn("{}");
-        doAnswer(invocation -> {
-            StudentEntity student = invocation.getArgument(0);
-            student.setId(101L);
-            return 1;
-        }).when(studentMapper).insert(any(StudentEntity.class));
-        doAnswer(invocation -> {
-            EnrollmentOrderEntity order = invocation.getArgument(0);
-            order.setId(2001L);
-            return 1;
-        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
-        doAnswer(invocation -> {
-            EnrollmentOrderItemEntity item = invocation.getArgument(0);
-            item.setId(2101L);
-            return 1;
-        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
-        doAnswer(invocation -> {
-            CoursePackageEntity coursePackage = invocation.getArgument(0);
-            coursePackage.setId(3001L);
-            return 1;
-        }).when(coursePackageMapper).insert(any(CoursePackageEntity.class));
     }
 
     private void stubGroupClassIntake() {
@@ -724,8 +611,8 @@ class RegistrationIntakeServiceImplTest {
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("MONTHLY");
-        classGroup.setStartMonth(LocalDate.of(2026, 9, 1));
-        classGroup.setEndMonth(LocalDate.of(2026, 12, 1));
+        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 12, 31));
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
         slot.setClassGroupId(501L);
         slot.setWeekday(2);
@@ -742,7 +629,7 @@ class RegistrationIntakeServiceImplTest {
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
         when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
         when(jsonHelper.toJson(any())).thenReturn("{}");
-        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        lenient().when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
         lenient().when(lessonOccurrenceMapper.selectList(any()))
                 .thenReturn(Collections.emptyList(), List.of(targetOccurrence), Collections.emptyList(), Collections.emptyList());
         doAnswer(invocation -> {
@@ -755,7 +642,7 @@ class RegistrationIntakeServiceImplTest {
             item.setId(2101L);
             return 1;
         }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
-        doAnswer(invocation -> {
+        lenient().doAnswer(invocation -> {
             com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity enrollment = invocation.getArgument(0);
             enrollment.setId(3101L);
             return 1;
@@ -775,8 +662,8 @@ class RegistrationIntakeServiceImplTest {
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("MONTHLY");
-        classGroup.setStartMonth(LocalDate.of(2026, 9, 1));
-        classGroup.setEndMonth(LocalDate.of(2027, 12, 1));
+        classGroup.setStartDate(LocalDate.of(2026, 1, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 7, 31));
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
         when(courseProductMapper.selectById(202L)).thenReturn(product);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
@@ -808,9 +695,6 @@ class RegistrationIntakeServiceImplTest {
     private RegistrationIntakeRequest buildGroupClassRequest() {
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         RegistrationIntakeRequest.CourseItemPayload item = buildOneOnOneItem();
-        item.setTeacherId(null);
-        item.setInitialLessonStartAt(null);
-        item.setInitialLessonEndAt(null);
         item.setClassId(501L);
         item.setOneOnOneUnits(null);
         request.setItems(List.of(item));
@@ -834,9 +718,6 @@ class RegistrationIntakeServiceImplTest {
     private RegistrationIntakeRequest.CourseItemPayload buildOneOnOneItem() {
         RegistrationIntakeRequest.CourseItemPayload item = new RegistrationIntakeRequest.CourseItemPayload();
         item.setCoursePriceOptionId(201L);
-        item.setTeacherId(301L);
-        item.setInitialLessonStartAt(LocalDateTime.of(2026, 9, 1, 15, 30));
-        item.setInitialLessonEndAt(LocalDateTime.of(2026, 9, 1, 17, 0));
         return item;
     }
 
@@ -860,19 +741,8 @@ class RegistrationIntakeServiceImplTest {
         product.setProductName("1:1 Algebra");
         product.setSubjectName("Math");
         product.setTeachingMode("ONE_ON_ONE");
-        product.setDefaultLessonUnits(3);
         product.setStatus("ACTIVE");
         return product;
-    }
-
-    private TeacherEntity buildTeacher() {
-        TeacherEntity teacher = new TeacherEntity();
-        teacher.setId(301L);
-        teacher.setTeacherNo("T301");
-        teacher.setTeacherName("Ms Lee");
-        teacher.setMobile("9175550202");
-        teacher.setStatus("ACTIVE");
-        return teacher;
     }
 
     private CampusEntity buildCampus() {
@@ -890,12 +760,4 @@ class RegistrationIntakeServiceImplTest {
         return role;
     }
 
-    private UserAccountEntity buildExistingTeacherAccount() {
-        UserAccountEntity account = new UserAccountEntity();
-        account.setId(7001L);
-        account.setUsername("teacher");
-        account.setUserType("TEACHER");
-        account.setTeacherId(301L);
-        return account;
-    }
 }
