@@ -60,4 +60,16 @@ public class CourseProductController {
         courseProductService.deleteCourseProduct(id);
         return ApiResponse.success("Deleted successfully.", null);
     }
+
+    @PostMapping("/{id}/force-delete")
+    @Operation(summary = "Force delete a course product and its classes (admin, legacy cleanup)")
+    @RequireRoles({"ADMIN"})
+    public ApiResponse<Void> forceDeleteCourseProduct(@PathVariable Long id,
+                                                      @RequestBody(required = false) ForceDeleteRequest request) {
+        courseProductService.forceDeleteCourseProduct(id, request == null ? null : request.reason());
+        return ApiResponse.success("Deleted successfully.", null);
+    }
+
+    public record ForceDeleteRequest(String reason) {
+    }
 }

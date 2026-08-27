@@ -7,6 +7,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
+import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderCorrectionRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
 import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
@@ -65,6 +66,15 @@ public class EnrollmentOrderController {
         return ApiResponse.success("Updated successfully.", null);
     }
 
+    @PutMapping("/{id}/correction")
+    @Operation(summary = "更正报名单联系信息（不改动金额与课程）")
+    public ApiResponse<Void> correctOrder(
+            @Parameter(description = "报名单ID") @PathVariable Long id,
+            @Valid @RequestBody EnrollmentOrderCorrectionRequest request) {
+        enrollmentOrderService.correctOrder(id, request);
+        return ApiResponse.success("Updated successfully.", null);
+    }
+
     @PostMapping("/{id}/cancel")
     @Operation(summary = "取消报名单")
     public ApiResponse<Void> cancelOrder(@Parameter(description = "报名单ID") @PathVariable Long id) {
@@ -87,6 +97,19 @@ public class EnrollmentOrderController {
     public ApiResponse<Void> deleteOrder(@Parameter(description = "报名单ID") @PathVariable Long id) {
         enrollmentOrderService.deleteOrder(id);
         return ApiResponse.success("Deleted successfully.", null);
+    }
+
+    @PostMapping("/{id}/force-void")
+    @Operation(summary = "管理员强制作废报名单（清理历史脏数据，软删除）")
+    @RequireRoles({"ADMIN"})
+    public ApiResponse<Void> forceVoidOrder(
+            @Parameter(description = "报名单ID") @PathVariable Long id,
+            @RequestBody(required = false) ForceVoidRequest request) {
+        enrollmentOrderService.forceVoidOrder(id, request == null ? null : request.reason());
+        return ApiResponse.success("Voided successfully.", null);
+    }
+
+    public record ForceVoidRequest(String reason) {
     }
 
     private static <T> ResponseEntity<ApiResponse<T>> noStore(ApiResponse<T> body) {

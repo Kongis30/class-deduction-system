@@ -1155,6 +1155,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         recurringSlotMap, statusNameMap))
                 .toList();
         EnrollmentOrderItemEntity orderItem = orderItemMap.get(coursePackage.getEnrollmentOrderItemId());
+        int totalUnitsRaw = safeUnits(coursePackage.getTotalUnits());
+        Integer purchasedUnitsRaw = orderItem == null ? null : orderItem.getOneOnOneUnits();
+        int purchasedUnits = purchasedUnitsRaw == null ? totalUnitsRaw : purchasedUnitsRaw;
+        int bonusUnits = Math.max(0, totalUnitsRaw - purchasedUnits);
         return OneOnOnePackageVO.builder()
                 .packageId(coursePackage.getId())
                 .packageNo(coursePackage.getPackageNo())
@@ -1167,6 +1171,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .gradeBand(orderItem == null ? null : orderItem.getGradeBand())
                 .packageName(coursePackage.getPackageName())
                 .totalUnits(UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()))
+                .purchasedUnits(UnitConverter.toHoursDecimal(purchasedUnits))
+                .bonusUnits(UnitConverter.toHoursDecimal(bonusUnits))
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
                 .renewalReminder(safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage))
@@ -1188,6 +1194,12 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                 Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
                                                 Map<String, String> statusNameMap) {
         Long plannedTeacherId = record == null ? occurrence.getPlannedTeacherId() : record.getPlannedTeacherId();
+        // 按课表还原授课老师：老数据里 occurrence/record 的 plannedTeacherId 可能缺失或与排课时段不一致，
+        // 此时以循环排课时段（slot）上配置的老师为准，保证消课列表和 Teacher Sheet 的老师与课表一致。
+        Long slotTeacherId = resolveSlotTeacherId(occurrence, recurringSlotMap);
+        if (slotTeacherId != null) {
+            plannedTeacherId = slotTeacherId;
+        }
         Long actualTeacherId = record == null ? null : record.getActualTeacherId();
         Long plannedClassroomId = record == null ? occurrence.getPlannedClassroomId() : record.getPlannedClassroomId();
         Long actualClassroomId = record == null ? null : record.getActualClassroomId();
@@ -1252,6 +1264,15 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private String resolveOccurrenceSubjectName(LessonOccurrenceEntity occurrence,
                                                 Map<Long, RecurringScheduleSlotEntity> recurringSlotMap) {
         return resolveOccurrenceSubjectName(occurrence, recurringSlotMap, Collections.emptyMap());
+    }
+
+    private Long resolveSlotTeacherId(LessonOccurrenceEntity occurrence,
+                                      Map<Long, RecurringScheduleSlotEntity> recurringSlotMap) {
+        if (occurrence == null || occurrence.getScheduleSlotId() == null || occurrence.getClassGroupId() != null) {
+            return null;
+        }
+        RecurringScheduleSlotEntity slot = recurringSlotMap.get(occurrence.getScheduleSlotId());
+        return slot == null ? null : slot.getTeacherId();
     }
 
     private Map<Long, ClassGroupScheduleSlotEntity> loadClassSlotMap(List<LessonOccurrenceEntity> occurrences) {

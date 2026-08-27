@@ -1,5 +1,38 @@
 <template>
   <div class="data-summary-page" v-loading="loading">
+    <div class="workbook-toolbar">
+      <div class="workbook-toolbar__month">
+        <span class="workbook-toolbar__label">Month</span>
+        <el-select
+          v-model="selectedMonth"
+          class="workbook-toolbar__select"
+          size="small"
+          filterable
+        >
+          <el-option label="All months" value="ALL" />
+          <el-option
+            v-for="month in availableMonths"
+            :key="month.value"
+            :label="month.label"
+            :value="month.value"
+          />
+        </el-select>
+      </div>
+      <div class="workbook-toolbar__stats">
+        <span class="workbook-toolbar__stat">
+          <em>Registrations</em>
+          <strong>{{ monthStats.count }}</strong>
+        </span>
+        <span class="workbook-toolbar__stat">
+          <em>Paid</em>
+          <strong>{{ formatMoney(monthStats.paid) }}</strong>
+        </span>
+        <span class="workbook-toolbar__stat">
+          <em>Balance</em>
+          <strong>{{ formatMoney(monthStats.balance) }}</strong>
+        </span>
+      </div>
+    </div>
     <div class="workbook-scroll" data-testid="data-summary-workbook">
       <table class="workbook-table">
         <colgroup>
@@ -269,6 +302,7 @@ const columns: WorkbookColumn[] = [
 
 const loading = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
+const selectedMonth = ref<string>('ALL');
 const sortState = reactive<SortState>({
   key: null,
   direction: 'asc',
@@ -287,7 +321,44 @@ const selectOptions = computed<Record<ColumnKey, string[]>>(() => {
   })) as Record<ColumnKey, string[]>;
 });
 
-const filteredRows = computed(() => rows.value.filter((row) => {
+// Month is derived from the sign-up date so staff can review one month at a time.
+function monthKey(row: DataSummaryRow) {
+  return row.signupDate ? dayjs(row.signupDate).format('YYYY-MM') : '';
+}
+
+const availableMonths = computed(() => {
+  const keys = new Set<string>();
+  rows.value.forEach((row) => {
+    const key = monthKey(row);
+    if (key) {
+      keys.add(key);
+    }
+  });
+  return [...keys]
+    .sort((left, right) => right.localeCompare(left))
+    .map((value) => ({ value, label: dayjs(`${value}-01`).format('MMMM YYYY') }));
+});
+
+const monthFilteredRows = computed(() => {
+  if (selectedMonth.value === 'ALL') {
+    return rows.value;
+  }
+  return rows.value.filter((row) => monthKey(row) === selectedMonth.value);
+});
+
+const monthStats = computed(() => {
+  return monthFilteredRows.value.reduce(
+    (acc, row) => {
+      acc.count += 1;
+      acc.paid += Number(row.paidAmount ?? 0);
+      acc.balance += Number(row.balanceAmount ?? 0);
+      return acc;
+    },
+    { count: 0, paid: 0, balance: 0 },
+  );
+});
+
+const filteredRows = computed(() => monthFilteredRows.value.filter((row) => {
   return columns.every((column) => matchesColumnFilter(row, column));
 }));
 
@@ -517,12 +588,67 @@ onMounted(loadSummary);
 .data-summary-page {
   min-width: 0;
   height: calc(100vh - 88px);
+  display: flex;
+  flex-direction: column;
   background: #fff;
+}
+
+.workbook-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid #9eafa7;
+  border-bottom: 0;
+  background: #f4f8f5;
+}
+
+.workbook-toolbar__month {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.workbook-toolbar__label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #376451;
+}
+
+.workbook-toolbar__select {
+  width: 180px;
+}
+
+.workbook-toolbar__stats {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.workbook-toolbar__stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.workbook-toolbar__stat em {
+  color: #6b7684;
+  font-style: normal;
+}
+
+.workbook-toolbar__stat strong {
+  font-size: 14px;
+  color: #263b44;
 }
 
 .workbook-scroll {
   width: 100%;
   height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   border: 1px solid #9eafa7;
   background: #fff;

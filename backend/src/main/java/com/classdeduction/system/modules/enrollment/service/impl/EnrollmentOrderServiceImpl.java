@@ -19,6 +19,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery;
+import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderCorrectionRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
 import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -59,6 +60,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -927,6 +929,89 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public void correctOrder(Long id, EnrollmentOrderCorrectionRequest request) {
+        EnrollmentOrderEntity order = requireOrder(id);
+        if ("CANCELLED".equals(order.getOrderStatus())) {
+            throw new BusinessException("ORDER_CANCELLED_NOT_EDITABLE",
+                    "Cancelled orders cannot be edited.");
+        }
+
+        // Update order snapshot fields. Amounts, courses, and payments are untouched.
+        if (StringUtils.hasText(request.getStudentName())) {
+            order.setStudentNameSnapshot(request.getStudentName().trim());
+        }
+        if (request.getGrade() != null) {
+            order.setGradeSnapshot(request.getGrade().trim());
+        }
+        if (request.getSchool() != null) {
+            order.setSchoolSnapshot(request.getSchool().trim());
+        }
+        if (request.getGuardianPhone() != null) {
+            order.setParentPhoneSnapshot(request.getGuardianPhone().trim());
+        }
+        if (request.getGuardianPhone2() != null) {
+            order.setParentPhone2Snapshot(request.getGuardianPhone2().trim());
+        }
+        if (request.getPickupRequired() != null) {
+            order.setPickupRequiredSnapshot(request.getPickupRequired());
+        }
+        if (request.getPickupAddress() != null) {
+            order.setPickupAddressSnapshot(request.getPickupAddress().trim());
+        }
+        if (request.getDropoffRequired() != null) {
+            order.setDropoffRequiredSnapshot(request.getDropoffRequired());
+        }
+        if (request.getDropoffAddress() != null) {
+            order.setDropoffAddressSnapshot(request.getDropoffAddress().trim());
+        }
+        if (request.getSignupDate() != null) {
+            order.setSignupDate(request.getSignupDate());
+        }
+        if (request.getHandledByName() != null) {
+            order.setHandledByName(request.getHandledByName().trim());
+        }
+        if (request.getRemark() != null) {
+            order.setRemark(request.getRemark());
+        }
+        enrollmentOrderMapper.updateById(order);
+
+        // Keep the receipt snapshot(s) in sync so the printed receipt reflects the fix.
+        syncReceiptSnapshots(order);
+    }
+
+    /**
+     * Re-write the matching keys inside each stored receipt payload for this order so
+     * corrected contact info is reflected on the saved/printable receipt.
+     */
+    private void syncReceiptSnapshots(EnrollmentOrderEntity order) {
+        List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(
+                new LambdaQueryWrapper<ReceiptRecordEntity>()
+                        .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
+        for (ReceiptRecordEntity receipt : receipts) {
+            Map<String, Object> payload = jsonHelper.fromJson(
+                    receipt.getReceiptPayload(),
+                    new TypeReference<LinkedHashMap<String, Object>>() {});
+            if (payload == null) {
+                continue;
+            }
+            payload.put("studentName", order.getStudentNameSnapshot());
+            payload.put("grade", order.getGradeSnapshot());
+            payload.put("school", order.getSchoolSnapshot());
+            payload.put("guardianPhone", order.getParentPhoneSnapshot());
+            payload.put("guardianPhone2", order.getParentPhone2Snapshot());
+            payload.put("pickupRequired", order.getPickupRequiredSnapshot());
+            payload.put("pickupAddress", order.getPickupAddressSnapshot());
+            payload.put("dropoffRequired", order.getDropoffRequiredSnapshot());
+            payload.put("dropoffAddress", order.getDropoffAddressSnapshot());
+            payload.put("signupDate", order.getSignupDate());
+            payload.put("handledByName", order.getHandledByName());
+            receipt.setReceiptPayload(jsonHelper.toJson(payload));
+            receiptRecordMapper.updateById(receipt);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void cancelOrder(Long id) {
         EnrollmentOrderEntity order = requireOrder(id);
 
@@ -1237,6 +1322,28 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             } else {
                 cancelOneOnOneEnrollment(order);
             }
+        }
+        enrollmentOrderMapper.deleteById(id);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void forceVoidOrder(Long id, String reason) {
+        EnrollmentOrderEntity order = requireOrder(id);
+
+        // 强制作废保留财务与消课历史，只关闭报名产物并软删订单，供清理历史脏数据。
+        cancelEnrollmentArtifacts(order);
+
+        if (!"CANCELLED".equals(order.getOrderStatus())) {
+            order.setOrderStatus("CANCELLED");
+        }
+        String note = "[FORCE-VOID] " + (StringUtils.hasText(reason) ? reason.trim() : "Legacy record cleanup");
+        String existingRemark = order.getRemark();
+        order.setRemark(StringUtils.hasText(existingRemark) ? existingRemark + " | " + note : note);
+        int updated = enrollmentOrderMapper.updateById(order);
+        if (updated != 1) {
+            throw new BusinessException("ORDER_CONCURRENT_UPDATE",
+                    "The order was updated by another request. Please retry.");
         }
         enrollmentOrderMapper.deleteById(id);
     }

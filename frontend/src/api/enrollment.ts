@@ -58,6 +58,25 @@ export function cancelEnrollmentOrder(id: string | number) {
   return http.post(`/v1/enrollment/orders/${id}/cancel`);
 }
 
+export interface EnrollmentOrderCorrectionPayload {
+  studentName?: string;
+  grade?: string;
+  school?: string;
+  guardianPhone?: string;
+  guardianPhone2?: string;
+  pickupRequired?: boolean;
+  pickupAddress?: string;
+  dropoffRequired?: boolean;
+  dropoffAddress?: string;
+  signupDate?: string;
+  handledByName?: string;
+  remark?: string;
+}
+
+export function correctEnrollmentOrder(id: string | number, data: EnrollmentOrderCorrectionPayload) {
+  return http.put<ApiResponse<void>>(`/v1/enrollment/orders/${id}/correction`, data);
+}
+
 export interface RefundPayload {
   refundAmount: number;
   paymentMethod: string;
@@ -72,6 +91,10 @@ export function refundEnrollmentOrder(id: string | number, data: RefundPayload) 
 
 export function deleteEnrollmentOrder(id: string | number) {
   return http.delete(`/v1/enrollment/orders/${id}`);
+}
+
+export function forceVoidEnrollmentOrder(id: string | number, reason?: string) {
+  return http.post(`/v1/enrollment/orders/${id}/force-void`, { reason });
 }
 
 // ─── Registration Intake ──────────────────────────────

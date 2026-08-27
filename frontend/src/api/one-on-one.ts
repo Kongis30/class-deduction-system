@@ -50,6 +50,8 @@ export interface OneOnOnePackage {
   gradeBand?: string;
   packageName: string;
   totalUnits: number;
+  purchasedUnits?: number;
+  bonusUnits?: number;
   consumedUnits: number;
   remainingUnits: number;
   renewalReminder: boolean;

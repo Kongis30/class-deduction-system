@@ -1248,6 +1248,33 @@ CREATE TABLE `subject` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `course_category`
+--
+
+DROP TABLE IF EXISTS `course_category`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `course_category` (
+  `id` bigint NOT NULL COMMENT 'Primary key ID',
+  `type_code` varchar(32) NOT NULL COMMENT 'Fixed category code: AFTER_SCHOOL/SATURDAY/SUMMER/SPRINT/ONE_ON_ONE',
+  `display_name` varchar(64) NOT NULL COMMENT 'Editable display name',
+  `display_order` int NOT NULL DEFAULT '99' COMMENT 'Display order for sorting',
+  `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
+  `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
+  `updated_by` bigint DEFAULT NULL COMMENT 'Updated by user ID',
+  `is_deleted` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Soft delete flag: 0=no, 1=yes',
+  `deleted_at` datetime(3) DEFAULT NULL COMMENT 'Deleted at',
+  `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
+  `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_course_category_type_code` (`type_code`),
+  KEY `idx_course_category_display_order` (`display_order`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Top-level course categories (display name + order editable)';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `sys_dict_item`
 --
 

@@ -1282,10 +1282,11 @@ const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
 );
 
-// 课时包总课时（小时）：含赠送，作为逐时段分配的上限。
+// 可分配课时（小时）：剩余课时（总课时含赠送，已扣除报名时录入的已用课时），作为逐时段分配的上限。
 const packageTotalHours = computed(() => {
   const pkg = studentPackages.value.find(p => p.id === selectedPackageId.value);
-  return pkg?.totalUnits ?? 0;
+  if (!pkg) return 0;
+  return pkg.remainingUnits ?? pkg.totalUnits ?? 0;
 });
 
 // 已在各时段分配的课时合计（小时）。

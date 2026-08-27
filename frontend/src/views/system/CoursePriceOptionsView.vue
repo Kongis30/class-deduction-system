@@ -8,6 +8,7 @@
           <p>Choose a course, create one class for each grade, then add the monthly, weekly, or session registration options for that class.</p>
         </div>
         <div class="header-actions">
+          <el-button @click="openCategoryDialog">Edit categories</el-button>
           <el-button @click="loadAll">Reload</el-button>
         </div>
       </div>
@@ -83,6 +84,9 @@
                   <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }} for this grade</small>
                 </div>
                 <div class="product-price-group__actions">
+                  <small v-if="selectedMode === 'GROUP' && groupHalfDayPriceSummary(group)" class="group-halfday-summary">
+                    {{ groupHalfDayPriceSummary(group) }}
+                  </small>
                   <small v-if="selectedMode === 'GROUP'">{{ formatGroupClassroom(group.rows[0]) }}</small>
                   <el-button size="small" type="primary" plain @click="openDialog(undefined, group.gradeLabel)">
                     Add registration option
@@ -356,9 +360,17 @@
             <span class="section-step">4</span>
             <div>
               <strong>Set grade class schedule</strong>
-              <small>This calendar belongs to the grade class and is shared by all registration options.</small>
+              <small>This calendar belongs to the grade class and is shared by every registration option in it.</small>
             </div>
           </div>
+          <el-alert
+            type="warning"
+            :closable="false"
+            show-icon
+            class="grade-class-settings__alert"
+            title="Changing these dates updates every registration option in this grade class."
+            description="Need different dates for terms like Fall and Spring? Create them as separate grade classes (for example grade 'G3-6 Fall' and 'G3-6 Spring') so each term keeps its own start and end date."
+          />
           <div class="form-grid form-grid--two">
             <el-form-item :label="fixedDateGroup ? 'Class starts' : 'Class calendar starts'">
               <el-date-picker
@@ -402,12 +414,21 @@
                 <strong>{{ groupSlotLabel(slot) }}</strong>
               </div>
               <label class="slot-field">
-                <span>Applies to</span>
+                <span class="slot-field__label">
+                  Applies to
+                  <el-tooltip
+                    content="Which half-day session this time slot serves. Pick 'All day' when the class runs the whole day; use Morning only / Afternoon only for half-day classes."
+                    placement="top"
+                    :show-after="300"
+                  >
+                    <el-icon class="slot-field__tip"><QuestionFilled /></el-icon>
+                  </el-tooltip>
+                </span>
                 <el-select
                   v-model="slot.attendanceOptions"
                   placeholder="Select"
                 >
-                  <el-option label="All students" value="ALL" />
+                  <el-option label="All day (full day)" value="ALL" />
                   <el-option label="Morning only" value="MORNING" />
                   <el-option label="Afternoon only" value="AFTERNOON" />
                 </el-select>
@@ -498,11 +519,39 @@
         <el-button type="primary" :loading="saving" @click="saveOption">{{ priceSaveButtonLabel }}</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="categoryDialogVisible"
+      title="Edit course categories"
+      width="560px"
+      :close-on-click-modal="false"
+    >
+      <p class="category-dialog__hint">
+        Rename the top-level course categories and set their display order. The set of
+        categories is fixed; smaller order numbers appear first.
+      </p>
+      <el-table :data="categoryRows" size="small" class="category-table">
+        <el-table-column label="Display name" min-width="220">
+          <template #default="{ row }">
+            <el-input v-model="row.displayName" maxlength="64" />
+          </template>
+        </el-table-column>
+        <el-table-column label="Order" width="120" align="center">
+          <template #default="{ row }">
+            <el-input-number v-model="row.displayOrder" :min="1" :max="99" :controls="false" style="width: 90px;" />
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="categoryDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="savingCategories" @click="saveCategories">Save</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, InfoFilled } from '@element-plus/icons-vue';
+import { ArrowLeft, InfoFilled, QuestionFilled } from '@element-plus/icons-vue';
 import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -513,8 +562,11 @@ import {
   fetchAllClassrooms,
   fetchAllTeachers,
   fetchCoursePriceOptions,
+  fetchCourseCategories,
   fetchCourseProducts,
+  updateCourseCategory,
   updateCoursePriceOption,
+  type CourseCategoryItem,
   type CoursePriceOptionSavePayload,
 } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
@@ -558,13 +610,28 @@ const HeaderTip = defineComponent({
   },
 });
 
-const courseTypes: CourseTypeDef[] = [
+const courseTypeDefs: CourseTypeDef[] = [
   { value: 'AFTER_SCHOOL', label: 'After School', mode: 'GROUP' },
   { value: 'SATURDAY', label: 'Saturday Class', mode: 'GROUP' },
   { value: 'SUMMER', label: 'Summer Class', mode: 'GROUP' },
   { value: 'SPRINT', label: 'Sprint Class', mode: 'GROUP' },
   { value: 'ONE_ON_ONE', label: '1 on 1', mode: 'ONE_ON_ONE' },
 ];
+
+// Category display name/order are configurable; codes and modes stay fixed.
+const categoryConfig = ref<Record<string, { label: string; order: number }>>({});
+const categoryDialogVisible = ref(false);
+const savingCategories = ref(false);
+const categoryRows = ref<CourseCategoryItem[]>([]);
+
+const courseTypes = computed<CourseTypeDef[]>(() =>
+  [...courseTypeDefs]
+    .map(def => ({
+      ...def,
+      label: categoryConfig.value[def.value]?.label ?? def.label,
+    }))
+    .sort((left, right) =>
+      (categoryConfig.value[left.value]?.order ?? 99) - (categoryConfig.value[right.value]?.order ?? 99)));
 
 const courseModes: CourseModeDef[] = [
   { value: 'ONE_ON_ONE', label: '1-on-1 Private' },
@@ -791,7 +858,7 @@ const existingGradeClass = computed(() => {
   );
 });
 
-const formTeachingMode = computed<CourseMode>(() => courseTypes.find(item => item.value === form.courseType)?.mode ?? 'GROUP');
+const formTeachingMode = computed<CourseMode>(() => courseTypes.value.find(item => item.value === form.courseType)?.mode ?? 'GROUP');
 const fixedDateGroup = computed(() => form.packageUnit === 'WEEK' || form.packageUnit === 'SESSION');
 const priceColumnTip = computed(() => selectedMode.value === 'ONE_ON_ONE'
   ? 'Total package price for the selected private lesson hours.'
@@ -816,8 +883,9 @@ watch(() => form.packageUnit, (unit) => {
 onMounted(initializePage);
 
 async function initializePage() {
+  await loadCategoryConfig();
   const requestedType = queryValue(route.query.courseType);
-  if (courseTypes.some(item => item.value === requestedType)) {
+  if (courseTypes.value.some(item => item.value === requestedType)) {
     query.courseType = requestedType as CourseTypeValue;
     selectedMode.value = modeForCourseType(query.courseType);
   }
@@ -837,6 +905,57 @@ async function initializePage() {
 
 async function loadAll() {
   await Promise.all([loadProductsAndClasses(), loadOptions()]);
+}
+
+async function loadCategoryConfig() {
+  try {
+    const res = await fetchCourseCategories();
+    const map: Record<string, { label: string; order: number }> = {};
+    for (const item of res.data.data ?? []) {
+      map[item.typeCode] = { label: item.displayName, order: item.displayOrder ?? 99 };
+    }
+    categoryConfig.value = map;
+  } catch {
+    // Fall back to built-in labels/order if the config cannot be loaded.
+    categoryConfig.value = {};
+  }
+}
+
+async function openCategoryDialog() {
+  try {
+    const res = await fetchCourseCategories();
+    categoryRows.value = (res.data.data ?? [])
+      .slice()
+      .sort((left, right) => (left.displayOrder ?? 99) - (right.displayOrder ?? 99))
+      .map(item => ({ ...item }));
+    categoryDialogVisible.value = true;
+  } catch {
+    ElMessage.error('Failed to load course categories.');
+  }
+}
+
+async function saveCategories() {
+  for (const row of categoryRows.value) {
+    if (!row.displayName || !row.displayName.trim()) {
+      ElMessage.warning('Display name cannot be empty.');
+      return;
+    }
+  }
+  savingCategories.value = true;
+  try {
+    await Promise.all(categoryRows.value.map(row =>
+      updateCourseCategory(row.id, {
+        displayName: row.displayName.trim(),
+        displayOrder: row.displayOrder,
+      })));
+    await loadCategoryConfig();
+    categoryDialogVisible.value = false;
+    ElMessage.success('Course categories updated.');
+  } catch {
+    ElMessage.error('Failed to save course categories.');
+  } finally {
+    savingCategories.value = false;
+  }
 }
 
 async function loadProductsAndClasses() {
@@ -996,7 +1115,7 @@ function normalizePackageUnit(unit: string | undefined, mode: CourseMode): Packa
 
 function normalizeGroupCourseType(courseType?: string): CourseTypeValue {
   const normalized = String(courseType || '').toUpperCase();
-  return courseTypes.some(item => item.value === normalized && item.mode === 'GROUP')
+  return courseTypes.value.some(item => item.value === normalized && item.mode === 'GROUP')
     ? normalized as CourseTypeValue
     : 'AFTER_SCHOOL';
 }
@@ -1229,7 +1348,7 @@ function sortCourseProducts(products: CourseProductItem[]) {
 }
 
 function selectedTypeLabelFor(value: string) {
-  return courseTypes.find(item => item.value === value)?.label ?? formatCourseType(value);
+  return courseTypes.value.find(item => item.value === value)?.label ?? formatCourseType(value);
 }
 
 function modeForCourseType(value: string): CourseMode {
@@ -1334,6 +1453,20 @@ function formatGroupClassroom(row: CoursePriceOptionItem) {
   return `Room: ${room}`;
 }
 
+function groupHalfDayPriceSummary(group: ProductPriceGroup) {
+  const prices = group.rows
+    .map(row => Number(row.halfDayPrice ?? 0))
+    .filter(price => price > 0);
+  if (prices.length === 0) {
+    return '';
+  }
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  return min === max
+    ? `Half-day: ${formatMoney(min)}`
+    : `Half-day: ${formatMoney(min)}–${formatMoney(max)}`;
+}
+
 function teacherName(id?: EntityId) {
   if (!id) return 'Assign later';
   return teachers.value.find(item => String(item.id) === String(id))?.teacherName ?? 'Assign later';
@@ -1385,6 +1518,16 @@ function normalizeSlotAttendance(value?: string) {
 </script>
 
 <style scoped>
+.category-dialog__hint {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #6b7684;
+}
+
+.category-table {
+  width: 100%;
+}
+
 .config-panel {
   padding: 18px 20px;
   border: 1px solid #e8edf2;
@@ -1911,6 +2054,23 @@ function normalizeSlotAttendance(value?: string) {
   font-size: 11px;
   font-weight: 600;
   line-height: 1;
+}
+
+.slot-field__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.slot-field__tip {
+  color: #909399;
+  cursor: help;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.slot-field__tip:hover {
+  color: #409eff;
 }
 
 .slot-time-cell strong {

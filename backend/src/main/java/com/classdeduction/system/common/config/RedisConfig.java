@@ -42,6 +42,12 @@ public class RedisConfig implements CachingConfigurer {
 
     private static final Logger log = LoggerFactory.getLogger(RedisConfig.class);
 
+    /**
+     * 缓存 key 的版本前缀。序列化格式变更时递增（如 v1 -> v2），
+     * 使旧格式的缓存值自然失效，避免反序列化异常。
+     */
+    private static final String CACHE_KEY_VERSION_PREFIX = "v2::";
+
     private final RedisProperties redisProperties;
 
     public RedisConfig(RedisProperties redisProperties) {
@@ -114,8 +120,12 @@ public class RedisConfig implements CachingConfigurer {
                 RedisSerializationContext.SerializationPair.fromSerializer(StringRedisSerializer.UTF_8);
 
         // 默认配置：10 分钟 TTL
+        // 缓存 key 版本前缀：当序列化格式（类型信息等）发生变更时递增该版本号，
+        // 旧格式的缓存 key 将不再被读取，从根源上避免反序列化异常
+        // （历史问题：读取旧格式值时抛 "Could not read JSON: Unexpected token (START_OBJECT)"）。
         RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofMinutes(10))
+                .computePrefixWith(cacheName -> CACHE_KEY_VERSION_PREFIX + cacheName + "::")
                 .serializeKeysWith(keySerializationPair)
                 .serializeValuesWith(valueSerializationPair)
                 .disableCachingNullValues();

@@ -534,7 +534,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     }
 
     /**
-     * 校验各时段分配课时总和不超过课时包总课时（含赠送，即 totalUnits）。
+     * 校验各时段分配课时总和不超过课时包可分配课时（总课时含赠送，扣除报名时录入的已用课时）。
      */
     private void validateSlotAllocations(List<RecurringScheduleSlotRequest> slots, CoursePackageEntity coursePackage) {
         int allocatedSum = 0;
@@ -546,10 +546,24 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
             allocatedSum += slot.getAllocatedUnits();
         }
-        if (allocatedSum > coursePackage.getTotalUnits()) {
+        int allocatableUnits = allocatableUnits(coursePackage);
+        if (allocatedSum > allocatableUnits) {
             throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
-                    "Total allocated hours across slots cannot exceed the package's total hours.");
+                    "Total allocated hours across slots cannot exceed the package's remaining hours.");
         }
+    }
+
+    /**
+     * 课包可分配课时（unit）：优先用剩余课时，回退到总课时扣除已用课时。
+     */
+    private int allocatableUnits(CoursePackageEntity coursePackage) {
+        Integer remaining = coursePackage.getRemainingUnits();
+        if (remaining != null) {
+            return Math.max(0, remaining);
+        }
+        int total = coursePackage.getTotalUnits() == null ? 0 : coursePackage.getTotalUnits();
+        int consumed = coursePackage.getConsumedUnits() == null ? 0 : coursePackage.getConsumedUnits();
+        return Math.max(0, total - consumed);
     }
 
     private ClassroomEntity resolveClassroom(Long classroomId) {
@@ -684,11 +698,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         if (candidates.isEmpty()) {
             return candidates;
         }
-        int usedUnits = preservedOccurrences.stream()
+        // 已被"计划中但尚未消课"的课次占用的课时（已消课的课次已计入课包 consumedUnits，不能重复扣）。
+        int reservedPlannedUnits = preservedOccurrences.stream()
                 .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
-                .mapToInt(occurrence -> reservedUnitsForOccurrence(occurrence, recordByOccurrenceId.get(occurrence.getId())))
+                .filter(occurrence -> !isConsumedOccurrence(recordByOccurrenceId.get(occurrence.getId())))
+                .mapToInt(occurrence -> occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits())
                 .sum();
-        int remainingUnits = Math.max(0, coursePackage.getTotalUnits() - usedUnits);
+        // 可分配基数用课包剩余课时（已扣报名时录入的已用课时与历史消课），再扣掉计划中未消课的占用。
+        int remainingUnits = Math.max(0, allocatableUnits(coursePackage) - reservedPlannedUnits);
         if (remainingUnits == 0) {
             return Collections.emptyList();
         }
@@ -714,13 +731,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return capped;
     }
 
-    private int reservedUnitsForOccurrence(LessonOccurrenceEntity occurrence, LessonRecordEntity record) {
-        if (record != null) {
-            return record.getShouldDeduct() != null && record.getShouldDeduct() == 1
-                    ? (record.getDeductedUnits() == null ? 0 : record.getDeductedUnits())
-                    : 0;
-        }
-        return occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits();
+    /** 该课次是否已消课（已计入课包 consumedUnits，不能在排课时重复扣减）。 */
+    private boolean isConsumedOccurrence(LessonRecordEntity record) {
+        return record != null
+                && record.getShouldDeduct() != null && record.getShouldDeduct() == 1
+                && record.getDeductedUnits() != null && record.getDeductedUnits() > 0;
     }
 
     private void updateCandidatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {

@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -33,6 +34,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -206,6 +208,39 @@ class CoursePriceOptionServiceImplTest {
         when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
 
         coursePriceOptionService.createOption(request);
+    }
+
+    @Test
+    void shouldTranslateDuplicateCodeFromSoftDeletedRowIntoBusinessError() {
+        // The application-level uniqueness check only sees active rows, but the DB unique
+        // key spans soft-deleted rows too. Simulate the insert hitting that constraint.
+        CoursePriceOptionSaveRequest request = oneOnOneOption();
+        when(courseProductMapper.selectById(201L)).thenReturn(oneOnOneProduct());
+        when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
+        doThrow(new DuplicateKeyException("Duplicate entry for key 'uk_course_price_option_code'"))
+                .when(coursePriceOptionMapper).insert(any(CoursePriceOptionEntity.class));
+
+        assertThatThrownBy(() -> coursePriceOptionService.createOption(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Course price option code already exists");
+    }
+
+    @Test
+    void shouldReleaseOptionCodeWhenSoftDeletingSoItCanBeReused() {
+        when(coursePriceOptionMapper.selectById(9001L)).thenReturn(oneOnOneEntity());
+        when(enrollmentOrderItemMapper.selectCount(any())).thenReturn(0L);
+
+        coursePriceOptionService.deleteOption(9001L);
+
+        // Before the soft delete, the code should be tombstoned via updateById so the DB
+        // unique key no longer blocks recreating the same option code.
+        ArgumentCaptor<CoursePriceOptionEntity> patchCaptor =
+                ArgumentCaptor.forClass(CoursePriceOptionEntity.class);
+        verify(coursePriceOptionMapper).updateById(patchCaptor.capture());
+        assertThat(patchCaptor.getValue().getId()).isEqualTo(9001L);
+        assertThat(patchCaptor.getValue().getOptionCode())
+                .isEqualTo("ONE_ON_ONE_G6_G8_60_DEL_9001");
+        verify(coursePriceOptionMapper).deleteById(9001L);
     }
 
     @Test

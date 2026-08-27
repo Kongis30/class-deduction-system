@@ -176,6 +176,28 @@ export function deleteSubject(id: EntityId) {
   return http.delete<ApiResponse<void>>(`/v1/base/subjects/${id}`);
 }
 
+// ─── Course Categories ───────────────────────────────
+export interface CourseCategoryItem {
+  id: EntityId;
+  typeCode: string;
+  displayName: string;
+  displayOrder: number;
+  status: string;
+}
+
+export function fetchCourseCategories() {
+  return http.get<ApiResponse<CourseCategoryItem[]>>('/v1/base/course-categories');
+}
+
+export interface CourseCategorySavePayload {
+  displayName: string;
+  displayOrder?: number;
+}
+
+export function updateCourseCategory(id: EntityId, data: CourseCategorySavePayload) {
+  return http.put<ApiResponse<void>>(`/v1/base/course-categories/${id}`, data);
+}
+
 // ─── Campuses ────────────────────────────────────────
 export function fetchCampuses() {
   return http.get<ApiResponse<CampusItem[]>>('/v1/base/campuses');
@@ -318,6 +340,10 @@ export function updateCourseProduct(id: EntityId, data: CourseProductSavePayload
 
 export function deleteCourseProduct(id: EntityId) {
   return http.delete(`/v1/base/course-products/${id}`);
+}
+
+export function forceDeleteCourseProduct(id: EntityId, reason?: string) {
+  return http.post(`/v1/base/course-products/${id}/force-delete`, { reason });
 }
 
 // ─── Discount Presets ──────────────────────────────────

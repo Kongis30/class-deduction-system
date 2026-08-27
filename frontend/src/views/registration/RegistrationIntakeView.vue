@@ -22,6 +22,11 @@
       </div>
       <div class="registration-desk__actions">
         <el-button class="action-secondary" @click="openCurrentStudentHistory">Find student &amp; history</el-button>
+        <el-button v-if="isReadOnly && !editingCorrection" type="primary" @click="startCorrection">Edit contact info</el-button>
+        <template v-if="isReadOnly && editingCorrection">
+          <el-button @click="cancelCorrection">Cancel</el-button>
+          <el-button type="primary" :loading="savingCorrection" @click="saveCorrection">Save changes</el-button>
+        </template>
       </div>
     </section>
 
@@ -99,8 +104,8 @@
             </el-tooltip>
           </span>
           <div class="student-name-fields screen-only">
-            <el-input v-model="form.student.firstName" :disabled="isReadOnly" placeholder="First name" />
-            <el-input v-model="form.student.lastName" :disabled="isReadOnly" placeholder="Last name" />
+            <el-input v-model="form.student.firstName" :disabled="contactLocked" placeholder="First name" />
+            <el-input v-model="form.student.lastName" :disabled="contactLocked" placeholder="Last name" />
           </div>
           <strong class="printed-student-name">{{ fullStudentName || '—' }}</strong>
           <el-tag v-if="!isReadOnly && studentReuseStatus === 'existing'" size="small" type="success" class="reuse-tag">Reuse</el-tag>
@@ -114,41 +119,41 @@
         <div class="two-col-line">
           <label>
             <span>Grade:</span>
-            <el-input v-model="form.student.grade" :disabled="isReadOnly" class="line-input" />
+            <el-input v-model="form.student.grade" :disabled="contactLocked" class="line-input" />
           </label>
           <label>
             <span>School:</span>
-            <el-input v-model="form.student.school" :disabled="isReadOnly" class="line-input" />
+            <el-input v-model="form.student.school" :disabled="contactLocked" class="line-input" />
           </label>
         </div>
 
         <div class="two-col-line">
           <label>
             <span>Guardian phone:</span>
-            <el-input v-model="form.student.guardianPhone" :disabled="isReadOnly" class="line-input" />
+            <el-input v-model="form.student.guardianPhone" :disabled="contactLocked" class="line-input" />
           </label>
           <label>
             <span>Guardian phone 2:</span>
-            <el-input v-model="form.student.guardianPhone2" :disabled="isReadOnly" class="line-input" />
+            <el-input v-model="form.student.guardianPhone2" :disabled="contactLocked" class="line-input" />
           </label>
         </div>
 
         <div class="two-col-line">
           <label>
             <span>Sign Up Date:</span>
-            <el-date-picker v-model="form.signupDate" type="date" value-format="YYYY-MM-DD" :disabled="isReadOnly" class="line-date" />
+            <el-date-picker v-model="form.signupDate" type="date" value-format="YYYY-MM-DD" :disabled="contactLocked" class="line-date" />
           </label>
         </div>
 
         <label class="address-line">
-          <input type="checkbox" v-model="form.student.pickupRequired" :disabled="isReadOnly" />
+          <input type="checkbox" v-model="form.student.pickupRequired" :disabled="contactLocked" />
           <span>Pickup needed</span>
-          <el-input v-model="form.student.pickupAddress" :disabled="isReadOnly" class="line-input" />
+          <el-input v-model="form.student.pickupAddress" :disabled="contactLocked" class="line-input" />
         </label>
         <label class="address-line">
-          <input type="checkbox" v-model="form.student.dropoffRequired" :disabled="isReadOnly" />
+          <input type="checkbox" v-model="form.student.dropoffRequired" :disabled="contactLocked" />
           <span>Drop-off needed</span>
-          <el-input v-model="form.student.dropoffAddress" :disabled="isReadOnly" class="line-input" />
+          <el-input v-model="form.student.dropoffAddress" :disabled="contactLocked" class="line-input" />
         </label>
       </section>
 
@@ -608,9 +613,9 @@ import { ElMessage, ElNotification } from 'element-plus';
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { fetchActiveCoursePriceOptions, fetchAllTeachers, fetchCampuses, fetchCourseProducts, fetchDiscountPresets, fetchReusableStudent, fetchStudent } from '@/api/base-data';
+import { fetchActiveCoursePriceOptions, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchReusableStudent, fetchStudent } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
-import { fetchActivePaymentMethods, fetchEnrollmentOrder, submitRegistrationIntake, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
+import { fetchActivePaymentMethods, fetchEnrollmentOrder, submitRegistrationIntake, correctEnrollmentOrder, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
 import type { CampusItem, ClassGroupItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
@@ -759,6 +764,7 @@ const priceOptions = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
 const classGroups = ref<ClassGroupItem[]>([]);
 const discountPresets = ref<DiscountPresetItem[]>([]);
+const courseCategoryLabels = ref<Record<string, string>>({});
 const reusableStudent = ref<StudentItem | null>(null);
 const studentReuseStatus = ref<ReuseStatus>('idle');
 const validationErrors = ref<string[]>([]);
@@ -794,6 +800,10 @@ const campusChoices = computed<CampusChoice[]>(() => {
 
 const selectedCampus = computed(() => campusChoices.value.find((campus) => campus.key === form.campusKey));
 const isReadOnly = computed(() => Boolean(route.query.orderId));
+const editingCorrection = ref(false);
+const savingCorrection = ref(false);
+// Contact fields are editable when creating a new registration or when correcting a saved one.
+const contactLocked = computed(() => isReadOnly.value && !editingCorrection.value);
 const isAdmin = computed(() => isAdminUser(currentUser));
 const currentCampusTaxId = computed(() => receiptTaxId.value || selectedCampus.value?.taxId || '');
 
@@ -957,6 +967,7 @@ async function loadInitialData() {
     courseProducts.value = productRes.data.data.records ?? [];
     classGroups.value = classRes.data.data ?? [];
     discountPresets.value = discountPresetRes.data.data ?? [];
+    void loadCourseCategoryLabels();
     if (!form.campusKey && campusChoices.value.length > 0) {
       form.campusKey = campusChoices.value[0].key;
     }
@@ -965,6 +976,19 @@ async function loadInitialData() {
     }
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
+  }
+}
+
+async function loadCourseCategoryLabels() {
+  try {
+    const res = await fetchCourseCategories();
+    const map: Record<string, string> = {};
+    for (const item of res.data.data ?? []) {
+      map[item.typeCode] = item.displayName;
+    }
+    courseCategoryLabels.value = map;
+  } catch {
+    courseCategoryLabels.value = {};
   }
 }
 
@@ -979,6 +1003,50 @@ async function loadHistoricalOrder() {
     await printHistoricalFormIfRequested(String(orderId));
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
+  }
+}
+
+function startCorrection() {
+  editingCorrection.value = true;
+}
+
+function cancelCorrection() {
+  editingCorrection.value = false;
+  void loadHistoricalOrder();
+}
+
+async function saveCorrection() {
+  const orderId = Array.isArray(route.query.orderId) ? route.query.orderId[0] : route.query.orderId;
+  if (!orderId) {
+    return;
+  }
+  if (!fullStudentName.value.trim()) {
+    ElMessage.warning('Student name cannot be empty.');
+    return;
+  }
+  savingCorrection.value = true;
+  try {
+    await correctEnrollmentOrder(orderId, {
+      studentName: fullStudentName.value.trim(),
+      grade: form.student.grade,
+      school: form.student.school,
+      guardianPhone: form.student.guardianPhone,
+      guardianPhone2: form.student.guardianPhone2,
+      pickupRequired: form.student.pickupRequired,
+      pickupAddress: form.student.pickupAddress,
+      dropoffRequired: form.student.dropoffRequired,
+      dropoffAddress: form.student.dropoffAddress,
+      signupDate: form.signupDate || undefined,
+      handledByName: form.handledByName || undefined,
+      remark: form.remark || undefined,
+    });
+    ElMessage.success('Receipt details updated.');
+    editingCorrection.value = false;
+    await loadHistoricalOrder();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    savingCorrection.value = false;
   }
 }
 
@@ -2087,6 +2155,10 @@ function formatClassLabel(item: ClassGroupItem) {
 }
 
 function formatCourseType(type: string) {
+  const configured = courseCategoryLabels.value[type];
+  if (configured) {
+    return configured;
+  }
   const labels: Record<string, string> = {
     AFTER_SCHOOL: 'After school',
     SATURDAY: 'Saturday',

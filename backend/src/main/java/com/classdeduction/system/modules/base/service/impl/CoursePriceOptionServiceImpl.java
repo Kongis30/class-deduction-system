@@ -26,6 +26,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -117,7 +118,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             entity.setOptionCode(generateOptionCode(request));
         }
         ensureOptionCodeUnique(null, entity.getOptionCode());
-        coursePriceOptionMapper.insert(entity);
+        insertOrThrowDuplicateCode(entity);
         return entity.getId();
     }
 
@@ -136,7 +137,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             entity.setOptionCode(existingOptionCode);
         }
         ensureOptionCodeUnique(id, entity.getOptionCode());
-        coursePriceOptionMapper.updateById(entity);
+        updateOrThrowDuplicateCode(entity);
     }
 
     @Override
@@ -147,6 +148,12 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             throw new BusinessException("COURSE_PRICE_OPTION_REFERENCED",
                     "Course price option has been used by enrollment orders. Set it to INACTIVE instead.");
         }
+        // Release the unique option code before the soft delete so the same code can be
+        // reused later. The DB unique key spans all rows (including soft-deleted ones),
+        // while the application-level uniqueness check only looks at active rows, so a
+        // lingering soft-deleted row with the same code would otherwise cause a
+        // DuplicateKeyException on the next insert.
+        releaseOptionCode(entity);
         coursePriceOptionMapper.deleteById(entity.getId());
     }
 
@@ -690,6 +697,48 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             throw new BusinessException("COURSE_PRICE_OPTION_CODE_EXISTS",
                     "Course price option code already exists: " + optionCode);
         }
+    }
+
+    /**
+     * Insert the entity, translating the database-level unique constraint violation on
+     * {@code uk_course_price_option_code} into the same friendly business error used by
+     * {@link #ensureOptionCodeUnique}. This guards against the race where a soft-deleted
+     * row (invisible to the application-level check) still occupies the code in the DB.
+     */
+    private void insertOrThrowDuplicateCode(CoursePriceOptionEntity entity) {
+        try {
+            coursePriceOptionMapper.insert(entity);
+        } catch (DuplicateKeyException ex) {
+            throw new BusinessException("COURSE_PRICE_OPTION_CODE_EXISTS",
+                    "Course price option code already exists: " + entity.getOptionCode());
+        }
+    }
+
+    private void updateOrThrowDuplicateCode(CoursePriceOptionEntity entity) {
+        try {
+            coursePriceOptionMapper.updateById(entity);
+        } catch (DuplicateKeyException ex) {
+            throw new BusinessException("COURSE_PRICE_OPTION_CODE_EXISTS",
+                    "Course price option code already exists: " + entity.getOptionCode());
+        }
+    }
+
+    /**
+     * Rewrite the option code to a tombstoned value before soft deleting so the original
+     * code is freed for reuse. The DB unique key covers soft-deleted rows, so we must not
+     * leave the live code behind.
+     */
+    private void releaseOptionCode(CoursePriceOptionEntity entity) {
+        if (!StringUtils.hasText(entity.getOptionCode())) {
+            return;
+        }
+        String suffix = "_DEL_" + entity.getId();
+        String releasedCode = truncateCode(entity.getOptionCode(), 64 - suffix.length()) + suffix;
+        CoursePriceOptionEntity patch = new CoursePriceOptionEntity();
+        patch.setId(entity.getId());
+        patch.setOptionCode(releasedCode);
+        coursePriceOptionMapper.updateById(patch);
+        entity.setOptionCode(releasedCode);
     }
 
     private String generateOptionCode(CoursePriceOptionSaveRequest request) {

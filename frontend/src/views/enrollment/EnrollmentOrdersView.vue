@@ -168,6 +168,7 @@
                       <el-dropdown-item v-if="canRefundOrder(row)" command="refund">Refund</el-dropdown-item>
                       <el-dropdown-item v-if="canCancelOrder(row)" command="cancel">Cancel</el-dropdown-item>
                       <el-dropdown-item v-if="canDeleteOrder(row)" divided command="delete">Delete</el-dropdown-item>
+                      <el-dropdown-item v-if="canForceVoidOrder(row)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
                 </el-dropdown>
@@ -306,6 +307,7 @@
                               <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
                               <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
                               <el-dropdown-item v-if="canDeleteOrder(order)" divided command="delete">Delete</el-dropdown-item>
+                              <el-dropdown-item v-if="canForceVoidOrder(order)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
                             </el-dropdown-menu>
                           </template>
                         </el-dropdown>
@@ -922,11 +924,16 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
-import { cancelEnrollmentOrder, deleteEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
+import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
 import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
+import { useAuthStore } from '@/stores/auth';
+import { isAdminUser } from '@/types/auth';
 import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem, ReceiptRecordItem } from '@/types/domain';
 import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
+
+const authStore = useAuthStore();
+const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 
 const orderStatusOptions = [
   { label: 'Draft', value: 'DRAFT' },
@@ -1447,7 +1454,7 @@ async function handleCancel(row: EnrollmentOrderItem) {
 }
 
 // ─── Row Action Menu ────────────────────────────────
-type OrderAction = 'detail' | 'receipt' | 'pay' | 'refund' | 'cancel' | 'delete';
+type OrderAction = 'detail' | 'receipt' | 'pay' | 'refund' | 'cancel' | 'delete' | 'forceVoid';
 
 function canPayOrder(row: EnrollmentOrderItem) {
   return row.orderStatus === 'CONFIRMED'
@@ -1467,6 +1474,11 @@ function canDeleteOrder(row: EnrollmentOrderItem) {
   return row.paymentStatus === 'UNPAID' && (row.receivedAmount ?? 0) === 0;
 }
 
+// 强制作废：仅管理员可见，用于清理无法走常规删除/取消的历史脏数据（如系统改造前建立、已付款或已消课的记录）。
+function canForceVoidOrder(row: EnrollmentOrderItem) {
+  return isAdmin.value && !canDeleteOrder(row) && !canCancelOrder(row);
+}
+
 function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
   const actions: Record<OrderAction, () => void> = {
     detail: () => openDetailDialog(row),
@@ -1475,8 +1487,35 @@ function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
     refund: () => openRefundDialog(row),
     cancel: () => handleCancel(row),
     delete: () => openDeleteDialog(row),
+    forceVoid: () => handleForceVoid(row),
   };
   actions[command]?.();
+}
+
+async function handleForceVoid(row: EnrollmentOrderItem) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      'This permanently voids the order and removes it from lists and stats. Payment and lesson history are kept for audit. This cannot be undone. Enter a reason:',
+      'Force void order',
+      {
+        confirmButtonText: 'Void order',
+        cancelButtonText: 'Cancel',
+        inputPlaceholder: 'Reason (e.g. legacy record before system update)',
+        confirmButtonClass: 'el-button--danger',
+      },
+    );
+    await forceVoidEnrollmentOrder(row.id, value?.trim() || undefined);
+    ElMessage.success('Order voided.');
+    if (row.classId) {
+      await loadExpandedClassOrders(row.classId, expandedClassPagination[row.classId]?.page ?? 1);
+      await loadClassEnrollments();
+    } else {
+      await loadData();
+    }
+  } catch (err: any) {
+    if (err === 'cancel' || err === 'close') return;
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to void order.');
+  }
 }
 
 function openReceipt(row: EnrollmentOrderItem) {

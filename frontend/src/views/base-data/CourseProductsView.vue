@@ -239,13 +239,19 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   createCourseProduct,
   deleteCourseProduct,
+  forceDeleteCourseProduct,
   fetchCourseProducts,
   updateCourseProduct,
   type CourseProductQuery,
   type CourseProductSavePayload,
 } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
+import { useAuthStore } from '@/stores/auth';
+import { isAdminUser } from '@/types/auth';
 import type { ClassGroupItem, CourseProductItem, EntityId } from '@/types/domain';
+
+const authStore = useAuthStore();
+const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 
 const router = useRouter();
 const route = useRoute();
@@ -531,7 +537,40 @@ async function handleDelete(row: CourseProductItem) {
     ElMessage.success('Deleted.');
     loadData();
   } catch (err: any) {
+    // 常规删除被引用保护挡下时，管理员可走强制删除清理历史脏数据。
+    if (isAdmin.value) {
+      await offerForceDelete(row, err?.response?.data?.message);
+      return;
+    }
     ElMessage.error(err?.response?.data?.message ?? 'Delete failed.');
+  }
+}
+
+async function offerForceDelete(row: CourseProductItem, blockedMessage?: string) {
+  let reason: string;
+  try {
+    const result = await ElMessageBox.prompt(
+      `${blockedMessage ?? 'This product cannot be deleted normally.'}\n\n`
+        + `Force delete also removes its classes and cancels future lessons. `
+        + `Payment and lesson history are kept for audit. This cannot be undone. Enter a reason:`,
+      'Force delete (admin)',
+      {
+        confirmButtonText: 'Force delete',
+        cancelButtonText: 'Cancel',
+        inputPlaceholder: 'Reason (e.g. legacy record before system update)',
+        confirmButtonClass: 'el-button--danger',
+      },
+    );
+    reason = result.value?.trim() ?? '';
+  } catch {
+    return;
+  }
+  try {
+    await forceDeleteCourseProduct(row.id, reason || undefined);
+    ElMessage.success('Deleted.');
+    loadData();
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Force delete failed.');
   }
 }
 

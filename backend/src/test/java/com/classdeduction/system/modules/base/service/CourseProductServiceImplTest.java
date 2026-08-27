@@ -7,6 +7,7 @@ import com.classdeduction.system.modules.base.service.impl.CourseProductServiceI
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,6 +29,8 @@ class CourseProductServiceImplTest {
     @Mock
     private ClassGroupMapper classGroupMapper;
     @Mock
+    private ClassGroupService classGroupService;
+    @Mock
     private PlatformTransactionManager transactionManager;
 
     private CourseProductServiceImpl courseProductService;
@@ -38,6 +41,7 @@ class CourseProductServiceImplTest {
                 courseProductMapper,
                 coursePackageMapper,
                 classGroupMapper,
+                classGroupService,
                 transactionManager
         );
     }

@@ -207,6 +207,7 @@
             </div>
             <div class="oo-student-context__metrics">
               <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
+              <span v-if="(activePackage.bonusUnits ?? 0) > 0"><small>Bonus</small>{{ formatHours(activePackage.bonusUnits ?? 0) }}h</span>
               <span><small>Allocated</small>{{ formatHours(signatureAllocatedHours) }}h</span>
               <span><small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h</span>
             </div>
@@ -215,8 +216,8 @@
           <section class="oo-signature-sheet oo-parent-signature-sheet print-only">
             <div class="oo-signature-sheet__meta">
               <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
-              <p><strong>Purchased Hours:</strong> {{ formatHours(activePackage.totalUnits) }}</p>
-              <p><strong>Bonus?</strong></p>
+              <p><strong>Purchased Hours:</strong> {{ formatHours(activePackage.purchasedUnits ?? activePackage.totalUnits) }}</p>
+              <p><strong>Bonus:</strong> {{ formatHours(activePackage.bonusUnits ?? 0) }}</p>
               <p><strong>Total Hours:</strong>{{ formatHours(signatureAllocatedHours) }}</p>
             </div>
 
@@ -755,7 +756,10 @@ const signatureSubjectSummaries = computed<SignatureSubjectSummary[]>(() => {
   signatureSheetRows.value.forEach((row) => {
     const subject = signatureSubjectLabel(row);
     const teacher = signatureLessonTeacher(row);
-    const key = subject;
+    // 按"科目 + 老师"聚合：同一科目若由多位老师授课，需分别成行，
+    // 否则抬头老师与合计课时会与实际不符（如把两位老师的课时都算到第一位名下）。
+    const teacherKey = signatureTeacherKey(row, teacher);
+    const key = `${subject}__${teacherKey}`;
     const existing = groups.get(key);
     if (existing) {
       existing.rows.push(row);
@@ -766,6 +770,7 @@ const signatureSubjectSummaries = computed<SignatureSubjectSummary[]>(() => {
       key,
       subject,
       teacher,
+      teacherKey,
       classTime: '',
       hours: Number(row.plannedUnits ?? 0),
       startDate: formatSignatureDate(row.plannedStartAt),

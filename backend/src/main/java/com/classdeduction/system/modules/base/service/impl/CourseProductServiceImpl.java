@@ -39,6 +39,7 @@ public class CourseProductServiceImpl implements CourseProductService {
     private final CourseProductMapper courseProductMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final com.classdeduction.system.modules.schedule.service.ClassGroupService classGroupService;
     private final PlatformTransactionManager transactionManager;
 
     @Override
@@ -133,7 +134,47 @@ public class CourseProductServiceImpl implements CourseProductService {
                                 + "Set the product status to INACTIVE, or delete the class instead.");
             }
         }
+        releaseProductCode(product);
         courseProductMapper.deleteById(id);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void forceDeleteCourseProduct(Long id, String reason) {
+        CourseProductEntity product = requireCourseProduct(id);
+
+        // 级联软删除关联班级：取消未来课次、退出报名、软删班级本身。历史消课与流水保留供审计。
+        List<ClassGroupEntity> classes = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, id)
+                .eq(ClassGroupEntity::getIsDeleted, 0));
+        for (ClassGroupEntity clz : classes) {
+            classGroupService.deleteClassGroup(clz.getId());
+        }
+
+        releaseProductCode(product);
+        courseProductMapper.deleteById(id);
+    }
+
+    /**
+     * DB 上 uk_course_product_code 覆盖软删行，若不改写，删课后再建同号会撞唯一键报错。
+     */
+    private void releaseProductCode(CourseProductEntity entity) {
+        if (!StringUtils.hasText(entity.getProductCode())) {
+            return;
+        }
+        // product_code is varchar(32); keep the tombstone within that limit.
+        String suffix = "_DEL_" + entity.getId();
+        String base = entity.getProductCode();
+        int maxBaseLength = Math.max(0, 32 - suffix.length());
+        if (base.length() > maxBaseLength) {
+            base = base.substring(0, maxBaseLength);
+        }
+        String releasedCode = base + suffix;
+        CourseProductEntity patch = new CourseProductEntity();
+        patch.setId(entity.getId());
+        patch.setProductCode(releasedCode);
+        courseProductMapper.updateById(patch);
+        entity.setProductCode(releasedCode);
     }
 
     /**
