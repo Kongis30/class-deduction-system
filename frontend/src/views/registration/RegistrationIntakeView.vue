@@ -220,6 +220,7 @@
                     <el-select
                       v-model="line.courseProductId"
                       class="table-select table-select--primary"
+                      popper-class="course-product-picker"
                       :placeholder="productSelectPlaceholder(line)"
                       :disabled="isReadOnly || productOptionsForLine(line).length === 0"
                       no-data-text="No linked courses"
@@ -2968,57 +2969,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   font-size: 13px;
 }
 
-:deep(.course-product-group) {
-  margin: 6px 8px;
-  overflow: hidden;
-  border: 1px solid #d8dee8;
-  border-radius: 6px;
-  background: #fff;
-}
-
-:deep(.course-product-group + .course-product-group) {
-  margin-top: 10px;
-}
-
-:deep(.course-product-group .el-select-group__title) {
-  height: 28px;
-  padding: 0 10px;
-  border-bottom: 1px solid #d8dee8;
-  color: #475569;
-  font-size: 11px;
-  font-weight: 800;
-  line-height: 28px;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-:deep(.course-product-group--group .el-select-group__title) {
-  background: #eef6ff;
-  color: #1d4ed8;
-}
-
-:deep(.course-product-group--one-on-one .el-select-group__title) {
-  background: #f4f7f2;
-  color: #3f6212;
-}
-
-:deep(.course-product-group--other .el-select-group__title) {
-  background: #f8fafc;
-}
-
-:deep(.course-product-option) {
-  height: auto;
-  min-height: 36px;
-  padding: 7px 12px;
-  border-bottom: 1px solid #eef2f7;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-:deep(.course-product-option:last-child) {
-  border-bottom: none;
-}
-
 .price-option-row {
   display: flex;
   align-items: center;
@@ -3912,5 +3862,67 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     font-size: 8.5px;
   }
 
+}
+</style>
+
+<!--
+  el-select 下拉面板默认 teleport 到 body，scoped 样式无法命中，
+  故课程产品下拉的分组/选项样式放在全局（非 scoped）样式中。
+
+  Element Plus 2.11.5 的 el-option-group 渲染结构：
+    ul.el-select-group__wrap.course-product-group--<value>   ← 分组卡片（自定义 class 合并在此）
+      li.el-select-group__title                              ← 一级分组标题
+      li > ul.el-select-group > li.el-select-dropdown__item  ← 二级选项
+-->
+<style>
+/* 一级：分组卡片（标题+选项整体），带边框圆角，与相邻组明显分隔 */
+.course-product-picker .el-select-group__wrap {
+  margin: 6px 8px;
+  overflow: hidden;
+  border: 1px solid #dde5ee;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.course-product-picker .el-select-group__wrap + .el-select-group__wrap {
+  margin-top: 10px;
+}
+
+/* 一级标题：彩色加粗大写条带，突出"分组"层级 */
+.course-product-picker .el-select-group__title {
+  height: 30px;
+  padding: 0 12px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 30px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.course-product-picker .course-product-group--group .el-select-group__title {
+  background: #eef6ff;
+  color: #1d4ed8;
+}
+
+.course-product-picker .course-product-group--one-on-one .el-select-group__title {
+  background: #f4f7f2;
+  color: #3f6212;
+}
+
+.course-product-picker .course-product-group--other .el-select-group__title {
+  background: #f8fafc;
+  color: #64748b;
+}
+
+/* 二级：选项缩进 + 更小字号，与标题形成清晰层级；选中态沿用默认蓝色加粗 */
+.course-product-picker .el-select-group__wrap .el-select-dropdown__item {
+  height: auto;
+  min-height: 34px;
+  padding: 6px 12px 6px 28px;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: normal;
 }
 </style>
