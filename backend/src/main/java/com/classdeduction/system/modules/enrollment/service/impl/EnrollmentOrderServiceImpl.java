@@ -46,20 +46,28 @@ import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
+import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
+import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
+import com.classdeduction.system.modules.systemconfig.mapper.NotificationLogMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -116,6 +124,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
+    private final HourLedgerMapper hourLedgerMapper;
+    private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
+    private final LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
+    private final NotificationLogMapper notificationLogMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
@@ -1178,31 +1190,51 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private void cancelClassEnrollment(EnrollmentOrderEntity order) {
-        List<ClassEnrollmentEntity> enrollments = new ArrayList<>();
-        if (order.getClassId() != null) {
-            // Legacy direct class orders do not have an order-item reference.
-            enrollments.addAll(classEnrollmentMapper.selectList(
-                    new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                            .eq(ClassEnrollmentEntity::getClassId, order.getClassId())
-                            .eq(ClassEnrollmentEntity::getStudentId, order.getStudentId())
-                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                            .eq(ClassEnrollmentEntity::getIsDeleted, 0)));
-        }
-
         List<Long> orderItemIds = listOrderItemsByOrderId(order.getId()).stream()
                 .map(EnrollmentOrderItemEntity::getId)
                 .toList();
-        if (!orderItemIds.isEmpty()) {
-            enrollments.addAll(classEnrollmentMapper.selectList(
-                    new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                            .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, orderItemIds)
-                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                            .eq(ClassEnrollmentEntity::getIsDeleted, 0)));
+        markClassEnrollmentsWithdrawn(collectClassEnrollments(order, orderItemIds, true));
+    }
+
+    /**
+     * 收集本单关联的班课在册记录：兼容 legacy class_id 直连与 enrollment_order_item 模型，按 id 去重。
+     *
+     * @param onlyActive 仅收集 ACTIVE 在册（Cancel / ForceVoid 流程沿用旧行为）
+     */
+    private List<ClassEnrollmentEntity> collectClassEnrollments(EnrollmentOrderEntity order,
+                                                                List<Long> orderItemIds,
+                                                                boolean onlyActive) {
+        Map<Long, ClassEnrollmentEntity> byId = new LinkedHashMap<>();
+        if (order.getClassId() != null) {
+            // Legacy direct class orders do not have an order-item reference.
+            LambdaQueryWrapper<ClassEnrollmentEntity> legacy = new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                    .eq(ClassEnrollmentEntity::getClassId, order.getClassId())
+                    .eq(ClassEnrollmentEntity::getStudentId, order.getStudentId());
+            if (onlyActive) {
+                legacy.eq(ClassEnrollmentEntity::getStatus, "ACTIVE");
+            }
+            legacy.eq(ClassEnrollmentEntity::getIsDeleted, 0);
+            for (ClassEnrollmentEntity enrollment : classEnrollmentMapper.selectList(legacy)) {
+                byId.put(enrollment.getId(), enrollment);
+            }
         }
 
-        for (ClassEnrollmentEntity enrollment : enrollments.stream()
-                .collect(Collectors.toMap(ClassEnrollmentEntity::getId, item -> item, (left, right) -> left))
-                .values()) {
+        if (!orderItemIds.isEmpty()) {
+            LambdaQueryWrapper<ClassEnrollmentEntity> itemBased = new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                    .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, orderItemIds);
+            if (onlyActive) {
+                itemBased.eq(ClassEnrollmentEntity::getStatus, "ACTIVE");
+            }
+            itemBased.eq(ClassEnrollmentEntity::getIsDeleted, 0);
+            for (ClassEnrollmentEntity enrollment : classEnrollmentMapper.selectList(itemBased)) {
+                byId.put(enrollment.getId(), enrollment);
+            }
+        }
+        return new ArrayList<>(byId.values());
+    }
+
+    private void markClassEnrollmentsWithdrawn(List<ClassEnrollmentEntity> enrollments) {
+        for (ClassEnrollmentEntity enrollment : enrollments) {
             classEnrollmentMapper.update(
                     new LambdaUpdateWrapper<ClassEnrollmentEntity>()
                             .eq(ClassEnrollmentEntity::getId, enrollment.getId())
@@ -1313,15 +1345,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteOrder(Long id) {
         EnrollmentOrderEntity order = requireOrder(id);
-        validateOrderCanBeDeleted(order);
+        List<Long> itemIds = listOrderItemsByOrderId(id).stream()
+                .map(EnrollmentOrderItemEntity::getId)
+                .toList();
 
-        // Deletion is reserved for mistaken unpaid orders. Release only future scheduling before hiding the order.
-        if (!"CANCELLED".equals(order.getOrderStatus())) {
-            if (order.getClassId() != null) {
-                cancelClassEnrollment(order);
-            } else {
-                cancelOneOnOneEnrollment(order);
-            }
+        // 全量级联软删：任意状态订单均可删，子表数据一并软删，最后软删父表。
+        if (order.getClassId() != null) {
+            deleteClassOrderCascade(order, itemIds);
+        } else {
+            deleteOneOnOneOrderCascade(order, itemIds);
         }
         enrollmentOrderMapper.deleteById(id);
     }
@@ -1348,72 +1380,150 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         enrollmentOrderMapper.deleteById(id);
     }
 
-    private void validateOrderCanBeDeleted(EnrollmentOrderEntity order) {
-        BigDecimal received = order.getReceivedAmount() != null ? order.getReceivedAmount() : BigDecimal.ZERO;
-        if (received.compareTo(BigDecimal.ZERO) != 0 || !"UNPAID".equals(order.getPaymentStatus())) {
-            throw new BusinessException("ORDER_DELETE_PAYMENT_EXISTS", "Only unpaid mistaken orders can be deleted. Use Refund for paid orders.");
-        }
+    // ─── 全量级联软删辅助 ──────────────────────────────────────────────
 
-        Long paymentCount = paymentRecordMapper.selectCount(new LambdaQueryWrapper<PaymentRecordEntity>()
-                .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId()));
-        if (paymentCount != null && paymentCount > 0) {
-            throw new BusinessException("ORDER_DELETE_PAYMENT_RECORD_EXISTS", "This order has payment records and cannot be deleted.");
-        }
-
-        Long receiptCount = receiptRecordMapper.selectCount(new LambdaQueryWrapper<ReceiptRecordEntity>()
-                .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
-        if (receiptCount != null && receiptCount > 0) {
-            throw new BusinessException("ORDER_DELETE_RECEIPT_EXISTS", "This order has receipt records and cannot be deleted.");
-        }
-
-        if (order.getClassId() != null) {
-            validateClassOrderHasNoLessonRecords(order);
-            return;
-        }
-        validateOneOnOneOrderHasNoLessonActivity(order);
-    }
-
-    private void validateOneOnOneOrderHasNoLessonActivity(EnrollmentOrderEntity order) {
+    private void deleteOneOnOneOrderCascade(EnrollmentOrderEntity order, List<Long> itemIds) {
         List<CoursePackageEntity> packages = coursePackageMapper.selectList(
                 new LambdaQueryWrapper<CoursePackageEntity>()
-                        .eq(CoursePackageEntity::getEnrollmentOrderId, order.getId())
-        );
+                        .eq(CoursePackageEntity::getEnrollmentOrderId, order.getId()));
+        deleteOneOnOnePackageCascade(packages);
+        deleteOrderFinancialArtifacts(order, itemIds);
+    }
+
+    private void deleteClassOrderCascade(EnrollmentOrderEntity order, List<Long> itemIds) {
+        // 1) 撤销本单关联的班课在册（兼容 item 模型与 legacy class_id+student_id，不限定 status）
+        List<ClassEnrollmentEntity> classEnrollments = collectClassEnrollments(order, itemIds, false);
+        List<Long> classEnrollmentIds = classEnrollments.stream()
+                .map(ClassEnrollmentEntity::getId)
+                .toList();
+        markClassEnrollmentsWithdrawn(classEnrollments);
+
+        // 2) 软删该学生个人的班课课时核销记录；共享排课 occurrence 不删
+        List<Long> classRecordIds = listClassOrderLessonRecordIds(order);
+        if (!classRecordIds.isEmpty()) {
+            lessonRecordMapper.delete(new LambdaQueryWrapper<LessonRecordEntity>()
+                    .in(LessonRecordEntity::getId, classRecordIds));
+            notificationLogMapper.delete(new LambdaQueryWrapper<NotificationLogEntity>()
+                    .in(NotificationLogEntity::getLessonRecordId, classRecordIds));
+        }
+        // class 课时流水：当前无此类行（class 课时接线未启用），按在册 / 课时记录预留级联
+        if (!classEnrollmentIds.isEmpty() || !classRecordIds.isEmpty()) {
+            QueryWrapper<HourLedgerEntity> ledgerWrapper = new QueryWrapper<>();
+            boolean hasClause = false;
+            if (!classEnrollmentIds.isEmpty()) {
+                // HourLedgerEntity 尚无 class_enrollment_id 字段，使用原列名
+                ledgerWrapper.in("class_enrollment_id", classEnrollmentIds);
+                hasClause = true;
+            }
+            if (!classRecordIds.isEmpty()) {
+                if (hasClause) {
+                    ledgerWrapper.or().in("lesson_record_id", classRecordIds);
+                } else {
+                    ledgerWrapper.in("lesson_record_id", classRecordIds);
+                }
+            }
+            hourLedgerMapper.delete(ledgerWrapper);
+        }
+
+        // 3) 班课订单如有 course_package（当前为 0，item 模型未来可能产生），一并级联其下游
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(
+                new LambdaQueryWrapper<CoursePackageEntity>()
+                        .eq(CoursePackageEntity::getEnrollmentOrderId, order.getId()));
+        deleteOneOnOnePackageCascade(packages);
+
+        deleteOrderFinancialArtifacts(order, itemIds);
+    }
+
+    private void deleteOneOnOnePackageCascade(List<CoursePackageEntity> packages) {
         if (packages.isEmpty()) {
             return;
         }
-
         List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
-        Long lessonRecordCount = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
-                .in(LessonRecordEntity::getPackageId, packageIds));
-        if (lessonRecordCount != null && lessonRecordCount > 0) {
-            throw new BusinessException("ORDER_DELETE_LESSON_RECORD_EXISTS", "This order already has lesson records and cannot be deleted.");
+
+        // 收集下游 id
+        List<Long> occurrenceIds = lessonOccurrenceMapper.selectList(
+                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                                .select(LessonOccurrenceEntity::getId)
+                                .in(LessonOccurrenceEntity::getPackageId, packageIds))
+                .stream().map(LessonOccurrenceEntity::getId).toList();
+        List<Long> recordIds = lessonRecordMapper.selectList(
+                        new LambdaQueryWrapper<LessonRecordEntity>()
+                                .select(LessonRecordEntity::getId)
+                                .in(LessonRecordEntity::getPackageId, packageIds))
+                .stream().map(LessonRecordEntity::getId).toList();
+        List<Long> ruleIds = recurringScheduleRuleMapper.selectList(
+                        new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                                .select(RecurringScheduleRuleEntity::getId)
+                                .in(RecurringScheduleRuleEntity::getPackageId, packageIds))
+                .stream().map(RecurringScheduleRuleEntity::getId).toList();
+
+        // 子表 → 父表删除
+        if (!occurrenceIds.isEmpty()) {
+            // lesson_adjustment_log 无 is_deleted → 物理删
+            lessonAdjustmentLogMapper.delete(new LambdaQueryWrapper<LessonAdjustmentLogEntity>()
+                    .in(LessonAdjustmentLogEntity::getOccurrenceId, occurrenceIds));
+        }
+        lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPackageId, packageIds));
+
+        if (!ruleIds.isEmpty()) {
+            recurringScheduleSlotMapper.delete(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                    .in(RecurringScheduleSlotEntity::getRuleId, ruleIds));
+        }
+        recurringScheduleRuleMapper.delete(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                .in(RecurringScheduleRuleEntity::getPackageId, packageIds));
+
+        if (!recordIds.isEmpty()) {
+            lessonRecordMapper.delete(new LambdaQueryWrapper<LessonRecordEntity>()
+                    .in(LessonRecordEntity::getId, recordIds));
+            hourLedgerMapper.delete(new LambdaQueryWrapper<HourLedgerEntity>()
+                    .in(HourLedgerEntity::getLessonRecordId, recordIds));
+            notificationLogMapper.delete(new LambdaQueryWrapper<NotificationLogEntity>()
+                    .in(NotificationLogEntity::getLessonRecordId, recordIds));
+        }
+        // hour_ledger / notification_log 按 package 关联一并软删
+        hourLedgerMapper.delete(new LambdaQueryWrapper<HourLedgerEntity>()
+                .in(HourLedgerEntity::getPackageId, packageIds));
+        notificationLogMapper.delete(new LambdaQueryWrapper<NotificationLogEntity>()
+                .in(NotificationLogEntity::getPackageId, packageIds));
+
+        // package_balance_snapshot 无 is_deleted → 物理删（PK = package_id）
+        for (Long packageId : packageIds) {
+            packageBalanceSnapshotMapper.deleteById(packageId);
         }
 
-        Long pastOccurrenceCount = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .in(LessonOccurrenceEntity::getPackageId, packageIds)
-                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .le(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
-        if (pastOccurrenceCount != null && pastOccurrenceCount > 0) {
-            throw new BusinessException("ORDER_DELETE_PAST_LESSON_EXISTS", "This order has past scheduled lessons and cannot be deleted.");
-        }
+        packageTeacherAssignmentMapper.delete(new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
+                .in(PackageTeacherAssignmentEntity::getPackageId, packageIds));
+        coursePackageMapper.delete(new LambdaQueryWrapper<CoursePackageEntity>()
+                .in(CoursePackageEntity::getId, packageIds));
     }
 
-    private void validateClassOrderHasNoLessonRecords(EnrollmentOrderEntity order) {
-        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .select(LessonOccurrenceEntity::getId)
-                        .eq(LessonOccurrenceEntity::getClassGroupId, order.getClassId())
-        );
-        if (occurrences.isEmpty()) {
-            return;
+    private void deleteOrderFinancialArtifacts(EnrollmentOrderEntity order, List<Long> itemIds) {
+        if (!itemIds.isEmpty()) {
+            enrollmentOrderItemMapper.delete(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
+                    .in(EnrollmentOrderItemEntity::getId, itemIds));
         }
+        paymentRecordMapper.delete(new LambdaQueryWrapper<PaymentRecordEntity>()
+                .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId()));
+        receiptRecordMapper.delete(new LambdaQueryWrapper<ReceiptRecordEntity>()
+                .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
+    }
 
-        Long lessonRecordCount = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
-                .eq(LessonRecordEntity::getStudentId, order.getStudentId())
-                .in(LessonRecordEntity::getOccurrenceId, occurrences.stream().map(LessonOccurrenceEntity::getId).toList()));
-        if (lessonRecordCount != null && lessonRecordCount > 0) {
-            throw new BusinessException("ORDER_DELETE_LESSON_RECORD_EXISTS", "This order already has lesson records and cannot be deleted.");
+    private List<Long> listClassOrderLessonRecordIds(EnrollmentOrderEntity order) {
+        List<Long> occurrenceIds = lessonOccurrenceMapper.selectList(
+                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                                .select(LessonOccurrenceEntity::getId)
+                                .eq(LessonOccurrenceEntity::getClassGroupId, order.getClassId()))
+                .stream().map(LessonOccurrenceEntity::getId).toList();
+        if (occurrenceIds.isEmpty()) {
+            return Collections.emptyList();
         }
+        return lessonRecordMapper.selectList(
+                        new LambdaQueryWrapper<LessonRecordEntity>()
+                                .select(LessonRecordEntity::getId)
+                                .eq(LessonRecordEntity::getStudentId, order.getStudentId())
+                                .in(LessonRecordEntity::getOccurrenceId, occurrenceIds))
+                .stream().map(LessonRecordEntity::getId).toList();
     }
 
     @Override

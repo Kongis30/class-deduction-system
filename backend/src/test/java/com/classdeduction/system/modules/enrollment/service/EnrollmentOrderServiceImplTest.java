@@ -13,6 +13,7 @@ import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateReq
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
@@ -27,12 +28,21 @@ import com.classdeduction.system.modules.enrollment.service.impl.EnrollmentOrder
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
-import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
+import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
+import com.classdeduction.system.modules.systemconfig.mapper.NotificationLogMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import org.junit.jupiter.api.BeforeAll;
@@ -113,6 +123,18 @@ class EnrollmentOrderServiceImplTest {
     private LessonRecordMapper lessonRecordMapper;
 
     @Mock
+    private HourLedgerMapper hourLedgerMapper;
+
+    @Mock
+    private PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
+
+    @Mock
+    private LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
+
+    @Mock
+    private NotificationLogMapper notificationLogMapper;
+
+    @Mock
     private com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper classGroupMapper;
 
     @Mock
@@ -141,6 +163,14 @@ class EnrollmentOrderServiceImplTest {
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassEnrollmentEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderItemEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonRecordEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), HourLedgerEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonAdjustmentLogEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), NotificationLogEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleRuleEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleSlotEntity.class);
     }
 
     @BeforeEach
@@ -160,6 +190,10 @@ class EnrollmentOrderServiceImplTest {
                 recurringScheduleSlotMapper,
                 lessonOccurrenceMapper,
                 lessonRecordMapper,
+                hourLedgerMapper,
+                packageBalanceSnapshotMapper,
+                lessonAdjustmentLogMapper,
+                notificationLogMapper,
                 classGroupMapper,
                 classEnrollmentMapper,
                 classGroupScheduleSlotMapper,
@@ -345,7 +379,7 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldDeleteOneOnOneOrderAndReleaseFutureScheduling() {
+    void shouldDeleteOneOnOneOrderWithFullCascade() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setOrderStatus("CONFIRMED");
@@ -357,32 +391,47 @@ class EnrollmentOrderServiceImplTest {
         coursePackage.setEnrollmentOrderId(2001L);
         coursePackage.setPackageStatus("ACTIVE");
 
+        LessonRecordEntity lessonRecord = new LessonRecordEntity();
+        lessonRecord.setId(4001L);
+        lessonRecord.setPackageId(3001L);
+
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(lessonRecord));
         when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
 
         enrollmentOrderService.deleteOrder(2001L);
 
-        verify(lessonOccurrenceMapper).update(any());
-        verify(coursePackageMapper).updateById(packageCaptor.capture());
+        // 全量级联：包及其下游软删/物理删，订单最后软删
+        verify(coursePackageMapper).delete(any());
+        verify(lessonOccurrenceMapper).delete(any());
+        verify(lessonRecordMapper).delete(any());
+        verify(hourLedgerMapper, atLeastOnce()).delete(any());
+        verify(notificationLogMapper, atLeastOnce()).delete(any());
+        verify(packageTeacherAssignmentMapper).delete(any());
+        verify(packageBalanceSnapshotMapper).deleteById(3001L);
+        verify(paymentRecordMapper).delete(any());
+        verify(receiptRecordMapper).delete(any());
         verify(enrollmentOrderMapper).deleteById(2001L);
-        assertThat(packageCaptor.getValue().getPackageStatus()).isEqualTo("CLOSED");
     }
 
     @Test
-    void shouldRejectDeleteWhenOrderHasReceivedPayment() {
+    void shouldDeletePaidOrderWithFullCascade() {
+        // 全量级联：已付款订单同样可删（不再限制仅未付款）
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setOrderStatus("CONFIRMED");
         order.setPaymentStatus("PAID");
         order.setReceivedAmount(new BigDecimal("1100.00"));
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of());
 
-        assertThatThrownBy(() -> enrollmentOrderService.deleteOrder(2001L))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Only unpaid mistaken orders can be deleted. Use Refund for paid orders.");
+        enrollmentOrderService.deleteOrder(2001L);
 
-        verify(enrollmentOrderMapper, never()).deleteById(2001L);
+        verify(paymentRecordMapper).delete(any());
+        verify(receiptRecordMapper).delete(any());
+        verify(enrollmentOrderMapper).deleteById(2001L);
     }
 
     @Test

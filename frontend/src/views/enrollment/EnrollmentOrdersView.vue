@@ -718,10 +718,16 @@
 
       <div class="delete-warning">
         <p>
-          Delete is only for mistaken unpaid orders. This action cannot be recovered.
+          This removes the order from the list together with its course package, scheduled lessons,
+          confirmed lesson records, hour ledger, and payment/receipt records.
+        </p>
+        <p v-if="deleteTarget?.classId">
+          For class orders the student's seat and personal lesson records are also removed;
+          the shared class schedule is untouched.
         </p>
         <p>
-          Deleting this order will remove it from the list and cancel future scheduling tied to this enrollment.
+          Data is soft-deleted and retained for audit, but no longer displayed.
+          This action cannot be recovered through the UI.
         </p>
         <p v-if="deleteTarget">
           Order: <strong>{{ deleteTarget.enrollmentNo }}</strong>
@@ -1470,13 +1476,14 @@ function canCancelOrder(row: EnrollmentOrderItem) {
   return row.orderStatus === 'CONFIRMED' && (row.receivedAmount ?? 0) === 0;
 }
 
+// 全量级联软删：任意状态订单（CONFIRMED / CANCELLED / 已付款）均可删除。
 function canDeleteOrder(row: EnrollmentOrderItem) {
-  return row.paymentStatus === 'UNPAID' && (row.receivedAmount ?? 0) === 0;
+  return true;
 }
 
-// 强制作废：仅管理员可见，用于清理无法走常规删除/取消的历史脏数据（如系统改造前建立、已付款或已消课的记录）。
+// 强制作废：仅管理员可见，用于"保留财务/消课历史、只隐藏订单"的清理场景。
 function canForceVoidOrder(row: EnrollmentOrderItem) {
-  return isAdmin.value && !canDeleteOrder(row) && !canCancelOrder(row);
+  return isAdmin.value && !canCancelOrder(row);
 }
 
 function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
