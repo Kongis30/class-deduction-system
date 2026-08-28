@@ -25,7 +25,9 @@ import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMap
 import com.classdeduction.system.modules.lesson.service.impl.LessonRecordServiceImpl;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -96,6 +98,9 @@ class LessonRecordServiceImplTest {
     @Mock
     private com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper notificationTriggerRuleMapper;
 
+    @Mock
+    private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+
     @Captor
     private ArgumentCaptor<LessonRecordEntity> recordCaptor;
 
@@ -134,7 +139,8 @@ class LessonRecordServiceImplTest {
                 teacherMapper,
                 classroomMapper,
                 notificationOutboxService,
-                notificationTriggerRuleMapper
+                notificationTriggerRuleMapper,
+                recurringScheduleRuleMapper
         );
     }
 

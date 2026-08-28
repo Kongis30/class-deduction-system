@@ -653,7 +653,11 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         }
         coursePackage.setTotalUnits(newTotalUnits);
         coursePackage.setRemainingUnits(newRemainingUnits);
-        if (newRemainingUnits > 0 && "COMPLETED".equals(coursePackage.getPackageStatus())) {
+        if (newRemainingUnits == 0) {
+            // 课时被调整为 0 → 课时耗尽，即时转 COMPLETED（避免课包停留在 ACTIVE 而不在列表收敛）
+            coursePackage.setPackageStatus("COMPLETED");
+            coursePackage.setCompletedAt(AppTime.nowLocalDateTime());
+        } else if (newRemainingUnits > 0 && "COMPLETED".equals(coursePackage.getPackageStatus())) {
             coursePackage.setPackageStatus("ACTIVE");
             coursePackage.setCompletedAt(null);
         }
