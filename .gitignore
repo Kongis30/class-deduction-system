@@ -35,6 +35,7 @@ memroy/
 
 # Logs
 *.log
+backend/logs/
 
 # Local env / editor temp files
 .env.local
