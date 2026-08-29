@@ -1481,9 +1481,9 @@ function canDeleteOrder(row: EnrollmentOrderItem) {
   return true;
 }
 
-// 强制作废：仅管理员可见，用于"保留财务/消课历史、只隐藏订单"的清理场景。
-function canForceVoidOrder(row: EnrollmentOrderItem) {
-  return isAdmin.value && !canCancelOrder(row);
+// 强制作废：业务上不需要，按需求隐藏该按钮（恒 false，前端不再渲染下拉项）。
+function canForceVoidOrder(_row: EnrollmentOrderItem) {
+  return false;
 }
 
 function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
