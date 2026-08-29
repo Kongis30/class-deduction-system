@@ -1741,7 +1741,7 @@ function groupMonthCountFromSnapshot(item: Record<string, unknown> | EnrollmentO
 
 function printTeacherOrClassLabel(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line)) {
-    return teachers.value.find((teacher) => String(teacher.id) === String(line.teacherId))?.teacherName || 'To be assigned';
+    return teachers.value.find((teacher) => String(teacher.id) === String(line.teacherId))?.teacherName || '—';
   }
   const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
   return classGroup ? formatClassLabel(classGroup) : line.className || '—';

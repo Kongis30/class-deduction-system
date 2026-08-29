@@ -111,10 +111,6 @@
         </section>
       </el-col>
     </el-row>
-
-    <el-dialog v-model="transactionReceiptDialogVisible" :title="transactionReceiptTitle" width="820px">
-      <PaymentReceiptPreview v-if="selectedTransactionReceipt" :receipt="selectedTransactionReceipt" />
-    </el-dialog>
   </div>
 </template>
 
@@ -126,7 +122,6 @@ import { useRouter } from 'vue-router';
 import { fetchStudents } from '@/api/base-data';
 import { fetchReceipts } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
-import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
 import type { ReceiptRecordItem, StudentItem } from '@/types/domain';
 
 const router = useRouter();
@@ -139,8 +134,6 @@ const selectedStudent = ref<StudentItem | null>(null);
 const receiptType = ref<'registration' | 'payment' | 'refund'>('registration');
 const receipts = ref<ReceiptRecordItem[]>([]);
 const receiptTotal = ref(0);
-const transactionReceiptDialogVisible = ref(false);
-const selectedTransactionReceipt = ref<ReceiptRecordItem | null>(null);
 const recordTotal = computed(() => receiptTotal.value);
 
 const studentQuery = reactive({
@@ -262,18 +255,10 @@ function clearOrders() {
   receiptTotal.value = 0;
 }
 
-const transactionReceiptTitle = computed(() =>
-  receiptType.value === 'refund' ? 'Refund Receipt' : 'Payment Receipt'
-);
-
 function openReceipt(row: ReceiptRecordItem) {
-  if (receiptType.value === 'registration') {
-    const orderId = receiptPayload(row).enrollmentOrderId || row.enrollmentOrderId;
-    router.push({ name: 'registration', query: { orderId: String(orderId) } });
-    return;
-  }
-  selectedTransactionReceipt.value = row;
-  transactionReceiptDialogVisible.value = true;
+  // 统一收据查看样式：报名/付款/退款收据都跳转到报名页只读收据（与 Enrollments 页一致）。
+  const orderId = receiptPayload(row).enrollmentOrderId || row.enrollmentOrderId;
+  router.push({ name: 'registration', query: { orderId: String(orderId) } });
 }
 
 function receiptPayload(row: ReceiptRecordItem) {
