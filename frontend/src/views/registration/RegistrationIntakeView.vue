@@ -619,7 +619,7 @@ import { extractErrorMessage } from '@/api/http';
 import { fetchActivePaymentMethods, fetchEnrollmentOrder, submitRegistrationIntake, correctEnrollmentOrder, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
-import type { CampusItem, ClassGroupItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
+import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
 import { getStoredAuthUser } from '@/utils/auth-storage';
 import { isAdminUser } from '@/types/auth';
 
@@ -1135,6 +1135,11 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   const payloadItems = getArray(receiptPayload, 'items');
   courseLines.value = (payloadItems.length > 0 ? payloadItems : order.items)
     .map((item, index) => toHistoricalCourseLine(item, index, findOrderItemFallback(item, order.items, index)));
+  // 历史报名单（收据无 items、订单无明细行时）用订单课包兜底还原课程行，
+  // 课程名取课包快照，避免依赖已删除的 course_product 联表。
+  if (courseLines.value.length === 0) {
+    courseLines.value = buildCourseLinesFromPackages(order.packages);
+  }
   if (courseLines.value.length === 0) {
     courseLines.value = [createCourseLine()];
   }
@@ -1238,6 +1243,26 @@ function findOrderItemFallback(
   return orderItems.find((candidate) => String(candidate.id) === orderItemId)
     || orderItems.find((candidate) => candidate.lineNo === lineNo)
     || orderItems[index];
+}
+
+/**
+ * 从订单课包还原课程行。用于历史报名单——收据 payload 无 items 数组、订单也无明细行
+ * （enrollment_order_item）时的兜底。课程名优先取 courseProductName 快照，
+ * 该字段来自 course_product 联表（产品被删后为 null），故回退到 package_name 快照。
+ */
+function buildCourseLinesFromPackages(packages: CoursePackageItem[]): RegistrationCourseLine[] {
+  return (packages ?? []).map((pkg) => {
+    const line = createCourseLine();
+    line.courseType = pkg.teachingMode || '';
+    line.courseProductId = pkg.courseProductId;
+    line.courseProductName = pkg.courseProductName || pkg.packageName;
+    line.detail = pkg.packageName;
+    line.packageQuantity = pkg.totalUnits;
+    line.oneOnOneUnits = pkg.teachingMode === 'ONE_ON_ONE' ? pkg.totalUnits : undefined;
+    line.priceAmount = 0;
+    line.startDate = pkg.startDate || undefined;
+    return line;
+  });
 }
 
 async function checkReusableStudent() {
