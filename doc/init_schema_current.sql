@@ -103,7 +103,7 @@ CREATE TABLE `campus` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_campus_name` (`campus_name`),
+  UNIQUE KEY `uk_campus_name` (`campus_name`,`is_deleted`),
   KEY `idx_campus_status` (`status`),
   KEY `idx_campus_display_order` (`display_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Campus master';
@@ -250,7 +250,7 @@ CREATE TABLE `classroom` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_room_code` (`room_code`),
+  UNIQUE KEY `uk_room_code` (`room_code`,`is_deleted`),
   KEY `idx_room_name` (`room_name`),
   KEY `idx_classroom_campus` (`campus`),
   KEY `idx_classroom_status` (`status`),
@@ -297,7 +297,7 @@ CREATE TABLE `course_package` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_course_package_no` (`package_no`),
+  UNIQUE KEY `uk_course_package_no` (`package_no`,`is_deleted`),
   KEY `idx_package_student` (`student_id`,`package_status`),
   KEY `idx_package_estimated_end` (`estimated_end_date`),
   KEY `idx_package_product` (`course_product_id`),
@@ -355,7 +355,7 @@ CREATE TABLE `course_price_option` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_course_price_option_code` (`option_code`),
+  UNIQUE KEY `uk_course_price_option_code` (`option_code`,`is_deleted`),
   KEY `idx_course_price_option_type` (`course_type`,`status`,`sort_order`),
   KEY `idx_course_price_option_product` (`course_product_id`),
   KEY `idx_course_price_option_class` (`class_id`),
@@ -400,7 +400,7 @@ CREATE TABLE `course_product` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_course_product_code` (`product_code`),
+  UNIQUE KEY `uk_course_product_code` (`product_code`,`is_deleted`),
   KEY `idx_course_product_name` (`product_name`),
   KEY `idx_course_product_status` (`status`),
   KEY `idx_course_product_type` (`course_type`,`status`),
@@ -514,7 +514,7 @@ CREATE TABLE `enrollment_order` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_enrollment_no` (`enrollment_no`),
+  UNIQUE KEY `uk_enrollment_no` (`enrollment_no`,`is_deleted`),
   KEY `idx_enrollment_student` (`student_id`,`created_at` DESC),
   KEY `idx_enrollment_status` (`order_status`,`payment_status`),
   KEY `idx_enrollment_cashier` (`cashier_user_id`),
@@ -759,7 +759,7 @@ CREATE TABLE `lesson_record` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_lesson_record_occurrence_student` (`occurrence_id`,`student_id`),
+  UNIQUE KEY `uk_lesson_record_occurrence_student` (`occurrence_id`,`student_id`,`is_deleted`),
   KEY `idx_lesson_record_package` (`package_id`,`confirmed_at` DESC),
   KEY `idx_lesson_record_student` (`student_id`,`confirmed_at` DESC),
   KEY `idx_lesson_record_actual_teacher` (`actual_teacher_id`,`confirmed_at` DESC),
@@ -806,7 +806,7 @@ CREATE TABLE `lesson_status_rule` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_lesson_status_rule_code` (`status_code`),
+  UNIQUE KEY `uk_lesson_status_rule_code` (`status_code`,`is_deleted`),
   KEY `idx_lesson_status_rule_status` (`status`),
   CONSTRAINT `chk_lesson_status_rule_fixed_units` CHECK (((`fixed_units` is null) or (`fixed_units` >= 0)))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Lesson status rules';
@@ -913,7 +913,7 @@ CREATE TABLE `notification_template` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_notification_template_code` (`template_code`),
+  UNIQUE KEY `uk_notification_template_code` (`template_code`,`is_deleted`),
   KEY `idx_notification_template_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Notification templates';
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1025,7 +1025,7 @@ CREATE TABLE `payment_method` (
   `deleted_by` bigint DEFAULT NULL,
   `version` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_method_code` (`method_code`)
+  UNIQUE KEY `uk_method_code` (`method_code`,`is_deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='User-configurable payment methods';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -1057,7 +1057,7 @@ CREATE TABLE `payment_record` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_payment_no` (`payment_no`),
+  UNIQUE KEY `uk_payment_no` (`payment_no`,`is_deleted`),
   KEY `idx_payment_order` (`enrollment_order_id`,`paid_at` DESC),
   KEY `idx_payment_handler` (`handled_by_user_id`),
   CONSTRAINT `fk_payment_handler` FOREIGN KEY (`handled_by_user_id`) REFERENCES `sys_user` (`id`),
@@ -1091,7 +1091,7 @@ CREATE TABLE `receipt_record` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_receipt_no` (`receipt_no`),
+  UNIQUE KEY `uk_receipt_no` (`receipt_no`,`is_deleted`),
   KEY `idx_receipt_order` (`enrollment_order_id`,`issued_at` DESC),
   KEY `idx_receipt_student` (`student_id`),
   KEY `fk_receipt_issued_by` (`issued_by`),
@@ -1210,7 +1210,7 @@ CREATE TABLE `student` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_student_no` (`student_no`),
+  UNIQUE KEY `uk_student_no` (`student_no`,`is_deleted`),
   KEY `idx_student_name` (`student_name`),
   KEY `idx_student_status` (`status`),
   KEY `idx_student_campus` (`campus_id`),
@@ -1241,7 +1241,7 @@ CREATE TABLE `subject` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_subject_name` (`subject_name`),
+  UNIQUE KEY `uk_subject_name` (`subject_name`,`is_deleted`),
   KEY `idx_subject_status` (`status`),
   KEY `idx_subject_display_order` (`display_order`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Course subjects (Math, English, Science, SAT, etc.)';
@@ -1273,7 +1273,7 @@ CREATE TABLE `sys_dict_item` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_sys_dict_item_code` (`dict_type_id`,`item_code`),
+  UNIQUE KEY `uk_sys_dict_item_code` (`dict_type_id`,`item_code`,`is_deleted`),
   KEY `idx_sys_dict_item_value` (`dict_type_id`,`item_value`),
   KEY `idx_sys_dict_item_status` (`status`),
   CONSTRAINT `fk_sys_dict_item_type` FOREIGN KEY (`dict_type_id`) REFERENCES `sys_dict_type` (`id`)
@@ -1302,7 +1302,7 @@ CREATE TABLE `sys_dict_type` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_sys_dict_type_code` (`dict_code`),
+  UNIQUE KEY `uk_sys_dict_type_code` (`dict_code`,`is_deleted`),
   KEY `idx_sys_dict_type_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Dictionary types';
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1377,7 +1377,7 @@ CREATE TABLE `sys_permission` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_sys_permission_code` (`permission_code`),
+  UNIQUE KEY `uk_sys_permission_code` (`permission_code`,`is_deleted`),
   KEY `idx_sys_permission_parent` (`parent_id`),
   KEY `idx_sys_permission_type_status` (`permission_type`,`status`),
   CONSTRAINT `fk_sys_permission_parent` FOREIGN KEY (`parent_id`) REFERENCES `sys_permission` (`id`)
@@ -1406,7 +1406,7 @@ CREATE TABLE `sys_role` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_sys_role_code` (`role_code`),
+  UNIQUE KEY `uk_sys_role_code` (`role_code`,`is_deleted`),
   KEY `idx_sys_role_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='System roles';
 /*!40101 SET character_set_client = @saved_cs_client */;
@@ -1460,9 +1460,9 @@ CREATE TABLE `sys_user` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_sys_user_username` (`username`),
-  UNIQUE KEY `uk_sys_user_teacher_id` (`teacher_id`),
-  UNIQUE KEY `idx_sys_user_student_id` (`student_id`),
+  UNIQUE KEY `uk_sys_user_username` (`username`,`is_deleted`),
+  UNIQUE KEY `uk_sys_user_teacher_id` (`teacher_id`,`is_deleted`),
+  KEY `idx_sys_user_student_id` (`student_id`),
   KEY `idx_sys_user_teacher_id` (`teacher_id`),
   KEY `idx_sys_user_type_status` (`user_type`,`status`),
   CONSTRAINT `fk_sys_user_student` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`),
@@ -1517,7 +1517,7 @@ CREATE TABLE `teacher` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_teacher_no` (`teacher_no`),
+  UNIQUE KEY `uk_teacher_no` (`teacher_no`,`is_deleted`),
   KEY `idx_teacher_name` (`teacher_name`),
   KEY `idx_teacher_status` (`status`),
   KEY `idx_teacher_campus` (`campus_id`),
@@ -1589,7 +1589,7 @@ CREATE TABLE `teacher_payment` (
   `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
   `version` int NOT NULL DEFAULT '0' COMMENT 'Optimistic lock version',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_payment_no` (`payment_no`),
+  UNIQUE KEY `uk_payment_no` (`payment_no`,`is_deleted`),
   KEY `idx_payment_teacher` (`teacher_id`),
   KEY `idx_payment_status` (`status`),
   CONSTRAINT `fk_payment_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
