@@ -65,7 +65,7 @@
                 <el-icon><ArrowLeft /></el-icon>
                 Back to Courses
               </el-button>
-              <el-button v-if="selectedMode === 'GROUP'" @click="openGradeDialog">Manage grades</el-button>
+              <el-button @click="openGradeDialog">Manage grades</el-button>
               <el-button type="primary" @click="openDialog()">
                 {{ matrixPrimaryActionLabel }}
               </el-button>
