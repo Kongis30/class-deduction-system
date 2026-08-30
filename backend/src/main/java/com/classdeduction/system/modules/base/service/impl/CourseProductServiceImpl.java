@@ -107,7 +107,6 @@ public class CourseProductServiceImpl implements CourseProductService {
         ensureProductCodeUnique(id, request.getProductCode());
         ensureProductNameUnique(id, request.getProductName());
         validateByTeachingMode(request);
-        protectReferencedProductCriticalFields(entity, request);
         applyCourseProduct(entity, request);
         courseProductMapper.updateById(entity);
     }
@@ -217,25 +216,6 @@ public class CourseProductServiceImpl implements CourseProductService {
          }
     }
 
-     private void protectReferencedProductCriticalFields(CourseProductEntity existing, CourseProductSaveRequest request) {
-         if (!isProductReferenced(existing.getId())) {
-             return;
-         }
-         List<String> changedFields = new ArrayList<>();
-         addIfChanged(changedFields, "course type", existing.getCourseType(), normalizeCourseType(request));
-         addIfChanged(changedFields, "register class", existing.getRegisterClass(), normalizeRegisterClass(request));
-         addIfChanged(changedFields, "teaching format", existing.getTeachingMode(), request.getTeachingMode());
-         if (!changedFields.isEmpty()) {
-             throw new BusinessException("PRODUCT_ALREADY_REFERENCED",
-                     "This course product is already used. Create a new product to change: "
-                             + String.join(", ", changedFields) + ".");
-         }
-     }
-
-     private boolean isProductReferenced(Long productId) {
-         return countProductReferences(productId) > 0;
-     }
-
      private long countProductReferences(Long productId) {
          return countCoursePackageReferences(productId) + countClassGroupReferences(productId);
      }
@@ -263,12 +243,6 @@ public class CourseProductServiceImpl implements CourseProductService {
              sources.add("Class groups");
          }
          return sources;
-     }
-
-     private void addIfChanged(List<String> changedFields, String label, Object oldValue, Object newValue) {
-         if (!Objects.equals(oldValue, newValue)) {
-             changedFields.add(label);
-         }
      }
 
     private void ensureProductCodeUnique(Long currentId, String productCode) {
