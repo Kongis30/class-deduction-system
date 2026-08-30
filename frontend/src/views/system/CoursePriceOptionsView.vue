@@ -144,6 +144,9 @@
                       <div class="price-cell">
                         <strong>{{ row.halfDayPrice ? formatMoney(row.halfDayPrice) : '-' }}</strong>
                         <span v-if="row.halfDayPrice">USD / package</span>
+                        <small v-if="row.halfDayPrice && halfDayUnitPrice(row)">
+                          {{ formatMoney(halfDayUnitPrice(row)) }} / {{ packageUnitText(row.packageUnit || row.groupBillingType || 'package').toLowerCase() }}
+                        </small>
                       </div>
                     </template>
                   </el-table-column>
@@ -1496,6 +1499,14 @@ function priceUnitLabel(row: CoursePriceOptionItem) {
     return `${currency} / package`;
   }
   return `${currency} / package`;
+}
+
+function halfDayUnitPrice(row: CoursePriceOptionItem) {
+  const totalPrice = Number(row.halfDayPrice ?? 0);
+  const quantity = Number(row.packageQuantity ?? row.groupTotalSessions ?? 0);
+  return totalPrice > 0 && quantity > 0
+    ? Math.round((totalPrice / quantity) * 100) / 100
+    : 0;
 }
 
 function formatMoney(value?: number) {
