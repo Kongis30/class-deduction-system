@@ -578,7 +578,7 @@
 import dayjs from 'dayjs';
 import { WarningFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { fetchAllClassrooms, fetchAllTeachers, fetchStudents } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { adminConfirmLessonRecord, confirmLesson } from '@/api/lesson';
@@ -1361,17 +1361,21 @@ async function submitConfirm() {
   }
 }
 
-function printCurrentPackage(mode: 'parent' | 'teacher') {
+async function printCurrentPackage(mode: 'parent' | 'teacher') {
   if (!activePackage.value) return;
   printMode.value = mode;
   selectedTeacherPrintKey.value = '__all__';
+  // 先等 Vue 把 printMode/selectedTeacherPrintKey 反映到 DOM（@media print 靠绑定类切换显示），
+  // 再打开打印，否则第一次点击打印的还是上一次渲染的 sheet。
+  await nextTick();
   window.print();
 }
 
-function printTeacherSheet(command: string | number | object) {
+async function printTeacherSheet(command: string | number | object) {
   if (!activePackage.value) return;
   printMode.value = 'teacher';
   selectedTeacherPrintKey.value = String(command || '__all__');
+  await nextTick();
   window.print();
 }
 
