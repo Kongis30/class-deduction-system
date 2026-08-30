@@ -65,6 +65,7 @@
                 <el-icon><ArrowLeft /></el-icon>
                 Back to Courses
               </el-button>
+              <el-button v-if="selectedMode === 'GROUP'" @click="openGradeDialog">Manage grades</el-button>
               <el-button type="primary" @click="openDialog()">
                 {{ matrixPrimaryActionLabel }}
               </el-button>
@@ -550,6 +551,38 @@
         <el-button type="primary" :loading="savingCategories" @click="saveCategories">Save</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="gradeDialogVisible"
+      title="Manage grades"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <p class="category-dialog__hint">
+        Rename a grade or change its display order. Renaming updates this course's
+        price rows, classes, and teacher pay rate scopes together. Grades without
+        a schedule stay in place; use the arrows to reorder.
+      </p>
+      <el-table :data="gradeRows" size="small" class="category-table">
+        <el-table-column label="Grade name" min-width="240">
+          <template #default="{ row }">
+            <el-input v-model="row.newLabel" maxlength="64" />
+          </template>
+        </el-table-column>
+        <el-table-column label="Order" width="130" align="center">
+          <template #default="{ $index }">
+            <div class="grade-order-actions">
+              <el-button size="small" text :disabled="$index === 0" @click="moveGradeRow($index, -1)">Up</el-button>
+              <el-button size="small" text :disabled="$index === gradeRows.length - 1" @click="moveGradeRow($index, 1)">Down</el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="gradeDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="savingGrades" @click="saveGrades">Save</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -567,6 +600,8 @@ import {
   fetchCoursePriceOptions,
   fetchCourseCategories,
   fetchCourseProducts,
+  fetchProductGradeConfigs,
+  saveProductGradeConfigs,
   updateCourseCategory,
   updateCoursePriceOption,
   type CourseCategoryItem,
@@ -626,6 +661,13 @@ const categoryConfig = ref<Record<string, { label: string; order: number }>>({})
 const categoryDialogVisible = ref(false);
 const savingCategories = ref(false);
 const categoryRows = ref<CourseCategoryItem[]>([]);
+
+// grade 名称/顺序管理：orderMap 驱动分组排序，rows 驱动管理弹窗。
+const DEFAULT_GRADE_ORDER = 999;
+const gradeDialogVisible = ref(false);
+const savingGrades = ref(false);
+const gradeRows = ref<Array<{ currentLabel: string; newLabel: string; displayOrder: number }>>([]);
+const gradeOrderMap = ref<Map<string, number>>(new Map());
 
 const courseTypes = computed<CourseTypeDef[]>(() =>
   [...courseTypeDefs]
@@ -735,7 +777,23 @@ const rules = {
   }],
 };
 
-const gradeOptionsForForm = computed(() => pptGradeOptions[form.courseType] ?? []);
+const gradeOptionsForForm = computed(() => {
+  // 该产品已有的 grade（含改名后的）排在硬编码建议之前，避免改名后下拉仍引导创建旧名。
+  const existing = new Map<string, string>();
+  for (const option of options.value) {
+    const label = (option.gradeBand ?? '').trim();
+    if (label && String(option.courseProductId ?? '') === String(form.courseProductId ?? '')) {
+      existing.set(label.toLowerCase(), label);
+    }
+  }
+  const merged = [...existing.values()];
+  for (const grade of pptGradeOptions[form.courseType] ?? []) {
+    if (!merged.some(item => item.toLowerCase() === grade.toLowerCase())) {
+      merged.push(grade);
+    }
+  }
+  return merged;
+});
 const derivedUnitPrice = computed(() => {
   const totalPrice = Number(form.totalPrice ?? 0);
   const quantity = Number(form.packageQuantity ?? 0);
@@ -847,7 +905,15 @@ const groupedOptions = computed<ProductPriceGroup[]>(() => {
         || String(left.durationLabel ?? '').localeCompare(String(right.durationLabel ?? ''))
       ),
     }))
-    .sort((left, right) => left.gradeLabel.localeCompare(right.gradeLabel));
+    .sort((left, right) => {
+      // 已配置顺序的 grade 优先按 displayOrder 排；未配置的按字典序排在其后。
+      const leftOrder = gradeOrderMap.value.get(left.gradeLabel.toLowerCase());
+      const rightOrder = gradeOrderMap.value.get(right.gradeLabel.toLowerCase());
+      if (leftOrder !== undefined || rightOrder !== undefined) {
+        return (leftOrder ?? DEFAULT_GRADE_ORDER) - (rightOrder ?? DEFAULT_GRADE_ORDER);
+      }
+      return left.gradeLabel.localeCompare(right.gradeLabel);
+    });
 });
 
 const existingGradeClass = computed(() => {
@@ -958,6 +1024,90 @@ async function saveCategories() {
     ElMessage.error('Failed to save course categories.');
   } finally {
     savingCategories.value = false;
+  }
+}
+
+async function loadGradeConfigs() {
+  if (!query.courseProductId) {
+    gradeOrderMap.value = new Map();
+    return;
+  }
+  try {
+    const res = await fetchProductGradeConfigs(query.courseProductId);
+    const map = new Map<string, number>();
+    for (const item of res.data.data ?? []) {
+      map.set(item.gradeLabel.toLowerCase(), item.displayOrder ?? 99);
+    }
+    gradeOrderMap.value = map;
+  } catch {
+    // 加载失败时退回字典序排序，不阻塞页面。
+    gradeOrderMap.value = new Map();
+  }
+}
+
+watch(() => query.courseProductId, () => {
+  void loadGradeConfigs();
+}, { immediate: true });
+
+async function openGradeDialog() {
+  if (!query.courseProductId) {
+    return;
+  }
+  try {
+    const res = await fetchProductGradeConfigs(query.courseProductId);
+    gradeRows.value = (res.data.data ?? []).map(item => ({
+      currentLabel: item.gradeLabel,
+      newLabel: item.gradeLabel,
+      displayOrder: item.displayOrder ?? 99,
+    }));
+    gradeDialogVisible.value = true;
+  } catch {
+    ElMessage.error('Failed to load grades.');
+  }
+}
+
+function moveGradeRow(index: number, direction: -1 | 1) {
+  const target = index + direction;
+  if (target < 0 || target >= gradeRows.value.length) {
+    return;
+  }
+  const rows = [...gradeRows.value];
+  [rows[index], rows[target]] = [rows[target], rows[index]];
+  gradeRows.value = rows;
+}
+
+async function saveGrades() {
+  if (!query.courseProductId) {
+    return;
+  }
+  const seen = new Set<string>();
+  for (const row of gradeRows.value) {
+    const label = row.newLabel.trim();
+    if (!label) {
+      ElMessage.warning('Grade name cannot be empty.');
+      return;
+    }
+    const key = label.toLowerCase();
+    if (seen.has(key)) {
+      ElMessage.warning(`Duplicate grade name: ${label}`);
+      return;
+    }
+    seen.add(key);
+  }
+  savingGrades.value = true;
+  try {
+    await saveProductGradeConfigs(query.courseProductId, gradeRows.value.map((row, index) => ({
+      currentLabel: row.currentLabel,
+      newLabel: row.newLabel.trim() === row.currentLabel ? undefined : row.newLabel.trim(),
+      displayOrder: index + 1,
+    })));
+    gradeDialogVisible.value = false;
+    ElMessage.success('Grades updated.');
+    await Promise.all([loadOptions(), loadGradeConfigs()]);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to save grades.');
+  } finally {
+    savingGrades.value = false;
   }
 }
 
@@ -1537,6 +1687,11 @@ function normalizeSlotAttendance(value?: string) {
 
 .category-table {
   width: 100%;
+}
+
+.grade-order-actions {
+  display: inline-flex;
+  gap: 4px;
 }
 
 .config-panel {

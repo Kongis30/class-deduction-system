@@ -198,6 +198,27 @@ export function updateCourseCategory(id: EntityId, data: CourseCategorySavePaylo
   return http.put<ApiResponse<void>>(`/v1/base/course-categories/${id}`, data);
 }
 
+// ─── Product Grade Configs ──────────────────────────
+export interface ProductGradeConfigItem {
+  id?: EntityId;
+  gradeLabel: string;
+  displayOrder: number;
+}
+
+export function fetchProductGradeConfigs(productId: EntityId) {
+  return http.get<ApiResponse<ProductGradeConfigItem[]>>(`/v1/base/course-products/${productId}/grade-configs`);
+}
+
+export interface ProductGradeConfigSaveItem {
+  currentLabel: string;
+  newLabel?: string;
+  displayOrder?: number;
+}
+
+export function saveProductGradeConfigs(productId: EntityId, items: ProductGradeConfigSaveItem[]) {
+  return http.put<ApiResponse<void>>(`/v1/base/course-products/${productId}/grade-configs`, { items });
+}
+
 // ─── Campuses ────────────────────────────────────────
 export function fetchCampuses() {
   return http.get<ApiResponse<CampusItem[]>>('/v1/base/campuses');
