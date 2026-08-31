@@ -330,6 +330,20 @@
                       </div>
                       <strong class="print-only print-course-value">{{ printRegistrationDurationLabel(line) }}</strong>
                     </label>
+                    <label v-if="isOneOnOneLine(line)" class="course-control">
+                      <span>Bonus hours</span>
+                      <el-input-number
+                        v-model="line.oneOnOneBonusHours"
+                        class="table-price"
+                        :min="0"
+                        :max="400"
+                        :step="0.5"
+                        :precision="1"
+                        :controls="true"
+                        :disabled="isReadOnly || !line.coursePriceOptionId"
+                        @change="() => handleRegistrationDurationChange(line)"
+                      />
+                    </label>
                     <label v-if="!isOneOnOneLine(line) && line.coursePriceOptionId" class="course-control">
                       <span>Start Date</span>
                       <el-date-picker
@@ -348,7 +362,7 @@
                         v-model="line.openingUsedHours"
                         class="table-price"
                         :min="0"
-                        :max="line.oneOnOneHours || 400"
+                        :max="totalOneOnOneHours(line) || 400"
                         :step="0.5"
                         :precision="1"
                         :controls="true"
@@ -662,6 +676,7 @@ interface RegistrationCourseLine {
   originalPriceAmount?: number;
   manualPriceOverride: boolean;
   oneOnOneHours?: number;
+  oneOnOneBonusHours?: number;
   openingUsedHours?: number;
   oneOnOneUnits?: number;
   groupBillingType?: string;
@@ -1219,6 +1234,7 @@ function toHistoricalCourseLine(
     originalPriceAmount: optionalNumber(item, 'originalPriceAmount') ?? optionalNumber(fallback, 'originalPriceAmount'),
     manualPriceOverride: getBoolean(item, 'manualPriceOverride', false),
     oneOnOneHours: optionalNumber(item, 'oneOnOneHours') ?? optionalNumber(fallback, 'oneOnOneHours'),
+    oneOnOneBonusHours: optionalNumber(item, 'oneOnOneBonusHours') ?? optionalNumber(fallback, 'oneOnOneBonusHours'),
     openingUsedHours: optionalNumber(item, 'openingUsedHours') ?? optionalNumber(fallback, 'openingUsedHours') ?? 0,
     oneOnOneUnits: optionalNumber(item, 'oneOnOneUnits') ?? optionalNumber(fallback, 'oneOnOneUnits'),
     groupBillingType: getString(item, 'groupBillingType') || undefined,
@@ -1303,6 +1319,7 @@ function createCourseLine(): RegistrationCourseLine {
     attendanceScheduleJson: undefined,
     priceAmount: 0,
     manualPriceOverride: false,
+    oneOnOneBonusHours: 0,
     openingUsedHours: 0,
     groupBillingType: undefined,
     groupTotalSessions: undefined,
@@ -1510,10 +1527,11 @@ function handlePriceChange(line: RegistrationCourseLine) {
 
 function handleRegistrationDurationChange(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line)) {
-    line.oneOnOneUnits = line.oneOnOneHours ? Math.round(line.oneOnOneHours * 2) : undefined;
-    line.durationLabel = line.oneOnOneHours ? `${formatHours(line.oneOnOneHours)} hours` : '';
-    if (numeric(line.openingUsedHours) > numeric(line.oneOnOneHours)) {
-      line.openingUsedHours = line.oneOnOneHours;
+    const totalHours = totalOneOnOneHours(line);
+    line.oneOnOneUnits = totalHours > 0 ? Math.round(totalHours * 2) : undefined;
+    line.durationLabel = totalHours > 0 ? `${formatHours(totalHours)} hours` : '';
+    if (numeric(line.openingUsedHours) > totalHours) {
+      line.openingUsedHours = totalHours || undefined;
     }
   } else {
     line.durationLabel = printRegistrationDurationLabel(line);
@@ -1577,6 +1595,7 @@ function clearSelectedOption(line: RegistrationCourseLine) {
   line.originalPriceAmount = undefined;
   line.manualPriceOverride = false;
   line.oneOnOneHours = undefined;
+  line.oneOnOneBonusHours = 0;
   line.oneOnOneUnits = undefined;
   line.groupBillingType = undefined;
   line.groupTotalSessions = undefined;
@@ -1702,7 +1721,8 @@ function showDurationInput(line: RegistrationCourseLine) {
 
 function printRegistrationDurationLabel(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line)) {
-    return line.oneOnOneHours ? `${formatHours(line.oneOnOneHours)} hours` : '—';
+    const totalHours = totalOneOnOneHours(line);
+    return totalHours > 0 ? `${formatHours(totalHours)} hours` : '—';
   }
   if (line.packageQuantity && line.packageUnit) {
     const unit = line.packageUnit.toLowerCase();
@@ -2025,16 +2045,22 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
   }
   if (isOneOnOneLine(line)) {
     const hours = numeric(line.oneOnOneHours);
+    const bonusHours = numeric(line.oneOnOneBonusHours);
+    const totalHours = totalOneOnOneHours(line);
     const openingUsedHours = numeric(line.openingUsedHours);
     const invalid = hours < 0.5 || hours > 400 || !Number.isInteger(hours * 2);
     if (invalid) {
       errors.push(`${label}: enter 0.5 to 400 hours using 0.5-hour increments.`);
     }
-    const invalidOpeningUsed = openingUsedHours < 0 || openingUsedHours > hours || !Number.isInteger(openingUsedHours * 2);
-    if (invalidOpeningUsed) {
-      errors.push(`${label}: already used hours must be between 0 and package hours using 0.5-hour increments.`);
+    const invalidBonus = bonusHours < 0 || bonusHours > 400 || !Number.isInteger(bonusHours * 2);
+    if (invalidBonus) {
+      errors.push(`${label}: bonus hours must be between 0 and 400 using 0.5-hour increments.`);
     }
-    return invalid || invalidOpeningUsed;
+    const invalidOpeningUsed = openingUsedHours < 0 || openingUsedHours > totalHours || !Number.isInteger(openingUsedHours * 2);
+    if (invalidOpeningUsed) {
+      errors.push(`${label}: already used hours must be between 0 and total package hours using 0.5-hour increments.`);
+    }
+    return invalid || invalidBonus || invalidOpeningUsed;
   }
 
   const quantity = numeric(line.packageQuantity);
@@ -2097,6 +2123,7 @@ function buildPayload(): RegistrationIntakePayload {
       originalPriceAmount: line.originalPriceAmount,
       manualPriceOverride: line.manualPriceOverride,
       oneOnOneHours: isOneOnOneLine(line) ? line.oneOnOneHours : undefined,
+      oneOnOneBonusHours: isOneOnOneLine(line) && numeric(line.oneOnOneBonusHours) > 0 ? line.oneOnOneBonusHours : undefined,
       openingUsedHours: isOneOnOneLine(line) && numeric(line.openingUsedHours) > 0 ? line.openingUsedHours : undefined,
       oneOnOneUnits: isOneOnOneLine(line) ? line.oneOnOneUnits : undefined,
       teacherId: undefined,
@@ -2250,6 +2277,10 @@ function sumNumbers(values: number[]) {
 function numeric(value: unknown) {
   const result = Number(value);
   return Number.isFinite(result) ? result : 0;
+}
+
+function totalOneOnOneHours(line: RegistrationCourseLine) {
+  return numeric(line.oneOnOneHours) + numeric(line.oneOnOneBonusHours);
 }
 
 function roundMoney(value: number) {

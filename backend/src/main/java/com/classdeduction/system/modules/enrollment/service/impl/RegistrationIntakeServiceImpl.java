@@ -250,6 +250,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.attendanceOption = normalizeAttendanceOption(item.getAttendanceOption());
             line.attendanceScheduleJson = item.getAttendanceScheduleJson();
             line.oneOnOneHours = firstNonNull(item.getOneOnOneHours(), option == null ? null : option.getOneOnOneHours());
+            line.oneOnOneBonusHours = item.getOneOnOneBonusHours();
             line.openingUsedHours = item.getOpeningUsedHours();
             line.oneOnOneUnits = item.getOneOnOneUnits();
             line.classId = firstNonNull(item.getClassId(), option.getClassId());
@@ -371,16 +372,23 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 throw new BusinessException("ONE_ON_ONE_HOURS_INVALID",
                         "One-on-one hours must be between 0.5 and 400 in 0.5-hour increments.");
             }
+            if (line.oneOnOneBonusHours != null
+                    && (line.oneOnOneBonusHours.compareTo(BigDecimal.ZERO) < 0
+                        || line.oneOnOneBonusHours.compareTo(new BigDecimal("400")) > 0
+                        || line.oneOnOneBonusHours.multiply(BigDecimal.valueOf(2)).stripTrailingZeros().scale() > 0)) {
+                throw new BusinessException("ONE_ON_ONE_BONUS_HOURS_INVALID",
+                        "One-on-one bonus hours must be between 0 and 400 in 0.5-hour increments.");
+            }
             if (line.product == null || !"ONE_ON_ONE".equals(line.product.getTeachingMode()) || !"ACTIVE".equals(line.product.getStatus())) {
                 throw new BusinessException("ONE_ON_ONE_PRODUCT_REQUIRED", "Active one-on-one course product is required.");
             }
-            if (resolveOneOnOneUnits(line) <= 0) {
+            if (resolveOneOnOnePurchasedUnits(line) <= 0) {
                 throw new BusinessException("ONE_ON_ONE_UNITS_REQUIRED", "One-on-one purchased hours or units are required.");
             }
             int openingUsedUnits = resolveOpeningUsedUnits(line);
             if (openingUsedUnits > resolveOneOnOneUnits(line)) {
                 throw new BusinessException("OPENING_USED_HOURS_EXCEED_PACKAGE",
-                        "Already used hours cannot exceed purchased package hours.");
+                        "Already used hours cannot exceed total package hours (purchased + bonus).");
             }
             if (line.openingUsedHours != null
                     && line.openingUsedHours.multiply(BigDecimal.valueOf(2)).stripTrailingZeros().scale() > 0) {
@@ -872,6 +880,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("originalPriceAmount", line.originalPriceAmount);
         item.put("manualPriceOverride", line.manualPriceOverride);
         item.put("oneOnOneHours", line.oneOnOneHours);
+        item.put("oneOnOneBonusHours", line.oneOnOneBonusHours);
         item.put("openingUsedHours", line.openingUsedHours);
         item.put("openingRemainingHours", line.oneOnOne ? BigDecimal.valueOf(resolveOneOnOneUnits(line) - resolveOpeningUsedUnits(line))
                 .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP) : null);
@@ -1442,13 +1451,26 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 || "ONEONONE".equals(registerClass);
     }
 
-    private int resolveOneOnOneUnits(ResolvedCourseLine line) {
+    private int resolveOneOnOnePurchasedUnits(ResolvedCourseLine line) {
         if (line.oneOnOneHours != null && line.oneOnOneHours.compareTo(BigDecimal.ZERO) > 0) {
             return line.oneOnOneHours.multiply(BigDecimal.valueOf(2))
                     .setScale(0, RoundingMode.HALF_UP)
                     .intValue();
         }
         return 0;
+    }
+
+    private int resolveOneOnOneBonusUnits(ResolvedCourseLine line) {
+        if (line.oneOnOneBonusHours != null && line.oneOnOneBonusHours.compareTo(BigDecimal.ZERO) > 0) {
+            return line.oneOnOneBonusHours.multiply(BigDecimal.valueOf(2))
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .intValue();
+        }
+        return 0;
+    }
+
+    private int resolveOneOnOneUnits(ResolvedCourseLine line) {
+        return resolveOneOnOnePurchasedUnits(line) + resolveOneOnOneBonusUnits(line);
     }
 
     private int resolveLineOneOnOneUnits(ResolvedCourseLine line) {
@@ -1563,6 +1585,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private BigDecimal originalPriceAmount;
         private Boolean manualPriceOverride;
         private BigDecimal oneOnOneHours;
+        private BigDecimal oneOnOneBonusHours;
         private BigDecimal openingUsedHours;
         private Integer oneOnOneUnits;
         private String remark;

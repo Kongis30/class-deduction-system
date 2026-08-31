@@ -224,6 +224,65 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldAddBonusHoursIntoOneOnOneTotalUnits() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOneOnOneBonusHours(new BigDecimal("3.0"));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(26);
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(26);
+        // bonus hours are baked into totalUnits, not stored on the item
+        assertThat(orderItemCaptor.getValue().getOneOnOneUnits()).isEqualTo(26);
+    }
+
+    @Test
+    void shouldClampOpeningUsedHoursAgainstTotalIncludingBonus() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOneOnOneBonusHours(new BigDecimal("2.0"));
+        request.getItems().get(0).setOpeningUsedHours(new BigDecimal("11.0"));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(24);
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(22);
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(2);
+    }
+
+    @Test
+    void shouldRejectNegativeBonusHours() {
+        stubStudentCreationOnly();
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
+        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOneOnOneBonusHours(new BigDecimal("-1.0"));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("ONE_ON_ONE_BONUS_HOURS_INVALID");
+    }
+
+    @Test
+    void shouldRejectNonHalfHourBonusHours() {
+        stubStudentCreationOnly();
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
+        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getItems().get(0).setOneOnOneBonusHours(new BigDecimal("1.3"));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getCode())
+                .isEqualTo("ONE_ON_ONE_BONUS_HOURS_INVALID");
+    }
+
+    @Test
     void shouldInitializeOneOnOneOpeningBalanceFromAlreadyUsedHours() {
         stubSuccessfulIntake(false);
         RegistrationIntakeRequest request = buildOneOnOneRequest();

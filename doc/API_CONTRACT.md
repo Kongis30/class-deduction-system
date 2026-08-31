@@ -150,7 +150,8 @@ Key request fields:
 - `issueReceipt`
 
 For 1-on-1 registration, `totalUnits` is calculated from the selected price
-option's purchased hours. Teacher, lesson name, lesson duration, and allocated
+option's purchased hours plus any gifted bonus hours (`oneOnOneBonusHours`,
+0-400 in 0.5-hour steps). Teacher, lesson name, lesson duration, and allocated
 hours are configured later on each recurring schedule slot; the enrollment
 form does not allocate teachers or lesson hours.
 
