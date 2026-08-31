@@ -5,15 +5,25 @@ import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 
+import java.util.List;
+
 public interface CourseProductService {
 
     PageResponse<CourseProductVO> pageCourseProducts(CourseProductPageQuery query);
+
+    List<CourseProductVO> listCourseProducts();
 
     CourseProductVO getCourseProduct(Long id);
 
     Long createCourseProduct(CourseProductSaveRequest request);
 
     void updateCourseProduct(Long id, CourseProductSaveRequest request);
+
+    /**
+     * 保存 Data Summary Product Tab 的系统级共享顺序（ADMIN 专用）。
+     * 提交 ID 必须为当前未删除产品且无重复；遗漏的产品按现有顺序追加到末尾。
+     */
+    void reorderCourseProducts(List<Long> productIds, Long operatorId);
 
     void deleteCourseProduct(Long id);
 

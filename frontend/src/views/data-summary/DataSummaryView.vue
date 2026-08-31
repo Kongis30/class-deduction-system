@@ -212,7 +212,7 @@
         <tbody v-else-if="!loading">
           <tr class="workbook-empty-row">
             <td :colspan="columns.length">
-              <span>No matching records.</span>
+              <span>{{ emptyMessage }}</span>
               <el-button v-if="hasAnyFilter" text type="primary" @click="clearAllFilters">
                 Clear all filters
               </el-button>
@@ -221,16 +221,64 @@
         </tbody>
       </table>
     </div>
+
+    <div class="workbook-pager">
+      <el-pagination
+        v-model:current-page="pagination.page"
+        v-model:page-size="pagination.pageSize"
+        :total="filteredRows.length"
+        :page-sizes="[25, 50, 100, 200]"
+        layout="total, sizes, prev, pager, next"
+        small
+        background
+      />
+    </div>
+
+    <nav
+      v-if="tabs.length"
+      class="product-tab-bar"
+      data-testid="product-tab-bar"
+      aria-label="Course product tabs"
+    >
+      <button
+        v-for="tab in tabs"
+        :key="tab.id"
+        type="button"
+        class="product-tab"
+        :class="{
+          'product-tab--active': tab.id === activeTabId,
+          'product-tab--unassigned': tab.unassigned,
+          'product-tab--dragging': dragState.fromId === tab.id,
+          'product-tab--drop-target': dragState.overId === tab.id && dragState.fromId !== tab.id,
+        }"
+        :draggable="canDragTabs && !tab.unassigned"
+        :title="tab.unassigned ? 'Rows not linked to a current course product' : tab.label"
+        :data-testid="`product-tab-${tab.id}`"
+        :aria-current="tab.id === activeTabId ? 'page' : undefined"
+        @click="selectTab(tab.id)"
+        @dragstart="handleDragStart(tab, $event)"
+        @dragenter.prevent="handleDragEnter(tab)"
+        @dragover.prevent="handleDragOver(tab)"
+        @drop.prevent="handleDrop(tab)"
+        @dragend="handleDragEnd"
+      >
+        <span class="product-tab__label">{{ tab.label }}</span>
+      </button>
+    </nav>
   </div>
 </template>
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
 import { ElMessage } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import { fetchDataSummary, type DataSummaryRow } from '@/api/data-summary';
+import { fetchAllCourseProducts, saveCourseProductTabOrder } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
+import { useAuthStore } from '@/stores/auth';
+import { isAdminUser } from '@/types/auth';
+import type { CourseProductItem } from '@/types/domain';
 
 type ColumnKey =
   | 'class'
@@ -280,6 +328,26 @@ interface WorkbookGroup {
   rows: DataSummaryRow[];
 }
 
+/** 每个 Product Tab 独立保留的视图状态（月份、筛选、分页、排序）。 */
+interface ProductViewState {
+  selectedMonth: string;
+  columnFilters: Record<ColumnKey, ColumnFilter>;
+  sortKey: ColumnKey | null;
+  sortDirection: SortDirection;
+  page: number;
+  pageSize: number;
+}
+
+interface ProductTab {
+  id: string;
+  label: string;
+  unassigned?: boolean;
+}
+
+/** 未关联到当前有效产品的历史行兜底页签，固定在末尾且不可拖拽。 */
+const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
+const ORDER_SAVE_DEBOUNCE_MS = 300;
+
 const columns: WorkbookColumn[] = [
   { key: 'campus', label: 'Campus', width: 112, filterType: 'select' },
   { key: 'class', label: 'Class', width: 90, filterType: 'select' },
@@ -300,23 +368,78 @@ const columns: WorkbookColumn[] = [
   { key: 'balance', label: 'Balance', width: 104, filterType: 'number' },
 ];
 
+const authStore = useAuthStore();
+const isAdmin = computed(() => isAdminUser(authStore.currentUser));
+const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
+
 const loading = ref(false);
+const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
+const products = ref<CourseProductItem[]>([]);
+const activeTabId = ref<string>('');
 const selectedMonth = ref<string>('ALL');
 const sortState = reactive<SortState>({
   key: null,
   direction: 'asc',
 });
+const pagination = reactive({
+  page: 1,
+  pageSize: 50,
+});
 const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>(
   Object.fromEntries(columns.map((column) => [column.key, createEmptyFilter()])) as Record<ColumnKey, ColumnFilter>,
 );
+
+/** Tab 视图状态快照池：切换 Product 时存入/恢复，仅存活于当前页面会话。 */
+const tabStates = new Map<string, ProductViewState>();
+
+const dragState = reactive<{ fromId: string | null; overId: string | null }>({
+  fromId: null,
+  overId: null,
+});
+
+const knownProductIds = computed(() => new Set(products.value.map((product) => String(product.id))));
+
+function isAssignedRow(row: DataSummaryRow) {
+  const productId = row.courseProductId == null ? null : String(row.courseProductId);
+  return productId != null && knownProductIds.value.has(productId);
+}
+
+const productTabs = computed<ProductTab[]>(() =>
+  products.value.map((product) => ({
+    id: String(product.id),
+    label: product.productName,
+  })),
+);
+
+const hasUnassignedRows = computed(() => rows.value.some((row) => !isAssignedRow(row)));
+
+const tabs = computed<ProductTab[]>(() => {
+  if (!products.value.length) {
+    return [];
+  }
+  return hasUnassignedRows.value
+    ? [...productTabs.value, { id: UNASSIGNED_TAB_ID, label: 'Unassigned', unassigned: true }]
+    : productTabs.value;
+});
+
+/** 无产品可用时（如产品接口失败且无未分配行）回退为全量展示，保证页面可用。 */
+const productRows = computed(() => {
+  if (!tabs.value.length || !tabs.value.some((tab) => tab.id === activeTabId.value)) {
+    return rows.value;
+  }
+  if (activeTabId.value === UNASSIGNED_TAB_ID) {
+    return rows.value.filter((row) => !isAssignedRow(row));
+  }
+  return rows.value.filter((row) => String(row.courseProductId ?? '') === activeTabId.value);
+});
 
 const selectOptions = computed<Record<ColumnKey, string[]>>(() => {
   return Object.fromEntries(columns.map((column) => {
     if (column.filterType !== 'select') {
       return [column.key, []];
     }
-    const values = rows.value.map((row) => selectValue(row, column.key));
+    const values = productRows.value.map((row) => selectValue(row, column.key));
     return [column.key, [...new Set(values)].sort(naturalCompare)];
   })) as Record<ColumnKey, string[]>;
 });
@@ -328,7 +451,7 @@ function monthKey(row: DataSummaryRow) {
 
 const availableMonths = computed(() => {
   const keys = new Set<string>();
-  rows.value.forEach((row) => {
+  productRows.value.forEach((row) => {
     const key = monthKey(row);
     if (key) {
       keys.add(key);
@@ -341,9 +464,9 @@ const availableMonths = computed(() => {
 
 const monthFilteredRows = computed(() => {
   if (selectedMonth.value === 'ALL') {
-    return rows.value;
+    return productRows.value;
   }
-  return rows.value.filter((row) => monthKey(row) === selectedMonth.value);
+  return productRows.value.filter((row) => monthKey(row) === selectedMonth.value);
 });
 
 const monthStats = computed(() => {
@@ -381,9 +504,16 @@ const sortedRows = computed(() => {
   });
 });
 
+const totalPages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / pagination.pageSize)));
+
+const pagedRows = computed(() => {
+  const start = (pagination.page - 1) * pagination.pageSize;
+  return sortedRows.value.slice(start, start + pagination.pageSize);
+});
+
 const groupedRows = computed<WorkbookGroup[]>(() => {
   const groups = new Map<string, DataSummaryRow[]>();
-  sortedRows.value.forEach((row) => {
+  pagedRows.value.forEach((row) => {
     const label = classLabel(row);
     const group = groups.get(label) ?? [];
     group.push(row);
@@ -393,6 +523,13 @@ const groupedRows = computed<WorkbookGroup[]>(() => {
 });
 
 const hasAnyFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
+
+const emptyMessage = computed(() => {
+  if (tabs.value.length) {
+    return 'No matching records for this course.';
+  }
+  return 'No matching records.';
+});
 
 function createEmptyFilter(): ColumnFilter {
   return {
@@ -404,17 +541,198 @@ function createEmptyFilter(): ColumnFilter {
   };
 }
 
-async function loadSummary() {
-  loading.value = true;
-  try {
-    const response = await fetchDataSummary();
-    rows.value = response.data.data.rows ?? [];
-  } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
-  } finally {
-    loading.value = false;
+function copyFilter(filter: ColumnFilter): ColumnFilter {
+  return {
+    text: filter.text,
+    selected: [...filter.selected],
+    dateRange: filter.dateRange ? ([...filter.dateRange] as [string, string]) : null,
+    min: filter.min,
+    max: filter.max,
+  };
+}
+
+function snapshotCurrentState(): ProductViewState {
+  return {
+    selectedMonth: selectedMonth.value,
+    columnFilters: Object.fromEntries(
+      columns.map((column) => [column.key, copyFilter(columnFilters[column.key])]),
+    ) as Record<ColumnKey, ColumnFilter>,
+    sortKey: sortState.key,
+    sortDirection: sortState.direction,
+    page: pagination.page,
+    pageSize: pagination.pageSize,
+  };
+}
+
+function createDefaultState(): ProductViewState {
+  return {
+    selectedMonth: 'ALL',
+    columnFilters: Object.fromEntries(
+      columns.map((column) => [column.key, createEmptyFilter()]),
+    ) as Record<ColumnKey, ColumnFilter>,
+    sortKey: null,
+    sortDirection: 'asc',
+    page: 1,
+    pageSize: 50,
+  };
+}
+
+function restoreState(state: ProductViewState) {
+  selectedMonth.value = state.selectedMonth;
+  columns.forEach((column) => {
+    Object.assign(columnFilters[column.key], copyFilter(state.columnFilters[column.key]));
+  });
+  sortState.key = state.sortKey;
+  sortState.direction = state.sortDirection;
+  pagination.pageSize = state.pageSize;
+  pagination.page = state.page;
+  clampPage();
+}
+
+function clampPage() {
+  if (pagination.page > totalPages.value) {
+    pagination.page = totalPages.value;
+  }
+  if (pagination.page < 1) {
+    pagination.page = 1;
   }
 }
+
+async function loadPage() {
+  loading.value = true;
+  const [productsResult, summaryResult] = await Promise.allSettled([
+    fetchAllCourseProducts(),
+    fetchDataSummary(),
+  ]);
+
+  if (productsResult.status === 'fulfilled') {
+    products.value = productsResult.value.data.data ?? [];
+    savedOrderProducts = [...products.value];
+  } else {
+    // 产品列表失败时保留空 Tab 并继续展示汇总，顺序不回写。
+    products.value = [];
+    ElMessage.error(extractErrorMessage(productsResult.reason));
+  }
+
+  if (summaryResult.status === 'fulfilled') {
+    rows.value = summaryResult.value.data.data.rows ?? [];
+  } else {
+    rows.value = [];
+    ElMessage.error(extractErrorMessage(summaryResult.reason));
+  }
+
+  loading.value = false;
+  ensureActiveTab();
+}
+
+function ensureActiveTab() {
+  if (!tabs.value.length) {
+    activeTabId.value = '';
+    return;
+  }
+  if (!tabs.value.some((tab) => tab.id === activeTabId.value)) {
+    activeTabId.value = tabs.value[0].id;
+    restoreState(createDefaultState());
+  }
+}
+
+function selectTab(tabId: string) {
+  if (tabId === activeTabId.value) {
+    return;
+  }
+  if (activeTabId.value) {
+    tabStates.set(activeTabId.value, snapshotCurrentState());
+  }
+  activeTabId.value = tabId;
+  restoreState(tabStates.get(tabId) ?? createDefaultState());
+}
+
+// ── Tab 拖拽排序（管理员专用，顺序为系统级共享配置） ──
+
+let orderSaveTimer: number | undefined;
+/** 最近一次成功保存（或初始加载）的顺序，用于保存失败回滚。 */
+let savedOrderProducts: CourseProductItem[] = [];
+
+function handleDragStart(tab: ProductTab, event: DragEvent) {
+  if (!canDragTabs.value || tab.unassigned) {
+    event.preventDefault();
+    return;
+  }
+  dragState.fromId = tab.id;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', tab.id);
+  }
+}
+
+function handleDragEnter(tab: ProductTab) {
+  if (!dragState.fromId || tab.unassigned || tab.id === dragState.fromId) {
+    return;
+  }
+  dragState.overId = tab.id;
+}
+
+function handleDragOver(tab: ProductTab) {
+  if (!dragState.fromId || tab.unassigned || tab.id === dragState.fromId) {
+    return;
+  }
+  dragState.overId = tab.id;
+}
+
+function handleDrop(tab: ProductTab) {
+  const fromId = dragState.fromId;
+  const overId = tab.unassigned || tab.id === dragState.fromId ? null : tab.id;
+  handleDragEnd();
+  if (!fromId || !overId) {
+    return;
+  }
+  const fromIndex = products.value.findIndex((product) => String(product.id) === fromId);
+  const toIndex = products.value.findIndex((product) => String(product.id) === overId);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) {
+    return;
+  }
+  const next = [...products.value];
+  const [moved] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, moved);
+  products.value = next;
+  scheduleOrderSave();
+}
+
+function handleDragEnd() {
+  dragState.fromId = null;
+  dragState.overId = null;
+}
+
+/** 连续快速拖拽时合并为最后一次顺序，只保存最终结果。 */
+function scheduleOrderSave() {
+  window.clearTimeout(orderSaveTimer);
+  orderSaveTimer = window.setTimeout(() => {
+    void persistTabOrder();
+  }, ORDER_SAVE_DEBOUNCE_MS);
+}
+
+async function persistTabOrder() {
+  if (!products.value.length) {
+    return;
+  }
+  savingOrder.value = true;
+  const requested = [...products.value];
+  try {
+    await saveCourseProductTabOrder(requested.map((product) => product.id));
+    savedOrderProducts = requested;
+    ElMessage.success('Tab order saved.');
+  } catch (error) {
+    // 保存失败回滚到最后一次已确认顺序，避免界面与系统配置不一致。
+    products.value = [...savedOrderProducts];
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    savingOrder.value = false;
+  }
+}
+
+onBeforeUnmount(() => {
+  window.clearTimeout(orderSaveTimer);
+});
 
 function matchesColumnFilter(row: DataSummaryRow, column: WorkbookColumn) {
   const filter = columnFilters[column.key];
@@ -581,7 +899,17 @@ function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-onMounted(loadSummary);
+// 筛选结果变化或数据重载后，把页码收敛到有效范围。
+watch(() => filteredRows.value.length, () => {
+  clampPage();
+});
+
+// Tab 列表变化（产品新增/删除/排序保存失败回滚）后校正当前选中 Tab。
+watch(tabs, () => {
+  ensureActiveTab();
+});
+
+onMounted(loadPage);
 </script>
 
 <style scoped>
@@ -902,6 +1230,100 @@ th.workbook-column--studentName {
 
 .workbook-empty-row span {
   margin-right: 8px;
+}
+
+.workbook-pager {
+  display: flex;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  border: 1px solid #9eafa7;
+  border-top: 0;
+  background: #f4f8f5;
+}
+
+/* ── Product Tab 工作表页签（位于表格底部） ── */
+.product-tab-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 4px 8px 0;
+  border: 1px solid #9eafa7;
+  border-top: 0;
+  border-bottom: 0;
+  background: #dce8e2;
+  overflow-x: auto;
+  scrollbar-width: none; /* Firefox: 隐藏横向滚动条，保留滚轮/触控板滚动 */
+}
+
+/* Chrome / Safari (Chromium)：隐藏横向滚动条，但保留滚动能力 */
+.product-tab-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.product-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid #b7cec5;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  background: #eef5f1;
+  color: #376451;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.product-tab:hover {
+  background: #f7fbf9;
+  color: #224a3b;
+}
+
+.product-tab__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.product-tab--active {
+  background: #fff;
+  border-color: #9eafa7;
+  color: #1f3d32;
+  font-weight: 700;
+  box-shadow: inset 0 3px 0 #2f8f6f;
+}
+
+.product-tab--unassigned {
+  background: #f4f1e8;
+  border-style: dashed;
+  border-color: #c9bfa5;
+  color: #7a6a3f;
+}
+
+.product-tab--unassigned.product-tab--active {
+  background: #fffdf5;
+  box-shadow: inset 0 3px 0 #b09a55;
+  color: #5c4d24;
+}
+
+.product-tab[draggable='true'] {
+  cursor: grab;
+}
+
+.product-tab--dragging {
+  opacity: 0.45;
+  transform: translateY(2px) rotate(-1deg);
+}
+
+.product-tab--drop-target {
+  border-color: #2f8f6f;
+  box-shadow: inset 0 0 0 2px rgb(47 143 111 / 35%);
 }
 
 @media (max-width: 720px) {

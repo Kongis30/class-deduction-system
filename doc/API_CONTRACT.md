@@ -63,9 +63,11 @@ Shared conventions:
 - `PUT /api/v1/base/classrooms/{id}`
 - `DELETE /api/v1/base/classrooms/{id}`
 - `GET /api/v1/base/course-products`
+- `GET /api/v1/base/course-products/all`
 - `GET /api/v1/base/course-products/{id}`
 - `POST /api/v1/base/course-products`
 - `PUT /api/v1/base/course-products/{id}`
+- `PUT /api/v1/base/course-products/tab-order`
 - `DELETE /api/v1/base/course-products/{id}`
 
 ### Enrollment and Course Packages

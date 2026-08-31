@@ -23,6 +23,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
 import java.util.*;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Course product service for maintaining reusable course templates.
@@ -74,6 +76,37 @@ public class CourseProductServiceImpl implements CourseProductService {
     }
 
     @Override
+    public List<CourseProductVO> listCourseProducts() {
+        return courseProductMapper.selectList(new LambdaQueryWrapper<CourseProductEntity>()
+                        .orderByAsc(CourseProductEntity::getSortOrder)
+                        .orderByDesc(CourseProductEntity::getCreatedAt)
+                        .orderByDesc(CourseProductEntity::getId))
+                .stream()
+                .map(this::toTabVO)
+                .toList();
+    }
+
+    /**
+     * Tab 列表轻量映射：跳过逐条引用计数查询，避免全量产品时的 N+1 查询。
+     */
+    private CourseProductVO toTabVO(CourseProductEntity entity) {
+        return CourseProductVO.builder()
+                .id(entity.getId())
+                .productCode(entity.getProductCode())
+                .productName(entity.getProductName())
+                .courseType(entity.getCourseType())
+                .registerClass(entity.getRegisterClass())
+                .subjectName(entity.getSubjectName())
+                .teachingMode(entity.getTeachingMode())
+                .sortOrder(entity.getSortOrder() == null ? 99 : entity.getSortOrder())
+                .status(entity.getStatus())
+                .notes(entity.getNotes())
+                .createdAt(entity.getCreatedAt())
+                .updatedAt(entity.getUpdatedAt())
+                .build();
+    }
+
+    @Override
     public CourseProductVO getCourseProduct(Long id) {
         return toVO(requireCourseProduct(id));
     }
@@ -109,6 +142,58 @@ public class CourseProductServiceImpl implements CourseProductService {
         validateByTeachingMode(request);
         applyCourseProduct(entity, request);
         courseProductMapper.updateById(entity);
+    }
+
+    /**
+     * 保存 Data Summary Product Tab 的系统级共享顺序。
+     * 校验提交 ID 全部有效且不重复；客户端列表过期遗漏的产品按现有顺序追加到末尾，
+     * 避免并发新建的产品被旧浏览器拖拽操作挤出 Tab 列表。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void reorderCourseProducts(List<Long> requestedProductIds, Long operatorId) {
+        List<CourseProductEntity> existingProducts = courseProductMapper.selectList(
+                new LambdaQueryWrapper<CourseProductEntity>()
+                        .orderByAsc(CourseProductEntity::getSortOrder)
+                        .orderByDesc(CourseProductEntity::getCreatedAt)
+                        .orderByDesc(CourseProductEntity::getId));
+
+        List<Long> submittedIds = requestedProductIds == null ? List.of() : requestedProductIds;
+        if (existingProducts.isEmpty()) {
+            if (!submittedIds.isEmpty()) {
+                throw new BusinessException("INVALID_PRODUCT_ORDER", "Product order contains unknown products.");
+            }
+            return;
+        }
+        if (submittedIds.isEmpty()) {
+            throw new BusinessException("INVALID_PRODUCT_ORDER", "Product order cannot be empty while products exist.");
+        }
+
+        Map<Long, CourseProductEntity> existingById = existingProducts.stream()
+                .collect(Collectors.toMap(CourseProductEntity::getId, Function.identity()));
+        Set<Long> submittedSet = new LinkedHashSet<>();
+        for (Long productId : submittedIds) {
+            if (productId == null || !submittedSet.add(productId) || !existingById.containsKey(productId)) {
+                throw new BusinessException("INVALID_PRODUCT_ORDER", "Product order contains duplicate or unknown products.");
+            }
+        }
+
+        List<CourseProductEntity> orderedProducts = new ArrayList<>(existingProducts.size());
+        submittedIds.forEach(productId -> orderedProducts.add(existingById.get(productId)));
+        existingProducts.stream()
+                .filter(product -> !submittedSet.contains(product.getId()))
+                .forEach(orderedProducts::add);
+
+        for (int index = 0; index < orderedProducts.size(); index++) {
+            CourseProductEntity product = orderedProducts.get(index);
+            int nextOrder = index + 1;
+            if (Objects.equals(product.getSortOrder(), nextOrder)) {
+                continue;
+            }
+            product.setSortOrder(nextOrder);
+            product.setUpdatedBy(operatorId);
+            courseProductMapper.updateById(product);
+        }
     }
 
     @Override

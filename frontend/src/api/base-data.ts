@@ -339,6 +339,16 @@ export function fetchCourseProducts(params: CourseProductQuery = {}) {
   });
 }
 
+// 全量产品（含 INACTIVE），按共享显示顺序返回，供 Data Summary Product Tab 使用。
+export function fetchAllCourseProducts() {
+  return http.get<ApiResponse<CourseProductItem[]>>('/v1/base/course-products/all');
+}
+
+// 保存 Data Summary Product Tab 的系统级共享顺序（ADMIN 专用）。
+export function saveCourseProductTabOrder(productIds: EntityId[]) {
+  return http.put<ApiResponse<void>>('/v1/base/course-products/tab-order', { productIds });
+}
+
 export interface CourseProductSavePayload {
   productCode: string;
   productName: string;

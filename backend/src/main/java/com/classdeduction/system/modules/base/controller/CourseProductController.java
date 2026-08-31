@@ -1,9 +1,12 @@
 package com.classdeduction.system.modules.base.controller;
 
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
+import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
+import com.classdeduction.system.modules.base.dto.CourseProductOrderRequest;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.service.CourseProductService;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
@@ -14,6 +17,8 @@ import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
 
 /**
  * Course product controller.
@@ -34,6 +39,12 @@ public class CourseProductController {
         return ApiResponse.success(courseProductService.pageCourseProducts(query));
     }
 
+    @GetMapping("/all")
+    @Operation(summary = "List all course products in display order")
+    public ApiResponse<List<CourseProductVO>> listCourseProducts() {
+        return ApiResponse.success(courseProductService.listCourseProducts());
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "Get course product detail")
     public ApiResponse<CourseProductVO> getCourseProduct(@PathVariable Long id) {
@@ -52,6 +63,17 @@ public class CourseProductController {
                                                  @Valid @RequestBody CourseProductSaveRequest request) {
         courseProductService.updateCourseProduct(id, request);
         return ApiResponse.success("Updated successfully.", null);
+    }
+
+    @PutMapping("/tab-order")
+    @Operation(summary = "Save the shared Data Summary Product Tab order")
+    @RequireRoles({"ADMIN"})
+    public ApiResponse<Void> reorderCourseProducts(
+            @Valid @RequestBody CourseProductOrderRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser
+    ) {
+        courseProductService.reorderCourseProducts(request.getProductIds(), currentUser.userId());
+        return ApiResponse.success("Product Tab order saved.", null);
     }
 
     @DeleteMapping("/{id}")

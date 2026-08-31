@@ -117,4 +117,5 @@ The MVP delivery follows 7 ordered stages documented in `doc/DEVELOPMENT_STAGES.
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
+Current plan: `specs/001-data-summary-product-tabs/plan.md`
 <!-- SPECKIT END -->
