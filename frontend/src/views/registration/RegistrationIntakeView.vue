@@ -22,7 +22,7 @@
       </div>
       <div class="registration-desk__actions">
         <el-button class="action-secondary" @click="openCurrentStudentHistory">Find student &amp; history</el-button>
-        <el-button v-if="isReadOnly && !editingCorrection" type="primary" @click="startCorrection">Edit contact info</el-button>
+        <el-button v-if="isReadOnly && !editingCorrection" type="primary" @click="startCorrection">Edit Receipt</el-button>
         <template v-if="isReadOnly && editingCorrection">
           <el-button @click="cancelCorrection">Cancel</el-button>
           <el-button type="primary" :loading="savingCorrection" @click="saveCorrection">Save changes</el-button>
@@ -76,15 +76,15 @@
         <div class="phone-line">☎ Ms. Jin （929）528–1060 / 办公室 （929）701–9872</div>
 
         <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('SOUTH') }]">
-          <input type="checkbox" :checked="isCampusProfileSelected('SOUTH')" :disabled="isReadOnly" @change="selectCampusProfile('SOUTH')" />
+          <input type="checkbox" :checked="isCampusProfileSelected('SOUTH')" :disabled="contactLocked" @change="selectCampusProfile('SOUTH')" />
           <span>南校：144–56 Roosevelt Ave, Flushing, NY 11354</span>
         </label>
         <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('NORTH') }]">
-          <input type="checkbox" :checked="isCampusProfileSelected('NORTH')" :disabled="isReadOnly" @change="selectCampusProfile('NORTH')" />
+          <input type="checkbox" :checked="isCampusProfileSelected('NORTH')" :disabled="contactLocked" @change="selectCampusProfile('NORTH')" />
           <span>北校：142–18 32nd Ave, Flushing, NY 11354</span>
         </label>
         <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('ONLINE') }]">
-          <input type="checkbox" :checked="isCampusProfileSelected('ONLINE')" :disabled="isReadOnly" @change="selectCampusProfile('ONLINE')" />
+          <input type="checkbox" :checked="isCampusProfileSelected('ONLINE')" :disabled="contactLocked" @change="selectCampusProfile('ONLINE')" />
           <span>线上课 online</span>
         </label>
       </section>
@@ -1048,6 +1048,11 @@ async function saveCorrection() {
       school: form.student.school,
       guardianPhone: form.student.guardianPhone,
       guardianPhone2: form.student.guardianPhone2,
+      campusId: selectedCampus.value?.campusId,
+      campusName: selectedCampus.value?.campusName,
+      campusAddress: selectedCampus.value?.address,
+      campusPhone: selectedCampus.value?.phone,
+      taxId: selectedCampus.value?.taxId ?? '',
       pickupRequired: form.student.pickupRequired,
       pickupAddress: form.student.pickupAddress,
       dropoffRequired: form.student.dropoffRequired,

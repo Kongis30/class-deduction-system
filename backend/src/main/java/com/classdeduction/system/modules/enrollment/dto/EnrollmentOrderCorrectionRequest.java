@@ -9,7 +9,7 @@ import java.time.LocalDate;
  * Enrollment order correction request.
  *
  * <p>Allows staff to fix registration/receipt details after submission (student
- * name, contact phones, pickup/drop-off info, sign-up date, handler and remark).
+ * name, contact phones, campus, pickup/drop-off info, sign-up date, handler and remark).
  * Financial amounts, courses, and payments are intentionally excluded and can only
  * be changed through cancel/refund flows.</p>
  */
@@ -19,6 +19,21 @@ public class EnrollmentOrderCorrectionRequest {
 
     @Schema(description = "Student display name")
     private String studentName;
+
+    @Schema(description = "Campus ID")
+    private Long campusId;
+
+    @Schema(description = "Campus name snapshot")
+    private String campusName;
+
+    @Schema(description = "Campus address shown on the receipt")
+    private String campusAddress;
+
+    @Schema(description = "Campus phone shown on the receipt")
+    private String campusPhone;
+
+    @Schema(description = "Tax ID (EIN) shown on the receipt for this campus")
+    private String taxId;
 
     @Schema(description = "Student grade")
     private String grade;

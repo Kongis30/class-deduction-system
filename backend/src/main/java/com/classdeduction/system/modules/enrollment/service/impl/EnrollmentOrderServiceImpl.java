@@ -964,6 +964,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (request.getGuardianPhone2() != null) {
             order.setParentPhone2Snapshot(request.getGuardianPhone2().trim());
         }
+        if (request.getCampusName() != null) {
+            order.setCampusNameSnapshot(request.getCampusName().trim());
+            order.setCampusId(request.getCampusId());
+        }
         if (request.getPickupRequired() != null) {
             order.setPickupRequiredSnapshot(request.getPickupRequired());
         }
@@ -988,14 +992,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         enrollmentOrderMapper.updateById(order);
 
         // Keep the receipt snapshot(s) in sync so the printed receipt reflects the fix.
-        syncReceiptSnapshots(order);
+        syncReceiptSnapshots(order, request.getCampusAddress(), request.getCampusPhone(), request.getTaxId());
     }
 
     /**
      * Re-write the matching keys inside each stored receipt payload for this order so
      * corrected contact info is reflected on the saved/printable receipt.
      */
-    private void syncReceiptSnapshots(EnrollmentOrderEntity order) {
+    private void syncReceiptSnapshots(EnrollmentOrderEntity order, String campusAddress, String campusPhone, String taxId) {
         List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(
                 new LambdaQueryWrapper<ReceiptRecordEntity>()
                         .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
@@ -1011,6 +1015,17 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             payload.put("school", order.getSchoolSnapshot());
             payload.put("guardianPhone", order.getParentPhoneSnapshot());
             payload.put("guardianPhone2", order.getParentPhone2Snapshot());
+            payload.put("campusId", order.getCampusId());
+            payload.put("campusName", order.getCampusNameSnapshot());
+            if (campusAddress != null) {
+                payload.put("campusAddress", campusAddress);
+            }
+            if (campusPhone != null) {
+                payload.put("campusPhone", campusPhone);
+            }
+            if (taxId != null) {
+                payload.put("taxId", taxId);
+            }
             payload.put("pickupRequired", order.getPickupRequiredSnapshot());
             payload.put("pickupAddress", order.getPickupAddressSnapshot());
             payload.put("dropoffRequired", order.getDropoffRequiredSnapshot());

@@ -64,6 +64,11 @@ export interface EnrollmentOrderCorrectionPayload {
   school?: string;
   guardianPhone?: string;
   guardianPhone2?: string;
+  campusId?: EntityId;
+  campusName?: string;
+  campusAddress?: string;
+  campusPhone?: string;
+  taxId?: string;
   pickupRequired?: boolean;
   pickupAddress?: string;
   dropoffRequired?: boolean;
