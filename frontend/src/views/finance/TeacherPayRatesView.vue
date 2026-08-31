@@ -209,7 +209,7 @@
               <el-select v-model="editingDeliveryMode" clearable placeholder="Any delivery" style="width: 100%;">
                 <el-option label="Any delivery" :value="undefined" />
                 <el-option label="Online" value="ONLINE" />
-                <el-option label="Offline" value="OFFLINE" />
+                <el-option label="In person" value="OFFLINE" />
               </el-select>
             </el-form-item>
           </div>
@@ -535,7 +535,7 @@ async function loadRates() {
 
 function formatDelivery(value?: string) {
   if (value === 'ONLINE') return 'Online';
-  if (value === 'OFFLINE') return 'Offline';
+  if (value === 'OFFLINE') return 'In person';
   return 'Any delivery';
 }
 
