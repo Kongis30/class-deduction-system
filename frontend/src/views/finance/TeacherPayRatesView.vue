@@ -113,9 +113,17 @@
                         <el-table-column label="Hourly rate" width="130" align="right">
                           <template #default="{ row: rate }">{{ formatMoney(rate.hourlyRate) }}</template>
                         </el-table-column>
-                        <el-table-column label="Action" width="90" fixed="right">
+                        <el-table-column label="Action" width="120" fixed="right">
                           <template #default="{ row: rate }">
                             <el-button text type="primary" size="small" @click="openEditDialog(rate)">Edit</el-button>
+                            <el-button
+                              text
+                              type="danger"
+                              size="small"
+                              :loading="removingRateId === rate.rateId"
+                              :disabled="!rate.rateId"
+                              @click="handleDeleteSpecialRate(rate)"
+                            >Delete</el-button>
                           </template>
                         </el-table-column>
                       </el-table>
@@ -270,7 +278,7 @@
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 
-import { fetchPayRates, savePayRate, type TeacherPayRateSavePayload } from '@/api/finance';
+import { fetchPayRates, savePayRate, deletePayRate, type TeacherPayRateSavePayload } from '@/api/finance';
 import { fetchAllStudents, fetchAllTeachers, fetchCourseProducts } from '@/api/base-data';
 import type { EntityId } from '@/types/domain';
 
@@ -313,6 +321,7 @@ interface RateGroup {
 const defaultRate = ref<RateRow | null>(null);
 const rateExceptionRows = ref<RateRow[]>([]);
 const savingProductId = ref<EntityId | null>(null);
+const removingRateId = ref<EntityId | null>(null);
 
 
 
@@ -426,6 +435,20 @@ async function handleEditSave() {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to save rate.');
   } finally {
     savingProductId.value = null;
+  }
+}
+
+async function handleDeleteSpecialRate(rate: RateRow) {
+  if (!rate.rateId) return;
+  removingRateId.value = rate.rateId;
+  try {
+    await deletePayRate(rate.rateId);
+    await loadRates();
+    ElMessage.success('Special rate deleted.');
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to delete rate.');
+  } finally {
+    removingRateId.value = null;
   }
 }
 

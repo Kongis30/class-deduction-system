@@ -24,6 +24,10 @@ export function savePayRate(data: TeacherPayRateSavePayload) {
   return http.post<ApiResponse<EntityId>>('/v1/finance/pay-rates', data);
 }
 
+export function deletePayRate(id: EntityId) {
+  return http.delete<ApiResponse<string>>(`/v1/finance/pay-rates/${id}`);
+}
+
 // ─── Teacher Payments ───────────────────────────────────
 
 export interface UnpaidLessonQuery {
