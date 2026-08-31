@@ -8,7 +8,6 @@
           <p>Choose a course, create one class for each grade, then add the monthly, weekly, or session registration options for that class.</p>
         </div>
         <div class="header-actions">
-          <el-button @click="openCategoryDialog">Edit categories</el-button>
           <el-button @click="loadAll">Reload</el-button>
         </div>
       </div>
