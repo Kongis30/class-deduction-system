@@ -14,7 +14,6 @@ import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.CoursePriceOptionService;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
-import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
@@ -382,9 +381,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     }
 
     private long countOptionReferences(Long optionId) {
-        Long count = enrollmentOrderItemMapper.selectCount(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
-                .eq(EnrollmentOrderItemEntity::getCoursePriceOptionId, optionId)
-                .eq(EnrollmentOrderItemEntity::getIsDeleted, 0));
+        Long count = enrollmentOrderItemMapper.countActiveReferences(optionId);
         return count == null ? 0L : count;
     }
 

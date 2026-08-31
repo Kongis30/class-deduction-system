@@ -228,7 +228,7 @@ class CoursePriceOptionServiceImplTest {
     @Test
     void shouldReleaseOptionCodeWhenSoftDeletingSoItCanBeReused() {
         when(coursePriceOptionMapper.selectById(9001L)).thenReturn(oneOnOneEntity());
-        when(enrollmentOrderItemMapper.selectCount(any())).thenReturn(0L);
+        when(enrollmentOrderItemMapper.countActiveReferences(any())).thenReturn(0L);
 
         coursePriceOptionService.deleteOption(9001L);
 
@@ -250,7 +250,7 @@ class CoursePriceOptionServiceImplTest {
         mapperPage.setRecords(List.of(oneOnOneEntity()));
         mapperPage.setTotal(1);
         when(coursePriceOptionMapper.selectPage(any(), any())).thenReturn(mapperPage);
-        when(enrollmentOrderItemMapper.selectCount(any())).thenReturn(2L);
+        when(enrollmentOrderItemMapper.countActiveReferences(any())).thenReturn(2L);
 
         PageResponse<CoursePriceOptionVO> result = coursePriceOptionService.pageOptions(query);
 
