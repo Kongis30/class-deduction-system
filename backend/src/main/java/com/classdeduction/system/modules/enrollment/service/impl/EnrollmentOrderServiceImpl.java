@@ -964,7 +964,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (request.getGuardianPhone2() != null) {
             order.setParentPhone2Snapshot(request.getGuardianPhone2().trim());
         }
-        if (request.getCampusName() != null) {
+        boolean campusChanged = request.getCampusName() != null;
+        if (campusChanged) {
             order.setCampusNameSnapshot(request.getCampusName().trim());
             order.setCampusId(request.getCampusId());
         }
@@ -990,6 +991,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             order.setRemark(request.getRemark());
         }
         enrollmentOrderMapper.updateById(order);
+        // updateById skips null fields, so a campus switch to a no-id campus (e.g. Online)
+        // would keep the stale campus_id. Apply the campus snapshot explicitly so it can be nulled.
+        if (campusChanged) {
+            enrollmentOrderMapper.update(null, new LambdaUpdateWrapper<EnrollmentOrderEntity>()
+                    .eq(EnrollmentOrderEntity::getId, order.getId())
+                    .set(EnrollmentOrderEntity::getCampusNameSnapshot, order.getCampusNameSnapshot())
+                    .set(EnrollmentOrderEntity::getCampusId, order.getCampusId()));
+        }
 
         // Keep the receipt snapshot(s) in sync so the printed receipt reflects the fix.
         syncReceiptSnapshots(order, request.getCampusAddress(), request.getCampusPhone(), request.getTaxId());
