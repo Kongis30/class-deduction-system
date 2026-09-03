@@ -94,8 +94,9 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" width="90" fixed="right">
+            <el-table-column label="Actions" width="150" fixed="right">
               <template #default="{ row }">
+                <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
                 <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
               </template>
             </el-table-column>
@@ -1183,6 +1184,16 @@ async function loadTeachers() {
   } catch {
     // Silent fail
   }
+}
+
+function openOneOnOneRenewal(row: CoursePackageItem) {
+  router.push({
+    name: 'registration',
+    query: {
+      renewPackageId: String(row.id),
+      studentId: String(row.studentId),
+    },
+  });
 }
 
 // ─── Package Detail ──────────────────────────────────
