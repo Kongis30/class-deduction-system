@@ -251,6 +251,11 @@
                         </el-tag>
                       </template>
                     </el-table-column>
+                    <el-table-column label="Actions" width="80" align="center">
+                      <template #default="{ row: student }">
+                        <el-button class="row-action-button" text type="primary" size="small" @click="openGroupClassRenewal(student)">Renew</el-button>
+                      </template>
+                    </el-table-column>
                   </el-table>
                 </div>
               </template>
@@ -1192,6 +1197,17 @@ function openOneOnOneRenewal(row: CoursePackageItem) {
     query: {
       renewPackageId: String(row.id),
       studentId: String(row.studentId),
+    },
+  });
+}
+
+function openGroupClassRenewal(student: GroupClassStudentProgressItem) {
+  router.push({
+    name: 'registration',
+    query: {
+      renewClassEnrollmentId: String(student.enrollmentId),
+      studentId: String(student.studentId),
+      classId: String(student.classId),
     },
   });
 }
