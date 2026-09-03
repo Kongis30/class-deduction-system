@@ -39,6 +39,8 @@ public class StudentEntity extends BaseEntity {
 
     private String grade;
 
+    private String studentClass;
+
     private String school;
 
     private String sourceChannel;

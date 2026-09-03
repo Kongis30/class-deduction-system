@@ -19,6 +19,7 @@ public record StudentDetailVO(
         String gender,
         LocalDate birthDate,
         String grade,
+        String studentClass,
         String school,
         String sourceChannel,
         String status,

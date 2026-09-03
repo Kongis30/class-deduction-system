@@ -180,11 +180,16 @@
             </el-select>
           </el-form-item>
         </div>
-        <div class="student-form__row">
-          <el-form-item label="Grade" class="student-form__half">
+        <div class="student-form__row student-form__row--three">
+          <el-form-item label="Grade" class="student-form__third">
             <el-input v-model="studentForm.grade" placeholder="e.g. Grade 6" />
           </el-form-item>
-          <el-form-item label="School" class="student-form__half">
+          <el-form-item label="Class" class="student-form__third">
+            <el-select v-model="studentForm.studentClass" placeholder="Select class" clearable style="width: 100%;">
+              <el-option v-for="option in studentClassOptions" :key="option" :label="option" :value="option" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="School" class="student-form__third">
             <el-input v-model="studentForm.school" placeholder="Current school" />
           </el-form-item>
         </div>
@@ -1049,6 +1054,8 @@ async function loadStudentAccounts() {
 }
 
 // ─── Form ──────────────────────────────────────────
+const studentClassOptions = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
+
 const studentForm = reactive<StudentSavePayload>({
   studentName: '',
   gender: 'Female',
@@ -1058,6 +1065,7 @@ const studentForm = reactive<StudentSavePayload>({
   guardianEmail: '',
   guardianRelationType: '',
   grade: '',
+  studentClass: '',
   school: '',
   status: 'ACTIVE',
   notes: '',
@@ -1100,6 +1108,7 @@ function openStudentDialog(row?: StudentItem) {
     guardianEmail: row?.guardianEmail ?? '',
     guardianRelationType: row?.guardianRelationType ?? '',
     grade: row?.grade ?? '',
+    studentClass: row?.studentClass ?? '',
     school: row?.school ?? '',
     status: row?.status ?? 'ACTIVE',
     notes: row?.notes ?? '',

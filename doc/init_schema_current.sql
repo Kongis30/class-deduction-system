@@ -1187,6 +1187,7 @@ CREATE TABLE `student` (
   `gender` varchar(16) DEFAULT NULL COMMENT 'Gender',
   `birth_date` date DEFAULT NULL COMMENT 'Birth date',
   `grade` varchar(32) DEFAULT NULL COMMENT 'Current student grade',
+  `student_class` varchar(32) DEFAULT NULL COMMENT 'Student class level',
   `school` varchar(128) DEFAULT NULL COMMENT 'Current school name',
   `source_channel` varchar(64) DEFAULT NULL COMMENT 'Lead source',
   `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',

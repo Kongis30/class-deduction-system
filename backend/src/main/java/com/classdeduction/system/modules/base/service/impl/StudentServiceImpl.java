@@ -236,6 +236,7 @@ public class StudentServiceImpl implements StudentService {
         entity.setGender(request.getGender());
         entity.setBirthDate(request.getBirthDate());
         entity.setGrade(request.getGrade());
+        entity.setStudentClass(request.getStudentClass());
         entity.setSchool(request.getSchool());
         entity.setSourceChannel(request.getSourceChannel());
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : DEFAULT_STATUS);
@@ -291,6 +292,7 @@ public class StudentServiceImpl implements StudentService {
                 .gender(student.getGender())
                 .birthDate(student.getBirthDate())
                 .grade(student.getGrade())
+                .studentClass(student.getStudentClass())
                 .school(student.getSchool())
                 .sourceChannel(student.getSourceChannel())
                 .status(student.getStatus())
@@ -320,6 +322,7 @@ public class StudentServiceImpl implements StudentService {
                 .gender(stringValue(row.get("gender")))
                 .birthDate(localDateValue(row.get("birthDate")))
                 .grade(stringValue(row.get("grade")))
+                .studentClass(stringValue(row.get("studentClass")))
                 .school(stringValue(row.get("school")))
                 .sourceChannel(stringValue(row.get("sourceChannel")))
                 .status(stringValue(row.get("status")))
@@ -447,6 +450,7 @@ public class StudentServiceImpl implements StudentService {
                 .gender(student.getGender())
                 .birthDate(student.getBirthDate())
                 .grade(student.getGrade())
+                .studentClass(student.getStudentClass())
                 .school(student.getSchool())
                 .sourceChannel(student.getSourceChannel())
                 .status(student.getStatus())

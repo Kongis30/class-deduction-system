@@ -28,6 +28,7 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
                     s.gender AS gender,
                     s.birth_date AS birthDate,
                     s.grade AS grade,
+                    s.student_class AS studentClass,
                     s.school AS school,
                     s.source_channel AS sourceChannel,
                     s.status AS status,

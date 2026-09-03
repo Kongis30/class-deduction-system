@@ -32,6 +32,9 @@ public class StudentSaveRequest {
     @Schema(description = "Current grade", example = "Grade 6")
     private String grade;
 
+    @Schema(description = "Student class level", example = "G6")
+    private String studentClass;
+
     @Schema(description = "Current school", example = "PS 101")
     private String school;
 

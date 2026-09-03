@@ -44,6 +44,7 @@ export interface StudentSavePayload {
   englishName?: string;
   birthDate?: string;
   grade?: string;
+  studentClass?: string;
   school?: string;
   sourceChannel?: string;
   campusId?: EntityId;
