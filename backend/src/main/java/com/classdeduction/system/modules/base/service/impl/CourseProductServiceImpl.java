@@ -1,13 +1,16 @@
 package com.classdeduction.system.modules.base.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
+import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.CourseProductService;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
@@ -43,6 +46,7 @@ public class CourseProductServiceImpl implements CourseProductService {
     private final ClassGroupMapper classGroupMapper;
     private final com.classdeduction.system.modules.schedule.service.ClassGroupService classGroupService;
     private final PlatformTransactionManager transactionManager;
+    private final CoursePriceOptionMapper coursePriceOptionMapper;
 
     @Override
     public PageResponse<CourseProductVO> pageCourseProducts(CourseProductPageQuery query) {
@@ -142,6 +146,23 @@ public class CourseProductServiceImpl implements CourseProductService {
         validateByTeachingMode(request);
         applyCourseProduct(entity, request);
         courseProductMapper.updateById(entity);
+        syncGroupOptionCourseType(entity);
+    }
+
+    /**
+     * 编辑课程产品后，把本次写入的 course_type 级联刷到其关联的「班课」价格选项，
+     * 让选项里的描述性 program 标签与产品保持一致（选项创建时是对产品 course_type 的快照）。
+     * 仅同步 derived 的 course_type，不改其它字段；已报名订单报文（enrollment_order_item.course_type）是
+     * 报名时自身的快照，不受影响。只能对非 ONE_ON_ONE 选项生效，避免覆盖 1v1 选项。
+     */
+    private void syncGroupOptionCourseType(CourseProductEntity entity) {
+        String syncedCourseType = "ONE_ON_ONE".equals(entity.getTeachingMode())
+                ? "ONE_ON_ONE"
+                : StringUtils.hasText(entity.getCourseType()) ? entity.getCourseType() : "GROUP";
+        coursePriceOptionMapper.update(null, new LambdaUpdateWrapper<CoursePriceOptionEntity>()
+                .eq(CoursePriceOptionEntity::getCourseProductId, entity.getId())
+                .ne(CoursePriceOptionEntity::getCourseType, "ONE_ON_ONE")
+                .set(CoursePriceOptionEntity::getCourseType, syncedCourseType));
     }
 
     /**

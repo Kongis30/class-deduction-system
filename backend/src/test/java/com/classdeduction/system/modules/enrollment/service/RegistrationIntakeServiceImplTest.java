@@ -609,6 +609,27 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldAllowGroupClassRegistrationBeforeClassScheduleIsConfigured() {
+        stubUnscheduledGroupClassIntake();
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setSignupDate(LocalDate.of(2026, 9, 3));
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("8"));
+
+        registrationIntakeService.submitIntake(request);
+
+        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
+                ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 3));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 12, 31));
+        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(8);
+        assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("SESSION");
+    }
+
+    @Test
     void shouldCreateCalendarMonthGroupEnrollmentFromSelectedPackage() {
         stubMonthlyGroupClassIntake();
         RegistrationIntakeRequest request = buildGroupClassRequest();
@@ -854,6 +875,48 @@ class RegistrationIntakeServiceImplTest {
             enrollment.setId(3101L);
             return 1;
         }).when(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
+    }
+
+    private void stubUnscheduledGroupClassIntake() {
+        stubStudentCreationOnly();
+        CoursePriceOptionEntity option = buildOption("15:30-17:00");
+        option.setCourseType("GROUP");
+        option.setRegisterClass("Group class");
+        option.setPackageUnit("SESSION");
+        option.setPackageQuantity(new BigDecimal("8"));
+        CourseProductEntity product = buildProduct();
+        product.setTeachingMode("GROUP");
+        product.setBillingType("SESSION");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setProductId(202L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setBillingType("SESSION");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 12, 31));
+
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        when(courseProductMapper.selectById(202L)).thenReturn(product);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(jsonHelper.toJson(any())).thenReturn("{}");
+        lenient().when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        lenient().when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        doAnswer(invocation -> {
+            EnrollmentOrderEntity order = invocation.getArgument(0);
+            order.setId(2001L);
+            return 1;
+        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+        doAnswer(invocation -> {
+            EnrollmentOrderItemEntity item = invocation.getArgument(0);
+            item.setId(2101L);
+            return 1;
+        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
+        doAnswer(invocation -> {
+            ClassEnrollmentEntity enrollment = invocation.getArgument(0);
+            enrollment.setId(3101L);
+            return 1;
+        }).when(classEnrollmentMapper).insert(any(ClassEnrollmentEntity.class));
     }
 
     private void stubMonthlyGroupClassIntake() {

@@ -1,10 +1,14 @@
 package com.classdeduction.system.modules.base.service;
 
+import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
+import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.impl.CourseProductServiceImpl;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
@@ -44,6 +48,8 @@ class CourseProductServiceImplTest {
     private ClassGroupService classGroupService;
     @Mock
     private PlatformTransactionManager transactionManager;
+    @Mock
+    private CoursePriceOptionMapper coursePriceOptionMapper;
 
     private CourseProductServiceImpl courseProductService;
 
@@ -52,6 +58,7 @@ class CourseProductServiceImplTest {
         // 单元测试不启动 MyBatis 上下文，手动初始化 LambdaQueryWrapper 字段缓存。
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CourseProductEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePriceOptionEntity.class);
     }
 
     @BeforeEach
@@ -61,7 +68,8 @@ class CourseProductServiceImplTest {
                 coursePackageMapper,
                 classGroupMapper,
                 classGroupService,
-                transactionManager
+                transactionManager,
+                coursePriceOptionMapper
         );
     }
 
@@ -162,6 +170,29 @@ class CourseProductServiceImplTest {
         verify(courseProductMapper, never()).updateById(any(CourseProductEntity.class));
     }
 
+    @Test
+    void shouldCascadeCourseTypeToGroupOptionsWhenUpdatingProduct() {
+        CourseProductEntity existing = product(1L, "Weekly Class", 5);
+        existing.setCourseType("AFTER_SCHOOL");
+        when(courseProductMapper.selectById(1L)).thenReturn(existing);
+
+        CourseProductSaveRequest request = buildGroupRequest();
+        request.setCourseType("AFTER_SCHOOL");
+
+        courseProductService.updateCourseProduct(1L, request);
+
+        verify(courseProductMapper).updateById(any(CourseProductEntity.class));
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<Wrapper> wrapperCaptor = ArgumentCaptor.forClass((Class) Wrapper.class);
+        verify(coursePriceOptionMapper).update(isNull(), wrapperCaptor.capture());
+        // 级联写入 course_type 为产品当前值（设置值存于 paramNameValuePairs）。
+        assertThat(wrapperSqlContains(wrapperCaptor.getValue(), "AFTER_SCHOOL")).isTrue();
+        // 更新范围：限定到该产品，且只作用于班课选项（ne ONE_ON_ONE）。
+        String wrapperSql = ((AbstractWrapper<?, ?, ?>) wrapperCaptor.getValue()).getSqlSet()
+                + " " + ((AbstractWrapper<?, ?, ?>) wrapperCaptor.getValue()).getSqlSegment();
+        assertThat(wrapperSql).contains("courseType").contains("courseProductId =").contains("courseType <>");
+    }
+
     private CourseProductEntity product(Long id, String name, int sortOrder) {
         CourseProductEntity entity = new CourseProductEntity();
         entity.setId(id);
@@ -181,5 +212,10 @@ class CourseProductServiceImplTest {
         request.setTeachingMode("GROUP");
         request.setStatus("ACTIVE");
         return request;
+    }
+
+    private static boolean wrapperSqlContains(Wrapper<?> wrapper, String keyword) {
+        return ((AbstractWrapper<?, ?, ?>) wrapper).getParamNameValuePairs().values().stream()
+                .anyMatch(value -> String.valueOf(value).contains(keyword));
     }
 }

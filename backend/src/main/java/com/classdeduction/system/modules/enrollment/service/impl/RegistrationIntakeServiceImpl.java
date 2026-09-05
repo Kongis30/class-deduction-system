@@ -397,12 +397,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("COURSE_PRODUCT_MODE_MISMATCH",
                     "Course price option teaching mode does not match the linked product.");
         }
-        if (StringUtils.hasText(product.getCourseType())
-                && StringUtils.hasText(option.getCourseType())
-                && !option.getCourseType().equals(product.getCourseType())) {
-            throw new BusinessException("COURSE_PRODUCT_TYPE_MISMATCH",
-                    "Course price option type does not match the linked product.");
-        }
     }
 
     private void validateResolvedLine(ResolvedCourseLine line) {
@@ -1279,9 +1273,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                     LocalDate signupDate) {
         LocalDate today = signupDate == null ? LocalDate.now(AppTime.APP_ZONE_ID) : signupDate;
         List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup);
-        if (slots.isEmpty()) {
-            throw new BusinessException("GRADE_CLASS_NO_SLOTS", "Grade class has no schedule slots.");
-        }
         String unit = StringUtils.hasText(line.packageUnit) ? line.packageUnit : "MONTH";
         int quantity = line.packageQuantity == null
                 ? resolveGroupPurchasedQuantity(line)
@@ -1319,7 +1310,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         } else if ("WEEK".equals(unit)) {
             expiryDate = enrollmentDate.plusWeeks(quantity).minusDays(1);
         } else if ("SESSION".equals(unit)) {
-            expiryDate = computeNthSessionDate(enrollmentDate, slots, quantity);
+            expiryDate = computeSessionExpiryDate(enrollmentDate, slots, quantity, configuredEnd);
         } else {
             throw new BusinessException("INVALID_PACKAGE_UNIT",
                     "Group class package unit must be MONTH, WEEK, or SESSION.");
@@ -1337,7 +1328,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                LocalDate horizonEnd) {
         List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup);
         if (slots.isEmpty()) {
-            throw new BusinessException("GRADE_CLASS_NO_SLOTS", "Grade class has no schedule slots.");
+            // 班课允许先报名、后排课；没有 weekly slot 时只保存 enrollment，不生成日历 occurrence。
+            return 0;
         }
 
         LocalDateTime windowStartAt = windowStart.atStartOfDay();
@@ -1504,6 +1496,19 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             }
         }
         throw new BusinessException("SESSION_DATE_UNRESOLVED", "Cannot resolve the date for the selected sessions.");
+    }
+
+    private LocalDate computeSessionExpiryDate(LocalDate startDate,
+                                               List<ClassGroupScheduleSlotEntity> slots,
+                                               int quantity,
+                                               LocalDate configuredEnd) {
+        if (!slots.isEmpty()) {
+            return computeNthSessionDate(startDate, slots, quantity);
+        }
+        if (configuredEnd != null && !configuredEnd.isBefore(startDate)) {
+            return configuredEnd;
+        }
+        return startDate.plusDays(quantity - 1L);
     }
 
     private YearMonth parseRequestMonth(String value, String fieldName) {
