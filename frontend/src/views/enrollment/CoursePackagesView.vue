@@ -41,6 +41,15 @@
             <el-option label="Pending" value="PENDING" />
           </el-select>
         </el-form-item>
+        <el-form-item class="filters__item">
+          <el-button
+            :type="filters.onlyRenewalDue ? 'danger' : 'default'"
+            plain
+            @click="toggleRenewalDueFilter"
+          >
+            Renewal due
+          </el-button>
+        </el-form-item>
       </el-form>
 
       <el-tabs v-model="activeTab" class="package-tabs">
@@ -51,6 +60,7 @@
             row-key="id"
             class="product-table"
             :show-empty="true"
+            :row-class-name="oneOnOneRowClassName"
           >
             <el-table-column label="Student" min-width="150" prop="studentName" />
             <el-table-column label="Product / Package" min-width="230">
@@ -85,7 +95,11 @@
               </template>
             </el-table-column>
             <el-table-column label="Period" min-width="170">
-              <template #default="{ row }">{{ row.startDate ?? '—' }} ~ {{ row.estimatedEndDate ?? '—' }}</template>
+              <template #default="{ row }">
+                <span :class="{ 'renewal-due-text': isOneOnOneRenewalDue(row) }">
+                  {{ row.startDate ?? '—' }} ~ {{ row.estimatedEndDate ?? '—' }}
+                </span>
+              </template>
             </el-table-column>
             <el-table-column label="Package status" min-width="110" align="center">
               <template #default="{ row }">
@@ -132,21 +146,9 @@
                   <div class="nested-package-card__header">
                     <span>Students in</span>
                     <strong>{{ row.productName }}</strong>
-                    <el-select
-                      :model-value="selectedGroupClassId(row)"
-                      size="small"
-                      class="group-grade-select"
-                      placeholder="Select grade"
-                      @click.stop
-                      @change="(value) => selectGroupGrade(row, value)"
-                    >
-                      <el-option
-                        v-for="groupClass in row.classes"
-                        :key="groupClass.classId"
-                        :label="groupClass.className"
-                        :value="groupClass.classId"
-                      />
-                    </el-select>
+                    <span v-if="selectedGroupClass(row)" class="selected-class-label">
+                      {{ selectedGroupClass(row)?.className }}
+                    </span>
                     <el-tag v-if="selectedGroupClass(row)" size="small" type="info">
                       {{ classTypeLabel(selectedGroupClass(row)?.billingType) }}
                     </el-tag>
@@ -161,8 +163,11 @@
                     size="small"
                     class="nested-table"
                     empty-text="No active students in this grade."
+                    :row-class-name="groupStudentRowClassName"
                   >
-                    <el-table-column label="Student" min-width="140" prop="studentName" />
+                    <el-table-column label="Student" min-width="140">
+                      <template #default="{ row: student }">{{ displayStudentName(student) }}</template>
+                    </el-table-column>
                     <el-table-column label="Purchased" min-width="100" align="center">
                       <template #default="{ row: student }">
                         {{ student.totalUnits }} {{ groupUnitLabel(student.billingType) }}
@@ -222,7 +227,9 @@
                         </el-popover>
                       </template>
                       <template #default="{ row: student }">
-                        {{ student.enrollmentDate ?? '—' }} ~ {{ student.expiryDate ?? '—' }}
+                        <span :class="{ 'renewal-due-text': isGroupStudentRenewalDue(student) }">
+                          {{ student.enrollmentDate ?? '—' }} ~ {{ student.expiryDate ?? '—' }}
+                        </span>
                       </template>
                     </el-table-column>
                     <el-table-column label="Status" min-width="90" align="center">
@@ -314,7 +321,7 @@
             <el-table-column label="Students" min-width="90" align="center">
               <template #default="{ row }">
                 <el-tag v-if="selectedGroupClass(row)" size="small" type="success">
-                  {{ selectedGroupClass(row)?.activeStudentCount }}
+                  {{ displayGroupStudentCount(row) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -743,6 +750,7 @@ import type {
 } from '@/types/domain';
 
 const router = useRouter();
+const RENEWAL_DUE_DAYS = 15;
 const loading = ref(false);
 const groupLoading = ref(false);
 const activeTab = ref<'ONE_ON_ONE' | 'GROUP'>('ONE_ON_ONE');
@@ -802,6 +810,7 @@ const filters = reactive({
   keyword: '',
   studentId: undefined as number | undefined,
   packageStatus: '',
+  onlyRenewalDue: false,
 });
 
 const pagination = reactive({
@@ -885,6 +894,11 @@ function handleFilterChange() {
   }
 }
 
+function toggleRenewalDueFilter() {
+  filters.onlyRenewalDue = !filters.onlyRenewalDue;
+  handleFilterChange();
+}
+
 function progressPercent(row: { totalUnits: number; consumedUnits: number }): number {
   return row.totalUnits > 0 ? Math.round((row.consumedUnits / row.totalUnits) * 100) : 0;
 }
@@ -930,6 +944,9 @@ function setGroupStudentStatusFilter(classId: EntityId, value: PackageProgressFi
 function getVisibleGroupStudents(classId: EntityId): GroupClassStudentProgressItem[] {
   const filter = getGroupStudentStatusFilter(classId);
   const studentsInClass = (expandedGroupStudents[String(classId)] ?? []).filter((student) => {
+    if (filters.onlyRenewalDue && !isGroupStudentRenewalDue(student)) {
+      return false;
+    }
     if (filter === 'ALL') return true;
     if (filter === 'INACTIVE') return student.enrollmentStatus !== 'ACTIVE';
     return student.enrollmentStatus === 'ACTIVE';
@@ -957,6 +974,14 @@ function selectGroupGrade(row: GroupProductRow, classId: EntityId) {
   }
 }
 
+function displayGroupStudentCount(row: GroupProductRow): number {
+  const classId = selectedGroupClassId(row);
+  if (!filters.onlyRenewalDue) {
+    return selectedGroupClass(row)?.activeStudentCount ?? 0;
+  }
+  return getVisibleGroupStudents(classId).length;
+}
+
 function sortGroupStudents(
   studentsInClass: GroupClassStudentProgressItem[],
   state: GroupStudentSortState,
@@ -974,14 +999,46 @@ function sortGroupStudents(
     }
 
     const ordered = state.order === 'asc' ? result : -result;
-    return ordered || a.studentName.localeCompare(b.studentName) || String(a.enrollmentId).localeCompare(String(b.enrollmentId));
+    return ordered || displayStudentName(a).localeCompare(displayStudentName(b)) || String(a.enrollmentId).localeCompare(String(b.enrollmentId));
   });
 }
 
 function parseDateValue(value?: string): number | undefined {
   if (!value) return undefined;
-  const time = new Date(value).getTime();
+  const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const date = dateOnlyMatch
+    ? new Date(Number(dateOnlyMatch[1]), Number(dateOnlyMatch[2]) - 1, Number(dateOnlyMatch[3]))
+    : new Date(value);
+  const time = date.getTime();
   return Number.isNaN(time) ? undefined : time;
+}
+
+function isRenewalDueByDate(endDateValue?: string): boolean {
+  const endTime = parseDateValue(endDateValue);
+  if (endTime == null) {
+    return false;
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dueLimit = new Date(today);
+  dueLimit.setDate(dueLimit.getDate() + RENEWAL_DUE_DAYS);
+  return endTime <= dueLimit.getTime();
+}
+
+function isOneOnOneRenewalDue(row: CoursePackageItem): boolean {
+  return row.packageStatus === 'ACTIVE' && isRenewalDueByDate(row.estimatedEndDate);
+}
+
+function isGroupStudentRenewalDue(row: GroupClassStudentProgressItem): boolean {
+  return row.enrollmentStatus === 'ACTIVE' && isRenewalDueByDate(row.expiryDate);
+}
+
+function oneOnOneRowClassName({ row }: { row: OneOnOnePackageRow }) {
+  return isOneOnOneRenewalDue(row) ? 'renewal-due-row' : '';
+}
+
+function groupStudentRowClassName({ row }: { row: GroupClassStudentProgressItem }) {
+  return isGroupStudentRenewalDue(row) ? 'renewal-due-row' : '';
 }
 
 function groupUnitLabel(billingType?: string): string {
@@ -990,6 +1047,11 @@ function groupUnitLabel(billingType?: string): string {
 
 function normalizeLabel(value?: string | null): string {
   return (value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function displayStudentName(row: Pick<GroupClassStudentProgressItem, 'studentName' | 'studentId'>): string {
+  const name = row.studentName?.trim();
+  return name || `Unknown student #${row.studentId}`;
 }
 
 function shouldShowProductName(row: CoursePackageItem): boolean {
@@ -1027,7 +1089,10 @@ function packageStatusLabel(status: string) {
 async function loadData() {
   loading.value = true;
   try {
-    const packages = await loadAllOneOnOnePackages();
+    const allPackages = await loadAllOneOnOnePackages();
+    const packages = filters.onlyRenewalDue
+      ? allPackages.filter(isOneOnOneRenewalDue)
+      : allPackages;
     pagination.total = packages.length;
     const pagePackages = packages.slice((pagination.page - 1) * pagination.size, pagination.page * pagination.size);
     tableData.value = await enrichOneOnOnePackages(pagePackages);
@@ -1133,17 +1198,27 @@ function formatScheduleDate(value?: string): string {
 async function loadGroupData() {
   groupLoading.value = true;
   try {
-    const params: CoursePackageQuery = {
-      keyword: filters.keyword || undefined,
-      studentId: filters.studentId,
-      packageStatus: filters.packageStatus || undefined,
-      pageNum: groupPagination.page,
-      pageSize: groupPagination.size,
-    };
-    const res = await fetchGroupClassPackageProgress(params);
-    const data = res.data.data;
-    groupTableData.value = data.records;
-    groupPagination.total = data.total;
+    if (filters.onlyRenewalDue) {
+      const groups = await loadAllGroupClassPackages();
+      await preloadGroupStudents(groups);
+      const dueGroups = groups.filter((groupClass) =>
+        (expandedGroupStudents[String(groupClass.classId)] ?? []).some(isGroupStudentRenewalDue),
+      );
+      groupPagination.total = dueGroups.length;
+      groupTableData.value = dueGroups.slice((groupPagination.page - 1) * groupPagination.size, groupPagination.page * groupPagination.size);
+    } else {
+      const params: CoursePackageQuery = {
+        keyword: filters.keyword || undefined,
+        studentId: filters.studentId,
+        packageStatus: filters.packageStatus || undefined,
+        pageNum: groupPagination.page,
+        pageSize: groupPagination.size,
+      };
+      const res = await fetchGroupClassPackageProgress(params);
+      const data = res.data.data;
+      groupTableData.value = data.records;
+      groupPagination.total = data.total;
+    }
   } catch {
     ElMessage.error('Failed to load group class packages.');
   } finally {
@@ -1162,6 +1237,41 @@ async function loadGroupStudents(classId: EntityId) {
   } finally {
     expandedGroupLoading[key] = false;
   }
+}
+
+async function loadAllGroupClassPackages(): Promise<GroupClassPackageProgressItem[]> {
+  const pageSize = 200;
+  let pageNum = 1;
+  let total = 0;
+  const records: GroupClassPackageProgressItem[] = [];
+
+  do {
+    const params: CoursePackageQuery = {
+      keyword: filters.keyword || undefined,
+      studentId: filters.studentId,
+      packageStatus: filters.packageStatus || undefined,
+      pageNum,
+      pageSize,
+    };
+    const res = await fetchGroupClassPackageProgress(params);
+    const data = res.data.data;
+    records.push(...data.records);
+    total = data.total;
+    pageNum += 1;
+  } while (records.length < total);
+
+  return records;
+}
+
+async function preloadGroupStudents(groups: GroupClassPackageProgressItem[]) {
+  await Promise.all(groups.map(async (groupClass) => {
+    const key = String(groupClass.classId);
+    if (expandedGroupStudents[key]) {
+      return;
+    }
+    const res = await fetchGroupClassStudentProgress(groupClass.classId);
+    expandedGroupStudents[key] = res.data.data;
+  }));
 }
 
 function handleGroupExpandChange(row: GroupProductRow, expandedRows: GroupProductRow[]) {
@@ -1202,12 +1312,14 @@ function openOneOnOneRenewal(row: CoursePackageItem) {
 }
 
 function openGroupClassRenewal(student: GroupClassStudentProgressItem) {
+  const groupClass = groupTableData.value.find((item) => String(item.classId) === String(student.classId));
   router.push({
     name: 'registration',
     query: {
       renewClassEnrollmentId: String(student.enrollmentId),
       studentId: String(student.studentId),
       classId: String(student.classId),
+      ...(groupClass?.productId ? { productId: String(groupClass.productId) } : {}),
     },
   });
 }
@@ -1473,6 +1585,21 @@ loadTeachers();
   background: #f8fafc;
 }
 
+.product-table :deep(.renewal-due-row > td),
+.nested-table :deep(.renewal-due-row > td) {
+  background: #fff1f2 !important;
+}
+
+.product-table :deep(.renewal-due-row:hover > td),
+.nested-table :deep(.renewal-due-row:hover > td) {
+  background: #ffe4e6 !important;
+}
+
+.renewal-due-text {
+  color: #e11d48;
+  font-weight: 700;
+}
+
 .nested-package-card {
   margin: 8px 12px 12px 46px;
   padding: 14px;
@@ -1497,8 +1624,9 @@ loadTeachers();
   font-weight: 600;
 }
 
-.group-grade-select {
-  min-width: 180px;
+.selected-class-label {
+  color: #606266;
+  font-size: 12px;
 }
 
 .product-table :deep(.el-table__expanded-cell) {

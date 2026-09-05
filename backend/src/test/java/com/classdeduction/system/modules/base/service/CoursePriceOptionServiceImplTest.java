@@ -7,8 +7,10 @@ import com.classdeduction.system.modules.base.dto.CoursePriceOptionSaveRequest;
 import com.classdeduction.system.modules.base.dto.CoursePriceOptionPageQuery;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.impl.CoursePriceOptionServiceImpl;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -63,6 +65,12 @@ class CoursePriceOptionServiceImplTest {
     @Mock
     private LessonRecordMapper lessonRecordMapper;
 
+    @Mock
+    private TeacherMapper teacherMapper;
+
+    @Mock
+    private ClassroomMapper classroomMapper;
+
     private CoursePriceOptionServiceImpl coursePriceOptionService;
 
     @BeforeEach
@@ -74,7 +82,9 @@ class CoursePriceOptionServiceImplTest {
                 classGroupMapper,
                 classGroupScheduleSlotMapper,
                 lessonOccurrenceMapper,
-                lessonRecordMapper
+                lessonRecordMapper,
+                teacherMapper,
+                classroomMapper
         );
     }
 
@@ -99,14 +109,46 @@ class CoursePriceOptionServiceImplTest {
     }
 
     @Test
-    void shouldRejectGroupOptionWithoutScheduleNeededForMonthlyConversion() {
+    void shouldCreateActualClassesFromBillingGradeWithoutSharedSchedule() {
         CoursePriceOptionSaveRequest request = groupOption();
         request.setGroupScheduleSlots(List.of());
         when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
+        when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
+        when(classGroupMapper.selectOne(any())).thenReturn(null);
 
-        assertThatThrownBy(() -> coursePriceOptionService.createOption(request))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Grade classes require at least one weekly time slot.");
+        coursePriceOptionService.createOption(request);
+
+        ArgumentCaptor<ClassGroupEntity> classCaptor = ArgumentCaptor.forClass(ClassGroupEntity.class);
+        verify(classGroupMapper, times(4)).insert(classCaptor.capture());
+        assertThat(classCaptor.getAllValues())
+                .extracting(ClassGroupEntity::getActualClass)
+                .containsExactly("G3", "G4", "G5", "G6");
+        assertThat(classCaptor.getAllValues())
+                .extracting(ClassGroupEntity::getClassName)
+                .containsExactly("G3", "G4", "G5", "G6");
+    }
+
+    @Test
+    void shouldPreserveCustomActualClassDisplayNameWhenSavingGroupOption() {
+        CoursePriceOptionSaveRequest request = groupOption();
+        request.setActualClasses(List.of("G3"));
+        request.setGroupScheduleSlots(List.of());
+        ClassGroupEntity existingClass = new ClassGroupEntity();
+        existingClass.setId(401L);
+        existingClass.setProductId(301L);
+        existingClass.setGradeBand("G3-G6");
+        existingClass.setActualClass("G3");
+        existingClass.setClassName("Advanced Math G3");
+
+        when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
+        when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
+        when(classGroupMapper.selectOne(any())).thenReturn(existingClass);
+
+        coursePriceOptionService.createOption(request);
+
+        ArgumentCaptor<ClassGroupEntity> classCaptor = ArgumentCaptor.forClass(ClassGroupEntity.class);
+        verify(classGroupMapper).updateById(classCaptor.capture());
+        assertThat(classCaptor.getValue().getClassName()).isEqualTo("Advanced Math G3");
     }
 
     @Test
@@ -150,6 +192,54 @@ class CoursePriceOptionServiceImplTest {
                     assertThat(occurrence.getPlannedClassroomId()).isEqualTo(801L);
                     assertThat(occurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
                 });
+    }
+
+    @Test
+    void shouldTreatPerSessionGroupScheduleAsClassDaysWhenGeneratingOccurrences() {
+        CoursePriceOptionSaveRequest request = groupOption();
+        request.setGroupBillingType("PER_SESSION");
+        request.setPackageUnit("SESSION");
+        request.setPackageQuantity(new BigDecimal("2"));
+        request.setGroupTotalSessions(2);
+        request.setGroupStartMonth(null);
+        request.setGroupEndMonth(null);
+        request.setGroupStartDate(java.time.LocalDate.of(2026, 9, 5));
+        request.setGroupEndDate(java.time.LocalDate.of(2026, 9, 30));
+        CoursePriceOptionSaveRequest.GroupScheduleSlotDTO afternoon =
+                new CoursePriceOptionSaveRequest.GroupScheduleSlotDTO();
+        afternoon.setTeacherId(703L);
+        afternoon.setSubjectName(" Chemistry ");
+        afternoon.setWeekday(6);
+        afternoon.setStartTime("13:00");
+        afternoon.setEndTime("16:00");
+        request.setGroupScheduleSlots(List.of(request.getGroupScheduleSlots().get(0), afternoon));
+
+        when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
+        when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of());
+        doAnswer(invocation -> {
+            ClassGroupEntity classGroup = invocation.getArgument(0);
+            classGroup.setId(401L);
+            return 1;
+        }).when(classGroupMapper).insert(any(ClassGroupEntity.class));
+        doAnswer(invocation -> {
+            ClassGroupScheduleSlotEntity slot = invocation.getArgument(0);
+            slot.setId(slot.getStartTime().getHour() < 12 ? 501L : 502L);
+            return 1;
+        }).when(classGroupScheduleSlotMapper).insert(any(ClassGroupScheduleSlotEntity.class));
+
+        coursePriceOptionService.createOption(request);
+
+        ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor =
+                ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper, times(4)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues())
+                .extracting(occurrence -> occurrence.getPlannedStartAt().toLocalDate())
+                .containsExactly(
+                        java.time.LocalDate.of(2026, 9, 5),
+                        java.time.LocalDate.of(2026, 9, 5),
+                        java.time.LocalDate.of(2026, 9, 12),
+                        java.time.LocalDate.of(2026, 9, 12));
     }
 
     @Test

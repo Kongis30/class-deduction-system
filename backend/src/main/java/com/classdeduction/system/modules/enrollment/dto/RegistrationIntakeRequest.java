@@ -45,6 +45,12 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Registration period end date", example = "2026-12-31")
     private LocalDate periodEndDate;
 
+    @Schema(description = "Existing one-on-one course package ID to renew")
+    private Long renewPackageId;
+
+    @Schema(description = "Existing group class enrollment ID to renew")
+    private Long renewClassEnrollmentId;
+
     @Schema(description = "Cashier user ID")
     private Long cashierUserId;
 
@@ -121,6 +127,9 @@ public class RegistrationIntakeRequest {
 
         @Schema(description = "Current grade", example = "Grade 6")
         private String grade;
+
+        @Schema(description = "Registration class level selected on the intake form", example = "G6")
+        private String studentClass;
 
         @Schema(description = "Current school", example = "PS 101")
         private String school;

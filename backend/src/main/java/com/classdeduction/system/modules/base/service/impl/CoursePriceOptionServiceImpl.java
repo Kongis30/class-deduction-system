@@ -10,8 +10,12 @@ import com.classdeduction.system.modules.base.dto.CoursePriceOptionPageQuery;
 import com.classdeduction.system.modules.base.dto.CoursePriceOptionSaveRequest;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.TeacherEntity;
+import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.CoursePriceOptionService;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -38,9 +42,10 @@ import java.time.LocalTime;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -62,6 +67,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
+    private final TeacherMapper teacherMapper;
+    private final ClassroomMapper classroomMapper;
 
     @Override
     public List<CoursePriceOptionVO> listActiveOptions(String courseType) {
@@ -244,11 +251,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
 
     private void validateGroupScheduleRequest(CoursePriceOptionSaveRequest request) {
         if (request.getGroupScheduleSlots() == null || request.getGroupScheduleSlots().isEmpty()) {
-            if (hasExistingGradeClass(request)) {
-                return;
-            }
-            throw new BusinessException("GROUP_SCHEDULE_REQUIRED",
-                    "Grade classes require at least one weekly time slot.");
+            return;
         }
         String billingType = request.getPackageUnit();
         if (isWeekBilling(billingType) || isSessionBilling(billingType)) {
@@ -441,21 +444,11 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     }
 
     /**
-     * A group price row belongs to exactly one course-and-grade class. Students
-     * select the price row during registration and inherit this class schedule.
+     * 班课价格行只代表收费档位；实际班级按 actual_class 拆分，供注册和排课选择。
      */
     private void ensureGroupClass(CoursePriceOptionEntity option, CoursePriceOptionSaveRequest request) {
         if ("ONE_ON_ONE".equals(option.getCourseType()) || option.getCourseProductId() == null) {
             option.setClassId(null);
-            return;
-        }
-        if (option.getClassId() != null) {
-            ClassGroupEntity classGroup = classGroupMapper.selectById(option.getClassId());
-            if (classGroup == null) {
-                throw new BusinessException("CLASS_GROUP_NOT_FOUND",
-                        "The grade class linked to this price row no longer exists.");
-            }
-            applyGroupSchedule(classGroup, request);
             return;
         }
         CourseProductEntity product = courseProductMapper.selectById(option.getCourseProductId());
@@ -463,26 +456,108 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
         }
         String gradeBand = StringUtils.hasText(request.getGradeBand()) ? request.getGradeBand().trim() : "General";
-        ClassGroupEntity existing = classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getProductId, product.getId())
+        List<String> actualClasses = resolveActualClasses(request.getActualClasses(), gradeBand);
+        ClassGroupEntity primary = null;
+        for (String actualClass : actualClasses) {
+            ClassGroupEntity classGroup = findClassGroup(product.getId(), gradeBand, actualClass);
+            if (classGroup == null) {
+                classGroup = new ClassGroupEntity();
+                classGroup.setProductId(product.getId());
+                classGroup.setGradeBand(gradeBand);
+                classGroup.setActualClass(actualClass);
+                classGroup.setClassName(actualClass);
+                classGroup.setListPrice(BigDecimal.ZERO);
+                classGroup.setStatus("ACTIVE");
+                classGroupMapper.insert(classGroup);
+            } else {
+                boolean changed = false;
+                if (!safeEquals(classGroup.getActualClass(), actualClass)) {
+                    classGroup.setActualClass(actualClass);
+                    changed = true;
+                }
+                if (!StringUtils.hasText(classGroup.getClassName())) {
+                    classGroup.setClassName(actualClass);
+                    changed = true;
+                }
+                if (changed) {
+                    classGroupMapper.updateById(classGroup);
+                }
+            }
+            applyGroupBillingMetadata(classGroup, request);
+            if (primary == null || Objects.equals(classGroup.getId(), request.getClassId())) {
+                primary = classGroup;
+            }
+        }
+        option.setClassId(primary == null ? null : primary.getId());
+        if (primary != null && request.getGroupScheduleSlots() != null && !request.getGroupScheduleSlots().isEmpty()) {
+            applyGroupSchedule(primary, request);
+        }
+    }
+
+    private void applyGroupBillingMetadata(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request) {
+        classGroup.setBillingType(StringUtils.hasText(request.getPackageUnit())
+                ? request.getPackageUnit().trim().toUpperCase(Locale.ROOT)
+                : "MONTH");
+        classGroup.setStartDate(request.getGroupStartDate());
+        classGroup.setEndDate(request.getGroupEndDate());
+        classGroup.setTotalSessions(request.getGroupTotalSessions());
+        classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
+        classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
+        classGroupMapper.updateById(classGroup);
+    }
+
+    private ClassGroupEntity findClassGroup(Long productId, String gradeBand, String actualClass) {
+        ClassGroupEntity exact = classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, productId)
                 .eq(ClassGroupEntity::getGradeBand, gradeBand)
+                .eq(ClassGroupEntity::getActualClass, actualClass)
                 .eq(ClassGroupEntity::getIsDeleted, 0)
                 .last("LIMIT 1"));
-        if (existing != null) {
-            option.setClassId(existing.getId());
-            applyGroupSchedule(existing, request);
-            return;
+        if (exact != null) {
+            return exact;
         }
+        return classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, productId)
+                .eq(ClassGroupEntity::getGradeBand, gradeBand)
+                .and(wrapper -> wrapper.isNull(ClassGroupEntity::getActualClass).or().eq(ClassGroupEntity::getActualClass, ""))
+                .eq(ClassGroupEntity::getIsDeleted, 0)
+                .last("LIMIT 1"));
+    }
 
-        ClassGroupEntity classGroup = new ClassGroupEntity();
-        classGroup.setProductId(product.getId());
-        classGroup.setGradeBand(gradeBand);
-        classGroup.setClassName(product.getProductName() + " · " + gradeBand);
-        classGroup.setListPrice(BigDecimal.ZERO);
-        classGroup.setStatus("ACTIVE");
-        classGroupMapper.insert(classGroup);
-        option.setClassId(classGroup.getId());
-        applyGroupSchedule(classGroup, request);
+    private List<String> resolveActualClasses(List<String> requestedClasses, String gradeBand) {
+        List<String> cleaned = requestedClasses == null ? List.of() : requestedClasses.stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .distinct()
+                .toList();
+        if (!cleaned.isEmpty()) {
+            return cleaned;
+        }
+        List<String> expanded = expandGradeBand(gradeBand);
+        return expanded.isEmpty() ? List.of(gradeBand) : expanded;
+    }
+
+    private List<String> expandGradeBand(String gradeBand) {
+        if (!StringUtils.hasText(gradeBand)) {
+            return List.of();
+        }
+        String normalized = gradeBand.trim().toUpperCase(Locale.ROOT);
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile("^G(\\d{1,2})\\s*-\\s*G?(\\d{1,2})$")
+                .matcher(normalized);
+        if (!matcher.matches()) {
+            return List.of(normalized);
+        }
+        int start = Integer.parseInt(matcher.group(1));
+        int end = Integer.parseInt(matcher.group(2));
+        if (end < start || end - start > 20) {
+            return List.of(normalized);
+        }
+        List<String> classes = new ArrayList<>();
+        for (int grade = start; grade <= end; grade++) {
+            classes.add("G" + grade);
+        }
+        return classes;
     }
 
     private void applyGroupSchedule(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request) {
@@ -544,7 +619,15 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         if (slots.isEmpty()) {
             return;
         }
-        Set<String> existingKeys = futureClassOccurrenceKeys(classGroup.getId());
+        List<LessonOccurrenceEntity> existingFutureOccurrences = futureClassOccurrences(classGroup.getId());
+        Set<String> existingKeys = existingFutureOccurrences.stream()
+                .map(item -> occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt()))
+                .collect(java.util.stream.Collectors.toSet());
+        Set<LocalDate> existingSessionDates = existingFutureOccurrences.stream()
+                .map(LessonOccurrenceEntity::getPlannedStartAt)
+                .filter(Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .collect(java.util.stream.Collectors.toSet());
         LocalDate startDate = resolveOccurrenceStartDate(classGroup);
         LocalDate endDate = resolveOccurrenceEndDate(classGroup, startDate);
         if (endDate.isBefore(startDate)) {
@@ -552,12 +635,18 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         }
         int remainingSessions = isSessionBilling(classGroup.getBillingType())
                 && classGroup.getTotalSessions() != null
-                ? Math.max(classGroup.getTotalSessions() - existingKeys.size(), 0)
+                ? Math.max(classGroup.getTotalSessions() - existingSessionDates.size(), 0)
                 : Integer.MAX_VALUE;
-        for (LocalDate date = startDate; !date.isAfter(endDate) && remainingSessions > 0; date = date.plusDays(1)) {
+        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            boolean countsAsNewSessionDay = isSessionBilling(classGroup.getBillingType())
+                    && !existingSessionDates.contains(date);
+            if (countsAsNewSessionDay && remainingSessions <= 0) {
+                continue;
+            }
             int weekday = date.getDayOfWeek().getValue();
+            boolean createdOnDate = false;
             for (ClassGroupScheduleSlotEntity slot : slots) {
-                if (!slot.getWeekday().equals(weekday) || remainingSessions <= 0) {
+                if (!slot.getWeekday().equals(weekday)) {
                     continue;
                 }
                 LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
@@ -582,6 +671,11 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 occurrence.setConflictChecked(1);
                 lessonOccurrenceMapper.insert(occurrence);
                 existingKeys.add(key);
+                createdOnDate = true;
+            }
+            // 班课 SESSION 代表“上课日”：同一天的上午/下午时段都生成，但只占用 1 个 session 额度。
+            if (countsAsNewSessionDay && createdOnDate) {
+                existingSessionDates.add(date);
                 remainingSessions--;
             }
         }
@@ -616,15 +710,12 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         }
     }
 
-    private Set<String> futureClassOccurrenceKeys(Long classId) {
+    private List<LessonOccurrenceEntity> futureClassOccurrences(Long classId) {
         LocalDateTime now = AppTime.nowLocalDateTime();
-        Set<String> keys = new HashSet<>();
-        lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
                         .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now))
-                .forEach(item -> keys.add(occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt())));
-        return keys;
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now));
     }
 
     private LocalDate resolveOccurrenceStartDate(ClassGroupEntity classGroup) {
@@ -797,7 +888,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
 
     private CoursePriceOptionVO toVO(CoursePriceOptionEntity entity) {
         long referenceCount = countOptionReferences(entity.getId());
-        ClassGroupEntity classGroup = entity.getClassId() == null ? null : classGroupMapper.selectById(entity.getClassId());
+        List<ClassGroupEntity> gradeClasses = listActualClasses(entity.getCourseProductId(), entity.getGradeBand());
+        ClassGroupEntity classGroup = entity.getClassId() == null ? firstClass(gradeClasses) : classGroupMapper.selectById(entity.getClassId());
         String packageUnit = resolvePackageUnit(entity);
         BigDecimal packageQuantity = resolvePackageQuantity(entity, classGroup, packageUnit);
         BigDecimal totalPrice = resolveTotalPrice(entity);
@@ -840,6 +932,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 .currencyCode(entity.getCurrencyCode())
                 .courseProductId(entity.getCourseProductId())
                 .classId(entity.getClassId())
+                .actualClasses(toActualClassVOs(gradeClasses))
                 .groupTeacherId(classGroup == null ? null : classGroup.getTeacherId())
                 .groupClassroomId(classGroup == null ? null : classGroup.getClassroomId())
                 .groupScheduleSlots(groupScheduleSlots)
@@ -862,6 +955,56 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
                 .build();
+    }
+
+    private List<ClassGroupEntity> listActualClasses(Long productId, String gradeBand) {
+        if (productId == null || !StringUtils.hasText(gradeBand)) {
+            return List.of();
+        }
+        return classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, productId)
+                .eq(ClassGroupEntity::getGradeBand, gradeBand)
+                .eq(ClassGroupEntity::getStatus, "ACTIVE")
+                .eq(ClassGroupEntity::getIsDeleted, 0)
+                .orderByAsc(ClassGroupEntity::getActualClass)
+                .orderByAsc(ClassGroupEntity::getClassName));
+    }
+
+    private ClassGroupEntity firstClass(List<ClassGroupEntity> classes) {
+        return classes.isEmpty() ? null : classes.get(0);
+    }
+
+    private List<CoursePriceOptionVO.ActualClassVO> toActualClassVOs(List<ClassGroupEntity> classes) {
+        if (classes.isEmpty()) {
+            return List.of();
+        }
+        Set<Long> teacherIds = classes.stream().map(ClassGroupEntity::getTeacherId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        Set<Long> classroomIds = classes.stream().map(ClassGroupEntity::getClassroomId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        Map<Long, TeacherEntity> teachers = teacherIds.isEmpty() ? Map.of() : teacherMapper.selectBatchIds(teacherIds).stream()
+                .collect(java.util.stream.Collectors.toMap(TeacherEntity::getId, item -> item));
+        Map<Long, ClassroomEntity> classrooms = classroomIds.isEmpty() ? Map.of() : classroomMapper.selectBatchIds(classroomIds).stream()
+                .collect(java.util.stream.Collectors.toMap(ClassroomEntity::getId, item -> item));
+        return classes.stream()
+                .map(item -> new CoursePriceOptionVO.ActualClassVO(
+                        item.getId(),
+                        item.getClassName(),
+                        StringUtils.hasText(item.getActualClass()) ? item.getActualClass() : item.getGradeBand(),
+                        item.getTeacherId(),
+                        teacherName(item.getTeacherId(), teachers),
+                        item.getClassroomId(),
+                        classroomName(item.getClassroomId(), classrooms),
+                        item.getScheduleDesc()))
+                .toList();
+    }
+
+    private String teacherName(Long teacherId, Map<Long, TeacherEntity> teachers) {
+        TeacherEntity teacher = teacherId == null ? null : teachers.get(teacherId);
+        return teacher == null ? null : teacher.getTeacherName();
+    }
+
+    private String classroomName(Long classroomId, Map<Long, ClassroomEntity> classrooms) {
+        ClassroomEntity classroom = classroomId == null ? null : classrooms.get(classroomId);
+        return classroom == null ? null : classroom.getRoomName();
     }
 
     private String resolvePackageUnit(CoursePriceOptionEntity entity) {

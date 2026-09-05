@@ -91,6 +91,9 @@ public class CoursePriceOptionSaveRequest {
     @Schema(description = "Generated group class ID for this course and grade")
     private Long classId;
 
+    @Schema(description = "Actual classes under this price grade, e.g. G1, G2, G3")
+    private List<String> actualClasses;
+
     @Schema(description = "Group class teacher configured for this grade")
     private Long groupTeacherId;
 

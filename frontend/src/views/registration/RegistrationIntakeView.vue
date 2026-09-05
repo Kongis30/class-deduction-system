@@ -286,7 +286,7 @@
                       <strong class="print-only print-course-value">{{ line.gradeBand || '—' }}</strong>
                     </label>
                     <label class="course-control">
-                      <span>{{ isOneOnOneLine(line) ? 'Package' : 'Payment option' }}</span>
+                      <span>Package</span>
                       <el-select
                         v-model="line.coursePriceOptionId"
                         class="table-select option"
@@ -312,7 +312,7 @@
                       <strong class="print-only print-course-value">{{ printCourseScheduleLabel(line) }}</strong>
                     </label>
                     <label v-if="showDurationInput(line)" class="course-control">
-                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : 'Package length' }}</span>
+                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : 'Selected length' }}</span>
                       <el-input-number
                         v-if="isOneOnOneLine(line)"
                         v-model="line.oneOnOneHours"
@@ -325,6 +325,9 @@
                         :disabled="isReadOnly"
                         @change="() => handleRegistrationDurationChange(line)"
                       />
+                      <div v-else-if="line.packageUnit === 'MONTH'" class="class-schedule-summary">
+                        {{ printRegistrationDurationLabel(line) }}
+                      </div>
                       <div v-else class="class-schedule-summary">
                         {{ printRegistrationDurationLabel(line) }}
                       </div>
@@ -356,7 +359,7 @@
                         @change="() => handleRegistrationDurationChange(line)"
                       />
                     </label>
-                    <label v-if="isOneOnOneLine(line)" class="course-control">
+                    <label v-if="isOneOnOneLine(line) && !isRenewalMode" class="course-control">
                       <span>Already used</span>
                       <el-input-number
                         v-model="line.openingUsedHours"
@@ -390,9 +393,21 @@
                     <div v-if="!isOneOnOneLine(line)" class="teacher-class-line">
                       <label class="course-control course-control--wide">
                         <span>Class</span>
-                        <div class="class-schedule-summary">
-                        {{ classScheduleLabel(line) }}
-                        </div>
+                        <el-select
+                          v-model="line.classId"
+                          class="table-select option"
+                          :placeholder="classSelectPlaceholder(line)"
+                          :disabled="isReadOnly || !line.coursePriceOptionId || classOptionsForLine(line).length === 0"
+                          filterable
+                          @change="() => handleClassChange(line)"
+                        >
+                          <el-option
+                            v-for="classGroup in classOptionsForLine(line)"
+                            :key="classGroup.id"
+                            :label="formatClassLabel(classGroup)"
+                            :value="classGroup.id"
+                          />
+                        </el-select>
                         <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
                       </label>
                       <span v-if="!line.coursePriceOptionId" class="course-detail-hint">{{ courseLineHint(line) }}</span>
@@ -429,7 +444,7 @@
                   <el-input-number v-model="line.priceAmount" :min="0" :precision="2" :controls="false" class="table-price" @change="() => handlePriceChange(line)" />
                   <strong class="print-only print-course-price">{{ formatMoney(line.priceAmount) }}</strong>
                 </template>
-                <button v-if="!isReadOnly && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
+                <button v-if="!isReadOnly && !isRenewalMode && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
               </td>
             </tr>
           </tbody>
@@ -437,7 +452,7 @@
       </section>
 
       <section v-if="!isReadOnly" class="paper-actions no-print">
-        <el-button class="action-secondary" @click="addCourseLine">Add course row</el-button>
+        <el-button v-if="!isRenewalMode" class="action-secondary" @click="addCourseLine">Add course row</el-button>
       </section>
 
       <section v-if="!isReadOnly" class="intake-adjustment-panel no-print">
@@ -577,6 +592,11 @@
         </div>
       </section>
 
+      <section v-if="form.remark.trim()" class="registration-remark-print print-only">
+        <strong>Registration remark</strong>
+        <p>{{ form.remark.trim() }}</p>
+      </section>
+
       <section class="policies">
         <div class="policy-copy">
           <p><strong>退款政策 / Refund Policy</strong></p>
@@ -628,9 +648,9 @@ import { ElMessage, ElNotification } from 'element-plus';
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { fetchActiveCoursePriceOptions, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchReusableStudent, fetchStudent } from '@/api/base-data';
+import { fetchActiveCoursePriceOptions, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
-import { fetchActivePaymentMethods, fetchEnrollmentOrder, submitRegistrationIntake, correctEnrollmentOrder, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
+import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
 import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
@@ -725,6 +745,7 @@ interface RegistrationForm {
     firstName: string;
     lastName: string;
     grade: string;
+    studentClass: string;
     school: string;
     guardianName: string;
     guardianPhone: string;
@@ -761,6 +782,7 @@ const form = reactive<RegistrationForm>({
     firstName: '',
     lastName: '',
     grade: '',
+    studentClass: '',
     school: '',
     guardianName: '',
     guardianPhone: '',
@@ -778,6 +800,7 @@ const teachers = ref<TeacherItem[]>([]);
 const paymentMethods = ref<PaymentMethodItem[]>([]);
 const priceOptions = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
+const productGradeOrderMaps = ref<Map<string, Map<string, number>>>(new Map());
 const classGroups = ref<ClassGroupItem[]>([]);
 const discountPresets = ref<DiscountPresetItem[]>([]);
 const courseCategoryLabels = ref<Record<string, string>>({});
@@ -816,6 +839,9 @@ const campusChoices = computed<CampusChoice[]>(() => {
 
 const selectedCampus = computed(() => campusChoices.value.find((campus) => campus.key === form.campusKey));
 const isReadOnly = computed(() => Boolean(route.query.orderId));
+const renewPackageId = computed(() => getQueryValue(route.query.renewPackageId));
+const renewClassEnrollmentId = computed(() => getQueryValue(route.query.renewClassEnrollmentId));
+const isRenewalMode = computed(() => Boolean(renewPackageId.value || renewClassEnrollmentId.value));
 const editingCorrection = ref(false);
 const savingCorrection = ref(false);
 // Contact fields are editable when creating a new registration or when correcting a saved one.
@@ -960,6 +986,8 @@ onMounted(async () => {
   await loadInitialData();
   if (isReadOnly.value) {
     await loadHistoricalOrder();
+  } else if (isRenewalMode.value) {
+    await loadRenewalRegistration();
   } else {
     await loadExistingStudent();
   }
@@ -983,10 +1011,10 @@ async function loadInitialData() {
     courseProducts.value = productRes.data.data.records ?? [];
     classGroups.value = classRes.data.data ?? [];
     discountPresets.value = discountPresetRes.data.data ?? [];
+    await loadProductGradeOrders(courseProducts.value);
     void loadCourseCategoryLabels();
-    if (!form.campusKey && campusChoices.value.length > 0) {
-      form.campusKey = campusChoices.value[0].key;
-    }
+    // 校区默认留空，交由用户主动选择（提交时 validateForm 校验已拦截未选校区的提交）。
+    // 编辑既有订单(loadHistoricalOrder) / 续费(loadRenewalRegistration) / 预览学生(loadExistingStudent) 仍会按数据带出校区。
     if (paymentMethods.value.length > 0) {
       payments.value[0].paymentMethod = paymentMethods.value[0].methodCode;
     }
@@ -1006,6 +1034,23 @@ async function loadCourseCategoryLabels() {
   } catch {
     courseCategoryLabels.value = {};
   }
+}
+
+async function loadProductGradeOrders(products: CourseProductItem[]) {
+  const entries = await Promise.all(products.map(async (product) => {
+    try {
+      const res = await fetchProductGradeConfigs(product.id);
+      const orderMap = new Map<string, number>();
+      for (const item of res.data.data ?? []) {
+        orderMap.set(item.gradeLabel.toLowerCase(), item.displayOrder ?? 99);
+      }
+      return [String(product.id), orderMap] as const;
+    } catch {
+      // grade 配置加载失败时不阻塞报名页，后续下拉框使用本地稳定排序兜底。
+      return [String(product.id), new Map<string, number>()] as const;
+    }
+  }));
+  productGradeOrderMaps.value = new Map(entries);
 }
 
 async function loadHistoricalOrder() {
@@ -1045,6 +1090,7 @@ async function saveCorrection() {
     await correctEnrollmentOrder(orderId, {
       studentName: fullStudentName.value.trim(),
       grade: form.student.grade,
+      studentClass: form.student.studentClass,
       school: form.student.school,
       guardianPhone: form.student.guardianPhone,
       guardianPhone2: form.student.guardianPhone2,
@@ -1096,32 +1142,119 @@ async function loadExistingStudent() {
   try {
     const response = await fetchStudent(studentId);
     const student = response.data.data;
-    setStudentName(student.studentName || '');
-    form.student.grade = student.grade || '';
-    form.student.school = student.school || '';
-    form.student.guardianName = student.guardianName || '';
-    form.student.guardianPhone = student.guardianPhone || student.phone || '';
-    form.student.guardianPhone2 = student.guardianPhone2 || '';
-    form.student.guardianEmail = student.guardianEmail || '';
-    const pickupRequired = Boolean(student.pickupRequired);
-    const dropoffRequired = Boolean(student.dropoffRequired);
-    form.student.pickupRequired = pickupRequired;
-    form.student.pickupAddress = pickupRequired ? student.pickupAddress || '' : '';
-    form.student.dropoffRequired = dropoffRequired;
-    form.student.dropoffAddress = dropoffRequired ? student.dropoffAddress || '' : '';
-    form.pickupFeeCharged = false;
-    form.pickupFeeAmount = 0;
-    form.dropoffFeeCharged = false;
-    form.dropoffFeeAmount = 0;
-    if (student.campusId != null) {
-      form.campusKey = String(student.campusId);
-    }
-    reusableStudent.value = student;
-    studentReuseStatus.value = 'existing';
+    applyStudentProfile(student);
     ElMessage.success(`New registration started for ${student.studentName}. Add the course rows and payment for this registration.`);
   } catch (error) {
     ElMessage.error(`Could not load the renewal student: ${extractErrorMessage(error)}`);
   }
+}
+
+function applyStudentProfile(student: StudentItem) {
+  setStudentName(student.studentName || '');
+  form.student.grade = student.grade || '';
+  form.student.school = student.school || '';
+  form.student.guardianName = student.guardianName || '';
+  form.student.guardianPhone = student.guardianPhone || student.phone || '';
+  form.student.guardianPhone2 = student.guardianPhone2 || '';
+  form.student.guardianEmail = student.guardianEmail || '';
+  const pickupRequired = Boolean(student.pickupRequired);
+  const dropoffRequired = Boolean(student.dropoffRequired);
+  form.student.pickupRequired = pickupRequired;
+  form.student.pickupAddress = pickupRequired ? student.pickupAddress || '' : '';
+  form.student.dropoffRequired = dropoffRequired;
+  form.student.dropoffAddress = dropoffRequired ? student.dropoffAddress || '' : '';
+  form.pickupFeeCharged = false;
+  form.pickupFeeAmount = 0;
+  form.dropoffFeeCharged = false;
+  form.dropoffFeeAmount = 0;
+  if (student.campusId != null) {
+    form.campusKey = String(student.campusId);
+  }
+  reusableStudent.value = student;
+  studentReuseStatus.value = 'existing';
+}
+
+async function loadRenewalRegistration() {
+  try {
+    if (renewPackageId.value) {
+      await loadPackageRenewal(renewPackageId.value);
+      return;
+    }
+    if (renewClassEnrollmentId.value) {
+      await loadGroupClassRenewal(renewClassEnrollmentId.value);
+    }
+  } catch (error) {
+    ElMessage.error(`Could not prepare renewal registration: ${extractErrorMessage(error)}`);
+  }
+}
+
+async function loadPackageRenewal(packageId: string) {
+  const packageResponse = await fetchCoursePackage(packageId);
+  const coursePackage = packageResponse.data.data;
+  if (coursePackage.teachingMode !== 'ONE_ON_ONE') {
+    throw new Error('This renewal entry is not a 1-on-1 course package.');
+  }
+  const studentResponse = await fetchStudent(coursePackage.studentId);
+  applyStudentProfile(studentResponse.data.data);
+  const line = createCourseLine();
+  line.courseProductId = coursePackage.courseProductId;
+  handleCourseProductChange(line);
+  const originalOption = coursePackage.coursePriceOptionId ? findOption(coursePackage.coursePriceOptionId) : undefined;
+  line.gradeBand = originalOption?.gradeBand
+    || coursePackage.gradeBand
+    || chooseGradeForProduct(line.courseProductId, form.student.grade);
+  const option = originalOption
+    ?? optionChoicesForLine(line)[0];
+  if (!option) {
+    throw new Error('Could not find a matching 1-on-1 package option for this renewal.');
+  }
+  if (String(option.courseProductId) !== String(coursePackage.courseProductId)) {
+    throw new Error('The original package option no longer belongs to this 1-on-1 course product.');
+  }
+  line.coursePriceOptionId = option.id;
+  handleOptionChange(line);
+  line.oneOnOneBonusHours = 0;
+  line.openingUsedHours = 0;
+  handleRegistrationDurationChange(line);
+  courseLines.value = [line];
+  ElMessage.success(`Renewal started for ${coursePackage.studentName}. Confirm the package hours and payment.`);
+}
+
+async function loadGroupClassRenewal(enrollmentId: string) {
+  const classId = getQueryValue(route.query.classId);
+  if (!classId) {
+    throw new Error('Class ID is required for group class renewal.');
+  }
+  const classGroup = classGroups.value.find((item) => String(item.id) === String(classId));
+  if (!classGroup) {
+    throw new Error('Class group is not active or cannot be loaded.');
+  }
+  const studentId = getQueryValue(route.query.studentId);
+  if (!studentId) {
+    throw new Error('Student ID is required for group class renewal.');
+  }
+  const [studentResponse, studentsResponse] = await Promise.all([
+    fetchStudent(studentId),
+    fetchGroupClassStudentProgress(classId),
+  ]);
+  applyStudentProfile(studentResponse.data.data);
+  const enrollment = studentsResponse.data.data.find((item) => String(item.enrollmentId) === String(enrollmentId));
+  const line = createCourseLine();
+  line.courseProductId = classGroup.productId ?? stringToEntityId(getQueryValue(route.query.productId));
+  handleCourseProductChange(line);
+  line.gradeBand = chooseGradeForProduct(line.courseProductId, form.student.grade);
+  const option = optionChoicesForLine(line).find((item) => String(item.classId) === String(classGroup.id))
+    ?? optionChoicesForLine(line)[0];
+  if (option) {
+    line.coursePriceOptionId = option.id;
+    handleOptionChange(line);
+  }
+  line.classId = classGroup.id;
+  line.className = classGroup.className;
+  line.startDate = nextRenewalStartDate(enrollment?.expiryDate);
+  handleRegistrationDurationChange(line);
+  courseLines.value = [line];
+  ElMessage.success(`Group class renewal started for ${studentResponse.data.data.studentName}. Select the package length and payment.`);
 }
 
 function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
@@ -1142,6 +1275,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   form.remark = order.remark ?? '';
   setStudentName(getString(receiptPayload, 'studentName') || order.studentNameSnapshot || order.studentName || '');
   form.student.grade = getString(receiptPayload, 'grade') || order.gradeSnapshot || '';
+  form.student.studentClass = getString(receiptPayload, 'studentClass') || order.studentClassSnapshot || '';
   form.student.school = getString(receiptPayload, 'school') || order.schoolSnapshot || '';
   form.student.guardianName = '';
   form.student.guardianPhone = getString(receiptPayload, 'guardianPhone') || order.parentPhoneSnapshot || '';
@@ -1497,7 +1631,8 @@ function handleOptionChange(line: RegistrationCourseLine) {
   line.oneOnOneHours = option.oneOnOneHours;
   line.openingUsedHours = Math.min(numeric(line.openingUsedHours), numeric(option.oneOnOneHours));
   line.oneOnOneUnits = option.oneOnOneHours ? Math.round(option.oneOnOneHours * 2) : undefined;
-  line.classId = option.classId;
+  const actualClasses = actualClassOptionsForOption(option);
+  line.classId = actualClasses.length === 1 ? actualClasses[0].id : undefined;
   line.groupBillingType = option.groupBillingType;
   line.groupTotalSessions = option.groupTotalSessions;
   line.groupStartMonth = option.groupStartMonth;
@@ -1511,7 +1646,7 @@ function handleOptionChange(line: RegistrationCourseLine) {
     line.groupRegistrationEndMonth = undefined;
   } else {
     line.groupSessionCount = undefined;
-    line.groupPurchasedMonths = line.groupPurchasedMonths || 2;
+    line.groupPurchasedMonths = resolveGroupPackageMonths(option);
     line.groupDurationMode = durationModeForMonths(line.groupPurchasedMonths);
     line.startDate = line.startDate || defaultGroupEnrollmentStartDate(line);
     line.groupRegistrationStartMonth = undefined;
@@ -1523,6 +1658,18 @@ function handleOptionChange(line: RegistrationCourseLine) {
   }
   line.manualPriceOverride = false;
   handleRegistrationDurationChange(line);
+  if (line.classId) {
+    handleClassChange(line);
+  }
+}
+
+function handleClassChange(line: RegistrationCourseLine) {
+  const classGroup = selectedClassGroup(line);
+  if (!classGroup) {
+    return;
+  }
+  form.student.studentClass = classGroup.actualClass || classGroup.gradeBand || classGroup.className;
+  line.className = classGroup.className;
 }
 
 function handlePriceChange(line: RegistrationCourseLine) {
@@ -1539,6 +1686,7 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
       line.openingUsedHours = totalHours || undefined;
     }
   } else {
+    syncGroupDurationFromSelectedPackage(line);
     line.durationLabel = printRegistrationDurationLabel(line);
   }
   recalculateLinePrice(line);
@@ -1558,11 +1706,25 @@ function defaultGroupEnrollmentStartDate(line: RegistrationCourseLine) {
   return classStart && signup < classStart ? classStart : signup;
 }
 
-function applyGroupDurationMode(line: RegistrationCourseLine) {
-  if (line.groupDurationMode !== 'CUSTOM') {
-    line.groupPurchasedMonths = Number(line.groupDurationMode);
+function resolveGroupPackageMonths(option?: CoursePriceOptionItem) {
+  if (!option || option.packageUnit !== 'MONTH') {
+    return undefined;
   }
-  handleRegistrationDurationChange(line);
+  const months = numeric(option.packageQuantity);
+  return months > 0 ? months : undefined;
+}
+
+function syncGroupDurationFromSelectedPackage(line: RegistrationCourseLine) {
+  if (isOneOnOneLine(line) || line.packageUnit !== 'MONTH') {
+    return;
+  }
+  const option = findOption(line.coursePriceOptionId);
+  const months = resolveGroupPackageMonths(option);
+  line.groupPurchasedMonths = months;
+  line.groupDurationMode = durationModeForMonths(months);
+  if (months !== undefined) {
+    line.packageQuantity = months;
+  }
 }
 
 function recalculateLinePrice(line: RegistrationCourseLine) {
@@ -1614,10 +1776,30 @@ function clearSelectedOption(line: RegistrationCourseLine) {
 }
 
 function gradeOptionsForLine(line: RegistrationCourseLine) {
-  return uniqueValues(
+  const gradeOptions = uniqueValues(
     priceOptionsForLineProduct(line)
       .map((option) => option.gradeBand || 'General')
   );
+  return sortGradeOptionsForProduct(line.courseProductId, gradeOptions);
+}
+
+function sortGradeOptionsForProduct(productId: EntityId | undefined, gradeOptions: string[]) {
+  if (!productId) {
+    return gradeOptions;
+  }
+  const orderMap = productGradeOrderMaps.value.get(String(productId));
+  if (!orderMap || orderMap.size === 0) {
+    return gradeOptions.slice().sort((left, right) => left.localeCompare(right));
+  }
+  return gradeOptions.slice().sort((left, right) => {
+    const leftOrder = orderMap.get(left.toLowerCase());
+    const rightOrder = orderMap.get(right.toLowerCase());
+    if (leftOrder !== undefined || rightOrder !== undefined) {
+      return (leftOrder ?? Number.MAX_SAFE_INTEGER) - (rightOrder ?? Number.MAX_SAFE_INTEGER)
+        || left.localeCompare(right);
+    }
+    return left.localeCompare(right);
+  });
 }
 
 function optionChoicesForLine(line: RegistrationCourseLine) {
@@ -1653,10 +1835,62 @@ function productOptionGroupsForLine(line: RegistrationCourseLine) {
 }
 
 function classOptionsForLine(line: RegistrationCourseLine) {
-  if (!line.courseProductId) {
+  if (!line.courseProductId || !line.gradeBand) {
     return [];
   }
-  return classGroups.value.filter((item) => String(item.productId) === String(line.courseProductId));
+  const currentClasses = classGroupsForProductGrade(line.courseProductId, line.gradeBand);
+  if (currentClasses.length > 0) {
+    return currentClasses;
+  }
+  const option = findOption(line.coursePriceOptionId);
+  if (option?.actualClasses && option.actualClasses.length > 0) {
+    return option.actualClasses.map(item => classGroupFromActualClassOption(item, line.courseProductId, line.gradeBand));
+  }
+  return [];
+}
+
+function actualClassOptionsForOption(option: CoursePriceOptionItem) {
+  const currentClasses = classGroupsForProductGrade(option.courseProductId, option.gradeBand || '');
+  if (currentClasses.length > 0) {
+    return currentClasses;
+  }
+  if (option.actualClasses && option.actualClasses.length > 0) {
+    return option.actualClasses.map(item => classGroupFromActualClassOption(item, option.courseProductId, option.gradeBand || ''));
+  }
+  return [];
+}
+
+function classGroupsForProductGrade(productId?: EntityId, gradeBand = '') {
+  if (!productId || !gradeBand) {
+    return [];
+  }
+  return classGroups.value.filter((item) =>
+    String(item.productId) === String(productId)
+      && String(item.gradeBand || '').toLowerCase() === String(gradeBand || '').toLowerCase());
+}
+
+function classGroupFromActualClassOption(
+  item: NonNullable<CoursePriceOptionItem['actualClasses']>[number],
+  productId?: EntityId,
+  gradeBand = '',
+) {
+  const currentClass = classGroups.value.find((classGroup) => String(classGroup.id) === String(item.id));
+  if (currentClass) {
+    return currentClass;
+  }
+  return {
+    id: item.id,
+    className: item.className,
+    actualClass: item.actualClass,
+    gradeBand,
+    productId,
+    teacherId: item.teacherId,
+    teacherName: item.teacherName,
+    classroomId: item.classroomId,
+    classroomName: item.classroomName,
+    scheduleDesc: item.scheduleDesc,
+    activeStudentCount: 0,
+  } as ClassGroupItem;
 }
 
 function detailSelectPlaceholder(line: RegistrationCourseLine) {
@@ -1667,8 +1901,8 @@ function detailSelectPlaceholder(line: RegistrationCourseLine) {
     return 'Select grade first';
   }
   return optionChoicesForLine(line).length > 0
-    ? isOneOnOneLine(line) ? 'Select package' : 'Select payment option'
-    : isOneOnOneLine(line) ? 'No package' : 'No payment option';
+    ? 'Select package'
+    : 'No package';
 }
 
 function courseLineHint(line: RegistrationCourseLine) {
@@ -1686,7 +1920,7 @@ function courseLineHint(line: RegistrationCourseLine) {
     return optionChoicesForLine(line).length > 0
       ? isOneOnOneLine(line)
         ? 'Select a grade and package.'
-        : 'Select a payment option.'
+        : 'Select a package.'
       : 'Course pricing is missing for this course.';
   }
   return 'Detail will appear here.';
@@ -1849,13 +2083,13 @@ function classSelectPlaceholder(line: RegistrationCourseLine) {
   if (!line.coursePriceOptionId) {
     return 'Select option first';
   }
-  return classOptionsForLine(line).length > 0 ? 'Class' : 'Class will be created automatically';
+  return classOptionsForLine(line).length > 0 ? 'Select actual class' : 'No actual class configured';
 }
 
 function classScheduleLabel(line: RegistrationCourseLine) {
   const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
   if (!classGroup) {
-    return line.coursePriceOptionId ? 'Class schedule will be assigned from this payment option.' : 'Select a payment option first';
+    return line.coursePriceOptionId ? 'Class schedule will be assigned from this package.' : 'Select a package first';
   }
   return formatClassLabel(classGroup);
 }
@@ -1995,7 +2229,7 @@ function validateForm() {
     if (!line.coursePriceOptionId) {
       errors.push(isOneOnOneLine(line)
         ? `${label}: select a grade and package.`
-        : `${label}: select a payment option.`);
+        : `${label}: select a package.`);
     }
     const durationInvalid = validateRegistrationDuration(line, label, errors);
     if (!durationInvalid && (line.originalPriceAmount === undefined || line.originalPriceAmount <= 0)) {
@@ -2092,6 +2326,7 @@ function buildPayload(): RegistrationIntakePayload {
     student: {
       studentName: fullStudentName.value,
       grade: form.student.grade.trim() || undefined,
+      studentClass: form.student.studentClass.trim() || undefined,
       school: form.student.school.trim() || undefined,
       guardianName: form.student.guardianName.trim() || undefined,
       guardianPhone: form.student.guardianPhone.trim(),
@@ -2105,6 +2340,8 @@ function buildPayload(): RegistrationIntakePayload {
     campusId: campus?.campusId,
     campusName: campus?.campusName,
     signupDate: form.signupDate,
+    renewPackageId: stringToEntityId(renewPackageId.value),
+    renewClassEnrollmentId: stringToEntityId(renewClassEnrollmentId.value),
     handledByName: form.handledByName.trim(),
     currencyCode: 'USD',
     items: courseLines.value.map((line, index) => ({
@@ -2131,6 +2368,10 @@ function buildPayload(): RegistrationIntakePayload {
       oneOnOneBonusHours: isOneOnOneLine(line) && numeric(line.oneOnOneBonusHours) > 0 ? line.oneOnOneBonusHours : undefined,
       openingUsedHours: isOneOnOneLine(line) && numeric(line.openingUsedHours) > 0 ? line.openingUsedHours : undefined,
       oneOnOneUnits: isOneOnOneLine(line) ? line.oneOnOneUnits : undefined,
+      sessions: isOneOnOneLine(line) ? undefined : line.groupSessionCount,
+      purchasedMonths: !isOneOnOneLine(line) && line.packageUnit === 'MONTH' ? line.groupPurchasedMonths : undefined,
+      startMonth: isOneOnOneLine(line) ? undefined : line.groupRegistrationStartMonth,
+      endMonth: isOneOnOneLine(line) ? undefined : line.groupRegistrationEndMonth,
       teacherId: undefined,
       remark: line.remark,
     })),
@@ -2176,6 +2417,7 @@ function buildMoneyPayload(lines: MoneyLine[]) {
 
 function resetForNextRegistration() {
   validationErrors.value = [];
+  form.campusKey = '';
   form.signupDate = formatDate(new Date());
   form.pickupFeeCharged = false;
   form.pickupFeeAmount = 0;
@@ -2185,6 +2427,7 @@ function resetForNextRegistration() {
   form.student.firstName = '';
   form.student.lastName = '';
   form.student.grade = '';
+  form.student.studentClass = '';
   form.student.school = '';
   form.student.guardianName = '';
   form.student.guardianPhone = '';
@@ -2204,12 +2447,49 @@ function resetForNextRegistration() {
 }
 
 function findOption(id: EntityId | '') {
-  return priceOptions.value.find((option) => option.id === id);
+  return priceOptions.value.find((option) => String(option.id) === String(id));
+}
+
+function getQueryValue(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0] == null ? undefined : String(value[0]);
+  }
+  return value == null || value === '' ? undefined : String(value);
+}
+
+function stringToEntityId(value?: string): EntityId | undefined {
+  return value || undefined;
+}
+
+function chooseGradeForProduct(productId: EntityId | undefined, preferredGrade?: string) {
+  const options = sortGradeOptionsForProduct(productId, uniqueValues(
+    priceOptionsWithProduct.value
+      .filter((option) => !productId || String(option.courseProductId) === String(productId))
+      .map((option) => option.gradeBand || 'General'),
+  ));
+  if (preferredGrade && options.includes(preferredGrade)) {
+    return preferredGrade;
+  }
+  return options[0] ?? '';
+}
+
+function nextRenewalStartDate(expiryDate?: string) {
+  if (!expiryDate) {
+    return today;
+  }
+  const expiry = new Date(`${expiryDate}T00:00:00`);
+  const current = new Date(`${today}T00:00:00`);
+  if (Number.isNaN(expiry.getTime()) || expiry < current) {
+    return today;
+  }
+  expiry.setDate(expiry.getDate() + 1);
+  return formatDate(expiry);
 }
 
 function formatClassLabel(item: ClassGroupItem) {
-  const meta = [item.teacherName, item.scheduleDesc].filter(Boolean).join(' / ');
-  return meta ? `${item.className} (${meta})` : item.className;
+  const actualClass = item.actualClass?.trim();
+  const className = item.className?.trim();
+  return className || actualClass || item.gradeBand || 'Class';
 }
 
 function formatCourseType(type: string) {
@@ -2688,7 +2968,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 .line-input,
-.line-date {
+.line-date,
+.line-select {
   flex: 1;
   min-width: 0;
 }
@@ -2718,6 +2999,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 :deep(.line-input .el-input__wrapper),
 :deep(.line-date .el-input__wrapper),
+:deep(.line-select .el-select__wrapper),
 :deep(.table-select .el-select__wrapper),
 :deep(.table-price .el-input__wrapper) {
   box-shadow: none !important;
@@ -2726,7 +3008,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 :deep(.line-input .el-input__wrapper),
-:deep(.line-date .el-input__wrapper) {
+:deep(.line-date .el-input__wrapper),
+:deep(.line-select .el-select__wrapper) {
   border-bottom: 2px solid #222;
 }
 
@@ -2736,8 +3019,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   min-width: 0;
 }
 
+:deep(.line-select.el-select) {
+  width: 100%;
+}
+
 :deep(.line-input .el-input__inner),
 :deep(.line-date .el-input__inner),
+:deep(.line-select .el-select__placeholder),
 :deep(.table-price .el-input__inner) {
   color: #111;
   font-size: 16px;
@@ -2964,20 +3252,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   display: grid;
   gap: 3px;
   min-width: 0;
-}
-
-.group-duration-picker {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
-  min-width: 0;
-}
-
-.group-duration-picker :deep(.el-select),
-.group-duration-picker :deep(.el-input-number) {
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
 }
 
 .course-control > span {
@@ -3709,12 +3983,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 
   :deep(.line-input .el-input__inner),
-  :deep(.line-date .el-input__inner) {
+  :deep(.line-date .el-input__inner),
+  :deep(.line-select .el-select__placeholder) {
     font-size: 11px;
   }
 
   :deep(.line-input .el-input__wrapper),
-  :deep(.line-date .el-input__wrapper) {
+  :deep(.line-date .el-input__wrapper),
+  :deep(.line-select .el-select__wrapper) {
     min-height: 22px;
     padding: 0 3px;
     border-bottom-width: 1px;
@@ -3906,6 +4182,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     padding-top: 3px;
     border-top: 1px solid #94a3b8;
     font-size: 10.5px;
+  }
+
+  .registration-remark-print {
+    display: block !important;
+    margin: 6px 0;
+    padding: 6px 8px;
+    border: 1px solid #334155;
+    break-inside: avoid;
+    color: #111;
+  }
+
+  .registration-remark-print strong {
+    display: block;
+    margin-bottom: 3px;
+    font-size: 10px;
+  }
+
+  .registration-remark-print p {
+    margin: 0;
+    font-size: 9px;
+    line-height: 1.25;
+    white-space: pre-wrap;
   }
 
   .policies {

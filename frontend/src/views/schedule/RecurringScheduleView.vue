@@ -1,25 +1,6 @@
 <template>
   <div class="page-stack schedule-page">
-    <div class="schedule-mode-tabs">
-      <button
-        class="schedule-mode-tab"
-        :class="{ 'schedule-mode-tab--active': scheduleMode === 'one-on-one' }"
-        type="button"
-        @click="scheduleMode = 'one-on-one'"
-      >
-        1-on-1
-      </button>
-      <button
-        class="schedule-mode-tab"
-        :class="{ 'schedule-mode-tab--active': scheduleMode === 'class' }"
-        type="button"
-        @click="scheduleMode = 'class'"
-      >
-        Group Class
-      </button>
-    </div>
-
-    <section v-if="scheduleMode === 'one-on-one'" class="schedule-panel">
+    <section class="schedule-panel">
       <div class="schedule-panel__header">
         <span class="schedule-panel__title">Schedule 1-on-1 Lessons</span>
       </div>
@@ -223,7 +204,23 @@
               filterable
               style="width: 100%;"
             >
-              <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
+              <el-option-group
+                v-for="group in classroomOptionGroups"
+                :key="group.campusKey"
+                :label="group.campusName"
+              >
+                <el-option
+                  v-for="c in group.classrooms"
+                  :key="c.id"
+                  :label="classroomSelectLabel(c)"
+                  :value="c.id"
+                >
+                  <div class="classroom-select-option">
+                    <span>{{ c.roomName }}</span>
+                    <small>{{ group.campusName }}</small>
+                  </div>
+                </el-option>
+              </el-option-group>
             </el-select>
           </el-form-item>
           <el-form-item label="Start Date" prop="startDate">
@@ -511,7 +508,7 @@
               <el-time-select
                 :model-value="rowStartTime(selectedRow)"
                 start="08:00"
-                end="20:30"
+                end="22:30"
                 step="00:30"
                 :disabled="selectedRow.markedForDelete"
                 @update:model-value="(v: string) => setRowStartTime(selectedRow!, v)"
@@ -540,7 +537,23 @@
             <div class="weekly-editor__field">
               <label>Classroom</label>
               <el-select v-model="selectedRow.plannedClassroomId" clearable filterable placeholder="Classroom" :disabled="selectedRow.markedForDelete">
-                <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
+                <el-option-group
+                  v-for="group in classroomOptionGroups"
+                  :key="group.campusKey"
+                  :label="group.campusName"
+                >
+                  <el-option
+                    v-for="c in group.classrooms"
+                    :key="c.id"
+                    :label="classroomSelectLabel(c)"
+                    :value="c.id"
+                  >
+                    <div class="classroom-select-option">
+                      <span>{{ c.roomName }}</span>
+                      <small>{{ group.campusName }}</small>
+                    </div>
+                  </el-option>
+                </el-option-group>
               </el-select>
             </div>
           </div>
@@ -672,8 +685,6 @@
         </div>
       </template>
     </el-dialog>
-
-    <ScheduleAdjustmentsView v-if="scheduleMode === 'class'" mode="class" embedded class="schedule-class-adjustments" />
   </div>
 </template>
 
@@ -698,10 +709,9 @@ import {
   adjustWeeklySchedule,
 } from '@/api/schedule';
 import type { WeeklyScheduleAdjustmentItemPayload } from '@/api/schedule';
-import type { CoursePackageItem, EntityId, LessonOccurrenceItem, RecurringScheduleRuleItem } from '@/types/domain';
+import type { ClassroomItem, CoursePackageItem, EntityId, LessonOccurrenceItem, RecurringScheduleRuleItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
-import ScheduleAdjustmentsView from './ScheduleAdjustmentsView.vue';
 
 interface WeeklyAdjustmentRow {
 
@@ -724,7 +734,6 @@ interface WeeklyAdjustmentRow {
 
 const loadingPackages = ref(false);
 const route = useRoute();
-const scheduleMode = ref<'one-on-one' | 'class'>('one-on-one');
 const editDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
 const weeklyDialogVisible = ref(false);
@@ -738,10 +747,50 @@ const detailData = ref<any>(null);
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const studentPackages = ref<CoursePackageItem[]>([]);
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
-const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
+const classrooms = ref<ClassroomItem[]>([]);
 const enrolledClassGroups = ref<any[]>([]);
 const classGroupLoading = ref(false);
 const classGroupOccupiedSlots = ref<OccupiedSlotDef[]>([]);
+
+interface ClassroomOptionGroup {
+  campusKey: string;
+  campusName: string;
+  classrooms: ClassroomItem[];
+}
+
+// Edit Weekly Schedule 的两个教室下拉共用这里的分组，保证用户选择时能直接看到校区。
+const classroomOptionGroups = computed<ClassroomOptionGroup[]>(() => {
+  const groups = new Map<string, ClassroomOptionGroup>();
+
+  classrooms.value.forEach((classroom) => {
+    const campusName = classroom.campus?.trim() || 'Unassigned campus';
+    const campusKey = String(classroom.campusId ?? campusName);
+    const existing = groups.get(campusKey);
+
+    if (existing) {
+      existing.classrooms.push(classroom);
+      return;
+    }
+
+    groups.set(campusKey, {
+      campusKey,
+      campusName,
+      classrooms: [classroom],
+    });
+  });
+
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      classrooms: [...group.classrooms].sort((a, b) => a.roomName.localeCompare(b.roomName)),
+    }))
+    .sort((a, b) => a.campusName.localeCompare(b.campusName));
+});
+
+function classroomSelectLabel(classroom: ClassroomItem) {
+  const campusName = classroom.campus?.trim();
+  return campusName ? `${classroom.roomName} · ${campusName}` : classroom.roomName;
+}
 
 function slotTeacherNames(rule: { slots?: Array<{ teacherId?: EntityId }> }): string {
   const teacherNames = (rule.slots ?? [])
@@ -768,7 +817,7 @@ const weeklyReason = ref('');
 // ─── Weekly adjustment calendar (Sat→Fri) ──────────────────
 
 const CAL_START_HOUR = 8;
-const CAL_END_HOUR = 21;
+const CAL_END_HOUR = 23;
 const CAL_SLOT_MINUTES = 30;
 const CAL_SLOT_HEIGHT = 28;
 
@@ -1255,7 +1304,7 @@ async function loadClassGroupSlots() {
           weekday,
           startTime: start.format('HH:mm'),
           endTime: dayjs(occ.plannedEndAt).format('HH:mm'),
-          courseLabel: cls.className,
+          courseLabel: classGroupDisplayName(cls),
           teacherName: occ.plannedTeacherName,
           classroomName: occ.plannedClassroomName,
         });
@@ -1263,6 +1312,10 @@ async function loadClassGroupSlots() {
     } catch { /* skip failed class group */ }
   }
   classGroupOccupiedSlots.value = allSlots;
+}
+
+function classGroupDisplayName(cls: { actualClass?: string; gradeBand?: string; className?: string }) {
+  return cls.actualClass || cls.gradeBand || cls.className || 'Class';
 }
 
 // ─── Edit Form ──────────────────────────────────
@@ -1753,7 +1806,29 @@ async function init() {
       fetchAllTeachers(),
       fetchAllClassrooms(),
     ]);
-    students.value = sRes.data.data.map(s => ({ id: s.id, studentName: s.studentName }));
+    // 只保留拥有 ≥1 个 ACTIVE 1-on-1 课时包的学生。
+    // 班课学生只写 class_enrollment、不写 course_package，选中也只能看到 "No active packages"，不应出现在 1-on-1 排课学生列表里。
+    const allStudents = sRes.data.data;
+    const packageCheck = await Promise.all(
+      allStudents.map(async (s) => {
+        try {
+          const res = await fetchCoursePackages({
+            studentId: s.id,
+            packageStatus: 'ACTIVE',
+            teachingMode: 'ONE_ON_ONE',
+            pageSize: 1,
+          });
+          const hasOneOnOne = (res.data.data.total ?? res.data.data.records.length) > 0;
+          return { id: s.id, studentName: s.studentName, hasOneOnOne };
+        } catch {
+          // 查询失败时保守保留该学生，避免误隐藏正常学生
+          return { id: s.id, studentName: s.studentName, hasOneOnOne: true };
+        }
+      })
+    );
+    students.value = packageCheck
+      .filter(x => x.hasOneOnOne)
+      .map(x => ({ id: x.id, studentName: x.studentName }));
     teachers.value = tRes.data.data;
     classrooms.value = cRes.data.data;
     await applyRouteScheduleContext();
@@ -1994,6 +2069,26 @@ function disabledPastDate(date: Date) {
 .summary-field span {
   font-size: 12px;
   color: #606266;
+}
+
+.classroom-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.classroom-select-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.classroom-select-option small {
+  flex-shrink: 0;
+  color: #909399;
+  font-size: 12px;
 }
 
 .schedule-calendar {

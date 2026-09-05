@@ -31,7 +31,9 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMa
 import com.classdeduction.system.modules.schedule.service.impl.LessonOccurrenceServiceImpl;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
+import com.classdeduction.system.modules.schedule.vo.PendingClassroomAssignmentVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -46,6 +48,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -306,6 +309,38 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldExcludeLegacyGroupPackagesFromOneOnOneDeductionQuery() {
+        CoursePackageEntity oneOnOnePackage = buildOneOnOnePackage();
+        oneOnOnePackage.setCourseProductId(9001L);
+        CoursePackageEntity legacyGroupPackage = buildOneOnOnePackage();
+        legacyGroupPackage.setId(3002L);
+        legacyGroupPackage.setPackageNo("PK3002");
+        legacyGroupPackage.setPackageName("Group SHSAT");
+        legacyGroupPackage.setStudentId(102L);
+        legacyGroupPackage.setCourseProductId(9002L);
+        legacyGroupPackage.setTeachingMode(null);
+
+        LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(oneOnOnePackage, legacyGroupPackage));
+        when(courseProductMapper.selectBatchIds(any())).thenReturn(List.of(
+                buildCourseProduct(9001L, "1:1 Algebra", "ONE_ON_ONE"),
+                buildCourseProduct(9002L, "SHSAT Group", "GROUP")
+        ));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence), List.of(occurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).students()).singleElement()
+                .satisfies(student -> assertThat(student.packages())
+                        .singleElement()
+                        .satisfies(pkg -> assertThat(pkg.packageId()).isEqualTo(3001L)));
+    }
+
+    @Test
     void shouldRemindRenewalWhenTwoLessonsRemain() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         coursePackage.setRemainingUnits(6);
@@ -357,6 +392,66 @@ class LessonOccurrenceServiceImplTest {
                                 assertThat(conflict.existingOccurrenceId()).isEqualTo(5001L);
                             });
                 });
+    }
+
+    @Test
+    void shouldBackfillSingleOccurrenceClassroomForRoomAndStudentCalendars() {
+        LessonOccurrenceEntity pending = buildOneOnOneOccurrence();
+        pending.setPlannedClassroomId(null);
+        ClassroomEntity classroom = buildClassroom();
+        when(classroomMapper.selectByIdForUpdate(601L)).thenReturn(classroom);
+        when(lessonOccurrenceMapper.selectById(4001L)).thenReturn(pending);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
+        when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(buildOneOnOnePackage()));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        PendingClassroomBackfillRequest request = new PendingClassroomBackfillRequest();
+        request.setTargetType("OCCURRENCE");
+        request.setTargetId(4001L);
+        request.setClassroomId(601L);
+
+        PendingClassroomAssignmentVO result = lessonOccurrenceService.backfillPendingClassroom(request);
+
+        ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getValue().getPlannedClassroomId()).isEqualTo(601L);
+        assertThat(result.targetType()).isEqualTo("OCCURRENCE");
+        assertThat(result.targetId()).isEqualTo(4001L);
+    }
+
+    @Test
+    void shouldBackfillClassGroupAndFutureOccurrencesForRoomCalendar() {
+        ClassGroupEntity classGroup = buildClassGroup();
+        LessonOccurrenceEntity first = buildClassOccurrence(LocalDateTime.now().plusDays(2));
+        first.setPlannedClassroomId(null);
+        LessonOccurrenceEntity second = buildClassOccurrence(LocalDateTime.now().plusDays(9));
+        second.setId(4002L);
+        second.setPlannedClassroomId(null);
+        ClassroomEntity classroom = buildClassroom();
+        when(classroomMapper.selectByIdForUpdate(601L)).thenReturn(classroom);
+        when(classGroupMapper.selectById(7001L)).thenReturn(classGroup);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(first, second), Collections.emptyList(), Collections.emptyList());
+        when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
+
+        PendingClassroomBackfillRequest request = new PendingClassroomBackfillRequest();
+        request.setTargetType("CLASS_GROUP");
+        request.setTargetId(7001L);
+        request.setClassroomId(601L);
+
+        PendingClassroomAssignmentVO result = lessonOccurrenceService.backfillPendingClassroom(request);
+
+        ArgumentCaptor<ClassGroupEntity> classCaptor = ArgumentCaptor.forClass(ClassGroupEntity.class);
+        ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(classGroupMapper).updateById(classCaptor.capture());
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.times(2)).updateById(occurrenceCaptor.capture());
+        assertThat(classCaptor.getValue().getClassroomId()).isEqualTo(601L);
+        assertThat(occurrenceCaptor.getAllValues())
+                .extracting(LessonOccurrenceEntity::getPlannedClassroomId)
+                .containsExactly(601L, 601L);
+        assertThat(result.targetType()).isEqualTo("CLASS_GROUP");
+        assertThat(result.targetId()).isEqualTo(7001L);
     }
 
     @Test
@@ -435,9 +530,14 @@ class LessonOccurrenceServiceImplTest {
     }
 
     private CourseProductEntity buildCourseProduct() {
+        return buildCourseProduct(9001L, "SHSAT Prep", null);
+    }
+
+    private CourseProductEntity buildCourseProduct(Long id, String productName, String teachingMode) {
         CourseProductEntity product = new CourseProductEntity();
-        product.setId(9001L);
-        product.setProductName("SHSAT Prep");
+        product.setId(id);
+        product.setProductName(productName);
+        product.setTeachingMode(teachingMode);
         return product;
     }
 

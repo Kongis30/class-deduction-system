@@ -240,6 +240,66 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldRenewExistingOneOnOnePackageWithPurchasedAndBonusHours() {
+        StudentEntity student = buildExistingStudent();
+        CoursePackageEntity existingPackage = new CoursePackageEntity();
+        existingPackage.setId(3001L);
+        existingPackage.setPackageNo("PK-RENEW");
+        existingPackage.setStudentId(101L);
+        existingPackage.setCourseProductId(202L);
+        existingPackage.setTeachingMode("ONE_ON_ONE");
+        existingPackage.setPackageStatus("COMPLETED");
+        existingPackage.setTotalUnits(20);
+        existingPackage.setConsumedUnits(3);
+        existingPackage.setRemainingUnits(17);
+        existingPackage.setOriginalAmount(new BigDecimal("1000.00"));
+        existingPackage.setReceivedAmount(new BigDecimal("50.00"));
+        when(coursePackageMapper.selectById(3001L)).thenReturn(existingPackage);
+        when(studentMapper.selectById(101L)).thenReturn(student);
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
+        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+        when(campusMapper.selectById(1L)).thenReturn(buildCampus());
+        when(jsonHelper.toJson(any())).thenReturn("{}");
+        lenient().when(userAccountMapper.selectOne(any())).thenReturn(null);
+        lenient().when(roleMapper.selectOne(any())).thenReturn(buildRole(1L, "STUDENT"));
+        lenient().when(passwordEncoder.encode("9175550101")).thenReturn("encoded");
+        lenient().when(userAccountMapper.selectCount(any())).thenReturn(0L);
+        lenient().when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        doAnswer(invocation -> {
+            EnrollmentOrderEntity order = invocation.getArgument(0);
+            order.setId(2001L);
+            return 1;
+        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+        doAnswer(invocation -> {
+            EnrollmentOrderItemEntity item = invocation.getArgument(0);
+            item.setId(2101L);
+            return 1;
+        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
+
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.setRenewPackageId(3001L);
+        request.getItems().get(0).setOneOnOneHours(new BigDecimal("4.0"));
+        request.getItems().get(0).setOneOnOneBonusHours(new BigDecimal("2.5"));
+
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
+
+        verify(studentMapper).updateById(student);
+        verify(studentMapper, never()).insert(any(StudentEntity.class));
+        verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+        verify(coursePackageMapper).updateById(coursePackageCaptor.capture());
+        CoursePackageEntity renewedPackage = coursePackageCaptor.getValue();
+        assertThat(renewedPackage.getId()).isEqualTo(3001L);
+        assertThat(renewedPackage.getTotalUnits()).isEqualTo(33);
+        assertThat(renewedPackage.getRemainingUnits()).isEqualTo(30);
+        assertThat(renewedPackage.getConsumedUnits()).isEqualTo(3);
+        assertThat(renewedPackage.getPackageStatus()).isEqualTo("ACTIVE");
+        assertThat(renewedPackage.getOriginalAmount()).isEqualByComparingTo("1320.00");
+        assertThat(result.courseArtifacts()).singleElement()
+                .extracting(RegistrationIntakeResultVO.CourseArtifactVO::packageId)
+                .isEqualTo(3001L);
+    }
+
+    @Test
     void shouldClampOpeningUsedHoursAgainstTotalIncludingBonus() {
         stubSuccessfulIntake(false);
         RegistrationIntakeRequest request = buildOneOnOneRequest();
@@ -592,6 +652,94 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldRenewExistingGroupClassEnrollmentPeriodWithoutCreatingDuplicateEnrollment() {
+        stubMonthlyGroupClassRenewal();
+        StudentEntity student = buildExistingStudent();
+        ClassEnrollmentEntity existingEnrollment = new ClassEnrollmentEntity();
+        existingEnrollment.setId(3101L);
+        existingEnrollment.setStudentId(101L);
+        existingEnrollment.setClassId(501L);
+        existingEnrollment.setEnrollmentDate(LocalDate.of(2026, 9, 1));
+        existingEnrollment.setExpiryDate(LocalDate.of(2026, 10, 31));
+        existingEnrollment.setBillingType("MONTH");
+        existingEnrollment.setPurchasedQuantity(2);
+        existingEnrollment.setAttendanceOption("NONE");
+        existingEnrollment.setStatus("ACTIVE");
+        when(classEnrollmentMapper.selectById(3101L)).thenReturn(existingEnrollment);
+        when(studentMapper.selectById(101L)).thenReturn(student);
+
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setRenewClassEnrollmentId(3101L);
+        request.setSignupDate(LocalDate.of(2026, 9, 20));
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setStartDate(LocalDate.of(2026, 11, 1));
+        item.setPackageUnit("MONTH");
+        item.setPackageQuantity(new BigDecimal("2"));
+
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
+
+        verify(studentMapper).updateById(student);
+        verify(studentMapper, never()).insert(any(StudentEntity.class));
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
+                ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(classEnrollmentMapper).updateById(enrollmentCaptor.capture());
+        ClassEnrollmentEntity renewedEnrollment = enrollmentCaptor.getValue();
+        assertThat(renewedEnrollment.getId()).isEqualTo(3101L);
+        assertThat(renewedEnrollment.getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(renewedEnrollment.getExpiryDate()).isEqualTo(LocalDate.of(2026, 12, 31));
+        assertThat(renewedEnrollment.getPurchasedQuantity()).isEqualTo(4);
+        assertThat(result.courseArtifacts()).singleElement()
+                .extracting(RegistrationIntakeResultVO.CourseArtifactVO::classEnrollmentId)
+                .isEqualTo(3101L);
+    }
+
+    @Test
+    void shouldRenewMorningGroupClassWhenAfternoonStudentConflictExists() {
+        stubMonthlyGroupClassRenewal();
+        StudentEntity student = buildExistingStudent();
+        ClassEnrollmentEntity existingEnrollment = buildRenewableClassEnrollment();
+        when(classEnrollmentMapper.selectById(3101L)).thenReturn(existingEnrollment);
+        when(studentMapper.selectById(101L)).thenReturn(student);
+
+        ClassGroupScheduleSlotEntity morningSlot = buildAttendanceSlot(7101L, "MORNING", 9, 0, 12, 0);
+        ClassGroupScheduleSlotEntity afternoonSlot = buildAttendanceSlot(7102L, "AFTERNOON", 13, 0, 16, 0);
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(morningSlot, afternoonSlot));
+        when(classGroupScheduleSlotMapper.selectById(7101L)).thenReturn(morningSlot);
+        when(classGroupScheduleSlotMapper.selectById(7102L)).thenReturn(afternoonSlot);
+
+        LessonOccurrenceEntity morningOccurrence = buildClassOccurrence(8101L, 7101L, 9, 0, 12, 0);
+        LessonOccurrenceEntity afternoonOccurrence = buildClassOccurrence(8102L, 7102L, 13, 0, 16, 0);
+        LessonOccurrenceEntity afternoonOneOnOne = new LessonOccurrenceEntity();
+        afternoonOneOnOne.setId(9101L);
+        afternoonOneOnOne.setLessonNo("O2O-AFTERNOON");
+        afternoonOneOnOne.setPlannedStartAt(LocalDateTime.of(2026, 11, 3, 13, 30));
+        afternoonOneOnOne.setPlannedEndAt(LocalDateTime.of(2026, 11, 3, 15, 0));
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(List.of(morningOccurrence, afternoonOccurrence),
+                        List.of(morningOccurrence, afternoonOccurrence),
+                        List.of(afternoonOneOnOne));
+
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setRenewClassEnrollmentId(3101L);
+        request.setSignupDate(LocalDate.of(2026, 9, 20));
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setStartDate(LocalDate.of(2026, 11, 1));
+        item.setPackageUnit("MONTH");
+        item.setPackageQuantity(new BigDecimal("2"));
+        item.setPurchasedMonths(2);
+        item.setAttendanceOption("MORNING");
+
+        registrationIntakeService.submitIntake(request);
+
+        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
+                ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(classEnrollmentMapper).updateById(enrollmentCaptor.capture());
+        assertThat(enrollmentCaptor.getValue().getAttendanceOption()).isEqualTo("MORNING");
+        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(4);
+    }
+
+    @Test
     void shouldRejectGroupEnrollmentStartDateOutsideClassRange() {
         stubMonthlyGroupClassIntake();
         RegistrationIntakeRequest request = buildGroupClassRequest();
@@ -726,6 +874,101 @@ class RegistrationIntakeServiceImplTest {
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
         when(courseProductMapper.selectById(202L)).thenReturn(product);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+    }
+
+    private void stubMonthlyGroupClassRenewal() {
+        CoursePriceOptionEntity option = buildOption("15:30-17:00");
+        option.setCourseType("GROUP");
+        option.setRegisterClass("Group class");
+        option.setPackageUnit("MONTH");
+        option.setPackageQuantity(new BigDecimal("2"));
+        CourseProductEntity product = buildProduct();
+        product.setTeachingMode("GROUP");
+        product.setBillingType("MONTHLY");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setProductId(202L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setBillingType("MONTHLY");
+        classGroup.setStartDate(LocalDate.of(2026, 1, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 12, 31));
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setClassGroupId(501L);
+        slot.setWeekday(2);
+        slot.setStartTime(java.time.LocalTime.of(15, 30));
+        slot.setEndTime(java.time.LocalTime.of(17, 0));
+        LessonOccurrenceEntity targetOccurrence = new LessonOccurrenceEntity();
+        targetOccurrence.setId(4001L);
+        targetOccurrence.setClassGroupId(501L);
+        targetOccurrence.setPlannedStartAt(LocalDateTime.of(2026, 11, 3, 15, 30));
+        targetOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 11, 3, 17, 0));
+
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        when(courseProductMapper.selectById(202L)).thenReturn(product);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(campusMapper.selectById(1L)).thenReturn(buildCampus());
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        when(jsonHelper.toJson(any())).thenReturn("{}");
+        when(classEnrollmentMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(Collections.emptyList(), List.of(targetOccurrence), Collections.emptyList(), Collections.emptyList());
+        doAnswer(invocation -> {
+            EnrollmentOrderEntity order = invocation.getArgument(0);
+            order.setId(2001L);
+            return 1;
+        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+        doAnswer(invocation -> {
+            EnrollmentOrderItemEntity item = invocation.getArgument(0);
+            item.setId(2101L);
+            return 1;
+        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
+    }
+
+    private ClassEnrollmentEntity buildRenewableClassEnrollment() {
+        ClassEnrollmentEntity existingEnrollment = new ClassEnrollmentEntity();
+        existingEnrollment.setId(3101L);
+        existingEnrollment.setStudentId(101L);
+        existingEnrollment.setClassId(501L);
+        existingEnrollment.setEnrollmentDate(LocalDate.of(2026, 9, 1));
+        existingEnrollment.setExpiryDate(LocalDate.of(2026, 10, 31));
+        existingEnrollment.setBillingType("MONTH");
+        existingEnrollment.setPurchasedQuantity(2);
+        existingEnrollment.setAttendanceOption("FULL_DAY");
+        existingEnrollment.setStatus("ACTIVE");
+        return existingEnrollment;
+    }
+
+    private ClassGroupScheduleSlotEntity buildAttendanceSlot(Long id,
+                                                             String attendanceOptions,
+                                                             int startHour,
+                                                             int startMinute,
+                                                             int endHour,
+                                                             int endMinute) {
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setId(id);
+        slot.setClassGroupId(501L);
+        slot.setWeekday(2);
+        slot.setStartTime(java.time.LocalTime.of(startHour, startMinute));
+        slot.setEndTime(java.time.LocalTime.of(endHour, endMinute));
+        slot.setAttendanceOptions(attendanceOptions);
+        return slot;
+    }
+
+    private LessonOccurrenceEntity buildClassOccurrence(Long id,
+                                                        Long scheduleSlotId,
+                                                        int startHour,
+                                                        int startMinute,
+                                                        int endHour,
+                                                        int endMinute) {
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(id);
+        occurrence.setLessonNo("GROUP-" + id);
+        occurrence.setClassGroupId(501L);
+        occurrence.setScheduleSlotId(scheduleSlotId);
+        occurrence.setPlannedStartAt(LocalDateTime.of(2026, 11, 3, startHour, startMinute));
+        occurrence.setPlannedEndAt(LocalDateTime.of(2026, 11, 3, endHour, endMinute));
+        occurrence.setPlanningStatus("SCHEDULED");
+        return occurrence;
     }
 
     private void stubStudentCreationOnly() {

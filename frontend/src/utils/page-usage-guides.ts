@@ -59,7 +59,6 @@ const guides: Record<string, PageUsageGuide> = {
     ],
     actions: [
       { label: '1-on-1 lessons', to: '/one-on-one-deduction' },
-      { label: 'Group lessons', to: '/group-class-lessons' },
       { label: 'Room calendar', to: '/classrooms/occupancy' },
     ],
   },
@@ -104,21 +103,6 @@ const guides: Record<string, PageUsageGuide> = {
     actions: [
       { label: 'Calendar', to: '/calendar' },
       { label: 'Registration', to: '/registration' },
-    ],
-  },
-  'group-class-lessons': {
-    eyebrow: 'Group class deduction',
-    title: 'Review group attendance and deduct class sessions.',
-    description: 'Group classes only use completed or cancelled outcomes. Both consume the planned class session.',
-    steps: [
-      'Choose the class date and review the enrolled student list.',
-      'Check teacher confirmation first when available.',
-      'Admin review finalizes the session deduction for each student.',
-    ],
-    actions: [
-      { label: 'Course prices', to: '/admin/config/course-prices' },
-      { label: 'Room calendar', to: '/classrooms/occupancy' },
-      { label: 'Data summary', to: '/data-summary' },
     ],
   },
   'schedule-adjustments': {
@@ -493,7 +477,6 @@ const guides: Record<string, PageUsageGuide> = {
     actions: [
       { label: 'Pay rates', to: '/admin/config/teacher-pay-rates' },
       { label: '1-on-1 lessons', to: '/one-on-one-deduction' },
-      { label: 'Group lessons', to: '/group-class-lessons' },
     ],
   },
   'my-payroll': {

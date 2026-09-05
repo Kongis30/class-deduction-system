@@ -44,6 +44,7 @@ export interface StudentItem {
   gender: string;
   birthDate?: string;
   grade?: string;
+  studentClass?: string;
   school?: string;
   sourceChannel?: string;
   guardianName: string;
@@ -135,6 +136,16 @@ export interface CoursePriceOptionItem {
   currencyCode: string;
   courseProductId?: EntityId;
   classId?: EntityId;
+  actualClasses?: Array<{
+    id: EntityId;
+    className: string;
+    actualClass?: string;
+    teacherId?: EntityId;
+    teacherName?: string;
+    classroomId?: EntityId;
+    classroomName?: string;
+    scheduleDesc?: string;
+  }>;
   groupTeacherId?: EntityId;
   groupClassroomId?: EntityId;
   groupScheduleSlots?: Array<{
@@ -199,6 +210,7 @@ export interface EnrollmentOrderItem {
   periodStartDate?: string;
   periodEndDate?: string;
   studentNameSnapshot?: string;
+  studentClassSnapshot?: string;
   gradeSnapshot?: string;
   schoolSnapshot?: string;
   parentPhoneSnapshot?: string;
@@ -241,6 +253,7 @@ export interface EnrollmentOrderDetailItem {
   periodStartDate?: string;
   periodEndDate?: string;
   studentNameSnapshot?: string;
+  studentClassSnapshot?: string;
   gradeSnapshot?: string;
   schoolSnapshot?: string;
   parentPhoneSnapshot?: string;
@@ -309,6 +322,8 @@ export interface CoursePackageItem {
   studentName: string;
   courseProductId: EntityId;
   courseProductName?: string;
+  coursePriceOptionId?: EntityId;
+  gradeBand?: string;
   packageName: string;
   subjectName?: string;
   teachingMode?: string;
@@ -521,7 +536,11 @@ export interface PendingClassroomAssignmentItem {
   occurrenceId?: EntityId;
   lessonNo?: string;
   classGroupId?: EntityId;
+  productId?: EntityId;
+  productName?: string;
   className?: string;
+  gradeBand?: string;
+  actualClass?: string;
   packageId?: EntityId;
   packageName?: string;
   studentId?: EntityId;
@@ -544,6 +563,8 @@ export interface ClassGroupItem {
   productName?: string;
   registerClass?: string;
   courseType?: string;
+  gradeBand?: string;
+  actualClass?: string;
   scheduleDesc?: string;
   teacherId?: EntityId;
   teacherName?: string;

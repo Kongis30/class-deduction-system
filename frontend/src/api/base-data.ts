@@ -285,6 +285,7 @@ export interface CoursePriceOptionSavePayload {
   currencyCode?: string;
   courseProductId?: EntityId;
   classId?: EntityId;
+  actualClasses?: string[];
   groupTeacherId?: EntityId;
   groupClassroomId?: EntityId;
   groupScheduleSlots?: {

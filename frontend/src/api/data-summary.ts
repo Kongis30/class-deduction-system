@@ -30,11 +30,13 @@ export interface DataSummaryRow {
   orderItemId?: EntityId;
   studentId: EntityId;
   studentName?: string;
+  studentClass?: string;
   school?: string;
   grade?: string;
   signupDate?: string;
   periodStartDate?: string;
   periodEndDate?: string;
+  periodLabel?: string;
   campusId?: EntityId;
   campusName?: string;
   classId?: EntityId;

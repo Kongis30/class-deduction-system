@@ -148,6 +148,7 @@ export async function createGroupProductAndPriceByApi(
 ): Promise<{ product: ApiRecord; option: ApiRecord; classId: EntityId }> {
   const productName = `${ACCEPTANCE_MARKER} Saturday ${suffix}`;
   const today = todayInNewYork();
+  const endDate = plusDays(today, 56);
   const weekday = weekdayForApi(today);
   const productId = await apiPost<string>(request, token, '/v1/base/course-products', {
     productCode: '',
@@ -171,8 +172,10 @@ export async function createGroupProductAndPriceByApi(
     courseType: 'SATURDAY',
     registerClass: 'Saturday Class',
     gradeBand: 'G3-G6',
+    packageUnit: 'SESSION',
+    packageQuantity: 8,
     detailText: 'G3-G6 | 8 sessions | 9am-10am',
-    priceAmount: 100,
+    priceAmount: 800,
     currencyCode: 'USD',
     courseProductId: productId,
     groupTeacherId: teacherId,
@@ -180,6 +183,7 @@ export async function createGroupProductAndPriceByApi(
     groupScheduleSlots: [{ weekday, startTime: '09:00', endTime: '10:00' }],
     groupBillingType: 'PER_SESSION',
     groupStartDate: today,
+    groupEndDate: endDate,
     groupTotalSessions: 8,
     status: 'ACTIVE',
     notes: ACCEPTANCE_MARKER,

@@ -96,6 +96,22 @@ public class ClassGroupController {
         return ApiResponse.success("Class schedule updated.", classGroupService.updateClassSchedule(classId, body == null ? Map.of() : body));
     }
 
+    @PostMapping("/actual-classes")
+    @RequireRoles({"ADMIN", "STAFF"})
+    @Operation(summary = "Create an actual class under a product grade")
+    public ApiResponse<Map<String, Object>> createActualClass(@RequestBody Map<String, Object> body) {
+        return ApiResponse.success("Actual class created.", classGroupService.createActualClass(body == null ? Map.of() : body));
+    }
+
+    @PutMapping("/{classId}/info")
+    @RequireRoles({"ADMIN", "STAFF"})
+    @Operation(summary = "Update actual class name information")
+    public ApiResponse<Map<String, Object>> updateClassInfo(
+            @PathVariable Long classId,
+            @RequestBody Map<String, Object> body) {
+        return ApiResponse.success("Actual class updated.", classGroupService.updateClassInfo(classId, body == null ? Map.of() : body));
+    }
+
     @PostMapping("/{classId}/enroll")
     @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Enroll a student in a class")

@@ -129,12 +129,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'group-class-lessons',
         name: 'group-class-lessons',
-        component: ScheduleAdjustmentsView,
-        meta: {
-          title: 'Group Class Lessons',
-          section: 'Group Class Lessons',
-          description: 'Review group class attendance and deduct lessons for enrolled students.',
-        },
+        redirect: '/calendar',
       },
       {
         path: 'classrooms',
@@ -510,9 +505,15 @@ function getSelfServiceFallbackPath(user: AuthUser | null, path: string): string
 const router = createRouter({
   history: isElectron ? createWebHashHistory() : createWebHistory(import.meta.env.BASE_URL),
   routes,
-  scrollBehavior: () => ({
-    top: 0,
-  }),
+  scrollBehavior: (to, from, savedPosition) => {
+    if (savedPosition) {
+      return savedPosition;
+    }
+    if (to.path === from.path) {
+      return false;
+    }
+    return { top: 0 };
+  },
 });
 
 router.beforeEach((to) => {

@@ -22,8 +22,12 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         dropLegacyOccurrenceSlotForeignKey();
         addClassGroupColumnIfMissing("end_date",
                 "date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class' AFTER start_date");
+        addClassGroupColumnIfMissing("actual_class",
+                "varchar(64) DEFAULT NULL COMMENT 'Actual class name under a billing grade, e.g. G1/G2' AFTER grade_band");
         addEnrollmentOrderItemColumnIfMissing("start_date",
                 "date DEFAULT NULL COMMENT 'Course line enrollment start date' AFTER time_slot_label");
+        addEnrollmentOrderColumnIfMissing("student_class_snapshot",
+                "varchar(32) DEFAULT NULL COMMENT 'Registration class level snapshot' AFTER student_name_snapshot");
         addSlotColumnIfMissing("subject_name",
                 "varchar(128) DEFAULT NULL COMMENT 'Course/subject name taught in this recurring weekly slot'");
         addSlotColumnIfMissing("allocated_units",
@@ -64,6 +68,21 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         }
         jdbcTemplate.execute("ALTER TABLE enrollment_order_item ADD COLUMN `" + columnName + "` " + columnDefinition);
         log.info("Added enrollment_order_item.{} column for course-line enrollment start dates.", columnName);
+    }
+
+    private void addEnrollmentOrderColumnIfMissing(String columnName, String columnDefinition) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'enrollment_order'
+                  AND COLUMN_NAME = ?
+                """, Integer.class, columnName);
+        if (count != null && count > 0) {
+            return;
+        }
+        jdbcTemplate.execute("ALTER TABLE enrollment_order ADD COLUMN `" + columnName + "` " + columnDefinition);
+        log.info("Added enrollment_order.{} column for registration student class snapshots.", columnName);
     }
 
     private void addSlotColumnIfMissing(String columnName, String columnDefinition) {

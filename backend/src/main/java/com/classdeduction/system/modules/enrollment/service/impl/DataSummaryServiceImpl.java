@@ -2,9 +2,13 @@ package com.classdeduction.system.modules.enrollment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.util.UnitConverter;
+import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
+import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -62,6 +66,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final CourseProductMapper courseProductMapper;
     private final TeacherMapper teacherMapper;
     private final HourLedgerMapper hourLedgerMapper;
+    private final StudentMapper studentMapper;
+    private final CampusMapper campusMapper;
 
     @Override
     public DataSummaryResponseVO getSummary(DataSummaryQuery query) {
@@ -106,18 +112,46 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Map<Long, List<String>> reviewIssuesByOrderId = buildReviewIssues(orders, packages, paymentRecords);
 
         Set<Long> itemIds = items.stream().map(EnrollmentOrderItemEntity::getId).collect(Collectors.toCollection(LinkedHashSet::new));
-        List<ClassEnrollmentEntity> classEnrollments = itemIds.isEmpty() ? Collections.emptyList() : classEnrollmentMapper.selectList(
+        Set<Long> studentIds = orders.stream().map(EnrollmentOrderEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, StudentEntity> studentById = new HashMap<>();
+        if (!studentIds.isEmpty()) {
+            studentMapper.selectBatchIds(studentIds)
+                    .forEach(s -> studentById.put(s.getId(), s));
+        }
+        Set<Long> campusIds = new LinkedHashSet<>();
+        orders.stream().map(EnrollmentOrderEntity::getCampusId).filter(Objects::nonNull).forEach(campusIds::add);
+        studentById.values().stream().map(StudentEntity::getCampusId).filter(Objects::nonNull).forEach(campusIds::add);
+        Map<Long, CampusEntity> campusById = campusIds.isEmpty() ? Collections.emptyMap()
+                : campusMapper.selectBatchIds(campusIds).stream()
+                        .collect(Collectors.toMap(CampusEntity::getId, Function.identity(), (left, right) -> left));
+        Set<Long> itemClassIds = items.stream().map(EnrollmentOrderItemEntity::getClassId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        orders.stream().map(EnrollmentOrderEntity::getClassId).filter(Objects::nonNull).forEach(itemClassIds::add);
+        List<ClassEnrollmentEntity> directClassEnrollments = itemIds.isEmpty() ? Collections.emptyList() : classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, itemIds));
+        List<ClassEnrollmentEntity> studentClassEnrollments = studentIds.isEmpty() || itemClassIds.isEmpty()
+                ? Collections.emptyList()
+                : classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .in(ClassEnrollmentEntity::getStudentId, studentIds)
+                        .in(ClassEnrollmentEntity::getClassId, itemClassIds));
+        List<ClassEnrollmentEntity> classEnrollments = mergeClassEnrollments(directClassEnrollments, studentClassEnrollments);
         Map<Long, ClassEnrollmentEntity> classEnrollmentByOrderItemId = classEnrollments.stream()
                 .filter(item -> item.getEnrollmentOrderItemId() != null)
                 .collect(Collectors.toMap(ClassEnrollmentEntity::getEnrollmentOrderItemId, Function.identity(), (left, right) -> left));
+        Map<StudentClassKey, List<ClassEnrollmentEntity>> classEnrollmentsByStudentClass = classEnrollments.stream()
+                .filter(item -> item.getStudentId() != null && item.getClassId() != null)
+                .collect(Collectors.groupingBy(item -> new StudentClassKey(item.getStudentId(), item.getClassId())));
 
         Context context = buildContext(orders, items, packages, classEnrollments);
         List<DataSummaryResponseVO.RowVO> rows = buildRows(orderMap, itemsByOrderId, packagesByOrderId,
-                        packageByOrderItemId, classEnrollmentByOrderItemId, reviewIssuesByOrderId,
-                        latestPaymentMethodByOrderId, context)
+                        packageByOrderItemId, classEnrollmentByOrderItemId, classEnrollmentsByStudentClass, reviewIssuesByOrderId,
+                        latestPaymentMethodByOrderId, studentById, campusById, context)
                 .stream()
+                .filter(this::hasDisplayableStudent)
                 .filter(row -> matchesQuery(row, query))
                 .filter(row -> !Boolean.TRUE.equals(query.getOnlyAlerts()) || hasAlerts(row))
                 .filter(row -> !Boolean.TRUE.equals(query.getOnlyNeedsReview()) || hasReviewIssues(row))
@@ -259,8 +293,11 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, List<CoursePackageEntity>> packagesByOrderId,
             Map<Long, CoursePackageEntity> packageByOrderItemId,
             Map<Long, ClassEnrollmentEntity> classEnrollmentByOrderItemId,
+            Map<StudentClassKey, List<ClassEnrollmentEntity>> classEnrollmentsByStudentClass,
             Map<Long, List<String>> reviewIssuesByOrderId,
             Map<Long, String> latestPaymentMethodByOrderId,
+            Map<Long, StudentEntity> studentById,
+            Map<Long, CampusEntity> campusById,
             Context context) {
         LocalDate today = LocalDate.now();
         LocalDate soonLimit = today.plusDays(EXPIRING_SOON_DAYS);
@@ -271,18 +308,109 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             if (orderItems == null || orderItems.isEmpty()) {
                 rows.add(toRow(order, null, firstPackage(packagesByOrderId.get(order.getId())), null,
                         reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
-                        latestPaymentMethodByOrderId.get(order.getId()), context, today, soonLimit));
+                        latestPaymentMethodByOrderId.get(order.getId()), studentById, campusById, context, today, soonLimit));
                 continue;
             }
             for (EnrollmentOrderItemEntity item : orderItems) {
-                CoursePackageEntity coursePackage = packageByOrderItemId.get(item.getId());
-                ClassEnrollmentEntity classEnrollment = classEnrollmentByOrderItemId.get(item.getId());
+                CoursePackageEntity coursePackage = firstNonNull(packageByOrderItemId.get(item.getId()),
+                        findPackageForItem(packagesByOrderId.get(order.getId()), item));
+                ClassEnrollmentEntity classEnrollment = firstNonNull(classEnrollmentByOrderItemId.get(item.getId()),
+                        findClassEnrollmentForItem(order, item, classEnrollmentsByStudentClass));
                 rows.add(toRow(order, item, coursePackage, classEnrollment,
                         reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
-                        latestPaymentMethodByOrderId.get(order.getId()), context, today, soonLimit));
+                        latestPaymentMethodByOrderId.get(order.getId()), studentById, campusById, context, today, soonLimit));
             }
         }
         return rows;
+    }
+
+    private List<ClassEnrollmentEntity> mergeClassEnrollments(List<ClassEnrollmentEntity> directClassEnrollments,
+                                                              List<ClassEnrollmentEntity> studentClassEnrollments) {
+        Map<Long, ClassEnrollmentEntity> byId = new LinkedHashMap<>();
+        List<ClassEnrollmentEntity> withoutId = new ArrayList<>();
+        for (ClassEnrollmentEntity enrollment : directClassEnrollments) {
+            addClassEnrollment(enrollment, byId, withoutId);
+        }
+        for (ClassEnrollmentEntity enrollment : studentClassEnrollments) {
+            addClassEnrollment(enrollment, byId, withoutId);
+        }
+        List<ClassEnrollmentEntity> merged = new ArrayList<>(byId.values());
+        merged.addAll(withoutId);
+        return merged;
+    }
+
+    private void addClassEnrollment(ClassEnrollmentEntity enrollment,
+                                    Map<Long, ClassEnrollmentEntity> byId,
+                                    List<ClassEnrollmentEntity> withoutId) {
+        if (enrollment == null) {
+            return;
+        }
+        if (enrollment.getId() == null) {
+            withoutId.add(enrollment);
+            return;
+        }
+        byId.putIfAbsent(enrollment.getId(), enrollment);
+    }
+
+    private CoursePackageEntity findPackageForItem(List<CoursePackageEntity> orderPackages, EnrollmentOrderItemEntity item) {
+        if (orderPackages == null || orderPackages.isEmpty() || item == null) {
+            return null;
+        }
+        List<CoursePackageEntity> unlinkedPackages = orderPackages.stream()
+                .filter(coursePackage -> coursePackage.getEnrollmentOrderItemId() == null)
+                .toList();
+        List<CoursePackageEntity> candidates = unlinkedPackages.isEmpty() ? orderPackages : unlinkedPackages;
+        if (item.getCourseProductId() != null) {
+            List<CoursePackageEntity> sameProductPackages = candidates.stream()
+                    .filter(coursePackage -> Objects.equals(coursePackage.getCourseProductId(), item.getCourseProductId()))
+                    .toList();
+            if (sameProductPackages.size() == 1) {
+                return sameProductPackages.get(0);
+            }
+        }
+        return candidates.size() == 1 ? candidates.get(0) : null;
+    }
+
+    private ClassEnrollmentEntity findClassEnrollmentForItem(EnrollmentOrderEntity order,
+                                                             EnrollmentOrderItemEntity item,
+                                                             Map<StudentClassKey, List<ClassEnrollmentEntity>> classEnrollmentsByStudentClass) {
+        if (item == null || order.getStudentId() == null) {
+            return null;
+        }
+        Long classId = firstNonNull(item.getClassId(), order.getClassId());
+        if (classId == null) {
+            return null;
+        }
+        List<ClassEnrollmentEntity> candidates = classEnrollmentsByStudentClass.get(new StudentClassKey(order.getStudentId(), classId));
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        List<ClassEnrollmentEntity> unlinkedCandidates = candidates.stream()
+                .filter(enrollment -> enrollment.getEnrollmentOrderItemId() == null)
+                .toList();
+        List<ClassEnrollmentEntity> scopedCandidates = unlinkedCandidates.isEmpty() ? candidates : unlinkedCandidates;
+        LocalDate signupDate = order.getSignupDate();
+        if (signupDate != null) {
+            List<ClassEnrollmentEntity> activeOnSignupDate = scopedCandidates.stream()
+                    .filter(enrollment -> containsDate(enrollment.getEnrollmentDate(), enrollment.getExpiryDate(), signupDate))
+                    .toList();
+            if (activeOnSignupDate.size() == 1) {
+                return activeOnSignupDate.get(0);
+            }
+            if (!activeOnSignupDate.isEmpty()) {
+                scopedCandidates = activeOnSignupDate;
+            }
+        }
+        return scopedCandidates.stream()
+                .max(Comparator.comparing(ClassEnrollmentEntity::getEnrollmentDate, Comparator.nullsFirst(Comparator.naturalOrder()))
+                        .thenComparing(ClassEnrollmentEntity::getId, Comparator.nullsFirst(Long::compareTo)))
+                .orElse(null);
+    }
+
+    private boolean containsDate(LocalDate startDate, LocalDate endDate, LocalDate targetDate) {
+        boolean startsBeforeTarget = startDate == null || !startDate.isAfter(targetDate);
+        boolean endsAfterTarget = endDate == null || !endDate.isBefore(targetDate);
+        return startsBeforeTarget && endsAfterTarget;
     }
 
     private DataSummaryResponseVO.RowVO toRow(EnrollmentOrderEntity order,
@@ -291,9 +419,14 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                               ClassEnrollmentEntity classEnrollment,
                                               List<String> reviewIssueCodes,
                                               String paymentMethod,
+                                              Map<Long, StudentEntity> studentById,
+                                              Map<Long, CampusEntity> campusById,
                                               Context context,
                                               LocalDate today,
                                               LocalDate soonLimit) {
+        StudentEntity student = order.getStudentId() == null ? null : studentById.get(order.getStudentId());
+        Long resolvedCampusId = firstNonNull(order.getCampusId(), student == null ? null : student.getCampusId());
+        CampusEntity campus = resolvedCampusId == null ? null : campusById.get(resolvedCampusId);
         Long classId = firstNonNull(item == null ? null : item.getClassId(),
                 classEnrollment == null ? null : classEnrollment.getClassId(),
                 order.getClassId());
@@ -319,9 +452,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 coursePackage == null ? null : coursePackage.getPackageName(),
                 product == null ? null : product.getProductName());
 
-        LocalDate expiryDate = firstNonNull(coursePackage == null ? null : coursePackage.getEstimatedEndDate(),
+        LocalDate periodStartDate = firstNonNull(coursePackage == null ? null : coursePackage.getStartDate(),
+                classEnrollment == null ? null : classEnrollment.getEnrollmentDate(),
+                order.getPeriodStartDate());
+        LocalDate periodEndDate = firstNonNull(coursePackage == null ? null : coursePackage.getEstimatedEndDate(),
                 classEnrollment == null ? null : classEnrollment.getExpiryDate(),
                 order.getPeriodEndDate());
+        LocalDate expiryDate = periodEndDate;
         boolean overdue = positive(order.getBalanceAmount());
         boolean expiringSoon = expiryDate != null && !expiryDate.isBefore(today) && !expiryDate.isAfter(soonLimit);
         boolean oneOnOne = "ONE_ON_ONE".equals(courseType) || isOneOnOne(product, coursePackage);
@@ -343,14 +480,16 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 order.getEnrollmentNo(),
                 item == null ? null : item.getId(),
                 order.getStudentId(),
-                firstText(order.getStudentNameSnapshot(), null),
-                order.getSchoolSnapshot(),
-                order.getGradeSnapshot(),
+                firstText(order.getStudentNameSnapshot(), student == null ? null : student.getStudentName()),
+                firstText(student == null ? null : student.getStudentClass(), order.getStudentClassSnapshot()),
+                firstText(order.getSchoolSnapshot(), student == null ? null : student.getSchool()),
+                firstText(order.getGradeSnapshot(), student == null ? null : student.getGrade()),
                 order.getSignupDate(),
-                order.getPeriodStartDate(),
-                order.getPeriodEndDate(),
-                order.getCampusId(),
-                order.getCampusNameSnapshot(),
+                periodStartDate,
+                periodEndDate,
+                item == null ? null : item.getPeriodLabel(),
+                resolvedCampusId,
+                firstText(order.getCampusNameSnapshot(), campus == null ? null : campus.getCampusName()),
                 classId,
                 classGroup == null ? null : classGroup.getClassName(),
                 productId,
@@ -389,6 +528,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         );
     }
 
+    private boolean hasDisplayableStudent(DataSummaryResponseVO.RowVO row) {
+        return StringUtils.hasText(row.studentName());
+    }
+
     private boolean matchesQuery(DataSummaryResponseVO.RowVO row, DataSummaryQuery query) {
         if (query.getClassId() != null && !Objects.equals(query.getClassId(), row.classId())) {
             return false;
@@ -405,6 +548,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         String keyword = query.getKeyword().trim().toLowerCase();
         return contains(row.enrollmentNo(), keyword)
                 || contains(row.studentName(), keyword)
+                || contains(row.studentClass(), keyword)
                 || contains(row.school(), keyword)
                 || contains(row.phone(), keyword)
                 || contains(row.phone2(), keyword)
@@ -566,6 +710,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, PackageTeacherAssignmentEntity> primaryAssignments,
             Map<Long, TeacherEntity> teachers
     ) {
+    }
+
+    private record StudentClassKey(Long studentId, Long classId) {
     }
 
     private record GroupLabel(String key, String name) {

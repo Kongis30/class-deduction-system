@@ -147,6 +147,40 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldCountMultipleConfirmedSlotsOnSameDayAsOneSession() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 4, 1),
+                LocalDate.of(2026, 4, 30));
+        enrollment.setBillingType("PER_SESSION");
+        enrollment.setPurchasedQuantity(4);
+        StudentEntity student = new StudentEntity();
+        student.setId(601L);
+        student.setStudentName("Alice Chen");
+
+        LessonOccurrenceEntity morning = scheduledOccurrence(LocalDateTime.of(2026, 4, 5, 9, 0));
+        morning.setId(9001L);
+        LessonOccurrenceEntity afternoon = scheduledOccurrence(LocalDateTime.of(2026, 4, 5, 13, 0));
+        afternoon.setId(9002L);
+        LessonRecordEntity morningRecord = confirmedClassRecord(9001L, 601L);
+        LessonRecordEntity afternoonRecord = confirmedClassRecord(9002L, 601L);
+
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(studentMapper.selectBatchIds(List.of(601L))).thenReturn(List.of(student));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(morning, afternoon));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(morningRecord, afternoonRecord));
+
+        List<Map<String, Object>> result = classGroupService.listEnrolledStudents(501L, adminUser());
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0))
+                .containsEntry("usedSessions", 1L)
+                .containsEntry("remainingSessions", 3);
+    }
+
+    @Test
     void shouldPersistConfirmedStageForAllPendingClassRecordsWhenAdminFinalConfirms() {
         LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
         occurrence.setId(1001L);
@@ -335,6 +369,31 @@ class ClassGroupServiceImplTest {
                 .hasMessage("No active eligible students in this class lesson.");
         verify(lessonRecordMapper, never()).insert(any(LessonRecordEntity.class));
         verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldAllowSecondSlotOnSameClassDayForPerSessionEnrollment() {
+        LessonOccurrenceEntity afternoon = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 13, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1),
+                LocalDate.of(2026, 4, 30));
+        enrollment.setBillingType("PER_SESSION");
+        enrollment.setPurchasedQuantity(1);
+        LessonOccurrenceEntity morning = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 9, 0));
+        morning.setId(9001L);
+        LessonRecordEntity confirmedMorning = confirmedClassRecord(9001L, 601L);
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(afternoon);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(morning));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(confirmedMorning));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+
+        Map<String, Object> result = classGroupService.confirmLesson(501L, 1001L, Map.of(), adminUser());
+
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().getStudentId()).isEqualTo(601L);
+        assertThat(result.get("confirmedCount")).isEqualTo(1);
     }
 
     @Test
@@ -595,6 +654,15 @@ class ClassGroupServiceImplTest {
         record.setConfirmStage("PENDING_ADMIN");
         record.setTeacherConfirmedByUserId(1002L);
         record.setTeacherConfirmedAt(LocalDateTime.now().minusMinutes(10));
+        return record;
+    }
+
+    private LessonRecordEntity confirmedClassRecord(Long occurrenceId, Long studentId) {
+        LessonRecordEntity record = new LessonRecordEntity();
+        record.setOccurrenceId(occurrenceId);
+        record.setStudentId(studentId);
+        record.setConfirmStage("CONFIRMED");
+        record.setResultStatus("COMPLETED");
         return record;
     }
 

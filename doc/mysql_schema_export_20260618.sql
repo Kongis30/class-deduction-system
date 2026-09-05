@@ -361,6 +361,7 @@ CREATE TABLE `enrollment_order` (
   `cashier_user_id` bigint DEFAULT NULL COMMENT 'Cashier user ID',
   `handled_by_name` varchar(64) DEFAULT NULL COMMENT 'Handler name snapshot',
   `currency_code` varchar(16) NOT NULL DEFAULT 'USD' COMMENT 'Currency code',
+  `student_class_snapshot` varchar(32) DEFAULT NULL COMMENT 'Registration class level snapshot',
   `original_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Original amount',
   `discount_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Discount amount',
   `received_amount` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Received amount',

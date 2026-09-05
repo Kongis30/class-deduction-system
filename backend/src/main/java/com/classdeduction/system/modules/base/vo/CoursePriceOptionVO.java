@@ -35,6 +35,7 @@ public record CoursePriceOptionVO(
         String currencyCode,
         Long courseProductId,
         Long classId,
+        List<ActualClassVO> actualClasses,
         Long groupTeacherId,
         Long groupClassroomId,
         List<GroupScheduleSlotVO> groupScheduleSlots,
@@ -62,6 +63,18 @@ public record CoursePriceOptionVO(
             String morningEndTime,
             String afternoonStartTime,
             String attendanceOptions
+    ) {
+    }
+
+    public record ActualClassVO(
+            Long id,
+            String className,
+            String actualClass,
+            Long teacherId,
+            String teacherName,
+            Long classroomId,
+            String classroomName,
+            String scheduleDesc
     ) {
     }
 }

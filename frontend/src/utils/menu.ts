@@ -21,12 +21,6 @@ export const dailyMenus: AppMenuItem[] = [
     path: '/one-on-one-deduction',
   },
   {
-    key: 'group-class-lessons',
-    title: 'Group Class Lessons',
-    icon: 'Calendar',
-    path: '/group-class-lessons',
-  },
-  {
     key: 'data-summary',
     title: 'Data Summary',
     icon: 'DataAnalysis',

@@ -38,6 +38,9 @@ public class EnrollmentOrderCorrectionRequest {
     @Schema(description = "Student grade")
     private String grade;
 
+    @Schema(description = "Registration class level")
+    private String studentClass;
+
     @Schema(description = "Student school")
     private String school;
 

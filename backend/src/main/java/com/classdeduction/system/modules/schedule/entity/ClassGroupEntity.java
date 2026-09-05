@@ -43,6 +43,9 @@ public class ClassGroupEntity extends BaseEntity {
 
     private String gradeBand;
 
+    /** 实际上课班级，例如 G1/G2；gradeBand 只代表收费档位。 */
+    private String actualClass;
+
     /** Group-course billing window configured for this grade class. */
     private String billingType;
 

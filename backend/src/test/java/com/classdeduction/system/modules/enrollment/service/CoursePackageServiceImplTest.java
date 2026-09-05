@@ -205,7 +205,7 @@ class CoursePackageServiceImplTest {
     }
 
     @Test
-    void shouldCountOnlyFinallyConfirmedClassLessonsInGroupProgress() {
+    void shouldCountOnlyFinallyConfirmedClassDaysInGroupProgress() {
         CoursePackagePageQuery query = new CoursePackagePageQuery();
         query.setPageNum(1);
         query.setPageSize(10);
@@ -228,21 +228,36 @@ class CoursePackageServiceImplTest {
         product.setBillingType("PER_SESSION");
         product.setTotalSessions(8);
 
-        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-        occurrence.setId(601L);
-        occurrence.setClassGroupId(501L);
-        occurrence.setPlanningStatus("SCHEDULED");
+        LessonOccurrenceEntity morning = new LessonOccurrenceEntity();
+        morning.setId(601L);
+        morning.setClassGroupId(501L);
+        morning.setPlanningStatus("SCHEDULED");
+        morning.setPlannedStartAt(LocalDateTime.of(2026, 9, 5, 9, 0));
+        LessonOccurrenceEntity afternoon = new LessonOccurrenceEntity();
+        afternoon.setId(602L);
+        afternoon.setClassGroupId(501L);
+        afternoon.setPlanningStatus("SCHEDULED");
+        afternoon.setPlannedStartAt(LocalDateTime.of(2026, 9, 5, 13, 0));
+        LessonRecordEntity morningRecord = new LessonRecordEntity();
+        morningRecord.setOccurrenceId(601L);
+        morningRecord.setConfirmStage("CONFIRMED");
+        morningRecord.setIsDeleted(0);
+        LessonRecordEntity afternoonRecord = new LessonRecordEntity();
+        afternoonRecord.setOccurrenceId(602L);
+        afternoonRecord.setConfirmStage("CONFIRMED");
+        afternoonRecord.setIsDeleted(0);
 
         when(classGroupMapper.selectPage(any(), any())).thenReturn(page);
         when(courseProductMapper.selectBatchIds(any())).thenReturn(List.of(product));
         when(classEnrollmentMapper.countActiveByClassIds(anyList())).thenReturn(Collections.emptyList());
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(morning, afternoon));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(morningRecord, afternoonRecord));
 
         PageResponse<GroupClassPackageProgressVO> result = coursePackageService.pageGroupClassPackages(query);
 
         assertThat(result.records()).singleElement().satisfies(progress -> {
-            assertThat(progress.consumedUnits()).isZero();
-            assertThat(progress.remainingUnits()).isEqualTo(8);
+            assertThat(progress.consumedUnits()).isEqualTo(1);
+            assertThat(progress.remainingUnits()).isEqualTo(7);
         });
         @SuppressWarnings("unchecked")
         org.mockito.ArgumentCaptor<LambdaQueryWrapper<LessonRecordEntity>> queryCaptor =

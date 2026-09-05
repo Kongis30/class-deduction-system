@@ -543,7 +543,28 @@ onMounted(async () => {
   // Admin/staff/teacher: show student list
   try {
     const res = await fetchAllStudents();
-    students.value = res.data.data.map(s => ({ id: s.id, studentName: s.studentName }));
+    // 只保留拥有 ≥1 个 ACTIVE 1-on-1 课时包的学生。
+    // 班课学生只写 class_enrollment、不写 course_package，不应出现在 1-on-1 学生日历列表里。
+    const packageCheck = await Promise.all(
+      res.data.data.map(async (s) => {
+        try {
+          const pkgRes = await fetchCoursePackages({
+            studentId: s.id,
+            packageStatus: 'ACTIVE',
+            teachingMode: 'ONE_ON_ONE',
+            pageSize: 1,
+          });
+          const hasOneOnOne = (pkgRes.data.data.total ?? pkgRes.data.data.records.length) > 0;
+          return { id: s.id, studentName: s.studentName, hasOneOnOne };
+        } catch {
+          // 查询失败时保守保留该学生，避免误隐藏正常学生
+          return { id: s.id, studentName: s.studentName, hasOneOnOne: true };
+        }
+      })
+    );
+    students.value = packageCheck
+      .filter(x => x.hasOneOnOne)
+      .map(x => ({ id: x.id, studentName: x.studentName }));
   } catch { /* silent */ }
 });
 </script>

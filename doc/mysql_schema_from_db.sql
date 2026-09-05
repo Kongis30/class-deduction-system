@@ -416,6 +416,7 @@ CREATE TABLE `enrollment_order` (
   `period_start_date` date DEFAULT NULL COMMENT 'Registration period start date',
   `period_end_date` date DEFAULT NULL COMMENT 'Registration period end date',
   `student_name_snapshot` varchar(64) DEFAULT NULL COMMENT 'Student name snapshot',
+  `student_class_snapshot` varchar(32) DEFAULT NULL COMMENT 'Registration class level snapshot',
   `grade_snapshot` varchar(32) DEFAULT NULL COMMENT 'Student grade snapshot',
   `school_snapshot` varchar(128) DEFAULT NULL COMMENT 'Student school snapshot',
   `parent_phone_snapshot` varchar(32) DEFAULT NULL COMMENT 'Primary guardian phone snapshot',

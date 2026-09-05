@@ -2,11 +2,15 @@ package com.classdeduction.system.modules.enrollment.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
+import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.entity.StudentEntity;
+import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -17,6 +21,8 @@ import com.classdeduction.system.modules.enrollment.service.impl.DataSummaryServ
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -73,6 +79,12 @@ class DataSummaryServiceImplTest {
     @Mock
     private HourLedgerMapper hourLedgerMapper;
 
+    @Mock
+    private StudentMapper studentMapper;
+
+    @Mock
+    private CampusMapper campusMapper;
+
     private DataSummaryServiceImpl dataSummaryService;
 
     @BeforeAll
@@ -94,11 +106,15 @@ class DataSummaryServiceImplTest {
                 classGroupMapper,
                 courseProductMapper,
                 teacherMapper,
-                hourLedgerMapper
+                hourLedgerMapper,
+                studentMapper,
+                campusMapper
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(paymentRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(classEnrollmentMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(studentMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
     }
 
     @Test
@@ -148,6 +164,48 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldFallbackToCurrentStudentProfileWhenOrderSnapshotNameIsMissing() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        order.setStudentNameSnapshot(null);
+        order.setGradeSnapshot(null);
+        order.setSchoolSnapshot(null);
+        StudentEntity student = new StudentEntity();
+        student.setId(1L);
+        student.setStudentName("Current Student");
+        student.setStudentClass("G6");
+        student.setGrade("6");
+        student.setSchool("PS 1");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(student));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.studentName()).isEqualTo("Current Student");
+                    assertThat(row.studentClass()).isEqualTo("G6");
+                    assertThat(row.grade()).isEqualTo("6");
+                    assertThat(row.school()).isEqualTo("PS 1");
+                });
+    }
+
+    @Test
+    void shouldHideRowsWithoutAnyDisplayableStudentName() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        order.setStudentNameSnapshot(null);
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+        when(studentMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).isEmpty();
+        assertThat(response.totalRegistrationCount()).isZero();
+    }
+
+    @Test
     void shouldReturnPackageLedgerMismatchWhenPackageSnapshotsDoNotMatchLedgerChanges() {
         EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
         CoursePackageEntity coursePackage = new CoursePackageEntity();
@@ -172,6 +230,135 @@ class DataSummaryServiceImplTest {
                 .extracting(DataSummaryResponseVO.RowVO::reviewIssueCodes)
                 .asList()
                 .containsExactly("PACKAGE_LEDGER_MISMATCH");
+    }
+
+    @Test
+    void shouldDisplayOneOnOneCoursePackagePeriodBeforeOrderPeriod() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        order.setPeriodStartDate(LocalDate.of(2026, 1, 1));
+        order.setPeriodEndDate(LocalDate.of(2026, 1, 31));
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(11L);
+        coursePackage.setEnrollmentOrderId(1L);
+        coursePackage.setStartDate(LocalDate.of(2026, 9, 1));
+        coursePackage.setEstimatedEndDate(LocalDate.of(2026, 12, 31));
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+        when(hourLedgerMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(packageTeacherAssignmentMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 31));
+                });
+    }
+
+    @Test
+    void shouldDisplayGroupClassEnrollmentPeriodBeforeOrderPeriod() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        order.setPeriodStartDate(LocalDate.of(2026, 1, 1));
+        order.setPeriodEndDate(LocalDate.of(2026, 1, 31));
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(21L);
+        item.setEnrollmentOrderId(1L);
+        item.setLineNo(1);
+        item.setClassId(31L);
+        item.setCourseType("GROUP");
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(41L);
+        enrollment.setEnrollmentOrderItemId(21L);
+        enrollment.setClassId(31L);
+        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 10));
+        enrollment.setExpiryDate(LocalDate.of(2026, 11, 30));
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(31L);
+        classGroup.setClassName("G1-G5");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 10));
+                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 11, 30));
+                });
+    }
+
+    @Test
+    void shouldDisplayLegacyOneOnOnePackagePeriodWhenOrderItemLinkIsMissing() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(21L);
+        item.setEnrollmentOrderId(1L);
+        item.setLineNo(1);
+        item.setCourseProductId(31L);
+        item.setCourseType("ONE_ON_ONE");
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(11L);
+        coursePackage.setEnrollmentOrderId(1L);
+        coursePackage.setCourseProductId(31L);
+        coursePackage.setStartDate(LocalDate.of(2026, 9, 1));
+        coursePackage.setEstimatedEndDate(LocalDate.of(2026, 12, 31));
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+        when(hourLedgerMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(packageTeacherAssignmentMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 31));
+                });
+    }
+
+    @Test
+    void shouldDisplayLegacyGroupClassEnrollmentPeriodWhenOrderItemLinkIsMissing() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        order.setSignupDate(LocalDate.of(2026, 9, 15));
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(21L);
+        item.setEnrollmentOrderId(1L);
+        item.setLineNo(1);
+        item.setClassId(31L);
+        item.setCourseType("GROUP");
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(41L);
+        enrollment.setStudentId(1L);
+        enrollment.setClassId(31L);
+        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 10));
+        enrollment.setExpiryDate(LocalDate.of(2026, 11, 30));
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(31L);
+        classGroup.setClassName("G1-G5");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(Collections.emptyList(), List.of(enrollment));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement()
+                .satisfies(row -> {
+                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 10));
+                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 11, 30));
+                });
     }
 
     @Test

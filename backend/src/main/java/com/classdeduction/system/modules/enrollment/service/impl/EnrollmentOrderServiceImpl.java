@@ -327,6 +327,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .periodStartDate(order.getPeriodStartDate())
                 .periodEndDate(order.getPeriodEndDate())
                 .studentNameSnapshot(order.getStudentNameSnapshot())
+                .studentClassSnapshot(order.getStudentClassSnapshot())
                 .gradeSnapshot(order.getGradeSnapshot())
                 .schoolSnapshot(order.getSchoolSnapshot())
                 .parentPhoneSnapshot(order.getParentPhoneSnapshot())
@@ -764,6 +765,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .periodStartDate(order.getPeriodStartDate())
                 .periodEndDate(order.getPeriodEndDate())
                 .studentNameSnapshot(order.getStudentNameSnapshot())
+                .studentClassSnapshot(order.getStudentClassSnapshot())
                 .gradeSnapshot(order.getGradeSnapshot())
                 .schoolSnapshot(order.getSchoolSnapshot())
                 .parentPhoneSnapshot(order.getParentPhoneSnapshot())
@@ -808,6 +810,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .periodStartDate(order.getPeriodStartDate())
                 .periodEndDate(order.getPeriodEndDate())
                 .studentNameSnapshot(order.getStudentNameSnapshot())
+                .studentClassSnapshot(order.getStudentClassSnapshot())
                 .gradeSnapshot(order.getGradeSnapshot())
                 .schoolSnapshot(order.getSchoolSnapshot())
                 .parentPhoneSnapshot(order.getParentPhoneSnapshot())
@@ -955,6 +958,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (request.getGrade() != null) {
             order.setGradeSnapshot(request.getGrade().trim());
         }
+        if (request.getStudentClass() != null) {
+            order.setStudentClassSnapshot(request.getStudentClass().trim());
+        }
         if (request.getSchool() != null) {
             order.setSchoolSnapshot(request.getSchool().trim());
         }
@@ -1020,6 +1026,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 continue;
             }
             payload.put("studentName", order.getStudentNameSnapshot());
+            payload.put("studentClass", order.getStudentClassSnapshot());
             payload.put("grade", order.getGradeSnapshot());
             payload.put("school", order.getSchoolSnapshot());
             payload.put("guardianPhone", order.getParentPhoneSnapshot());
@@ -1041,6 +1048,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             payload.put("dropoffAddress", order.getDropoffAddressSnapshot());
             payload.put("signupDate", order.getSignupDate());
             payload.put("handledByName", order.getHandledByName());
+            payload.put("registrationRemark", order.getRemark());
             receipt.setReceiptPayload(jsonHelper.toJson(payload));
             receiptRecordMapper.updateById(receipt);
         }

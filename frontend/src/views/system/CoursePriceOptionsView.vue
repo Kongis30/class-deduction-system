@@ -5,7 +5,7 @@
         <div>
           <span class="config-panel__eyebrow">Course setup</span>
           <h2>Set Grade Classes & Registration Options</h2>
-          <p>Choose a course, create one class for each grade, then add the monthly, weekly, or session registration options for that class.</p>
+          <p>Choose a course, set shared registration options by grade, then edit each actual class schedule separately.</p>
         </div>
         <div class="header-actions">
           <el-button @click="loadAll">Reload</el-button>
@@ -79,15 +79,17 @@
             >
               <header class="product-price-group__header">
                 <div>
-                  <strong>{{ group.gradeLabel }} class</strong>
-                  <span v-if="selectedMode === 'GROUP'">{{ formatGroupSchedule(group.rows[0]) }}</span>
+                  <strong>{{ group.gradeLabel }} grade pricing</strong>
+                  <small v-if="selectedMode === 'GROUP' && groupDateWindowLabel(group.rows[0])">
+                    Class dates: {{ groupDateWindowLabel(group.rows[0]) }}
+                  </small>
+                  <small v-if="selectedMode === 'GROUP'">Actual classes: {{ groupActualClassSummary(group) }}</small>
                   <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }} for this grade</small>
                 </div>
                 <div class="product-price-group__actions">
                   <small v-if="selectedMode === 'GROUP' && groupHalfDayPriceSummary(group)" class="group-halfday-summary">
                     {{ groupHalfDayPriceSummary(group) }}
                   </small>
-                  <small v-if="selectedMode === 'GROUP'">{{ formatGroupClassroom(group.rows[0]) }}</small>
                   <el-button size="small" type="primary" plain @click="openDialog(undefined, group.gradeLabel)">
                     Add registration option
                   </el-button>
@@ -119,6 +121,9 @@
                           <strong>{{ paymentOptionName(row) }}</strong>
                         </div>
                         <span>{{ packageLengthLabel(row) || '-' }}</span>
+                        <small v-if="selectedMode === 'GROUP' && groupDateWindowLabel(row)">
+                          Class dates: {{ groupDateWindowLabel(row) }}
+                        </small>
                       </div>
                     </template>
                   </el-table-column>
@@ -200,6 +205,49 @@
                     </template>
                   </el-table-column>
                 </el-table>
+
+                <section v-if="selectedMode === 'GROUP'" class="actual-class-schedules">
+                  <div class="actual-class-schedules__head">
+                    <div>
+                      <strong>Actual class schedules</strong>
+                      <span>Registration options above are shared by this grade. Classroom and weekly times are set per actual class.</span>
+                    </div>
+                    <el-button size="small" type="primary" plain @click="openActualClassInfoDialog(group)">
+                      Add class
+                    </el-button>
+                  </div>
+                  <div v-if="groupActualClassRows(group).length" class="actual-class-grid">
+                    <article
+                      v-for="actualClass in groupActualClassRows(group)"
+                      :key="actualClass.id"
+                      class="actual-class-card"
+                    >
+                      <div class="actual-class-card__main">
+                        <strong>{{ actualClassDisplayLabel(actualClass) }}</strong>
+                        <span>{{ actualClass.scheduleDesc || 'Schedule not set' }}</span>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>Teacher</dt>
+                          <dd>{{ actualClass.teacherName || 'Assign later' }}</dd>
+                        </div>
+                        <div>
+                          <dt>Room</dt>
+                          <dd>{{ actualClass.classroomName || 'Assign later' }}</dd>
+                        </div>
+                      </dl>
+                      <div class="actual-class-card__actions">
+                        <el-button size="small" plain @click="openActualClassInfoDialog(group, actualClass)">
+                          Edit info
+                        </el-button>
+                        <el-button size="small" plain type="primary" @click="openActualClassScheduleDialog(actualClass)">
+                          Edit schedule
+                        </el-button>
+                      </div>
+                    </article>
+                  </div>
+                  <el-empty v-else :image-size="40" description="No actual classes for this grade yet." />
+                </section>
               </div>
             </section>
 
@@ -228,10 +276,10 @@
     >
       <el-form ref="formRef" label-position="top" :model="form" :rules="rules" class="registration-option-form">
         <div class="pricing-context">
-          <span>{{ formTeachingMode === 'GROUP' ? 'Add a registration option for this grade class' : 'Add an hour package for' }}</span>
+          <span>{{ formTeachingMode === 'GROUP' ? 'Edit shared registration option for' : 'Add an hour package for' }}</span>
           <strong>{{ selectedFormProductName }} · {{ form.gradeBand || 'selected grade' }}</strong>
           <small>{{ formTeachingMode === 'GROUP'
-            ? 'Example: Grade 3 can have choices like 2 months, 6 months, Fall 13 sessions, or Full year.'
+            ? 'Example: a grade can share choices like 2 months, 6 months, Fall 13 sessions, or Full year.'
             : 'Example: Grade 6 can have packages like 40 hours, 60 hours, or 120 hours.' }}</small>
         </div>
 
@@ -239,8 +287,8 @@
           <div class="price-dialog-section__head">
             <span class="section-step">1</span>
             <div>
-              <strong>Choose grade class</strong>
-              <small>One Product + Grade is one class. All monthly, weekly, or session choices for this grade belong to this class.</small>
+              <strong>Choose grade pricing group</strong>
+              <small>Product + Grade defines shared registration options. Actual classes under this grade keep separate schedules.</small>
             </div>
           </div>
           <div class="form-grid">
@@ -355,108 +403,6 @@
             <small v-if="form.halfDayPrice && form.halfDayPrice > 0">
               Half-day registration uses {{ formatMoney(form.halfDayPrice) }}.
             </small>
-          </div>
-        </section>
-
-        <section v-if="formTeachingMode === 'GROUP'" class="grade-class-settings">
-          <div class="grade-class-settings__head">
-            <span class="section-step">4</span>
-            <div>
-              <strong>Set grade class schedule</strong>
-              <small>This calendar belongs to the grade class and is shared by every registration option in it.</small>
-            </div>
-          </div>
-          <el-alert
-            type="warning"
-            :closable="false"
-            show-icon
-            class="grade-class-settings__alert"
-            title="Changing these dates updates every registration option in this grade class."
-            description="Need different dates for terms like Fall and Spring? Create them as separate grade classes (for example grade 'G3-6 Fall' and 'G3-6 Spring') so each term keeps its own start and end date."
-          />
-          <div class="form-grid form-grid--two">
-            <el-form-item :label="fixedDateGroup ? 'Class starts' : 'Class calendar starts'">
-              <el-date-picker
-                v-if="fixedDateGroup"
-                v-model="form.groupStartDate"
-                type="date"
-                value-format="YYYY-MM-DD"
-                style="width: 100%;"
-              />
-              <el-date-picker v-else v-model="form.groupStartMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
-            </el-form-item>
-            <el-form-item :label="fixedDateGroup ? 'Class ends' : 'Class calendar ends'">
-              <el-date-picker
-                v-if="fixedDateGroup"
-                v-model="form.groupEndDate"
-                type="date"
-                value-format="YYYY-MM-DD"
-                style="width: 100%;"
-              />
-              <el-date-picker v-else v-model="form.groupEndMonth" type="month" value-format="YYYY-MM" style="width: 100%;" />
-            </el-form-item>
-          </div>
-          <div class="form-grid form-grid--one">
-            <el-form-item label="Classroom">
-              <el-select v-model="form.groupClassroomId" clearable placeholder="Assign later" style="width: 100%;">
-                <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
-              </el-select>
-            </el-form-item>
-          </div>
-          <div class="weekly-schedule-panel">
-            <WeeklyTimeSelector v-model="form.groupScheduleSlots" />
-          </div>
-          <div v-if="form.groupScheduleSlots.length > 0" class="slot-teacher-list">
-            <div
-              v-for="(slot, index) in form.groupScheduleSlots"
-              :key="`${slot.weekday}-${slot.startTime}-${index}`"
-              class="slot-teacher-row"
-            >
-              <div class="slot-time-cell">
-                <small>Time</small>
-                <strong>{{ groupSlotLabel(slot) }}</strong>
-              </div>
-              <label class="slot-field">
-                <span class="slot-field__label">
-                  Applies to
-                  <el-tooltip
-                    content="Which half-day session this time slot serves. Pick 'All day' when the class runs the whole day; use Morning only / Afternoon only for half-day classes."
-                    placement="top"
-                    :show-after="300"
-                  >
-                    <el-icon class="slot-field__tip"><QuestionFilled /></el-icon>
-                  </el-tooltip>
-                </span>
-                <el-select
-                  v-model="slot.attendanceOptions"
-                  placeholder="Select"
-                >
-                  <el-option label="All day (full day)" value="ALL" />
-                  <el-option label="Morning only" value="MORNING" />
-                  <el-option label="Afternoon only" value="AFTERNOON" />
-                </el-select>
-              </label>
-              <label class="slot-field">
-                <span>Teacher</span>
-                <el-select
-                  v-model="slot.teacherId"
-                  clearable
-                  filterable
-                  placeholder="Select teacher"
-                >
-                  <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-                </el-select>
-              </label>
-              <label class="slot-field">
-                <span>Taught subject</span>
-                <el-input
-                  v-model="slot.subjectName"
-                  maxlength="128"
-                  placeholder="e.g. Chemistry"
-                  clearable
-                />
-              </label>
-            </div>
           </div>
         </section>
 
@@ -582,15 +528,89 @@
         <el-button type="primary" :loading="savingGrades" @click="saveGrades">Save</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="actualClassScheduleDialogVisible"
+      width="min(920px, calc(100vw - 48px))"
+      :close-on-click-modal="false"
+      :title="actualClassScheduleTitle"
+      class="actual-class-schedule-dialog"
+    >
+      <el-alert
+        title="Saving rebuilds future unconfirmed lessons for this actual class only. Confirmed lessons stay unchanged."
+        type="info"
+        :closable="false"
+        show-icon
+        class="grade-class-settings__alert"
+      />
+      <div class="form-grid form-grid--two actual-class-schedule-fields">
+        <el-form-item label="Default teacher">
+          <el-select v-model="actualClassScheduleForm.teacherId" clearable filterable placeholder="No default teacher" style="width: 100%;">
+            <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="Classroom">
+          <el-select v-model="actualClassScheduleForm.classroomId" clearable filterable placeholder="No default classroom" style="width: 100%;">
+            <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
+          </el-select>
+        </el-form-item>
+      </div>
+      <div class="weekly-schedule-panel">
+        <WeeklyTimeSelector v-model="actualClassScheduleForm.slots" hide-hint />
+      </div>
+      <div v-if="actualClassScheduleForm.slots.length > 0" class="slot-teacher-list actual-class-slot-list">
+        <div
+          v-for="(slot, index) in actualClassScheduleForm.slots"
+          :key="`${slot.weekday}-${slot.startTime}-${index}`"
+          class="actual-class-slot-row"
+        >
+          <div class="slot-time-cell">
+            <small>Time</small>
+            <strong>{{ groupSlotLabel(slot) }}</strong>
+          </div>
+          <label class="slot-field">
+            <span>Teacher</span>
+            <el-select v-model="slot.teacherId" clearable filterable placeholder="Use default teacher">
+              <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+            </el-select>
+          </label>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="actualClassScheduleDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="savingActualClassSchedule" @click="saveActualClassSchedule">Save schedule</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="actualClassInfoDialogVisible"
+      width="520px"
+      :close-on-click-modal="false"
+      :title="actualClassInfoTitle"
+      class="actual-class-info-dialog"
+    >
+      <el-form label-position="top" class="actual-class-info-form">
+        <el-form-item label="Class name">
+          <el-input v-model="actualClassInfoForm.className" maxlength="128" placeholder="e.g. G1" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="actualClassInfoDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="savingActualClassInfo" @click="saveActualClassInfo">
+          Save class
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, InfoFilled, QuestionFilled } from '@element-plus/icons-vue';
+import { ArrowLeft, InfoFilled } from '@element-plus/icons-vue';
 import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
+import { extractErrorMessage } from '@/api/http';
 import {
   createCoursePriceOption,
   deleteCoursePriceOption,
@@ -606,8 +626,9 @@ import {
   type CourseCategoryItem,
   type CoursePriceOptionSavePayload,
 } from '@/api/base-data';
-import { fetchClassGroups } from '@/api/schedule';
+import { createActualClass, fetchClassGroups, updateClassInfo, updateClassSchedule } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
+import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import type { ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
 
 type CourseMode = 'ONE_ON_ONE' | 'GROUP';
@@ -629,6 +650,20 @@ interface ProductPriceGroup {
   key: string;
   gradeLabel: string;
   rows: CoursePriceOptionItem[];
+}
+
+interface ActualClassScheduleRow {
+  id: EntityId;
+  className: string;
+  productId?: EntityId;
+  gradeBand?: string;
+  actualClass?: string;
+  teacherId?: EntityId;
+  teacherName?: string;
+  classroomId?: EntityId;
+  classroomName?: string;
+  scheduleDesc?: string;
+  scheduleSlots?: ClassGroupItem['scheduleSlots'];
 }
 
 const HeaderTip = defineComponent({
@@ -710,6 +745,22 @@ const total = ref(0);
 const dialogVisible = ref(false);
 const editingId = ref<EntityId | null>(null);
 const formRef = ref();
+const actualClassScheduleDialogVisible = ref(false);
+const savingActualClassSchedule = ref(false);
+const editingActualClass = ref<ActualClassScheduleRow | null>(null);
+const actualClassInfoDialogVisible = ref(false);
+const savingActualClassInfo = ref(false);
+const editingActualClassInfo = ref<ActualClassScheduleRow | null>(null);
+const actualClassScheduleForm = reactive({
+  teacherId: undefined as EntityId | undefined,
+  classroomId: undefined as EntityId | undefined,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId }>,
+});
+const actualClassInfoForm = reactive({
+  productId: undefined as EntityId | undefined,
+  gradeBand: '',
+  className: '',
+});
 
 const query = reactive({
   courseType: 'ONE_ON_ONE' as CourseTypeValue,
@@ -737,6 +788,7 @@ const form = reactive({
   totalPrice: undefined as number | undefined,
   halfDayPrice: undefined as number | undefined,
   courseProductId: undefined as EntityId | undefined,
+  actualClasses: [] as string[],
   groupClassroomId: undefined as EntityId | undefined,
   groupScheduleSlots: [] as Array<{
     teacherId?: EntityId;
@@ -877,6 +929,16 @@ const priceSaveButtonLabel = computed(() => {
     ? 'Save hour package'
     : 'Save registration option';
 });
+const canEditActualClassesInOptionForm = computed(() =>
+  formTeachingMode.value === 'GROUP' && !editingId.value && !existingGradeClass.value
+);
+const actualClassScheduleTitle = computed(() => {
+  const classLabel = editingActualClass.value?.className || editingActualClass.value?.actualClass || 'Class';
+  return `Edit ${classLabel} schedule`;
+});
+const actualClassInfoTitle = computed(() =>
+  editingActualClassInfo.value ? 'Edit actual class' : 'Add actual class'
+);
 
 const groupedOptions = computed<ProductPriceGroup[]>(() => {
   const groups = new Map<string, ProductPriceGroup>();
@@ -937,6 +999,15 @@ const formProductChoices = computed(() =>
 const selectedFormProductName = computed(() =>
   form.courseProductId ? productName(form.courseProductId) : 'Select course'
 );
+watch(() => form.gradeBand, (grade) => {
+  if (formTeachingMode.value !== 'GROUP') {
+    return;
+  }
+  const current = form.actualClasses.map(item => item.trim()).filter(Boolean);
+  if (current.length === 0 || current.every(item => expandGradeBand(grade).includes(item))) {
+    form.actualClasses = expandGradeBand(grade);
+  }
+});
 
 watch(() => form.packageUnit, (unit) => {
   if (formTeachingMode.value !== 'GROUP') {
@@ -1224,6 +1295,9 @@ function openDialog(option?: CoursePriceOptionItem, gradeLabel = '') {
   form.totalPrice = option?.totalPrice ?? option?.groupTotalPrice ?? option?.priceAmount;
   form.halfDayPrice = option?.halfDayPrice;
   form.courseProductId = option?.courseProductId ?? (query.courseProductId || undefined);
+  form.actualClasses = option?.actualClasses?.map(item => item.actualClass || item.className).filter(Boolean) as string[]
+    ?? existingActualClassNames(form.courseProductId, form.gradeBand)
+    ?? expandGradeBand(form.gradeBand);
   form.groupClassroomId = option?.groupClassroomId;
   form.groupScheduleSlots = (option?.groupScheduleSlots ?? []).map(slot => ({
     ...slot,
@@ -1341,9 +1415,10 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     priceAmount: packageTotalPrice ?? 0,
     currencyCode: 'USD',
     courseProductId: form.courseProductId,
+    actualClasses: resolvePayloadActualClasses(),
     groupTeacherId: undefined,
-    groupClassroomId: formTeachingMode.value === 'GROUP' ? form.groupClassroomId : undefined,
-    groupScheduleSlots: formTeachingMode.value === 'GROUP'
+    groupClassroomId: canEditActualClassesInOptionForm.value ? form.groupClassroomId : undefined,
+    groupScheduleSlots: canEditActualClassesInOptionForm.value
       ? form.groupScheduleSlots.map(({ teacherId, subjectName, weekday, startTime, endTime, attendanceOptions }) => ({
           teacherId,
           subjectName: subjectName?.trim() || undefined,
@@ -1385,6 +1460,7 @@ function payloadFromRow(row: CoursePriceOptionItem, status: string): CoursePrice
     currencyCode: row.currencyCode || 'USD',
     courseProductId: row.courseProductId,
     classId: row.classId,
+    actualClasses: row.actualClasses?.map(item => item.actualClass || item.className).filter(Boolean),
     groupTeacherId: undefined,
     groupClassroomId: row.groupClassroomId,
     groupScheduleSlots: row.groupScheduleSlots,
@@ -1406,28 +1482,14 @@ async function saveOption() {
   if (!valid) {
     return;
   }
-  if (formTeachingMode.value === 'GROUP' && !existingGradeClass.value && form.groupScheduleSlots.length === 0) {
-    ElMessage.warning('Add at least one weekly schedule slot for this grade class.');
+  if (formTeachingMode.value === 'GROUP' && resolvePayloadActualClasses()?.length === 0) {
+    ElMessage.warning('Add at least one actual class, for example G1.');
     return;
   }
   if (formTeachingMode.value === 'GROUP'
       && (!form.totalPrice || form.totalPrice <= 0
         || !form.packageQuantity || form.packageQuantity <= 0)) {
     ElMessage.warning('Add a package total price and package count.');
-    return;
-  }
-  if (formTeachingMode.value === 'GROUP' && !existingGradeClass.value
-      && (fixedDateGroup.value
-        ? (!form.groupStartDate || !form.groupEndDate)
-        : (!form.groupStartMonth || !form.groupEndMonth))) {
-    ElMessage.warning(fixedDateGroup.value
-      ? 'Add the first and last date for this class.'
-      : 'Add the first and last month for this grade class.');
-    return;
-  }
-  if (formTeachingMode.value === 'GROUP' && fixedDateGroup.value
-      && form.groupEndDate < form.groupStartDate) {
-    ElMessage.warning('Class end date cannot be earlier than the start date.');
     return;
   }
   if (formTeachingMode.value === 'ONE_ON_ONE' && (!form.oneOnOneHours || form.oneOnOneHours <= 0)) {
@@ -1443,11 +1505,104 @@ async function saveOption() {
     }
     ElMessage.success(editingId.value ? 'Registration option updated.' : 'Registration option created.');
     dialogVisible.value = false;
-    await loadOptions();
+    await loadAll();
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Save failed.');
   } finally {
     saving.value = false;
+  }
+}
+
+function openActualClassScheduleDialog(actualClass: ActualClassScheduleRow) {
+  const classDetail = classGroups.value.find(item => String(item.id) === String(actualClass.id)) ?? actualClass;
+  editingActualClass.value = actualClass;
+  actualClassScheduleForm.teacherId = classDetail.teacherId;
+  actualClassScheduleForm.classroomId = classDetail.classroomId;
+  actualClassScheduleForm.slots = normalizeActualClassScheduleSlots(classDetail.scheduleSlots);
+  actualClassScheduleDialogVisible.value = true;
+}
+
+function openActualClassInfoDialog(group: ProductPriceGroup, actualClass?: ActualClassScheduleRow) {
+  const productId = actualClass?.productId ?? group.rows[0]?.courseProductId ?? query.courseProductId ?? undefined;
+  editingActualClassInfo.value = actualClass ?? null;
+  actualClassInfoForm.productId = productId;
+  actualClassInfoForm.gradeBand = actualClass?.gradeBand || group.gradeLabel;
+  actualClassInfoForm.className = actualClass?.className || actualClass?.actualClass || '';
+  actualClassInfoDialogVisible.value = true;
+}
+
+async function saveActualClassInfo() {
+  if (!actualClassInfoForm.productId || !actualClassInfoForm.gradeBand.trim()) {
+    ElMessage.warning('Select a course and grade before adding a class.');
+    return;
+  }
+  const className = actualClassInfoForm.className.trim();
+  if (!className) {
+    ElMessage.warning('Class name is required.');
+    return;
+  }
+  savingActualClassInfo.value = true;
+  try {
+    const payload = {
+      productId: actualClassInfoForm.productId,
+      gradeBand: actualClassInfoForm.gradeBand.trim(),
+      actualClass: className,
+      className,
+    };
+    if (editingActualClassInfo.value) {
+      await updateClassInfo(editingActualClassInfo.value.id, payload);
+      ElMessage.success('Actual class updated.');
+    } else {
+      await createActualClass(payload);
+      ElMessage.success('Actual class created.');
+    }
+    actualClassInfoDialogVisible.value = false;
+    await loadAll();
+  } catch (err) {
+    ElMessage.error(extractErrorMessage(err));
+  } finally {
+    savingActualClassInfo.value = false;
+  }
+}
+
+function normalizeActualClassScheduleSlots(slots: ClassGroupItem['scheduleSlots']): Array<SlotDef & { teacherId?: EntityId }> {
+  return (slots ?? []).map(slot => ({
+    weekday: slot.weekday,
+    teacherId: slot.teacherId,
+    startTime: slot.startTime.slice(0, 5),
+    endTime: slot.endTime.slice(0, 5),
+    plannedUnits: slot.plannedUnits ?? plannedUnitsForSlot(slot.startTime, slot.endTime),
+  }));
+}
+
+async function saveActualClassSchedule() {
+  if (!editingActualClass.value) {
+    return;
+  }
+  if (actualClassScheduleForm.slots.length === 0) {
+    ElMessage.warning('Add at least one weekly class time.');
+    return;
+  }
+  savingActualClassSchedule.value = true;
+  try {
+    await updateClassSchedule(editingActualClass.value.id, {
+      teacherId: actualClassScheduleForm.teacherId,
+      classroomId: actualClassScheduleForm.classroomId,
+      slots: actualClassScheduleForm.slots.map(({ teacherId, weekday, startTime, endTime, plannedUnits }) => ({
+        teacherId,
+        weekday,
+        startTime,
+        endTime,
+        plannedUnits,
+      })),
+    });
+    ElMessage.success('Class schedule updated.');
+    actualClassScheduleDialogVisible.value = false;
+    await loadAll();
+  } catch (err) {
+    ElMessage.error(extractErrorMessage(err));
+  } finally {
+    savingActualClassSchedule.value = false;
   }
 }
 
@@ -1538,6 +1693,78 @@ function groupPackageTitle(group: ProductPriceGroup) {
   return `${group.gradeLabel} package (${unit.toLowerCase()} payment)`;
 }
 
+function groupActualClassSummary(group: ProductPriceGroup) {
+  const classes = groupActualClassRows(group).map(actualClassDisplayLabel);
+  return classes.length > 0 ? classes.join(', ') : 'Actual classes not set';
+}
+
+function actualClassDisplayLabel(actualClass: ActualClassScheduleRow) {
+  const className = actualClass.className?.trim();
+  const classCode = actualClass.actualClass?.trim();
+  return className || classCode || actualClass.gradeBand || 'Class';
+}
+
+function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[] {
+  const productId = group.rows[0]?.courseProductId;
+  const byId = new Map<string, ActualClassScheduleRow>();
+  const matchingClassGroups = classGroups.value.filter(item =>
+    String(item.productId ?? '') === String(productId ?? '')
+      && String(item.gradeBand ?? '').trim().toLowerCase() === group.gradeLabel.trim().toLowerCase());
+
+  for (const classGroup of matchingClassGroups) {
+    byId.set(String(classGroup.id), {
+      id: classGroup.id,
+      className: classGroup.className,
+      productId: classGroup.productId,
+      gradeBand: classGroup.gradeBand,
+      actualClass: classGroup.actualClass,
+      teacherId: classGroup.teacherId,
+      teacherName: classGroup.teacherName,
+      classroomId: classGroup.classroomId,
+      classroomName: classGroup.classroomName,
+      scheduleDesc: classGroup.scheduleDesc,
+      scheduleSlots: classGroup.scheduleSlots,
+    });
+  }
+
+  for (const actualClass of group.rows.flatMap(row => row.actualClasses ?? [])) {
+    if (byId.has(String(actualClass.id))) {
+      continue;
+    }
+    byId.set(String(actualClass.id), {
+      ...actualClass,
+      productId,
+      gradeBand: group.gradeLabel,
+    });
+  }
+
+  return [...byId.values()].sort((left, right) =>
+    String(left.actualClass || left.className).localeCompare(String(right.actualClass || right.className), undefined, {
+      numeric: true,
+      sensitivity: 'base',
+    }));
+}
+
+function existingActualClassNames(productId?: EntityId, gradeBand = '') {
+  const names = classGroups.value
+    .filter(item => String(item.productId ?? '') === String(productId ?? '')
+      && String(item.gradeBand ?? '').trim().toLowerCase() === gradeBand.trim().toLowerCase())
+    .map(item => item.actualClass || item.gradeBand || item.className)
+    .filter(Boolean) as string[];
+  return names.length > 0 ? uniqueValues(names) : undefined;
+}
+
+function resolvePayloadActualClasses() {
+  if (formTeachingMode.value !== 'GROUP') {
+    return undefined;
+  }
+  if (canEditActualClassesInOptionForm.value) {
+    return uniqueValues(form.actualClasses.map(item => item.trim()).filter(Boolean));
+  }
+  return existingActualClassNames(form.courseProductId, form.gradeBand)
+    ?? uniqueValues(form.actualClasses.map(item => item.trim()).filter(Boolean));
+}
+
 function packageDisplayName(row: CoursePriceOptionItem) {
   return row.periodLabel || row.durationLabel || packageLengthLabel(row) || 'Standard package';
 }
@@ -1552,11 +1779,18 @@ function isGroupRow(row: CoursePriceOptionItem) {
 
 function billingSubtitle(row: CoursePriceOptionItem) {
   if (isGroupRow(row)) {
-    const window = [row.groupStartDate, row.groupEndDate].filter(Boolean).join(' to ')
-      || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ');
+    const window = groupDateWindowLabel(row);
     return window || '';
   }
   return row.notes || '';
+}
+
+function groupDateWindowLabel(row?: CoursePriceOptionItem) {
+  if (!row) {
+    return '';
+  }
+  return [row.groupStartDate, row.groupEndDate].filter(Boolean).join(' to ')
+    || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ');
 }
 
 function packageLengthLabel(row: CoursePriceOptionItem) {
@@ -1586,23 +1820,23 @@ function formatQuantity(value: number) {
   return Number.isInteger(Number(value)) ? String(Number(value)) : Number(value).toFixed(1);
 }
 
-function formatGroupSchedule(row: CoursePriceOptionItem) {
-  if (row.courseType === 'ONE_ON_ONE') {
-    return '-';
-  }
-  return (row.groupScheduleSlots ?? [])
-    .map(slot => `${['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday]} ${slot.startTime}-${slot.endTime}`)
-    .join(', ') || 'Schedule not set';
-}
-
 function groupSlotLabel(slot: { weekday: number; startTime: string; endTime: string }) {
   const weekday = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday] ?? '';
   return `${weekday} ${slot.startTime}-${slot.endTime}`;
 }
 
-function formatGroupClassroom(row: CoursePriceOptionItem) {
-  const room = classroomName(row.groupClassroomId);
-  return `Room: ${room}`;
+function expandGradeBand(gradeBand: string) {
+  const normalized = String(gradeBand || '').trim().toUpperCase();
+  const match = normalized.match(/^G(\d{1,2})\s*-\s*G?(\d{1,2})$/);
+  if (!match) {
+    return normalized ? [normalized] : [];
+  }
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || end < start || end - start > 20) {
+    return [normalized];
+  }
+  return Array.from({ length: end - start + 1 }, (_item, index) => `G${start + index}`);
 }
 
 function groupHalfDayPriceSummary(group: ProductPriceGroup) {
@@ -1638,8 +1872,7 @@ function hasRowIssue(row: CoursePriceOptionItem) {
     || row.totalPrice === undefined
     || row.totalPrice === null
     || Number(row.totalPrice) === 0
-    || (product.teachingMode === 'GROUP' && !hasClassGroup(product.id))
-    || (modeForCourseType(row.courseType) === 'GROUP' && (row.groupScheduleSlots ?? []).length === 0);
+    || (product.teachingMode === 'GROUP' && !hasClassGroup(product.id));
 }
 
 function priceUnitLabel(row: CoursePriceOptionItem) {
@@ -1662,6 +1895,10 @@ function formatMoney(value?: number) {
   return `$${Number(value ?? 0).toFixed(2)}`;
 }
 
+function uniqueValues(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
 function formatHours(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
@@ -1669,6 +1906,10 @@ function formatHours(value: number) {
 function timeToMinutes(value: string) {
   const [hours, minutes] = value.split(':').map(Number);
   return (hours * 60) + minutes;
+}
+
+function plannedUnitsForSlot(startTime: string, endTime: string) {
+  return Math.max(1, Math.round((timeToMinutes(endTime) - timeToMinutes(startTime)) / 30));
 }
 
 function normalizeSlotAttendance(value?: string) {
@@ -1969,6 +2210,104 @@ function normalizeSlotAttendance(value?: string) {
   overflow: hidden;
 }
 
+.actual-class-schedules {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.actual-class-schedules__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.actual-class-schedules__head div {
+  display: grid;
+  gap: 3px;
+}
+
+.actual-class-schedules__head strong {
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.actual-class-schedules__head span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.actual-class-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.actual-class-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.actual-class-card__main {
+  display: grid;
+  gap: 4px;
+}
+
+.actual-class-card__main strong {
+  color: #0f172a;
+  font-size: 14px;
+}
+
+.actual-class-card__main span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.actual-class-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.actual-class-card dt {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.actual-class-card dd {
+  overflow: hidden;
+  margin: 2px 0 0;
+  color: #334155;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actual-class-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.actual-class-info-dialog :deep(.el-dialog__body) {
+  padding-top: 10px;
+}
+
+.actual-class-info-form {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .cell-stack {
   display: flex;
   flex-direction: column;
@@ -2200,6 +2539,32 @@ function normalizeSlotAttendance(value?: string) {
   align-items: end;
   gap: 10px;
   min-width: 0;
+  padding: 10px;
+  border: 1px solid #dbeafe;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.actual-class-schedule-dialog :deep(.el-dialog__body) {
+  display: grid;
+  gap: 12px;
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+}
+
+.actual-class-schedule-fields {
+  margin-top: 4px;
+}
+
+.actual-class-slot-list {
+  margin-top: 2px;
+}
+
+.actual-class-slot-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(220px, 1fr);
+  align-items: end;
+  gap: 10px;
   padding: 10px;
   border: 1px solid #dbeafe;
   border-radius: 8px;

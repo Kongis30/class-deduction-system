@@ -422,15 +422,22 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .map(LessonOccurrenceEntity::getClassGroupId)
                 .filter(Objects::nonNull)
                 .forEach(classGroupIds::add);
+        Map<Long, ClassGroupEntity> classGroupMap = classGroups.stream()
+                .filter(item -> item.getId() != null)
+                .collect(Collectors.toMap(ClassGroupEntity::getId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
         classGroups.stream()
                 .map(ClassGroupEntity::getId)
                 .filter(Objects::nonNull)
-                .forEach(classGroupIds::add);
+                .forEach(classGroupIds::remove);
+        Map<Long, CoursePackageEntity> packageMap = listPackagesByIds(packageIds);
+        classGroupMap.putAll(listClassGroupsByIds(classGroupIds));
+        Set<Long> productIds = collectCourseProductIds(packageMap.values(), classGroupMap.values());
         return new PendingContext(
-                listPackagesByIds(packageIds),
+                packageMap,
                 listStudentsByIds(studentIds),
                 listTeachersByIds(teacherIds),
-                listClassGroupsByIds(classGroupIds)
+                classGroupMap,
+                listCourseProductsByIds(productIds)
         );
     }
 
@@ -438,13 +445,18 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                                LessonOccurrenceEntity nextOccurrence,
                                                                PendingContext context) {
         TeacherEntity teacher = classGroup.getTeacherId() == null ? null : context.teacherMap().get(classGroup.getTeacherId());
+        CourseProductEntity product = classGroup.getProductId() == null ? null : context.courseProductMap().get(classGroup.getProductId());
         return PendingClassroomAssignmentVO.builder()
                 .targetType("CLASS_GROUP")
                 .targetId(classGroup.getId())
                 .occurrenceId(nextOccurrence == null ? null : nextOccurrence.getId())
                 .lessonNo(nextOccurrence == null ? null : nextOccurrence.getLessonNo())
                 .classGroupId(classGroup.getId())
+                .productId(classGroup.getProductId())
+                .productName(product == null ? null : product.getProductName())
                 .className(classGroup.getClassName())
+                .gradeBand(classGroup.getGradeBand())
+                .actualClass(resolveActualClassLabel(classGroup))
                 .teacherId(classGroup.getTeacherId())
                 .teacherName(teacher == null ? null : teacher.getTeacherName())
                 .plannedStartAt(nextOccurrence == null ? null : nextOccurrence.getPlannedStartAt())
@@ -459,13 +471,18 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         StudentEntity student = occurrence.getStudentId() == null ? null : context.studentMap().get(occurrence.getStudentId());
         TeacherEntity teacher = occurrence.getPlannedTeacherId() == null ? null : context.teacherMap().get(occurrence.getPlannedTeacherId());
         ClassGroupEntity classGroup = occurrence.getClassGroupId() == null ? null : context.classGroupMap().get(occurrence.getClassGroupId());
+        CourseProductEntity product = resolvePendingProduct(coursePackage, classGroup, context.courseProductMap());
         return PendingClassroomAssignmentVO.builder()
                 .targetType("OCCURRENCE")
                 .targetId(occurrence.getId())
                 .occurrenceId(occurrence.getId())
                 .lessonNo(occurrence.getLessonNo())
                 .classGroupId(occurrence.getClassGroupId())
+                .productId(product == null ? null : product.getId())
+                .productName(product == null ? null : product.getProductName())
                 .className(classGroup == null ? null : classGroup.getClassName())
+                .gradeBand(classGroup == null ? null : classGroup.getGradeBand())
+                .actualClass(resolveActualClassLabel(classGroup))
                 .packageId(occurrence.getPackageId())
                 .packageName(coursePackage == null ? null : coursePackage.getPackageName())
                 .studentId(occurrence.getStudentId())
@@ -477,6 +494,24 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .plannedUnits(occurrence.getPlannedUnits())
                 .scheduleDesc(classGroup == null ? null : classGroup.getScheduleDesc())
                 .build();
+    }
+
+    private CourseProductEntity resolvePendingProduct(CoursePackageEntity coursePackage,
+                                                      ClassGroupEntity classGroup,
+                                                      Map<Long, CourseProductEntity> courseProductMap) {
+        Long productId = classGroup != null && classGroup.getProductId() != null
+                ? classGroup.getProductId()
+                : coursePackage == null ? null : coursePackage.getCourseProductId();
+        return productId == null ? null : courseProductMap.get(productId);
+    }
+
+    private String resolveActualClassLabel(ClassGroupEntity classGroup) {
+        if (classGroup == null) {
+            return null;
+        }
+        return StringUtils.hasText(classGroup.getActualClass())
+                ? classGroup.getActualClass()
+                : classGroup.getGradeBand();
     }
 
     private void ensureNoInternalClassroomConflicts(List<LessonOccurrenceEntity> occurrences) {
@@ -530,7 +565,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             Map<Long, CoursePackageEntity> packageMap,
             Map<Long, StudentEntity> studentMap,
             Map<Long, TeacherEntity> teacherMap,
-            Map<Long, ClassGroupEntity> classGroupMap
+            Map<Long, ClassGroupEntity> classGroupMap,
+            Map<Long, CourseProductEntity> courseProductMap
     ) {
     }
 
@@ -612,6 +648,16 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (packages.isEmpty()) {
             return Collections.emptyList();
         }
+        Map<Long, CourseProductEntity> courseProductMap = listCourseProductsByIds(packages.stream()
+                .map(CoursePackageEntity::getCourseProductId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet()));
+        packages = packages.stream()
+                .filter(coursePackage -> isOneOnOnePackage(coursePackage, courseProductMap.get(coursePackage.getCourseProductId())))
+                .toList();
+        if (packages.isEmpty()) {
+            return Collections.emptyList();
+        }
 
         List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
         Map<Long, List<LessonOccurrenceEntity>> occurrenceMap = loadOneOnOneOccurrenceMap(packageIds, safeQuery.getStartAt(), safeQuery.getEndAt());
@@ -627,10 +673,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toSet()));
         Map<Long, TeacherEntity> teacherMap = loadOneOnOneTeachers(occurrenceMap, recordMap);
         Map<Long, ClassroomEntity> classroomMap = loadOneOnOneClassrooms(occurrenceMap, recordMap);
-        Map<Long, CourseProductEntity> courseProductMap = listCourseProductsByIds(packages.stream()
-                .map(CoursePackageEntity::getCourseProductId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet()));
         Map<Long, EnrollmentOrderItemEntity> orderItemMap = listEnrollmentOrderItemsByIds(packages.stream()
                 .map(CoursePackageEntity::getEnrollmentOrderItemId)
                 .filter(Objects::nonNull)
@@ -650,6 +692,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         studentMap, teacherMap, classroomMap, courseProductMap, orderItemMap,
                         occurrenceMap, recordMap, statusNameMap))
                 .toList();
+    }
+
+    private boolean isOneOnOnePackage(CoursePackageEntity coursePackage, CourseProductEntity courseProduct) {
+        if (courseProduct != null) {
+            return "ONE_ON_ONE".equals(courseProduct.getTeachingMode());
+        }
+        // 无法取到产品时才回退到课包字段；正常路径以产品模式为准，避免班课学生混入 1 对 1 排课列表。
+        return "ONE_ON_ONE".equals(coursePackage.getTeachingMode());
     }
 
     private List<LessonOccurrenceVO> toOccurrenceVOs(List<LessonOccurrenceEntity> occurrences) {
@@ -1373,7 +1423,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (ids.isEmpty()) {
             return Collections.emptyMap();
         }
-        return courseProductMapper.selectBatchIds(ids).stream()
+        List<CourseProductEntity> products = courseProductMapper.selectBatchIds(ids);
+        if (products == null || products.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return products.stream()
                 .collect(Collectors.toMap(CourseProductEntity::getId, item -> item));
     }
 

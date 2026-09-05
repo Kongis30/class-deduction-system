@@ -225,12 +225,28 @@ export interface ClassScheduleSlotPayload {
   weekday: number;
   startTime: string;
   endTime: string;
+  plannedUnits?: number;
 }
 
 export interface ClassScheduleUpdatePayload {
   teacherId?: string | number;
   classroomId?: string | number;
   slots: ClassScheduleSlotPayload[];
+}
+
+export interface ClassInfoPayload {
+  productId?: string | number;
+  gradeBand?: string;
+  actualClass: string;
+  className?: string;
+}
+
+export function createActualClass(data: ClassInfoPayload) {
+  return http.post<ApiResponse<Record<string, any>>>('/v1/classes/actual-classes', data);
+}
+
+export function updateClassInfo(classId: string | number, data: ClassInfoPayload) {
+  return http.put<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/info`, data);
 }
 
 export function updateClassSchedule(classId: string | number, data: ClassScheduleUpdatePayload) {

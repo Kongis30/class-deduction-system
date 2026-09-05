@@ -108,6 +108,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("productName", product == null ? null : product.getProductName());
             item.put("registerClass", product == null ? null : product.getRegisterClass());
             item.put("courseType", product == null ? null : product.getCourseType());
+            item.put("gradeBand", clz.getGradeBand());
+            item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
             item.put("startDate", clz.getStartDate());
             item.put("endDate", clz.getEndDate());
             item.put("status", clz.getStatus());
@@ -491,7 +493,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             return true;
         }
         long usedSessions = countUsedSessions(enrollment, confirmedLessonDatesByStudent);
-        return usedSessions < enrollment.getPurchasedQuantity();
+        return usedSessions < enrollment.getPurchasedQuantity()
+                || hasUsedSessionOnDate(enrollment, confirmedLessonDatesByStudent, lessonDate);
     }
 
     private boolean enrollmentIncludesOccurrence(ClassEnrollmentEntity enrollment, LessonOccurrenceEntity occurrence) {
@@ -546,12 +549,23 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     private long countUsedSessions(ClassEnrollmentEntity enrollment,
                                    Map<Long, List<LocalDate>> confirmedLessonDatesByStudent) {
+        // 班课 SESSION 的业务口径是“上课日”：同一天有上午/下午多个时段，也只消耗 1 个 session。
         return confirmedLessonDatesByStudent
                 .getOrDefault(enrollment.getStudentId(), Collections.emptyList())
                 .stream()
                 .filter(date -> enrollment.getEnrollmentDate() == null || !date.isBefore(enrollment.getEnrollmentDate()))
                 .filter(date -> enrollment.getExpiryDate() == null || !date.isAfter(enrollment.getExpiryDate()))
+                .distinct()
                 .count();
+    }
+
+    private boolean hasUsedSessionOnDate(ClassEnrollmentEntity enrollment,
+                                         Map<Long, List<LocalDate>> confirmedLessonDatesByStudent,
+                                         LocalDate lessonDate) {
+        return lessonDate != null && confirmedLessonDatesByStudent
+                .getOrDefault(enrollment.getStudentId(), Collections.emptyList())
+                .stream()
+                .anyMatch(lessonDate::equals);
     }
 
     private Map<Long, List<LocalDate>> loadConfirmedLessonDatesByStudent(Long classGroupId) {
@@ -660,6 +674,108 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> createActualClass(Map<String, Object> body) {
+        Long productId = parseLongFromBody(body, "productId");
+        String gradeBand = requireTextFromBody(body, "gradeBand", "Grade is required.");
+        String actualClass = requireTextFromBody(body, "actualClass", "Actual class is required.");
+        CourseProductEntity product = productId == null ? null : courseProductMapper.selectById(productId);
+        if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
+            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Active group course product not found.");
+        }
+        ensureActualClassUnique(null, productId, gradeBand, actualClass);
+
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setProductId(productId);
+        classGroup.setGradeBand(gradeBand);
+        classGroup.setActualClass(actualClass);
+        classGroup.setClassName(resolveClassName(body, actualClass));
+        classGroup.setListPrice(java.math.BigDecimal.ZERO);
+        classGroup.setStatus("ACTIVE");
+        inheritGradeBillingMetadata(classGroup);
+        classGroupMapper.insert(classGroup);
+        return toClassInfoMap(classGroup);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Map<String, Object> updateClassInfo(Long classId, Map<String, Object> body) {
+        ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
+        if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+        }
+        String actualClass = requireTextFromBody(body, "actualClass", "Actual class is required.");
+        ensureActualClassUnique(classId, classGroup.getProductId(), classGroup.getGradeBand(), actualClass);
+        classGroup.setActualClass(actualClass);
+        classGroup.setClassName(resolveClassName(body, actualClass));
+        classGroupMapper.updateById(classGroup);
+        return toClassInfoMap(classGroup);
+    }
+
+    private void ensureActualClassUnique(Long currentClassId, Long productId, String gradeBand, String actualClass) {
+        ClassGroupEntity duplicate = classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, productId)
+                .eq(ClassGroupEntity::getGradeBand, gradeBand)
+                .eq(ClassGroupEntity::getActualClass, actualClass)
+                .eq(ClassGroupEntity::getIsDeleted, 0)
+                .last("LIMIT 1"));
+        if (duplicate != null && !Objects.equals(duplicate.getId(), currentClassId)) {
+            throw new BusinessException("ACTUAL_CLASS_DUPLICATED",
+                    "This actual class already exists under the selected grade.");
+        }
+    }
+
+    private void inheritGradeBillingMetadata(ClassGroupEntity classGroup) {
+        ClassGroupEntity sibling = classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, classGroup.getProductId())
+                .eq(ClassGroupEntity::getGradeBand, classGroup.getGradeBand())
+                .eq(ClassGroupEntity::getIsDeleted, 0)
+                .last("LIMIT 1"));
+        if (sibling == null) {
+            return;
+        }
+        classGroup.setBillingType(sibling.getBillingType());
+        classGroup.setStartDate(sibling.getStartDate());
+        classGroup.setEndDate(sibling.getEndDate());
+        classGroup.setTotalSessions(sibling.getTotalSessions());
+        classGroup.setStartMonth(sibling.getStartMonth());
+        classGroup.setEndMonth(sibling.getEndMonth());
+    }
+
+    private String resolveClassName(Map<String, Object> body, String actualClass) {
+        String className = textFromBody(body, "className");
+        return StringUtils.hasText(className) ? className : actualClass;
+    }
+
+    private String requireTextFromBody(Map<String, Object> body, String key, String message) {
+        String value = textFromBody(body, key);
+        if (!StringUtils.hasText(value)) {
+            throw new BusinessException("INVALID_CLASS_INFO", message);
+        }
+        return value;
+    }
+
+    private String textFromBody(Map<String, Object> body, String key) {
+        Object value = body.get(key);
+        return value == null ? "" : String.valueOf(value).trim();
+    }
+
+    private Map<String, Object> toClassInfoMap(ClassGroupEntity classGroup) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", classGroup.getId());
+        item.put("className", classGroup.getClassName());
+        item.put("productId", classGroup.getProductId());
+        item.put("gradeBand", classGroup.getGradeBand());
+        item.put("actualClass", StringUtils.hasText(classGroup.getActualClass())
+                ? classGroup.getActualClass()
+                : classGroup.getGradeBand());
+        item.put("teacherId", classGroup.getTeacherId());
+        item.put("classroomId", classGroup.getClassroomId());
+        item.put("scheduleDesc", classGroup.getScheduleDesc());
+        return item;
+    }
+
+    @Override
     public Map<String, Object> sendExpiryReminders(Long classId) {
         LocalDate today = LocalDate.now();
         LocalDate cutoff = today.plusDays(30);
@@ -762,6 +878,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("className", clz.getClassName());
             item.put("description", clz.getDescription());
             item.put("scheduleDesc", clz.getScheduleDesc());
+            item.put("gradeBand", clz.getGradeBand());
+            item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
             item.put("teacherName", teacherName);
             item.put("classroomName", classroomName);
             item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
@@ -1448,6 +1566,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("className", clz.getClassName());
         item.put("description", clz.getDescription());
         item.put("scheduleDesc", clz.getScheduleDesc());
+        item.put("gradeBand", clz.getGradeBand());
+        item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
         item.put("teacherName", teacherName);
         item.put("classroomName", classroomName);
         item.put("listPrice", clz.getListPrice());

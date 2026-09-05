@@ -30,6 +30,12 @@ public interface ClassGroupService {
     /** 更新班课固定周课表，并重建未来未确认课次 */
     Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body);
 
+    /** 新增某个收费 grade 下的实际班级 */
+    Map<String, Object> createActualClass(Map<String, Object> body);
+
+    /** 更新实际班级的名称信息，不影响收费选项和排课 */
+    Map<String, Object> updateClassInfo(Long classId, Map<String, Object> body);
+
     /** 发送到期提醒邮件 */
     Map<String, Object> sendExpiryReminders(Long classId);
 

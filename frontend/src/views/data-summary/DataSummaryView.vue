@@ -32,6 +32,16 @@
           <strong>{{ formatMoney(monthStats.balance) }}</strong>
         </span>
       </div>
+      <div class="workbook-toolbar__export">
+        <el-button
+          size="small"
+          type="primary"
+          :disabled="sortedRows.length === 0"
+          @click="exportExcel"
+        >
+          Export Excel
+        </el-button>
+      </div>
     </div>
     <div class="workbook-scroll" data-testid="data-summary-workbook">
       <table class="workbook-table">
@@ -159,53 +169,67 @@
           </tr>
         </thead>
 
-        <tbody v-if="groupedRows.length">
-          <template v-for="(group, groupIndex) in groupedRows" :key="group.label">
-            <tr v-if="groupIndex > 0" class="workbook-group-spacer" aria-hidden="true">
+        <tbody v-if="groupedCampusRows.length">
+          <template v-for="(campusGroup, campusIndex) in groupedCampusRows" :key="campusGroup.key">
+            <tr v-if="campusIndex > 0" class="workbook-group-spacer" aria-hidden="true">
               <td :colspan="columns.length" />
             </tr>
-            <tr
-              v-for="(row, rowIndex) in group.rows"
-              :key="rowKey(row)"
-              class="workbook-data-row"
-            >
-              <td class="workbook-cell--center">{{ displayText(row.campusName) }}</td>
-              <td class="workbook-column--class workbook-class-cell">
-                {{ rowIndex === 0 ? group.label : '' }}
-              </td>
-              <td class="workbook-column--studentName">{{ displayText(row.studentName) }}</td>
-              <td>{{ displayText(row.school) }}</td>
-              <td class="workbook-cell--center">{{ displayText(row.grade) }}</td>
-              <td class="workbook-cell--center">{{ formatDate(row.signupDate) }}</td>
-              <td>{{ displayText(row.phone) }}</td>
-              <td>{{ displayText(row.phone2) }}</td>
-              <td class="workbook-cell--center">
-                <span :class="['workbook-pill', row.pickupRequired ? 'workbook-pill--yes' : 'workbook-pill--no']">
-                  {{ row.pickupRequired ? 'Yes' : 'No' }}
-                </span>
-              </td>
-              <td class="workbook-cell--center">
-                <span :class="['workbook-pill', row.dropoffRequired ? 'workbook-pill--yes' : 'workbook-pill--no']">
-                  {{ row.dropoffRequired ? 'Yes' : 'No' }}
-                </span>
-              </td>
-              <td class="workbook-cell--center">
-                <span :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
-                  {{ displayText(row.paymentMethod) }}
-                </span>
-              </td>
-              <td class="workbook-cell--center">{{ formatPeriod(row) }}</td>
-              <td class="workbook-cell--money">{{ formatMoney(row.linePriceAmount) }}</td>
-              <td class="workbook-cell--money">{{ formatMoney(row.pickupFeeAmount) }}</td>
-              <td class="workbook-cell--money">{{ formatMoney(row.discountAmount) }}</td>
-              <td class="workbook-cell--money">{{ formatMoney(row.paidAmount) }}</td>
-              <td
-                class="workbook-cell--money"
-                :class="{ 'workbook-cell--balance-due': Number(row.balanceAmount ?? 0) < 0 }"
+            <template v-for="classGroup in campusGroup.classGroups" :key="classGroup.key">
+              <tr
+                v-for="(row, rowIndex) in classGroup.rows"
+                :key="rowKey(row)"
+                class="workbook-data-row"
               >
-                {{ formatMoney(row.balanceAmount) }}
-              </td>
-            </tr>
+                <td
+                  v-if="classGroup.firstRowIndex + rowIndex === 0"
+                  class="workbook-column--campus workbook-cell--group workbook-cell--merged"
+                  :rowspan="campusGroup.rowspan"
+                >
+                  {{ campusGroup.campusName }}
+                </td>
+                <td
+                  v-if="rowIndex === 0"
+                  class="workbook-column--studentClass workbook-cell--group workbook-cell--merged"
+                  :rowspan="classGroup.rows.length"
+                >
+                  {{ classGroup.className }}
+                </td>
+                <td class="workbook-column--studentName">{{ displayText(row.studentName) }}</td>
+                <td>{{ displayText(row.school) }}</td>
+                <td class="workbook-cell--center">{{ displayText(row.grade) }}</td>
+                <td class="workbook-cell--center">{{ formatDate(row.signupDate) }}</td>
+                <td>{{ displayText(row.phone) }}</td>
+                <td>{{ displayText(row.phone2) }}</td>
+                <td class="workbook-cell--center">
+                  <span :class="['workbook-pill', row.pickupRequired ? 'workbook-pill--yes' : 'workbook-pill--no']">
+                    {{ row.pickupRequired ? 'Yes' : 'No' }}
+                  </span>
+                </td>
+                <td class="workbook-cell--center">
+                  <span :class="['workbook-pill', row.dropoffRequired ? 'workbook-pill--yes' : 'workbook-pill--no']">
+                    {{ row.dropoffRequired ? 'Yes' : 'No' }}
+                  </span>
+                </td>
+                <td class="workbook-cell--center">
+                  <span :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
+                    {{ displayText(row.paymentMethod) }}
+                  </span>
+                </td>
+                <td class="workbook-cell--center" :class="{ 'workbook-cell--renewal-due': isPeriodRenewalDue(row) }">
+                  {{ formatPeriod(row) }}
+                </td>
+                <td class="workbook-cell--money">{{ formatMoney(row.linePriceAmount) }}</td>
+                <td class="workbook-cell--money">{{ formatMoney(row.pickupFeeAmount) }}</td>
+                <td class="workbook-cell--money">{{ formatMoney(row.discountAmount) }}</td>
+                <td class="workbook-cell--money">{{ formatMoney(row.paidAmount) }}</td>
+                <td
+                  class="workbook-cell--money"
+                  :class="{ 'workbook-cell--balance-due': Number(row.balanceAmount ?? 0) < 0 }"
+                >
+                  {{ formatMoney(row.balanceAmount) }}
+                </td>
+              </tr>
+            </template>
           </template>
         </tbody>
 
@@ -247,12 +271,13 @@
         class="product-tab"
         :class="{
           'product-tab--active': tab.id === activeTabId,
+          'product-tab--global': tab.global,
           'product-tab--unassigned': tab.unassigned,
           'product-tab--dragging': dragState.fromId === tab.id,
           'product-tab--drop-target': dragState.overId === tab.id && dragState.fromId !== tab.id,
         }"
-        :draggable="canDragTabs && !tab.unassigned"
-        :title="tab.unassigned ? 'Rows not linked to a current course product' : tab.label"
+        :draggable="canMoveProductTab(tab)"
+        :title="tab.global ? 'All registration data' : tab.unassigned ? 'Rows not linked to a current course product' : tab.label"
         :data-testid="`product-tab-${tab.id}`"
         :aria-current="tab.id === activeTabId ? 'page' : undefined"
         @click="selectTab(tab.id)"
@@ -271,6 +296,7 @@
 <script setup lang="ts">
 import dayjs from 'dayjs';
 import { ElMessage } from 'element-plus';
+import * as XLSX from 'xlsx';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import { fetchDataSummary, type DataSummaryRow } from '@/api/data-summary';
@@ -281,8 +307,8 @@ import { isAdminUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
 
 type ColumnKey =
-  | 'class'
   | 'campus'
+  | 'studentClass'
   | 'studentName'
   | 'school'
   | 'grade'
@@ -323,9 +349,18 @@ interface SortState {
   direction: SortDirection;
 }
 
-interface WorkbookGroup {
-  label: string;
+interface WorkbookClassGroup {
+  key: string;
+  className: string;
+  firstRowIndex: number;
   rows: DataSummaryRow[];
+}
+
+interface WorkbookCampusGroup {
+  key: string;
+  campusName: string;
+  rowspan: number;
+  classGroups: WorkbookClassGroup[];
 }
 
 /** 每个 Product Tab 独立保留的视图状态（月份、筛选、分页、排序）。 */
@@ -341,16 +376,20 @@ interface ProductViewState {
 interface ProductTab {
   id: string;
   label: string;
+  global?: boolean;
   unassigned?: boolean;
 }
 
+/** 全局工作表页签固定在最左，展示全部报名数据。 */
+const ALL_TAB_ID = '__ALL__';
 /** 未关联到当前有效产品的历史行兜底页签，固定在末尾且不可拖拽。 */
 const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
 const ORDER_SAVE_DEBOUNCE_MS = 300;
+const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
 
 const columns: WorkbookColumn[] = [
   { key: 'campus', label: 'Campus', width: 112, filterType: 'select' },
-  { key: 'class', label: 'Class', width: 90, filterType: 'select' },
+  { key: 'studentClass', label: 'Class', width: 82, filterType: 'select' },
   { key: 'studentName', label: 'Student Name', width: 150, filterType: 'text' },
   { key: 'school', label: 'School', width: 110, filterType: 'text' },
   { key: 'grade', label: 'Grade', width: 76, filterType: 'select' },
@@ -415,17 +454,15 @@ const productTabs = computed<ProductTab[]>(() =>
 const hasUnassignedRows = computed(() => rows.value.some((row) => !isAssignedRow(row)));
 
 const tabs = computed<ProductTab[]>(() => {
-  if (!products.value.length) {
-    return [];
-  }
-  return hasUnassignedRows.value
+  const courseTabs = hasUnassignedRows.value
     ? [...productTabs.value, { id: UNASSIGNED_TAB_ID, label: 'Unassigned', unassigned: true }]
     : productTabs.value;
+  return [{ id: ALL_TAB_ID, label: 'All Data', global: true }, ...courseTabs];
 });
 
 /** 无产品可用时（如产品接口失败且无未分配行）回退为全量展示，保证页面可用。 */
 const productRows = computed(() => {
-  if (!tabs.value.length || !tabs.value.some((tab) => tab.id === activeTabId.value)) {
+  if (!activeTabId.value || activeTabId.value === ALL_TAB_ID || !tabs.value.some((tab) => tab.id === activeTabId.value)) {
     return rows.value;
   }
   if (activeTabId.value === UNASSIGNED_TAB_ID) {
@@ -488,7 +525,7 @@ const filteredRows = computed(() => monthFilteredRows.value.filter((row) => {
 const sortedRows = computed(() => {
   const source = [...filteredRows.value];
   if (!sortState.key) {
-    return source;
+    return source.sort(compareRowsByBusinessGroup);
   }
   const direction = sortState.direction === 'asc' ? 1 : -1;
   return source.sort((left, right) => {
@@ -511,21 +548,44 @@ const pagedRows = computed(() => {
   return sortedRows.value.slice(start, start + pagination.pageSize);
 });
 
-const groupedRows = computed<WorkbookGroup[]>(() => {
-  const groups = new Map<string, DataSummaryRow[]>();
+const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
+  const groups = new Map<string, WorkbookCampusGroup>();
   pagedRows.value.forEach((row) => {
-    const label = classLabel(row);
-    const group = groups.get(label) ?? [];
-    group.push(row);
-    groups.set(label, group);
+    const campusName = displayText(row.campusName);
+    const className = displayText(row.studentClass);
+    const campusKey = campusName;
+    let campusGroup = groups.get(campusKey);
+    if (!campusGroup) {
+      campusGroup = {
+        key: campusKey,
+        campusName,
+        rowspan: 0,
+        classGroups: [],
+      };
+      groups.set(campusKey, campusGroup);
+    }
+
+    const classKey = `${campusKey}::${className}`;
+    let classGroup = campusGroup.classGroups.find((group) => group.key === classKey);
+    if (!classGroup) {
+      classGroup = {
+        key: classKey,
+        className,
+        firstRowIndex: campusGroup.rowspan,
+        rows: [],
+      };
+      campusGroup.classGroups.push(classGroup);
+    }
+    classGroup.rows.push(row);
+    campusGroup.rowspan += 1;
   });
-  return [...groups.entries()].map(([label, groupRows]) => ({ label, rows: groupRows }));
+  return [...groups.values()];
 });
 
 const hasAnyFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
 
 const emptyMessage = computed(() => {
-  if (tabs.value.length) {
+  if (activeTabId.value && activeTabId.value !== ALL_TAB_ID) {
     return 'No matching records for this course.';
   }
   return 'No matching records.';
@@ -654,7 +714,7 @@ let orderSaveTimer: number | undefined;
 let savedOrderProducts: CourseProductItem[] = [];
 
 function handleDragStart(tab: ProductTab, event: DragEvent) {
-  if (!canDragTabs.value || tab.unassigned) {
+  if (!canMoveProductTab(tab)) {
     event.preventDefault();
     return;
   }
@@ -666,14 +726,14 @@ function handleDragStart(tab: ProductTab, event: DragEvent) {
 }
 
 function handleDragEnter(tab: ProductTab) {
-  if (!dragState.fromId || tab.unassigned || tab.id === dragState.fromId) {
+  if (!dragState.fromId || !canMoveProductTab(tab) || tab.id === dragState.fromId) {
     return;
   }
   dragState.overId = tab.id;
 }
 
 function handleDragOver(tab: ProductTab) {
-  if (!dragState.fromId || tab.unassigned || tab.id === dragState.fromId) {
+  if (!dragState.fromId || !canMoveProductTab(tab) || tab.id === dragState.fromId) {
     return;
   }
   dragState.overId = tab.id;
@@ -681,7 +741,7 @@ function handleDragOver(tab: ProductTab) {
 
 function handleDrop(tab: ProductTab) {
   const fromId = dragState.fromId;
-  const overId = tab.unassigned || tab.id === dragState.fromId ? null : tab.id;
+  const overId = !canMoveProductTab(tab) || tab.id === dragState.fromId ? null : tab.id;
   handleDragEnd();
   if (!fromId || !overId) {
     return;
@@ -701,6 +761,10 @@ function handleDrop(tab: ProductTab) {
 function handleDragEnd() {
   dragState.fromId = null;
   dragState.overId = null;
+}
+
+function canMoveProductTab(tab: ProductTab) {
+  return canDragTabs.value && !tab.global && !tab.unassigned;
 }
 
 /** 连续快速拖拽时合并为最后一次顺序，只保存最终结果。 */
@@ -770,10 +834,10 @@ function matchesDateRange(
 
 function columnValue(row: DataSummaryRow, key: ColumnKey): string | number | undefined {
   switch (key) {
-    case 'class':
-      return classLabel(row);
     case 'campus':
       return row.campusName;
+    case 'studentClass':
+      return row.studentClass;
     case 'studentName':
       return row.studentName;
     case 'school':
@@ -793,7 +857,7 @@ function columnValue(row: DataSummaryRow, key: ColumnKey): string | number | und
     case 'paymentMethod':
       return displayText(row.paymentMethod);
     case 'period':
-      return row.periodStartDate;
+      return row.periodStartDate || row.periodLabel;
     case 'tuition':
       return Number(row.linePriceAmount ?? 0);
     case 'transportFee':
@@ -855,8 +919,57 @@ function sortValue(row: DataSummaryRow, key: ColumnKey) {
   return value;
 }
 
-function classLabel(row: DataSummaryRow) {
-  return row.className || row.registerClass || row.courseProductName || 'Unassigned';
+function compareRowsByBusinessGroup(left: DataSummaryRow, right: DataSummaryRow) {
+  return compareCampus(displayText(left.campusName), displayText(right.campusName))
+    || compareClassName(displayText(left.studentClass), displayText(right.studentClass))
+    || naturalCompare(displayText(left.studentName), displayText(right.studentName))
+    || compareClassName(displayText(left.grade), displayText(right.grade))
+    || naturalCompare(left.signupDate ?? '', right.signupDate ?? '')
+    || naturalCompare(rowKey(left), rowKey(right));
+}
+
+function compareCampus(left: string, right: string) {
+  const leftRank = campusSortRank(left);
+  const rightRank = campusSortRank(right);
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+  return naturalCompare(left, right);
+}
+
+function campusSortRank(value: string) {
+  // 校区业务排序：实体校区互排在前，Online Class(线上/无实体校区)排在其后，不在表中的按字母序兜底。
+  // 避免纯字母序把 "Online Class" 挤在实体校区中间（原字母序为 North → Online → South）。
+  const normalized = value.trim().toUpperCase();
+  const directIndex = CAMPUS_SORT_ORDER.indexOf(normalized);
+  if (directIndex >= 0) {
+    return directIndex;
+  }
+  return CAMPUS_SORT_ORDER.length + 1;
+}
+
+const CAMPUS_SORT_ORDER = ['SOUTH CAMPUS', 'NORTH CAMPUS', 'ONLINE CLASS'];
+
+function compareClassName(left: string, right: string) {
+  const leftRank = classSortRank(left);
+  const rightRank = classSortRank(right);
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+  return naturalCompare(left, right);
+}
+
+function classSortRank(value: string) {
+  const normalized = value.trim().toUpperCase();
+  const directIndex = CLASS_SORT_ORDER.indexOf(normalized);
+  if (directIndex >= 0) {
+    return directIndex;
+  }
+  const gradeMatch = normalized.match(/^G(\d+)$/);
+  if (gradeMatch) {
+    return Number(gradeMatch[1]) - 1;
+  }
+  return CLASS_SORT_ORDER.length + 1;
 }
 
 function rowKey(row: DataSummaryRow) {
@@ -872,9 +985,40 @@ function formatDate(value?: string) {
 }
 
 function formatPeriod(row: DataSummaryRow) {
-  const start = row.periodStartDate ? dayjs(row.periodStartDate).format('M/D/YY') : '—';
-  const end = row.periodEndDate ? dayjs(row.periodEndDate).format('M/D/YY') : '—';
+  if (!row.periodStartDate && !row.periodEndDate) {
+    return displayText(row.periodLabel);
+  }
+  const start = row.periodStartDate ? dayjs(row.periodStartDate).format('M/D/YYYY') : '—';
+  const end = row.periodEndDate ? dayjs(row.periodEndDate).format('M/D/YYYY') : '—';
   return `${start} - ${end}`;
+}
+
+function isPeriodRenewalDue(row: DataSummaryRow) {
+  if (!row.periodEndDate) {
+    return false;
+  }
+  return remainingBusinessDays(row.periodEndDate) <= 7;
+}
+
+function remainingBusinessDays(endDateValue: string) {
+  const today = dayjs().startOf('day');
+  const endDate = dayjs(endDateValue).startOf('day');
+  if (!endDate.isValid()) {
+    return Number.POSITIVE_INFINITY;
+  }
+  if (endDate.isBefore(today)) {
+    return 0;
+  }
+  let days = 0;
+  let cursor = today;
+  while (cursor.isBefore(endDate) || cursor.isSame(endDate, 'day')) {
+    const day = cursor.day();
+    if (day !== 0 && day !== 6) {
+      days += 1;
+    }
+    cursor = cursor.add(1, 'day');
+  }
+  return days;
 }
 
 function formatMoney(value?: number) {
@@ -884,6 +1028,73 @@ function formatMoney(value?: number) {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
   }).format(Number(value ?? 0));
+}
+
+// ─── Excel 导出 ─────────────────────────────────
+// 金额列导出为数值，便于在 Excel 中直接求和/计算；其余列导出为展示文本。
+const EXPORT_NUMERIC_COLUMNS: ReadonlySet<ColumnKey> = new Set([
+  'tuition',
+  'transportFee',
+  'discount',
+  'paid',
+  'balance',
+]);
+
+function exportExcel() {
+  const dataRows = sortedRows.value;
+  if (dataRows.length === 0) {
+    ElMessage.warning('No rows to export.');
+    return;
+  }
+  const aoa: (string | number)[][] = [columns.map((column) => column.label)];
+  dataRows.forEach((row) => {
+    aoa.push(columns.map((column) => exportCell(row, column.key)));
+  });
+  const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  sheet['!cols'] = columns.map((column) => ({
+    wch: Math.max(8, Math.round(column.width / 6.6)),
+  }));
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, sheet, exportSheetName());
+  XLSX.writeFile(workbook, exportFilename());
+}
+
+function exportCell(row: DataSummaryRow, key: ColumnKey): string | number {
+  const value = columnValue(row, key);
+  if (EXPORT_NUMERIC_COLUMNS.has(key)) {
+    return Number(value ?? 0);
+  }
+  if (key === 'period') {
+    return formatPeriod(row);
+  }
+  if (key === 'signupDate') {
+    return formatDate(row.signupDate);
+  }
+  if (value == null) {
+    return '—';
+  }
+  return String(value).trim() || '—';
+}
+
+function exportLabel(): string {
+  const monthPart = selectedMonth.value === 'ALL' ? 'AllMonths' : selectedMonth.value;
+  if (activeTabId.value && activeTabId.value !== ALL_TAB_ID) {
+    const tab = tabs.value.find((item) => item.id === activeTabId.value);
+    if (tab) {
+      return `${tab.label}_${monthPart}`;
+    }
+  }
+  return `AllData_${monthPart}`;
+}
+
+/** 工作表名最长 31 字符，且不能含 []:*?/\。 */
+function exportSheetName(): string {
+  return exportLabel().replace(/[\\/?*[\]:]/g, '_').slice(0, 31);
+}
+
+function exportFilename(): string {
+  const date = dayjs().format('YYYYMMDD');
+  return `DataSummary_${exportLabel().replace(/[\\/?*[\]:]/g, '_')}_${date}.xlsx`;
 }
 
 function paymentMethodClass(value?: string) {
@@ -953,6 +1164,11 @@ onMounted(loadPage);
   display: flex;
   align-items: center;
   gap: 20px;
+}
+
+.workbook-toolbar__export {
+  margin-left: auto;
+  align-self: center;
 }
 
 .workbook-toolbar__stat {
@@ -1144,13 +1360,21 @@ onMounted(loadPage);
   background: #fff;
 }
 
-.workbook-class-cell {
-  font-weight: 700;
+.workbook-cell--center {
+  text-align: center;
+}
+
+.workbook-cell--group {
+  color: #1f3f36;
+  font-weight: 800;
+  text-align: left;
   vertical-align: top;
 }
 
-.workbook-cell--center {
-  text-align: center;
+.workbook-cell--merged {
+  padding-top: 14px;
+  border-right-color: rgba(31, 75, 59, 0.25);
+  background: #d9eefd;
 }
 
 .workbook-cell--money {
@@ -1161,6 +1385,11 @@ onMounted(loadPage);
 .workbook-cell--balance-due {
   color: #f21b2d;
   font-weight: 700;
+}
+
+.workbook-cell--renewal-due {
+  color: #f21b2d;
+  font-weight: 800;
 }
 
 .workbook-pill {
@@ -1200,20 +1429,30 @@ onMounted(loadPage);
   color: #fff;
 }
 
-.workbook-column--class {
+.workbook-column--campus {
   position: sticky;
   z-index: 2;
   left: 0;
 }
 
-th.workbook-column--class {
+th.workbook-column--campus {
+  z-index: 6;
+}
+
+.workbook-column--studentClass {
+  position: sticky;
+  z-index: 2;
+  left: 112px;
+}
+
+th.workbook-column--studentClass {
   z-index: 6;
 }
 
 .workbook-column--studentName {
   position: sticky;
   z-index: 2;
-  left: 90px;
+  left: 194px;
   box-shadow: 2px 0 0 rgb(81 119 104 / 25%);
 }
 
@@ -1297,6 +1536,25 @@ th.workbook-column--studentName {
   color: #1f3d32;
   font-weight: 700;
   box-shadow: inset 0 3px 0 #2f8f6f;
+}
+
+.product-tab--global {
+  min-width: 96px;
+  border-color: #2f6b55;
+  background: #376451;
+  color: #fff;
+  font-weight: 800;
+}
+
+.product-tab--global:hover {
+  background: #2f5b49;
+  color: #fff;
+}
+
+.product-tab--global.product-tab--active {
+  background: #fff;
+  border-color: #9eafa7;
+  color: #214d3b;
 }
 
 .product-tab--unassigned {

@@ -61,6 +61,7 @@ export function cancelEnrollmentOrder(id: string | number) {
 export interface EnrollmentOrderCorrectionPayload {
   studentName?: string;
   grade?: string;
+  studentClass?: string;
   school?: string;
   guardianPhone?: string;
   guardianPhone2?: string;
@@ -109,6 +110,7 @@ export interface RegistrationStudentPayload {
   gender?: string;
   birthDate?: string;
   grade?: string;
+  studentClass?: string;
   school?: string;
   sourceChannel?: string;
   guardianName?: string;
@@ -188,6 +190,8 @@ export interface RegistrationIntakePayload {
   signupDate?: string;
   periodStartDate?: string;
   periodEndDate?: string;
+  renewPackageId?: EntityId;
+  renewClassEnrollmentId?: EntityId;
   cashierUserId?: EntityId;
   handledByName: string;
   currencyCode?: string;

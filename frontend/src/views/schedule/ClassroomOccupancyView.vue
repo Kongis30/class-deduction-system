@@ -35,19 +35,29 @@
             />
           </div>
           <div class="classroom-list-panel__body">
-            <div v-if="filteredClassrooms.length === 0" class="classroom-list-panel__empty">
+            <div v-if="filteredClassroomGroups.length === 0" class="classroom-list-panel__empty">
               {{ classroomListEmptyText }}
             </div>
-            <div
-              v-for="c in filteredClassrooms"
-              :key="c.id"
-              class="classroom-item"
-              :class="{ 'classroom-item--active': selectedClassroomId === c.id }"
-              @click="onClassroomSelect(c.id)"
+            <section
+              v-for="group in filteredClassroomGroups"
+              :key="group.campus"
+              class="classroom-campus-group"
             >
-              <span class="classroom-item__name">{{ c.roomName }}</span>
-              <el-icon v-if="selectedClassroomId === c.id" color="#409eff"><Check /></el-icon>
-            </div>
+              <div class="classroom-campus-group__header">
+                <span>{{ group.campus }}</span>
+                <small>{{ group.rooms.length }}</small>
+              </div>
+              <div
+                v-for="c in group.rooms"
+                :key="c.id"
+                class="classroom-item"
+                :class="{ 'classroom-item--active': selectedClassroomId === c.id }"
+                @click="onClassroomSelect(c.id)"
+              >
+                <span class="classroom-item__name">{{ c.roomName }}</span>
+                <el-icon v-if="selectedClassroomId === c.id" color="#409eff"><Check /></el-icon>
+              </div>
+            </section>
           </div>
         </aside>
 
@@ -167,18 +177,20 @@
 
       <details class="pending-panel">
         <summary class="pending-panel__summary">
-          <div>
+          <div class="pending-panel__heading">
             <strong>Room assignment queue</strong>
             <span>Open only when scheduled classes or lessons still need a classroom.</span>
           </div>
-          <el-tag size="small" :type="pendingRows.length ? 'warning' : 'info'">
-            {{ pendingRows.length }} pending
-          </el-tag>
+          <div class="pending-panel__summary-actions">
+            <el-tag class="pending-count-tag" size="large" :type="pendingAssignmentRows.length ? 'warning' : 'info'">
+              {{ pendingAssignmentRows.length }} pending
+            </el-tag>
+            <el-button size="small" :loading="pendingLoading" @click.stop="loadPendingAssignments">
+              Refresh
+            </el-button>
+          </div>
         </summary>
         <div class="pending-panel__content">
-          <div class="pending-panel__toolbar">
-            <el-button size="small" :loading="pendingLoading" @click="loadPendingAssignments">Refresh</el-button>
-          </div>
           <el-alert
             v-if="pendingError"
             class="pending-panel__alert"
@@ -189,48 +201,73 @@
           />
           <el-table
             v-loading="pendingLoading"
-            :data="pendingRows"
+            :data="pendingTreeRows"
             size="small"
             class="pending-table"
+            row-key="rowKey"
+            :indent="32"
+            :tree-props="{ children: 'children' }"
+            :row-class-name="pendingRowClassName"
             empty-text="No pending classroom assignments."
           >
-            <el-table-column label="Type" width="110">
+            <el-table-column label="Product / Grade / Class" min-width="420">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.targetType === 'CLASS_GROUP' ? 'warning' : 'info'">
-                  {{ row.targetType === 'CLASS_GROUP' ? 'Class' : 'Lesson' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Course / Student" min-width="220">
-              <template #default="{ row }">
-                <div class="cell-stack">
-                  <strong>{{ row.courseLabel }}</strong>
-                  <span>{{ row.studentName || row.scheduleDesc || '—' }}</span>
+                <div class="cell-stack pending-hierarchy-cell" :class="`pending-hierarchy-cell--${row.rowType}`">
+                  <div class="pending-hierarchy-cell__top">
+                    <strong>{{ pendingMainLabel(row) }}</strong>
+                    <el-tag size="small" effect="plain" :type="pendingTypeTag(row)" round>
+                      {{ pendingTypeLabel(row) }}
+                    </el-tag>
+                  </div>
+                  <span>{{ row.secondaryLabel }}</span>
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Teacher" min-width="120" prop="teacherName" />
-            <el-table-column label="Next time" min-width="150" prop="timeLabel" />
-            <el-table-column label="Classroom" min-width="190">
+            <el-table-column label="Next time" min-width="150">
+              <template #default="{ row }">
+                <span :class="{ 'pending-muted-cell': !isPendingAssignmentRow(row) }">
+                  {{ isPendingAssignmentRow(row) ? row.timeLabel : '' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Teacher" min-width="120">
+              <template #default="{ row }">
+                <span :class="{ 'pending-muted-cell': !isPendingAssignmentRow(row) }">
+                  {{ isPendingAssignmentRow(row) ? row.teacherName : '' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Classroom" min-width="260">
               <template #default="{ row }">
                 <el-select
+                  v-if="isPendingAssignmentRow(row)"
                   v-model="pendingClassroomSelections[row.rowKey]"
+                  class="pending-room-select"
                   placeholder="Select room"
                   filterable
-                  style="width: 170px;"
                 >
-                  <el-option
-                    v-for="room in classrooms"
-                    :key="room.id"
-                    :label="room.roomName"
-                    :value="room.id"
-                  />
+                  <el-option-group
+                    v-for="group in classroomGroups"
+                    :key="group.campus"
+                    :label="group.campus"
+                  >
+                    <el-option
+                      v-for="room in group.rooms"
+                      :key="room.id"
+                      :label="room.roomName"
+                      :value="room.id"
+                    >
+                      <span class="room-option__name">{{ room.roomName }}</span>
+                      <small class="room-option__campus">{{ group.campus }}</small>
+                    </el-option>
+                  </el-option-group>
                 </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="Action" width="110" fixed="right">
+            <el-table-column label="Action" width="120" fixed="right">
               <template #default="{ row }">
                 <el-button
+                  v-if="isPendingAssignmentRow(row)"
                   size="small"
                   type="primary"
                   :loading="savingPendingKey === row.rowKey"
@@ -323,7 +360,7 @@ import {
   fetchPendingClassroomAssignments,
   type ClassroomOccupancyQuery,
 } from '@/api/schedule';
-import type { ClassroomOccupancyItem, EntityId, PendingClassroomAssignmentItem } from '@/types/domain';
+import type { ClassroomItem, ClassroomOccupancyItem, EntityId, PendingClassroomAssignmentItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 
@@ -331,7 +368,14 @@ const route = useRoute();
 const router = useRouter();
 
 // ─── Classrooms ────────────────────────────────
-const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
+type ClassroomOption = Pick<ClassroomItem, 'id' | 'roomName' | 'campus' | 'campusId'>;
+
+interface ClassroomCampusGroup {
+  campus: string;
+  rooms: ClassroomOption[];
+}
+
+const classrooms = ref<ClassroomOption[]>([]);
 const classroomsLoading = ref(false);
 const classroomLoadError = ref('');
 const searchText = ref('');
@@ -343,8 +387,15 @@ let occupancyRequestSeq = 0;
 const filteredClassrooms = computed(() => {
   const q = searchText.value.trim().toLowerCase();
   if (!q) return classrooms.value;
-  return classrooms.value.filter(c => c.roomName.toLowerCase().includes(q));
+  return classrooms.value.filter(c =>
+    c.roomName.toLowerCase().includes(q)
+      || campusLabel(c).toLowerCase().includes(q)
+  );
 });
+
+const filteredClassroomGroups = computed<ClassroomCampusGroup[]>(() => groupClassroomsByCampus(filteredClassrooms.value));
+
+const classroomGroups = computed<ClassroomCampusGroup[]>(() => groupClassroomsByCampus(classrooms.value));
 
 const classroomListEmptyText = computed(() => {
   if (classroomsLoading.value) return 'Loading classrooms...';
@@ -358,6 +409,10 @@ const selectedClassroomName = computed(() => {
   return c?.roomName ?? '';
 });
 
+function campusLabel(classroom: Pick<ClassroomItem, 'campus'>) {
+  return classroom.campus?.trim() || 'Unassigned campus';
+}
+
 // ─── Pending classroom assignments ────────────
 const pendingLoading = ref(false);
 const pendingError = ref('');
@@ -365,19 +420,207 @@ const pendingAssignments = ref<PendingClassroomAssignmentItem[]>([]);
 const pendingClassroomSelections = ref<Record<string, EntityId>>({});
 const savingPendingKey = ref('');
 
-const pendingRows = computed(() => pendingAssignments.value.map(item => {
-  const courseLabel = item.className || item.packageName || item.lessonNo || 'Pending assignment';
+interface PendingAssignmentRow extends PendingClassroomAssignmentItem {
+  rowKey: string;
+  rowType: 'assignment';
+  productLabel: string;
+  gradeLabel: string;
+  classLabel: string;
+  secondaryLabel: string;
+  teacherName: string;
+  timeLabel: string;
+}
+
+interface PendingGroupRow {
+  rowKey: string;
+  rowType: 'product' | 'grade';
+  productLabel: string;
+  gradeLabel?: string;
+  secondaryLabel: string;
+  teacherName: string;
+  timeLabel: string;
+  children: PendingQueueRow[];
+}
+
+type PendingQueueRow = PendingAssignmentRow | PendingGroupRow;
+
+const pendingAssignmentRows = computed<PendingAssignmentRow[]>(() => pendingAssignments.value.map(item => {
   const timeLabel = item.plannedStartAt
     ? dayjs(item.plannedStartAt).format('MMM D HH:mm')
     : 'No generated lesson yet';
   return {
     ...item,
     rowKey: pendingRowKey(item),
-    courseLabel,
+    rowType: 'assignment',
+    productLabel: pendingProductLabel(item),
+    gradeLabel: pendingGradeLabel(item),
+    classLabel: pendingClassLabel(item),
+    secondaryLabel: pendingSecondaryLabel(item),
     teacherName: item.teacherName || '—',
     timeLabel,
   };
 }));
+
+const pendingTreeRows = computed<PendingQueueRow[]>(() => buildPendingQueueTree(pendingAssignmentRows.value));
+
+function groupClassroomsByCampus(source: ClassroomOption[]) {
+  const groups = new Map<string, ClassroomOption[]>();
+  for (const classroom of source) {
+    const campus = campusLabel(classroom);
+    groups.set(campus, [...(groups.get(campus) ?? []), classroom]);
+  }
+  return Array.from(groups.entries())
+    .map(([campus, rooms]) => ({
+      campus,
+      rooms: [...rooms].sort((left, right) => left.roomName.localeCompare(right.roomName)),
+    }))
+    .sort((left, right) => left.campus.localeCompare(right.campus));
+}
+
+function buildPendingQueueTree(rows: PendingAssignmentRow[]): PendingQueueRow[] {
+  const productGroups = new Map<string, PendingGroupRow>();
+  for (const row of rows) {
+    const productKey = normalizedGroupKey(row.productLabel);
+    let productGroup = productGroups.get(productKey);
+    if (!productGroup) {
+      productGroup = {
+        rowKey: `product:${productKey}`,
+        rowType: 'product',
+        productLabel: row.productLabel,
+        secondaryLabel: 'Product',
+        teacherName: '—',
+        timeLabel: '—',
+        children: [],
+      };
+      productGroups.set(productKey, productGroup);
+    }
+
+    const gradeKey = normalizedGroupKey(row.gradeLabel);
+    const gradeRowKey = `${productGroup.rowKey}:grade:${gradeKey}`;
+    let gradeGroup = productGroup.children.find(
+      child => child.rowType === 'grade' && child.rowKey === gradeRowKey,
+    ) as PendingGroupRow | undefined;
+    if (!gradeGroup) {
+      gradeGroup = {
+        rowKey: gradeRowKey,
+        rowType: 'grade',
+        productLabel: row.productLabel,
+        gradeLabel: row.gradeLabel,
+        secondaryLabel: 'Grade',
+        teacherName: '—',
+        timeLabel: '—',
+        children: [],
+      };
+      productGroup.children.push(gradeGroup);
+    }
+    gradeGroup.children.push(row);
+  }
+
+  return [...productGroups.values()]
+    .map(productGroup => ({
+      ...productGroup,
+      children: sortPendingGroups(productGroup.children),
+      secondaryLabel: `${countPendingLeaves(productGroup)} pending`,
+    }))
+    .sort((left, right) => left.productLabel.localeCompare(right.productLabel, undefined, { numeric: true }));
+}
+
+function sortPendingGroups(rows: PendingQueueRow[]) {
+  return rows
+    .map(row => {
+      if (row.rowType !== 'grade') return row;
+      return {
+        ...row,
+        children: [...row.children].sort(sortPendingAssignmentRows),
+        secondaryLabel: `${row.children.length} pending`,
+      };
+    })
+    .sort((left, right) => pendingMainLabel(left).localeCompare(pendingMainLabel(right), undefined, { numeric: true }));
+}
+
+function sortPendingAssignmentRows(left: PendingQueueRow, right: PendingQueueRow) {
+  if (!isPendingAssignmentRow(left) || !isPendingAssignmentRow(right)) return 0;
+  return [
+    left.classLabel.localeCompare(right.classLabel, undefined, { numeric: true }),
+    (left.studentName || '').localeCompare(right.studentName || '', undefined, { numeric: true }),
+    (left.plannedStartAt || '').localeCompare(right.plannedStartAt || ''),
+  ].find(result => result !== 0) ?? 0;
+}
+
+function countPendingLeaves(row: PendingQueueRow): number {
+  if (isPendingAssignmentRow(row)) return 1;
+  return row.children.reduce((total, child) => total + countPendingLeaves(child), 0);
+}
+
+function normalizedGroupKey(label: string) {
+  return label.trim().toLowerCase() || 'unset';
+}
+
+function pendingProductLabel(item: PendingClassroomAssignmentItem) {
+  const productName = item.productName?.trim();
+  if (productName) {
+    return productName;
+  }
+  const className = item.className?.trim();
+  const actualClass = item.actualClass?.trim();
+  if (item.targetType === 'CLASS_GROUP' && className) {
+    const separatorIndex = className.indexOf('·');
+    if (separatorIndex > -1) {
+      return className.slice(0, separatorIndex).trim() || className;
+    }
+    if (actualClass && className.endsWith(actualClass)) {
+      return className.slice(0, -actualClass.length).replace(/[·\-\s]+$/u, '').trim() || className;
+    }
+    return item.packageName?.trim() || 'Product not set';
+  }
+  return item.packageName?.trim() || className || item.lessonNo || 'Product not set';
+}
+
+function pendingGradeLabel(item: PendingClassroomAssignmentItem) {
+  return item.gradeBand?.trim() || 'Grade not set';
+}
+
+function pendingClassLabel(item: PendingClassroomAssignmentItem) {
+  const actualClass = item.actualClass?.trim();
+  const className = item.className?.trim();
+  return className || actualClass || item.packageName || item.lessonNo || 'Pending assignment';
+}
+
+function pendingSecondaryLabel(item: PendingClassroomAssignmentItem) {
+  const labels = [
+    item.targetType === 'CLASS_GROUP' && item.actualClass !== item.className ? item.actualClass : item.studentName,
+    item.targetType === 'CLASS_GROUP' ? item.scheduleDesc : item.packageName,
+    item.targetType !== 'CLASS_GROUP' ? item.scheduleDesc : '',
+    item.targetType !== 'CLASS_GROUP' ? item.lessonNo : '',
+  ].filter(Boolean);
+  return labels.join(' / ') || '—';
+}
+
+function pendingMainLabel(row: PendingQueueRow) {
+  if (row.rowType === 'product') return row.productLabel;
+  if (row.rowType === 'grade') return `Grade ${row.gradeLabel || 'not set'}`;
+  return row.classLabel;
+}
+
+function pendingTypeLabel(row: PendingQueueRow) {
+  if (row.rowType === 'product') return 'Product';
+  if (row.rowType === 'grade') return 'Grade';
+  return row.targetType === 'CLASS_GROUP' ? 'Class' : 'Lesson';
+}
+
+function pendingTypeTag(row: PendingQueueRow) {
+  if (row.rowType === 'product') return 'success';
+  if (row.rowType === 'grade') return 'primary';
+  return row.targetType === 'CLASS_GROUP' ? 'warning' : 'info';
+}
+
+function isPendingAssignmentRow(row: PendingQueueRow): row is PendingAssignmentRow {
+  return row.rowType === 'assignment';
+}
+
+function pendingRowClassName({ row }: { row: PendingQueueRow }) {
+  return `pending-row pending-row--${row.rowType}`;
+}
 
 function pendingRowKey(item: Pick<PendingClassroomAssignmentItem, 'targetType' | 'targetId'>) {
   return `${item.targetType}:${item.targetId}`;
@@ -694,7 +937,12 @@ onMounted(async () => {
   classroomLoadError.value = '';
   try {
     const res = await fetchAllClassrooms();
-    classrooms.value = (res.data.data as any[]).map(c => ({ id: c.id, roomName: c.roomName }));
+    classrooms.value = (res.data.data ?? []).map(c => ({
+      id: String(c.id),
+      roomName: c.roomName,
+      campus: c.campus,
+      campusId: c.campusId,
+    }));
     selectInitialClassroom();
     await loadPendingAssignments();
   } catch (error) {
@@ -808,11 +1056,12 @@ function resolveQueryId(value: unknown): EntityId | null {
 }
 
 .pending-panel {
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
-  background: #fafcff;
+  border: 1px solid #d9e4ef;
+  border-radius: 8px;
+  background: #ffffff;
   flex-shrink: 0;
   overflow: hidden;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 
 .pending-panel__summary {
@@ -820,29 +1069,44 @@ function resolveQueryId(value: unknown): EntityId | null {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f7fafc 100%);
+  border-bottom: 1px solid #e6edf5;
   cursor: pointer;
   user-select: none;
 }
 
-.pending-panel__summary div {
+.pending-panel__heading {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 
 .pending-panel__summary strong {
   color: #303133;
-  font-size: 13px;
+  font-size: 15px;
 }
 
-.pending-panel__summary div > span {
+.pending-panel__summary .pending-panel__heading > span {
   color: #606266;
   font-size: 12px;
 }
 
+.pending-panel__summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pending-count-tag {
+  min-width: 88px;
+  justify-content: center;
+  font-weight: 700;
+}
+
 .pending-panel__content {
-  padding: 0 12px 12px;
+  padding: 14px 16px 16px;
+  background: #ffffff;
   overflow-x: auto;
 }
 
@@ -857,10 +1121,178 @@ function resolveQueryId(value: unknown): EntityId | null {
 }
 
 .pending-table {
-  min-width: 960px;
-  border: 1px solid #ebeef5;
-  border-radius: 6px;
+  min-width: 1020px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   overflow: hidden;
+}
+
+.pending-table :deep(.el-table__header th) {
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pending-table :deep(.el-table__body td) {
+  border-bottom-color: #e8eef5;
+}
+
+.pending-table :deep(.pending-row--product td) {
+  background: #f3faf7;
+}
+
+.pending-table :deep(.pending-row--grade td) {
+  background: #f7fbff;
+}
+
+.pending-table :deep(.pending-row--assignment td) {
+  background: #ffffff;
+}
+
+.pending-table :deep(.pending-row--product .el-table__cell),
+.pending-table :deep(.pending-row--grade .el-table__cell) {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.pending-table :deep(.pending-row--assignment .el-table__cell) {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.pending-table :deep(.pending-row--assignment td:first-child) {
+  box-shadow: inset 3px 0 0 #f59e0b;
+}
+
+.pending-table :deep(.pending-row--product td:first-child) {
+  box-shadow: inset 4px 0 0 #22c55e;
+}
+
+.pending-table :deep(.pending-row--grade td:first-child) {
+  box-shadow: inset 4px 0 0 #3b82f6;
+}
+
+.pending-table :deep(.el-table__expand-icon) {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  border-radius: 999px;
+  color: #64748b;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.pending-table :deep(.el-table__expand-icon:hover) {
+  background: #e2e8f0;
+  color: #1f2937;
+}
+
+.pending-table :deep(.el-table__row td:first-child .cell) {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+}
+
+.pending-table :deep(.pending-row--product td:first-child .cell),
+.pending-table :deep(.pending-row--grade td:first-child .cell) {
+  min-height: 36px;
+}
+
+.pending-table :deep(.el-table__indent) {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.pending-table :deep(.el-table__indent::after) {
+  position: absolute;
+  top: -18px;
+  bottom: -18px;
+  left: 15px;
+  width: 1px;
+  background: #dbe5f0;
+  content: '';
+}
+
+.pending-hierarchy-cell {
+  flex: 1;
+  min-width: 0;
+  gap: 5px;
+}
+
+.pending-hierarchy-cell__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pending-hierarchy-cell strong {
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.pending-hierarchy-cell--product strong {
+  color: #1f4e3d;
+  font-weight: 700;
+}
+
+.pending-hierarchy-cell--grade strong {
+  color: #264766;
+}
+
+.pending-hierarchy-cell--grade {
+  padding-left: 2px;
+}
+
+.pending-hierarchy-cell--assignment strong {
+  color: #111827;
+  font-size: 14px;
+}
+
+.pending-hierarchy-cell--assignment {
+  padding-left: 4px;
+}
+
+.pending-hierarchy-cell span {
+  color: #8b95a1;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pending-hierarchy-cell--assignment span {
+  color: #6b7280;
+}
+
+.pending-muted-cell {
+  color: transparent;
+}
+
+.pending-room-select {
+  width: min(100%, 280px);
+}
+
+.pending-table :deep(.pending-room-select .el-select__wrapper) {
+  min-height: 38px;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px #cbd5e1 inset;
+}
+
+.pending-table :deep(.pending-row--assignment .el-button--primary) {
+  min-width: 72px;
+  height: 34px;
+  border-radius: 6px;
+  font-weight: 700;
+}
+
+.room-option__name {
+  font-weight: 600;
+}
+
+.room-option__campus {
+  float: right;
+  color: #909399;
+  font-size: 12px;
 }
 
 .classroom-calendar__body {
@@ -876,6 +1308,7 @@ function resolveQueryId(value: unknown): EntityId | null {
 .classroom-list-panel {
   width: 280px;
   flex-shrink: 0;
+  min-height: 0;
   border: 1px solid #ebeef5;
   border-radius: 6px;
   display: flex;
@@ -889,8 +1322,25 @@ function resolveQueryId(value: unknown): EntityId | null {
   flex-shrink: 0;
 }
 
+.classroom-list-panel__header :deep(.el-input) {
+  width: 100%;
+}
+
+.classroom-list-panel__header :deep(.el-input__wrapper) {
+  box-sizing: border-box;
+  min-height: 36px;
+  height: 36px;
+  align-items: center;
+}
+
+.classroom-list-panel__header :deep(.el-input__inner) {
+  height: 34px;
+  line-height: 34px;
+}
+
 .classroom-list-panel__body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -903,11 +1353,46 @@ function resolveQueryId(value: unknown): EntityId | null {
   font-size: 13px;
 }
 
+.classroom-campus-group {
+  border-bottom: 1px solid #edf2f7;
+}
+
+.classroom-campus-group:last-child {
+  border-bottom: none;
+}
+
+.classroom-campus-group__header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border-bottom: 1px solid #eef2f7;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.classroom-campus-group__header small {
+  min-width: 22px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e8eef7;
+  color: #526171;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .classroom-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 10px 14px 10px 18px;
   cursor: pointer;
   border-bottom: 1px solid #f5f7fa;
   transition: background 0.15s;
@@ -920,7 +1405,7 @@ function resolveQueryId(value: unknown): EntityId | null {
 .classroom-item--active {
   background: #ecf5ff;
   border-left: 3px solid #409eff;
-  padding-left: 11px;
+  padding-left: 15px;
 }
 
 .classroom-item--active:hover {

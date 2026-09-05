@@ -177,7 +177,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .collect(Collectors.toSet()));
         Map<Long, Long> activeCounts = toLongMap(classEnrollmentMapper.countActiveByClassIds(classIds), "class_id", "cnt");
         Map<Long, List<LessonOccurrenceEntity>> occurrenceMap = loadClassOccurrenceMap(classIds);
-        Map<Long, Long> confirmedOccurrenceCounts = countConfirmedOccurrencesByClass(occurrenceMap);
+        Map<Long, Long> confirmedOccurrenceCounts = countConfirmedSessionDaysByClass(occurrenceMap);
 
         List<GroupClassPackageProgressVO> records = result.getRecords().stream()
                 .map(item -> toGroupClassProgress(item, productMap.get(item.getProductId()), teacherMap.get(item.getTeacherId()),
@@ -244,6 +244,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .studentName(student == null ? null : student.getStudentName())
                 .courseProductId(coursePackage.getCourseProductId())
                 .courseProductName(courseProduct == null ? null : courseProduct.getProductName())
+                .coursePriceOptionId(orderItem == null ? null : orderItem.getCoursePriceOptionId())
+                .gradeBand(orderItem == null ? null : orderItem.getGradeBand())
                 .packageName(coursePackage.getPackageName())
                 .subjectName(coursePackage.getSubjectName())
                 .teachingMode(coursePackage.getTeachingMode())
@@ -401,24 +403,29 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .collect(Collectors.groupingBy(LessonOccurrenceEntity::getClassGroupId));
     }
 
-    private Map<Long, Long> countConfirmedOccurrencesByClass(Map<Long, List<LessonOccurrenceEntity>> occurrenceMap) {
+    private Map<Long, Long> countConfirmedSessionDaysByClass(Map<Long, List<LessonOccurrenceEntity>> occurrenceMap) {
         List<LessonOccurrenceEntity> occurrences = occurrenceMap.values().stream()
                 .flatMap(List::stream)
+                .filter(occurrence -> occurrence.getPlannedStartAt() != null)
                 .toList();
         if (occurrences.isEmpty()) {
             return Collections.emptyMap();
         }
-        Map<Long, Long> occurrenceClassMap = occurrences.stream()
-                .collect(Collectors.toMap(LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getClassGroupId));
+        Map<Long, LessonOccurrenceEntity> occurrenceById = occurrences.stream()
+                .collect(Collectors.toMap(LessonOccurrenceEntity::getId, item -> item, (left, right) -> left));
         List<LessonRecordEntity> records = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                .in(LessonRecordEntity::getOccurrenceId, occurrenceClassMap.keySet())
+                .in(LessonRecordEntity::getOccurrenceId, occurrenceById.keySet())
                 .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
                 .eq(LessonRecordEntity::getIsDeleted, 0));
+        // 班课 SESSION 按“上课日”统计：同一天多个连续/分段时段，只消耗 1 个 session。
         return records.stream()
-                .map(LessonRecordEntity::getOccurrenceId)
-                .filter(occurrenceClassMap::containsKey)
-                .distinct()
-                .collect(Collectors.groupingBy(occurrenceClassMap::get, Collectors.counting()));
+                .map(record -> occurrenceById.get(record.getOccurrenceId()))
+                .filter(Objects::nonNull)
+                .collect(Collectors.groupingBy(
+                        LessonOccurrenceEntity::getClassGroupId,
+                        Collectors.mapping(
+                                occurrence -> occurrence.getPlannedStartAt().toLocalDate(),
+                                Collectors.collectingAndThen(Collectors.toSet(), dates -> (long) dates.size()))));
     }
 
     private GroupClassPackageProgressVO toGroupClassProgress(ClassGroupEntity classGroup,
@@ -461,7 +468,10 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                                 .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
                                 .eq(LessonRecordEntity::getIsDeleted, 0))
                         .stream()
-                        .filter(record -> isOccurrenceInEnrollmentWindow(occurrenceById.get(record.getOccurrenceId()), enrollment))
+                        .map(record -> occurrenceById.get(record.getOccurrenceId()))
+                        .filter(occurrence -> isOccurrenceInEnrollmentWindow(occurrence, enrollment))
+                        .map(occurrence -> occurrence.getPlannedStartAt().toLocalDate())
+                        .distinct()
                         .count();
         return GroupClassStudentProgressVO.builder()
                 .enrollmentId(enrollment.getId())
@@ -482,7 +492,12 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         if ("PER_SESSION".equals(classGroup.getBillingType()) && classGroup.getTotalSessions() != null) {
             return classGroup.getTotalSessions();
         }
-        return occurrences.size();
+        return (int) occurrences.stream()
+                .map(LessonOccurrenceEntity::getPlannedStartAt)
+                .filter(Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .distinct()
+                .count();
     }
 
     private int resolveStudentTotalUnits(ClassEnrollmentEntity enrollment, List<LessonOccurrenceEntity> occurrences) {
@@ -491,6 +506,10 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         }
         return (int) occurrences.stream()
                 .filter(occurrence -> isOccurrenceInEnrollmentWindow(occurrence, enrollment))
+                .map(LessonOccurrenceEntity::getPlannedStartAt)
+                .filter(Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .distinct()
                 .count();
     }
 

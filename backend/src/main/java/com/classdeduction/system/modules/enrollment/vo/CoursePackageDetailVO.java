@@ -22,6 +22,8 @@ public record CoursePackageDetailVO(
         String studentName,
         Long courseProductId,
         String courseProductName,
+        Long coursePriceOptionId,
+        String gradeBand,
         String packageName,
         String subjectName,
         String teachingMode,

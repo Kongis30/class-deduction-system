@@ -30,6 +30,7 @@ public record EnrollmentOrderDetailVO(
         LocalDate periodStartDate,
         LocalDate periodEndDate,
         String studentNameSnapshot,
+        String studentClassSnapshot,
         String gradeSnapshot,
         String schoolSnapshot,
         String parentPhoneSnapshot,

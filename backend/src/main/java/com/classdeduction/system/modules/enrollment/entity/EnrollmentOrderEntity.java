@@ -52,6 +52,8 @@ public class EnrollmentOrderEntity extends BaseEntity {
 
     private String studentNameSnapshot;
 
+    private String studentClassSnapshot;
+
     private String gradeSnapshot;
 
     private String schoolSnapshot;

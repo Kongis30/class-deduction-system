@@ -114,6 +114,11 @@
         </div>
       </section>
 
+      <section v-if="normalized.registrationRemark" class="receipt-section receipt-remark">
+        <h2>Registration Remark</h2>
+        <p>{{ normalized.registrationRemark }}</p>
+      </section>
+
       <section class="receipt-section pickup-section">
         <h2>Pickup / Dropoff</h2>
         <div class="pickup-print-grid">
@@ -285,6 +290,7 @@ interface NormalizedReceipt {
   dropoffRequired: boolean;
   dropoffAddress: string;
   handledByName: string;
+  registrationRemark: string;
   paymentStatus: string;
   items: ReceiptCourseItem[];
   extraFees: MoneyLine[];
@@ -345,6 +351,7 @@ const normalized = computed<NormalizedReceipt>(() => {
     dropoffRequired: getBoolean(payload, 'dropoffRequired'),
     dropoffAddress: getString(payload, 'dropoffAddress'),
     handledByName: getString(payload, 'handledByName'),
+    registrationRemark: getString(payload, 'registrationRemark') || getString(payload, 'remark'),
     paymentStatus: getString(payload, 'paymentStatus'),
     items,
     extraFees: getMoneyLines(payload, 'extraFees'),
@@ -763,11 +770,20 @@ function resolveCampusTaxId(campusName: string) {
 
 .payment-box,
 .totals-box,
-.receipt-policy {
+.receipt-policy,
+.receipt-remark {
   padding: 14px;
   background: #f8fafc;
   border: 1px solid #e3e9f0;
   border-radius: 12px;
+}
+
+.receipt-remark p {
+  margin: 0;
+  color: #172033;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 .payment-list,
