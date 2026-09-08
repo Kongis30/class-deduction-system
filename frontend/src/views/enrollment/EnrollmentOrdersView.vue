@@ -214,15 +214,15 @@
 
             <div v-for="product in groupClassTree" :key="`P-${product.productId}`" class="group-level">
               <div class="group-header group-header--product" @click="toggleProduct(product.productId)">
-                <span class="group-caret" :class="{ 'group-caret--open': isProductExpanded(product.productId) }">▸</span>
+                <span class="group-caret">{{ isProductExpanded(product.productId) ? '▾' : '▸' }}</span>
                 <strong>{{ product.productName }}</strong>
                 <span class="group-meta">{{ product.grades.length }} grade(s)</span>
               </div>
 
               <template v-if="isProductExpanded(product.productId)">
-                <div v-for="grade in product.grades" :key="grade.key" class="group-level group-level--grade">
+                <div v-for="grade in product.grades" :key="grade.key" class="group-level--grade">
                   <div class="group-header group-header--grade" @click="toggleGrade(grade.key)">
-                    <span class="group-caret" :class="{ 'group-caret--open': isGradeExpanded(grade.key) }">▸</span>
+                    <span class="group-caret">{{ isGradeExpanded(grade.key) ? '▾' : '▸' }}</span>
                     <span>{{ grade.gradeBand }}</span>
                     <span class="group-meta">{{ grade.classes.length }} class(es)</span>
                   </div>
@@ -2402,7 +2402,7 @@ loadActivePaymentMethods();
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 .group-toolbar__hint {
   color: #909399;
@@ -2411,52 +2411,44 @@ loadActivePaymentMethods();
 .group-hierarchy {
   min-height: 60px;
 }
-.group-level {
-  margin-bottom: 6px;
-}
-.group-level--grade {
-  margin-left: 16px;
+.group-level + .group-level {
+  margin-top: 10px;
 }
 .group-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border: 1px solid #e8edf2;
-  border-radius: 6px;
-  background: #f8fafc;
+  gap: 6px;
+  padding: 6px 4px;
   cursor: pointer;
   user-select: none;
 }
 .group-header--product {
-  background: #eff6ff;
-  border-color: #bfdbfe;
+  border-bottom: 1px solid #ebeef5;
 }
 .group-header--product strong {
-  color: #1f2937;
-  font-size: 14px;
-  font-weight: 600;
+  color: #303133;
+  font-size: 13px;
+}
+.group-level--grade {
+  padding-left: 16px;
 }
 .group-header--grade {
-  background: #fafafa;
-  color: #374151;
-  font-size: 13px;
-  font-weight: 500;
+  padding: 4px;
+  color: #606266;
+  font-size: 12px;
 }
 .group-caret {
-  color: #94a3b8;
+  width: 12px;
+  color: #909399;
   font-size: 12px;
-  transition: transform 0.15s ease;
-}
-.group-caret--open {
-  transform: rotate(90deg);
 }
 .group-meta {
   margin-left: auto;
   color: #909399;
   font-size: 12px;
+  font-weight: 400;
 }
 .group-class-table {
-  margin-top: 6px;
+  margin: 4px 0 8px;
 }
 </style>
