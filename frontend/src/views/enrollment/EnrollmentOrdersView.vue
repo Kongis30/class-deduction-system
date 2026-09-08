@@ -355,7 +355,10 @@
                         >
                           <span class="group-caret">{{ row.expanded ? '▾' : '▸' }}</span>
                           <strong>{{ row.name }}</strong>
-                          <span class="group-meta">{{ row.gradeCount }} grades · {{ row.classCount }} classes</span>
+                          <span class="group-meta">
+                            {{ row.gradeCount }} {{ row.gradeCount === 1 ? 'grade' : 'grades' }}
+                            · {{ row.classCount }} {{ row.classCount === 1 ? 'class' : 'classes' }}
+                          </span>
                         </div>
                         <div
                           v-else-if="row.rowType === 'grade'"
@@ -364,9 +367,9 @@
                         >
                           <span class="group-caret">{{ row.expanded ? '▾' : '▸' }}</span>
                           <span>{{ row.name }}</span>
-                          <span class="group-meta">{{ row.classCount }} classes</span>
+                          <span class="group-meta">{{ row.classCount }} {{ row.classCount === 1 ? 'class' : 'classes' }}</span>
                         </div>
-                        <div v-else class="cell-stack">
+                        <div v-else class="cell-stack group-cell--class">
                           <strong>{{ row.className }}</strong>
                         </div>
                       </template>
@@ -1118,7 +1121,8 @@ const groupFlatRows = computed<GroupFlatRow[]>(() => {
 
 function groupSpanMethod({ row, columnIndex }: { row: GroupFlatRow; columnIndex: number }): [number, number] {
   if (row.rowType === 'class') return [1, 1];
-  if (columnIndex === 0) return [1, 0];
+  // 分组行：expand 列保留占位（图标由 CSS 隐藏），Course 列横向合并铺满其余 5 列。
+  if (columnIndex === 0) return [1, 1];
   if (columnIndex === 1) return [1, GROUP_TABLE_COLUMN_COUNT - 1];
   return [1, 0];
 }
@@ -2472,7 +2476,15 @@ loadActivePaymentMethods();
   user-select: none;
 }
 .group-cell--grade {
-  padding-left: 16px;
+  padding-left: 20px;
+}
+.group-cell--class {
+  padding-left: 44px;
+}
+/* 分组行隐藏 expand 图标（该列仅作占位，保证分组行铺满整行宽度） */
+.group-table :deep(tr.group-row--product .el-table__expand-icon),
+.group-table :deep(tr.group-row--grade .el-table__expand-icon) {
+  display: none;
 }
 .group-caret {
   flex: none;
