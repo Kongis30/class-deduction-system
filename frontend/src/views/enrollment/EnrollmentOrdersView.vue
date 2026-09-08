@@ -1020,8 +1020,9 @@ interface GroupClassProduct {
   grades: GroupClassGrade[];
 }
 
-const collapsedProducts = reactive(new Set<string>());
-const collapsedGrades = reactive(new Set<string>());
+// 默认全部折叠：只记录已展开的产品/grade。
+const expandedProducts = reactive(new Set<string>());
+const expandedGrades = reactive(new Set<string>());
 
 const groupClassCount = computed(() =>
   groupClassTree.value.reduce((sum, product) =>
@@ -1056,20 +1057,20 @@ const groupClassTree = computed<GroupClassProduct[]>(() => {
 
 function toggleProduct(productId: string) {
   const key = String(productId);
-  if (collapsedProducts.has(key)) collapsedProducts.delete(key);
-  else collapsedProducts.add(key);
+  if (expandedProducts.has(key)) expandedProducts.delete(key);
+  else expandedProducts.add(key);
 }
 function toggleGrade(gradeKey: string) {
-  if (collapsedGrades.has(gradeKey)) collapsedGrades.delete(gradeKey);
-  else collapsedGrades.add(gradeKey);
+  if (expandedGrades.has(gradeKey)) expandedGrades.delete(gradeKey);
+  else expandedGrades.add(gradeKey);
 }
 function isProductExpanded(productId: string) {
   if (groupFilters.keyword.trim()) return true;
-  return !collapsedProducts.has(String(productId));
+  return expandedProducts.has(String(productId));
 }
 function isGradeExpanded(gradeKey: string) {
   if (groupFilters.keyword.trim()) return true;
-  return !collapsedGrades.has(gradeKey);
+  return expandedGrades.has(gradeKey);
 }
 
 // 扁平化为「产品行 / grade 行 / class 行」交替的单表数据，产品与 grade 作为通栏分组行。
