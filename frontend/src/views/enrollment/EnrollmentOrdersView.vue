@@ -205,37 +205,18 @@
             </span>
           </div>
 
-          <div v-loading="loadingClasses" class="group-hierarchy">
-            <el-empty
-              v-if="!loadingClasses && groupClassTree.length === 0"
-              description="No active group classes."
-              :image-size="60"
-            />
-
-            <div v-for="product in groupClassTree" :key="`P-${product.productId}`" class="group-level">
-              <div class="group-header group-header--product" @click="toggleProduct(product.productId)">
-                <span class="group-caret">{{ isProductExpanded(product.productId) ? '▾' : '▸' }}</span>
-                <strong>{{ product.productName }}</strong>
-                <span class="group-meta">{{ product.grades.length }} grade(s)</span>
-              </div>
-
-              <template v-if="isProductExpanded(product.productId)">
-                <div v-for="grade in product.grades" :key="grade.key" class="group-level--grade">
-                  <div class="group-header group-header--grade" @click="toggleGrade(grade.key)">
-                    <span class="group-caret">{{ isGradeExpanded(grade.key) ? '▾' : '▸' }}</span>
-                    <span>{{ grade.gradeBand }}</span>
-                    <span class="group-meta">{{ grade.classes.length }} class(es)</span>
-                  </div>
-
-                  <el-table
-                    v-if="isGradeExpanded(grade.key)"
-                    :data="grade.classes"
-                    row-key="id"
-                    class="product-table group-class-table"
-                    :show-empty="true"
-                    @expand-change="handleExpandChange"
-                  >
-                    <el-table-column type="expand">
+          <el-table
+            v-loading="loadingClasses"
+            :data="groupFlatRows"
+            row-key="id"
+            class="product-table group-table"
+            :show-empty="true"
+            empty-text="No active group classes."
+            :span-method="groupSpanMethod"
+            :row-class-name="groupRowClassName"
+            @expand-change="handleExpandChange"
+          >
+            <el-table-column type="expand">
                       <template #default="{ row }">
                         <div v-if="expandedClassLoading[row.id]" class="expand-loading">
                           Loading orders...
@@ -365,9 +346,27 @@
                       </template>
                     </el-table-column>
 
-                    <el-table-column label="Course" min-width="190">
+                    <el-table-column label="Course" min-width="220">
                       <template #default="{ row }">
-                        <div class="cell-stack">
+                        <div
+                          v-if="row.rowType === 'product'"
+                          class="group-cell"
+                          @click="toggleProduct(row.key)"
+                        >
+                          <span class="group-caret">{{ row.expanded ? '▾' : '▸' }}</span>
+                          <strong>{{ row.name }}</strong>
+                          <span class="group-meta">{{ row.gradeCount }} grades · {{ row.classCount }} classes</span>
+                        </div>
+                        <div
+                          v-else-if="row.rowType === 'grade'"
+                          class="group-cell group-cell--grade"
+                          @click="toggleGrade(row.key)"
+                        >
+                          <span class="group-caret">{{ row.expanded ? '▾' : '▸' }}</span>
+                          <span>{{ row.name }}</span>
+                          <span class="group-meta">{{ row.classCount }} classes</span>
+                        </div>
+                        <div v-else class="cell-stack">
                           <strong>{{ row.className }}</strong>
                         </div>
                       </template>
@@ -393,11 +392,7 @@
                         <el-tag size="small" type="success">{{ row.activeStudentCount }}</el-tag>
                       </template>
                     </el-table-column>
-                  </el-table>
-                </div>
-              </template>
-            </div>
-          </div>
+          </el-table>
         </el-tab-pane>
       </el-tabs>
     </section>
@@ -1072,6 +1067,66 @@ function isProductExpanded(productId: string) {
 function isGradeExpanded(gradeKey: string) {
   if (groupFilters.keyword.trim()) return true;
   return !collapsedGrades.has(gradeKey);
+}
+
+// 扁平化为「产品行 / grade 行 / class 行」交替的单表数据，产品与 grade 作为通栏分组行。
+const GROUP_TABLE_COLUMN_COUNT = 6;
+
+interface GroupFlatRow {
+  rowType: 'product' | 'grade' | 'class';
+  id: string;
+  key?: string;
+  name?: string;
+  gradeCount?: number;
+  classCount?: number;
+  expanded?: boolean;
+  [key: string]: any;
+}
+
+const groupFlatRows = computed<GroupFlatRow[]>(() => {
+  const rows: GroupFlatRow[] = [];
+  for (const product of groupClassTree.value) {
+    const productExpanded = isProductExpanded(product.productId);
+    rows.push({
+      rowType: 'product',
+      id: `P-${product.productId}`,
+      key: product.productId,
+      name: product.productName,
+      gradeCount: product.grades.length,
+      classCount: product.grades.reduce((sum, grade) => sum + grade.classes.length, 0),
+      expanded: productExpanded,
+    });
+    if (!productExpanded) continue;
+    for (const grade of product.grades) {
+      const gradeExpanded = isGradeExpanded(grade.key);
+      rows.push({
+        rowType: 'grade',
+        id: `G-${grade.key}`,
+        key: grade.key,
+        name: grade.gradeBand,
+        classCount: grade.classes.length,
+        expanded: gradeExpanded,
+      });
+      if (!gradeExpanded) continue;
+      for (const cls of grade.classes) {
+        rows.push({ ...cls, rowType: 'class' });
+      }
+    }
+  }
+  return rows;
+});
+
+function groupSpanMethod({ row, columnIndex }: { row: GroupFlatRow; columnIndex: number }): [number, number] {
+  if (row.rowType === 'class') return [1, 1];
+  if (columnIndex === 0) return [1, 0];
+  if (columnIndex === 1) return [1, GROUP_TABLE_COLUMN_COUNT - 1];
+  return [1, 0];
+}
+
+function groupRowClassName({ row }: { row: GroupFlatRow }) {
+  if (row.rowType === 'product') return 'group-row--product';
+  if (row.rowType === 'grade') return 'group-row--grade';
+  return '';
 }
 
 // ─── Group Class expandable rows ──────────────────
@@ -2408,39 +2463,26 @@ loadActivePaymentMethods();
   color: #909399;
   font-size: 12px;
 }
-.group-hierarchy {
-  min-height: 60px;
-}
-.group-level + .group-level {
-  margin-top: 10px;
-}
-.group-header {
+.group-cell {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 4px;
+  min-width: 0;
   cursor: pointer;
   user-select: none;
 }
-.group-header--product {
-  border-bottom: 1px solid #ebeef5;
-}
-.group-header--product strong {
-  color: #303133;
-  font-size: 13px;
-}
-.group-level--grade {
+.group-cell--grade {
   padding-left: 16px;
 }
-.group-header--grade {
-  padding: 4px;
-  color: #606266;
-  font-size: 12px;
-}
 .group-caret {
+  flex: none;
   width: 12px;
   color: #909399;
   font-size: 12px;
+}
+.group-cell strong {
+  color: #303133;
+  font-size: 13px;
 }
 .group-meta {
   margin-left: auto;
@@ -2448,7 +2490,11 @@ loadActivePaymentMethods();
   font-size: 12px;
   font-weight: 400;
 }
-.group-class-table {
-  margin: 4px 0 8px;
+.group-table :deep(tr.group-row--product > td) {
+  background: #f5f7fa;
+  border-top: 1px solid #dcdfe6;
+}
+.group-table :deep(tr.group-row--grade > td) {
+  background: #fafafa;
 }
 </style>
