@@ -192,184 +192,212 @@
         </el-tab-pane>
 
         <el-tab-pane label="Group Class" name="GROUP">
-          <el-table
-            v-loading="loadingClasses"
-            :data="filteredClassEnrollmentData"
-            row-key="id"
-            class="product-table"
-            :show-empty="true"
-            @expand-change="handleExpandChange"
-          >
-            <el-table-column type="expand">
-              <template #default="{ row }">
-                <div v-if="expandedClassLoading[row.id]" class="expand-loading">
-                  Loading orders...
-                </div>
-                <div v-else class="expand-orders-container">
+          <div class="group-toolbar">
+            <el-input
+              v-model="groupFilters.keyword"
+              size="small"
+              clearable
+              placeholder="Course / teacher / room"
+              style="width: 240px;"
+            />
+            <span v-if="groupClassTree.length" class="group-toolbar__hint">
+              {{ groupClassTree.length }} product(s) · {{ groupClassCount }} class(es)
+            </span>
+          </div>
+
+          <div v-loading="loadingClasses" class="group-hierarchy">
+            <el-empty
+              v-if="!loadingClasses && groupClassTree.length === 0"
+              description="No active group classes."
+              :image-size="60"
+            />
+
+            <div v-for="product in groupClassTree" :key="`P-${product.productId}`" class="group-level">
+              <div class="group-header group-header--product" @click="toggleProduct(product.productId)">
+                <span class="group-caret" :class="{ 'group-caret--open': isProductExpanded(product.productId) }">▸</span>
+                <strong>{{ product.productName }}</strong>
+                <span class="group-meta">{{ product.grades.length }} grade(s)</span>
+              </div>
+
+              <template v-if="isProductExpanded(product.productId)">
+                <div v-for="grade in product.grades" :key="grade.key" class="group-level group-level--grade">
+                  <div class="group-header group-header--grade" @click="toggleGrade(grade.key)">
+                    <span class="group-caret" :class="{ 'group-caret--open': isGradeExpanded(grade.key) }">▸</span>
+                    <span>{{ grade.gradeBand }}</span>
+                    <span class="group-meta">{{ grade.classes.length }} class(es)</span>
+                  </div>
+
                   <el-table
-                    :data="(expandedClassOrders[row.id] ?? [])"
+                    v-if="isGradeExpanded(grade.key)"
+                    :data="grade.classes"
                     row-key="id"
-                    size="small"
-                    class="nested-table"
-                    empty-text="No enrollment orders for this class."
+                    class="product-table group-class-table"
+                    :show-empty="true"
+                    @expand-change="handleExpandChange"
                   >
-                    <el-table-column min-width="150">
-                      <template #header>
-                        <div class="table-header-filter">
-                          <span>Student</span>
-                          <el-input
-                            v-model="groupOrderFilters.keyword"
-                            size="small"
-                            clearable
-                            placeholder="Student / order no."
-                            @input="handleGroupOrderFilterChange"
-                          />
+                    <el-table-column type="expand">
+                      <template #default="{ row }">
+                        <div v-if="expandedClassLoading[row.id]" class="expand-loading">
+                          Loading orders...
                         </div>
-                      </template>
-                      <template #default="{ row: order }">
-                        <strong>{{ order.studentName }}</strong>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="Original price" min-width="100" align="right">
-                      <template #default="{ row: order }">${{ order.originalAmount?.toFixed(2) }}</template>
-                    </el-table-column>
-                    <el-table-column label="Discount" min-width="80" align="right">
-                      <template #default="{ row: order }">
-                        <span class="discount-text">-${{ order.discountAmount?.toFixed(2) }}</span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="Received" min-width="90" align="right">
-                      <template #default="{ row: order }">
-                        <strong>${{ order.receivedAmount?.toFixed(2) }}</strong>
-                      </template>
-                    </el-table-column>
-                    <el-table-column min-width="112" align="center">
-                      <template #header>
-                        <div class="table-header-filter table-header-filter--center">
-                          <span>Payment</span>
-                          <el-select
-                            v-model="groupOrderFilters.paymentStatus"
+                        <div v-else class="expand-orders-container">
+                          <el-table
+                            :data="(expandedClassOrders[row.id] ?? [])"
+                            row-key="id"
                             size="small"
-                            placeholder="All"
-                            clearable
-                            @change="handleGroupOrderFilterChange"
+                            class="nested-table"
+                            empty-text="No enrollment orders for this class."
                           >
-                            <el-option
-                              v-for="option in paymentStatusOptions"
-                              :key="option.value"
-                              :label="option.label"
-                              :value="option.value"
+                            <el-table-column min-width="150">
+                              <template #header>
+                                <div class="table-header-filter">
+                                  <span>Student</span>
+                                  <el-input
+                                    v-model="groupOrderFilters.keyword"
+                                    size="small"
+                                    clearable
+                                    placeholder="Student / order no."
+                                    @input="handleGroupOrderFilterChange"
+                                  />
+                                </div>
+                              </template>
+                              <template #default="{ row: order }">
+                                <strong>{{ order.studentName }}</strong>
+                              </template>
+                            </el-table-column>
+                            <el-table-column label="Original price" min-width="100" align="right">
+                              <template #default="{ row: order }">${{ order.originalAmount?.toFixed(2) }}</template>
+                            </el-table-column>
+                            <el-table-column label="Discount" min-width="80" align="right">
+                              <template #default="{ row: order }">
+                                <span class="discount-text">-${{ order.discountAmount?.toFixed(2) }}</span>
+                              </template>
+                            </el-table-column>
+                            <el-table-column label="Received" min-width="90" align="right">
+                              <template #default="{ row: order }">
+                                <strong>${{ order.receivedAmount?.toFixed(2) }}</strong>
+                              </template>
+                            </el-table-column>
+                            <el-table-column min-width="112" align="center">
+                              <template #header>
+                                <div class="table-header-filter table-header-filter--center">
+                                  <span>Payment</span>
+                                  <el-select
+                                    v-model="groupOrderFilters.paymentStatus"
+                                    size="small"
+                                    placeholder="All"
+                                    clearable
+                                    @change="handleGroupOrderFilterChange"
+                                  >
+                                    <el-option
+                                      v-for="option in paymentStatusOptions"
+                                      :key="option.value"
+                                      :label="option.label"
+                                      :value="option.value"
+                                    />
+                                  </el-select>
+                                </div>
+                              </template>
+                              <template #default="{ row: order }">
+                                <el-tag size="small" :type="paymentStatusType(order.paymentStatus)">
+                                  {{ paymentStatusLabel(order.paymentStatus) }}
+                                </el-tag>
+                              </template>
+                            </el-table-column>
+                            <el-table-column min-width="112" align="center">
+                              <template #header>
+                                <div class="table-header-filter table-header-filter--center">
+                                  <span>Status</span>
+                                  <el-select
+                                    v-model="groupOrderFilters.orderStatus"
+                                    size="small"
+                                    placeholder="All"
+                                    clearable
+                                    @change="handleGroupOrderFilterChange"
+                                  >
+                                    <el-option
+                                      v-for="option in orderStatusOptions"
+                                      :key="option.value"
+                                      :label="option.label"
+                                      :value="option.value"
+                                    />
+                                  </el-select>
+                                </div>
+                              </template>
+                              <template #default="{ row: order }">
+                                <el-tag size="small" :type="orderStatusType(order.orderStatus)">
+                                  {{ orderStatusLabel(order.orderStatus) }}
+                                </el-tag>
+                              </template>
+                            </el-table-column>
+                            <el-table-column label="Actions" width="76" align="center">
+                              <template #default="{ row: order }">
+                                <el-dropdown trigger="hover" @command="handleOrderAction($event, order)">
+                                  <el-button text type="primary" size="small" class="order-action-more">&hellip;</el-button>
+                                  <template #dropdown>
+                                    <el-dropdown-menu>
+                                      <el-dropdown-item command="detail">Detail</el-dropdown-item>
+                                      <el-dropdown-item command="receipt">View receipt</el-dropdown-item>
+                                      <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
+                                      <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
+                                      <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
+                                      <el-dropdown-item v-if="canDeleteOrder(order)" divided command="delete">Delete</el-dropdown-item>
+                                      <el-dropdown-item v-if="canForceVoidOrder(order)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                  </template>
+                                </el-dropdown>
+                              </template>
+                            </el-table-column>
+                          </el-table>
+
+                          <div v-if="(expandedClassPagination[row.id]?.total ?? 0) > 0" class="expand-pagination">
+                            <el-pagination
+                              background
+                              layout="prev, pager, next"
+                              small
+                              :total="expandedClassPagination[row.id]?.total ?? 0"
+                              :page-size="expandedClassPagination[row.id]?.size ?? 10"
+                              :current-page="expandedClassPagination[row.id]?.page ?? 1"
+                              @current-change="(p: number) => loadExpandedClassOrders(row.id, p)"
                             />
-                          </el-select>
+                          </div>
                         </div>
                       </template>
-                      <template #default="{ row: order }">
-                        <el-tag size="small" :type="paymentStatusType(order.paymentStatus)">
-                          {{ paymentStatusLabel(order.paymentStatus) }}
-                        </el-tag>
-                      </template>
                     </el-table-column>
-                    <el-table-column min-width="112" align="center">
-                      <template #header>
-                        <div class="table-header-filter table-header-filter--center">
-                          <span>Status</span>
-                          <el-select
-                            v-model="groupOrderFilters.orderStatus"
-                            size="small"
-                            placeholder="All"
-                            clearable
-                            @change="handleGroupOrderFilterChange"
-                          >
-                            <el-option
-                              v-for="option in orderStatusOptions"
-                              :key="option.value"
-                              :label="option.label"
-                              :value="option.value"
-                            />
-                          </el-select>
+
+                    <el-table-column label="Course" min-width="190">
+                      <template #default="{ row }">
+                        <div class="cell-stack">
+                          <strong>{{ row.className }}</strong>
                         </div>
                       </template>
-                      <template #default="{ row: order }">
-                        <el-tag size="small" :type="orderStatusType(order.orderStatus)">
-                          {{ orderStatusLabel(order.orderStatus) }}
-                        </el-tag>
+                    </el-table-column>
+                    <el-table-column label="Teacher" min-width="120">
+                      <template #default="{ row }">
+                        {{ row.teacherName ?? '—' }}
                       </template>
                     </el-table-column>
-                    <el-table-column label="Actions" width="76" align="center">
-                      <template #default="{ row: order }">
-                        <el-dropdown trigger="hover" @command="handleOrderAction($event, order)">
-                          <el-button text type="primary" size="small" class="order-action-more">&hellip;</el-button>
-                          <template #dropdown>
-                            <el-dropdown-menu>
-                              <el-dropdown-item command="detail">Detail</el-dropdown-item>
-                              <el-dropdown-item command="receipt">View receipt</el-dropdown-item>
-                              <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
-                              <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
-                              <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
-                              <el-dropdown-item v-if="canDeleteOrder(order)" divided command="delete">Delete</el-dropdown-item>
-                              <el-dropdown-item v-if="canForceVoidOrder(order)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
-                            </el-dropdown-menu>
-                          </template>
-                        </el-dropdown>
+                    <el-table-column label="Classroom" min-width="120">
+                      <template #default="{ row }">
+                        {{ row.classroomName ?? '—' }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="Schedule" min-width="160">
+                      <template #default="{ row }">
+                        <span v-if="row.scheduleDesc">{{ row.scheduleDesc }}</span>
+                        <span v-else class="text-muted">—</span>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="Enrolled" min-width="90" align="center">
+                      <template #default="{ row }">
+                        <el-tag size="small" type="success">{{ row.activeStudentCount }}</el-tag>
                       </template>
                     </el-table-column>
                   </el-table>
-
-                  <div v-if="(expandedClassPagination[row.id]?.total ?? 0) > 0" class="expand-pagination">
-                    <el-pagination
-                      background
-                      layout="prev, pager, next"
-                      small
-                      :total="expandedClassPagination[row.id]?.total ?? 0"
-                      :page-size="expandedClassPagination[row.id]?.size ?? 10"
-                      :current-page="expandedClassPagination[row.id]?.page ?? 1"
-                      @current-change="(p: number) => loadExpandedClassOrders(row.id, p)"
-                    />
-                  </div>
                 </div>
               </template>
-            </el-table-column>
-
-            <el-table-column min-width="190">
-              <template #header>
-                <div class="table-header-filter">
-                  <span>Course</span>
-                  <el-input
-                    v-model="groupFilters.keyword"
-                    size="small"
-                    clearable
-                    placeholder="Course / teacher / room"
-                  />
-                </div>
-              </template>
-              <template #default="{ row }">
-                <div class="cell-stack">
-                  <strong>{{ row.className }}</strong>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="Teacher" min-width="120">
-              <template #default="{ row }">
-                {{ row.teacherName ?? '—' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="Classroom" min-width="120">
-              <template #default="{ row }">
-                {{ row.classroomName ?? '—' }}
-              </template>
-            </el-table-column>
-            <el-table-column label="Schedule" min-width="160">
-              <template #default="{ row }">
-                <span v-if="row.scheduleDesc">{{ row.scheduleDesc }}</span>
-                <span v-else class="text-muted">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Enrolled" min-width="90" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" type="success">{{ row.activeStudentCount }}</el-tag>
-              </template>
-            </el-table-column>
-          </el-table>
+            </div>
+          </div>
         </el-tab-pane>
       </el-tabs>
     </section>
@@ -981,6 +1009,70 @@ const filteredClassEnrollmentData = computed(() => {
     row.scheduleDesc,
   ].some((value) => String(value ?? '').toLowerCase().includes(keyword)));
 });
+
+// ─── Group Class hierarchical grouping (product → grade → class) ──
+interface GroupClassGrade {
+  key: string;
+  gradeBand: string;
+  classes: any[];
+}
+interface GroupClassProduct {
+  productId: string;
+  productName: string;
+  grades: GroupClassGrade[];
+}
+
+const collapsedProducts = reactive(new Set<string>());
+const collapsedGrades = reactive(new Set<string>());
+
+const groupClassCount = computed(() =>
+  groupClassTree.value.reduce((sum, product) =>
+    sum + product.grades.reduce((inner, grade) => inner + grade.classes.length, 0), 0)
+);
+
+const groupClassTree = computed<GroupClassProduct[]>(() => {
+  const productMap = new Map<string, GroupClassProduct>();
+  for (const row of filteredClassEnrollmentData.value) {
+    const pid = String(row.productId ?? 'unassigned');
+    let product = productMap.get(pid);
+    if (!product) {
+      product = { productId: pid, productName: row.productName ?? 'Unassigned', grades: [] };
+      productMap.set(pid, product);
+    }
+    const gradeBand = String(row.gradeBand ?? 'Grade not set');
+    const gkey = `${pid}::${gradeBand.toLowerCase()}`;
+    let grade = product.grades.find((item) => item.key === gkey);
+    if (!grade) {
+      grade = { key: gkey, gradeBand, classes: [] };
+      product.grades.push(grade);
+    }
+    grade.classes.push(row);
+  }
+  const products = Array.from(productMap.values());
+  products.sort((left, right) => left.productName.localeCompare(right.productName));
+  products.forEach((product) => {
+    product.grades.sort((left, right) => left.gradeBand.localeCompare(right.gradeBand));
+  });
+  return products;
+});
+
+function toggleProduct(productId: string) {
+  const key = String(productId);
+  if (collapsedProducts.has(key)) collapsedProducts.delete(key);
+  else collapsedProducts.add(key);
+}
+function toggleGrade(gradeKey: string) {
+  if (collapsedGrades.has(gradeKey)) collapsedGrades.delete(gradeKey);
+  else collapsedGrades.add(gradeKey);
+}
+function isProductExpanded(productId: string) {
+  if (groupFilters.keyword.trim()) return true;
+  return !collapsedProducts.has(String(productId));
+}
+function isGradeExpanded(gradeKey: string) {
+  if (groupFilters.keyword.trim()) return true;
+  return !collapsedGrades.has(gradeKey);
+}
 
 // ─── Group Class expandable rows ──────────────────
 const expandedClassOrders = reactive<Record<string, EnrollmentOrderItem[]>>({});
@@ -2302,5 +2394,69 @@ loadActivePaymentMethods();
 .payment-split-balanced {
   color: #67c23a;
   font-weight: 600;
+}
+
+/* Group Class hierarchy */
+.group-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.group-toolbar__hint {
+  color: #909399;
+  font-size: 12px;
+}
+.group-hierarchy {
+  min-height: 60px;
+}
+.group-level {
+  margin-bottom: 6px;
+}
+.group-level--grade {
+  margin-left: 16px;
+}
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid #e8edf2;
+  border-radius: 6px;
+  background: #f8fafc;
+  cursor: pointer;
+  user-select: none;
+}
+.group-header--product {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.group-header--product strong {
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 600;
+}
+.group-header--grade {
+  background: #fafafa;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 500;
+}
+.group-caret {
+  color: #94a3b8;
+  font-size: 12px;
+  transition: transform 0.15s ease;
+}
+.group-caret--open {
+  transform: rotate(90deg);
+}
+.group-meta {
+  margin-left: auto;
+  color: #909399;
+  font-size: 12px;
+}
+.group-class-table {
+  margin-top: 6px;
 }
 </style>
