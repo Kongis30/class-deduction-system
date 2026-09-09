@@ -111,13 +111,12 @@ test.describe.serial('Acceptance - Registration intake', () => {
       productId: product.id,
       option,
       classId,
-      sessionCount: 3,
       paidAmount: 150,
     });
 
-    expect(result.amountDue).toBe(300);
+    expect(result.amountDue).toBe(800);
     expect(result.paidAmount).toBe(150);
-    expect(result.balanceAmount).toBe(150);
+    expect(result.balanceAmount).toBe(650);
     expect(result.paymentStatus).toBe('PARTIAL');
     expect(result.courseArtifacts).toHaveLength(1);
     expect(result.courseArtifacts[0].classEnrollmentId).toBeTruthy();
@@ -129,9 +128,9 @@ test.describe.serial('Acceptance - Registration intake', () => {
       const order = await queryOne<Record<string, any>>(db, 'SELECT * FROM enrollment_order WHERE id = ?', [result.enrollmentOrderId]);
       expect(order).toBeTruthy();
       expect(order!.payment_status).toBe('PARTIAL');
-      expect(Number(order!.amount_due).toFixed(2)).toBe('300.00');
+      expect(Number(order!.amount_due).toFixed(2)).toBe('800.00');
       expect(Number(order!.received_amount).toFixed(2)).toBe('150.00');
-      expect(Number(order!.balance_amount).toFixed(2)).toBe('150.00');
+      expect(Number(order!.balance_amount).toFixed(2)).toBe('650.00');
 
       const item = await queryOne<Record<string, any>>(
         db,
@@ -143,7 +142,7 @@ test.describe.serial('Acceptance - Registration intake', () => {
       expect(item!.register_class).toBe('Saturday Class');
       expect(String(item!.class_id)).toBe(String(classId));
       expect(Number(item!.one_on_one_units)).toBe(0);
-      expect(Number(item!.price_amount).toFixed(2)).toBe('300.00');
+      expect(Number(item!.price_amount).toFixed(2)).toBe('800.00');
 
       const enrollment = await queryOne<Record<string, any>>(
         db,
@@ -153,8 +152,8 @@ test.describe.serial('Acceptance - Registration intake', () => {
       expect(enrollment).toBeTruthy();
       expect(String(enrollment!.class_id)).toBe(String(classId));
       expect(String(enrollment!.student_id)).toBe(String(order!.student_id));
-      expect(enrollment!.billing_type).toBe('PER_SESSION');
-      expect(Number(enrollment!.purchased_quantity)).toBe(3);
+      expect(enrollment!.billing_type).toBe('SESSION');
+      expect(Number(enrollment!.purchased_quantity)).toBe(8);
       expect(enrollment!.status).toBe('ACTIVE');
 
       const packages = await queryAll<Record<string, any>>(
@@ -181,8 +180,8 @@ test.describe.serial('Acceptance - Registration intake', () => {
       expect(receipt).toBeTruthy();
       const receiptPayload = readReceiptPayload(receipt!.receipt_payload);
       expect(receiptPayload.items[0].oneOnOneUnits).toBe(0);
-      expect(receiptPayload.items[0].sessions).toBe(3);
-      expect(receiptPayload.items[0].priceAmount).toBe(300);
+      expect(receiptPayload.items[0].sessions).toBe(8);
+      expect(receiptPayload.items[0].priceAmount).toBe(800);
     });
 
     const summary = await apiGet<Record<string, any>>(request, token, '/v1/data-summary', {
@@ -210,5 +209,49 @@ test.describe.serial('Acceptance - Registration intake', () => {
       pageSize: 20,
     });
     expect(classList.records.some((item) => String(item.classId) === String(classId))).toBe(true);
+  });
+
+  test('班课 actual class 未排课时也应允许先报名', async ({ request }) => {
+    const token = await apiLogin(request);
+    const suffix = `unscheduled-group-${Date.now().toString(36)}`;
+    const teacher = await createTeacherAccountByApi(request, token, suffix);
+    const classroom = await createClassroomByApi(request, token, suffix);
+    const { product, option, classId } = await createGroupProductAndPriceByApi(
+      request,
+      token,
+      suffix,
+      teacher.profile.id,
+      classroom.id,
+      { withSchedule: false },
+    );
+
+    const result = await submitGroupRegistrationByApi(request, token, {
+      suffix,
+      productId: product.id,
+      option,
+      classId,
+      sessionCount: 8,
+    });
+
+    expect(result.courseArtifacts).toHaveLength(1);
+    expect(result.courseArtifacts[0].classEnrollmentId).toBeTruthy();
+    await withAcceptanceDb(async (db) => {
+      const enrollment = await queryOne<Record<string, any>>(
+        db,
+        'SELECT * FROM class_enrollment WHERE id = ?',
+        [result.courseArtifacts[0].classEnrollmentId],
+      );
+      expect(enrollment).toBeTruthy();
+      expect(String(enrollment!.class_id)).toBe(String(classId));
+      expect(enrollment!.billing_type).toBe('SESSION');
+      expect(Number(enrollment!.purchased_quantity)).toBe(8);
+
+      const occurrenceRows = await queryAll<Record<string, any>>(
+        db,
+        'SELECT id FROM lesson_occurrence WHERE class_group_id = ? AND planning_status <> "CANCELLED"',
+        [classId],
+      );
+      expect(occurrenceRows).toHaveLength(0);
+    });
   });
 });

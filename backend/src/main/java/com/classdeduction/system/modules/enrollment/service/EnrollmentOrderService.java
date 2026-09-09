@@ -33,10 +33,7 @@ public interface EnrollmentOrderService {
      */
     void updateOrder(Long id, EnrollmentOrderUpdateRequest request);
 
-    /**
-     * 更正报名单联系信息（姓名、电话、接送、报名日期、经手人、备注），不改动金额与课程。
-     * 同步更新订单快照与已生成的收据快照。
-     */
+    /** 更正已保存收据，并同步订单、课包、班级报名和收据快照。 */
     void correctOrder(Long id, EnrollmentOrderCorrectionRequest request);
 
     /**

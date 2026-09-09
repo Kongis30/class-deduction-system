@@ -145,11 +145,13 @@ export async function createGroupProductAndPriceByApi(
   suffix: string,
   teacherId: EntityId,
   classroomId: EntityId,
+  options: { withSchedule?: boolean } = {},
 ): Promise<{ product: ApiRecord; option: ApiRecord; classId: EntityId }> {
   const productName = `${ACCEPTANCE_MARKER} Saturday ${suffix}`;
   const today = todayInNewYork();
   const endDate = plusDays(today, 56);
   const weekday = weekdayForApi(today);
+  const withSchedule = options.withSchedule !== false;
   const productId = await apiPost<string>(request, token, '/v1/base/course-products', {
     productCode: '',
     productName,
@@ -180,7 +182,7 @@ export async function createGroupProductAndPriceByApi(
     courseProductId: productId,
     groupTeacherId: teacherId,
     groupClassroomId: classroomId,
-    groupScheduleSlots: [{ weekday, startTime: '09:00', endTime: '10:00' }],
+    groupScheduleSlots: withSchedule ? [{ weekday, startTime: '09:00', endTime: '10:00' }] : [],
     groupBillingType: 'PER_SESSION',
     groupStartDate: today,
     groupEndDate: endDate,
@@ -255,8 +257,9 @@ export async function submitGroupRegistrationByApi(
     paidAmount?: number;
   },
 ): Promise<ApiRecord> {
-  const sessionCount = data.sessionCount ?? 3;
-  const unitPrice = data.priceAmount ?? 100;
+  const packageUnit = String(data.option.packageUnit ?? 'SESSION');
+  const packageQuantity = data.sessionCount ?? Number(data.option.packageQuantity ?? data.option.groupTotalSessions ?? 3);
+  const priceAmount = data.priceAmount ?? Number(data.option.priceAmount ?? data.option.totalPrice ?? 100 * packageQuantity);
   const studentName = `${ACCEPTANCE_MARKER} Group Student ${data.suffix}`;
   return apiPost<ApiRecord>(request, token, '/v1/registration/intake', {
     student: {
@@ -282,10 +285,13 @@ export async function submitGroupRegistrationByApi(
       detail: data.option.detailText,
       gradeBand: data.option.gradeBand,
       periodLabel: data.option.periodLabel,
-      priceAmount: unitPrice * sessionCount,
-      originalPriceAmount: unitPrice * sessionCount,
+      packageUnit,
+      packageQuantity,
+      packageTotalPrice: priceAmount,
+      priceAmount,
+      originalPriceAmount: priceAmount,
       groupBillingType: 'PER_SESSION',
-      sessions: sessionCount,
+      sessions: packageUnit === 'SESSION' ? packageQuantity : undefined,
     }],
     payments: data.paidAmount
       ? [{ paymentMethod: 'TRANSFER', amount: data.paidAmount, paidAt: `${todayInNewYork()}T00:00:00` }]

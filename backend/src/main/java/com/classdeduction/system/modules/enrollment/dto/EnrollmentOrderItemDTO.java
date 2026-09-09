@@ -17,6 +17,9 @@ import java.time.LocalDate;
 @Schema(description = "Enrollment order item payload")
 public class EnrollmentOrderItemDTO {
 
+    /** 历史报名单更正时用于定位原订单行；新报名时为空。 */
+    private Long orderItemId;
+
     @Min(value = 1, message = "Line number must be at least 1")
     @Schema(description = "Line number inside the enrollment order", example = "1")
     private Integer lineNo;

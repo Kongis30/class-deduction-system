@@ -67,7 +67,7 @@ public class EnrollmentOrderController {
     }
 
     @PutMapping("/{id}/correction")
-    @Operation(summary = "更正报名单联系信息（不改动金额与课程）")
+    @Operation(summary = "编辑已保存收据并同步报名下游数据")
     public ApiResponse<Void> correctOrder(
             @Parameter(description = "报名单ID") @PathVariable Long id,
             @Valid @RequestBody EnrollmentOrderCorrectionRequest request) {

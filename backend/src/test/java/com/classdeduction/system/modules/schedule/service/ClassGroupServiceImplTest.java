@@ -90,6 +90,8 @@ class ClassGroupServiceImplTest {
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonRecordEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassEnrollmentEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupScheduleSlotEntity.class);
     }
 
@@ -144,6 +146,21 @@ class ClassGroupServiceImplTest {
                 .containsEntry("purchasedQuantity", 4)
                 .containsEntry("usedSessions", 1L)
                 .containsEntry("remainingSessions", 3);
+    }
+
+    @Test
+    void shouldRetireClassWithoutDeletingStudentOrHistoricalData() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        classGroupService.deleteClassGroup(501L);
+
+        verify(lessonOccurrenceMapper).update(any(LessonOccurrenceEntity.class), any());
+        verify(classEnrollmentMapper).update(any(ClassEnrollmentEntity.class), any());
+        verify(classGroupScheduleSlotMapper).delete(any());
+        verify(classGroupMapper).deleteById(501L);
     }
 
     @Test

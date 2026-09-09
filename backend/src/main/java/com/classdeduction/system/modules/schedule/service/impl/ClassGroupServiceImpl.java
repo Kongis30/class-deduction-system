@@ -80,6 +80,18 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             return Collections.emptyList();
         }
 
+        // 班课列表是当前可运营班级，不应展示已删除、停用或已失去产品关联的遗留 class_group。
+        Map<Long, CourseProductEntity> productMap = batchLoadCourseProducts(classes);
+        classes = classes.stream()
+                .filter(classGroup -> {
+                    CourseProductEntity product = productMap.get(classGroup.getProductId());
+                    return product != null && "ACTIVE".equals(product.getStatus());
+                })
+                .toList();
+        if (classes.isEmpty()) {
+            return Collections.emptyList();
+        }
+
         // 批量统计在册人数
         List<Long> classIds = classes.stream().map(ClassGroupEntity::getId).toList();
         Map<Long, Long> enrollmentCounts = toLongMap(classEnrollmentMapper.countActiveByClassIds(classIds), "class_id", "cnt");
@@ -87,8 +99,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // 批量加载教师和教室
         Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(classes, ClassGroupEntity::getTeacherId);
         Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(classes, ClassGroupEntity::getClassroomId);
-        Map<Long, CourseProductEntity> productMap = batchLoadCourseProducts(classes);
-
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassGroupEntity clz : classes) {
             String teacherName = resolveTeacherName(clz.getTeacherId(), teacherMap);
@@ -104,14 +114,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("classroomId", clz.getClassroomId());
             item.put("classroomName", classroomName);
             item.put("listPrice", clz.getListPrice());
-            item.put("productId", clz.getProductId());
-            item.put("productName", product == null ? null : product.getProductName());
+        item.put("productId", clz.getProductId());
+        item.put("productName", product == null ? null : product.getProductName());
             item.put("registerClass", product == null ? null : product.getRegisterClass());
             item.put("courseType", product == null ? null : product.getCourseType());
             item.put("gradeBand", clz.getGradeBand());
-            item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
-            item.put("startDate", clz.getStartDate());
-            item.put("endDate", clz.getEndDate());
+        item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
+        item.put("startDate", clz.getStartDate());
+        item.put("endDate", clz.getEndDate());
             item.put("status", clz.getStatus());
             item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
             item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
@@ -134,6 +144,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         detail.put("className", clz.getClassName());
         detail.put("description", clz.getDescription());
         detail.put("scheduleDesc", clz.getScheduleDesc());
+        detail.put("startDate", clz.getStartDate());
+        detail.put("endDate", clz.getEndDate());
         detail.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
         detail.put("classroomName", classroom != null ? classroom.getRoomName() : null);
         detail.put("status", clz.getStatus());
@@ -636,6 +648,13 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
         Long teacherId = parseLongFromBody(body, "teacherId");
         Long classroomId = parseLongFromBody(body, "classroomId");
+        LocalDate startDate = body != null && body.containsKey("startDate")
+                ? parseDateParam(body, "startDate") : classGroup.getStartDate();
+        LocalDate endDate = body != null && body.containsKey("endDate")
+                ? parseDateParam(body, "endDate") : classGroup.getEndDate();
+        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
+            throw new BusinessException("INVALID_CLASS_DATE_RANGE", "Class end date cannot be earlier than the start date.");
+        }
         List<ClassGroupScheduleSlotEntity> slots = parseClassScheduleSlots(body.get("slots"));
         if (slots.isEmpty()) {
             throw new BusinessException("CLASS_SCHEDULE_REQUIRED", "Add at least one weekly class time.");
@@ -657,6 +676,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
         classGroup.setTeacherId(teacherId);
         classGroup.setClassroomId(classroomId);
+        classGroup.setStartDate(startDate);
+        classGroup.setEndDate(endDate);
         classGroup.setScheduleDesc(buildScheduleDesc(slots));
         classGroupMapper.updateById(classGroup);
 
@@ -693,6 +714,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         classGroup.setListPrice(java.math.BigDecimal.ZERO);
         classGroup.setStatus("ACTIVE");
         inheritGradeBillingMetadata(classGroup);
+        applyClassDateRange(classGroup, body);
         classGroupMapper.insert(classGroup);
         return toClassInfoMap(classGroup);
     }
@@ -708,6 +730,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         ensureActualClassUnique(classId, classGroup.getProductId(), classGroup.getGradeBand(), actualClass);
         classGroup.setActualClass(actualClass);
         classGroup.setClassName(resolveClassName(body, actualClass));
+        applyClassDateRange(classGroup, body);
         classGroupMapper.updateById(classGroup);
         return toClassInfoMap(classGroup);
     }
@@ -771,8 +794,23 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 : classGroup.getGradeBand());
         item.put("teacherId", classGroup.getTeacherId());
         item.put("classroomId", classGroup.getClassroomId());
+        item.put("startDate", classGroup.getStartDate());
+        item.put("endDate", classGroup.getEndDate());
         item.put("scheduleDesc", classGroup.getScheduleDesc());
         return item;
+    }
+
+    /** Actual class 的周期属于 class 本身，和共享的 registration option 分开保存。 */
+    private void applyClassDateRange(ClassGroupEntity classGroup, Map<String, Object> body) {
+        LocalDate startDate = body != null && body.containsKey("startDate")
+                ? parseDateParam(body, "startDate") : classGroup.getStartDate();
+        LocalDate endDate = body != null && body.containsKey("endDate")
+                ? parseDateParam(body, "endDate") : classGroup.getEndDate();
+        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
+            throw new BusinessException("INVALID_CLASS_DATE_RANGE", "Class end date cannot be earlier than the start date.");
+        }
+        classGroup.setStartDate(startDate);
+        classGroup.setEndDate(endDate);
     }
 
     @Override
@@ -949,15 +987,22 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .gt(LessonOccurrenceEntity::getPlannedStartAt, now));
 
-        // 3. 软删除所有活跃报名记录
+        // 3. 结束该班级下的报名关系，但不删除学生档案、订单或历史消课记录。
+        //    续费/学生列表只看 ACTIVE + 未删除，因此已退出学生不会继续出现在该班级中。
         ClassEnrollmentEntity enrollUpdate = new ClassEnrollmentEntity();
+        enrollUpdate.setStatus("CANCELLED");
         enrollUpdate.setIsDeleted(1);
         classEnrollmentMapper.update(enrollUpdate, new LambdaUpdateWrapper<ClassEnrollmentEntity>()
                 .eq(ClassEnrollmentEntity::getClassId, classId)
                 .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
                 .eq(ClassEnrollmentEntity::getIsDeleted, 0));
 
-        // 4. 软删除班课本身
+        // 4. 软删除周排课配置，避免班级删除后仍被排课编辑器读到。
+        classGroupScheduleSlotMapper.delete(new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId)
+                .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
+
+        // 5. 软删除班课本身；订单中的 class_id 保留，历史数据仍可追溯。
         classGroupMapper.deleteById(classId);
     }
 
@@ -1146,6 +1191,24 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             }
         }
         return null;
+    }
+
+    /**
+     * 解析 Actual class 的教学周期；空字符串表示清空日期，非法日期直接阻止保存。
+     */
+    private LocalDate parseDateParam(Map<String, Object> body, String key) {
+        Object value = body == null ? null : body.get(key);
+        if (value == null || (value instanceof String text && text.isBlank())) {
+            return null;
+        }
+        if (value instanceof String text) {
+            try {
+                return LocalDate.parse(text);
+            } catch (RuntimeException exception) {
+                throw new BusinessException("INVALID_CLASS_DATE", "Class dates must use YYYY-MM-DD format.");
+            }
+        }
+        throw new BusinessException("INVALID_CLASS_DATE", "Class dates must use YYYY-MM-DD format.");
     }
 
     private void ensureNoClassConfirmConflicts(LessonOccurrenceEntity source,
@@ -1568,6 +1631,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("scheduleDesc", clz.getScheduleDesc());
         item.put("gradeBand", clz.getGradeBand());
         item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
+        item.put("startDate", clz.getStartDate());
+        item.put("endDate", clz.getEndDate());
         item.put("teacherName", teacherName);
         item.put("classroomName", classroomName);
         item.put("listPrice", clz.getListPrice());

@@ -29,7 +29,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -95,6 +97,8 @@ class PaymentRecordServiceImplTest {
         testPackage.setPackageNo("PK202604280001");
         testPackage.setRemainingUnits(40);
         lenient().when(paymentMethodMapper.selectCount(any())).thenReturn(1L);
+        lenient().when(receiptRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(paymentRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
     }
 
     @Nested
@@ -150,10 +154,66 @@ class PaymentRecordServiceImplTest {
 
             ArgumentCaptor<ReceiptRecordEntity> receiptCaptor = ArgumentCaptor.forClass(ReceiptRecordEntity.class);
             verify(receiptRecordMapper).insert(receiptCaptor.capture());
-            assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("PAYMENT_RECEIPT");
+            assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("DEFAULT_RECEIPT");
             assertThat(receiptCaptor.getValue().getEnrollmentOrderId()).isEqualTo(1L);
+            verify(receiptRecordMapper).updateById(any(ReceiptRecordEntity.class));
             assertThat(receipt.id()).isEqualTo(9001L);
-            assertThat(receipt.templateCode()).isEqualTo("PAYMENT_RECEIPT");
+            assertThat(receipt.templateCode()).isEqualTo("DEFAULT_RECEIPT");
+        }
+
+        @Test
+        @DisplayName("Should update the registration receipt with the order payment ledger")
+        void shouldUpdateRegistrationReceiptWithOrderPaymentLedger() {
+            testOrder.setReceivedAmount(new BigDecimal("2099.00"));
+            testOrder.setBalanceAmount(new BigDecimal("500.00"));
+
+            ReceiptRecordEntity existingReceipt = new ReceiptRecordEntity();
+            existingReceipt.setId(8001L);
+            existingReceipt.setReceiptNo("RC202604280001");
+            existingReceipt.setEnrollmentOrderId(1L);
+            existingReceipt.setStudentId(601L);
+            existingReceipt.setTemplateCode("DEFAULT_RECEIPT");
+            existingReceipt.setIssuedAt(LocalDateTime.of(2026, 4, 28, 9, 0));
+            existingReceipt.setReceiptPayload("{\"studentName\":\"Edited Name\"}");
+
+            PaymentRecordEntity oldPayment = new PaymentRecordEntity();
+            oldPayment.setId(10L);
+            oldPayment.setEnrollmentOrderId(1L);
+            oldPayment.setPaymentNo("PMT202604270001");
+            oldPayment.setPaymentMethod("CASH");
+            oldPayment.setPaymentType("PAYMENT");
+            oldPayment.setPaymentStatus("PAID");
+            oldPayment.setAmount(new BigDecimal("2099.00"));
+            oldPayment.setPaidAt(LocalDateTime.of(2026, 4, 27, 10, 0));
+            oldPayment.setHandledByName("Amy");
+
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("CARD", new BigDecimal("500.00"))));
+            request.setHandledByName("Admin");
+
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+            when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(i -> {
+                PaymentRecordEntity entity = i.getArgument(0);
+                entity.setId(11L);
+                entity.setPaymentNo("PMT202604280002");
+                return 1;
+            });
+            when(receiptRecordMapper.selectList(any())).thenReturn(List.of(existingReceipt));
+            when(paymentRecordMapper.selectList(any())).thenAnswer(i -> List.of(oldPayment, testPayment));
+            when(jsonHelper.fromJson(any(), any())).thenReturn(new LinkedHashMap<>(Map.of("studentName", "Edited Name")));
+            when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"REGISTRATION\",\"paidAmount\":2599.00}");
+
+            ReceiptRecordVO receipt = paymentRecordService.createPaymentRecord(request);
+
+            verify(receiptRecordMapper, never()).insert(any(ReceiptRecordEntity.class));
+            ArgumentCaptor<ReceiptRecordEntity> updatedReceiptCaptor = ArgumentCaptor.forClass(ReceiptRecordEntity.class);
+            verify(receiptRecordMapper).updateById(updatedReceiptCaptor.capture());
+            assertThat(updatedReceiptCaptor.getValue().getId()).isEqualTo(8001L);
+            assertThat(updatedReceiptCaptor.getValue().getTemplateCode()).isEqualTo("DEFAULT_RECEIPT");
+            assertThat(receipt.id()).isEqualTo(8001L);
+            assertThat(receipt.templateCode()).isEqualTo("DEFAULT_RECEIPT");
         }
 
         @Test

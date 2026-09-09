@@ -125,14 +125,18 @@ function buildPagedRows(count: number) {
   }));
 }
 
-async function mockProducts(page: import('@playwright/test').Page) {
+async function mockProductsWith(page: import('@playwright/test').Page, productRows = products) {
   await page.route('**/api/v1/base/course-products/all', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, code: 'OK', message: 'Success', data: products, timestamp: '2026-08-31T00:00:00-04:00' }),
+      body: JSON.stringify({ success: true, code: 'OK', message: 'Success', data: productRows, timestamp: '2026-08-31T00:00:00-04:00' }),
     });
   });
+}
+
+async function mockProducts(page: import('@playwright/test').Page) {
+  await mockProductsWith(page);
 }
 
 async function mockSummary(page: import('@playwright/test').Page, rows: unknown[]) {
@@ -254,6 +258,68 @@ test('切换 Product Tab 应保留每个产品的筛选排序与分页状态', a
   await page.getByTestId('product-tab-8001').click();
   await expect(page.locator('.workbook-data-row')).toHaveCount(10);
   await expect(page.locator('.el-pagination')).toContainText('60');
+});
+
+test('周六班 Data Summary 应把全年学生同时显示在 Fall 和 Spring 班级中，但统计只计算一次', async ({ page }) => {
+  await loginAsAdmin(page);
+  await mockProductsWith(page, [{
+    id: '8100',
+    productName: '2026-2027 Saturday Course',
+    courseType: 'SATURDAY',
+    sortOrder: 1,
+    status: 'ACTIVE',
+    teachingMode: 'GROUP',
+  }]);
+
+  const saturdayRows = [
+    summaryRow({
+      orderId: '8101',
+      orderItemId: '8201',
+      studentId: '8301',
+      studentName: 'Annual Student',
+      studentClass: 'G5',
+      courseProductId: '8100',
+      courseProductName: '2026-2027 Saturday Course',
+      className: '2026-2027 Saturday Full Year G5',
+      periodLabel: 'Full year',
+      paidAmount: 1200,
+      balanceAmount: 0,
+    }),
+    summaryRow({
+      orderId: '8102',
+      orderItemId: '8202',
+      studentId: '8302',
+      studentName: 'Fall Student',
+      studentClass: 'G5',
+      courseProductId: '8100',
+      courseProductName: '2026-2027 Saturday Course',
+      className: '2026-2027 Saturday Fall G5',
+      periodLabel: 'Fall',
+      paidAmount: 600,
+      balanceAmount: 0,
+    }),
+    summaryRow({
+      orderId: '8103',
+      orderItemId: '8203',
+      studentId: '8303',
+      studentName: 'Spring Student',
+      studentClass: 'G5',
+      courseProductId: '8100',
+      courseProductName: '2026-2027 Saturday Course',
+      className: '2026-2027 Saturday Spring G5',
+      periodLabel: 'Spring',
+      paidAmount: 600,
+      balanceAmount: 0,
+    }),
+  ];
+  await mockSummary(page, saturdayRows);
+
+  await page.goto('/data-summary');
+
+  await expect(page.locator('.workbook-data-row')).toHaveCount(4);
+  await expect(page.locator('tbody .workbook-column--studentClass')).toHaveText(['G5 · Fall', 'G5 · Spring']);
+  await expect(page.getByText('Annual Student')).toHaveCount(2);
+  await expect(page.locator('.workbook-toolbar__stat').first()).toContainText('3');
 });
 
 test('拖拽 Product Tab 应即时调整顺序并保存系统级共享配置', async ({ page }) => {

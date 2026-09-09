@@ -1316,8 +1316,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     "Group class package unit must be MONTH, WEEK, or SESSION.");
         }
         if (configuredEnd != null && expiryDate.isAfter(configuredEnd)) {
-            throw new BusinessException("ENROLLMENT_DURATION_OUT_OF_RANGE",
-                    "Selected package duration exceeds the class date range.");
+            // 班课结束日是实际有效期边界；购买数量仍保留，用于课时/次数统计。
+            expiryDate = configuredEnd;
         }
         return new ClassBillingResult(enrollmentDate, expiryDate, enrollmentDate, expiryDate, quantity);
     }

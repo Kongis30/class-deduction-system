@@ -18,7 +18,7 @@ interface ScheduleConflictDetail {
  */
 const ID_FIELD_REGEX = /"(\w*[iI][dD])":\s*(\d+)/g;
 
-function preprocessLargeIds(jsonString: string): string {
+export function preprocessLargeIds(jsonString: string): string {
   return jsonString.replace(ID_FIELD_REGEX, '"$1":"$2"');
 }
 

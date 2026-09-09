@@ -231,6 +231,8 @@ export interface ClassScheduleSlotPayload {
 export interface ClassScheduleUpdatePayload {
   teacherId?: string | number;
   classroomId?: string | number;
+  startDate?: string;
+  endDate?: string;
   slots: ClassScheduleSlotPayload[];
 }
 
@@ -239,6 +241,8 @@ export interface ClassInfoPayload {
   gradeBand?: string;
   actualClass: string;
   className?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 export function createActualClass(data: ClassInfoPayload) {

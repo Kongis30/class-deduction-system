@@ -153,7 +153,12 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
         QueryWrapper<ClassGroupEntity> wrapper = new QueryWrapper<>();
         var lambda = wrapper.lambda();
+        List<Long> activeGroupProductIds = listActiveGroupProductIds();
+        if (activeGroupProductIds.isEmpty()) {
+            return PageResponse.empty(query.getPageNum(), query.getPageSize());
+        }
         lambda.isNotNull(ClassGroupEntity::getProductId)
+                .in(ClassGroupEntity::getProductId, activeGroupProductIds)
                 .in(query.getStudentId() != null, ClassGroupEntity::getId, matchedClassIdsByStudent)
                 .eq(StringUtils.hasText(query.getPackageStatus()), ClassGroupEntity::getStatus, query.getPackageStatus())
                 .and(StringUtils.hasText(query.getKeyword()), w -> w
@@ -350,6 +355,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         }
         return courseProductMapper.selectList(new LambdaQueryWrapper<CourseProductEntity>()
                         .eq(CourseProductEntity::getTeachingMode, "GROUP")
+                        .eq(CourseProductEntity::getStatus, "ACTIVE")
                         .and(w -> w.like(CourseProductEntity::getProductName, keyword)
                                 .or()
                                 .like(CourseProductEntity::getSubjectName, keyword)
@@ -357,6 +363,20 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                                 .like(CourseProductEntity::getProductCode, keyword)))
                 .stream()
                 .map(CourseProductEntity::getId)
+                .toList();
+    }
+
+    /**
+     * 读取当前可运营的班课产品 ID，供班课列表做实体关联过滤。
+     * class_group 是历史上可能残留的独立实体，不能仅凭 product_id 非空判断其仍可展示。
+     */
+    private List<Long> listActiveGroupProductIds() {
+        return courseProductMapper.selectList(new LambdaQueryWrapper<CourseProductEntity>()
+                        .eq(CourseProductEntity::getTeachingMode, "GROUP")
+                        .eq(CourseProductEntity::getStatus, "ACTIVE"))
+                .stream()
+                .map(CourseProductEntity::getId)
+                .filter(Objects::nonNull)
                 .toList();
     }
 

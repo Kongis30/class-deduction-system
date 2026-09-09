@@ -1,5 +1,5 @@
 <template>
-  <div class="data-summary-page" v-loading="loading">
+  <div class="data-summary-page" v-loading="loading" @click="closeStudentContextMenu">
     <div class="workbook-toolbar">
       <div class="workbook-toolbar__month">
         <span class="workbook-toolbar__label">Month</span>
@@ -194,7 +194,14 @@
                 >
                   {{ classGroup.className }}
                 </td>
-                <td class="workbook-column--studentName">{{ displayText(row.studentName) }}</td>
+                <td
+                  class="workbook-column--studentName workbook-student-cell"
+                  @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
+                >
+                  <span class="workbook-student-name">
+                    {{ displayText(row.studentName) }}
+                  </span>
+                </td>
                 <td>{{ displayText(row.school) }}</td>
                 <td class="workbook-cell--center">{{ displayText(row.grade) }}</td>
                 <td class="workbook-cell--center">{{ formatDate(row.signupDate) }}</td>
@@ -244,6 +251,34 @@
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <div
+      v-if="studentContextMenu.visible"
+      class="student-context-menu"
+      role="menu"
+      :style="{ left: `${studentContextMenu.x}px`, top: `${studentContextMenu.y}px` }"
+      @click.stop
+    >
+      <button type="button" role="menuitem" @click="viewStudentReceipt">
+        View receipt
+      </button>
+      <button
+        v-if="canPayFromDataSummary(studentContextMenu.row)"
+        type="button"
+        role="menuitem"
+        @click="openOrderAction('pay')"
+      >
+        Pay
+      </button>
+      <button
+        v-if="canRefundFromDataSummary(studentContextMenu.row)"
+        type="button"
+        role="menuitem"
+        @click="openOrderAction('refund')"
+      >
+        Refund
+      </button>
     </div>
 
     <div class="workbook-pager">
@@ -305,6 +340,7 @@ import { extractErrorMessage } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
+import { useRouter } from 'vue-router';
 
 type ColumnKey =
   | 'campus'
@@ -353,7 +389,7 @@ interface WorkbookClassGroup {
   key: string;
   className: string;
   firstRowIndex: number;
-  rows: DataSummaryRow[];
+  rows: DataSummaryDisplayRow[];
 }
 
 interface WorkbookCampusGroup {
@@ -378,6 +414,14 @@ interface ProductTab {
   label: string;
   global?: boolean;
   unassigned?: boolean;
+}
+
+type SaturdayRosterSeason = 'FALL' | 'SPRING';
+
+interface DataSummaryDisplayRow extends DataSummaryRow {
+  /** Data Summary 专用展示分组，不写回报名记录。 */
+  displayStudentClass?: string;
+  displaySourceKey?: string;
 }
 
 /** 全局工作表页签固定在最左，展示全部报名数据。 */
@@ -408,6 +452,7 @@ const columns: WorkbookColumn[] = [
 ];
 
 const authStore = useAuthStore();
+const router = useRouter();
 const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 
@@ -437,6 +482,18 @@ const dragState = reactive<{ fromId: string | null; overId: string | null }>({
   overId: null,
 });
 
+const studentContextMenu = reactive<{
+  visible: boolean;
+  x: number;
+  y: number;
+  row: DataSummaryDisplayRow | null;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  row: null,
+});
+
 const knownProductIds = computed(() => new Set(products.value.map((product) => String(product.id))));
 
 function isAssignedRow(row: DataSummaryRow) {
@@ -451,13 +508,18 @@ const productTabs = computed<ProductTab[]>(() =>
   })),
 );
 
+const activeProduct = computed(() =>
+  products.value.find((product) => String(product.id) === activeTabId.value),
+);
+
 const hasUnassignedRows = computed(() => rows.value.some((row) => !isAssignedRow(row)));
 
 const tabs = computed<ProductTab[]>(() => {
   const courseTabs = hasUnassignedRows.value
     ? [...productTabs.value, { id: UNASSIGNED_TAB_ID, label: 'Unassigned', unassigned: true }]
     : productTabs.value;
-  return [{ id: ALL_TAB_ID, label: 'All Data', global: true }, ...courseTabs];
+  // All Data 保留内部兼容逻辑，但不再作为用户可见页签；默认直接进入课程产品页签。
+  return courseTabs;
 });
 
 /** 无产品可用时（如产品接口失败且无未分配行）回退为全量展示，保证页面可用。 */
@@ -471,12 +533,26 @@ const productRows = computed(() => {
   return rows.value.filter((row) => String(row.courseProductId ?? '') === activeTabId.value);
 });
 
+const isSaturdayProductTab = computed(() => {
+  if (activeProduct.value?.courseType?.toUpperCase() === 'SATURDAY') {
+    return true;
+  }
+  return productRows.value.some((row) => row.courseType?.toUpperCase() === 'SATURDAY');
+});
+
+const displayProductRows = computed<DataSummaryDisplayRow[]>(() => {
+  if (!isSaturdayProductTab.value) {
+    return productRows.value;
+  }
+  return expandSaturdayRosterRows(productRows.value);
+});
+
 const selectOptions = computed<Record<ColumnKey, string[]>>(() => {
   return Object.fromEntries(columns.map((column) => {
     if (column.filterType !== 'select') {
       return [column.key, []];
     }
-    const values = productRows.value.map((row) => selectValue(row, column.key));
+    const values = displayProductRows.value.map((row) => selectValue(row, column.key));
     return [column.key, [...new Set(values)].sort(naturalCompare)];
   })) as Record<ColumnKey, string[]>;
 });
@@ -488,7 +564,7 @@ function monthKey(row: DataSummaryRow) {
 
 const availableMonths = computed(() => {
   const keys = new Set<string>();
-  productRows.value.forEach((row) => {
+  displayProductRows.value.forEach((row) => {
     const key = monthKey(row);
     if (key) {
       keys.add(key);
@@ -499,15 +575,15 @@ const availableMonths = computed(() => {
     .map((value) => ({ value, label: dayjs(`${value}-01`).format('MMMM YYYY') }));
 });
 
-const monthFilteredRows = computed(() => {
+const monthFilteredRows = computed<DataSummaryDisplayRow[]>(() => {
   if (selectedMonth.value === 'ALL') {
-    return productRows.value;
+    return displayProductRows.value;
   }
-  return productRows.value.filter((row) => monthKey(row) === selectedMonth.value);
+  return displayProductRows.value.filter((row) => monthKey(row) === selectedMonth.value);
 });
 
 const monthStats = computed(() => {
-  return monthFilteredRows.value.reduce(
+  return uniqueSourceRows(monthFilteredRows.value).reduce(
     (acc, row) => {
       acc.count += 1;
       acc.paid += Number(row.paidAmount ?? 0);
@@ -518,11 +594,11 @@ const monthStats = computed(() => {
   );
 });
 
-const filteredRows = computed(() => monthFilteredRows.value.filter((row) => {
+const filteredRows = computed<DataSummaryDisplayRow[]>(() => monthFilteredRows.value.filter((row) => {
   return columns.every((column) => matchesColumnFilter(row, column));
 }));
 
-const sortedRows = computed(() => {
+const sortedRows = computed<DataSummaryDisplayRow[]>(() => {
   const source = [...filteredRows.value];
   if (!sortState.key) {
     return source.sort(compareRowsByBusinessGroup);
@@ -552,7 +628,7 @@ const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
   const groups = new Map<string, WorkbookCampusGroup>();
   pagedRows.value.forEach((row) => {
     const campusName = displayText(row.campusName);
-    const className = displayText(row.studentClass);
+    const className = displayText(row.displayStudentClass ?? displayClassName(row));
     const campusKey = campusName;
     let campusGroup = groups.get(campusKey);
     if (!campusGroup) {
@@ -707,6 +783,69 @@ function selectTab(tabId: string) {
   restoreState(tabStates.get(tabId) ?? createDefaultState());
 }
 
+function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
+  const menuWidth = 150;
+  const menuHeight = 140;
+  studentContextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
+  studentContextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
+  studentContextMenu.row = row;
+  studentContextMenu.visible = true;
+}
+
+function closeStudentContextMenu() {
+  studentContextMenu.visible = false;
+  studentContextMenu.row = null;
+}
+
+function viewStudentReceipt() {
+  const orderId = studentContextMenu.row?.orderId;
+  closeStudentContextMenu();
+  if (!orderId) {
+    return;
+  }
+  router.push({ name: 'registration', query: { orderId: String(orderId) } });
+}
+
+function canPayFromDataSummary(row: DataSummaryDisplayRow | null) {
+  return Boolean(
+    row
+      && row.orderStatus === 'CONFIRMED'
+      && row.paymentStatus !== 'PAID'
+      // Data Summary 将待收余额按负数展示；订单页内部仍使用正数做支付计算。
+      && Number(row.balanceAmount ?? 0) < 0,
+  );
+}
+
+function canRefundFromDataSummary(row: DataSummaryDisplayRow | null) {
+  return Boolean(
+    row
+      && row.paymentStatus !== 'REFUNDED'
+      && Number(row.paidAmount ?? 0) > 0,
+  );
+}
+
+function openOrderAction(action: 'pay' | 'refund') {
+  const row = studentContextMenu.row;
+  closeStudentContextMenu();
+  if (!row?.orderId) {
+    return;
+  }
+  router.push({
+    name: 'enrollment-orders',
+    query: {
+      orderId: String(row.orderId),
+      action,
+      productName: row.courseProductName || undefined,
+    },
+  });
+}
+
+function handleStudentContextMenuKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    closeStudentContextMenu();
+  }
+}
+
 // ── Tab 拖拽排序（管理员专用，顺序为系统级共享配置） ──
 
 let orderSaveTimer: number | undefined;
@@ -796,9 +935,10 @@ async function persistTabOrder() {
 
 onBeforeUnmount(() => {
   window.clearTimeout(orderSaveTimer);
+  window.removeEventListener('keydown', handleStudentContextMenuKeydown);
 });
 
-function matchesColumnFilter(row: DataSummaryRow, column: WorkbookColumn) {
+function matchesColumnFilter(row: DataSummaryDisplayRow, column: WorkbookColumn) {
   const filter = columnFilters[column.key];
   if (column.filterType === 'text') {
     const keyword = filter.text.trim().toLowerCase();
@@ -816,7 +956,7 @@ function matchesColumnFilter(row: DataSummaryRow, column: WorkbookColumn) {
 }
 
 function matchesDateRange(
-  row: DataSummaryRow,
+  row: DataSummaryDisplayRow,
   key: ColumnKey,
   range: [string, string] | null,
 ) {
@@ -832,12 +972,12 @@ function matchesDateRange(
   return Boolean(value && value >= range[0] && value <= range[1]);
 }
 
-function columnValue(row: DataSummaryRow, key: ColumnKey): string | number | undefined {
+function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | number | undefined {
   switch (key) {
     case 'campus':
       return row.campusName;
     case 'studentClass':
-      return row.studentClass;
+      return row.displayStudentClass ?? displayClassName(row);
     case 'studentName':
       return row.studentName;
     case 'school':
@@ -871,7 +1011,7 @@ function columnValue(row: DataSummaryRow, key: ColumnKey): string | number | und
   }
 }
 
-function selectValue(row: DataSummaryRow, key: ColumnKey) {
+function selectValue(row: DataSummaryDisplayRow, key: ColumnKey) {
   return String(columnValue(row, key) ?? '—');
 }
 
@@ -919,9 +1059,9 @@ function sortValue(row: DataSummaryRow, key: ColumnKey) {
   return value;
 }
 
-function compareRowsByBusinessGroup(left: DataSummaryRow, right: DataSummaryRow) {
+function compareRowsByBusinessGroup(left: DataSummaryDisplayRow, right: DataSummaryDisplayRow) {
   return compareCampus(displayText(left.campusName), displayText(right.campusName))
-    || compareClassName(displayText(left.studentClass), displayText(right.studentClass))
+    || compareClassName(displayText(left.displayStudentClass ?? displayClassName(left)), displayText(right.displayStudentClass ?? displayClassName(right)))
     || naturalCompare(displayText(left.studentName), displayText(right.studentName))
     || compareClassName(displayText(left.grade), displayText(right.grade))
     || naturalCompare(left.signupDate ?? '', right.signupDate ?? '')
@@ -972,8 +1112,85 @@ function classSortRank(value: string) {
   return CLASS_SORT_ORDER.length + 1;
 }
 
-function rowKey(row: DataSummaryRow) {
-  return [row.orderId, row.orderItemId ?? row.classId ?? row.courseProductId ?? row.enrollmentNo].join('-');
+function rowKey(row: DataSummaryDisplayRow) {
+  return [
+    row.orderId,
+    row.orderItemId ?? row.classId ?? row.courseProductId ?? row.enrollmentNo,
+    row.displayStudentClass ?? displayClassName(row),
+  ].join('-');
+}
+
+function sourceRowKey(row: DataSummaryDisplayRow) {
+  return row.displaySourceKey ?? rowKey(row);
+}
+
+function uniqueSourceRows(sourceRows: DataSummaryDisplayRow[]) {
+  const rowsBySource = new Map<string, DataSummaryDisplayRow>();
+  sourceRows.forEach((row) => rowsBySource.set(sourceRowKey(row), row));
+  return [...rowsBySource.values()];
+}
+
+function expandSaturdayRosterRows(sourceRows: DataSummaryRow[]): DataSummaryDisplayRow[] {
+  return sourceRows.flatMap((row) => {
+    const baseClass = saturdayBaseClass(row);
+    const sourceKey = rowKey(row);
+    const season = saturdayRosterSeason(row);
+    if (season === 'FULL_YEAR') {
+      return (['FALL', 'SPRING'] as const).map((targetSeason) => ({
+        ...row,
+        displayStudentClass: `${baseClass} · ${targetSeason === 'FALL' ? 'Fall' : 'Spring'}`,
+        displaySourceKey: sourceKey,
+      }));
+    }
+    if (season === 'FALL' || season === 'SPRING') {
+      return [{
+        ...row,
+        displayStudentClass: `${baseClass} · ${season === 'FALL' ? 'Fall' : 'Spring'}`,
+        displaySourceKey: sourceKey,
+      }];
+    }
+    return [{
+      ...row,
+      displayStudentClass: baseClass,
+      displaySourceKey: sourceKey,
+    }];
+  });
+}
+
+function saturdayRosterSeason(row: DataSummaryRow): 'FULL_YEAR' | SaturdayRosterSeason | undefined {
+  const labels = [row.periodLabel, row.className, row.registerClass, row.detail]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (/全年|full[\s-]*year|annual/.test(labels)) {
+    return 'FULL_YEAR';
+  }
+  if (/秋季|fall|autumn/.test(labels)) {
+    return 'FALL';
+  }
+  if (/春季|spring/.test(labels)) {
+    return 'SPRING';
+  }
+  return undefined;
+}
+
+function saturdayBaseClass(row: DataSummaryRow) {
+  const className = displayClassName(row);
+  if (className && !/(全年班|秋季班|春季班|full[\s-]*year|fall|spring)/i.test(className)) {
+    return className;
+  }
+
+  const classSuffix = className.match(/(?:全年班|秋季班|春季班|full[\s-]*year|fall|spring)\s*[-·:]?\s*(.+)$/i)?.[1]?.trim();
+  if (classSuffix) {
+    return classSuffix;
+  }
+
+  return className || row.grade?.trim() || 'Class';
+}
+
+/** 汇总页 Class 只展示报名关联的 actual class，不读取学生档案中的旧 Class 字段。 */
+function displayClassName(row: DataSummaryRow) {
+  return row.className || '';
 }
 
 function displayText(value?: string) {
@@ -1120,7 +1337,10 @@ watch(tabs, () => {
   ensureActiveTab();
 });
 
-onMounted(loadPage);
+onMounted(() => {
+  void loadPage();
+  window.addEventListener('keydown', handleStudentContextMenuKeydown);
+});
 </script>
 
 <style scoped>
@@ -1380,6 +1600,41 @@ onMounted(loadPage);
 .workbook-cell--money {
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.workbook-student-cell {
+  cursor: context-menu;
+}
+
+.student-context-menu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid #d8e2ea;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 18%);
+}
+
+.student-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #1f2937;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.student-context-menu button:hover,
+.student-context-menu button:focus-visible {
+  background: #eef6ff;
+  color: #1d4ed8;
+  outline: none;
 }
 
 .workbook-cell--balance-due {

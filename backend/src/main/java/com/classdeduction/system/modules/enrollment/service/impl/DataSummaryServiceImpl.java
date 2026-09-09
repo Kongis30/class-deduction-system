@@ -452,12 +452,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 coursePackage == null ? null : coursePackage.getPackageName(),
                 product == null ? null : product.getProductName());
 
-        LocalDate periodStartDate = firstNonNull(coursePackage == null ? null : coursePackage.getStartDate(),
-                classEnrollment == null ? null : classEnrollment.getEnrollmentDate(),
-                order.getPeriodStartDate());
-        LocalDate periodEndDate = firstNonNull(coursePackage == null ? null : coursePackage.getEstimatedEndDate(),
-                classEnrollment == null ? null : classEnrollment.getExpiryDate(),
-                order.getPeriodEndDate());
+        // Data Summary 展示班课本身的教学周期；session 数量只负责课时扣减，不应缩短班课 Period。
+        LocalDate periodStartDate = resolvePeriodStartDate(classGroup, coursePackage, classEnrollment, order);
+        LocalDate periodEndDate = resolvePeriodEndDate(classGroup, coursePackage, classEnrollment, order);
         LocalDate expiryDate = periodEndDate;
         boolean overdue = positive(order.getBalanceAmount());
         boolean expiringSoon = expiryDate != null && !expiryDate.isBefore(today) && !expiryDate.isAfter(soonLimit);
@@ -526,6 +523,32 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 order.getOrderStatus(),
                 reviewIssueCodes
         );
+    }
+
+    /**
+     * 班课优先使用 class_group 的配置周期，兼容旧数据时再回退到学生报名和订单快照日期。
+     */
+    private LocalDate resolvePeriodStartDate(ClassGroupEntity classGroup,
+                                             CoursePackageEntity coursePackage,
+                                             ClassEnrollmentEntity classEnrollment,
+                                             EnrollmentOrderEntity order) {
+        return firstNonNull(classGroup == null ? null : classGroup.getStartDate(),
+                coursePackage == null ? null : coursePackage.getStartDate(),
+                classEnrollment == null ? null : classEnrollment.getEnrollmentDate(),
+                order.getPeriodStartDate());
+    }
+
+    /**
+     * 班课结束日期以 class_group 为准，避免按第 N 次 session 推算出提前结束的错误 Period。
+     */
+    private LocalDate resolvePeriodEndDate(ClassGroupEntity classGroup,
+                                           CoursePackageEntity coursePackage,
+                                           ClassEnrollmentEntity classEnrollment,
+                                           EnrollmentOrderEntity order) {
+        return firstNonNull(classGroup == null ? null : classGroup.getEndDate(),
+                coursePackage == null ? null : coursePackage.getEstimatedEndDate(),
+                classEnrollment == null ? null : classEnrollment.getExpiryDate(),
+                order.getPeriodEndDate());
     }
 
     private boolean hasDisplayableStudent(DataSummaryResponseVO.RowVO row) {

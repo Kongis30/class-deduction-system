@@ -80,9 +80,6 @@
               <header class="product-price-group__header">
                 <div>
                   <strong>{{ group.gradeLabel }} grade pricing</strong>
-                  <small v-if="selectedMode === 'GROUP' && groupDateWindowLabel(group.rows[0])">
-                    Class dates: {{ groupDateWindowLabel(group.rows[0]) }}
-                  </small>
                   <small v-if="selectedMode === 'GROUP'">Actual classes: {{ groupActualClassSummary(group) }}</small>
                   <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }} for this grade</small>
                 </div>
@@ -121,9 +118,6 @@
                           <strong>{{ paymentOptionName(row) }}</strong>
                         </div>
                         <span>{{ packageLengthLabel(row) || '-' }}</span>
-                        <small v-if="selectedMode === 'GROUP' && groupDateWindowLabel(row)">
-                          Class dates: {{ groupDateWindowLabel(row) }}
-                        </small>
                       </div>
                     </template>
                   </el-table-column>
@@ -212,9 +206,32 @@
                       <strong>Actual class schedules</strong>
                       <span>Registration options above are shared by this grade. Classroom and weekly times are set per actual class.</span>
                     </div>
-                    <el-button size="small" type="primary" plain @click="openActualClassInfoDialog(group)">
-                      Add class
-                    </el-button>
+                    <div class="actual-class-schedules__tools">
+                      <el-button size="small" type="primary" plain @click="openActualClassInfoDialog(group)">
+                        Add class
+                      </el-button>
+                      <el-dropdown
+                        v-if="groupActualClassRows(group).length"
+                        trigger="click"
+                        @command="(classId) => deleteActualClassById(group, classId)"
+                      >
+                        <el-button size="small" type="danger" plain>
+                          Delete class
+                          <el-icon><ArrowDown /></el-icon>
+                        </el-button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item
+                              v-for="actualClass in groupActualClassRows(group)"
+                              :key="`delete-${actualClass.id}`"
+                              :command="String(actualClass.id)"
+                            >
+                              Delete {{ actualClassDisplayLabel(actualClass) }}
+                            </el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
+                    </div>
                   </div>
                   <div v-if="groupActualClassRows(group).length" class="actual-class-grid">
                     <article
@@ -225,11 +242,20 @@
                       <div class="actual-class-card__main">
                         <strong>{{ actualClassDisplayLabel(actualClass) }}</strong>
                         <span>{{ actualClass.scheduleDesc || 'Schedule not set' }}</span>
+                        <small>Class period: {{ actualClassPeriodLabel(actualClass) }}</small>
                       </div>
                       <dl>
                         <div>
                           <dt>Teacher</dt>
-                          <dd>{{ actualClass.teacherName || 'Assign later' }}</dd>
+                          <el-tooltip
+                            :content="actualClassTeacherLabel(actualClass)"
+                            placement="top"
+                            :disabled="!actualClassTeacherNames(actualClass).length"
+                          >
+                            <dd class="actual-class-card__teacher">
+                              {{ actualClassTeacherLabel(actualClass) }}
+                            </dd>
+                          </el-tooltip>
                         </div>
                         <div>
                           <dt>Room</dt>
@@ -593,6 +619,26 @@
         <el-form-item label="Class name">
           <el-input v-model="actualClassInfoForm.className" maxlength="128" placeholder="e.g. G1" />
         </el-form-item>
+        <div class="form-grid form-grid--two">
+          <el-form-item label="Class start date">
+            <el-date-picker
+              v-model="actualClassInfoForm.startDate"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="Select start date"
+              style="width: 100%;"
+            />
+          </el-form-item>
+          <el-form-item label="Class end date">
+            <el-date-picker
+              v-model="actualClassInfoForm.endDate"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="Select end date"
+              style="width: 100%;"
+            />
+          </el-form-item>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="actualClassInfoDialogVisible = false">Cancel</el-button>
@@ -605,7 +651,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, InfoFilled } from '@element-plus/icons-vue';
+import { ArrowDown, ArrowLeft, InfoFilled } from '@element-plus/icons-vue';
 import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -626,7 +672,7 @@ import {
   type CourseCategoryItem,
   type CoursePriceOptionSavePayload,
 } from '@/api/base-data';
-import { createActualClass, fetchClassGroups, updateClassInfo, updateClassSchedule } from '@/api/schedule';
+import { createActualClass, deleteClassGroup, fetchClassGroups, updateClassInfo, updateClassSchedule } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import type { ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
@@ -662,6 +708,8 @@ interface ActualClassScheduleRow {
   teacherName?: string;
   classroomId?: EntityId;
   classroomName?: string;
+  startDate?: string;
+  endDate?: string;
   scheduleDesc?: string;
   scheduleSlots?: ClassGroupItem['scheduleSlots'];
 }
@@ -760,6 +808,8 @@ const actualClassInfoForm = reactive({
   productId: undefined as EntityId | undefined,
   gradeBand: '',
   className: '',
+  startDate: '' as string,
+  endDate: '' as string,
 });
 
 const query = reactive({
@@ -1528,6 +1578,8 @@ function openActualClassInfoDialog(group: ProductPriceGroup, actualClass?: Actua
   actualClassInfoForm.productId = productId;
   actualClassInfoForm.gradeBand = actualClass?.gradeBand || group.gradeLabel;
   actualClassInfoForm.className = actualClass?.className || actualClass?.actualClass || '';
+  actualClassInfoForm.startDate = actualClass?.startDate || '';
+  actualClassInfoForm.endDate = actualClass?.endDate || '';
   actualClassInfoDialogVisible.value = true;
 }
 
@@ -1541,6 +1593,12 @@ async function saveActualClassInfo() {
     ElMessage.warning('Class name is required.');
     return;
   }
+  if (actualClassInfoForm.startDate
+      && actualClassInfoForm.endDate
+      && actualClassInfoForm.endDate < actualClassInfoForm.startDate) {
+    ElMessage.warning('Class end date cannot be earlier than the start date.');
+    return;
+  }
   savingActualClassInfo.value = true;
   try {
     const payload = {
@@ -1548,6 +1606,8 @@ async function saveActualClassInfo() {
       gradeBand: actualClassInfoForm.gradeBand.trim(),
       actualClass: className,
       className,
+      startDate: actualClassInfoForm.startDate || undefined,
+      endDate: actualClassInfoForm.endDate || undefined,
     };
     if (editingActualClassInfo.value) {
       await updateClassInfo(editingActualClassInfo.value.id, payload);
@@ -1562,6 +1622,37 @@ async function saveActualClassInfo() {
     ElMessage.error(extractErrorMessage(err));
   } finally {
     savingActualClassInfo.value = false;
+  }
+}
+
+async function deleteActualClass(actualClass: ActualClassScheduleRow) {
+  const className = actualClass.className || actualClass.actualClass || 'this actual class';
+  try {
+    await ElMessageBox.confirm(
+      `Delete ${className}? Active students will be removed from this class, future lessons will be cancelled, and its weekly schedule will be cleared. Student profiles, orders, and completed lesson history will be kept.`,
+      'Delete actual class',
+      {
+        type: 'warning',
+        confirmButtonText: 'Delete class',
+        cancelButtonText: 'Cancel',
+        confirmButtonClass: 'el-button--danger',
+      },
+    );
+    await deleteClassGroup(actualClass.id);
+    ElMessage.success('Actual class deleted.');
+    await loadAll();
+  } catch (err: any) {
+    if (err === 'cancel' || err === 'close') {
+      return;
+    }
+    ElMessage.error(extractErrorMessage(err));
+  }
+}
+
+function deleteActualClassById(group: ProductPriceGroup, classId: string | number) {
+  const actualClass = groupActualClassRows(group).find(item => String(item.id) === String(classId));
+  if (actualClass) {
+    void deleteActualClass(actualClass);
   }
 }
 
@@ -1674,16 +1765,6 @@ function formatCourseType(value: string) {
   return value ? value.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (char: string) => char.toUpperCase()) : '-';
 }
 
-function formatGroupBilling(row: CoursePriceOptionItem) {
-  if (row.courseType === 'ONE_ON_ONE') {
-    return packageLengthLabel(row) || '-';
-  }
-  return packageLengthLabel(row)
-    || [row.groupStartDate, row.groupEndDate].filter(Boolean).join(' to ')
-    || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ')
-    || 'Package';
-}
-
 function groupPackageTitle(group: ProductPriceGroup) {
   if (selectedMode.value === 'ONE_ON_ONE') {
     return 'Hour packages';
@@ -1704,6 +1785,34 @@ function actualClassDisplayLabel(actualClass: ActualClassScheduleRow) {
   return className || classCode || actualClass.gradeBand || 'Class';
 }
 
+function actualClassPeriodLabel(actualClass: ActualClassScheduleRow) {
+  if (actualClass.startDate && actualClass.endDate) {
+    return `${actualClass.startDate} to ${actualClass.endDate}`;
+  }
+  return actualClass.startDate || actualClass.endDate || 'Not set';
+}
+
+// 卡片上的教师以排课 slot 为准，汇总同一 class 已分配的老师并去重；没有 slot 老师时兼容旧的 class 默认老师。
+function actualClassTeacherNames(actualClass: ActualClassScheduleRow): string[] {
+  const names = (actualClass.scheduleSlots ?? [])
+    .map(slot => slot.teacherId)
+    .filter((teacherId): teacherId is EntityId => teacherId !== undefined && teacherId !== null)
+    .map(teacherId => teachers.value.find(item => String(item.id) === String(teacherId))?.teacherName?.trim())
+    .filter((name): name is string => Boolean(name));
+
+  const uniqueSlotTeacherNames = [...new Set(names)];
+  if (uniqueSlotTeacherNames.length > 0) {
+    return uniqueSlotTeacherNames;
+  }
+
+  const defaultTeacherName = actualClass.teacherName?.trim();
+  return defaultTeacherName ? [defaultTeacherName] : [];
+}
+
+function actualClassTeacherLabel(actualClass: ActualClassScheduleRow): string {
+  return actualClassTeacherNames(actualClass).join(', ') || 'Assign later';
+}
+
 function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[] {
   const productId = group.rows[0]?.courseProductId;
   const byId = new Map<string, ActualClassScheduleRow>();
@@ -1722,6 +1831,8 @@ function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[
       teacherName: classGroup.teacherName,
       classroomId: classGroup.classroomId,
       classroomName: classGroup.classroomName,
+      startDate: classGroup.startDate,
+      endDate: classGroup.endDate,
       scheduleDesc: classGroup.scheduleDesc,
       scheduleSlots: classGroup.scheduleSlots,
     });
@@ -1771,26 +1882,6 @@ function packageDisplayName(row: CoursePriceOptionItem) {
 
 function paymentOptionName(row: CoursePriceOptionItem) {
   return row.periodLabel || packageLengthLabel(row) || 'Standard payment';
-}
-
-function isGroupRow(row: CoursePriceOptionItem) {
-  return modeForCourseType(row.courseType) === 'GROUP';
-}
-
-function billingSubtitle(row: CoursePriceOptionItem) {
-  if (isGroupRow(row)) {
-    const window = groupDateWindowLabel(row);
-    return window || '';
-  }
-  return row.notes || '';
-}
-
-function groupDateWindowLabel(row?: CoursePriceOptionItem) {
-  if (!row) {
-    return '';
-  }
-  return [row.groupStartDate, row.groupEndDate].filter(Boolean).join(' to ')
-    || [row.groupStartMonth, row.groupEndMonth].filter(Boolean).join(' to ');
 }
 
 function packageLengthLabel(row: CoursePriceOptionItem) {
@@ -2223,6 +2314,13 @@ function normalizeSlotAttendance(value?: string) {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.actual-class-schedules__tools {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .actual-class-schedules__head div {

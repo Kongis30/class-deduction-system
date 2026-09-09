@@ -77,6 +77,17 @@ export interface EnrollmentOrderCorrectionPayload {
   signupDate?: string;
   handledByName?: string;
   remark?: string;
+  pickupFeeCharged?: boolean;
+  pickupFeeAmount?: number;
+  dropoffFeeCharged?: boolean;
+  dropoffFeeAmount?: number;
+  extraFeeAmount?: number;
+  extraFees?: RegistrationFeeLinePayload[];
+  discountAmount?: number;
+  discounts?: RegistrationFeeLinePayload[];
+  items?: RegistrationCourseItemPayload[];
+  payments?: RegistrationPaymentPayload[];
+  receiptOptions?: RegistrationReceiptOptionsPayload;
 }
 
 export function correctEnrollmentOrder(id: string | number, data: EnrollmentOrderCorrectionPayload) {
@@ -125,6 +136,7 @@ export interface RegistrationStudentPayload {
 }
 
 export interface RegistrationCourseItemPayload {
+  orderItemId?: EntityId;
   lineNo?: number;
   registerClass?: string;
   courseType?: string;

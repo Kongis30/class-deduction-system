@@ -115,6 +115,8 @@ class CoursePackageServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonRecordEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleRuleEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CourseProductEntity.class);
     }
 
     @BeforeEach
@@ -225,6 +227,7 @@ class CoursePackageServiceImplTest {
         product.setId(201L);
         product.setProductName("Saturday Math");
         product.setTeachingMode("GROUP");
+        product.setStatus("ACTIVE");
         product.setBillingType("PER_SESSION");
         product.setTotalSessions(8);
 
@@ -248,6 +251,7 @@ class CoursePackageServiceImplTest {
         afternoonRecord.setIsDeleted(0);
 
         when(classGroupMapper.selectPage(any(), any())).thenReturn(page);
+        when(courseProductMapper.selectList(any())).thenReturn(List.of(product));
         when(courseProductMapper.selectBatchIds(any())).thenReturn(List.of(product));
         when(classEnrollmentMapper.countActiveByClassIds(anyList())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(morning, afternoon));
@@ -265,6 +269,21 @@ class CoursePackageServiceImplTest {
         verify(lessonRecordMapper).selectList(queryCaptor.capture());
         assertThat(queryCaptor.getValue().getSqlSegment()).contains("confirmStage", "is_deleted");
         assertThat(queryCaptor.getValue().getParamNameValuePairs()).containsValue("CONFIRMED");
+    }
+
+    @Test
+    void shouldHideClassWhenItsProductWasDeletedOrIsNoLongerActive() {
+        CoursePackagePageQuery query = new CoursePackagePageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+
+        when(courseProductMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        PageResponse<GroupClassPackageProgressVO> result = coursePackageService.pageGroupClassPackages(query);
+
+        assertThat(result.records()).isEmpty();
+        assertThat(result.total()).isZero();
+        verify(classGroupMapper, never()).selectPage(any(), any());
     }
 
     @Test

@@ -672,10 +672,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="transactionReceiptDialogVisible" :title="transactionReceiptTitle" width="820px">
-      <PaymentReceiptPreview v-if="transactionReceipt" :receipt="transactionReceipt" />
-    </el-dialog>
-
     <el-dialog
       v-model="deleteDialogVisible"
       width="520px"
@@ -787,8 +783,7 @@ import {
   refundEnrollmentOrder,
 } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
-import PaymentReceiptPreview from '@/components/receipt/PaymentReceiptPreview.vue';
-import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, ReceiptRecordItem, StudentAccountItem, StudentItem } from '@/types/domain';
+import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, StudentAccountItem, StudentItem } from '@/types/domain';
 
 const loading = ref(false);
 const submitting = ref(false);
@@ -871,8 +866,6 @@ const paymentDialogVisible = ref(false);
 const paymentSubmitting = ref(false);
 const paymentOrder = ref<EnrollmentOrderDetailItem | null>(null);
 const paymentRows = ref<PaymentDraft[]>([]);
-const transactionReceiptDialogVisible = ref(false);
-const transactionReceipt = ref<ReceiptRecordItem | null>(null);
 const refundDialogVisible = ref(false);
 const refunding = ref(false);
 const refundOrder = ref<EnrollmentOrderItem | null>(null);
@@ -905,10 +898,6 @@ const selectedStudentForDisplay = computed(() => studentDetail.value ?? selected
 const paymentBalance = computed(() => roundMoney(paymentOrder.value?.balanceAmount ?? 0));
 const paymentDraftTotal = computed(() => roundMoney(paymentRows.value.reduce((sum, row) => sum + numeric(row.amount), 0)));
 const paymentDraftRemaining = computed(() => roundMoney(paymentBalance.value - paymentDraftTotal.value));
-const transactionReceiptTitle = computed(() =>
-  transactionReceipt.value?.templateCode === 'REFUND_RECEIPT' ? 'Refund Receipt' : 'Payment Receipt'
-);
-
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
@@ -1295,7 +1284,12 @@ async function loadStudentOrderHistory(studentId: StudentItem['id']) {
 }
 
 function openReceipt(row: EnrollmentOrderItem) {
-  router.push({ name: 'registration', query: { orderId: row.id } });
+  openRegistrationReceipt(row.id);
+}
+
+// 支付或退款成功后复用 View Receipt 的注册页，显示和打印始终保持同一套收据实现。
+function openRegistrationReceipt(orderId: string | number) {
+  void router.push({ name: 'registration', query: { orderId: String(orderId) } });
 }
 
 function startNewRegistration() {
@@ -1382,7 +1376,7 @@ async function submitPayments() {
 
   paymentSubmitting.value = true;
   try {
-    const response = await createPaymentRecord({
+    await createPaymentRecord({
       enrollmentOrderId: paymentOrder.value.id,
       splits: rows.map((row) => ({
         paymentMethod: row.paymentMethod,
@@ -1398,8 +1392,7 @@ async function submitPayments() {
     paymentOrder.value = updatedOrder.data.data;
     await reloadCurrentStudentContext();
     paymentDialogVisible.value = false;
-    transactionReceipt.value = response.data.data;
-    transactionReceiptDialogVisible.value = true;
+    openRegistrationReceipt(updatedOrder.data.data.id);
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
   } finally {
@@ -1438,7 +1431,7 @@ async function submitRefund() {
 
   refunding.value = true;
   try {
-    const response = await refundEnrollmentOrder(refundOrder.value.id, {
+    await refundEnrollmentOrder(refundOrder.value.id, {
       refundAmount,
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName.trim(),
@@ -1446,9 +1439,9 @@ async function submitRefund() {
     });
     ElMessage.success('Refund completed.');
     refundDialogVisible.value = false;
-    transactionReceipt.value = response.data.data;
-    transactionReceiptDialogVisible.value = true;
+    const updatedOrder = await fetchEnrollmentOrder(refundOrder.value.id);
     await reloadCurrentStudentContext();
+    openRegistrationReceipt(updatedOrder.data.data.id);
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
   } finally {

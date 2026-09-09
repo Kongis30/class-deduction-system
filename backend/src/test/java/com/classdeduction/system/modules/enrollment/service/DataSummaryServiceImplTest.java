@@ -278,6 +278,8 @@ class DataSummaryServiceImplTest {
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(31L);
         classGroup.setClassName("G1-G5");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 12, 20));
 
         when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
@@ -289,8 +291,8 @@ class DataSummaryServiceImplTest {
 
         assertThat(response.rows()).singleElement()
                 .satisfies(row -> {
-                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 10));
-                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 11, 30));
+                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 20));
                 });
     }
 
@@ -345,6 +347,8 @@ class DataSummaryServiceImplTest {
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(31L);
         classGroup.setClassName("G1-G5");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 12, 20));
 
         when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
@@ -356,8 +360,8 @@ class DataSummaryServiceImplTest {
 
         assertThat(response.rows()).singleElement()
                 .satisfies(row -> {
-                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 10));
-                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 11, 30));
+                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 20));
                 });
     }
 

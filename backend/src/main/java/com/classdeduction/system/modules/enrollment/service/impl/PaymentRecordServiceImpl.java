@@ -20,6 +20,7 @@ import com.classdeduction.system.modules.enrollment.service.PaymentRecordService
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,7 +49,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
     private final JsonHelper jsonHelper;
 
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO;
-    private static final String PAYMENT_RECEIPT_TEMPLATE = "PAYMENT_RECEIPT";
+    private static final String DEFAULT_RECEIPT_TEMPLATE = "DEFAULT_RECEIPT";
 
     @Override
     public List<PaymentRecordVO> listByEnrollmentOrderId(Long enrollmentOrderId) {
@@ -136,54 +137,87 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
             paymentRecords.add(paymentRecord);
         }
 
-        // Payment records and receipts are immutable; only the derived order balance is updated.
+        // 支付流水保留为审计账本；报名收据只维护这一笔报名的累计支付状态，不再新增支付收据。
         updateEnrollmentOrderPayment(order, totalAmount);
-        return createPaymentReceipt(order, request, paymentRecords, totalAmount);
+        return syncRegistrationReceipt(order, request.getHandledByUserId());
     }
 
-    private ReceiptRecordVO createPaymentReceipt(EnrollmentOrderEntity order,
-                                                 PaymentRecordSaveRequest request,
-                                                 List<PaymentRecordEntity> paymentRecords,
-                                                 BigDecimal paymentAmount) {
-        LocalDateTime issuedAt = AppTime.nowLocalDateTime();
-        String receiptNo = BusinessNoGenerator.generateReceiptNo();
+    /**
+     * 将完整支付流水写回报名收据；收据编号和报名课程信息保持不变，付款列表及金额字段实时更新。
+     */
+    private ReceiptRecordVO syncRegistrationReceipt(EnrollmentOrderEntity order, Long issuedBy) {
+        ReceiptRecordEntity receipt = receiptRecordMapper.selectList(
+                        new LambdaQueryWrapper<ReceiptRecordEntity>()
+                                .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId())
+                                .eq(ReceiptRecordEntity::getTemplateCode, DEFAULT_RECEIPT_TEMPLATE)
+                                .orderByDesc(ReceiptRecordEntity::getIssuedAt))
+                .stream()
+                .findFirst()
+                .orElseGet(() -> createFallbackRegistrationReceipt(order, issuedBy));
 
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("receiptType", "PAYMENT");
-        payload.put("receiptNo", receiptNo);
+        Map<String, Object> payload = jsonHelper.fromJson(
+                receipt.getReceiptPayload(),
+                new TypeReference<LinkedHashMap<String, Object>>() {});
+        if (payload == null) {
+            payload = new LinkedHashMap<>();
+        }
+        payload.put("receiptType", "REGISTRATION");
+        payload.put("receiptNo", receipt.getReceiptNo());
         payload.put("enrollmentOrderId", order.getId());
         payload.put("enrollmentNo", order.getEnrollmentNo());
         payload.put("studentId", order.getStudentId());
-        payload.put("studentName", order.getStudentNameSnapshot());
-        payload.put("currencyCode", order.getCurrencyCode());
-        payload.put("issuedAt", issuedAt);
-        payload.put("paymentAmount", paymentAmount);
+        payload.putIfAbsent("studentName", order.getStudentNameSnapshot());
+        payload.putIfAbsent("currencyCode", order.getCurrencyCode());
         payload.put("amountDue", order.getAmountDue());
         payload.put("receivedAmount", order.getReceivedAmount());
+        payload.put("paidAmount", order.getReceivedAmount());
         payload.put("balanceAmount", order.getBalanceAmount());
         payload.put("paymentStatus", order.getPaymentStatus());
-        payload.put("payments", paymentRecords.stream().map(this::toReceiptPaymentPayload).toList());
-
-        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
-        receipt.setReceiptNo(receiptNo);
-        receipt.setEnrollmentOrderId(order.getId());
-        receipt.setStudentId(order.getStudentId());
-        receipt.setTemplateCode(PAYMENT_RECEIPT_TEMPLATE);
+        payload.put("payments", listPaymentLedger(order.getId()));
         receipt.setReceiptPayload(jsonHelper.toJson(payload));
-        receipt.setIssuedAt(issuedAt);
-        receipt.setIssuedBy(request.getHandledByUserId());
-        receiptRecordMapper.insert(receipt);
+        receiptRecordMapper.updateById(receipt);
 
         return ReceiptRecordVO.builder()
                 .id(receipt.getId())
-                .receiptNo(receiptNo)
+                .receiptNo(receipt.getReceiptNo())
                 .enrollmentOrderId(order.getId())
                 .studentId(order.getStudentId())
                 .studentName(order.getStudentNameSnapshot())
-                .templateCode(PAYMENT_RECEIPT_TEMPLATE)
+                .templateCode(DEFAULT_RECEIPT_TEMPLATE)
                 .receiptPayload(receipt.getReceiptPayload())
-                .issuedAt(issuedAt)
+                .issuedAt(receipt.getIssuedAt())
                 .build();
+    }
+
+    private ReceiptRecordEntity createFallbackRegistrationReceipt(EnrollmentOrderEntity order, Long issuedBy) {
+        LocalDateTime issuedAt = AppTime.nowLocalDateTime();
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setReceiptNo(BusinessNoGenerator.generateReceiptNo());
+        receipt.setEnrollmentOrderId(order.getId());
+        receipt.setStudentId(order.getStudentId());
+        receipt.setTemplateCode(DEFAULT_RECEIPT_TEMPLATE);
+        receipt.setIssuedAt(issuedAt);
+        receipt.setIssuedBy(issuedBy);
+        receipt.setReceiptPayload(jsonHelper.toJson(new LinkedHashMap<>()));
+        receiptRecordMapper.insert(receipt);
+        return receipt;
+    }
+
+    private List<Map<String, Object>> listPaymentLedger(Long orderId) {
+        List<PaymentRecordEntity> records = paymentRecordMapper.selectList(
+                new LambdaQueryWrapper<PaymentRecordEntity>()
+                        .eq(PaymentRecordEntity::getEnrollmentOrderId, orderId)
+                        .orderByAsc(PaymentRecordEntity::getPaidAt)
+                        .orderByAsc(PaymentRecordEntity::getId));
+        if (records == null) {
+            return Collections.emptyList();
+        }
+        return records.stream()
+                .filter(record -> record.getAmount() != null
+                        && record.getAmount().compareTo(ZERO_AMOUNT) != 0
+                        && !"VOIDED".equals(record.getPaymentStatus()))
+                .map(this::toReceiptPaymentPayload)
+                .toList();
     }
 
     private Map<String, Object> toReceiptPaymentPayload(PaymentRecordEntity payment) {
@@ -191,6 +225,8 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         payload.put("paymentId", payment.getId());
         payload.put("paymentNo", payment.getPaymentNo());
         payload.put("paymentMethod", payment.getPaymentMethod());
+        payload.put("paymentType", payment.getPaymentType());
+        payload.put("paymentStatus", payment.getPaymentStatus());
         payload.put("amount", payment.getAmount());
         payload.put("paidAt", payment.getPaidAt());
         payload.put("handledByName", payment.getHandledByName());

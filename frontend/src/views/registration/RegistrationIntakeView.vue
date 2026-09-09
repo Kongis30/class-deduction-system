@@ -1,7 +1,7 @@
 <template>
   <div class="registration-page">
     <el-alert
-      v-if="!isReadOnly && validationErrors.length"
+      v-if="receiptEditingEnabled && validationErrors.length"
       type="error"
       :closable="false"
       show-icon
@@ -16,8 +16,8 @@
     <section class="registration-desk no-print">
       <div>
         <strong>{{ isReadOnly ? 'Saved receipt' : 'Registration desk' }}</strong>
-        <p>{{ isReadOnly
-          ? 'This is the saved receipt. It is read-only and prints with the same layout.'
+        <p>{{ isReadOnly && !editingCorrection
+          ? 'This is the saved receipt. Click Edit Receipt to correct all fields and keep the original registration.'
           : 'Fill the familiar paper form, save the record, then print the receipt when ready.' }}</p>
       </div>
       <div class="registration-desk__actions">
@@ -58,7 +58,7 @@
       </article>
     </section>
 
-    <section class="paper-form">
+    <section class="paper-form" :class="{ 'paper-form--readonly': isReadOnly && !editingCorrection }">
       <header class="form-header">
         <div class="form-title-block">
           <h1>Registration &amp; Receipt</h1>
@@ -164,7 +164,7 @@
         <strong class="paper-payment-summary paper-payment-summary--amount">{{ formatMoney(paidAmount) }}</strong>
       </section>
 
-      <section v-if="isReadOnly && payments.length > 0" class="payment-history">
+      <section v-if="isReadOnly && !editingCorrection && payments.length > 0" class="payment-history">
         <div v-for="payment in payments" :key="payment.rowKey">
           <span>{{ formatDateValue(payment.paidAt) }}</span>
           <strong>{{ payment.paymentMethod || 'Payment' }}</strong>
@@ -212,7 +212,7 @@
           <tbody>
             <tr v-for="(line, index) in courseLines" :key="line.rowKey" class="course-entry-row">
               <td>
-                <div v-if="isReadOnly" class="receipt-course-display">
+                <div v-if="isReadOnly && !editingCorrection" class="receipt-course-display">
                   <strong>{{ printCourseProductLabel(line) }}</strong>
                 </div>
                 <div v-else>
@@ -222,7 +222,7 @@
                       class="table-select table-select--primary"
                       popper-class="course-product-picker"
                       :placeholder="productSelectPlaceholder(line)"
-                      :disabled="isReadOnly || productOptionsForLine(line).length === 0"
+                      :disabled="!receiptEditingEnabled || productOptionsForLine(line).length === 0"
                       no-data-text="No linked courses"
                       no-match-text="No matching course"
                       filterable
@@ -248,7 +248,7 @@
                 </div>
               </td>
               <td>
-                <div v-if="isReadOnly" class="receipt-course-detail">
+                <div v-if="isReadOnly && !editingCorrection" class="receipt-course-detail">
                   <div>
                     <span>Grade</span>
                     <strong>{{ line.gradeBand || '—' }}</strong>
@@ -276,7 +276,7 @@
                         v-model="line.gradeBand"
                         class="table-select"
                         placeholder="Select grade"
-                        :disabled="isReadOnly || !line.courseProductId"
+                        :disabled="!receiptEditingEnabled || !line.courseProductId"
                         no-data-text="No grade options"
                         clearable
                         @change="() => handleGradeChange(line)"
@@ -291,7 +291,7 @@
                         v-model="line.coursePriceOptionId"
                         class="table-select option"
                         :placeholder="detailSelectPlaceholder(line)"
-                        :disabled="isReadOnly || !line.courseProductId || !line.gradeBand || optionChoicesForLine(line).length === 0"
+                        :disabled="!receiptEditingEnabled || !line.courseProductId || !line.gradeBand || optionChoicesForLine(line).length === 0"
                         no-data-text="No detail options"
                         no-match-text="No matching detail"
                         filterable
@@ -322,7 +322,7 @@
                         :step="0.5"
                         :precision="1"
                         :controls="true"
-                        :disabled="isReadOnly"
+                        :disabled="!receiptEditingEnabled"
                         @change="() => handleRegistrationDurationChange(line)"
                       />
                       <div v-else-if="line.packageUnit === 'MONTH'" class="class-schedule-summary">
@@ -343,7 +343,7 @@
                         :step="0.5"
                         :precision="1"
                         :controls="true"
-                        :disabled="isReadOnly || !line.coursePriceOptionId"
+                        :disabled="!receiptEditingEnabled || !line.coursePriceOptionId"
                         @change="() => handleRegistrationDurationChange(line)"
                       />
                     </label>
@@ -354,7 +354,7 @@
                         type="date"
                         value-format="YYYY-MM-DD"
                         :placeholder="classStartDatePlaceholder(line)"
-                        :disabled="isReadOnly"
+                        :disabled="!receiptEditingEnabled"
                         class="line-date"
                         @change="() => handleRegistrationDurationChange(line)"
                       />
@@ -369,7 +369,7 @@
                         :step="0.5"
                         :precision="1"
                         :controls="true"
-                        :disabled="isReadOnly || !line.coursePriceOptionId"
+                        :disabled="!receiptEditingEnabled || !line.coursePriceOptionId"
                       />
                     </label>
                     <label v-if="!isOneOnOneLine(line) && attendanceOptionsForLine(line).length > 0" class="course-control">
@@ -378,7 +378,7 @@
                         v-model="line.attendanceOption"
                         class="table-select"
                         placeholder="Select attendance"
-                        :disabled="isReadOnly"
+                        :disabled="!receiptEditingEnabled"
                         @change="() => handleAttendanceChange(line)"
                       >
                         <el-option
@@ -397,7 +397,7 @@
                           v-model="line.classId"
                           class="table-select option"
                           :placeholder="classSelectPlaceholder(line)"
-                          :disabled="isReadOnly || !line.coursePriceOptionId || classOptionsForLine(line).length === 0"
+                        :disabled="!receiptEditingEnabled || !line.coursePriceOptionId || classOptionsForLine(line).length === 0"
                           filterable
                           @change="() => handleClassChange(line)"
                         >
@@ -415,7 +415,7 @@
                     <p v-if="isOneOnOneLine(line)" class="one-on-one-scheduling-hint">
                       After saving, open the schedule calendar and assign each time slot its teacher, lesson name, and allocated hours.
                     </p>
-                    <div v-if="!isReadOnly && line.manualPriceOverride" class="manual-price-line">
+                    <div v-if="receiptEditingEnabled && line.manualPriceOverride" class="manual-price-line">
                       <el-tag size="small" type="warning">Manual price</el-tag>
                       <el-input
                         v-model="line.remark"
@@ -439,12 +439,12 @@
                 </div>
               </td>
               <td class="price-cell">
-                <strong v-if="isReadOnly" class="receipt-course-price">{{ formatMoney(line.priceAmount) }}</strong>
+                <strong v-if="!receiptEditingEnabled" class="receipt-course-price">{{ formatMoney(line.priceAmount) }}</strong>
                 <template v-else>
                   <el-input-number v-model="line.priceAmount" :min="0" :precision="2" :controls="false" class="table-price" @change="() => handlePriceChange(line)" />
                   <strong class="print-only print-course-price">{{ formatMoney(line.priceAmount) }}</strong>
                 </template>
-                <button v-if="!isReadOnly && !isRenewalMode && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
+                <button v-if="receiptEditingEnabled && !isRenewalMode && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
               </td>
             </tr>
           </tbody>
@@ -455,7 +455,7 @@
         <el-button v-if="!isRenewalMode" class="action-secondary" @click="addCourseLine">Add course row</el-button>
       </section>
 
-      <section v-if="!isReadOnly" class="intake-adjustment-panel no-print">
+      <section v-if="receiptEditingEnabled" class="intake-adjustment-panel no-print">
         <div class="adjustment-column adjustment-column--fees">
           <div class="adjustment-heading">
             <strong>Service & other fees</strong>
@@ -633,8 +633,8 @@
         <em v-if="hasOutstandingBalance">Balance due. Record the remaining payment from student history later.</em>
         <em v-else-if="isPaidInFull">Paid in full.</em>
       </div>
-      <el-input v-if="!isReadOnly" v-model="form.handledByName" placeholder="Handled by" class="handled-by" />
-      <el-input v-if="!isReadOnly" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
+      <el-input v-if="receiptEditingEnabled" v-model="form.handledByName" placeholder="Handled by" class="handled-by" />
+      <el-input v-if="receiptEditingEnabled" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
       <el-button v-if="!isReadOnly" class="action-primary" type="primary" size="large" :loading="submitting" @click="submitForm">Save</el-button>
       <el-button class="action-print" size="large" @click="printForm">Print</el-button>
     </section>
@@ -649,8 +649,8 @@ import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { fetchActiveCoursePriceOptions, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
-import { extractErrorMessage } from '@/api/http';
-import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
+import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
+import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
 import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
@@ -672,6 +672,7 @@ interface CampusChoice {
 
 interface RegistrationCourseLine {
   rowKey: string;
+  orderItemId?: EntityId;
   courseType: string;
   gradeBand: string;
   periodKey: string;
@@ -846,6 +847,8 @@ const editingCorrection = ref(false);
 const savingCorrection = ref(false);
 // Contact fields are editable when creating a new registration or when correcting a saved one.
 const contactLocked = computed(() => isReadOnly.value && !editingCorrection.value);
+// 收据更正态复用报名表控件，但保存时更新原订单，不创建新的报名单。
+const receiptEditingEnabled = computed(() => !isReadOnly.value || editingCorrection.value);
 const isAdmin = computed(() => isAdminUser(currentUser));
 const currentCampusTaxId = computed(() => receiptTaxId.value || selectedCampus.value?.taxId || '');
 
@@ -1106,6 +1109,7 @@ async function saveCorrection() {
       signupDate: form.signupDate || undefined,
       handledByName: form.handledByName || undefined,
       remark: form.remark || undefined,
+      ...buildCorrectionPayload(),
     });
     ElMessage.success('Receipt details updated.');
     editingCorrection.value = false;
@@ -1115,6 +1119,23 @@ async function saveCorrection() {
   } finally {
     savingCorrection.value = false;
   }
+}
+
+function buildCorrectionPayload(): EnrollmentOrderCorrectionPayload {
+  const payload = buildPayload();
+  return {
+    pickupFeeCharged: payload.pickupFeeCharged,
+    pickupFeeAmount: payload.pickupFeeAmount,
+    dropoffFeeCharged: payload.dropoffFeeCharged,
+    dropoffFeeAmount: payload.dropoffFeeAmount,
+    extraFeeAmount: payload.extraFeeAmount,
+    extraFees: payload.extraFees,
+    discountAmount: payload.discountAmount,
+    discounts: payload.discounts,
+    items: payload.items,
+    payments: payload.payments,
+    receiptOptions: payload.receiptOptions,
+  };
 }
 
 async function printHistoricalFormIfRequested(orderId: string) {
@@ -1289,6 +1310,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   const payloadItems = getArray(receiptPayload, 'items');
   courseLines.value = (payloadItems.length > 0 ? payloadItems : order.items)
     .map((item, index) => toHistoricalCourseLine(item, index, findOrderItemFallback(item, order.items, index)));
+  normalizeHistoricalLineReferences();
   // 历史报名单（收据无 items、订单无明细行时）用订单课包兜底还原课程行，
   // 课程名取课包快照，避免依赖已删除的 course_product 联表。
   if (courseLines.value.length === 0) {
@@ -1319,10 +1341,12 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
     discounts.value = [createDiscountLine('Custom discount', firstPositiveNumber(getNumber(receiptPayload, 'discountAmount'), order.discountAmount))];
   }
 
-  const savedPayments = getHistoricalPayments(receiptPayload);
-  payments.value = registrationReceipt
-    ? savedPayments
-    : order.payments.map((payment) => ({
+  // 订单支付流水是报名收据的实时账本；收据 payload 只保留报名信息，不能覆盖后续 Pay 记录。
+  const livePayments = (order.payments ?? [])
+    .filter((payment) => numeric(payment.amount) !== 0 && payment.paymentStatus !== 'VOIDED')
+    .slice()
+    .sort((left, right) => String(left.paidAt ?? '').localeCompare(String(right.paidAt ?? '')))
+    .map((payment) => ({
       rowKey: `payment-${payment.id}`,
       paymentMethod: payment.paymentMethod,
       amount: numeric(payment.amount),
@@ -1330,6 +1354,8 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
       handledByName: payment.handledByName,
       remark: payment.remark,
     }));
+  const savedPayments = getHistoricalPayments(receiptPayload);
+  payments.value = livePayments.length > 0 ? livePayments : savedPayments;
   if (payments.value.length === 0) {
     payments.value = [createPaymentLine()];
   }
@@ -1341,6 +1367,72 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   reusableStudent.value = null;
 }
 
+/**
+ * 历史收据里的 ID 来自 JSON，通常会被解析成字符串；Element Plus 下拉选项使用
+ * 基础数据里的 number/EntityId。统一回填成当前选项的原始 ID，避免下拉框把 ID 当作显示文本。
+ */
+function normalizeHistoricalLineReferences() {
+  courseLines.value.forEach((line) => {
+    let product = courseProducts.value.find((item) => String(item.id) === String(line.courseProductId));
+    if (!product && line.courseProductId) {
+      product = {
+        id: line.courseProductId,
+        productCode: `HISTORICAL-${line.courseProductId}`,
+        productName: line.courseProductName || line.detail || 'Historical course',
+        courseType: line.courseType,
+        registerClass: line.registerClass,
+        teachingMode: line.courseType === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'GROUP',
+        status: 'ACTIVE',
+        sortOrder: 999,
+      };
+      courseProducts.value = [...courseProducts.value, product];
+    }
+    if (product) {
+      line.courseProductId = product.id;
+      line.courseProductName = product.productName;
+    }
+    let option = priceOptions.value.find((item) => String(item.id) === String(line.coursePriceOptionId));
+    if (!option && line.coursePriceOptionId) {
+      // 已停用/历史价格选项不在 active 列表中时，保留一条只读历史选项，避免下拉框显示原始 ID。
+      option = {
+        id: line.coursePriceOptionId,
+        optionCode: `HISTORICAL-${line.coursePriceOptionId}`,
+        courseType: line.courseType || 'GROUP',
+        registerClass: line.registerClass || '',
+        gradeBand: line.gradeBand,
+        periodLabel: line.periodLabel,
+        durationLabel: line.durationLabel || (line.packageQuantity ? `${line.packageQuantity} ${line.packageUnit ?? ''}`.trim() : ''),
+        timeSlotLabel: line.timeSlotLabel,
+        detailText: line.detail || 'Historical package',
+        packageUnit: line.packageUnit,
+        packageQuantity: line.packageQuantity,
+        totalPrice: line.priceAmount,
+        priceAmount: line.priceAmount,
+        currencyCode: 'USD',
+        courseProductId: line.courseProductId,
+        actualClasses: line.classId ? [{
+          id: line.classId,
+          className: line.className || line.classId.toString(),
+          actualClass: line.gradeBand,
+        }] : [],
+        sortOrder: 999,
+        status: 'ACTIVE',
+      } as CoursePriceOptionItem;
+      priceOptions.value = [...priceOptions.value, option];
+    }
+    if (option) {
+      line.coursePriceOptionId = option.id;
+      line.courseProductId = product?.id ?? option.courseProductId ?? line.courseProductId;
+      line.courseProductName = product?.productName ?? line.courseProductName;
+    }
+    const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
+    if (classGroup) {
+      line.classId = classGroup.id;
+      line.className = classGroup.className;
+    }
+  });
+}
+
 function toHistoricalCourseLine(
   item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number],
   index: number,
@@ -1349,15 +1441,18 @@ function toHistoricalCourseLine(
   const periodLabel = getString(item, 'periodLabel') || getString(fallback, 'periodLabel');
   return {
     rowKey: `history-course-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || index}`,
+    // 订单明细是业务主数据；收据 payload 是历史快照，内部 JSON 的 Snowflake ID
+    // 可能已经被原生 JSON.parse 转成不精确的 number，因此 ID 优先取订单明细。
+    orderItemId: getString(fallback, 'id') || getString(item, 'orderItemId') || getString(item, 'id') || undefined,
     courseType: getString(item, 'courseType') || getString(fallback, 'courseType'),
     gradeBand: getString(item, 'gradeBand') || getString(fallback, 'gradeBand'),
     periodKey: `${periodLabel || 'General'}::Standard`,
-    coursePriceOptionId: (getString(item, 'coursePriceOptionId') || getString(fallback, 'coursePriceOptionId')) as EntityId | '',
-    courseProductId: getString(item, 'courseProductId') || getString(fallback, 'courseProductId') || undefined,
+    coursePriceOptionId: (getString(fallback, 'coursePriceOptionId') || getString(item, 'coursePriceOptionId')) as EntityId | '',
+    courseProductId: getString(fallback, 'courseProductId') || getString(item, 'courseProductId') || undefined,
     courseProductName: getString(item, 'courseProductName') || undefined,
-    classId: getString(item, 'classId') || getString(fallback, 'classId') || undefined,
+    classId: getString(fallback, 'classId') || getString(item, 'classId') || undefined,
     className: getString(item, 'className') || undefined,
-    teacherId: getString(item, 'teacherId') || getString(fallback, 'teacherId') || undefined,
+    teacherId: getString(fallback, 'teacherId') || getString(item, 'teacherId') || undefined,
     registerClass: getString(item, 'registerClass') || getString(fallback, 'registerClass'),
     detail: getString(item, 'detail') || getString(fallback, 'detail'),
     periodLabel,
@@ -2011,7 +2106,6 @@ function durationOptionLabel(option: CoursePriceOptionItem) {
     return [
       option.periodLabel,
       packageLengthLabel(option),
-      groupDateRangeLabel(option),
     ].filter(Boolean).join(' · ') || 'Class package';
   }
   return [
@@ -2019,11 +2113,6 @@ function durationOptionLabel(option: CoursePriceOptionItem) {
     option.periodLabel,
     option.timeSlotLabel,
   ].filter(Boolean).join(' · ') || option.detailText;
-}
-
-function groupDateRangeLabel(option: CoursePriceOptionItem) {
-  if (!option.groupStartDate || !option.groupEndDate) return '';
-  return `${option.groupStartDate} to ${option.groupEndDate}`;
 }
 
 function packageLengthLabel(option: CoursePriceOptionItem) {
@@ -2119,18 +2208,7 @@ async function submitForm() {
     const res = await submitRegistrationIntake(payload);
     const saved = res.data.data;
     notifyRegistrationSaved(saved);
-    const scheduleArtifact = saved.courseArtifacts.find((artifact) => artifact.packageId);
-    if (scheduleArtifact?.packageId) {
-      await router.replace({
-        name: 'recurring-schedule',
-        query: {
-          studentId: saved.studentId,
-          packageId: scheduleArtifact.packageId,
-          startSchedule: '1',
-        },
-      });
-      return;
-    }
+    // 报名保存后先回到只读收据页，方便立即打印；排课由后续的学生历史/课包流程单独进入。
     await router.replace({
       name: 'registration',
       query: { orderId: saved.enrollmentOrderId, saved: '1' },
@@ -2159,7 +2237,7 @@ function notifyRegistrationSaved(saved: RegistrationIntakeResult) {
   ElNotification({
     title: 'Registration completed',
     message: needsScheduling
-      ? `${accountMessage} Continue by choosing weekly lesson times on the calendar.`
+      ? `${accountMessage} The registration is saved. Schedule the weekly lesson times later from the student history or course package.`
       : accountMessage,
     type: 'success',
     position: 'top-right',
@@ -2345,6 +2423,7 @@ function buildPayload(): RegistrationIntakePayload {
     handledByName: form.handledByName.trim(),
     currencyCode: 'USD',
     items: courseLines.value.map((line, index) => ({
+      orderItemId: line.orderItemId,
       lineNo: index + 1,
       registerClass: line.registerClass,
       courseType: line.courseType,
@@ -2627,7 +2706,7 @@ function parsePayload(value: unknown): Record<string, unknown> | null {
     return null;
   }
   try {
-    const parsed = JSON.parse(value);
+    const parsed = JSON.parse(preprocessLargeIds(value));
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
@@ -2729,6 +2808,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.16);
   box-sizing: border-box;
   font-family: "Arial", "Helvetica Neue", sans-serif;
+}
+
+.paper-form--readonly,
+.paper-form--readonly * {
+  color: #000 !important;
+}
+
+.paper-form--readonly {
+  --el-disabled-text-color: #000;
+  --el-text-color-placeholder: #000;
+  --el-input-text-color: #000;
+  --el-input-placeholder-color: #000;
+}
+
+:deep(.paper-form--readonly input),
+:deep(.paper-form--readonly textarea),
+:deep(.paper-form--readonly .el-input__inner),
+:deep(.paper-form--readonly .el-select__selected-item),
+:deep(.paper-form--readonly .el-select__placeholder),
+:deep(.paper-form--readonly .el-checkbox__label) {
+  color: #000 !important;
+  -webkit-text-fill-color: #000 !important;
+  opacity: 1 !important;
 }
 
 .paper-form *,
@@ -3891,6 +3993,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     print-color-adjust: exact;
   }
 
+  .paper-form,
+  .paper-form * {
+    color: #000 !important;
+  }
+
   .paper-form {
     width: 100%;
     min-height: auto;
@@ -3994,6 +4101,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     min-height: 22px;
     padding: 0 3px;
     border-bottom-width: 1px;
+  }
+
+  :deep(.line-date .el-input__prefix) {
+    display: none !important;
   }
 
   .paper-payment-summary {

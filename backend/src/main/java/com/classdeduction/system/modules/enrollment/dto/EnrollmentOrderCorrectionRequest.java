@@ -3,15 +3,16 @@ package com.classdeduction.system.modules.enrollment.dto;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Enrollment order correction request.
  *
- * <p>Allows staff to fix registration/receipt details after submission (student
- * name, contact phones, campus, pickup/drop-off info, sign-up date, handler and remark).
- * Financial amounts, courses, and payments are intentionally excluded and can only
- * be changed through cancel/refund flows.</p>
+ * <p>Allows staff to correct the complete saved registration receipt. The service applies
+ * the change to the original order and its downstream enrollment artifacts in one
+ * transaction; it does not create a second registration.</p>
  */
 @Data
 @Schema(description = "Enrollment order correction request")
@@ -70,4 +71,37 @@ public class EnrollmentOrderCorrectionRequest {
 
     @Schema(description = "Registration remark")
     private String remark;
+
+    @Schema(description = "Whether pickup fee is charged")
+    private Boolean pickupFeeCharged;
+
+    @Schema(description = "Pickup fee amount")
+    private BigDecimal pickupFeeAmount;
+
+    @Schema(description = "Whether drop-off fee is charged")
+    private Boolean dropoffFeeCharged;
+
+    @Schema(description = "Drop-off fee amount")
+    private BigDecimal dropoffFeeAmount;
+
+    @Schema(description = "Other fee total")
+    private BigDecimal extraFeeAmount;
+
+    @Schema(description = "Other fee detail lines")
+    private List<RegistrationIntakeRequest.FeeLinePayload> extraFees;
+
+    @Schema(description = "Discount total")
+    private BigDecimal discountAmount;
+
+    @Schema(description = "Discount detail lines")
+    private List<RegistrationIntakeRequest.FeeLinePayload> discounts;
+
+    @Schema(description = "Editable course lines from the original receipt")
+    private List<RegistrationIntakeRequest.CourseItemPayload> items;
+
+    @Schema(description = "Editable payment lines. Existing payment rows are updated in place.")
+    private List<RegistrationIntakeRequest.PaymentPayload> payments;
+
+    @Schema(description = "Receipt display options")
+    private RegistrationIntakeRequest.ReceiptOptionsPayload receiptOptions;
 }
