@@ -171,8 +171,12 @@
               <span>Balance <strong>{{ formatMoney(participant.balanceAmount) }}</strong></span>
             </div>
             <div v-if="participant.payments.length" class="private-receipt-student-summary__payments">
-              <span v-for="payment in participant.payments" :key="payment.rowKey">
-                {{ displayPaymentMethod(payment.paymentMethod) }} · {{ formatMoney(payment.amount) }} · {{ formatDateValue(payment.paidAt) }}
+              <span
+                v-for="payment in participant.payments"
+                :key="payment.rowKey"
+                :class="{ 'refund-line': payment.amount < 0 || payment.paymentType === 'REFUND' }"
+              >
+                {{ [paymentRefundTag(payment), displayPaymentMethod(payment.paymentMethod)].filter(Boolean).join(' · ') }} · {{ formatMoney(payment.amount) }} · {{ formatDateValue(payment.paidAt) }}
               </span>
             </div>
           </article>
@@ -257,9 +261,13 @@
       </section>
 
       <section v-if="isReadOnly && !editingCorrection && !isPrivateAllReceiptView && receiptPaymentRows.length > 0" class="payment-history">
-        <div v-for="payment in receiptPaymentRows" :key="payment.rowKey">
+        <div
+          v-for="payment in receiptPaymentRows"
+          :key="payment.rowKey"
+          :class="{ 'payment-history__refund': payment.amount < 0 || payment.paymentType === 'REFUND' }"
+        >
           <span>{{ formatDateValue(payment.paidAt) }}</span>
-          <strong>{{ [paymentParticipantLabel(payment), payment.paymentMethod || 'Payment'].filter(Boolean).join(' · ') }}</strong>
+          <strong>{{ [paymentRefundTag(payment), paymentParticipantLabel(payment), payment.paymentMethod || 'Payment'].filter(Boolean).join(' · ') }}</strong>
           <span>{{ formatMoney(payment.amount) }}</span>
           <small>{{ [payment.handledByName, payment.remark].filter(Boolean).join(' · ') }}</small>
         </div>
@@ -835,6 +843,7 @@ interface PaymentLine {
   participantIndex?: number;
   handledByName?: string;
   remark?: string;
+  paymentType?: string;
 }
 
 interface RegistrationForm {
@@ -1153,7 +1162,7 @@ const privateParticipantReceiptRows = computed(() => {
     amountDue,
     paidAmount: paid,
     balanceAmount: roundMoney(amountDue - paid),
-    payments: (billing?.payments ?? []).filter((payment) => payment.amount > 0),
+    payments: (billing?.payments ?? []).filter((payment) => payment.amount !== 0),
   };
   });
 });
@@ -1213,7 +1222,10 @@ const activeParticipantBilling = computed(() => {
     : null;
 });
 const activeDiscountLines = computed(() => activeParticipantBilling.value?.discounts ?? discounts.value);
-const activePaymentLines = computed(() => activeParticipantBilling.value?.payments ?? payments.value);
+const activePaymentLines = computed(() => {
+  const lines = activeParticipantBilling.value?.payments ?? payments.value;
+  return lines.filter((payment) => payment.amount > 0);
+});
 const activeBillingScopeLabel = computed(() => activeParticipantBilling.value
   ? `${privateWorkspaceTabLabel(activeParticipantBilling.value.participantIndex)} only`
   : 'Applied to this receipt');
@@ -1835,7 +1847,9 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   participantBillings.value = historicalParticipants.slice(0, 3).map((item, index) => {
     const discounts = getMoneyLines(item, 'discounts');
     const paymentsForParticipant = (order.payments ?? [])
-      .filter((payment) => Number(payment.participantIndex) === index + 1)
+      .filter((payment) =>
+        Number(payment.participantIndex) === index + 1
+        || (index === 0 && (payment.participantIndex == null || payment.participantIndex === '')))
       .map((payment) => ({
         rowKey: `payment-${payment.id}`,
         paymentMethod: payment.paymentMethod,
@@ -1844,6 +1858,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         participantIndex: index + 1,
         handledByName: payment.handledByName,
         remark: payment.remark,
+        paymentType: payment.paymentType,
       }));
     return {
       participantIndex: index + 1,
@@ -1900,6 +1915,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
       participantIndex: payment.participantIndex,
       handledByName: payment.handledByName,
       remark: payment.remark,
+      paymentType: payment.paymentType,
     }));
   const savedPayments = getHistoricalPayments(receiptPayload);
   payments.value = livePayments.length > 0 ? livePayments : savedPayments;
@@ -2250,8 +2266,13 @@ function addPaymentLine() {
 }
 
 function removePaymentLine(index: number) {
-  if (payments.value.length > 1) {
-    payments.value.splice(index, 1);
+  if (payments.value.length <= 1) return;
+  const positives = payments.value.filter((payment) => payment.amount > 0);
+  const target = positives[index];
+  if (!target) return;
+  const actualIndex = payments.value.indexOf(target);
+  if (actualIndex >= 0) {
+    payments.value.splice(actualIndex, 1);
   }
 }
 
@@ -2910,13 +2931,11 @@ function validateForm() {
     participantBillings.value.slice(0, privateParticipantCount.value).forEach((billing, index) => {
       validateMoneyLines(billing.discounts, `${privateWorkspaceTabLabel(index + 1)} discount`, errors);
       billing.payments.forEach((payment, paymentIndex) => {
-        if (payment.amount > 0 && !payment.paymentMethod) {
+        if (payment.amount <= 0) return;
+        if (!payment.paymentMethod) {
           errors.push(`${privateWorkspaceTabLabel(index + 1)} payment ${paymentIndex + 1}: payment method is required.`);
         }
-        if (payment.amount < 0) {
-          errors.push(`${privateWorkspaceTabLabel(index + 1)} payment ${paymentIndex + 1}: amount cannot be negative.`);
-        }
-        if (payment.amount > 0 && !payment.paidAt) {
+        if (!payment.paidAt) {
           errors.push(`${privateWorkspaceTabLabel(index + 1)} payment ${paymentIndex + 1}: payment date is required.`);
         }
       });
@@ -2996,17 +3015,15 @@ function validateForm() {
 
 function validatePaymentLines(lines: PaymentLine[], label: string, errors: string[]) {
   lines.forEach((payment, index) => {
+    if (payment.amount <= 0) return;
     const rowLabel = `${label} row ${index + 1}`;
-    if (payment.amount > 0 && !payment.paymentMethod) {
+    if (!payment.paymentMethod) {
       errors.push(`${rowLabel}: payment method is required.`);
     }
-    if (payment.amount < 0) {
-      errors.push(`${rowLabel}: amount cannot be negative.`);
-    }
-    if (payment.amount > 0 && !payment.paidAt) {
+    if (!payment.paidAt) {
       errors.push(`${rowLabel}: payment date is required.`);
     }
-    if (payment.amount > 0 && isOtherPaymentMethod(payment.paymentMethod) && !payment.remark?.trim()) {
+    if (isOtherPaymentMethod(payment.paymentMethod) && !payment.remark?.trim()) {
       errors.push(`${rowLabel}: describe the other payment method.`);
     }
   });
@@ -3177,6 +3194,10 @@ function displayPaymentMethod(methodCode: string) {
   return (paymentMethods.value.find((method) => method.methodCode === methodCode)?.methodName ?? methodCode) || 'Payment';
 }
 
+function paymentRefundTag(payment: PaymentLine) {
+  return payment.amount < 0 || payment.paymentType === 'REFUND' ? 'Refund' : '';
+}
+
 function filterStudentPickerOptions(query: string) {
   studentPickerQuery.value = query;
 }
@@ -3248,8 +3269,13 @@ function addParticipantPayment(index: number) {
 
 function removeParticipantPayment(index: number, lineIndex: number) {
   const billing = participantBillings.value[index - 1];
-  if (billing && billing.payments.length > 1) {
-    billing.payments.splice(lineIndex, 1);
+  if (!billing || billing.payments.length <= 1) return;
+  const positives = billing.payments.filter((payment) => payment.amount > 0);
+  const target = positives[lineIndex];
+  if (!target) return;
+  const actualIndex = billing.payments.indexOf(target);
+  if (actualIndex >= 0) {
+    billing.payments.splice(actualIndex, 1);
   }
 }
 
@@ -3696,6 +3722,7 @@ function getHistoricalPayments(payload: Record<string, unknown> | null): Payment
       paidAt: normalizeDate(getString(payment, 'paidAt')) || form.signupDate || today,
       handledByName: getString(payment, 'handledByName') || form.handledByName,
       remark: getString(payment, 'remark'),
+      paymentType: getString(payment, 'paymentType'),
     }))
     .filter((payment) => payment.amount > 0);
 }
@@ -4438,6 +4465,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .payment-history small {
   color: #4b5563;
+}
+
+.payment-history__refund {
+  color: #b42318;
+}
+
+.payment-history__refund strong {
+  color: #b42318;
+}
+
+.refund-line {
+  color: #b42318;
 }
 
 .paper-other-method {
