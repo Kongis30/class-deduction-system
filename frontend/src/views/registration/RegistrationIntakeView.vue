@@ -1224,7 +1224,7 @@ const activeParticipantBilling = computed(() => {
 const activeDiscountLines = computed(() => activeParticipantBilling.value?.discounts ?? discounts.value);
 const activePaymentLines = computed(() => {
   const lines = activeParticipantBilling.value?.payments ?? payments.value;
-  return lines.filter((payment) => payment.amount > 0);
+  return lines.filter((payment) => payment.amount >= 0);
 });
 const activeBillingScopeLabel = computed(() => activeParticipantBilling.value
   ? `${privateWorkspaceTabLabel(activeParticipantBilling.value.participantIndex)} only`
@@ -2267,8 +2267,8 @@ function addPaymentLine() {
 
 function removePaymentLine(index: number) {
   if (payments.value.length <= 1) return;
-  const positives = payments.value.filter((payment) => payment.amount > 0);
-  const target = positives[index];
+  const editable = payments.value.filter((payment) => payment.amount >= 0);
+  const target = editable[index];
   if (!target) return;
   const actualIndex = payments.value.indexOf(target);
   if (actualIndex >= 0) {
@@ -3270,8 +3270,8 @@ function addParticipantPayment(index: number) {
 function removeParticipantPayment(index: number, lineIndex: number) {
   const billing = participantBillings.value[index - 1];
   if (!billing || billing.payments.length <= 1) return;
-  const positives = billing.payments.filter((payment) => payment.amount > 0);
-  const target = positives[lineIndex];
+  const editable = billing.payments.filter((payment) => payment.amount >= 0);
+  const target = editable[lineIndex];
   if (!target) return;
   const actualIndex = billing.payments.indexOf(target);
   if (actualIndex >= 0) {
