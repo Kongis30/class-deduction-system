@@ -4062,14 +4062,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .private-receipt-student-summary__payments {
   grid-column: 2;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px 12px;
+  display: block;
   color: #74879d;
-  font-size: 10px;
+  font-size: 13px;
+  line-height: 1.7;
 }
 
 .private-receipt-student-summary__payments span {
+  display: block;
   overflow-wrap: anywhere;
 }
 
@@ -4422,11 +4422,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .payment-history {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   margin-top: 6px;
   padding: 6px 0;
   border-bottom: 1px solid #222;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .payment-history > div {
