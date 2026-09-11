@@ -83,7 +83,7 @@
             @click="activePrivateWorkspaceTab = tab"
           >
             <span>{{ privateWorkspaceTabLabel(tab) }}</span>
-            <small v-if="tab !== 'all'">{{ privateWorkspaceParticipantName(tab) || privateWorkspaceTabStatus(tab) }}</small>
+            <small v-if="tab !== 'all'">{{ privateWorkspaceTabStatus(tab) }}</small>
           </button>
         </div>
         <div v-if="activePrivateWorkspaceTab === 'all'" class="private-lesson-shared-summary">
@@ -95,7 +95,7 @@
 
     <section v-if="studentPickerVisible" class="registration-student-picker no-print">
       <div class="registration-student-picker__heading">
-        <strong>{{ activeStudentPickerIndex === 1 ? 'Existing student' : `Existing Student ${activeStudentPickerIndex}` }}</strong>
+        <strong>{{ activeStudentName || 'Existing student' }}</strong>
         <span>Select an existing student or search by name. Leave blank for a new student.</span>
       </div>
       <el-select
@@ -163,7 +163,6 @@
         <div class="private-receipt-student-summary__list">
           <article v-for="(participant, index) in privateParticipantReceiptRows" :key="participant.key" class="private-receipt-student-summary__row">
             <div class="private-receipt-student-summary__identity">
-              <span>Student {{ index + 1 }}</span>
               <strong>{{ participant.name || 'Name not set' }}</strong>
             </div>
             <div class="private-receipt-student-summary__financials">
@@ -257,7 +256,7 @@
         <strong class="paper-payment-summary paper-payment-summary--amount">{{ formatMoney(activePaidAmount) }}</strong>
       </section>
 
-      <section v-if="isReadOnly && !editingCorrection && receiptPaymentRows.length > 0" class="payment-history">
+      <section v-if="isReadOnly && !editingCorrection && !isPrivateAllReceiptView && receiptPaymentRows.length > 0" class="payment-history">
         <div v-for="payment in receiptPaymentRows" :key="payment.rowKey">
           <span>{{ formatDateValue(payment.paidAt) }}</span>
           <strong>{{ [paymentParticipantLabel(payment), payment.paymentMethod || 'Payment'].filter(Boolean).join(' · ') }}</strong>
@@ -1097,9 +1096,14 @@ const activeStudentPickerSelection = computed<EntityId | ''>({
 const activeStudentPickerLoading = computed(() => {
   return studentPickerLoading.value;
 });
-const activeStudentPickerPlaceholder = computed(() => activeStudentPickerIndex.value === 1
-  ? 'Select or search Student 1'
-  : `Select or search Student ${activeStudentPickerIndex.value ?? ''}`);
+const activeStudentPickerPlaceholder = computed(() => {
+  const name = activeStudentName.value;
+  if (name) {
+    return `Select or search ${name}`;
+  }
+  const ordinal = ['', 'second', 'third'][activeStudentPickerIndex.value ?? 1] ?? '';
+  return ordinal ? `Select or search the ${ordinal} student` : 'Select or search a student';
+});
 const activePrivateParticipant = computed(() => {
   const index = activePrivateParticipantIndex.value;
   if (index === null || index === 1) {
@@ -1171,12 +1175,19 @@ const participantDiscountTotal = computed(() => participantBillings.value
   .reduce((total, billing) => total + sumNumbers(billing.discounts.map((line) => line.amount)), 0));
 const participantPaidAmount = computed(() => participantBillings.value
   .reduce((total, billing) => total + sumNumbers(billing.payments.map((line) => line.amount)), 0));
-const receiptPaymentRows = computed(() => isSharedPrivateLesson.value
-  ? participantBillings.value.flatMap((billing) => billing.payments.map((payment) => ({
+const receiptPaymentRows = computed(() => {
+  if (!isSharedPrivateLesson.value) {
+    return payments.value;
+  }
+  const activeIndex = activePrivateParticipantIndex.value;
+  const billings = activeIndex != null
+    ? participantBillings.value.filter((billing) => billing.participantIndex === activeIndex)
+    : participantBillings.value;
+  return billings.flatMap((billing) => billing.payments.map((payment) => ({
     ...payment,
     participantIndex: billing.participantIndex,
-  })))
-  : payments.value);
+  })));
+});
 const discountTotal = computed(() => isSharedPrivateLesson.value
   ? roundMoney(participantDiscountTotal.value)
   : sumNumbers(discounts.value.map((line) => line.amount)));
@@ -2889,24 +2900,24 @@ function validateForm() {
     }
     privateParticipantForms.value.forEach((participant, index) => {
       if (!participant.studentName.trim()) {
-        errors.push(`Student ${index + 2}: name is required.`);
+        errors.push(`${privateWorkspaceTabLabel(index + 2)}: name is required.`);
       }
       if (participant.studentId && privateParticipantForms.value.some((other, otherIndex) =>
         otherIndex !== index && String(other.studentId) === String(participant.studentId))) {
-        errors.push(`Student ${index + 2}: the same existing student cannot be added twice.`);
+        errors.push(`${privateWorkspaceTabLabel(index + 2)}: the same existing student cannot be added twice.`);
       }
     });
     participantBillings.value.slice(0, privateParticipantCount.value).forEach((billing, index) => {
-      validateMoneyLines(billing.discounts, `Student ${index + 1} discount`, errors);
+      validateMoneyLines(billing.discounts, `${privateWorkspaceTabLabel(index + 1)} discount`, errors);
       billing.payments.forEach((payment, paymentIndex) => {
         if (payment.amount > 0 && !payment.paymentMethod) {
-          errors.push(`Student ${index + 1} payment ${paymentIndex + 1}: payment method is required.`);
+          errors.push(`${privateWorkspaceTabLabel(index + 1)} payment ${paymentIndex + 1}: payment method is required.`);
         }
         if (payment.amount < 0) {
-          errors.push(`Student ${index + 1} payment ${paymentIndex + 1}: amount cannot be negative.`);
+          errors.push(`${privateWorkspaceTabLabel(index + 1)} payment ${paymentIndex + 1}: amount cannot be negative.`);
         }
         if (payment.amount > 0 && !payment.paidAt) {
-          errors.push(`Student ${index + 1} payment ${paymentIndex + 1}: payment date is required.`);
+          errors.push(`${privateWorkspaceTabLabel(index + 1)} payment ${paymentIndex + 1}: payment date is required.`);
         }
       });
     });
@@ -3140,7 +3151,7 @@ function privateWorkspaceTabLabel(tab: PrivateWorkspaceTab) {
   if (tab === 'all') {
     return 'All';
   }
-  return `Student ${tab}`;
+  return privateWorkspaceParticipantName(tab) || `Student ${tab}`;
 }
 
 function privateWorkspaceParticipantName(tab: PrivateWorkspaceTab) {
