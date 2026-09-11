@@ -15,6 +15,8 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.CoursePackageServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
 import com.classdeduction.system.modules.enrollment.vo.GroupClassPackageProgressVO;
@@ -75,6 +77,12 @@ class CoursePackageServiceImplTest {
     private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
 
     @Mock
+    private PrivateLessonGroupMapper privateLessonGroupMapper;
+
+    @Mock
+    private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+
+    @Mock
     private StudentMapper studentMapper;
 
     @Mock
@@ -125,6 +133,8 @@ class CoursePackageServiceImplTest {
                 coursePackageMapper,
                 enrollmentOrderItemMapper,
                 packageTeacherAssignmentMapper,
+                privateLessonGroupMapper,
+                privateLessonGroupMemberMapper,
                 studentMapper,
                 teacherMapper,
                 courseProductMapper,

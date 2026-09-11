@@ -32,6 +32,9 @@ public class PaymentRecordEntity extends BaseEntity {
 
     private Long enrollmentOrderId;
 
+    /** 1 对 N 收据中的学生序号；普通订单为空。 */
+    private Integer participantIndex;
+
     private String paymentNo;
 
     private String paymentMethod;

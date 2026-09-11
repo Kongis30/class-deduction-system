@@ -14,13 +14,17 @@ import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
@@ -58,6 +62,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
+    private final EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
+    private final PrivateLessonGroupMapper privateLessonGroupMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final PaymentRecordMapper paymentRecordMapper;
@@ -91,6 +97,20 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         PaymentRecordEntity::getPaymentMethod,
                         (left, right) -> right,
                         LinkedHashMap::new));
+        Map<PaymentParticipantKey, String> latestPaymentMethodByParticipant = paymentRecords.stream()
+                .filter(record -> record.getParticipantIndex() != null)
+                .filter(record -> positive(record.getAmount()) && StringUtils.hasText(record.getPaymentMethod()))
+                .collect(Collectors.toMap(
+                        record -> new PaymentParticipantKey(record.getEnrollmentOrderId(), record.getParticipantIndex()),
+                        PaymentRecordEntity::getPaymentMethod,
+                        (left, right) -> right,
+                        LinkedHashMap::new));
+        Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant = paymentRecords.stream()
+                .filter(record -> record.getParticipantIndex() != null)
+                .collect(Collectors.groupingBy(
+                        record -> new PaymentParticipantKey(record.getEnrollmentOrderId(), record.getParticipantIndex()),
+                        LinkedHashMap::new,
+                        Collectors.reducing(ZERO_AMOUNT, record -> amount(record.getAmount()), BigDecimal::add)));
 
         List<EnrollmentOrderItemEntity> items = enrollmentOrderItemMapper.selectList(
                 new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
@@ -99,6 +119,34 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         .orderByAsc(EnrollmentOrderItemEntity::getId));
         Map<Long, List<EnrollmentOrderItemEntity>> itemsByOrderId = items.stream()
                 .collect(Collectors.groupingBy(EnrollmentOrderItemEntity::getEnrollmentOrderId, LinkedHashMap::new, Collectors.toList()));
+
+        List<EnrollmentOrderParticipantEntity> orderParticipants = enrollmentOrderParticipantMapper.selectList(
+                new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                        .in(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, orderIds)
+                        .orderByAsc(EnrollmentOrderParticipantEntity::getParticipantIndex)
+                        .orderByAsc(EnrollmentOrderParticipantEntity::getId));
+        Map<Long, List<EnrollmentOrderParticipantEntity>> participantsByOrderId = orderParticipants.stream()
+                .collect(Collectors.groupingBy(EnrollmentOrderParticipantEntity::getEnrollmentOrderId,
+                        LinkedHashMap::new, Collectors.toList()));
+
+        List<PrivateLessonGroupEntity> privateLessonGroups = privateLessonGroupMapper.selectList(
+                        new LambdaQueryWrapper<PrivateLessonGroupEntity>()
+                                .in(PrivateLessonGroupEntity::getEnrollmentOrderId, orderIds)
+                                .eq(PrivateLessonGroupEntity::getIsDeleted, 0));
+        Map<Long, Long> privateLessonGroupIdByOrderId = privateLessonGroups.stream()
+                .filter(group -> group.getEnrollmentOrderId() != null && group.getId() != null)
+                .collect(Collectors.toMap(
+                        PrivateLessonGroupEntity::getEnrollmentOrderId,
+                        PrivateLessonGroupEntity::getId,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+        Map<Long, Integer> privateLessonParticipantCountByOrderId = privateLessonGroups.stream()
+                .filter(group -> group.getEnrollmentOrderId() != null && group.getParticipantCount() != null)
+                .collect(Collectors.toMap(
+                        PrivateLessonGroupEntity::getEnrollmentOrderId,
+                        PrivateLessonGroupEntity::getParticipantCount,
+                        Math::max,
+                        LinkedHashMap::new));
 
         List<CoursePackageEntity> packages = coursePackageMapper.selectList(
                 new LambdaQueryWrapper<CoursePackageEntity>()
@@ -115,6 +163,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Set<Long> studentIds = orders.stream().map(EnrollmentOrderEntity::getStudentId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+        orderParticipants.stream().map(EnrollmentOrderParticipantEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .forEach(studentIds::add);
         Map<Long, StudentEntity> studentById = new HashMap<>();
         if (!studentIds.isEmpty()) {
             studentMapper.selectBatchIds(studentIds)
@@ -148,8 +199,11 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
         Context context = buildContext(orders, items, packages, classEnrollments);
         List<DataSummaryResponseVO.RowVO> rows = buildRows(orderMap, itemsByOrderId, packagesByOrderId,
-                        packageByOrderItemId, classEnrollmentByOrderItemId, classEnrollmentsByStudentClass, reviewIssuesByOrderId,
-                        latestPaymentMethodByOrderId, studentById, campusById, context)
+                        participantsByOrderId, privateLessonGroupIdByOrderId, privateLessonParticipantCountByOrderId,
+                        packageByOrderItemId,
+                        classEnrollmentByOrderItemId, classEnrollmentsByStudentClass, reviewIssuesByOrderId,
+                        latestPaymentMethodByOrderId, latestPaymentMethodByParticipant, paidAmountByParticipant,
+                        studentById, campusById, context)
                 .stream()
                 .filter(this::hasDisplayableStudent)
                 .filter(row -> matchesQuery(row, query))
@@ -291,11 +345,16 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, EnrollmentOrderEntity> orderMap,
             Map<Long, List<EnrollmentOrderItemEntity>> itemsByOrderId,
             Map<Long, List<CoursePackageEntity>> packagesByOrderId,
+            Map<Long, List<EnrollmentOrderParticipantEntity>> participantsByOrderId,
+            Map<Long, Long> privateLessonGroupIdByOrderId,
+            Map<Long, Integer> privateLessonParticipantCountByOrderId,
             Map<Long, CoursePackageEntity> packageByOrderItemId,
             Map<Long, ClassEnrollmentEntity> classEnrollmentByOrderItemId,
             Map<StudentClassKey, List<ClassEnrollmentEntity>> classEnrollmentsByStudentClass,
             Map<Long, List<String>> reviewIssuesByOrderId,
             Map<Long, String> latestPaymentMethodByOrderId,
+            Map<PaymentParticipantKey, String> latestPaymentMethodByParticipant,
+            Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
             Map<Long, StudentEntity> studentById,
             Map<Long, CampusEntity> campusById,
             Context context) {
@@ -304,24 +363,71 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         List<DataSummaryResponseVO.RowVO> rows = new ArrayList<>();
 
         for (EnrollmentOrderEntity order : orderMap.values()) {
+            List<EnrollmentOrderParticipantEntity> participants = participantsByOrderId.get(order.getId());
+            List<EnrollmentOrderParticipantEntity> displayParticipants = participants == null || participants.isEmpty()
+                    ? Collections.singletonList(null)
+                    : participants;
+            Integer privateLessonParticipantCount = resolvePrivateLessonParticipantCount(
+                    order.getId(), participants, privateLessonParticipantCountByOrderId);
+            Long privateLessonGroupId = privateLessonGroupIdByOrderId.get(order.getId());
+            boolean sharedPrivateLesson = isSharedPrivateLesson(privateLessonParticipantCount);
             List<EnrollmentOrderItemEntity> orderItems = itemsByOrderId.get(order.getId());
             if (orderItems == null || orderItems.isEmpty()) {
-                rows.add(toRow(order, null, firstPackage(packagesByOrderId.get(order.getId())), null,
-                        reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
-                        latestPaymentMethodByOrderId.get(order.getId()), studentById, campusById, context, today, soonLimit));
+                for (EnrollmentOrderParticipantEntity participant : displayParticipants) {
+                    CoursePackageEntity coursePackage = participant == null
+                            ? firstPackage(packagesByOrderId.get(order.getId()))
+                            : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, null);
+                    rows.add(toRow(order, null, coursePackage, null, participant,
+                            privateLessonGroupId,
+                            sharedPrivateLesson ? privateLessonParticipantCount : null,
+                            reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
+                            latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
+                            paidAmountByParticipant,
+                            studentById, campusById, context, today, soonLimit));
+                }
                 continue;
             }
             for (EnrollmentOrderItemEntity item : orderItems) {
-                CoursePackageEntity coursePackage = firstNonNull(packageByOrderItemId.get(item.getId()),
+                CoursePackageEntity defaultPackage = firstNonNull(packageByOrderItemId.get(item.getId()),
                         findPackageForItem(packagesByOrderId.get(order.getId()), item));
-                ClassEnrollmentEntity classEnrollment = firstNonNull(classEnrollmentByOrderItemId.get(item.getId()),
-                        findClassEnrollmentForItem(order, item, classEnrollmentsByStudentClass));
-                rows.add(toRow(order, item, coursePackage, classEnrollment,
-                        reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
-                        latestPaymentMethodByOrderId.get(order.getId()), studentById, campusById, context, today, soonLimit));
+                ClassEnrollmentEntity defaultClassEnrollment = firstNonNull(classEnrollmentByOrderItemId.get(item.getId()),
+                        findClassEnrollmentForItem(order, item, order.getStudentId(), classEnrollmentsByStudentClass));
+                for (EnrollmentOrderParticipantEntity participant : displayParticipants) {
+                    CoursePackageEntity coursePackage = participant == null
+                            ? defaultPackage
+                            : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, item);
+                    ClassEnrollmentEntity classEnrollment = participant == null
+                            ? defaultClassEnrollment
+                            : firstNonNull(classEnrollmentByOrderItemId.get(item.getId()),
+                                    findClassEnrollmentForItem(order, item, participant.getStudentId(), classEnrollmentsByStudentClass));
+                    rows.add(toRow(order, item, coursePackage, classEnrollment, participant,
+                            privateLessonGroupId,
+                            sharedPrivateLesson ? privateLessonParticipantCount : null,
+                            reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
+                            latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
+                            paidAmountByParticipant,
+                            studentById, campusById, context, today, soonLimit));
+                }
             }
         }
         return rows;
+    }
+
+    private Integer resolvePrivateLessonParticipantCount(Long orderId,
+                                                         List<EnrollmentOrderParticipantEntity> participants,
+                                                         Map<Long, Integer> privateLessonParticipantCountByOrderId) {
+        Integer groupCount = privateLessonParticipantCountByOrderId.get(orderId);
+        if (groupCount != null && groupCount > 0) {
+            return groupCount;
+        }
+        int participantCount = participants == null ? 0 : (int) participants.stream()
+                .filter(Objects::nonNull)
+                .count();
+        return participantCount > 0 ? participantCount : null;
+    }
+
+    private boolean isSharedPrivateLesson(Integer participantCount) {
+        return participantCount != null && participantCount > 1;
     }
 
     private List<ClassEnrollmentEntity> mergeClassEnrollments(List<ClassEnrollmentEntity> directClassEnrollments,
@@ -371,17 +477,45 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         return candidates.size() == 1 ? candidates.get(0) : null;
     }
 
+    /** 普通订单和多人私教都按参与学生与订单项定位各自的课包。 */
+    private CoursePackageEntity findPackageForParticipant(List<CoursePackageEntity> orderPackages,
+                                                          EnrollmentOrderParticipantEntity participant,
+                                                          EnrollmentOrderItemEntity item) {
+        if (participant == null || orderPackages == null || orderPackages.isEmpty()) {
+            return null;
+        }
+        List<CoursePackageEntity> candidates = orderPackages.stream()
+                .filter(coursePackage -> Objects.equals(coursePackage.getStudentId(), participant.getStudentId()))
+                .toList();
+        if (item != null) {
+            List<CoursePackageEntity> sameItem = candidates.stream()
+                    .filter(coursePackage -> Objects.equals(coursePackage.getEnrollmentOrderItemId(), item.getId()))
+                    .toList();
+            if (sameItem.size() == 1) {
+                return sameItem.get(0);
+            }
+            List<CoursePackageEntity> sameProduct = candidates.stream()
+                    .filter(coursePackage -> Objects.equals(coursePackage.getCourseProductId(), item.getCourseProductId()))
+                    .toList();
+            if (sameProduct.size() == 1) {
+                return sameProduct.get(0);
+            }
+        }
+        return candidates.size() == 1 ? candidates.get(0) : firstPackage(candidates);
+    }
+
     private ClassEnrollmentEntity findClassEnrollmentForItem(EnrollmentOrderEntity order,
                                                              EnrollmentOrderItemEntity item,
+                                                             Long studentId,
                                                              Map<StudentClassKey, List<ClassEnrollmentEntity>> classEnrollmentsByStudentClass) {
-        if (item == null || order.getStudentId() == null) {
+        if (item == null || studentId == null) {
             return null;
         }
         Long classId = firstNonNull(item.getClassId(), order.getClassId());
         if (classId == null) {
             return null;
         }
-        List<ClassEnrollmentEntity> candidates = classEnrollmentsByStudentClass.get(new StudentClassKey(order.getStudentId(), classId));
+        List<ClassEnrollmentEntity> candidates = classEnrollmentsByStudentClass.get(new StudentClassKey(studentId, classId));
         if (candidates == null || candidates.isEmpty()) {
             return null;
         }
@@ -417,14 +551,20 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                               EnrollmentOrderItemEntity item,
                                               CoursePackageEntity coursePackage,
                                               ClassEnrollmentEntity classEnrollment,
+                                              EnrollmentOrderParticipantEntity participant,
+                                              Long privateLessonGroupId,
+                                              Integer privateLessonParticipantCount,
                                               List<String> reviewIssueCodes,
                                               String paymentMethod,
+                                              Map<PaymentParticipantKey, String> latestPaymentMethodByParticipant,
+                                              Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
                                               Map<Long, StudentEntity> studentById,
                                               Map<Long, CampusEntity> campusById,
                                               Context context,
                                               LocalDate today,
                                               LocalDate soonLimit) {
-        StudentEntity student = order.getStudentId() == null ? null : studentById.get(order.getStudentId());
+        Long displayStudentId = participant == null ? order.getStudentId() : participant.getStudentId();
+        StudentEntity student = displayStudentId == null ? null : studentById.get(displayStudentId);
         Long resolvedCampusId = firstNonNull(order.getCampusId(), student == null ? null : student.getCampusId());
         CampusEntity campus = resolvedCampusId == null ? null : campusById.get(resolvedCampusId);
         Long classId = firstNonNull(item == null ? null : item.getClassId(),
@@ -456,9 +596,43 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         LocalDate periodStartDate = resolvePeriodStartDate(classGroup, coursePackage, classEnrollment, order);
         LocalDate periodEndDate = resolvePeriodEndDate(classGroup, coursePackage, classEnrollment, order);
         LocalDate expiryDate = periodEndDate;
-        boolean overdue = positive(order.getBalanceAmount());
         boolean expiringSoon = expiryDate != null && !expiryDate.isBefore(today) && !expiryDate.isAfter(soonLimit);
         boolean oneOnOne = "ONE_ON_ONE".equals(courseType) || isOneOnOne(product, coursePackage);
+        boolean sharedPrivateLesson = oneOnOne && isSharedPrivateLesson(privateLessonParticipantCount)
+                && participant != null;
+        boolean primaryParticipant = participant == null
+                || Objects.equals(displayStudentId, order.getStudentId())
+                || Objects.equals(participant.getParticipantIndex(), 1);
+        PaymentParticipantKey paymentParticipantKey = participant == null || participant.getParticipantIndex() == null
+                ? null
+                : new PaymentParticipantKey(order.getId(), participant.getParticipantIndex());
+        String participantPaymentMethod = paymentParticipantKey == null
+                ? null
+                : latestPaymentMethodByParticipant.get(paymentParticipantKey);
+        String resolvedPaymentMethod = sharedPrivateLesson
+                ? firstText(participantPaymentMethod, primaryParticipant ? paymentMethod : null)
+                : firstText(participantPaymentMethod, paymentMethod);
+
+        BigDecimal rowLinePriceAmount = item == null ? null : amount(item.getPriceAmount());
+        BigDecimal rowPickupFeeAmount = amount(order.getPickupFeeAmount());
+        BigDecimal rowExtraFeeAmount = amount(order.getExtraFeeAmount());
+        BigDecimal rowDiscountAmount = amount(order.getDiscountAmount());
+        BigDecimal rowAmountDue = amount(order.getAmountDue());
+        BigDecimal rowPaidAmount = amount(order.getReceivedAmount());
+        BigDecimal rowBalanceAmount = amount(order.getBalanceAmount());
+        if (sharedPrivateLesson) {
+            rowLinePriceAmount = resolveParticipantGrossAmount(participant, coursePackage, item, order,
+                    privateLessonParticipantCount);
+            rowDiscountAmount = resolveParticipantDiscountAmount(participant, order, privateLessonParticipantCount);
+            rowPickupFeeAmount = primaryParticipant ? amount(order.getPickupFeeAmount()) : ZERO_AMOUNT;
+            rowExtraFeeAmount = primaryParticipant ? amount(order.getExtraFeeAmount()) : ZERO_AMOUNT;
+            rowAmountDue = resolveParticipantAmountDue(participant, rowLinePriceAmount, rowPickupFeeAmount,
+                    rowExtraFeeAmount, rowDiscountAmount);
+            rowPaidAmount = resolveParticipantPaidAmount(participant, paymentParticipantKey,
+                    paidAmountByParticipant, order, primaryParticipant);
+            rowBalanceAmount = resolveParticipantBalanceAmount(participant, rowAmountDue, rowPaidAmount);
+        }
+        boolean overdue = positive(rowBalanceAmount);
         boolean lowOneOnOneHours = oneOnOne && coursePackage != null
                 && safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage);
         List<String> alerts = new ArrayList<>();
@@ -472,15 +646,41 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             alerts.add("LOW_ONE_ON_ONE_HOURS");
         }
 
+        String studentName = primaryParticipant
+                ? firstText(order.getStudentNameSnapshot(), student == null ? null : student.getStudentName())
+                : firstText(student == null ? null : student.getStudentName(), participant.getStudentNameSnapshot());
+        String studentClass = primaryParticipant
+                ? firstText(student == null ? null : student.getStudentClass(), order.getStudentClassSnapshot())
+                : firstText(student == null ? null : student.getStudentClass());
+        String school = primaryParticipant
+                ? firstText(order.getSchoolSnapshot(), student == null ? null : student.getSchool())
+                : firstText(student == null ? null : student.getSchool(), participant.getSchoolSnapshot());
+        String grade = primaryParticipant
+                ? firstText(order.getGradeSnapshot(), student == null ? null : student.getGrade())
+                : firstText(student == null ? null : student.getGrade(), participant.getGradeSnapshot());
+        String phone = primaryParticipant
+                ? order.getParentPhoneSnapshot()
+                : firstText(student == null ? null : student.getGuardianPhone(), order.getParentPhoneSnapshot());
+        String phone2 = primaryParticipant
+                ? order.getParentPhone2Snapshot()
+                : firstText(student == null ? null : student.getGuardianPhone2(), order.getParentPhone2Snapshot());
+        Boolean pickupRequired = primaryParticipant
+                ? Boolean.TRUE.equals(order.getPickupRequiredSnapshot())
+                : Boolean.TRUE.equals(student == null ? null : student.getPickupRequired());
+        Boolean dropoffRequired = primaryParticipant
+                ? Boolean.TRUE.equals(order.getDropoffRequiredSnapshot())
+                : Boolean.TRUE.equals(student == null ? null : student.getDropoffRequired());
+
         return new DataSummaryResponseVO.RowVO(
                 order.getId(),
                 order.getEnrollmentNo(),
                 item == null ? null : item.getId(),
-                order.getStudentId(),
-                firstText(order.getStudentNameSnapshot(), student == null ? null : student.getStudentName()),
-                firstText(student == null ? null : student.getStudentClass(), order.getStudentClassSnapshot()),
-                firstText(order.getSchoolSnapshot(), student == null ? null : student.getSchool()),
-                firstText(order.getGradeSnapshot(), student == null ? null : student.getGrade()),
+                displayStudentId,
+                participant == null ? null : participant.getParticipantIndex(),
+                studentName,
+                studentClass,
+                school,
+                grade,
                 order.getSignupDate(),
                 periodStartDate,
                 periodEndDate,
@@ -494,22 +694,22 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 registerClass,
                 courseType,
                 detail,
-                order.getParentPhoneSnapshot(),
-                order.getParentPhone2Snapshot(),
-                Boolean.TRUE.equals(order.getPickupRequiredSnapshot()),
+                phone,
+                phone2,
+                pickupRequired,
                 order.getPickupAddressSnapshot(),
-                Boolean.TRUE.equals(order.getDropoffRequiredSnapshot()),
+                dropoffRequired,
                 order.getDropoffAddressSnapshot(),
                 pickupDropoffLabel(order),
-                paymentMethod,
+                resolvedPaymentMethod,
                 order.getPaymentStatus(),
-                item == null ? null : amount(item.getPriceAmount()),
-                amount(order.getPickupFeeAmount()),
-                amount(order.getExtraFeeAmount()),
-                amount(order.getDiscountAmount()),
-                amount(order.getAmountDue()),
-                amount(order.getReceivedAmount()),
-                displayBalanceAmount(order.getBalanceAmount()),
+                rowLinePriceAmount,
+                rowPickupFeeAmount,
+                rowExtraFeeAmount,
+                rowDiscountAmount,
+                rowAmountDue,
+                rowPaidAmount,
+                displayBalanceAmount(rowBalanceAmount),
                 coursePackage == null ? null : UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()),
                 coursePackage == null ? null : UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()),
                 coursePackage == null ? null : UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()),
@@ -521,8 +721,87 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 lowOneOnOneHours,
                 alerts,
                 order.getOrderStatus(),
-                reviewIssueCodes
+                reviewIssueCodes,
+                oneOnOne ? privateLessonGroupId : null,
+                oneOnOne ? privateLessonParticipantCount : null
         );
+    }
+
+    private BigDecimal resolveParticipantGrossAmount(EnrollmentOrderParticipantEntity participant,
+                                                     CoursePackageEntity coursePackage,
+                                                     EnrollmentOrderItemEntity item,
+                                                     EnrollmentOrderEntity order,
+                                                     Integer participantCount) {
+        if (participant.getGrossAmount() != null) {
+            return amount(participant.getGrossAmount());
+        }
+        if (coursePackage != null && coursePackage.getOriginalAmount() != null) {
+            return amount(coursePackage.getOriginalAmount());
+        }
+        BigDecimal totalAmount = item == null ? order.getAmountDue() : item.getPriceAmount();
+        return splitAmount(totalAmount, participantCount, participant.getParticipantIndex());
+    }
+
+    private BigDecimal resolveParticipantDiscountAmount(EnrollmentOrderParticipantEntity participant,
+                                                        EnrollmentOrderEntity order,
+                                                        Integer participantCount) {
+        if (participant.getDiscountAmount() != null) {
+            return amount(participant.getDiscountAmount());
+        }
+        return splitAmount(order.getDiscountAmount(), participantCount, participant.getParticipantIndex());
+    }
+
+    private BigDecimal resolveParticipantAmountDue(EnrollmentOrderParticipantEntity participant,
+                                                   BigDecimal grossAmount,
+                                                   BigDecimal pickupFeeAmount,
+                                                   BigDecimal extraFeeAmount,
+                                                   BigDecimal discountAmount) {
+        if (participant.getAmountDue() != null) {
+            return amount(participant.getAmountDue());
+        }
+        return grossAmount.add(pickupFeeAmount).add(extraFeeAmount)
+                .subtract(discountAmount)
+                .max(ZERO_AMOUNT)
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal resolveParticipantPaidAmount(EnrollmentOrderParticipantEntity participant,
+                                                    PaymentParticipantKey paymentParticipantKey,
+                                                    Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
+                                                    EnrollmentOrderEntity order,
+                                                    boolean primaryParticipant) {
+        if (participant.getPaidAmount() != null) {
+            return amount(participant.getPaidAmount());
+        }
+        if (paymentParticipantKey != null && paidAmountByParticipant.containsKey(paymentParticipantKey)) {
+            return amount(paidAmountByParticipant.get(paymentParticipantKey));
+        }
+        // 兼容尚未写入参与人分摊字段的历史订单：未标记参与人的付款归主学生，避免每行重复显示。
+        return primaryParticipant ? amount(order.getReceivedAmount()) : ZERO_AMOUNT;
+    }
+
+    private BigDecimal resolveParticipantBalanceAmount(EnrollmentOrderParticipantEntity participant,
+                                                       BigDecimal amountDue,
+                                                       BigDecimal paidAmount) {
+        if (participant.getBalanceAmount() != null) {
+            return amount(participant.getBalanceAmount());
+        }
+        return amountDue.subtract(paidAmount).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    private BigDecimal splitAmount(BigDecimal totalAmount, Integer participantCount, Integer participantIndex) {
+        BigDecimal total = amount(totalAmount);
+        int count = participantCount == null || participantCount < 1 ? 1 : participantCount;
+        if (count == 1) {
+            return total;
+        }
+        BigDecimal base = total.divide(BigDecimal.valueOf(count), 2, RoundingMode.DOWN);
+        int index = participantIndex == null ? 1 : participantIndex;
+        if (index >= count) {
+            return total.subtract(base.multiply(BigDecimal.valueOf(count - 1)))
+                    .setScale(2, RoundingMode.HALF_UP);
+        }
+        return base;
     }
 
     /**
@@ -736,6 +1015,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     }
 
     private record StudentClassKey(Long studentId, Long classId) {
+    }
+
+    private record PaymentParticipantKey(Long orderId, Integer participantIndex) {
     }
 
     private record GroupLabel(String key, String name) {

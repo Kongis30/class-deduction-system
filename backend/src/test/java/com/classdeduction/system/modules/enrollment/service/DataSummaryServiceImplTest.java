@@ -11,12 +11,16 @@ import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.DataSummaryServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
@@ -56,6 +60,12 @@ class DataSummaryServiceImplTest {
     private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
 
     @Mock
+    private EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
+
+    @Mock
+    private PrivateLessonGroupMapper privateLessonGroupMapper;
+
+    @Mock
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
@@ -92,6 +102,7 @@ class DataSummaryServiceImplTest {
         // 单元测试不启动 MyBatis 上下文，手动初始化 LambdaQueryWrapper 字段缓存。
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PrivateLessonGroupEntity.class);
     }
 
     @BeforeEach
@@ -99,6 +110,8 @@ class DataSummaryServiceImplTest {
         dataSummaryService = new DataSummaryServiceImpl(
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
+                enrollmentOrderParticipantMapper,
+                privateLessonGroupMapper,
                 coursePackageMapper,
                 packageTeacherAssignmentMapper,
                 paymentRecordMapper,
@@ -111,6 +124,8 @@ class DataSummaryServiceImplTest {
                 campusMapper
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(privateLessonGroupMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(paymentRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(classEnrollmentMapper.selectList(any())).thenReturn(Collections.emptyList());
@@ -189,6 +204,43 @@ class DataSummaryServiceImplTest {
                     assertThat(row.grade()).isEqualTo("6");
                     assertThat(row.school()).isEqualTo("PS 1");
                 });
+    }
+
+    @Test
+    void shouldRenderSharedPrivateLessonAsSeparateRowsWithoutDuplicatingOrderTotals() {
+        EnrollmentOrderEntity order = order(1L, "200.00", "200.00", "0.00");
+        EnrollmentOrderParticipantEntity first = participant(1L, 1, "Student 1");
+        EnrollmentOrderParticipantEntity second = participant(2L, 2, "Student 2");
+
+        StudentEntity firstStudent = new StudentEntity();
+        firstStudent.setId(1L);
+        firstStudent.setStudentName("Student 1");
+        StudentEntity secondStudent = new StudentEntity();
+        secondStudent.setId(2L);
+        secondStudent.setStudentName("Student 2");
+
+        CoursePackageEntity firstPackage = packageForParticipant(11L, 1L, "100.00");
+        CoursePackageEntity secondPackage = packageForParticipant(12L, 2L, "100.00");
+        firstPackage.setTeachingMode("ONE_ON_ONE");
+        secondPackage.setTeachingMode("ONE_ON_ONE");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(firstPackage, secondPackage));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "200.00")));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(firstStudent, secondStudent));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::studentName)
+                .containsExactly("Student 1", "Student 2");
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::linePriceAmount)
+                .containsExactly(new BigDecimal("100.00"), new BigDecimal("100.00"));
+        assertThat(response.rows()).allSatisfy(row ->
+                assertThat(row.privateLessonParticipantCount()).isEqualTo(2));
+        assertThat(response.totalRegistrationCount()).isEqualTo(2L);
+        assertThat(response.totalIncomeAmount()).isEqualByComparingTo("200.00");
     }
 
     @Test
@@ -406,5 +458,26 @@ class DataSummaryServiceImplTest {
         payment.setEnrollmentOrderId(orderId);
         payment.setAmount(new BigDecimal(amount));
         return payment;
+    }
+
+    private EnrollmentOrderParticipantEntity participant(Long studentId, int index, String name) {
+        EnrollmentOrderParticipantEntity participant = new EnrollmentOrderParticipantEntity();
+        participant.setEnrollmentOrderId(1L);
+        participant.setStudentId(studentId);
+        participant.setParticipantIndex(index);
+        participant.setStudentNameSnapshot(name);
+        return participant;
+    }
+
+    private CoursePackageEntity packageForParticipant(Long id, Long studentId, String originalAmount) {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(id);
+        coursePackage.setEnrollmentOrderId(1L);
+        coursePackage.setStudentId(studentId);
+        coursePackage.setOriginalAmount(new BigDecimal(originalAmount));
+        coursePackage.setTotalUnits(20);
+        coursePackage.setConsumedUnits(0);
+        coursePackage.setRemainingUnits(20);
+        return coursePackage;
     }
 }

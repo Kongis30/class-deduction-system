@@ -63,7 +63,7 @@
           <el-table
             v-loading="loading"
             :data="tableData"
-            row-key="id"
+            :row-key="orderRowKey"
             class="product-table"
             :show-empty="true"
           >
@@ -83,12 +83,15 @@
               <template #default="{ row }">
                 <div class="cell-stack">
                   <strong>{{ row.courseProductName ?? '—' }}</strong>
+                  <el-tag v-if="sharedLessonLabel(row)" size="small" type="warning" effect="plain" class="shared-lesson-tag">
+                    {{ sharedLessonLabel(row) }}
+                  </el-tag>
                 </div>
               </template>
             </el-table-column>
             <el-table-column label="Student" min-width="140">
               <template #default="{ row }">
-                {{ row.studentName ?? '—' }}
+                <span>{{ row.studentName ?? '—' }}</span>
               </template>
             </el-table-column>
             <el-table-column label="Original price" min-width="110" align="right">
@@ -164,8 +167,8 @@
                     <el-dropdown-menu>
                       <el-dropdown-item command="detail">Detail</el-dropdown-item>
                       <el-dropdown-item command="receipt">View receipt</el-dropdown-item>
-                      <el-dropdown-item v-if="canPayOrder(row)" command="pay">Pay</el-dropdown-item>
-                      <el-dropdown-item v-if="canRefundOrder(row)" command="refund">Refund</el-dropdown-item>
+                      <el-dropdown-item v-if="canPayOrder(row, rowParticipant(row))" command="pay">Pay</el-dropdown-item>
+                      <el-dropdown-item v-if="canRefundOrder(row, rowParticipant(row))" command="refund">Refund</el-dropdown-item>
                       <el-dropdown-item v-if="canCancelOrder(row)" command="cancel">Cancel</el-dropdown-item>
                       <el-dropdown-item v-if="canDeleteOrder(row)" divided command="delete">Delete</el-dropdown-item>
                       <el-dropdown-item v-if="canForceVoidOrder(row)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
@@ -466,6 +469,9 @@
 
         <div class="detail-section">
           <h4 class="detail-section__title">Payment summary</h4>
+          <p v-if="detailParticipants.length > 1" class="detail-section__hint">
+            Shared lesson ({{ detailParticipants.length === 2 ? '1-on-2' : '1-on-3' }}): the totals below are the whole order; each student's split is listed in the Students section.
+          </p>
           <div class="detail-grid">
             <div class="detail-field">
               <label>Original price</label>
@@ -490,6 +496,55 @@
               </strong>
             </div>
           </div>
+        </div>
+
+        <div v-if="detailParticipants.length > 1" class="detail-section">
+          <h4 class="detail-section__title">Students</h4>
+          <el-table :data="detailParticipants" size="small" class="nested-table">
+            <el-table-column label="Student" min-width="140">
+              <template #default="{ row }">{{ row.studentName || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="Split price" min-width="110" align="right">
+              <template #default="{ row }">${{ (row.grossAmount ?? 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="Discount" min-width="90" align="right">
+              <template #default="{ row }">
+                <span class="discount-text">-${{ (row.discountAmount ?? 0).toFixed(2) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Due" min-width="100" align="right">
+              <template #default="{ row }">${{ (row.amountDue ?? 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="Paid" min-width="100" align="right">
+              <template #default="{ row }">${{ (row.paidAmount ?? 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="Balance" min-width="100" align="right">
+              <template #default="{ row }">
+                <strong>${{ (row.balanceAmount ?? 0).toFixed(2) }}</strong>
+              </template>
+            </el-table-column>
+            <el-table-column label="Payment" min-width="90" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="paymentStatusType(participantPaymentStatus(row))">
+                  {{ paymentStatusLabel(participantPaymentStatus(row)) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Actions" min-width="110" align="center">
+              <template #default="{ row }">
+                <el-button text type="primary" size="small" @click="openDetailPayForParticipant(row)">Pay</el-button>
+                <el-button
+                  v-if="(row.paidAmount ?? 0) > 0"
+                  text
+                  type="danger"
+                  size="small"
+                  @click="openDetailRefundForParticipant(row)"
+                >
+                  Refund
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </div>
 
         <div class="detail-section">
@@ -580,7 +635,7 @@
         </div>
         <div class="payment-summary__row">
           <span class="payment-summary__label">Student</span>
-          <span class="payment-summary__value">{{ payOrder.studentName }}</span>
+          <span class="payment-summary__value">{{ payStudentName }}</span>
         </div>
         <div class="payment-summary__row">
           <span class="payment-summary__label">Product</span>
@@ -589,23 +644,26 @@
         <div class="payment-summary__divider" />
         <div class="payment-summary__row">
           <span class="payment-summary__label">Original price</span>
-          <span class="payment-summary__value">${{ payOrder.originalAmount?.toFixed(2) }}</span>
+          <span class="payment-summary__value">${{ payOriginalAmount.toFixed(2) }}</span>
         </div>
         <div class="payment-summary__row">
           <span class="payment-summary__label">Discount</span>
-          <span class="payment-summary__value discount-text">-${{ payOrder.discountAmount?.toFixed(2) }}</span>
+          <span class="payment-summary__value discount-text">-${{ payDiscountAmount.toFixed(2) }}</span>
         </div>
         <div class="payment-summary__row payment-summary__row--due">
           <span class="payment-summary__label">Amount Due</span>
-          <strong class="payment-summary__value">${{ payOrder.amountDue?.toFixed(2) }}</strong>
+          <strong class="payment-summary__value">${{ payAmountDueTotal.toFixed(2) }}</strong>
         </div>
         <div class="payment-summary__row payment-summary__row--due">
           <span class="payment-summary__label">Outstanding Balance</span>
           <strong class="payment-summary__value">${{ payAmountDue.toFixed(2) }}</strong>
         </div>
-        <div v-if="payOrder.receivedAmount > 0" class="payment-summary__row">
+        <div v-if="payReceivedAmount > 0" class="payment-summary__row">
           <span class="payment-summary__label">Already Paid</span>
-          <span class="payment-summary__value">${{ payOrder.receivedAmount?.toFixed(2) }}</span>
+          <span class="payment-summary__value">${{ payReceivedAmount.toFixed(2) }}</span>
+        </div>
+        <div v-if="payParticipant" class="payment-summary__scope">
+          This payment applies to this student only. The receipt remains shared by the whole order.
         </div>
       </div>
 
@@ -711,21 +769,25 @@
         :rules="refundFormRules"
         class="enrollment-form"
       >
-        <div class="product-info-card" style="margin-bottom: 12px;">
+        <div v-if="refundOrder" class="product-info-card" style="margin-bottom: 12px;">
+          <div v-if="refundParticipant" class="product-info-card__item">
+            <span class="product-info-card__label">Student</span>
+            <span class="product-info-card__value">{{ refundStudentName }}</span>
+          </div>
           <div class="product-info-card__item">
-            <span class="product-info-card__label">Currently received</span>
-            <span class="product-info-card__value">${{ (refundOrder?.receivedAmount ?? 0).toFixed(2) }}</span>
+            <span class="product-info-card__label">{{ refundParticipant ? 'Currently received for this student' : 'Currently received for order' }}</span>
+            <span class="product-info-card__value">${{ refundReceivedAmount.toFixed(2) }}</span>
           </div>
         </div>
         <p class="refund-hint">
-          A partial refund keeps the enrollment and schedule active, then updates received and outstanding amounts. Refunding the full currently received amount cancels the enrollment, future lessons, and class eligibility. Every refund creates a separate payment record.
+          A partial refund keeps the enrollment and schedule active. A refund from a student row applies only to that student's payments; the shared receipt and order totals are updated together.
         </p>
 
         <el-form-item label="Refund amount" prop="refundAmount">
           <el-input-number
             v-model="refundForm.refundAmount"
             :min="0.01"
-            :max="refundOrder?.receivedAmount ?? 0"
+            :max="refundReceivedAmount"
             :precision="2"
             :controls="false"
             style="width: 100%;"
@@ -983,7 +1045,7 @@ import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDis
 import { fetchClassGroups } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminUser } from '@/types/auth';
-import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, PaymentMethodItem, PaymentRecordItem } from '@/types/domain';
+import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, EnrollmentOrderParticipantItem, PaymentMethodItem, PaymentRecordItem } from '@/types/domain';
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => isAdminUser(authStore.currentUser));
@@ -1228,6 +1290,12 @@ function handleGroupRowClick(row: GroupFlatRow) {
 }
 
 const detailData = ref<EnrollmentOrderDetailItem | null>(null);
+
+const detailParticipants = computed(() =>
+  (detailData.value?.participants ?? [])
+    .slice()
+    .sort((a, b) => (a.participantIndex ?? 0) - (b.participantIndex ?? 0)),
+);
 const paymentRecords = computed(() => detailData.value?.payments ?? []);
 const students = ref<{ id: string; studentName: string }[]>([]);
 
@@ -1450,6 +1518,7 @@ const payDialogVisible = ref(false);
 const paying = ref(false);
 const payFormRef = ref();
 const payOrder = ref<EnrollmentOrderItem | null>(null);
+const payParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
 
 interface PaySplit {
   paymentMethod: string;
@@ -1465,9 +1534,14 @@ const payForm = reactive({
 });
 
 const payAmountDue = computed(() => {
-  if (!payOrder.value) return 0;
-  return Math.max(0, payOrder.value.balanceAmount ?? 0);
+  return Math.max(0, payParticipant.value?.balanceAmount ?? payOrder.value?.balanceAmount ?? 0);
 });
+
+const payStudentName = computed(() => payParticipant.value?.studentName ?? payOrder.value?.studentName ?? '—');
+const payOriginalAmount = computed(() => payParticipant.value?.grossAmount ?? payOrder.value?.originalAmount ?? 0);
+const payDiscountAmount = computed(() => payParticipant.value?.discountAmount ?? payOrder.value?.discountAmount ?? 0);
+const payAmountDueTotal = computed(() => payParticipant.value?.amountDue ?? payOrder.value?.amountDue ?? 0);
+const payReceivedAmount = computed(() => payParticipant.value?.paidAmount ?? payOrder.value?.receivedAmount ?? 0);
 
 const paySplitTotal = computed(() => {
   return payForm.splits.reduce((sum, s) => sum + (s.amount || 0), 0);
@@ -1534,6 +1608,55 @@ const pagination = reactive({
 
 const tableData = ref<EnrollmentOrderItem[]>([]);
 
+// 共享私教订单（1-on-2 / 1-on-3）在列表里按学员展开为多行，每行显示该学员在 DB 里持久化的平摊金额。
+function participantPaymentStatus(participant: EnrollmentOrderParticipantItem) {
+  const due = participant.amountDue ?? 0;
+  const paid = participant.paidAmount ?? 0;
+  if (paid <= 0 && due > 0) return 'UNPAID';
+  if (due > 0 && paid >= due) return 'PAID';
+  return paid > 0 ? 'PARTIAL' : 'UNPAID';
+}
+
+function expandSharedPrivateLessonRows(records: EnrollmentOrderItem[]): EnrollmentOrderItem[] {
+  const rows: EnrollmentOrderItem[] = [];
+  for (const order of records) {
+    const participants = order.participants ?? [];
+    if (participants.length > 1) {
+      participants.forEach((participant) => {
+        rows.push({
+          ...order,
+          studentId: participant.studentId,
+          studentName: participant.studentName || order.studentName,
+          originalAmount: participant.grossAmount ?? order.originalAmount,
+          discountAmount: participant.discountAmount ?? 0,
+          receivedAmount: participant.paidAmount ?? 0,
+          amountDue: participant.amountDue ?? 0,
+          balanceAmount: participant.balanceAmount ?? 0,
+          paymentStatus: participantPaymentStatus(participant),
+          participantIndex: participant.participantIndex,
+        });
+      });
+    } else {
+      rows.push(order);
+    }
+  }
+  return rows;
+}
+
+function orderRowKey(row: EnrollmentOrderItem) {
+  return `${row.id}-${row.participantIndex ?? 0}`;
+}
+
+function rowParticipant(row: EnrollmentOrderItem): EnrollmentOrderParticipantItem | null {
+  if (row.participantIndex == null || !row.participants?.length) return null;
+  return row.participants.find((item) => item.participantIndex === row.participantIndex) ?? null;
+}
+
+function sharedLessonLabel(row: EnrollmentOrderItem): string | null {
+  const count = row.participants?.length ?? 0;
+  return count > 1 ? `1-on-${count}` : null;
+}
+
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
@@ -1597,7 +1720,7 @@ async function loadData() {
     };
     const res = await fetchEnrollmentOrders(params);
     const data = res.data.data;
-    tableData.value = data.records;
+    tableData.value = expandSharedPrivateLessonRows(data.records);
     pagination.total = data.total;
   } catch {
     ElMessage.error('Failed to load enrollment orders.');
@@ -1638,9 +1761,34 @@ async function openDetailDialog(row: EnrollmentOrderItem) {
   }
 }
 
+function openDetailPayForParticipant(participant: EnrollmentOrderParticipantItem) {
+  if (!detailData.value) return;
+  const order = orderSummaryFromDetail(detailData.value);
+  const stored = order.participants?.find((item) => item.participantIndex === participant.participantIndex) ?? participant;
+  if (!canPayOrder(order, stored)) {
+    ElMessage.warning('This student does not have an outstanding balance.');
+    return;
+  }
+  openPayDialog(order, stored);
+}
+
+function openDetailRefundForParticipant(participant: EnrollmentOrderParticipantItem) {
+  if (!detailData.value) return;
+  const order = orderSummaryFromDetail(detailData.value);
+  const stored = order.participants?.find((item) => item.participantIndex === participant.participantIndex) ?? participant;
+  if (!canRefundOrder(order, stored)) {
+    ElMessage.warning('This student has no refundable payment.');
+    return;
+  }
+  openRefundDialog(order, stored);
+}
+
 async function handleCancel(row: EnrollmentOrderItem) {
   try {
-    const paymentNotice = (row.receivedAmount ?? 0) > 0
+    const orderReceived = row.participants?.length
+      ? row.participants.reduce((sum, item) => sum + (item.paidAmount ?? 0), 0)
+      : (row.receivedAmount ?? 0);
+    const paymentNotice = orderReceived > 0
       ? '\n\nPayment records will be retained for manual follow-up.'
       : '';
     await ElMessageBox.confirm(
@@ -1666,18 +1814,23 @@ async function handleCancel(row: EnrollmentOrderItem) {
 // ─── Row Action Menu ────────────────────────────────
 type OrderAction = 'detail' | 'receipt' | 'pay' | 'refund' | 'cancel' | 'delete' | 'forceVoid';
 
-function canPayOrder(row: EnrollmentOrderItem) {
+function canPayOrder(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
+  const balanceAmount = participant?.balanceAmount ?? row.balanceAmount ?? 0;
   return row.orderStatus === 'CONFIRMED'
-    && row.paymentStatus !== 'PAID'
-    && (row.balanceAmount ?? 0) > 0;
+    && balanceAmount > 0
+    && (participant != null || row.paymentStatus !== 'PAID');
 }
 
-function canRefundOrder(row: EnrollmentOrderItem) {
-  return row.paymentStatus !== 'REFUNDED' && (row.receivedAmount ?? 0) > 0;
+function canRefundOrder(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
+  const receivedAmount = participant?.paidAmount ?? row.receivedAmount ?? 0;
+  return row.paymentStatus !== 'REFUNDED' && receivedAmount > 0;
 }
 
 function canCancelOrder(row: EnrollmentOrderItem) {
-  return row.orderStatus === 'CONFIRMED' && (row.receivedAmount ?? 0) === 0;
+  const orderReceived = row.participants?.length
+    ? row.participants.reduce((sum, item) => sum + (item.paidAmount ?? 0), 0)
+    : (row.receivedAmount ?? 0);
+  return row.orderStatus === 'CONFIRMED' && orderReceived === 0;
 }
 
 // 全量级联软删：任意状态订单（CONFIRMED / CANCELLED / 已付款）均可删除。
@@ -1691,11 +1844,12 @@ function canForceVoidOrder(_row: EnrollmentOrderItem) {
 }
 
 function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
+  const participant = rowParticipant(row);
   const actions: Record<OrderAction, () => void> = {
     detail: () => openDetailDialog(row),
     receipt: () => openReceipt(row),
-    pay: () => openPayDialog(row),
-    refund: () => openRefundDialog(row),
+    pay: () => openPayDialog(row, participant),
+    refund: () => openRefundDialog(row, participant),
     cancel: () => handleCancel(row),
     delete: () => openDeleteDialog(row),
     forceVoid: () => handleForceVoid(row),
@@ -1773,6 +1927,7 @@ function orderSummaryFromDetail(detail: EnrollmentOrderDetailItem): EnrollmentOr
     orderStatus: detail.orderStatus,
     packageCount: detail.packages?.length,
     items: detail.items,
+    participants: detail.participants,
     createdAt: detail.createdAt,
   };
 }
@@ -1780,6 +1935,8 @@ function orderSummaryFromDetail(detail: EnrollmentOrderDetailItem): EnrollmentOr
 async function openRequestedOrderAction() {
   const orderId = String(route.query.orderId ?? '').trim();
   const action = String(route.query.action ?? '');
+  const participantIndexText = String(route.query.participantIndex ?? '').trim();
+  const participantIndex = participantIndexText ? Number(participantIndexText) : null;
   if (!orderId || (action !== 'pay' && action !== 'refund')) {
     return;
   }
@@ -1787,19 +1944,26 @@ async function openRequestedOrderAction() {
   try {
     const response = await fetchEnrollmentOrder(orderId);
     const order = orderSummaryFromDetail(response.data.data);
+    const participant = Number.isInteger(participantIndex)
+      ? response.data.data.participants?.find((item) => item.participantIndex === participantIndex) ?? null
+      : null;
+    if (participantIndexText && !participant) {
+      ElMessage.warning('The selected student is not part of this enrollment order.');
+      return;
+    }
     if (order.classId) {
       activeTab.value = 'GROUP';
     }
     if (action === 'pay') {
-      if (!canPayOrder(order)) {
+      if (!canPayOrder(order, participant)) {
         ElMessage.warning('This order does not have an outstanding balance.');
       } else {
-        openPayDialog(order);
+        openPayDialog(order, participant);
       }
-    } else if (!canRefundOrder(order)) {
+    } else if (!canRefundOrder(order, participant)) {
       ElMessage.warning('This order has no refundable payment.');
     } else {
-      openRefundDialog(order);
+      openRefundDialog(order, participant);
     }
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to load the selected order.');
@@ -1810,6 +1974,7 @@ async function openRequestedOrderAction() {
         orderId: undefined,
         action: undefined,
         productName: undefined,
+        participantIndex: undefined,
       },
     });
   }
@@ -1886,6 +2051,7 @@ const refundDialogVisible = ref(false);
 const refunding = ref(false);
 const refundFormRef = ref();
 const refundOrder = ref<EnrollmentOrderItem | null>(null);
+const refundParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
 const refundForm = reactive({
   refundAmount: 0,
   paymentMethod: 'CASH',
@@ -1901,11 +2067,18 @@ const refundFormRules = {
   handledByName: [{ required: true, message: 'Handler name is required' }],
 };
 
-function openRefundDialog(row: EnrollmentOrderItem) {
+const refundReceivedAmount = computed(() => Math.max(
+  0,
+  refundParticipant.value?.paidAmount ?? refundOrder.value?.receivedAmount ?? 0,
+));
+const refundStudentName = computed(() => refundParticipant.value?.studentName ?? refundOrder.value?.studentName ?? '—');
+
+function openRefundDialog(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
   refundOrder.value = row;
+  refundParticipant.value = participant;
   refundFormRef.value?.resetFields();
   Object.assign(refundForm, {
-    refundAmount: row.receivedAmount ?? 0,
+    refundAmount: participant?.paidAmount ?? row.receivedAmount ?? 0,
     paymentMethod: 'CASH',
     handledByName: '',
     remark: '',
@@ -1920,6 +2093,7 @@ async function handleRefundSubmit() {
   try {
     await refundEnrollmentOrder(refundOrder.value.id, {
       refundAmount: refundForm.refundAmount,
+      participantIndex: refundParticipant.value?.participantIndex,
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName,
       remark: refundForm.remark || undefined,
@@ -1941,8 +2115,9 @@ async function handleRefundSubmit() {
 }
 
 // ─── Payment Dialog ──────────────────────────────────
-function openPayDialog(row: EnrollmentOrderItem) {
+function openPayDialog(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
   payOrder.value = row;
+  payParticipant.value = participant;
   payForm.splits = [createPaySplit(payAmountDue.value)];
   payDialogVisible.value = true;
 }
@@ -1977,6 +2152,7 @@ async function handlePaySubmit() {
         paymentMethod: row.paymentMethod,
         amount: row.amount,
         paidAt: `${row.paidAt}T00:00:00`,
+        participantIndex: payParticipant.value?.participantIndex,
         handledByName: row.handledByName,
         remark: row.remark || undefined,
       })),
@@ -2222,6 +2398,11 @@ void initializePage();
   font-weight: 500;
 }
 
+.shared-lesson-tag {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+
 .table-footer {
   display: flex;
   align-items: center;
@@ -2341,6 +2522,13 @@ void initializePage();
   line-height: 1.5;
 }
 
+.detail-section__hint {
+  margin: 0 0 10px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* Payment summary */
 .payment-summary {
   background: #f5f7fa;
@@ -2377,6 +2565,15 @@ void initializePage();
   height: 1px;
   background: #dcdfe6;
   margin: 6px 0;
+}
+.payment-summary__scope {
+  margin-top: 10px;
+  padding: 8px 10px;
+  color: #606266;
+  background: #f5f7fa;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* Product info card */

@@ -161,7 +161,7 @@
                   :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
                   @click="selectCandidatePackage(candidate)"
                 >
-                  {{ candidate.pkg.packageName }}
+                  <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
                 </button>
               </div>
             </section>
@@ -202,8 +202,19 @@
         >
           <div class="oo-student-context">
             <div>
-              <strong>{{ activeStudent.studentName }}</strong>
+              <strong>
+                {{ activeStudent.studentName }}
+                <el-tag
+                  v-if="(activePackage.participantCount ?? 1) > 1"
+                  size="small"
+                  type="primary"
+                  class="oo-private-group-tag"
+                >1-on-{{ activePackage.participantCount }}</el-tag>
+              </strong>
               <span>{{ activePackage.packageName }}</span>
+              <span v-if="activePackage.participants?.length" class="oo-private-group-students">
+                {{ activePackage.participants.map(participant => participant.studentName).filter(Boolean).join(' / ') }}
+              </span>
             </div>
             <div class="oo-student-context__metrics">
               <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
@@ -1085,6 +1096,18 @@ function courseTypeLabel(pkg: OneOnOnePackage) {
   return pkg.courseProductName?.trim() || pkg.packageName;
 }
 
+function candidatePackageLabel(pkg: OneOnOnePackage) {
+  const participantCount = pkg.participantCount ?? 1;
+  if (participantCount <= 1) {
+    return pkg.packageName;
+  }
+  const names = (pkg.participants ?? [])
+    .map(participant => participant.studentName?.trim())
+    .filter((name): name is string => Boolean(name));
+  const studentSummary = names.length > 0 ? ` · ${names.join(' / ')}` : '';
+  return `1-on-${participantCount} · ${pkg.packageName}${studentSummary}`;
+}
+
 function matchesCandidateFilters(candidate: PackageCandidate) {
   if (activeStudentSearch.value && !searchedStudentKeys.value.has(candidate.studentKey)) return false;
   if (selectedTeacherKey.value && candidate.teacherKey !== selectedTeacherKey.value) return false;
@@ -1638,6 +1661,17 @@ onMounted(async () => {
 .oo-student-context strong {
   color: #102a43;
   font-size: 15px;
+}
+
+.oo-private-group-tag {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+.oo-student-context .oo-private-group-students {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .oo-student-context div > span {

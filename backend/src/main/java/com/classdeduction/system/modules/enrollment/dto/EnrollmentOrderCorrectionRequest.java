@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.enrollment.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import jakarta.validation.Valid;
 import lombok.Data;
 
 import java.math.BigDecimal;
@@ -20,6 +21,18 @@ public class EnrollmentOrderCorrectionRequest {
 
     @Schema(description = "Student display name")
     private String studentName;
+
+    /**
+     * Shared private lesson participant profiles. The first entry is participant 1;
+     * legacy single-student corrections may omit this field.
+     */
+    @Valid
+    @Schema(description = "Participant profiles for a shared private lesson")
+    private List<RegistrationIntakeRequest.StudentPayload> participants;
+
+    @Valid
+    @Schema(description = "Independent discounts and payments per participant")
+    private List<RegistrationIntakeRequest.ParticipantBillingPayload> participantBillings;
 
     @Schema(description = "Campus ID")
     private Long campusId;

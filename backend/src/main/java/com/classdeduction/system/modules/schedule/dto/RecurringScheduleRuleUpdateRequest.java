@@ -19,6 +19,9 @@ import java.util.List;
 @Schema(description = "Recurring schedule rule update request")
 public class RecurringScheduleRuleUpdateRequest {
 
+    @Schema(description = "Shared private lesson group ID for the existing schedule")
+    private Long privateLessonGroupId;
+
     @Schema(description = "Updated default classroom ID", example = "1880000000000000003")
     private Long defaultClassroomId;
 

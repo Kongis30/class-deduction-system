@@ -29,5 +29,6 @@ public record UnpaidLessonVO(
         String resultStatus,
         String occurrenceType,
         String className,
+        List<String> participantNames,
         List<Long> lessonRecordIds
 ) {}

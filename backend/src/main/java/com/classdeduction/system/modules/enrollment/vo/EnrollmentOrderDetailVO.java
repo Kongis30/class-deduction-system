@@ -54,6 +54,7 @@ public record EnrollmentOrderDetailVO(
         String paymentStatus,
         String remark,
         List<EnrollmentOrderItemVO> items,
+        List<EnrollmentOrderParticipantVO> participants,
         List<PaymentRecordVO> payments,
         List<CoursePackageListItemVO> packages,
         List<ReceiptRecordVO> receipts,

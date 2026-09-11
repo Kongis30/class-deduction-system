@@ -52,6 +52,7 @@ public record EnrollmentOrderListItemVO(
         String orderStatus,
         Integer packageCount,
         List<EnrollmentOrderItemVO> items,
+        List<EnrollmentOrderParticipantVO> participants,
         LocalDateTime createdAt
 ) {
 }

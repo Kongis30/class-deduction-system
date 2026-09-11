@@ -233,6 +233,8 @@ export interface EnrollmentOrderItem {
   orderStatus: string;
   packageCount?: number;
   items?: EnrollmentOrderLineItem[];
+  participants?: EnrollmentOrderParticipantItem[];
+  participantIndex?: number;
   createdAt: string;
 }
 
@@ -277,11 +279,37 @@ export interface EnrollmentOrderDetailItem {
   paymentStatus: string;
   remark?: string;
   items: EnrollmentOrderLineItem[];
+  participants?: EnrollmentOrderParticipantItem[];
   payments: PaymentRecordItem[];
   packages: CoursePackageItem[];
   receipts: ReceiptRecordItem[];
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface EnrollmentOrderParticipantItem {
+  id: EntityId;
+  studentId: EntityId;
+  participantIndex: number;
+  studentName: string;
+  studentNo?: string;
+  grade?: string;
+  school?: string;
+  studentClass?: string;
+  guardianName?: string;
+  guardianPhone?: string;
+  guardianPhone2?: string;
+  guardianEmail?: string;
+  pickupRequired?: boolean;
+  pickupAddress?: string;
+  dropoffRequired?: boolean;
+  dropoffAddress?: string;
+  grossAmount?: number;
+  discountAmount?: number;
+  discountDetail?: string;
+  amountDue?: number;
+  paidAmount?: number;
+  balanceAmount?: number;
 }
 
 export interface EnrollmentOrderLineItem {
@@ -335,6 +363,19 @@ export interface CoursePackageItem {
   packageStatus: string;
   startDate?: string;
   estimatedEndDate?: string;
+  privateLessonGroupId?: EntityId;
+  privateLessonParticipantCount?: number;
+  privateLessonParticipants?: Array<{
+    studentId: EntityId;
+    studentName?: string;
+    studentNo?: string;
+    grade?: string;
+    school?: string;
+    packageId: EntityId;
+    participantIndex: number;
+    priceMultiplier?: number;
+    memberStatus?: string;
+  }>;
   primaryTeacherName?: string;
   teacherAssignments?: PackageTeacherAssignmentItem[];
   createdAt: string;
@@ -399,6 +440,7 @@ export interface PaymentMethodItem {
 export interface PaymentRecordItem {
   id: EntityId;
   paymentNo: string;
+  participantIndex?: number;
   paymentMethod: string;
   paymentType?: string;
   paymentStatus: string;
@@ -507,6 +549,7 @@ export interface LessonOccurrenceItem {
   actualStartAt?: string;
   actualEndAt?: string;
   actualUnits?: number;
+  privateLessonGroupId?: EntityId;
 }
 
 export interface ClassroomOccupancyItem {
@@ -793,6 +836,7 @@ export interface UnpaidLessonItem {
   resultStatus: string;
   occurrenceType?: string;
   className?: string;
+  participantNames?: string[];
 }
 
 export interface TeacherPaymentItem {

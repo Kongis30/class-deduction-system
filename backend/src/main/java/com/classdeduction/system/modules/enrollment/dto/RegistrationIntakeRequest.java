@@ -30,6 +30,15 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Student profile submitted from the registration form")
     private StudentPayload student;
 
+    /**
+     * Optional participants for a shared private lesson. The legacy student field remains
+     * required for backward-compatible clients and is treated as participant 1.
+     */
+    @Size(max = 3, message = "A private lesson can have at most 3 students")
+    @Valid
+    @Schema(description = "Private lesson participants, including participant 1")
+    private List<StudentPayload> participants;
+
     @Schema(description = "Campus ID selected during registration", example = "1")
     private Long campusId;
 
@@ -100,6 +109,13 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Payment detail lines")
     private List<PaymentPayload> payments;
 
+    /**
+     * 1 对 N 私教的按学生账务。订单和 Receipt 仍然只有一份，但每个学生的折扣、付款方式和已付金额独立记录。
+     */
+    @Valid
+    @Schema(description = "Per-participant billing details for shared private lessons")
+    private List<ParticipantBillingPayload> participantBillings;
+
     @Valid
     @Schema(description = "Receipt options")
     private ReceiptOptionsPayload receiptOptions;
@@ -111,6 +127,9 @@ public class RegistrationIntakeRequest {
     @Setter
     @Schema(description = "Registration student payload")
     public static class StudentPayload {
+
+        @Schema(description = "Existing student ID when selecting a saved participant")
+        private Long studentId;
 
         @NotBlank(message = "Student name is required")
         @Schema(description = "Student name", example = "Ava Lin")
@@ -207,6 +226,9 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Registration payment payload")
     public static class PaymentPayload {
 
+        @Schema(description = "Participant index within the shared private lesson", example = "2")
+        private Integer participantIndex;
+
         @NotBlank(message = "Payment method is required")
         @Schema(description = "Payment method code", example = "ZELLE")
         private String paymentMethod;
@@ -228,6 +250,24 @@ public class RegistrationIntakeRequest {
 
         @Schema(description = "Payment remark")
         private String remark;
+    }
+
+    @Getter
+    @Setter
+    @Schema(description = "Private lesson participant billing")
+    public static class ParticipantBillingPayload {
+
+        @NotNull(message = "Participant index is required")
+        private Integer participantIndex;
+
+        @DecimalMin(value = "0.00", message = "Participant discount cannot be negative")
+        private BigDecimal discountAmount;
+
+        @Valid
+        private List<FeeLinePayload> discounts;
+
+        @Valid
+        private List<PaymentPayload> payments;
     }
 
     @Getter

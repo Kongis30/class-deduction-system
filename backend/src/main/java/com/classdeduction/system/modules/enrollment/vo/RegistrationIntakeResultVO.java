@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -20,6 +21,8 @@ public record RegistrationIntakeResultVO(
         String studentName,
         Boolean studentReused,
         AccountResultVO studentAccount,
+        Long privateLessonGroupId,
+        List<ParticipantResultVO> participants,
         List<AccountResultVO> teacherAccounts,
         List<CourseArtifactVO> courseArtifacts,
         List<PaymentResultVO> payments,
@@ -45,6 +48,20 @@ public record RegistrationIntakeResultVO(
     }
 
     @Builder
+    @Schema(description = "Registration participant result")
+    public record ParticipantResultVO(
+            Long studentId,
+            String studentNo,
+            String studentName,
+            Boolean studentReused,
+            Long packageId,
+            String packageNo,
+            BigDecimal priceAmount,
+            AccountResultVO studentAccount
+    ) {
+    }
+
+    @Builder
     @Schema(description = "Generated course artifact result")
     public record CourseArtifactVO(
             Long orderItemId,
@@ -62,8 +79,12 @@ public record RegistrationIntakeResultVO(
     public record PaymentResultVO(
             Long paymentId,
             String paymentNo,
+            Integer participantIndex,
             String paymentMethod,
-            BigDecimal amount
+            BigDecimal amount,
+            LocalDateTime paidAt,
+            String handledByName,
+            String remark
     ) {
     }
 }

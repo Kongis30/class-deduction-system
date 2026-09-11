@@ -18,8 +18,10 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.schedule.dto.ClassroomOccupancyPageQuery;
 import com.classdeduction.system.modules.schedule.dto.LessonOccurrencePageQuery;
 import com.classdeduction.system.modules.schedule.dto.OneOnOneDeductionQuery;
@@ -43,6 +45,7 @@ import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneLessonVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOnePackageVO;
+import com.classdeduction.system.modules.schedule.vo.OneOnOneParticipantVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneStudentVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
 import com.classdeduction.system.modules.schedule.vo.PendingClassroomAssignmentVO;
@@ -79,6 +82,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private final LessonStatusRuleMapper lessonStatusRuleMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -132,6 +136,16 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .eq(query.getPackageId() != null, LessonOccurrenceEntity::getPackageId, query.getPackageId())
                 .and(query.getStudentId() != null, studentWrapper -> {
                     studentWrapper.eq(LessonOccurrenceEntity::getStudentId, query.getStudentId());
+                    List<Long> privateGroupIds = privateLessonGroupMemberMapper.selectList(
+                                    new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                                            .eq(PrivateLessonGroupMemberEntity::getStudentId, query.getStudentId())
+                                            .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                                            .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                            .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                            .filter(Objects::nonNull).toList();
+                    if (!privateGroupIds.isEmpty()) {
+                        studentWrapper.or().in(LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds);
+                    }
                     List<Long> enrolledClassGroupIds = classEnrollmentMapper.selectList(
                                     new LambdaQueryWrapper<ClassEnrollmentEntity>()
                                             .eq(ClassEnrollmentEntity::getStudentId, query.getStudentId())
@@ -576,7 +590,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         LocalDateTime futureWindowEnd = now.plusMonths(6);
 
         LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getStudentId, studentId)
+                .and(scope -> scope.eq(LessonOccurrenceEntity::getStudentId, studentId)
+                        .or(privateGroupMemberMapperHasGroup(studentId),
+                                group -> group.in(LessonOccurrenceEntity::getPrivateLessonGroupId,
+                                        privateGroupIdsForStudent(studentId))))
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .ge(LessonOccurrenceEntity::getPlannedStartAt, now)
                 .le(LessonOccurrenceEntity::getPlannedStartAt, futureWindowEnd)
@@ -660,6 +677,30 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         }
 
         List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
+        Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage = loadPrivateGroupMembersByPackage(packageIds);
+        // 管理员视图按私教课组展示一次；学生视图仍保留当前学生自己的课包入口。
+        if (studentId == null) {
+            Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersForFilter = groupMembersByPackage;
+            packages = packages.stream()
+                    .filter(coursePackage -> isPrimaryPrivateLessonPackage(coursePackage, groupMembersForFilter))
+                    .toList();
+            packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
+            groupMembersByPackage = loadPrivateGroupMembersByPackage(packageIds);
+        }
+        Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersForView = groupMembersByPackage;
+        List<CoursePackageEntity> packagesForParticipantContext = new ArrayList<>(packages);
+        Set<Long> relatedPackageIds = groupMembersForView.values().stream()
+                .flatMap(List::stream)
+                .map(PrivateLessonGroupMemberEntity::getPackageId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<Long> loadedPackageIds = packagesForParticipantContext.stream()
+                .map(CoursePackageEntity::getId)
+                .collect(Collectors.toSet());
+        relatedPackageIds.removeAll(loadedPackageIds);
+        if (!relatedPackageIds.isEmpty()) {
+            packagesForParticipantContext.addAll(coursePackageMapper.selectBatchIds(relatedPackageIds));
+        }
         Map<Long, List<LessonOccurrenceEntity>> occurrenceMap = loadOneOnOneOccurrenceMap(packageIds, safeQuery.getStartAt(), safeQuery.getEndAt());
         Set<Long> occurrenceIds = occurrenceMap.values().stream()
                 .flatMap(List::stream)
@@ -667,10 +708,15 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toSet());
         Map<Long, LessonRecordEntity> recordMap = loadLatestRecordByOccurrence(occurrenceIds);
 
-        Map<Long, StudentEntity> studentMap = listStudentsByIds(packages.stream()
+        Set<Long> studentIds = new LinkedHashSet<>(packages.stream()
                 .map(CoursePackageEntity::getStudentId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet()));
+        groupMembersForView.values().stream().flatMap(List::stream)
+                .map(PrivateLessonGroupMemberEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .forEach(studentIds::add);
+        Map<Long, StudentEntity> studentMap = listStudentsByIds(studentIds);
         Map<Long, TeacherEntity> teacherMap = loadOneOnOneTeachers(occurrenceMap, recordMap);
         Map<Long, ClassroomEntity> classroomMap = loadOneOnOneClassrooms(occurrenceMap, recordMap);
         Map<Long, EnrollmentOrderItemEntity> orderItemMap = listEnrollmentOrderItemsByIds(packages.stream()
@@ -687,10 +733,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     .add(coursePackage);
         }
 
+        List<CoursePackageEntity> resolvedPackages = packagesForParticipantContext;
         return grouped.entrySet().stream()
                 .map(teacherEntry -> toOneOnOneTeacherVO(teacherEntry.getKey(), teacherEntry.getValue(),
                         studentMap, teacherMap, classroomMap, courseProductMap, orderItemMap,
-                        occurrenceMap, recordMap, statusNameMap))
+                        occurrenceMap, recordMap, statusNameMap, groupMembersForView, resolvedPackages))
                 .toList();
     }
 
@@ -700,6 +747,17 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         }
         // 无法取到产品时才回退到课包字段；正常路径以产品模式为准，避免班课学生混入 1 对 1 排课列表。
         return "ONE_ON_ONE".equals(coursePackage.getTeachingMode());
+    }
+
+    private boolean isPrimaryPrivateLessonPackage(CoursePackageEntity coursePackage,
+                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> membersByPackage) {
+        List<PrivateLessonGroupMemberEntity> members = membersByPackage.getOrDefault(
+                coursePackage.getId(), Collections.emptyList());
+        if (members.isEmpty()) {
+            return true;
+        }
+        return members.stream().anyMatch(member -> Integer.valueOf(1).equals(member.getParticipantIndex())
+                && Objects.equals(member.getPackageId(), coursePackage.getId()));
     }
 
     private List<LessonOccurrenceVO> toOccurrenceVOs(List<LessonOccurrenceEntity> occurrences) {
@@ -772,6 +830,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .actualStartAt(record == null ? null : record.getActualStartAt())
                             .actualEndAt(record == null ? null : record.getActualEndAt())
                             .actualUnits(record == null ? null : record.getActualUnits())
+                            .privateLessonGroupId(item.getPrivateLessonGroupId())
                             .build();
                 })
                 .toList();
@@ -892,7 +951,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             if (currentUser.studentId() == null) {
                 throw new BusinessException("STUDENT_BINDING_REQUIRED", "This student account is not linked to a student profile.");
             }
-            if (Objects.equals(entity.getStudentId(), currentUser.studentId())) {
+            if (Objects.equals(entity.getStudentId(), currentUser.studentId())
+                    || isStudentPrivateLessonGroupMember(currentUser.studentId(), entity.getPrivateLessonGroupId())) {
                 return;
             }
             if (entity.getClassGroupId() != null && isStudentEnrolledInClassForOccurrence(
@@ -916,6 +976,30 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         .ge(ClassEnrollmentEntity::getExpiryDate, occurrence.getPlannedStartAt().toLocalDate()))
                 .stream()
                 .anyMatch(enrollment -> enrollmentIncludesOccurrence(enrollment, occurrence));
+    }
+
+    private boolean isStudentPrivateLessonGroupMember(Long studentId, Long privateLessonGroupId) {
+        if (studentId == null || privateLessonGroupId == null) {
+            return false;
+        }
+        return privateLessonGroupMemberMapper.selectCount(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
+                .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, privateLessonGroupId)
+                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)) > 0;
+    }
+
+    private boolean privateGroupMemberMapperHasGroup(Long studentId) {
+        return !privateGroupIdsForStudent(studentId).isEmpty();
+    }
+
+    private List<Long> privateGroupIdsForStudent(Long studentId) {
+        return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull).distinct().toList();
     }
 
     private List<LessonOccurrenceEntity> filterStudentClassOccurrences(List<LessonOccurrenceEntity> records, Long studentId) {
@@ -1024,12 +1108,85 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (packageIds.isEmpty()) {
             return Collections.emptyMap();
         }
+        Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByGroup = loadPrivateGroupMembersByGroup(packageIds);
+        Set<Long> groupIds = groupMembersByGroup.keySet();
         List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .in(LessonOccurrenceEntity::getPackageId, packageIds)
+                .and(scope -> scope.in(LessonOccurrenceEntity::getPackageId, packageIds)
+                        .or(!groupIds.isEmpty(), group -> group.in(LessonOccurrenceEntity::getPrivateLessonGroupId, groupIds)))
                 .ge(startAt != null, LessonOccurrenceEntity::getPlannedStartAt, startAt)
                 .le(endAt != null, LessonOccurrenceEntity::getPlannedStartAt, endAt)
                 .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
-        return occurrences.stream().collect(Collectors.groupingBy(LessonOccurrenceEntity::getPackageId, LinkedHashMap::new, Collectors.toList()));
+        Map<Long, List<LessonOccurrenceEntity>> result = new LinkedHashMap<>();
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            if (occurrence.getPrivateLessonGroupId() == null) {
+                result.computeIfAbsent(occurrence.getPackageId(), key -> new ArrayList<>()).add(occurrence);
+                continue;
+            }
+            List<PrivateLessonGroupMemberEntity> members = groupMembersByGroup.getOrDefault(
+                    occurrence.getPrivateLessonGroupId(), Collections.emptyList());
+            for (PrivateLessonGroupMemberEntity member : members) {
+                result.computeIfAbsent(member.getPackageId(), key -> new ArrayList<>()).add(occurrence);
+            }
+        }
+        return result;
+    }
+
+    private Map<Long, List<PrivateLessonGroupMemberEntity>> loadPrivateGroupMembersByPackage(List<Long> packageIds) {
+        if (packageIds == null || packageIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<PrivateLessonGroupMemberEntity> seedMembers = privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getPackageId, packageIds)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE"))
+                ;
+        Set<Long> groupIds = seedMembers.stream()
+                .map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, List<PrivateLessonGroupMemberEntity>> membersByGroup = groupIds.isEmpty()
+                ? Collections.emptyMap()
+                : privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupIds)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex))
+                .stream().collect(Collectors.groupingBy(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId,
+                        LinkedHashMap::new, Collectors.toList()));
+        Map<Long, List<PrivateLessonGroupMemberEntity>> result = new LinkedHashMap<>();
+        for (Long packageId : packageIds) {
+            List<PrivateLessonGroupMemberEntity> seed = seedMembers.stream()
+                    .filter(member -> Objects.equals(member.getPackageId(), packageId))
+                    .toList();
+            if (seed.isEmpty()) {
+                continue;
+            }
+            Long groupId = seed.get(0).getPrivateLessonGroupId();
+            result.put(packageId, groupId == null
+                    ? seed
+                    : membersByGroup.getOrDefault(groupId, seed));
+        }
+        return result;
+    }
+
+    private Map<Long, List<PrivateLessonGroupMemberEntity>> loadPrivateGroupMembersByGroup(List<Long> packageIds) {
+        if (packageIds == null || packageIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Set<Long> groupIds = privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getPackageId, packageIds)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE"))
+                .stream()
+                .map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (groupIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupIds)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex))
+                .stream().collect(Collectors.groupingBy(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId,
+                        LinkedHashMap::new, Collectors.toList()));
     }
 
     private Map<Long, LessonRecordEntity> loadLatestRecordByOccurrence(Set<Long> occurrenceIds) {
@@ -1136,10 +1293,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, EnrollmentOrderItemEntity> orderItemMap,
                                                   Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
                                                   Map<Long, LessonRecordEntity> recordMap,
-                                                  Map<String, String> statusNameMap) {
+                                                  Map<String, String> statusNameMap,
+                                                  Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
+                                                  List<CoursePackageEntity> allPackages) {
         List<OneOnOneStudentVO> students = studentPackages.entrySet().stream()
                 .map(entry -> toOneOnOneStudentVO(entry.getKey(), entry.getValue(), studentMap, teacherMap,
-                        classroomMap, courseProductMap, orderItemMap, occurrenceMap, recordMap, statusNameMap))
+                        classroomMap, courseProductMap, orderItemMap, occurrenceMap, recordMap, statusNameMap,
+                        groupMembersByPackage, allPackages))
                 .toList();
         TeacherEntity teacher = teacherId == null ? null : teacherMap.get(teacherId);
         int packageCount = studentPackages.values().stream().mapToInt(List::size).sum();
@@ -1169,11 +1329,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, EnrollmentOrderItemEntity> orderItemMap,
                                                   Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
                                                   Map<Long, LessonRecordEntity> recordMap,
-                                                  Map<String, String> statusNameMap) {
+                                                  Map<String, String> statusNameMap,
+                                                  Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
+                                                  List<CoursePackageEntity> allPackages) {
         StudentEntity student = studentMap.get(studentId);
         List<OneOnOnePackageVO> packageVOs = packages.stream()
                 .map(item -> toOneOnOnePackageVO(item, teacherMap, classroomMap, courseProductMap,
-                        orderItemMap, occurrenceMap, recordMap, statusNameMap))
+                        orderItemMap, occurrenceMap, recordMap, statusNameMap, groupMembersByPackage, allPackages,
+                        studentMap))
                 .toList();
         UnitSummary units = summarizeUnits(packages);
         return OneOnOneStudentVO.builder()
@@ -1197,7 +1360,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, EnrollmentOrderItemEntity> orderItemMap,
                                                   Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
                                                   Map<Long, LessonRecordEntity> recordMap,
-                                                  Map<String, String> statusNameMap) {
+                                                  Map<String, String> statusNameMap,
+                                                  Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
+                                                  List<CoursePackageEntity> allPackages,
+                                                  Map<Long, StudentEntity> studentMap) {
         List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList());
         Map<Long, RecurringScheduleSlotEntity> recurringSlotMap = loadRecurringSlotMap(occurrences);
         List<OneOnOneLessonVO> lessons = occurrences.stream()
@@ -1209,6 +1375,29 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Integer purchasedUnitsRaw = orderItem == null ? null : orderItem.getOneOnOneUnits();
         int purchasedUnits = purchasedUnitsRaw == null ? totalUnitsRaw : purchasedUnitsRaw;
         int bonusUnits = Math.max(0, totalUnitsRaw - purchasedUnits);
+        List<PrivateLessonGroupMemberEntity> groupMembers = groupMembersByPackage.getOrDefault(
+                coursePackage.getId(), Collections.emptyList()).stream()
+                .sorted(Comparator.comparing(PrivateLessonGroupMemberEntity::getParticipantIndex,
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+        Map<Long, CoursePackageEntity> packageMap = allPackages.stream()
+                .collect(Collectors.toMap(CoursePackageEntity::getId, Function.identity(), (left, right) -> left));
+        List<OneOnOneParticipantVO> participants = groupMembers.stream()
+                .map(member -> {
+                    StudentEntity participant = studentMap.get(member.getStudentId());
+                    CoursePackageEntity participantPackage = packageMap.get(member.getPackageId());
+                    return OneOnOneParticipantVO.builder()
+                            .studentId(member.getStudentId())
+                            .studentName(participant == null ? null : participant.getStudentName())
+                            .studentNo(participant == null ? null : participant.getStudentNo())
+                            .packageId(member.getPackageId())
+                            .priceMultiplier(member.getPriceMultiplier())
+                            .remainingUnits(participantPackage == null ? null
+                                    : UnitConverter.toHoursDecimal(participantPackage.getRemainingUnits()))
+                            .build();
+                }).toList();
+        Long privateGroupId = groupMembers.isEmpty() ? null : groupMembers.get(0).getPrivateLessonGroupId();
+        boolean primary = groupMembers.isEmpty() || Objects.equals(groupMembers.get(0).getPackageId(), coursePackage.getId());
         return OneOnOnePackageVO.builder()
                 .packageId(coursePackage.getId())
                 .packageNo(coursePackage.getPackageNo())
@@ -1229,6 +1418,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .packageStatus(coursePackage.getPackageStatus())
                 .startDate(coursePackage.getStartDate())
                 .estimatedEndDate(coursePackage.getEstimatedEndDate())
+                .privateLessonGroupId(privateGroupId)
+                .participantCount(participants.isEmpty() ? 1 : participants.size())
+                .privateLessonGroupPrimary(primary)
+                .participants(participants)
                 .lessons(lessons)
                 .build();
     }

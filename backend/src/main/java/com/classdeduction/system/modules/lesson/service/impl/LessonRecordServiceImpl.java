@@ -17,8 +17,10 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
@@ -75,6 +77,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -167,6 +170,13 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     @Transactional(rollbackFor = Exception.class)
     public LessonRecordConfirmResultVO confirmLesson(LessonRecordConfirmRequest request, CurrentUserResponse currentUser) {
         currentUser = defaultAdminIfMissing(currentUser);
+        LessonOccurrenceEntity occurrence = requireConfirmableOccurrence(request.getOccurrenceId());
+        if (occurrence.getPrivateLessonGroupId() != null) {
+            if (isTeacherUser(currentUser)) {
+                return initialConfirmPrivateLessonGroup(request, currentUser, occurrence);
+            }
+            return confirmPrivateLessonGroup(request, currentUser, occurrence);
+        }
         if (isTeacherUser(currentUser)) {
             return initialConfirmLesson(request, currentUser);
         }
@@ -176,6 +186,216 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             return adminConfirmLesson(pendingRecord.getId(), currentUser);
         }
         return adminDirectConfirmLesson(request, currentUser);
+    }
+
+    /**
+     * 共享私教课的整组消课入口：校验所有成员后，在一个事务内写入每个学生的记录和流水。
+     * 老师工资仍以同一个 occurrence 为结算单位，因此这里不会生成第二套 occurrence。
+     */
+    private LessonRecordConfirmResultVO confirmPrivateLessonGroup(LessonRecordConfirmRequest request,
+                                                                  CurrentUserResponse currentUser,
+                                                                  LessonOccurrenceEntity occurrence) {
+        List<PrivateLessonGroupMemberEntity> members = activePrivateLessonGroupMembers(occurrence.getPrivateLessonGroupId());
+        if (members.isEmpty()) {
+            throw new BusinessException("PRIVATE_LESSON_GROUP_EMPTY", "This private lesson group has no active students.");
+        }
+        Map<Long, CoursePackageEntity> packageMap = coursePackageMapper.selectBatchIds(
+                        members.stream().map(PrivateLessonGroupMemberEntity::getPackageId).toList())
+                .stream()
+                .collect(Collectors.toMap(CoursePackageEntity::getId, item -> item));
+        for (PrivateLessonGroupMemberEntity member : members) {
+            CoursePackageEntity coursePackage = packageMap.get(member.getPackageId());
+            if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
+                throw new BusinessException("PRIVATE_LESSON_MEMBER_PACKAGE_INVALID",
+                        "A private lesson member package is missing or inactive for student " + member.getStudentId() + ".");
+            }
+        }
+
+        List<LessonRecordEntity> existingRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())
+                .eq(LessonRecordEntity::getIsDeleted, 0));
+        Map<Long, LessonRecordEntity> existingRecordByPackage = existingRecords.stream()
+                .filter(record -> record.getPackageId() != null)
+                .collect(Collectors.toMap(LessonRecordEntity::getPackageId, item -> item, (left, right) -> left));
+        if (!existingRecords.isEmpty()) {
+            boolean completePendingGroup = existingRecordByPackage.size() == members.size()
+                    && existingRecords.size() == members.size()
+                    && existingRecords.stream().allMatch(record -> CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())
+                    || CONFIRM_STAGE_REJECTED.equals(record.getConfirmStage()));
+            if (!completePendingGroup) {
+                throw new BusinessException("LESSON_ALREADY_CONFIRMED", "This shared private lesson has already been confirmed.");
+            }
+        }
+
+        PrivateLessonGroupMemberEntity primaryMember = members.stream()
+                .filter(item -> Objects.equals(item.getPackageId(), occurrence.getPackageId()))
+                .findFirst()
+                .orElse(members.get(0));
+        CoursePackageEntity primaryPackage = packageMap.get(primaryMember.getPackageId());
+        StudentEntity primaryStudent = requireStudent(primaryMember.getStudentId());
+        LessonStatusRuleEntity statusRule = requireActiveRule(request.getResultStatus());
+        ConfirmationDecision decision = buildDecision(request, occurrence, primaryPackage, statusRule);
+        if (decision.shouldDeduct()) {
+            for (PrivateLessonGroupMemberEntity member : members) {
+                CoursePackageEntity coursePackage = packageMap.get(member.getPackageId());
+                if (decision.deductedUnits() > safeUnits(coursePackage.getRemainingUnits())) {
+                    StudentEntity student = studentMapper.selectById(member.getStudentId());
+                    throw new BusinessException("INSUFFICIENT_REMAINING_UNITS",
+                            "Student " + (student == null ? member.getStudentId() : student.getStudentName())
+                                    + " does not have enough remaining units for this shared lesson.");
+                }
+            }
+        }
+
+        for (PrivateLessonGroupMemberEntity member : members) {
+            ensureNoConflictForConfirmedOccurrence(occurrence, decision, member.getStudentId());
+        }
+        int originalPlannedUnits = occurrence.getPlannedUnits();
+        LessonOccurrenceEntity makeup = buildMakeupIfNeeded(primaryPackage, primaryStudent, occurrence,
+                originalPlannedUnits, decision);
+        if (makeup != null) {
+            makeup.setPrivateLessonGroupId(occurrence.getPrivateLessonGroupId());
+            ensureNoConflictForMakeupOccurrence(makeup);
+        }
+
+        List<LessonRecordEntity> records = new ArrayList<>();
+        List<PackageUpdateResult> packageUpdates = new ArrayList<>();
+        LocalDateTime confirmedAt = AppTime.nowLocalDateTime();
+        for (PrivateLessonGroupMemberEntity member : members) {
+            CoursePackageEntity coursePackage = packageMap.get(member.getPackageId());
+            StudentEntity student = requireStudent(member.getStudentId());
+            LessonRecordEntity record = existingRecordByPackage.get(member.getPackageId());
+            if (record == null) {
+                record = new LessonRecordEntity();
+            }
+            fillRecordFromDecision(record, occurrence, coursePackage, student, statusRule, decision, request.getNotes());
+            record.setConfirmStage(CONFIRM_STAGE_CONFIRMED);
+            record.setRecordSource(resolveRecordSource(currentUser));
+            record.setConfirmedByUserId(currentUser.userId());
+            record.setConfirmedAt(confirmedAt);
+            record.setAdminConfirmedAt(confirmedAt);
+            record.setAdminConfirmedByUserId(currentUser.userId());
+            record.setRejectReason(null);
+            record.setRejectedAt(null);
+            record.setRejectedByUserId(null);
+            if (record.getId() == null) {
+                lessonRecordMapper.insert(record);
+            } else {
+                lessonRecordMapper.updateById(record);
+            }
+            records.add(record);
+            packageUpdates.add(applyPackageAndLedgerChanges(coursePackage, occurrence, statusRule, record,
+                    currentUser.userId(), decision));
+        }
+
+        applyActualValuesToOccurrence(occurrence, decision);
+        occurrence.setPlanningStatus("MERGED");
+        lessonOccurrenceMapper.updateById(occurrence);
+        if (makeup != null) {
+            lessonOccurrenceMapper.insert(makeup);
+        }
+        adjustFutureOccurrencesIfNeeded(primaryPackage.getId(), occurrence.getPrivateLessonGroupId(), originalPlannedUnits, decision);
+
+        for (int index = 0; index < members.size(); index++) {
+            CoursePackageEntity coursePackage = packageMap.get(members.get(index).getPackageId());
+            StudentEntity student = requireStudent(members.get(index).getStudentId());
+            notificationOutboxService.queueLessonBalanceEmail(records.get(index), coursePackage, student, statusRule.getStatusName());
+            queueLowBalanceWarningIfNeeded(coursePackage, student, packageUpdates.get(index));
+        }
+
+        int primaryIndex = members.indexOf(primaryMember);
+        PackageUpdateResult primaryUpdate = packageUpdates.get(primaryIndex);
+        return LessonRecordConfirmResultVO.builder()
+                .lessonRecordId(records.get(primaryIndex).getId())
+                .occurrenceId(occurrence.getId())
+                .ledgerId(primaryUpdate.ledgerId())
+                .deductedUnits(UnitConverter.toHoursDecimal(decision.deductedUnits()))
+                .remainingUnits(UnitConverter.toHoursDecimal(primaryUpdate.remainingUnits()))
+                .packageCompleted(packageUpdates.stream().allMatch(PackageUpdateResult::packageCompleted))
+                .build();
+    }
+
+    /**
+     * 多人私教沿用原有教师初确认流程：先为整组建立待复核记录，不扣课、不结算工资。
+     * 管理员随后确认任意一条成员记录时，会复用同一 occurrence 把整组一次性结算。
+     */
+    private LessonRecordConfirmResultVO initialConfirmPrivateLessonGroup(LessonRecordConfirmRequest request,
+                                                                          CurrentUserResponse currentUser,
+                                                                          LessonOccurrenceEntity occurrence) {
+        validateTeacherInitialConfirm(request, occurrence, currentUser);
+        List<PrivateLessonGroupMemberEntity> members = activePrivateLessonGroupMembers(occurrence.getPrivateLessonGroupId());
+        if (members.isEmpty()) {
+            throw new BusinessException("PRIVATE_LESSON_GROUP_EMPTY", "This private lesson group has no active students.");
+        }
+        List<LessonRecordEntity> existingRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())
+                .eq(LessonRecordEntity::getIsDeleted, 0));
+        Map<Long, LessonRecordEntity> existingRecordByPackage = existingRecords.stream()
+                .filter(record -> record.getPackageId() != null)
+                .collect(Collectors.toMap(LessonRecordEntity::getPackageId, item -> item, (left, right) -> left));
+        if (!existingRecords.isEmpty() && (existingRecords.size() != members.size()
+                || existingRecordByPackage.size() != members.size()
+                || existingRecords.stream().anyMatch(record -> !CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())
+                && !CONFIRM_STAGE_REJECTED.equals(record.getConfirmStage())))) {
+            throw new BusinessException("LESSON_ALREADY_CONFIRMED", "This shared private lesson has already been submitted.");
+        }
+
+        Map<Long, CoursePackageEntity> packageMap = coursePackageMapper.selectBatchIds(
+                        members.stream().map(PrivateLessonGroupMemberEntity::getPackageId).toList())
+                .stream()
+                .collect(Collectors.toMap(CoursePackageEntity::getId, item -> item));
+        PrivateLessonGroupMemberEntity primaryMember = members.stream()
+                .filter(item -> Objects.equals(item.getPackageId(), occurrence.getPackageId()))
+                .findFirst()
+                .orElse(members.get(0));
+        CoursePackageEntity primaryPackage = packageMap.get(primaryMember.getPackageId());
+        if (primaryPackage == null || !"ACTIVE".equals(primaryPackage.getPackageStatus())) {
+            throw new BusinessException("PRIVATE_LESSON_MEMBER_PACKAGE_INVALID", "The primary private lesson package is not active.");
+        }
+        LessonStatusRuleEntity statusRule = requireActiveRule(request.getResultStatus());
+        ConfirmationDecision decision = buildDecision(request, occurrence, primaryPackage, statusRule);
+        LocalDateTime submittedAt = AppTime.nowLocalDateTime();
+        LessonRecordEntity primaryRecord = null;
+        for (PrivateLessonGroupMemberEntity member : members) {
+            CoursePackageEntity coursePackage = packageMap.get(member.getPackageId());
+            if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
+                throw new BusinessException("PRIVATE_LESSON_MEMBER_PACKAGE_INVALID",
+                        "A private lesson member package is missing or inactive for student " + member.getStudentId() + ".");
+            }
+            StudentEntity student = requireStudent(member.getStudentId());
+            LessonRecordEntity record = existingRecordByPackage.get(member.getPackageId());
+            if (record == null) {
+                record = new LessonRecordEntity();
+            }
+            fillRecordFromDecision(record, occurrence, coursePackage, student, statusRule, decision, request.getNotes());
+            record.setConfirmStage(CONFIRM_STAGE_PENDING_ADMIN);
+            record.setRecordSource("TEACHER");
+            record.setConfirmedByUserId(null);
+            record.setConfirmedAt(null);
+            record.setTeacherConfirmedAt(submittedAt);
+            record.setTeacherConfirmedByUserId(currentUser.userId());
+            record.setAdminConfirmedAt(null);
+            record.setAdminConfirmedByUserId(null);
+            record.setRejectReason(null);
+            record.setRejectedAt(null);
+            record.setRejectedByUserId(null);
+            if (record.getId() == null) {
+                lessonRecordMapper.insert(record);
+            } else {
+                lessonRecordMapper.updateById(record);
+            }
+            if (Objects.equals(member.getPackageId(), primaryMember.getPackageId())) {
+                primaryRecord = record;
+            }
+        }
+        return LessonRecordConfirmResultVO.builder()
+                .lessonRecordId(primaryRecord == null ? null : primaryRecord.getId())
+                .occurrenceId(occurrence.getId())
+                .ledgerId(null)
+                .deductedUnits(UnitConverter.toHoursDecimal(decision.deductedUnits()))
+                .remainingUnits(UnitConverter.toHoursDecimal(safeUnits(primaryPackage.getRemainingUnits())))
+                .packageCompleted(false)
+                .build();
     }
 
     @Override
@@ -228,10 +448,16 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     public LessonRecordConfirmResultVO adminConfirmLesson(Long recordId, CurrentUserResponse currentUser) {
         currentUser = defaultAdminIfMissing(currentUser);
         LessonRecordEntity record = requireRecord(recordId);
+        LessonOccurrenceEntity occurrence = requireConfirmableOccurrence(record.getOccurrenceId());
+        if (occurrence.getPrivateLessonGroupId() != null) {
+            if (!CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())) {
+                throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be finally confirmed.");
+            }
+            return confirmPrivateLessonGroup(requestFromRecord(record, occurrence), currentUser, occurrence);
+        }
         if (!CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())) {
             throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be finally confirmed.");
         }
-        LessonOccurrenceEntity occurrence = requireConfirmableOccurrence(record.getOccurrenceId());
         CoursePackageEntity coursePackage = requirePackage(record.getPackageId());
         StudentEntity student = requireStudent(record.getStudentId());
         LessonStatusRuleEntity rule = requireActiveRule(record.getResultStatus());
@@ -249,12 +475,18 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
         currentUser = defaultAdminIfMissing(currentUser);
         LessonRecordEntity record = requireRecord(recordId);
-        if (!CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())) {
-            throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be finally confirmed.");
-        }
         LessonOccurrenceEntity occurrence = requireConfirmableOccurrence(record.getOccurrenceId());
         if (request.getOccurrenceId() != null && !Objects.equals(request.getOccurrenceId(), occurrence.getId())) {
             throw new BusinessException("OCCURRENCE_MISMATCH", "The request occurrence does not match this pending lesson record.");
+        }
+        if (occurrence.getPrivateLessonGroupId() != null) {
+            if (!CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())) {
+                throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be finally confirmed.");
+            }
+            return confirmPrivateLessonGroup(mergeAdminConfirmRequest(record, occurrence, request), currentUser, occurrence);
+        }
+        if (!CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())) {
+            throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be finally confirmed.");
         }
         CoursePackageEntity coursePackage = requirePackage(record.getPackageId());
         StudentEntity student = requireStudent(record.getStudentId());
@@ -276,6 +508,23 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         LessonRecordEntity record = requireRecord(recordId);
         if (!CONFIRM_STAGE_PENDING_ADMIN.equals(record.getConfirmStage())) {
             throw new BusinessException("INVALID_CONFIRM_STAGE", "Only pending lesson records can be rejected.");
+        }
+        LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectById(record.getOccurrenceId());
+        if (occurrence != null && occurrence.getPrivateLessonGroupId() != null) {
+            List<LessonRecordEntity> groupRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                    .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())
+                    .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_PENDING_ADMIN)
+                    .eq(LessonRecordEntity::getIsDeleted, 0));
+            LocalDateTime rejectedAt = AppTime.nowLocalDateTime();
+            for (LessonRecordEntity groupRecord : groupRecords) {
+                groupRecord.setConfirmStage(CONFIRM_STAGE_REJECTED);
+                groupRecord.setRejectReason(rejectReason);
+                groupRecord.setRejectedAt(rejectedAt);
+                groupRecord.setRejectedByUserId(currentUser.userId());
+                lessonRecordMapper.updateById(groupRecord);
+            }
+            restoreOccurrence(occurrence.getId());
+            return;
         }
         record.setConfirmStage(CONFIRM_STAGE_REJECTED);
         record.setRejectReason(rejectReason);
@@ -355,7 +604,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (makeup != null) {
             lessonOccurrenceMapper.insert(makeup);
         }
-        adjustFutureOccurrencesIfNeeded(coursePackage.getId(), originalPlannedUnits, decision);
+        adjustFutureOccurrencesIfNeeded(coursePackage.getId(), null, originalPlannedUnits, decision);
         refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision, packageUpdate);
 
         notificationOutboxService.queueLessonBalanceEmail(record, coursePackage, student, rule.getStatusName());
@@ -383,9 +632,15 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
     private void ensureNoConflictForConfirmedOccurrence(LessonOccurrenceEntity occurrence,
                                                         ConfirmationDecision decision) {
+        ensureNoConflictForConfirmedOccurrence(occurrence, decision, occurrence.getStudentId());
+    }
+
+    private void ensureNoConflictForConfirmedOccurrence(LessonOccurrenceEntity occurrence,
+                                                        ConfirmationDecision decision,
+                                                        Long studentId) {
         LessonOccurrenceEntity confirmed = new LessonOccurrenceEntity();
         confirmed.setId(occurrence.getId());
-        confirmed.setStudentId(occurrence.getStudentId());
+        confirmed.setStudentId(studentId);
         confirmed.setPlannedTeacherId(decision.actualTeacherId() != null
                 ? decision.actualTeacherId() : occurrence.getPlannedTeacherId());
         confirmed.setPlannedClassroomId(decision.actualClassroomId() != null
@@ -451,6 +706,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     public void revokeLesson(Long recordId, CurrentUserResponse currentUser) {
         currentUser = defaultAdminIfMissing(currentUser);
         LessonRecordEntity record = requireRecord(recordId);
+        LessonOccurrenceEntity recordOccurrence = lessonOccurrenceMapper.selectById(record.getOccurrenceId());
+        if (recordOccurrence != null && recordOccurrence.getPrivateLessonGroupId() != null) {
+            revokePrivateLessonGroup(recordOccurrence, currentUser);
+            return;
+        }
 
         if (!CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage())) {
             lessonRecordMapper.deleteById(record.getId());
@@ -472,7 +732,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (deducted > 0) {
             int newConsumed = Math.max(0, coursePackage.getConsumedUnits() - deducted);
             int newRemaining = coursePackage.getRemainingUnits() + deducted;
-            reverseFutureBalanceForRevokedRecord(coursePackage.getId(), record);
+            reverseFutureBalanceForRevokedRecord(coursePackage.getId(), null, record);
 
             HourLedgerEntity reversal = new HourLedgerEntity();
             reversal.setPackageId(coursePackage.getId());
@@ -507,6 +767,66 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         // 删除课次记录并把原计划课次恢复为可再次确认。
         lessonRecordMapper.deleteById(record.getId());
         restoreOccurrence(record);
+    }
+
+    private void revokePrivateLessonGroup(LessonOccurrenceEntity occurrence, CurrentUserResponse currentUser) {
+        List<LessonRecordEntity> records = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())
+                .eq(LessonRecordEntity::getIsDeleted, 0));
+        if (records.isEmpty()) {
+            restoreOccurrence(occurrence.getId());
+            return;
+        }
+        for (LessonRecordEntity record : records) {
+            if (!CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage()) || record.getPackageId() == null) {
+                lessonRecordMapper.deleteById(record.getId());
+                continue;
+            }
+            CoursePackageEntity coursePackage = requirePackageForRevoke(record.getPackageId());
+            int deducted = record.getDeductedUnits() == null ? 0 : record.getDeductedUnits();
+            if (deducted > 0) {
+                int newConsumed = Math.max(0, safeUnits(coursePackage.getConsumedUnits()) - deducted);
+                int newRemaining = safeUnits(coursePackage.getRemainingUnits()) + deducted;
+                if (Objects.equals(record.getPackageId(), occurrence.getPackageId())) {
+                    reverseFutureBalanceForRevokedRecord(coursePackage.getId(), occurrence.getPrivateLessonGroupId(), record);
+                }
+                HourLedgerEntity reversal = new HourLedgerEntity();
+                reversal.setPackageId(coursePackage.getId());
+                reversal.setLessonRecordId(record.getId());
+                reversal.setOccurrenceId(record.getOccurrenceId());
+                reversal.setLedgerType("REVOKE");
+                reversal.setChangeUnits(deducted);
+                reversal.setBalanceAfterUnits(newRemaining);
+                reversal.setBusinessDate(AppTime.nowLocalDateTime().toLocalDate());
+                reversal.setReasonCode("REVOKE");
+                reversal.setReasonDesc("Reversed shared private lesson record " + record.getId() + ".");
+                reversal.setOperatedBy(currentUser.userId());
+                reversal.setOperatedAt(AppTime.nowLocalDateTime());
+                hourLedgerMapper.insert(reversal);
+                coursePackage.setConsumedUnits(newConsumed);
+                coursePackage.setRemainingUnits(newRemaining);
+                coursePackage.setPackageStatus("ACTIVE");
+                coursePackage.setCompletedAt(null);
+                coursePackage.setEstimatedEndDate(recomputeEstimatedEndDate(coursePackage.getId(), newRemaining));
+                coursePackageMapper.updateById(coursePackage);
+                upsertBalanceSnapshot(coursePackage, reversal.getId());
+            }
+            lessonRecordMapper.deleteById(record.getId());
+        }
+        cancelGeneratedMakeups(occurrence.getId());
+        restoreOccurrence(occurrence.getId());
+    }
+
+    private List<PrivateLessonGroupMemberEntity> activePrivateLessonGroupMembers(Long groupId) {
+        return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupId)
+                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex));
+    }
+
+    private int safeUnits(Integer units) {
+        return units == null ? 0 : units;
     }
 
     private CurrentUserResponse defaultAdminIfMissing(CurrentUserResponse currentUser) {
@@ -629,6 +949,20 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         return merged;
     }
 
+    private LessonRecordConfirmRequest requestFromRecord(LessonRecordEntity record,
+                                                         LessonOccurrenceEntity occurrence) {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(occurrence.getId());
+        request.setResultStatus(record.getResultStatus());
+        request.setActualTeacherId(record.getActualTeacherId());
+        request.setActualClassroomId(record.getActualClassroomId());
+        request.setActualStartAt(record.getActualStartAt());
+        request.setActualEndAt(record.getActualEndAt());
+        request.setActualUnits(record.getActualUnits());
+        request.setNotes(record.getNotes());
+        return request;
+    }
+
     private void applyActualValuesToOccurrence(LessonOccurrenceEntity occurrence, ConfirmationDecision decision) {
         // 终确认后再把实际值同步回课次，避免待复核数据提前影响课表。
         if (decision.actualTeacherId() != null) {
@@ -659,13 +993,16 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         );
     }
 
-    private void adjustFutureOccurrencesIfNeeded(Long packageId, int originalPlannedUnits, ConfirmationDecision decision) {
+    private void adjustFutureOccurrencesIfNeeded(Long packageId,
+                                                Long privateLessonGroupId,
+                                                int originalPlannedUnits,
+                                                ConfirmationDecision decision) {
         // 实际扣课与计划课时有差异时，终确认阶段才调整未来课次。
         int adjustmentDelta = decision.shouldDeduct()
                 ? originalPlannedUnits - decision.deductedUnits()
                 : 0;
         if (adjustmentDelta != 0) {
-            adjustFutureOccurrences(packageId, adjustmentDelta);
+            adjustFutureOccurrences(packageId, privateLessonGroupId, adjustmentDelta);
         }
     }
 
@@ -684,7 +1021,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
     }
 
-    private void reverseFutureBalanceForRevokedRecord(Long packageId, LessonRecordEntity record) {
+    private void reverseFutureBalanceForRevokedRecord(Long packageId,
+                                                      Long privateLessonGroupId,
+                                                      LessonRecordEntity record) {
         if (record.getShouldDeduct() == null || record.getShouldDeduct() != 1) {
             return;
         }
@@ -695,7 +1034,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         int originalAdjustmentDelta = originalPlannedUnits - deductedUnits;
         if (originalAdjustmentDelta != 0) {
             // 终确认时对后续课次做过的平衡调整，撤销时按相反方向恢复总量守恒。
-            adjustFutureOccurrences(packageId, -originalAdjustmentDelta);
+            adjustFutureOccurrences(packageId, privateLessonGroupId, -originalAdjustmentDelta);
         }
     }
 
@@ -853,8 +1192,17 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .stream()
                 .map(LessonRecordEntity::getOccurrenceId)
                 .toList();
+        PrivateLessonGroupMemberEntity groupMember = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
         List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, packageId)
+                        .or(groupMember != null && groupMember.getPrivateLessonGroupId() != null,
+                                group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId,
+                                        groupMember == null ? null : groupMember.getPrivateLessonGroupId())))
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
                 .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
@@ -882,15 +1230,27 @@ public class LessonRecordServiceImpl implements LessonRecordService {
      * 3. 至少存在一条已确认的消课记录（排除"新报名尚未排课"的课包）。
      */
     private boolean isCourseScheduleExhausted(Long packageId) {
+        PrivateLessonGroupMemberEntity groupMember = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
         Long futureOccurrences = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, packageId)
+                        .or(groupMember != null && groupMember.getPrivateLessonGroupId() != null,
+                                group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId,
+                                        groupMember == null ? null : groupMember.getPrivateLessonGroupId())))
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .ge(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
         if (futureOccurrences != null && futureOccurrences > 0) {
             return false;
         }
         Long activeRules = recurringScheduleRuleMapper.selectCount(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
-                .eq(RecurringScheduleRuleEntity::getPackageId, packageId)
+                .and(scope -> scope.eq(RecurringScheduleRuleEntity::getPackageId, packageId)
+                        .or(groupMember != null && groupMember.getPrivateLessonGroupId() != null,
+                                group -> group.eq(RecurringScheduleRuleEntity::getPrivateLessonGroupId,
+                                        groupMember == null ? null : groupMember.getPrivateLessonGroupId())))
                 .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE"));
         if (activeRules != null && activeRules > 0) {
             return false;
@@ -908,11 +1268,13 @@ public class LessonRecordServiceImpl implements LessonRecordService {
      * Deficit (confirmed lesson used more units than planned) is subtracted from the last occurrence(s);
      * if a tail occurrence is fully consumed by the deficit, it is cancelled.
      */
-    private void adjustFutureOccurrences(Long packageId, int delta) {
+    private void adjustFutureOccurrences(Long packageId, Long privateLessonGroupId, int delta) {
         if (delta == 0) return;
         List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                        .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, packageId)
+                                .or(privateLessonGroupId != null,
+                                        group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId, privateLessonGroupId)))
                         .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
                         .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
                         .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
@@ -1006,7 +1368,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     }
 
     private void ensureNoConflictForOccurrence(LessonOccurrenceEntity occurrence, String conflictContext) {
-        if (hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getStudentId, occurrence.getStudentId())) {
+        if (hasStudentOccurrenceConflict(occurrence, occurrence.getStudentId())) {
             throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected " + conflictContext + ".");
         }
         if (occurrence.getPlannedTeacherId() != null
@@ -1020,7 +1382,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     }
 
     private boolean hasAnyAdjustedOccurrenceConflict(LessonOccurrenceEntity occurrence) {
-        return hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getStudentId, occurrence.getStudentId())
+        return hasStudentOccurrenceConflict(occurrence, occurrence.getStudentId())
                 || (occurrence.getPlannedTeacherId() != null
                 && hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId()))
                 || (occurrence.getPlannedClassroomId() != null
@@ -1036,6 +1398,27 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .ne(occurrence.getId() != null, LessonOccurrenceEntity::getId, occurrence.getId())
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, occurrence.getPlannedEndAt())
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt()));
+        return count != null && count > 0;
+    }
+
+    private boolean hasStudentOccurrenceConflict(LessonOccurrenceEntity occurrence, Long studentId) {
+        if (studentId == null) {
+            return false;
+        }
+        List<Long> groupIds = privateLessonGroupMemberMapper.selectList(
+                        new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                                .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
+                                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull).distinct().toList();
+        Long count = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .ne(occurrence.getId() != null, LessonOccurrenceEntity::getId, occurrence.getId())
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, occurrence.getPlannedEndAt())
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt())
+                .and(scope -> scope.eq(LessonOccurrenceEntity::getStudentId, studentId)
+                        .or(!groupIds.isEmpty(), group -> group.in(LessonOccurrenceEntity::getPrivateLessonGroupId, groupIds))));
         return count != null && count > 0;
     }
 

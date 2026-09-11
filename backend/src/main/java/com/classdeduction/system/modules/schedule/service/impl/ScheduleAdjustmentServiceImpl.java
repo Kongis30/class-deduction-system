@@ -11,7 +11,9 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -66,6 +68,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final LessonRecordMapper lessonRecordMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final CoursePackageMapper coursePackageMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -240,6 +243,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         newOccurrence.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
         newOccurrence.setPackageId(source.getPackageId());
         newOccurrence.setClassGroupId(source.getClassGroupId());
+        newOccurrence.setPrivateLessonGroupId(source.getPrivateLessonGroupId());
         newOccurrence.setStudentId(source.getStudentId());
         newOccurrence.setScheduleRuleId(source.getScheduleRuleId());
         newOccurrence.setScheduleSlotId(source.getScheduleSlotId());
@@ -262,6 +266,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         updated.setLessonNo(source.getLessonNo());
         updated.setPackageId(source.getPackageId());
         updated.setClassGroupId(source.getClassGroupId());
+        updated.setPrivateLessonGroupId(source.getPrivateLessonGroupId());
         updated.setStudentId(source.getStudentId());
         updated.setScheduleRuleId(source.getScheduleRuleId());
         updated.setScheduleSlotId(source.getScheduleSlotId());
@@ -480,6 +485,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         adjusted.setLessonNo(source.getLessonNo());
         adjusted.setPackageId(source.getPackageId());
         adjusted.setClassGroupId(source.getClassGroupId());
+        adjusted.setPrivateLessonGroupId(source.getPrivateLessonGroupId());
         adjusted.setStudentId(source.getStudentId());
         adjusted.setScheduleRuleId(source.getScheduleRuleId());
         adjusted.setScheduleSlotId(source.getScheduleSlotId());
@@ -514,6 +520,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         LessonOccurrenceEntity created = new LessonOccurrenceEntity();
         created.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
         created.setPackageId(packageId);
+        created.setPrivateLessonGroupId(resolvePrivateLessonGroupId(packageId));
         created.setStudentId(studentId);
         created.setScheduleRuleId(null);
         created.setScheduleSlotId(null);
@@ -746,7 +753,29 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         return id == null ? Set.of() : Set.of(id);
     }
 
+    private Long resolvePrivateLessonGroupId(Long packageId) {
+        if (packageId == null) {
+            return null;
+        }
+        PrivateLessonGroupMemberEntity member = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+        return member == null ? null : member.getPrivateLessonGroupId();
+    }
+
     private Set<Long> studentIdsForOccurrence(LessonOccurrenceEntity occurrence) {
+        if (occurrence.getPrivateLessonGroupId() != null) {
+            return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                            .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, occurrence.getPrivateLessonGroupId())
+                            .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                            .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                    .stream().map(PrivateLessonGroupMemberEntity::getStudentId)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
+        }
         if (occurrence.getStudentId() != null) {
             return setOf(occurrence.getStudentId());
         }
@@ -808,9 +837,11 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     }
 
     private void ensureNoConflicts(LessonOccurrenceEntity target, Long ignoredOccurrenceId) {
-        if (hasConflict(target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceId)) {
-            throwConflict("STUDENT", target.getStudentId(), "Student conflict detected for the adjusted lesson.",
-                    target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceId);
+        for (Long studentId : studentIdsForOccurrence(target)) {
+            if (hasStudentConflict(target, studentId, ignoredOccurrenceId)) {
+                throwConflict("STUDENT", studentId, "Student conflict detected for the adjusted lesson.",
+                        target, LessonOccurrenceEntity::getStudentId, studentId, ignoredOccurrenceId);
+            }
         }
         ensureNoClassStudentConflicts(target, ignoredOccurrenceId);
         if (target.getPlannedTeacherId() != null
@@ -842,9 +873,11 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private void ensureNoConflicts(List<LessonOccurrenceEntity> targets, Set<Long> ignoredOccurrenceIds) {
         ensureNoInternalConflicts(targets);
         for (LessonOccurrenceEntity target : targets) {
-            if (hasConflict(target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceIds)) {
-                throwConflict("STUDENT", target.getStudentId(), "Student conflict detected for the adjusted lesson.",
-                        target, LessonOccurrenceEntity::getStudentId, target.getStudentId(), ignoredOccurrenceIds);
+            for (Long studentId : studentIdsForOccurrence(target)) {
+                if (hasStudentConflict(target, studentId, ignoredOccurrenceIds)) {
+                    throwConflict("STUDENT", studentId, "Student conflict detected for the adjusted lesson.",
+                            target, LessonOccurrenceEntity::getStudentId, studentId, ignoredOccurrenceIds);
+                }
             }
             if (target.getPlannedTeacherId() != null
                     && hasConflict(target, LessonOccurrenceEntity::getPlannedTeacherId, target.getPlannedTeacherId(), ignoredOccurrenceIds)) {
@@ -867,7 +900,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 if (!overlaps(left, right)) {
                     continue;
                 }
-                if (Objects.equals(left.getStudentId(), right.getStudentId())) {
+                if (!Collections.disjoint(studentIdsForOccurrence(left), studentIdsForOccurrence(right))) {
                     throw new BusinessException("SCHEDULE_CONFLICT", "Adjusted lessons overlap for the same student.");
                 }
                 if (left.getPlannedTeacherId() != null && Objects.equals(left.getPlannedTeacherId(), right.getPlannedTeacherId())) {
@@ -913,13 +946,53 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, target.getPlannedEndAt())
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, target.getPlannedStartAt())
-                .and(nested -> nested
-                        .eq(LessonOccurrenceEntity::getStudentId, studentId)
-                        .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds)));
+                .and(nested -> {
+                    nested.eq(LessonOccurrenceEntity::getStudentId, studentId)
+                            .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds));
+                    List<Long> privateGroupIds = privateGroupIdsForStudent(studentId);
+                    if (!privateGroupIds.isEmpty()) {
+                        nested.or().in(LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds);
+                    }
+                });
         if (ignoredOccurrenceId != null) {
             wrapper.ne(LessonOccurrenceEntity::getId, ignoredOccurrenceId);
         }
         return lessonOccurrenceMapper.selectCount(wrapper) > 0;
+    }
+
+    private boolean hasStudentConflict(LessonOccurrenceEntity target,
+                                       Long studentId,
+                                       Set<Long> ignoredOccurrenceIds) {
+        List<Long> classIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream().map(ClassEnrollmentEntity::getClassId).filter(Objects::nonNull).toList();
+        List<Long> privateGroupIds = privateGroupIdsForStudent(studentId);
+        LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, target.getPlannedEndAt())
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, target.getPlannedStartAt())
+                .and(nested -> {
+                    nested.eq(LessonOccurrenceEntity::getStudentId, studentId)
+                            .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds));
+                    if (!privateGroupIds.isEmpty()) {
+                        nested.or().in(LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds);
+                    }
+                });
+        if (ignoredOccurrenceIds != null && !ignoredOccurrenceIds.isEmpty()) {
+            wrapper.notIn(LessonOccurrenceEntity::getId, ignoredOccurrenceIds);
+        }
+        return lessonOccurrenceMapper.selectCount(wrapper) > 0;
+    }
+
+    private List<Long> privateGroupIdsForStudent(Long studentId) {
+        return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull).distinct().toList();
     }
 
     private boolean hasConflict(LessonOccurrenceEntity target,

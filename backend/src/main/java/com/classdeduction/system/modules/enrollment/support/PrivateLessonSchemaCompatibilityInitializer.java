@@ -1,0 +1,152 @@
+package com.classdeduction.system.modules.enrollment.support;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
+import jakarta.annotation.PostConstruct;
+import org.springframework.stereotype.Component;
+
+/**
+ * 私教课组的幂等 schema 兼容入口。
+ * 线上已有库由应用启动自动补齐结构，完整迁移脚本仍保留在 doc/migrations 供发布审计使用。
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class PrivateLessonSchemaCompatibilityInitializer {
+
+    private final JdbcTemplate jdbcTemplate;
+
+    @PostConstruct
+    public void initialize() {
+        createTablesIfMissing();
+        addColumnIfMissing("recurring_schedule_rule", "private_lesson_group_id",
+                "bigint DEFAULT NULL COMMENT 'Shared private lesson group ID' AFTER package_id");
+        addColumnIfMissing("lesson_occurrence", "private_lesson_group_id",
+                "bigint DEFAULT NULL COMMENT 'Shared private lesson group ID' AFTER package_id");
+        addColumnIfMissing("payment_record", "participant_index",
+                "int DEFAULT NULL COMMENT 'Shared private lesson participant index' AFTER enrollment_order_id");
+        addColumnIfMissing("enrollment_order_participant", "gross_amount",
+                "decimal(12,2) DEFAULT NULL COMMENT 'Participant gross amount'");
+        addColumnIfMissing("enrollment_order_participant", "discount_amount",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Participant discount amount'");
+        addColumnIfMissing("enrollment_order_participant", "discount_detail",
+                "json DEFAULT NULL COMMENT 'Participant discount detail'");
+        addColumnIfMissing("enrollment_order_participant", "amount_due",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Participant amount due'");
+        addColumnIfMissing("enrollment_order_participant", "paid_amount",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Participant paid amount'");
+        addColumnIfMissing("enrollment_order_participant", "balance_amount",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Participant balance amount'");
+        addColumnIfMissing("enrollment_order_participant", "student_class_snapshot",
+                "varchar(64) DEFAULT NULL COMMENT 'Participant class snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "guardian_name_snapshot",
+                "varchar(128) DEFAULT NULL COMMENT 'Participant guardian name snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "guardian_phone_snapshot",
+                "varchar(64) DEFAULT NULL COMMENT 'Participant guardian phone snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "guardian_phone2_snapshot",
+                "varchar(64) DEFAULT NULL COMMENT 'Participant second guardian phone snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "guardian_email_snapshot",
+                "varchar(128) DEFAULT NULL COMMENT 'Participant guardian email snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "pickup_required_snapshot",
+                "tinyint(1) DEFAULT NULL COMMENT 'Participant pickup flag snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "pickup_address_snapshot",
+                "varchar(255) DEFAULT NULL COMMENT 'Participant pickup address snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "dropoff_required_snapshot",
+                "tinyint(1) DEFAULT NULL COMMENT 'Participant dropoff flag snapshot'");
+        addColumnIfMissing("enrollment_order_participant", "dropoff_address_snapshot",
+                "varchar(255) DEFAULT NULL COMMENT 'Participant dropoff address snapshot'");
+    }
+
+    private void createTablesIfMissing() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS private_lesson_group (
+                    id bigint NOT NULL,
+                    group_no varchar(32) NOT NULL,
+                    enrollment_order_id bigint NOT NULL,
+                    enrollment_order_item_id bigint DEFAULT NULL,
+                    course_product_id bigint DEFAULT NULL,
+                    grade_band varchar(64) DEFAULT NULL,
+                    participant_count int NOT NULL DEFAULT 1,
+                    second_participant_multiplier decimal(5,4) NOT NULL DEFAULT 0.5000,
+                    third_participant_multiplier decimal(5,4) NOT NULL DEFAULT 0.5000,
+                    group_status varchar(32) NOT NULL DEFAULT 'ACTIVE',
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uk_private_lesson_group_no (group_no, is_deleted),
+                    KEY idx_private_lesson_group_order (enrollment_order_id, is_deleted),
+                    KEY idx_private_lesson_group_product (course_product_id, group_status, is_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS private_lesson_group_member (
+                    id bigint NOT NULL,
+                    private_lesson_group_id bigint NOT NULL,
+                    student_id bigint NOT NULL,
+                    package_id bigint NOT NULL,
+                    participant_index int NOT NULL,
+                    price_multiplier decimal(5,4) NOT NULL,
+                    price_amount decimal(12,2) NOT NULL DEFAULT 0.00,
+                    member_status varchar(32) NOT NULL DEFAULT 'ACTIVE',
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uk_private_lesson_member_index (private_lesson_group_id, participant_index, is_deleted),
+                    UNIQUE KEY uk_private_lesson_member_package (private_lesson_group_id, package_id, is_deleted),
+                    KEY idx_private_lesson_member_student (student_id, member_status, is_deleted),
+                    KEY idx_private_lesson_member_package (package_id, member_status, is_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS enrollment_order_participant (
+                    id bigint NOT NULL,
+                    enrollment_order_id bigint NOT NULL,
+                    student_id bigint NOT NULL,
+                    participant_index int NOT NULL,
+                    student_name_snapshot varchar(128) NOT NULL,
+                    student_no_snapshot varchar(32) DEFAULT NULL,
+                    grade_snapshot varchar(64) DEFAULT NULL,
+                    school_snapshot varchar(128) DEFAULT NULL,
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uk_order_participant_index (enrollment_order_id, participant_index, is_deleted),
+                    KEY idx_order_participant_student (student_id, is_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
+    }
+
+    private void addColumnIfMissing(String tableName, String columnName, String definition) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = ?
+                  AND COLUMN_NAME = ?
+                """, Integer.class, tableName, columnName);
+        if (count != null && count > 0) {
+            return;
+        }
+        jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN `" + columnName + "` " + definition);
+        log.info("Added {}.{} for shared private lesson support.", tableName, columnName);
+    }
+}

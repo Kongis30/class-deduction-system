@@ -32,6 +32,9 @@ public class LessonOccurrenceEntity extends BaseEntity {
     @TableField("package_id")
     private Long packageId;
 
+    /** Shared private lesson group; one occurrence is generated for the whole group. */
+    private Long privateLessonGroupId;
+
     @TableField("class_group_id")
     private Long classGroupId;
 

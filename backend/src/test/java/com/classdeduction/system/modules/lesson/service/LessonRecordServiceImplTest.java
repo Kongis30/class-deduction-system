@@ -13,6 +13,7 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
@@ -84,6 +85,9 @@ class LessonRecordServiceImplTest {
     private PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
 
     @Mock
+    private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+
+    @Mock
     private StudentMapper studentMapper;
 
     @Mock
@@ -135,6 +139,7 @@ class LessonRecordServiceImplTest {
                 lessonOccurrenceMapper,
                 coursePackageMapper,
                 packageTeacherAssignmentMapper,
+                privateLessonGroupMemberMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,

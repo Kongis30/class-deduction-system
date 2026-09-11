@@ -8,11 +8,13 @@ import com.classdeduction.system.modules.enrollment.dto.PaymentRecordSaveRequest
 import com.classdeduction.system.modules.enrollment.dto.PaymentSplitDTO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
@@ -33,6 +35,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 支付记录服务实现。
@@ -43,6 +46,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
 
     private final PaymentRecordMapper paymentRecordMapper;
     private final EnrollmentOrderMapper enrollmentOrderMapper;
+    private final EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PaymentMethodMapper paymentMethodMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
@@ -115,13 +119,52 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         BigDecimal totalAmount = splits.stream()
                 .map(PaymentSplitDTO::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        validatePaymentAmount(order, totalAmount);
+        List<Integer> participantIndexes = splits.stream()
+                .map(PaymentSplitDTO::getParticipantIndex)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        boolean containsUnscopedSplit = splits.stream()
+                .anyMatch(split -> split.getParticipantIndex() == null);
+        if (participantIndexes.size() > 1 || (!participantIndexes.isEmpty() && containsUnscopedSplit)) {
+            throw new BusinessException("PAYMENT_PARTICIPANT_MISMATCH",
+                    "All payment splits must belong to the same student.");
+        }
+        EnrollmentOrderParticipantEntity targetParticipant = participantIndexes.isEmpty()
+                ? null
+                : enrollmentOrderParticipantMapper.selectOne(
+                        new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                                .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                                .eq(EnrollmentOrderParticipantEntity::getParticipantIndex, participantIndexes.get(0))
+                                .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+        if (!participantIndexes.isEmpty() && targetParticipant == null) {
+            throw new BusinessException("PAYMENT_PARTICIPANT_NOT_FOUND",
+                    "The selected student is not part of this enrollment order.");
+        }
+        if (targetParticipant == null && participantIndexes.isEmpty()) {
+            List<EnrollmentOrderParticipantEntity> participants = enrollmentOrderParticipantMapper.selectList(
+                    new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                            .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                            .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+            if (participants != null && participants.size() > 1) {
+                throw new BusinessException("PAYMENT_PARTICIPANT_REQUIRED",
+                        "Select the student who is making this payment.");
+            }
+        }
+        if (targetParticipant == null) {
+            validatePaymentAmount(order, totalAmount);
+        } else {
+            // 多人私教既要限制目标学生的应付余额，也要限制整单余额，避免历史付款分摊异常导致订单累计收款超额。
+            validatePaymentAmount(order, totalAmount);
+            validateParticipantPaymentAmount(targetParticipant, totalAmount);
+        }
 
         // 4. Create payment records (one per split)
         List<PaymentRecordEntity> paymentRecords = new ArrayList<>(splits.size());
         for (PaymentSplitDTO split : splits) {
             PaymentRecordEntity paymentRecord = new PaymentRecordEntity();
             paymentRecord.setEnrollmentOrderId(request.getEnrollmentOrderId());
+            paymentRecord.setParticipantIndex(split.getParticipantIndex());
             paymentRecord.setPaymentNo(BusinessNoGenerator.generatePaymentNo());
             paymentRecord.setPaymentMethod(split.getPaymentMethod());
             paymentRecord.setPaymentType("PAYMENT");
@@ -139,7 +182,34 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
 
         // 支付流水保留为审计账本；报名收据只维护这一笔报名的累计支付状态，不再新增支付收据。
         updateEnrollmentOrderPayment(order, totalAmount);
+        syncParticipantPaymentSnapshots(order.getId());
         return syncRegistrationReceipt(order, request.getHandledByUserId());
+    }
+
+    private void syncParticipantPaymentSnapshots(Long orderId) {
+        List<EnrollmentOrderParticipantEntity> participants = enrollmentOrderParticipantMapper.selectList(
+                new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                        .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, orderId)
+                        .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+        if (participants.isEmpty()) return;
+        // 学生已付金额按净流水计算：PAYMENT 为正、REFUND 为负，VOIDED 不参与统计。
+        // 这样退款后再次付款时，个人快照不会把历史已退金额重复算入。
+        List<PaymentRecordEntity> payments = paymentRecordMapper.selectList(
+                new LambdaQueryWrapper<PaymentRecordEntity>()
+                        .eq(PaymentRecordEntity::getEnrollmentOrderId, orderId));
+        for (EnrollmentOrderParticipantEntity participant : participants) {
+            BigDecimal paid = payments.stream()
+                    .filter(item -> Objects.equals(item.getParticipantIndex(), participant.getParticipantIndex())
+                            || (Objects.equals(participant.getParticipantIndex(), 1)
+                            && item.getParticipantIndex() == null))
+                    .filter(item -> !"VOIDED".equals(item.getPaymentStatus()))
+                    .map(PaymentRecordEntity::getAmount)
+                    .filter(java.util.Objects::nonNull)
+                    .reduce(ZERO_AMOUNT, BigDecimal::add);
+            participant.setPaidAmount(paid);
+            participant.setBalanceAmount(defaultAmount(participant.getAmountDue()).subtract(paid));
+            enrollmentOrderParticipantMapper.updateById(participant);
+        }
     }
 
     /**
@@ -173,6 +243,8 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         payload.put("paidAmount", order.getReceivedAmount());
         payload.put("balanceAmount", order.getBalanceAmount());
         payload.put("paymentStatus", order.getPaymentStatus());
+        // Pay 更新参与学生快照，保证收据里的分摊金额与 Data Summary、订单详情一致。
+        payload.put("participants", receiptParticipantPayloads(order.getId()));
         payload.put("payments", listPaymentLedger(order.getId()));
         receipt.setReceiptPayload(jsonHelper.toJson(payload));
         receiptRecordMapper.updateById(receipt);
@@ -203,6 +275,44 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         return receipt;
     }
 
+    private List<Map<String, Object>> receiptParticipantPayloads(Long orderId) {
+        List<EnrollmentOrderParticipantEntity> participants = enrollmentOrderParticipantMapper.selectList(
+                new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                        .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, orderId)
+                        .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0)
+                        .orderByAsc(EnrollmentOrderParticipantEntity::getParticipantIndex));
+        if (participants == null) {
+            return Collections.emptyList();
+        }
+        return participants.stream().map(item -> {
+            Map<String, Object> participant = new LinkedHashMap<>();
+            participant.put("studentId", item.getStudentId());
+            participant.put("studentNo", item.getStudentNoSnapshot());
+            participant.put("studentName", item.getStudentNameSnapshot());
+            participant.put("participantIndex", item.getParticipantIndex());
+            participant.put("grade", item.getGradeSnapshot());
+            participant.put("school", item.getSchoolSnapshot());
+            participant.put("studentClass", item.getStudentClassSnapshot());
+            participant.put("guardianName", item.getGuardianNameSnapshot());
+            participant.put("guardianPhone", item.getGuardianPhoneSnapshot());
+            participant.put("guardianPhone2", item.getGuardianPhone2Snapshot());
+            participant.put("guardianEmail", item.getGuardianEmailSnapshot());
+            participant.put("pickupRequired", item.getPickupRequiredSnapshot());
+            participant.put("pickupAddress", item.getPickupAddressSnapshot());
+            participant.put("dropoffRequired", item.getDropoffRequiredSnapshot());
+            participant.put("dropoffAddress", item.getDropoffAddressSnapshot());
+            participant.put("grossAmount", item.getGrossAmount());
+            participant.put("priceAmount", item.getGrossAmount());
+            participant.put("discountAmount", item.getDiscountAmount());
+            participant.put("discounts", item.getDiscountDetail() == null ? Collections.emptyList()
+                    : jsonHelper.fromJson(item.getDiscountDetail(), new TypeReference<List<Map<String, Object>>>() {}));
+            participant.put("amountDue", item.getAmountDue());
+            participant.put("paidAmount", item.getPaidAmount());
+            participant.put("balanceAmount", item.getBalanceAmount());
+            return participant;
+        }).toList();
+    }
+
     private List<Map<String, Object>> listPaymentLedger(Long orderId) {
         List<PaymentRecordEntity> records = paymentRecordMapper.selectList(
                 new LambdaQueryWrapper<PaymentRecordEntity>()
@@ -223,6 +333,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
     private Map<String, Object> toReceiptPaymentPayload(PaymentRecordEntity payment) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("paymentId", payment.getId());
+        payload.put("participantIndex", payment.getParticipantIndex());
         payload.put("paymentNo", payment.getPaymentNo());
         payload.put("paymentMethod", payment.getPaymentMethod());
         payload.put("paymentType", payment.getPaymentType());
@@ -282,6 +393,21 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         }
     }
 
+    private void validateParticipantPaymentAmount(EnrollmentOrderParticipantEntity participant,
+                                                  BigDecimal newPaymentAmount) {
+        BigDecimal currentBalance = participant.getBalanceAmount() != null
+                ? participant.getBalanceAmount()
+                : defaultAmount(participant.getAmountDue()).subtract(defaultAmount(participant.getPaidAmount()));
+        if (currentBalance.compareTo(ZERO_AMOUNT) <= 0) {
+            throw new BusinessException("PARTICIPANT_ALREADY_PAID",
+                    "This student's enrollment has no remaining amount due.");
+        }
+        if (newPaymentAmount.compareTo(currentBalance) > 0) {
+            throw new BusinessException("PARTICIPANT_PAYMENT_EXCEEDS_AMOUNT_DUE",
+                    "Payment amount cannot exceed this student's remaining amount due.");
+        }
+    }
+
     private BigDecimal resolveAmountDue(EnrollmentOrderEntity order) {
         if (order.getAmountDue() != null) {
             return order.getAmountDue();
@@ -316,6 +442,10 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
             return "PAID";
         }
         return "PARTIAL";
+    }
+
+    private BigDecimal defaultAmount(BigDecimal amount) {
+        return amount == null ? ZERO_AMOUNT : amount;
     }
 
     private PaymentRecordEntity requirePaymentRecord(Long id) {
@@ -357,6 +487,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         return PaymentRecordVO.builder()
                 .id(item.getId())
                 .paymentNo(item.getPaymentNo())
+                .participantIndex(item.getParticipantIndex())
                 .paymentMethod(item.getPaymentMethod())
                 .paymentType(item.getPaymentType())
                 .paymentStatus(item.getPaymentStatus())

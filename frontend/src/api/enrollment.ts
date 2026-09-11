@@ -59,6 +59,8 @@ export function cancelEnrollmentOrder(id: string | number) {
 }
 
 export interface EnrollmentOrderCorrectionPayload {
+  participants?: RegistrationStudentPayload[];
+  participantBillings?: RegistrationParticipantBillingPayload[];
   studentName?: string;
   grade?: string;
   studentClass?: string;
@@ -96,6 +98,7 @@ export function correctEnrollmentOrder(id: string | number, data: EnrollmentOrde
 
 export interface RefundPayload {
   refundAmount: number;
+  participantIndex?: number;
   paymentMethod: string;
   handledByName: string;
   handledByUserId?: string | number;
@@ -116,6 +119,7 @@ export function forceVoidEnrollmentOrder(id: string | number, reason?: string) {
 
 // ─── Registration Intake ──────────────────────────────
 export interface RegistrationStudentPayload {
+  studentId?: EntityId;
   studentName: string;
   englishName?: string;
   gender?: string;
@@ -177,9 +181,17 @@ export interface RegistrationPaymentPayload {
   paymentMethod: string;
   amount: number;
   paidAt?: string;
+  participantIndex?: number;
   handledByUserId?: EntityId;
   handledByName?: string;
   remark?: string;
+}
+
+export interface RegistrationParticipantBillingPayload {
+  participantIndex: number;
+  discounts?: RegistrationFeeLinePayload[];
+  discountAmount?: number;
+  payments?: RegistrationPaymentPayload[];
 }
 
 export interface RegistrationReceiptOptionsPayload {
@@ -197,6 +209,7 @@ export interface RegistrationReceiptOptionsPayload {
 
 export interface RegistrationIntakePayload {
   student: RegistrationStudentPayload;
+  participants?: RegistrationStudentPayload[];
   campusId?: EntityId;
   campusName?: string;
   signupDate?: string;
@@ -217,6 +230,7 @@ export interface RegistrationIntakePayload {
   discountAmount?: number;
   discounts?: RegistrationFeeLinePayload[];
   payments?: RegistrationPaymentPayload[];
+  participantBillings?: RegistrationParticipantBillingPayload[];
   receiptOptions?: RegistrationReceiptOptionsPayload;
   remark?: string;
 }
@@ -243,8 +257,12 @@ export interface RegistrationCourseArtifactResult {
 export interface RegistrationPaymentResult {
   paymentId: EntityId;
   paymentNo: string;
+  participantIndex?: number;
   paymentMethod: string;
   amount: number;
+  paidAt?: string;
+  handledByName?: string;
+  remark?: string;
 }
 
 export interface RegistrationIntakeResult {
@@ -255,6 +273,17 @@ export interface RegistrationIntakeResult {
   studentName: string;
   studentReused: boolean;
   studentAccount?: RegistrationAccountResult;
+  privateLessonGroupId?: EntityId;
+  participants?: Array<{
+    studentId: EntityId;
+    studentNo: string;
+    studentName: string;
+    studentReused: boolean;
+    packageId?: EntityId;
+    packageNo?: string;
+    priceAmount?: number;
+    studentAccount?: RegistrationAccountResult;
+  }>;
   teacherAccounts: RegistrationAccountResult[];
   courseArtifacts: RegistrationCourseArtifactResult[];
   payments: RegistrationPaymentResult[];
@@ -336,6 +365,7 @@ export interface PaymentSplit {
   paymentMethod: string;
   amount: number;
   paidAt?: string;
+  participantIndex?: number;
   handledByName?: string;
   remark?: string;
 }

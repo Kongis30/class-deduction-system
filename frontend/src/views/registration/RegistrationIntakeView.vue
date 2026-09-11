@@ -58,6 +58,72 @@
       </article>
     </section>
 
+    <section v-if="hasOneOnOneLine" class="private-lesson-switcher no-print">
+      <div class="private-lesson-switcher__header">
+        <div>
+          <span class="section-kicker">Private lesson</span>
+          <strong>Lesson format</strong>
+        </div>
+        <el-radio-group v-if="receiptEditingEnabled" v-model="privateParticipantCount" class="private-lesson-mode-select" size="small" aria-label="Private lesson student count">
+          <el-radio-button :value="1">1-on-1</el-radio-button>
+          <el-radio-button :value="2">1-on-2</el-radio-button>
+          <el-radio-button :value="3">1-on-3</el-radio-button>
+        </el-radio-group>
+        <el-tag v-else class="private-lesson-mode-readonly" type="info" effect="plain">1-on-{{ privateParticipantCount }}</el-tag>
+      </div>
+      <template v-if="privateWorkspaceVisible">
+        <div class="private-lesson-tabs" role="tablist" aria-label="Private lesson registration view">
+          <button
+            v-for="tab in visiblePrivateTabs"
+            :key="String(tab)"
+            type="button"
+            :class="['private-lesson-tab', { 'private-lesson-tab--active': activePrivateWorkspaceTab === tab }]"
+            role="tab"
+            :aria-selected="activePrivateWorkspaceTab === tab"
+            @click="activePrivateWorkspaceTab = tab"
+          >
+            <span>{{ privateWorkspaceTabLabel(tab) }}</span>
+            <small v-if="tab !== 'all'">{{ privateWorkspaceParticipantName(tab) || privateWorkspaceTabStatus(tab) }}</small>
+          </button>
+        </div>
+        <div v-if="activePrivateWorkspaceTab === 'all'" class="private-lesson-shared-summary">
+          <span>{{ printCourseProductLabel(courseLines[0]) || 'Select a 1-on-1 course' }}</span>
+          <span>{{ privateParticipantMultiplier.toFixed(1) }}x tuition · {{ formatMoney(privateParticipantShareAmount) }} each</span>
+        </div>
+      </template>
+    </section>
+
+    <section v-if="studentPickerVisible" class="registration-student-picker no-print">
+      <div class="registration-student-picker__heading">
+        <strong>{{ activeStudentPickerIndex === 1 ? 'Existing student' : `Existing Student ${activeStudentPickerIndex}` }}</strong>
+        <span>Select an existing student or search by name. Leave blank for a new student.</span>
+      </div>
+      <el-select
+        v-model="activeStudentPickerSelection"
+        class="registration-student-picker__select"
+        filterable
+        clearable
+        :disabled="!receiptEditingEnabled"
+        :loading="activeStudentPickerLoading"
+        :filter-method="filterStudentPickerOptions"
+        @visible-change="handleStudentPickerVisibility"
+        :placeholder="activeStudentPickerPlaceholder"
+        no-data-text="No active students available"
+        no-match-text="No existing student found; fill the form below for a new student"
+      >
+        <el-option
+          v-for="student in activeStudentPickerOptions"
+          :key="String(student.id)"
+          :label="student.studentName"
+          :value="student.id"
+        >
+          <div class="registration-student-picker__option">
+            <strong>{{ student.studentName }}</strong>
+          </div>
+        </el-option>
+      </el-select>
+    </section>
+
     <section class="paper-form" :class="{ 'paper-form--readonly': isReadOnly && !editingCorrection }">
       <header class="form-header">
         <div class="form-title-block">
@@ -76,20 +142,45 @@
         <div class="phone-line">☎ Ms. Jin （929）528–1060 / 办公室 （929）701–9872</div>
 
         <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('SOUTH') }]">
-          <input type="checkbox" :checked="isCampusProfileSelected('SOUTH')" :disabled="contactLocked" @change="selectCampusProfile('SOUTH')" />
+          <input type="checkbox" :checked="isCampusProfileSelected('SOUTH')" :disabled="contactLocked || isPrivateAllReceiptView" @change="selectCampusProfile('SOUTH')" />
           <span>南校：144–56 Roosevelt Ave, Flushing, NY 11354</span>
         </label>
         <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('NORTH') }]">
-          <input type="checkbox" :checked="isCampusProfileSelected('NORTH')" :disabled="contactLocked" @change="selectCampusProfile('NORTH')" />
+          <input type="checkbox" :checked="isCampusProfileSelected('NORTH')" :disabled="contactLocked || isPrivateAllReceiptView" @change="selectCampusProfile('NORTH')" />
           <span>北校：142–18 32nd Ave, Flushing, NY 11354</span>
         </label>
         <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('ONLINE') }]">
-          <input type="checkbox" :checked="isCampusProfileSelected('ONLINE')" :disabled="contactLocked" @change="selectCampusProfile('ONLINE')" />
+          <input type="checkbox" :checked="isCampusProfileSelected('ONLINE')" :disabled="contactLocked || isPrivateAllReceiptView" @change="selectCampusProfile('ONLINE')" />
           <span>线上课 online</span>
         </label>
       </section>
 
-      <section class="student-lines">
+      <section v-if="isPrivateAllReceiptView" class="private-receipt-student-summary" aria-label="Students on this receipt">
+        <div class="private-receipt-student-summary__header">
+          <span class="private-receipt-student-summary__label">Students on this receipt</span>
+          <strong>{{ privateParticipantCount }} students</strong>
+        </div>
+        <div class="private-receipt-student-summary__list">
+          <article v-for="(participant, index) in privateParticipantReceiptRows" :key="participant.key" class="private-receipt-student-summary__row">
+            <div class="private-receipt-student-summary__identity">
+              <span>Student {{ index + 1 }}</span>
+              <strong>{{ participant.name || 'Name not set' }}</strong>
+            </div>
+            <div class="private-receipt-student-summary__financials">
+              <span>Due <strong>{{ formatMoney(participant.amountDue) }}</strong></span>
+              <span>Paid <strong>{{ formatMoney(participant.paidAmount) }}</strong></span>
+              <span>Balance <strong>{{ formatMoney(participant.balanceAmount) }}</strong></span>
+            </div>
+            <div v-if="participant.payments.length" class="private-receipt-student-summary__payments">
+              <span v-for="payment in participant.payments" :key="payment.rowKey">
+                {{ displayPaymentMethod(payment.paymentMethod) }} · {{ formatMoney(payment.amount) }} · {{ formatDateValue(payment.paidAt) }}
+              </span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section v-else-if="!privateWorkspaceVisible || typeof activePrivateWorkspaceTab === 'number'" class="student-lines">
         <div class="full-line">
           <span class="field-label-with-help">
             Student name:
@@ -104,14 +195,16 @@
             </el-tooltip>
           </span>
           <div class="student-name-fields screen-only">
-            <el-input v-model="form.student.firstName" :disabled="contactLocked" placeholder="First name" />
-            <el-input v-model="form.student.lastName" :disabled="contactLocked" placeholder="Last name" />
+            <el-input v-model="activeStudentFirstName" :disabled="contactLocked" placeholder="First name" />
+            <el-input v-model="activeStudentLastName" :disabled="contactLocked" placeholder="Last name" />
           </div>
-          <strong class="printed-student-name">{{ fullStudentName || '—' }}</strong>
-          <el-tag v-if="!isReadOnly && studentReuseStatus === 'existing'" size="small" type="success" class="reuse-tag">Reuse</el-tag>
-          <el-tag v-else-if="!isReadOnly && studentReuseStatus === 'new'" size="small" type="info" class="reuse-tag">New</el-tag>
+          <strong class="printed-student-name">{{ activeStudentName || '—' }}</strong>
+          <template v-if="!privateWorkspaceVisible || activePrivateWorkspaceTab === 1">
+            <el-tag v-if="!isReadOnly && studentReuseStatus === 'existing'" size="small" type="success" class="reuse-tag">Reuse</el-tag>
+            <el-tag v-else-if="!isReadOnly && studentReuseStatus === 'new'" size="small" type="info" class="reuse-tag">New</el-tag>
+          </template>
         </div>
-        <div v-if="!isReadOnly && reusableStudent" class="student-context-line no-print">
+        <div v-if="(!privateWorkspaceVisible || activePrivateWorkspaceTab === 1) && !isReadOnly && reusableStudent" class="student-context-line no-print">
           <span>Existing profile found. Open history before saving when this is a repeat registration.</span>
           <button type="button" @click="openCurrentStudentHistory">View history</button>
         </div>
@@ -119,22 +212,22 @@
         <div class="two-col-line">
           <label>
             <span>Grade:</span>
-            <el-input v-model="form.student.grade" :disabled="contactLocked" class="line-input" />
+            <el-input v-model="activeStudentGrade" :disabled="contactLocked" class="line-input" />
           </label>
           <label>
             <span>School:</span>
-            <el-input v-model="form.student.school" :disabled="contactLocked" class="line-input" />
+            <el-input v-model="activeStudentSchool" :disabled="contactLocked" class="line-input" />
           </label>
         </div>
 
         <div class="two-col-line">
           <label>
             <span>Guardian phone:</span>
-            <el-input v-model="form.student.guardianPhone" :disabled="contactLocked" class="line-input" />
+            <el-input v-model="activeStudentGuardianPhone" :disabled="contactLocked" class="line-input" />
           </label>
           <label>
             <span>Guardian phone 2:</span>
-            <el-input v-model="form.student.guardianPhone2" :disabled="contactLocked" class="line-input" />
+            <el-input v-model="activeStudentGuardianPhone2" :disabled="contactLocked" class="line-input" />
           </label>
         </div>
 
@@ -146,28 +239,28 @@
         </div>
 
         <label class="address-line">
-          <input type="checkbox" v-model="form.student.pickupRequired" :disabled="contactLocked" />
+          <input type="checkbox" v-model="activeStudentPickupRequired" :disabled="contactLocked" />
           <span>Pickup needed</span>
-          <el-input v-model="form.student.pickupAddress" :disabled="contactLocked" class="line-input" />
+          <el-input v-model="activeStudentPickupAddress" :disabled="contactLocked" class="line-input" />
         </label>
         <label class="address-line">
-          <input type="checkbox" v-model="form.student.dropoffRequired" :disabled="contactLocked" />
+          <input type="checkbox" v-model="activeStudentDropoffRequired" :disabled="contactLocked" />
           <span>Drop-off needed</span>
-          <el-input v-model="form.student.dropoffAddress" :disabled="contactLocked" class="line-input" />
+          <el-input v-model="activeStudentDropoffAddress" :disabled="contactLocked" class="line-input" />
         </label>
       </section>
 
       <section class="payment-line">
         <span>Pay method:</span>
-        <strong class="paper-payment-summary">{{ paymentMethodSummary }}</strong>
+        <strong class="paper-payment-summary">{{ activePaymentMethodSummary }}</strong>
         <span class="amount-label">Amount:</span>
-        <strong class="paper-payment-summary paper-payment-summary--amount">{{ formatMoney(paidAmount) }}</strong>
+        <strong class="paper-payment-summary paper-payment-summary--amount">{{ formatMoney(activePaidAmount) }}</strong>
       </section>
 
-      <section v-if="isReadOnly && !editingCorrection && payments.length > 0" class="payment-history">
-        <div v-for="payment in payments" :key="payment.rowKey">
+      <section v-if="isReadOnly && !editingCorrection && receiptPaymentRows.length > 0" class="payment-history">
+        <div v-for="payment in receiptPaymentRows" :key="payment.rowKey">
           <span>{{ formatDateValue(payment.paidAt) }}</span>
-          <strong>{{ payment.paymentMethod || 'Payment' }}</strong>
+          <strong>{{ [paymentParticipantLabel(payment), payment.paymentMethod || 'Payment'].filter(Boolean).join(' · ') }}</strong>
           <span>{{ formatMoney(payment.amount) }}</span>
           <small>{{ [payment.handledByName, payment.remark].filter(Boolean).join(' · ') }}</small>
         </div>
@@ -194,7 +287,7 @@
 
       <section class="course-table-wrap">
         <el-alert
-          v-if="!isReadOnly && courseLines.some(isOneOnOneLine)"
+          v-if="!isReadOnly && !isPrivateAllReceiptView && courseLines.some(isOneOnOneLine)"
           type="info"
           :closable="false"
           show-icon
@@ -212,7 +305,7 @@
           <tbody>
             <tr v-for="(line, index) in courseLines" :key="line.rowKey" class="course-entry-row">
               <td>
-                <div v-if="isReadOnly && !editingCorrection" class="receipt-course-display">
+                <div v-if="isPrivateAllReceiptView || (isReadOnly && !editingCorrection)" class="receipt-course-display">
                   <strong>{{ printCourseProductLabel(line) }}</strong>
                 </div>
                 <div v-else>
@@ -248,7 +341,7 @@
                 </div>
               </td>
               <td>
-                <div v-if="isReadOnly && !editingCorrection" class="receipt-course-detail">
+                <div v-if="isPrivateAllReceiptView || (isReadOnly && !editingCorrection)" class="receipt-course-detail">
                   <div>
                     <span>Grade</span>
                     <strong>{{ line.gradeBand || '—' }}</strong>
@@ -439,43 +532,54 @@
                 </div>
               </td>
               <td class="price-cell">
-                <strong v-if="!receiptEditingEnabled" class="receipt-course-price">{{ formatMoney(line.priceAmount) }}</strong>
+                <strong v-if="!receiptEditingEnabled || isPrivateAllReceiptView" class="receipt-course-price">{{ formatCourseLinePrice(line) }}</strong>
+                <template v-else-if="isSharedPrivateLesson">
+                  <el-input-number
+                    :model-value="privateParticipantLineSharePrice(line, Math.max(0, (activePrivateParticipantIndex ?? 1) - 1))"
+                    :min="0"
+                    :precision="2"
+                    :controls="false"
+                    class="table-price"
+                    disabled
+                  />
+                  <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
+                </template>
                 <template v-else>
                   <el-input-number v-model="line.priceAmount" :min="0" :precision="2" :controls="false" class="table-price" @change="() => handlePriceChange(line)" />
-                  <strong class="print-only print-course-price">{{ formatMoney(line.priceAmount) }}</strong>
+                  <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
-                <button v-if="receiptEditingEnabled && !isRenewalMode && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
+                <button v-if="receiptEditingEnabled && !isPrivateAllReceiptView && !isRenewalMode && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
               </td>
             </tr>
           </tbody>
         </table>
       </section>
 
-      <section v-if="!isReadOnly" class="paper-actions no-print">
+      <section v-if="!isReadOnly && !isPrivateAllReceiptView" class="paper-actions no-print">
         <el-button v-if="!isRenewalMode" class="action-secondary" @click="addCourseLine">Add course row</el-button>
       </section>
 
-      <section v-if="receiptEditingEnabled" class="intake-adjustment-panel no-print">
+      <section v-if="receiptEditingEnabled && !isPrivateAllReceiptView" class="intake-adjustment-panel no-print">
         <div class="adjustment-column adjustment-column--fees">
           <div class="adjustment-heading">
             <strong>Service & other fees</strong>
             <span>Pickup/drop-off fees are per registration, not per student profile</span>
           </div>
-          <div v-if="form.student.pickupRequired" class="adjustment-row adjustment-row--service">
+          <div v-if="activeStudentPickupRequired" class="adjustment-row adjustment-row--service">
             <label class="service-charge-toggle">
               <input type="checkbox" v-model="form.pickupFeeCharged" />
               <span>Charge pickup on this registration</span>
             </label>
             <el-input-number v-model="form.pickupFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!form.pickupFeeCharged" />
           </div>
-          <div v-if="form.student.dropoffRequired" class="adjustment-row adjustment-row--service">
+          <div v-if="activeStudentDropoffRequired" class="adjustment-row adjustment-row--service">
             <label class="service-charge-toggle">
               <input type="checkbox" v-model="form.dropoffFeeCharged" />
               <span>Charge drop-off on this registration</span>
             </label>
             <el-input-number v-model="form.dropoffFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!form.dropoffFeeCharged" />
           </div>
-          <div v-if="!form.student.pickupRequired && !form.student.dropoffRequired" class="adjustment-empty">
+          <div v-if="!activeStudentPickupRequired && !activeStudentDropoffRequired" class="adjustment-empty">
             Select Pickup needed or Drop-off needed above, then explicitly choose whether to charge this registration.
           </div>
           <div v-for="(fee, index) in extraFees" :key="fee.rowKey" class="adjustment-row">
@@ -490,11 +594,11 @@
           <div class="adjustment-heading">
             <strong>Discounts</strong>
             <div class="adjustment-heading__actions">
-              <span>Applied to amount due</span>
+              <span>{{ activeBillingScopeLabel }}</span>
               <el-button text size="small" @click="openDiscountPresetManagement">Manage presets</el-button>
             </div>
           </div>
-          <div v-for="(discount, index) in discounts" :key="discount.rowKey" class="adjustment-row">
+          <div v-for="(discount, index) in activeDiscountLines" :key="discount.rowKey" class="adjustment-row">
             <div class="discount-preset-control">
               <el-select v-model="discount.presetId" placeholder="Select discount" @change="applyDiscountPreset(discount)">
                 <el-option label="Custom discount" value="__custom__" />
@@ -513,24 +617,24 @@
               :controls="false"
               :disabled="!isCustomDiscount(discount)"
             />
-            <el-button v-if="discounts.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove discount" @click="removeDiscount(index)">×</el-button>
+            <el-button v-if="activeDiscountLines.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove discount" @click="removeActiveDiscount(index)">×</el-button>
           </div>
-          <el-button class="action-secondary" text @click="addDiscount">Add discount</el-button>
+          <el-button class="action-secondary" text @click="addActiveDiscount">Add discount</el-button>
         </div>
 
         <div class="adjustment-column adjustment-column--payments">
           <div class="adjustment-heading">
             <strong>Payments</strong>
-            <span>Use more rows for installments</span>
+            <span>{{ activeBillingScopeLabel }}</span>
           </div>
-          <div v-for="(payment, index) in payments" :key="payment.rowKey" class="adjustment-row adjustment-row--payment">
+          <div v-for="(payment, index) in activePaymentLines" :key="payment.rowKey" class="adjustment-row adjustment-row--payment">
             <span>Payment {{ index + 1 }}</span>
             <el-select v-model="payment.paymentMethod" placeholder="Method" filterable>
               <el-option v-for="method in paymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
             </el-select>
             <el-input-number v-model="payment.amount" :min="0" :precision="2" :controls="false" />
             <el-date-picker v-model="payment.paidAt" type="date" value-format="YYYY-MM-DD" placeholder="Date" />
-            <el-button v-if="payments.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove payment" @click="removePaymentLine(index)">×</el-button>
+            <el-button v-if="activePaymentLines.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove payment" @click="removeActivePaymentLine(index)">×</el-button>
             <el-input
               v-if="isOtherPaymentMethod(payment.paymentMethod)"
               v-model="payment.remark"
@@ -538,7 +642,7 @@
               placeholder="Describe the payment method"
             />
           </div>
-          <el-button class="action-secondary" text @click="addPaymentLine">Add payment</el-button>
+          <el-button class="action-secondary" text @click="addActivePaymentLine">Add payment</el-button>
         </div>
       </section>
 
@@ -633,8 +737,8 @@
         <em v-if="hasOutstandingBalance">Balance due. Record the remaining payment from student history later.</em>
         <em v-else-if="isPaidInFull">Paid in full.</em>
       </div>
-      <el-input v-if="receiptEditingEnabled" v-model="form.handledByName" placeholder="Handled by" class="handled-by" />
-      <el-input v-if="receiptEditingEnabled" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
+      <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.handledByName" placeholder="Handled by" class="handled-by" />
+      <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
       <el-button v-if="!isReadOnly" class="action-primary" type="primary" size="large" :loading="submitting" @click="submitForm">Save</el-button>
       <el-button class="action-print" size="large" @click="printForm">Print</el-button>
     </section>
@@ -648,9 +752,9 @@ import { ElMessage, ElNotification } from 'element-plus';
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import { fetchActiveCoursePriceOptions, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
+import { fetchActiveCoursePriceOptions, fetchAllStudents, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
 import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
-import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult } from '@/api/enrollment';
+import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult, type RegistrationParticipantBillingPayload } from '@/api/enrollment';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
 import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
@@ -729,6 +833,7 @@ interface PaymentLine {
   paymentMethod: string;
   amount: number;
   paidAt: string;
+  participantIndex?: number;
   handledByName?: string;
   remark?: string;
 }
@@ -758,6 +863,30 @@ interface RegistrationForm {
     dropoffAddress: string;
   };
 }
+
+interface PrivateParticipantForm {
+  studentId?: EntityId;
+  studentName: string;
+  grade: string;
+  studentClass: string;
+  school: string;
+  guardianName: string;
+  guardianPhone: string;
+  guardianPhone2: string;
+  guardianEmail: string;
+  pickupRequired: boolean;
+  pickupAddress: string;
+  dropoffRequired: boolean;
+  dropoffAddress: string;
+}
+
+interface ParticipantBillingForm {
+  participantIndex: number;
+  discounts: DiscountLine[];
+  payments: PaymentLine[];
+}
+
+type PrivateWorkspaceTab = 'all' | number;
 
 const campusFallbacks: CampusChoice[] = [
   { key: 'SOUTH', campusName: 'South Campus', address: 'South campus address', phone: '929-701-9872', taxId: '39-2116039' },
@@ -799,6 +928,9 @@ const form = reactive<RegistrationForm>({
 const campuses = ref<CampusItem[]>([]);
 const teachers = ref<TeacherItem[]>([]);
 const paymentMethods = ref<PaymentMethodItem[]>([]);
+const studentsForPicker = ref<StudentItem[]>([]);
+const studentPickerLoading = ref(false);
+const studentPickerQuery = ref('');
 const priceOptions = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
 const productGradeOrderMaps = ref<Map<string, Map<string, number>>>(new Map());
@@ -806,6 +938,7 @@ const classGroups = ref<ClassGroupItem[]>([]);
 const discountPresets = ref<DiscountPresetItem[]>([]);
 const courseCategoryLabels = ref<Record<string, string>>({});
 const reusableStudent = ref<StudentItem | null>(null);
+const historicalPrimaryStudentId = ref<EntityId | undefined>();
 const studentReuseStatus = ref<ReuseStatus>('idle');
 const validationErrors = ref<string[]>([]);
 const submitting = ref(false);
@@ -813,11 +946,16 @@ const showTaxIdOnForm = ref(false);
 const receiptTaxId = ref('');
 let rowSeed = 0;
 const courseLines = ref<RegistrationCourseLine[]>([createCourseLine()]);
+const privateParticipantCount = ref(1);
+const privateParticipantForms = ref<PrivateParticipantForm[]>([]);
+// 已保存收据中的每位学生收费快照，仅用于按原收据金额展示，不参与重新计费。
+const privateParticipantPriceSnapshots = ref<Array<number | undefined>>([]);
 const extraFees = ref<MoneyLine[]>([createMoneyLine('Other fee')]);
 const discounts = ref<DiscountLine[]>([createDiscountLine()]);
 const payments = ref<PaymentLine[]>([createPaymentLine()]);
 const printedOrderId = ref<string | null>(null);
-
+const activePrivateWorkspaceTab = ref<PrivateWorkspaceTab>('all');
+const participantBillings = ref<ParticipantBillingForm[]>([]);
 let reuseLookupTimer: ReturnType<typeof window.setTimeout> | undefined;
 
 const campusChoices = computed<CampusChoice[]>(() => {
@@ -865,16 +1003,188 @@ const courseSetupHint = computed(() => courseProducts.value.length === 0
     ? 'Add an active grade, duration, and price in Back office before registration.'
     : 'No active price is available for this course. Ask an administrator to update Back office setup.'));
 
-const courseSubtotal = computed(() => sumNumbers(courseLines.value.map((line) => line.priceAmount)));
+const hasOneOnOneLine = computed(() => courseLines.value.some(isOneOnOneLine));
+const isSharedPrivateLesson = computed(() => hasOneOnOneLine.value && privateParticipantCount.value > 1);
+// 只有 1-on-2 / 1-on-3 才需要多人工作区；1-on-1 沿用原来的单学生注册表。
+const privateWorkspaceVisible = computed(() => isSharedPrivateLesson.value);
+const isPrivateAllReceiptView = computed(() => isSharedPrivateLesson.value && activePrivateWorkspaceTab.value === 'all');
+const visiblePrivateTabs = computed<PrivateWorkspaceTab[]>(() => [
+  'all',
+  ...Array.from({ length: privateParticipantCount.value }, (_, index) => index + 1),
+]);
+const activePrivateParticipantIndex = computed(() =>
+  typeof activePrivateWorkspaceTab.value === 'number'
+    ? activePrivateWorkspaceTab.value
+    : hasOneOnOneLine.value && !privateWorkspaceVisible.value
+      ? 1
+      : null,
+);
+// 普通课程和 1-on-1 使用主学生；1-on-2/1-on-3 使用当前学生 Tab，All 仅展示汇总收据。
+const activeStudentPickerIndex = computed<number | null>(() => {
+  if (isSharedPrivateLesson.value) {
+    return typeof activePrivateWorkspaceTab.value === 'number'
+      ? activePrivateWorkspaceTab.value
+      : null;
+  }
+  return receiptEditingEnabled.value ? 1 : null;
+});
+const studentPickerVisible = computed(() => receiptEditingEnabled.value && !isPrivateAllReceiptView.value);
+const activeStudentPickerOptions = computed(() => {
+  const index = activeStudentPickerIndex.value;
+  if (index === null) {
+    return [];
+  }
+  const participant = index === 1 ? null : privateParticipantForms.value[index - 2];
+  const selectedStudent = index === 1
+    ? reusableStudent.value
+      ?? (historicalPrimaryStudentId.value && fullStudentName.value
+        ? createStudentPickerOption(historicalPrimaryStudentId.value, fullStudentName.value, form.student)
+        : null)
+    : participant?.studentId
+      ? studentsForPicker.value.find((student) => String(student.id) === String(participant.studentId))
+        ?? createStudentPickerOption(participant.studentId, participant.studentName, participant)
+      : null;
+  const students = selectedStudent ? [selectedStudent, ...studentsForPicker.value] : studentsForPicker.value;
+  const uniqueStudents = new Map<string, StudentItem>();
+  students.forEach((student) => uniqueStudents.set(String(student.id), student));
+  const query = studentPickerQuery.value.trim().toLowerCase();
+  if (!query) {
+    return Array.from(uniqueStudents.values());
+  }
+  return Array.from(uniqueStudents.values()).filter((student) => {
+    if (selectedStudent && String(student.id) === String(selectedStudent.id)) {
+      return true;
+    }
+    return [
+      student.studentName,
+      student.studentNo,
+      student.grade,
+      student.guardianPhone,
+      student.phone,
+    ].filter(Boolean).some((value) => String(value).toLowerCase().includes(query));
+  });
+});
+const activeStudentPickerSelection = computed<EntityId | ''>({
+  get: () => {
+    const index = activeStudentPickerIndex.value;
+    if (index === null) {
+      return '';
+    }
+    return index === 1
+      ? reusableStudent.value?.id ?? historicalPrimaryStudentId.value ?? ''
+      : privateParticipantForms.value[index - 2]?.studentId ?? '';
+  },
+  set: (studentId) => {
+    const index = activeStudentPickerIndex.value;
+    if (index === null) {
+      return;
+    }
+    if (!studentId) {
+      clearSelectedStudent(index);
+      return;
+    }
+    const student = activeStudentPickerOptions.value.find((item) => String(item.id) === String(studentId));
+    if (!student) {
+      return;
+    }
+    if (index === 1) {
+      selectPrimaryPrivateParticipant(student);
+    } else {
+      selectPrivateParticipant(index, student);
+    }
+  },
+});
+const activeStudentPickerLoading = computed(() => {
+  return studentPickerLoading.value;
+});
+const activeStudentPickerPlaceholder = computed(() => activeStudentPickerIndex.value === 1
+  ? 'Select or search Student 1'
+  : `Select or search Student ${activeStudentPickerIndex.value ?? ''}`);
+const activePrivateParticipant = computed(() => {
+  const index = activePrivateParticipantIndex.value;
+  if (index === null || index === 1) {
+    return null;
+  }
+  return privateParticipantForms.value[index - 2] ?? null;
+});
+const privateParticipantMultiplier = computed(() =>
+  hasOneOnOneLine.value && privateParticipantCount.value > 1
+    ? 1 + (privateParticipantCount.value - 1) * 0.5
+    : 1,
+);
+const privateParticipantTotalPrice = computed(() => {
+  const line = courseLines.value.find(isOneOnOneLine);
+  return line ? privateParticipantLineTotalPrice(line) : 0;
+});
+const privateParticipantShareAmount = computed(() => {
+  const total = privateParticipantTotalPrice.value;
+  return privateParticipantCount.value > 0
+    ? splitShareAmount(total, privateParticipantCount.value, 0)
+    : 0;
+});
+const privateParticipantReceiptRows = computed(() => {
+  const names = Array.from({ length: privateParticipantCount.value }, (_, index) =>
+    index === 0 ? fullStudentName.value : privateParticipantForms.value[index - 1]?.studentName.trim() || '',
+  );
+  const totalPrice = privateParticipantTotalPrice.value;
+  const count = names.length;
+  return names.map((name, index) => {
+    const billing = participantBillings.value[index];
+    const grossPrice = privateParticipantPriceSnapshots.value.length === count
+      && privateParticipantPriceSnapshots.value[index] !== undefined
+      ? privateParticipantPriceSnapshots.value[index]!
+      : splitShareAmount(totalPrice, count, index);
+    const discount = sumNumbers(billing?.discounts.map((item) => item.amount) ?? []);
+    const participantFees = index === 0 ? serviceFeeTotal.value + extraFeeTotal.value : 0;
+    const amountDue = Math.max(0, roundMoney(grossPrice + participantFees - discount));
+    const paid = sumNumbers(billing?.payments.map((item) => item.amount) ?? []);
+    return {
+    key: `receipt-participant-${index}`,
+    name,
+    grade: index === 0 ? form.student.grade : privateParticipantForms.value[index - 1]?.grade || '',
+    school: index === 0 ? form.student.school : privateParticipantForms.value[index - 1]?.school || '',
+    guardianPhone: index === 0 ? form.student.guardianPhone : privateParticipantForms.value[index - 1]?.guardianPhone || '',
+    priceAmount: grossPrice,
+    discountAmount: discount,
+    amountDue,
+    paidAmount: paid,
+    balanceAmount: roundMoney(amountDue - paid),
+    payments: (billing?.payments ?? []).filter((payment) => payment.amount > 0),
+  };
+  });
+});
+const courseSubtotal = computed(() => sumNumbers(courseLines.value.map((line) => {
+  if (!isOneOnOneLine(line)) {
+    return line.priceAmount;
+  }
+  const multiplier = isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1
+    ? 1
+    : privateParticipantMultiplier.value;
+  return roundMoney(line.priceAmount * multiplier);
+})));
 const extraFeeTotal = computed(() => sumNumbers(extraFees.value.map((line) => line.amount)));
 const effectivePickupFeeAmount = computed(() => form.pickupFeeCharged ? roundMoney(form.pickupFeeAmount) : 0);
 const effectiveDropoffFeeAmount = computed(() => form.dropoffFeeCharged ? roundMoney(form.dropoffFeeAmount) : 0);
 const serviceFeeTotal = computed(() => roundMoney(effectivePickupFeeAmount.value + effectiveDropoffFeeAmount.value));
 const discountableAmount = computed(() => roundMoney(courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value));
-const discountTotal = computed(() => sumNumbers(discounts.value.map((line) => line.amount)));
-const paidAmount = computed(() => sumNumbers(payments.value.map((line) => line.amount)));
+const participantDiscountTotal = computed(() => participantBillings.value
+  .reduce((total, billing) => total + sumNumbers(billing.discounts.map((line) => line.amount)), 0));
+const participantPaidAmount = computed(() => participantBillings.value
+  .reduce((total, billing) => total + sumNumbers(billing.payments.map((line) => line.amount)), 0));
+const receiptPaymentRows = computed(() => isSharedPrivateLesson.value
+  ? participantBillings.value.flatMap((billing) => billing.payments.map((payment) => ({
+    ...payment,
+    participantIndex: billing.participantIndex,
+  })))
+  : payments.value);
+const discountTotal = computed(() => isSharedPrivateLesson.value
+  ? roundMoney(participantDiscountTotal.value)
+  : sumNumbers(discounts.value.map((line) => line.amount)));
+const paidAmount = computed(() => isSharedPrivateLesson.value
+  ? roundMoney(participantPaidAmount.value)
+  : sumNumbers(payments.value.map((line) => line.amount)));
 const paymentMethodSummary = computed(() => {
-  const methodCodes = Array.from(new Set(payments.value
+  const methodCodes = Array.from(new Set(receiptPaymentRows.value
     .filter((payment) => payment.amount > 0 && Boolean(payment.paymentMethod))
     .map((payment) => payment.paymentMethod)));
   if (methodCodes.length === 0) {
@@ -885,6 +1195,39 @@ const paymentMethodSummary = computed(() => {
   }
   return paymentMethods.value.find((method) => method.methodCode === methodCodes[0])?.methodName ?? methodCodes[0];
 });
+const activeParticipantBilling = computed(() => {
+  const index = activePrivateParticipantIndex.value;
+  return isSharedPrivateLesson.value && index !== null
+    ? participantBillings.value[index - 1]
+    : null;
+});
+const activeDiscountLines = computed(() => activeParticipantBilling.value?.discounts ?? discounts.value);
+const activePaymentLines = computed(() => activeParticipantBilling.value?.payments ?? payments.value);
+const activeBillingScopeLabel = computed(() => activeParticipantBilling.value
+  ? `${privateWorkspaceTabLabel(activeParticipantBilling.value.participantIndex)} only`
+  : 'Applied to this receipt');
+const activePaidAmount = computed(() => activeParticipantBilling.value
+  ? sumNumbers(activeParticipantBilling.value.payments.map((payment) => payment.amount))
+  : paidAmount.value);
+const activePaymentMethodSummary = computed(() => {
+  const billingPayments = activeParticipantBilling.value?.payments;
+  if (!billingPayments) {
+    return paymentMethodSummary.value;
+  }
+  const methodCodes = Array.from(new Set(billingPayments
+    .filter((payment) => payment.amount > 0 && Boolean(payment.paymentMethod))
+    .map((payment) => payment.paymentMethod)));
+  if (methodCodes.length === 0) {
+    return 'Not recorded';
+  }
+  if (methodCodes.length > 1) {
+    return 'Mixed';
+  }
+  return paymentMethods.value.find((method) => method.methodCode === methodCodes[0])?.methodName ?? methodCodes[0];
+});
+const paymentParticipantLabel = (payment: PaymentLine) => payment.participantIndex
+  ? privateWorkspaceTabLabel(payment.participantIndex)
+  : '';
 const amountDue = computed(() => Math.max(0, roundMoney(courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value - discountTotal.value)));
 const balanceAmount = computed(() => roundMoney(amountDue.value - paidAmount.value));
 const balanceLabel = computed(() => {
@@ -900,6 +1243,85 @@ const fullStudentName = computed(() => [form.student.firstName, form.student.las
   .map((part) => part.trim())
   .filter(Boolean)
   .join(' '));
+const activeStudentName = computed(() => activePrivateParticipant.value?.studentName.trim() || fullStudentName.value);
+
+function splitParticipantName(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return {
+    firstName: parts.shift() || '',
+    lastName: parts.join(' '),
+  };
+}
+
+function updateActiveParticipantName(firstName: string, lastName: string) {
+  const participant = activePrivateParticipant.value;
+  if (participant) {
+    participant.studentName = [firstName, lastName].map((part) => part.trim()).filter(Boolean).join(' ');
+    return;
+  }
+  form.student.firstName = firstName;
+  form.student.lastName = lastName;
+}
+
+const activeStudentFirstName = computed({
+  get: () => activePrivateParticipant.value
+    ? splitParticipantName(activePrivateParticipant.value.studentName).firstName
+    : form.student.firstName,
+  set: (value: string) => updateActiveParticipantName(value, activeStudentLastName.value),
+});
+const activeStudentLastName = computed({
+  get: () => activePrivateParticipant.value
+    ? splitParticipantName(activePrivateParticipant.value.studentName).lastName
+    : form.student.lastName,
+  set: (value: string) => updateActiveParticipantName(activeStudentFirstName.value, value),
+});
+
+type ActiveStudentStringField = 'grade' | 'school' | 'guardianPhone' | 'guardianPhone2' | 'pickupAddress' | 'dropoffAddress';
+function createActiveStudentStringField(field: ActiveStudentStringField) {
+  return computed({
+    get: () => activePrivateParticipant.value?.[field] ?? form.student[field],
+    set: (value: string) => {
+      if (activePrivateParticipant.value) {
+        activePrivateParticipant.value[field] = value;
+        if (field === 'pickupAddress' && value.trim()) {
+          activePrivateParticipant.value.pickupRequired = true;
+        }
+        if (field === 'dropoffAddress' && value.trim()) {
+          activePrivateParticipant.value.dropoffRequired = true;
+        }
+      } else {
+        form.student[field] = value;
+      }
+    },
+  });
+}
+
+const activeStudentGrade = createActiveStudentStringField('grade');
+const activeStudentSchool = createActiveStudentStringField('school');
+const activeStudentGuardianPhone = createActiveStudentStringField('guardianPhone');
+const activeStudentGuardianPhone2 = createActiveStudentStringField('guardianPhone2');
+const activeStudentPickupAddress = createActiveStudentStringField('pickupAddress');
+const activeStudentDropoffAddress = createActiveStudentStringField('dropoffAddress');
+const activeStudentPickupRequired = computed({
+  get: () => activePrivateParticipant.value?.pickupRequired ?? form.student.pickupRequired,
+  set: (value: boolean) => {
+    if (activePrivateParticipant.value) {
+      activePrivateParticipant.value.pickupRequired = value;
+    } else {
+      form.student.pickupRequired = value;
+    }
+  },
+});
+const activeStudentDropoffRequired = computed({
+  get: () => activePrivateParticipant.value?.dropoffRequired ?? form.student.dropoffRequired,
+  set: (value: boolean) => {
+    if (activePrivateParticipant.value) {
+      activePrivateParticipant.value.dropoffRequired = value;
+    } else {
+      form.student.dropoffRequired = value;
+    }
+  },
+});
 const studentLookupQuery = computed(() => ({
   keyword: fullStudentName.value || undefined,
   guardian: form.student.guardianPhone.trim() || undefined,
@@ -985,6 +1407,18 @@ watch(discountableAmount, () => {
   discounts.value.forEach(recalculatePresetDiscount);
 });
 
+watch([privateParticipantCount, hasOneOnOneLine], () => {
+  if (!hasOneOnOneLine.value) {
+    privateParticipantCount.value = 1;
+    activePrivateWorkspaceTab.value = 'all';
+  }
+  ensurePrivateParticipantState();
+  if (typeof activePrivateWorkspaceTab.value === 'number'
+      && activePrivateWorkspaceTab.value > privateParticipantCount.value) {
+    activePrivateWorkspaceTab.value = 'all';
+  }
+});
+
 onMounted(async () => {
   await loadInitialData();
   if (isReadOnly.value) {
@@ -1015,6 +1449,7 @@ async function loadInitialData() {
     classGroups.value = classRes.data.data ?? [];
     discountPresets.value = discountPresetRes.data.data ?? [];
     await loadProductGradeOrders(courseProducts.value);
+    await loadStudentsForPicker();
     void loadCourseCategoryLabels();
     // 校区默认留空，交由用户主动选择（提交时 validateForm 校验已拦截未选校区的提交）。
     // 编辑既有订单(loadHistoricalOrder) / 续费(loadRenewalRegistration) / 预览学生(loadExistingStudent) 仍会按数据带出校区。
@@ -1023,6 +1458,19 @@ async function loadInitialData() {
     }
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
+  }
+}
+
+async function loadStudentsForPicker() {
+  studentPickerLoading.value = true;
+  try {
+    const response = await fetchAllStudents();
+    studentsForPicker.value = response.data.data ?? [];
+  } catch (error) {
+    studentsForPicker.value = [];
+    ElMessage.warning(`Existing student list unavailable: ${extractErrorMessage(error)}`);
+  } finally {
+    studentPickerLoading.value = false;
   }
 }
 
@@ -1134,6 +1582,8 @@ function buildCorrectionPayload(): EnrollmentOrderCorrectionPayload {
     discounts: payload.discounts,
     items: payload.items,
     payments: payload.payments,
+    participants: payload.participants,
+    participantBillings: payload.participantBillings,
     receiptOptions: payload.receiptOptions,
   };
 }
@@ -1217,6 +1667,23 @@ async function loadPackageRenewal(packageId: string) {
   }
   const studentResponse = await fetchStudent(coursePackage.studentId);
   applyStudentProfile(studentResponse.data.data);
+  const groupParticipants = coursePackage.privateLessonParticipants ?? [];
+  if (groupParticipants.length > 1) {
+    privateParticipantCount.value = Math.min(3, groupParticipants.length);
+    privateParticipantForms.value = groupParticipants.slice(1, 3).map((participant) => ({
+      studentId: participant.studentId,
+      studentName: participant.studentName || '',
+      grade: participant.grade || '',
+      studentClass: '',
+      school: participant.school || '',
+      guardianPhone: '',
+    }));
+    privateParticipantPriceSnapshots.value = [];
+  } else {
+    privateParticipantCount.value = 1;
+    privateParticipantForms.value = [];
+    privateParticipantPriceSnapshots.value = [];
+  }
   const line = createCourseLine();
   line.courseProductId = coursePackage.courseProductId;
   handleCourseProductChange(line);
@@ -1238,7 +1705,10 @@ async function loadPackageRenewal(packageId: string) {
   line.openingUsedHours = 0;
   handleRegistrationDurationChange(line);
   courseLines.value = [line];
-  ElMessage.success(`Renewal started for ${coursePackage.studentName}. Confirm the package hours and payment.`);
+  const participantLabel = groupParticipants.length > 1
+    ? ` for ${groupParticipants.map((participant) => participant.studentName || 'student').join(' / ')}`
+    : ` for ${coursePackage.studentName}`;
+  ElMessage.success(`Renewal started${participantLabel}. Confirm the package hours and payment.`);
 }
 
 async function loadGroupClassRenewal(enrollmentId: string) {
@@ -1294,6 +1764,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   );
   form.dropoffFeeCharged = getBoolean(receiptPayload, 'dropoffFeeCharged', form.dropoffFeeAmount > 0);
   form.remark = order.remark ?? '';
+  historicalPrimaryStudentId.value = order.studentId;
   setStudentName(getString(receiptPayload, 'studentName') || order.studentNameSnapshot || order.studentName || '');
   form.student.grade = getString(receiptPayload, 'grade') || order.gradeSnapshot || '';
   form.student.studentClass = getString(receiptPayload, 'studentClass') || order.studentClassSnapshot || '';
@@ -1306,6 +1777,70 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   form.student.pickupAddress = getString(receiptPayload, 'pickupAddress') || order.pickupAddressSnapshot || '';
   form.student.dropoffRequired = getBoolean(receiptPayload, 'dropoffRequired', order.dropoffRequiredSnapshot);
   form.student.dropoffAddress = getString(receiptPayload, 'dropoffAddress') || order.dropoffAddressSnapshot || '';
+  const historicalParticipants: Record<string, unknown>[] = order.participants?.length
+    ? order.participants.map((participant) => ({
+      studentId: participant.studentId,
+      studentNo: participant.studentNo,
+      participantIndex: participant.participantIndex,
+      studentName: participant.studentName,
+      grade: participant.grade,
+      school: participant.school,
+      studentClass: participant.studentClass,
+      guardianName: participant.guardianName,
+      guardianPhone: participant.guardianPhone,
+      guardianPhone2: participant.guardianPhone2,
+      guardianEmail: participant.guardianEmail,
+      pickupRequired: participant.pickupRequired,
+      pickupAddress: participant.pickupAddress,
+      dropoffRequired: participant.dropoffRequired,
+      dropoffAddress: participant.dropoffAddress,
+      priceAmount: participant.grossAmount,
+      grossAmount: participant.grossAmount,
+      discountAmount: participant.discountAmount,
+      amountDue: participant.amountDue,
+      paidAmount: participant.paidAmount,
+      balanceAmount: participant.balanceAmount,
+      discounts: parseMoneyDetail(participant.discountDetail),
+    }))
+    : getArray(receiptPayload, 'participants');
+  privateParticipantCount.value = Math.min(3, Math.max(1, historicalParticipants.length || 1));
+  privateParticipantPriceSnapshots.value = historicalParticipants.slice(0, 3).map((item) =>
+    item.priceAmount == null ? undefined : getNumber(item, 'priceAmount'));
+  privateParticipantForms.value = historicalParticipants.slice(1, 3).map((item) => ({
+    studentId: item.studentId == null ? undefined : String(item.studentId),
+    studentName: getString(item, 'studentName'),
+    grade: getString(item, 'grade'),
+    studentClass: getString(item, 'studentClass'),
+    school: getString(item, 'school'),
+    guardianName: getString(item, 'guardianName'),
+    guardianPhone: getString(item, 'guardianPhone'),
+    guardianPhone2: getString(item, 'guardianPhone2'),
+    guardianEmail: getString(item, 'guardianEmail'),
+    pickupRequired: getBoolean(item, 'pickupRequired', false),
+    pickupAddress: getString(item, 'pickupAddress'),
+    dropoffRequired: getBoolean(item, 'dropoffRequired', false),
+    dropoffAddress: getString(item, 'dropoffAddress'),
+  }));
+  participantBillings.value = historicalParticipants.slice(0, 3).map((item, index) => {
+    const discounts = getMoneyLines(item, 'discounts');
+    const paymentsForParticipant = (order.payments ?? [])
+      .filter((payment) => Number(payment.participantIndex) === index + 1)
+      .map((payment) => ({
+        rowKey: `payment-${payment.id}`,
+        paymentMethod: payment.paymentMethod,
+        amount: numeric(payment.amount),
+        paidAt: normalizeDate(payment.paidAt),
+        participantIndex: index + 1,
+        handledByName: payment.handledByName,
+        remark: payment.remark,
+      }));
+    return {
+      participantIndex: index + 1,
+      discounts: discounts.length > 0 ? discounts.map((discount) => createDiscountLine(discount.label, discount.amount)) : [createDiscountLine('Custom discount', getNumber(item, 'discountAmount'))],
+      payments: paymentsForParticipant.length > 0 ? paymentsForParticipant : [createPaymentLine()],
+    };
+  });
+  ensurePrivateParticipantState();
 
   const payloadItems = getArray(receiptPayload, 'items');
   courseLines.value = (payloadItems.length > 0 ? payloadItems : order.items)
@@ -1351,6 +1886,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
       paymentMethod: payment.paymentMethod,
       amount: numeric(payment.amount),
       paidAt: normalizeDate(payment.paidAt),
+      participantIndex: payment.participantIndex,
       handledByName: payment.handledByName,
       remark: payment.remark,
     }));
@@ -1638,6 +2174,24 @@ function removeDiscount(index: number) {
   }
 }
 
+function addActiveDiscount() {
+  const participantIndex = activeParticipantBilling.value?.participantIndex;
+  if (participantIndex) {
+    addParticipantDiscount(participantIndex);
+    return;
+  }
+  addDiscount();
+}
+
+function removeActiveDiscount(index: number) {
+  const participantIndex = activeParticipantBilling.value?.participantIndex;
+  if (participantIndex) {
+    removeParticipantDiscount(participantIndex, index);
+    return;
+  }
+  removeDiscount(index);
+}
+
 function isCustomDiscount(discount: DiscountLine) {
   return discount.presetId === '__custom__';
 }
@@ -1688,6 +2242,24 @@ function removePaymentLine(index: number) {
   if (payments.value.length > 1) {
     payments.value.splice(index, 1);
   }
+}
+
+function addActivePaymentLine() {
+  const participantIndex = activeParticipantBilling.value?.participantIndex;
+  if (participantIndex) {
+    addParticipantPayment(participantIndex);
+    return;
+  }
+  addPaymentLine();
+}
+
+function removeActivePaymentLine(index: number) {
+  const participantIndex = activeParticipantBilling.value?.participantIndex;
+  if (participantIndex) {
+    removeParticipantPayment(participantIndex, index);
+    return;
+  }
+  removePaymentLine(index);
 }
 
 function handleCourseProductChange(line: RegistrationCourseLine) {
@@ -2041,6 +2613,36 @@ function printCourseProductLabel(line: RegistrationCourseLine) {
   return product ? productOptionLabel(product) : line.courseProductName || line.registerClass || '—';
 }
 
+function formatCourseLinePrice(line: RegistrationCourseLine) {
+  if (!isOneOnOneLine(line) || !isSharedPrivateLesson.value) {
+    return formatMoney(line.priceAmount);
+  }
+  const activeIndex = activePrivateParticipantIndex.value;
+  const amount = isPrivateAllReceiptView.value || activeIndex === null
+    ? privateParticipantLineTotalPrice(line)
+    : privateParticipantLineSharePrice(line, activeIndex - 1);
+  return formatMoney(amount);
+}
+
+function privateParticipantLineTotalPrice(line: RegistrationCourseLine) {
+  const total = isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1
+    ? numeric(line.priceAmount)
+    : numeric(line.priceAmount) * privateParticipantMultiplier.value;
+  return roundMoney(total);
+}
+
+function privateParticipantLineSharePrice(line: RegistrationCourseLine, participantIndex: number) {
+  const participantCount = Math.max(1, privateParticipantCount.value);
+  const snapshotPrice = isReadOnly.value
+    && privateParticipantPriceSnapshots.value.length === participantCount
+    ? privateParticipantPriceSnapshots.value[participantIndex]
+    : undefined;
+  if (snapshotPrice !== undefined) {
+    return roundMoney(snapshotPrice);
+  }
+  return splitShareAmount(privateParticipantLineTotalPrice(line), participantCount, participantIndex);
+}
+
 function printCourseScheduleLabel(line: RegistrationCourseLine) {
   const option = findOption(line.coursePriceOptionId);
   return [
@@ -2278,6 +2880,37 @@ function validateForm() {
   if (!form.student.guardianPhone.trim()) {
     errors.push('Guardian phone is required.');
   }
+  if (privateParticipantCount.value > 1) {
+    if (!hasOneOnOneLine.value) {
+      errors.push('Additional students are available only for a 1-on-1 course.');
+    }
+    if (courseLines.value.filter(isOneOnOneLine).length !== 1 || courseLines.value.length !== 1) {
+      errors.push('A shared private lesson registration must contain exactly one course line.');
+    }
+    privateParticipantForms.value.forEach((participant, index) => {
+      if (!participant.studentName.trim()) {
+        errors.push(`Student ${index + 2}: name is required.`);
+      }
+      if (participant.studentId && privateParticipantForms.value.some((other, otherIndex) =>
+        otherIndex !== index && String(other.studentId) === String(participant.studentId))) {
+        errors.push(`Student ${index + 2}: the same existing student cannot be added twice.`);
+      }
+    });
+    participantBillings.value.slice(0, privateParticipantCount.value).forEach((billing, index) => {
+      validateMoneyLines(billing.discounts, `Student ${index + 1} discount`, errors);
+      billing.payments.forEach((payment, paymentIndex) => {
+        if (payment.amount > 0 && !payment.paymentMethod) {
+          errors.push(`Student ${index + 1} payment ${paymentIndex + 1}: payment method is required.`);
+        }
+        if (payment.amount < 0) {
+          errors.push(`Student ${index + 1} payment ${paymentIndex + 1}: amount cannot be negative.`);
+        }
+        if (payment.amount > 0 && !payment.paidAt) {
+          errors.push(`Student ${index + 1} payment ${paymentIndex + 1}: payment date is required.`);
+        }
+      });
+    });
+  }
   if (!form.handledByName.trim()) {
     errors.push('Handled by is required.');
   }
@@ -2338,22 +2971,34 @@ function validateForm() {
     }
   });
   validateMoneyLines(extraFees.value, 'Other fee', errors);
-  validateMoneyLines(discounts.value, 'Discount', errors);
-  payments.value.forEach((payment, index) => {
+  if (isSharedPrivateLesson.value) {
+    participantBillings.value.slice(0, privateParticipantCount.value).forEach((billing) => {
+      validateMoneyLines(billing.discounts, `${privateWorkspaceTabLabel(billing.participantIndex)} discount`, errors);
+      validatePaymentLines(billing.payments, `${privateWorkspaceTabLabel(billing.participantIndex)} payment`, errors);
+    });
+  } else {
+    validateMoneyLines(discounts.value, 'Discount', errors);
+    validatePaymentLines(payments.value, 'Payment', errors);
+  }
+  return errors;
+}
+
+function validatePaymentLines(lines: PaymentLine[], label: string, errors: string[]) {
+  lines.forEach((payment, index) => {
+    const rowLabel = `${label} row ${index + 1}`;
     if (payment.amount > 0 && !payment.paymentMethod) {
-      errors.push(`Payment row ${index + 1}: payment method is required.`);
+      errors.push(`${rowLabel}: payment method is required.`);
     }
     if (payment.amount < 0) {
-      errors.push(`Payment row ${index + 1}: amount cannot be negative.`);
+      errors.push(`${rowLabel}: amount cannot be negative.`);
     }
     if (payment.amount > 0 && !payment.paidAt) {
-      errors.push(`Payment row ${index + 1}: payment date is required.`);
+      errors.push(`${rowLabel}: payment date is required.`);
     }
     if (payment.amount > 0 && isOtherPaymentMethod(payment.paymentMethod) && !payment.remark?.trim()) {
-      errors.push(`Payment row ${index + 1}: describe the other payment method.`);
+      errors.push(`${rowLabel}: describe the other payment method.`);
     }
   });
-  return errors;
 }
 
 function validateRegistrationDuration(line: RegistrationCourseLine, label: string, errors: string[]) {
@@ -2396,12 +3041,254 @@ function validateMoneyLines(lines: MoneyLine[], label: string, errors: string[])
   });
 }
 
+function createPrivateParticipantForm(): PrivateParticipantForm {
+  return {
+    studentName: '',
+    grade: '',
+    studentClass: '',
+    school: '',
+    guardianName: '',
+    guardianPhone: '',
+    guardianPhone2: '',
+    guardianEmail: '',
+    pickupRequired: false,
+    pickupAddress: '',
+    dropoffRequired: false,
+    dropoffAddress: '',
+  };
+}
+
+function createEmptyStudentProfile(): RegistrationForm['student'] {
+  return {
+    firstName: '',
+    lastName: '',
+    grade: '',
+    studentClass: '',
+    school: '',
+    guardianName: '',
+    guardianPhone: '',
+    guardianPhone2: '',
+    guardianEmail: '',
+    pickupRequired: false,
+    pickupAddress: '',
+    dropoffRequired: false,
+    dropoffAddress: '',
+  };
+}
+
+function createStudentPickerOption(
+  studentId: EntityId,
+  studentName: string,
+  profile: {
+    grade?: string;
+    school?: string;
+    guardianName?: string;
+    guardianPhone?: string;
+    guardianPhone2?: string;
+    guardianEmail?: string;
+    pickupRequired?: boolean;
+    pickupAddress?: string;
+    dropoffRequired?: boolean;
+    dropoffAddress?: string;
+  },
+): StudentItem {
+  return {
+    id: studentId,
+    studentNo: '',
+    studentName,
+    gender: '',
+    guardianName: profile.guardianName || '',
+    phone: profile.guardianPhone || '',
+    guardianPhone: profile.guardianPhone || '',
+    guardianPhone2: profile.guardianPhone2 || '',
+    guardianEmail: profile.guardianEmail || '',
+    grade: profile.grade || '',
+    school: profile.school || '',
+    pickupRequired: profile.pickupRequired,
+    pickupAddress: profile.pickupAddress || '',
+    dropoffRequired: profile.dropoffRequired,
+    dropoffAddress: profile.dropoffAddress || '',
+    status: 'ACTIVE',
+  };
+}
+
+function createParticipantBilling(participantIndex: number): ParticipantBillingForm {
+  return {
+    participantIndex,
+    discounts: [createDiscountLine()],
+    payments: [createPaymentLine()],
+  };
+}
+
+function ensurePrivateParticipantState() {
+  const requiredExtraStudents = Math.max(0, privateParticipantCount.value - 1);
+  while (privateParticipantForms.value.length < requiredExtraStudents) {
+    privateParticipantForms.value.push(createPrivateParticipantForm());
+  }
+  if (privateParticipantForms.value.length > requiredExtraStudents) {
+    privateParticipantForms.value.splice(requiredExtraStudents);
+  }
+  while (participantBillings.value.length < privateParticipantCount.value) {
+    participantBillings.value.push(createParticipantBilling(participantBillings.value.length + 1));
+  }
+  if (participantBillings.value.length > privateParticipantCount.value) {
+    participantBillings.value.splice(privateParticipantCount.value);
+  }
+}
+
+function privateWorkspaceTabLabel(tab: PrivateWorkspaceTab) {
+  if (tab === 'all') {
+    return 'All';
+  }
+  return `Student ${tab}`;
+}
+
+function privateWorkspaceParticipantName(tab: PrivateWorkspaceTab) {
+  if (tab === 'all') {
+    return '';
+  }
+  if (tab === 1) {
+    return fullStudentName.value;
+  }
+  return privateParticipantForms.value[tab - 2]?.studentName.trim() || '';
+}
+
+function privateWorkspaceTabStatus(tab: PrivateWorkspaceTab) {
+  if (tab === 'all') {
+    return '';
+  }
+  const participant = tab === 1 ? null : privateParticipantForms.value[tab - 2];
+  const name = tab === 1 ? fullStudentName.value : participant?.studentName.trim();
+  return name ? 'Ready' : 'Needs profile';
+}
+
+function displayPaymentMethod(methodCode: string) {
+  return (paymentMethods.value.find((method) => method.methodCode === methodCode)?.methodName ?? methodCode) || 'Payment';
+}
+
+function filterStudentPickerOptions(query: string) {
+  studentPickerQuery.value = query;
+}
+
+function handleStudentPickerVisibility(visible: boolean) {
+  if (!visible) {
+    studentPickerQuery.value = '';
+  }
+}
+
+function clearSelectedStudent(index: number) {
+  if (index === 1) {
+    Object.assign(form.student, createEmptyStudentProfile());
+    form.pickupFeeCharged = false;
+    form.pickupFeeAmount = 0;
+    form.dropoffFeeCharged = false;
+    form.dropoffFeeAmount = 0;
+    reusableStudent.value = null;
+    historicalPrimaryStudentId.value = undefined;
+    studentReuseStatus.value = 'idle';
+    return;
+  }
+  const participant = privateParticipantForms.value[index - 2];
+  if (participant) {
+    Object.assign(participant, createPrivateParticipantForm());
+  }
+}
+
+function selectPrimaryPrivateParticipant(student: StudentItem) {
+  applyStudentProfile(student);
+}
+
+function selectPrivateParticipant(index: number, student: StudentItem) {
+  const participant = privateParticipantForms.value[index - 2];
+  if (!participant) {
+    return;
+  }
+  participant.studentId = student.id;
+  participant.studentName = student.studentName || '';
+  participant.grade = student.grade || '';
+  participant.studentClass = student.studentClass || '';
+  participant.school = student.school || '';
+  participant.guardianName = student.guardianName || '';
+  participant.guardianPhone = student.guardianPhone || student.phone || '';
+  participant.guardianPhone2 = student.guardianPhone2 || '';
+  participant.guardianEmail = student.guardianEmail || '';
+  participant.pickupRequired = Boolean(student.pickupRequired);
+  participant.pickupAddress = student.pickupAddress || '';
+  participant.dropoffRequired = Boolean(student.dropoffRequired);
+  participant.dropoffAddress = student.dropoffAddress || '';
+}
+
+function addParticipantDiscount(index: number) {
+  const billing = participantBillings.value[index - 1];
+  billing?.discounts.push(createDiscountLine());
+}
+
+function removeParticipantDiscount(index: number, lineIndex: number) {
+  const billing = participantBillings.value[index - 1];
+  if (billing && billing.discounts.length > 1) {
+    billing.discounts.splice(lineIndex, 1);
+  }
+}
+
+function addParticipantPayment(index: number) {
+  const billing = participantBillings.value[index - 1];
+  billing?.payments.push(createPaymentLine());
+}
+
+function removeParticipantPayment(index: number, lineIndex: number) {
+  const billing = participantBillings.value[index - 1];
+  if (billing && billing.payments.length > 1) {
+    billing.payments.splice(lineIndex, 1);
+  }
+}
+
+function toPrivateParticipantPayload(formValue: PrivateParticipantForm) {
+  const pickupAddress = formValue.pickupAddress.trim();
+  const dropoffAddress = formValue.dropoffAddress.trim();
+  return {
+    studentId: formValue.studentId,
+    studentName: formValue.studentName.trim(),
+    grade: formValue.grade.trim() || undefined,
+    studentClass: formValue.studentClass.trim() || undefined,
+    school: formValue.school.trim() || undefined,
+    guardianName: formValue.guardianName.trim() || undefined,
+    guardianPhone: formValue.guardianPhone.trim() || undefined,
+    guardianPhone2: formValue.guardianPhone2.trim() || undefined,
+    guardianEmail: formValue.guardianEmail.trim() || undefined,
+    pickupRequired: formValue.pickupRequired || Boolean(pickupAddress),
+    pickupAddress: pickupAddress || undefined,
+    dropoffRequired: formValue.dropoffRequired || Boolean(dropoffAddress),
+    dropoffAddress: dropoffAddress || undefined,
+  };
+}
+
+function toPrimaryParticipantPayload() {
+  const pickupAddress = form.student.pickupAddress.trim();
+  const dropoffAddress = form.student.dropoffAddress.trim();
+  return {
+    studentId: reusableStudent.value?.id ?? historicalPrimaryStudentId.value,
+    studentName: fullStudentName.value,
+    grade: form.student.grade.trim() || undefined,
+    studentClass: form.student.studentClass.trim() || undefined,
+    school: form.student.school.trim() || undefined,
+    guardianName: form.student.guardianName.trim() || undefined,
+    guardianPhone: form.student.guardianPhone.trim() || undefined,
+    guardianPhone2: form.student.guardianPhone2.trim() || undefined,
+    guardianEmail: form.student.guardianEmail.trim() || undefined,
+    pickupRequired: form.student.pickupRequired || undefined,
+    pickupAddress: pickupAddress || undefined,
+    dropoffRequired: form.student.dropoffRequired || undefined,
+    dropoffAddress: dropoffAddress || undefined,
+  };
+}
+
 function buildPayload(): RegistrationIntakePayload {
   const campus = selectedCampus.value;
   const pickupAddress = form.student.pickupAddress.trim();
   const dropoffAddress = form.student.dropoffAddress.trim();
   const payload: RegistrationIntakePayload = {
     student: {
+      studentId: reusableStudent.value?.id ?? historicalPrimaryStudentId.value,
       studentName: fullStudentName.value,
       grade: form.student.grade.trim() || undefined,
       studentClass: form.student.studentClass.trim() || undefined,
@@ -2415,6 +3302,15 @@ function buildPayload(): RegistrationIntakePayload {
       dropoffRequired: form.student.dropoffRequired || Boolean(dropoffAddress),
       dropoffAddress: dropoffAddress || undefined,
     },
+    participants: hasOneOnOneLine.value && privateParticipantCount.value > 1
+      ? [
+        toPrimaryParticipantPayload(),
+        ...privateParticipantForms.value.map(toPrivateParticipantPayload),
+      ]
+      : undefined,
+    participantBillings: isSharedPrivateLesson.value
+      ? participantBillings.value.map((billing) => toParticipantBillingPayload(billing))
+      : undefined,
     campusId: campus?.campusId,
     campusName: campus?.campusName,
     signupDate: form.signupDate,
@@ -2462,15 +3358,17 @@ function buildPayload(): RegistrationIntakePayload {
     extraFees: buildMoneyPayload(extraFees.value),
     discountAmount: roundMoney(discountTotal.value),
     discounts: buildMoneyPayload(discounts.value),
-    payments: payments.value
-      .filter((payment) => payment.amount > 0)
-      .map((payment) => ({
-        paymentMethod: payment.paymentMethod,
-        amount: roundMoney(payment.amount),
-        paidAt: toLocalDateTime(payment.paidAt),
-        handledByName: form.handledByName.trim(),
-        remark: payment.remark?.trim() || undefined,
-      })),
+    payments: isSharedPrivateLesson.value
+      ? undefined
+      : payments.value
+        .filter((payment) => payment.amount > 0)
+        .map((payment) => ({
+          paymentMethod: payment.paymentMethod,
+          amount: roundMoney(payment.amount),
+          paidAt: toLocalDateTime(payment.paidAt),
+          handledByName: form.handledByName.trim(),
+          remark: payment.remark?.trim() || undefined,
+        })),
     receiptOptions: {
       issueReceipt: true,
       templateCode: 'DEFAULT_RECEIPT',
@@ -2483,6 +3381,24 @@ function buildPayload(): RegistrationIntakePayload {
     remark: form.remark.trim() || undefined,
   };
   return payload;
+}
+
+function toParticipantBillingPayload(billing: ParticipantBillingForm): RegistrationParticipantBillingPayload {
+  return {
+    participantIndex: billing.participantIndex,
+    discountAmount: roundMoney(sumNumbers(billing.discounts.map((line) => line.amount))),
+    discounts: buildMoneyPayload(billing.discounts),
+    payments: billing.payments
+      .filter((payment) => payment.amount > 0)
+      .map((payment) => ({
+        paymentMethod: payment.paymentMethod,
+        amount: roundMoney(payment.amount),
+        paidAt: toLocalDateTime(payment.paidAt),
+        participantIndex: billing.participantIndex,
+        handledByName: form.handledByName.trim(),
+        remark: payment.remark?.trim() || undefined,
+      })),
+  };
 }
 
 function buildMoneyPayload(lines: MoneyLine[]) {
@@ -2517,11 +3433,18 @@ function resetForNextRegistration() {
   form.student.dropoffRequired = false;
   form.student.dropoffAddress = '';
   courseLines.value = [createCourseLine()];
+  privateParticipantCount.value = 1;
+  privateParticipantForms.value = [];
+  privateParticipantPriceSnapshots.value = [];
+  participantBillings.value = [];
+  activePrivateWorkspaceTab.value = 'all';
+  studentPickerQuery.value = '';
   extraFees.value = [createMoneyLine('Other fee')];
   discounts.value = [createDiscountLine()];
   payments.value = [createPaymentLine()];
   studentReuseStatus.value = 'idle';
   reusableStudent.value = null;
+  historicalPrimaryStudentId.value = undefined;
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -2651,6 +3574,16 @@ function roundMoney(value: number) {
   return Math.round((numeric(value) + Number.EPSILON) * 100) / 100;
 }
 
+// 与后端 RegistrationIntakeServiceImpl.splitSharedTuition 保持一致：
+// 每份 = 总额/人数向下截断到 2 位小数，最后一名吸收分币误差。
+function splitShareAmount(total: number, count: number, index: number) {
+  const share = Math.floor((numeric(total) * 100) / Math.max(1, count)) / 100;
+  if (index >= count - 1) {
+    return roundMoney(numeric(total) - share * (count - 1));
+  }
+  return share;
+}
+
 function formatMoney(value: number | undefined) {
   return `$${roundMoney(value ?? 0).toFixed(2)}`;
 }
@@ -2710,6 +3643,21 @@ function parsePayload(value: unknown): Record<string, unknown> | null {
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
+  }
+}
+
+function parseMoneyDetail(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value !== 'string' || !value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(preprocessLargeIds(value));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
   }
 }
 
@@ -3017,6 +3965,301 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 .student-lines {
   margin-top: 6px;
   font-size: 17px;
+}
+
+.private-receipt-student-summary {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid #d8e3f0;
+  border-bottom: 1px solid #d8e3f0;
+  background: #fbfdff;
+}
+
+.private-receipt-student-summary__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.private-receipt-student-summary__label {
+  color: #60758f;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.private-receipt-student-summary__header strong {
+  color: #1f3552;
+  font-size: 12px;
+}
+
+.private-receipt-student-summary__list {
+  display: grid;
+  gap: 0;
+}
+
+.private-receipt-student-summary__row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1.15fr) minmax(300px, 1.85fr);
+  gap: 12px;
+  align-items: center;
+  padding: 7px 0;
+  border-top: 1px solid #edf2f7;
+}
+
+.private-receipt-student-summary__identity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.private-receipt-student-summary__identity > span {
+  flex: 0 0 auto;
+  color: #8a9bb0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.private-receipt-student-summary__identity strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #1f3552;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.private-receipt-student-summary__financials {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  color: #70839a;
+  font-size: 11px;
+}
+
+.private-receipt-student-summary__financials strong {
+  color: #314a68;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.private-receipt-student-summary__payments {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  color: #74879d;
+  font-size: 10px;
+}
+
+.private-receipt-student-summary__payments span {
+  overflow-wrap: anywhere;
+}
+
+.private-lesson-switcher {
+  width: 100%;
+  max-width: 920px;
+  margin: 0 0 10px;
+  overflow: hidden;
+  border: 1px solid #d8e3f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.045);
+}
+
+.private-lesson-switcher__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 54px;
+  padding: 9px 12px;
+  background: #f8fbff;
+}
+
+.private-lesson-switcher__header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.private-lesson-switcher__header strong {
+  color: #1f3552;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.private-lesson-switcher__header small {
+  color: #6e819a;
+  font-size: 12px;
+}
+
+.section-kicker {
+  color: #3182ce;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.private-lesson-mode-select {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  flex-wrap: nowrap !important;
+  align-items: stretch;
+  white-space: nowrap;
+}
+
+.private-lesson-mode-select :deep(.el-radio-button) {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+}
+
+.private-lesson-mode-select :deep(.el-radio-button__inner) {
+  min-width: 76px;
+  height: 30px;
+  padding: 6px 12px;
+  border-color: #cbd8e6;
+  background: #fff;
+  color: #526a84;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  box-shadow: none;
+}
+
+.private-lesson-mode-select :deep(.el-radio-button:first-child .el-radio-button__inner) {
+  border-radius: 5px 0 0 5px;
+}
+
+.private-lesson-mode-select :deep(.el-radio-button:last-child .el-radio-button__inner) {
+  border-radius: 0 5px 5px 0;
+}
+
+.private-lesson-mode-select :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+  border-color: #2f80c9;
+  background: #2f80c9;
+  color: #fff;
+  box-shadow: -1px 0 0 0 #2f80c9;
+}
+
+.private-lesson-mode-select :deep(.el-radio-button__inner:hover) {
+  color: #216ba8;
+}
+
+.private-lesson-mode-readonly {
+  flex: 0 0 auto;
+}
+
+.private-lesson-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  overflow-x: auto;
+  padding: 0 8px;
+  border-bottom: 1px solid #d8e3f0;
+  background: #fff;
+}
+
+.private-lesson-tab {
+  display: grid;
+  gap: 2px;
+  min-width: 76px;
+  padding: 6px 10px 7px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: #6e819a;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.private-lesson-tab span {
+  overflow: hidden;
+  color: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.private-lesson-tab small {
+  color: #9aa9ba;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.private-lesson-tab--active {
+  border-bottom-color: #409eff;
+  color: #1f67a8;
+  background: #eef6ff;
+}
+
+.private-lesson-tab--active small {
+  color: #409eff;
+}
+
+.private-lesson-shared-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding: 7px 0 8px;
+  color: #627895;
+  font-size: 12px;
+}
+
+.private-lesson-shared-summary span + span::before {
+  margin-right: 18px;
+  color: #c1cfdd;
+  content: '|';
+}
+
+.registration-student-picker {
+  width: 100%;
+  max-width: 920px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #d8e3f0;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.045);
+}
+
+.registration-student-picker__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.registration-student-picker__heading strong {
+  color: #1f3552;
+  font-size: 13px;
+}
+
+.registration-student-picker__heading span {
+  color: #7f91a7;
+  font-size: 11px;
+}
+
+.registration-student-picker__select {
+  width: 100%;
+}
+
+.registration-student-picker__option {
+  line-height: 1.2;
+}
+
+.registration-student-picker__option strong {
+  color: #1f3552;
 }
 
 .full-line,
@@ -3678,6 +4921,38 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 @media (max-width: 720px) {
+  .private-lesson-switcher__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .private-lesson-tabs {
+    margin-right: -8px;
+    margin-left: -8px;
+  }
+
+  .private-lesson-tab {
+    min-width: 88px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .private-receipt-student-summary {
+    gap: 5px;
+    margin-top: 3px;
+    padding: 6px 8px;
+  }
+
+  .private-receipt-student-summary__row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+    padding: 5px 0;
+  }
+
+  .private-receipt-student-summary__payments {
+    grid-column: auto;
+  }
+
   .intake-adjustment-panel {
     grid-template-columns: 1fr;
   }
@@ -3949,6 +5224,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 @media (max-width: 1280px) {
   .paper-form,
   .registration-desk,
+  .registration-student-picker,
   .submit-bar {
     max-width: 920px;
   }
@@ -3957,6 +5233,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 @media (max-width: 960px) {
   .registration-desk,
   .registration-flow,
+  .registration-student-picker,
   .submit-bar {
     width: 920px;
     max-width: none;
@@ -3971,7 +5248,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 @page {
   size: Letter portrait;
-  margin: 0.3in;
+  margin: 0.3in 0.3in 0.3in 0.6in;
 }
 
 @media print {
@@ -4063,6 +5340,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   .student-lines {
     margin-top: 3px;
     font-size: 11px;
+  }
+
+  .private-receipt-student-summary {
+    gap: 3px;
+    margin-top: 3px;
+    padding: 4px 6px;
+    border-top-width: 1px;
+    border-bottom-width: 1px;
+  }
+
+  .private-receipt-student-summary__label,
+  .private-receipt-student-summary__identity > span {
+    font-size: 7px;
+  }
+
+  .private-receipt-student-summary__header strong,
+  .private-receipt-student-summary__financials strong {
+    font-size: 9px;
+  }
+
+  .private-receipt-student-summary__identity strong {
+    font-size: 10px;
+  }
+
+  .private-receipt-student-summary__financials,
+  .private-receipt-student-summary__payments {
+    gap: 2px 8px;
+    font-size: 8px;
   }
 
   .printed-student-name {

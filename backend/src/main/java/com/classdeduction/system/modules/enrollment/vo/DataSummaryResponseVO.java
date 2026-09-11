@@ -37,6 +37,7 @@ public record DataSummaryResponseVO(
             String enrollmentNo,
             Long orderItemId,
             Long studentId,
+            Integer participantIndex,
             String studentName,
             String studentClass,
             String school,
@@ -82,7 +83,9 @@ public record DataSummaryResponseVO(
             Boolean lowOneOnOneHours,
             List<String> alertTypes,
             String orderStatus,
-            List<String> reviewIssueCodes
+            List<String> reviewIssueCodes,
+            Long privateLessonGroupId,
+            Integer privateLessonParticipantCount
     ) {
     }
 }

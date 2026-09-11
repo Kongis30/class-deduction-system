@@ -42,7 +42,7 @@ public interface EnrollmentOrderService {
     void cancelOrder(Long id);
 
     /**
-     * 退款：记录退款流水并更新订单财务快照；全额退款会同时取消报名产物。
+     * 退款：记录负数退款流水并回写原报名收据；全额退款会同时取消报名产物。
      */
     ReceiptRecordVO refundOrder(Long id, RefundRequest request);
 

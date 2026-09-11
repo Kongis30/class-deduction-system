@@ -24,6 +24,10 @@ public record OneOnOnePackageVO(
         String packageStatus,
         LocalDate startDate,
         LocalDate estimatedEndDate,
+        Long privateLessonGroupId,
+        Integer participantCount,
+        Boolean privateLessonGroupPrimary,
+        List<OneOnOneParticipantVO> participants,
         List<OneOnOneLessonVO> lessons
 ) {
 }

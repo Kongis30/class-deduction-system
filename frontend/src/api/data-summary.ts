@@ -29,6 +29,7 @@ export interface DataSummaryRow {
   enrollmentNo: string;
   orderItemId?: EntityId;
   studentId: EntityId;
+  participantIndex?: number;
   studentName?: string;
   studentClass?: string;
   school?: string;
@@ -45,6 +46,8 @@ export interface DataSummaryRow {
   courseProductName?: string;
   registerClass?: string;
   courseType?: string;
+  privateLessonGroupId?: EntityId;
+  privateLessonParticipantCount?: number;
   detail?: string;
   phone?: string;
   phone2?: string;

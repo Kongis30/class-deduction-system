@@ -14,15 +14,18 @@ import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.EnrollmentOrderServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
@@ -57,6 +60,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -84,10 +88,16 @@ class EnrollmentOrderServiceImplTest {
     private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
 
     @Mock
+    private EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
+
+    @Mock
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
     private PaymentRecordMapper paymentRecordMapper;
+
+    @Mock
+    private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
 
     @Mock
     private PaymentMethodMapper paymentMethodMapper;
@@ -178,8 +188,10 @@ class EnrollmentOrderServiceImplTest {
         enrollmentOrderService = new EnrollmentOrderServiceImpl(
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
+                enrollmentOrderParticipantMapper,
                 coursePackageMapper,
                 paymentRecordMapper,
+                privateLessonGroupMemberMapper,
                 receiptRecordMapper,
                 packageTeacherAssignmentMapper,
                 studentMapper,
@@ -200,6 +212,8 @@ class EnrollmentOrderServiceImplTest {
                 paymentMethodMapper
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(paymentMethodMapper.selectCount(any())).thenReturn(1L);
     }
 
@@ -463,11 +477,13 @@ class EnrollmentOrderServiceImplTest {
         request.setHandledByUserId(88L);
         request.setRemark("Student withdrew");
         when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"REFUND\"}");
-        when(receiptRecordMapper.insert(any(ReceiptRecordEntity.class))).thenAnswer(invocation -> {
-            ReceiptRecordEntity receipt = invocation.getArgument(0);
-            receipt.setId(9001L);
-            return 1;
-        });
+        ReceiptRecordEntity registrationReceipt = new ReceiptRecordEntity();
+        registrationReceipt.setId(9001L);
+        registrationReceipt.setReceiptNo("RCP202607150001");
+        registrationReceipt.setEnrollmentOrderId(2001L);
+        registrationReceipt.setTemplateCode("DEFAULT_RECEIPT");
+        registrationReceipt.setReceiptPayload("{}");
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of(registrationReceipt));
 
         ReceiptRecordVO receipt = enrollmentOrderService.refundOrder(2001L, request);
 
@@ -480,9 +496,9 @@ class EnrollmentOrderServiceImplTest {
         assertThat(paymentCaptor.getValue().getHandledByUserId()).isEqualTo(88L);
 
         ArgumentCaptor<ReceiptRecordEntity> receiptCaptor = ArgumentCaptor.forClass(ReceiptRecordEntity.class);
-        verify(receiptRecordMapper).insert(receiptCaptor.capture());
-        assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("REFUND_RECEIPT");
-        assertThat(receipt.templateCode()).isEqualTo("REFUND_RECEIPT");
+        verify(receiptRecordMapper).updateById(receiptCaptor.capture());
+        assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("DEFAULT_RECEIPT");
+        assertThat(receipt.templateCode()).isEqualTo("DEFAULT_RECEIPT");
         assertThat(receipt.id()).isEqualTo(9001L);
 
         // Order set to REFUNDED + CANCELLED, with no paid or collectible amount remaining.
@@ -569,6 +585,73 @@ class EnrollmentOrderServiceImplTest {
         verify(classEnrollmentMapper).update(any());
         verify(paymentRecordMapper).insert(paymentCaptor.capture());
         assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("-1100.00"));
+    }
+
+    @Test
+    void shouldRefundOnlySelectedPrivateParticipantAndKeepSharedOrderActive() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setOriginalAmount(new BigDecimal("375.00"));
+        order.setDiscountAmount(BigDecimal.ZERO);
+        order.setAmountDue(new BigDecimal("375.00"));
+        order.setReceivedAmount(new BigDecimal("375.00"));
+        order.setBalanceAmount(BigDecimal.ZERO);
+
+        EnrollmentOrderParticipantEntity first = buildParticipant(1, 101L, new BigDecimal("125.00"));
+        EnrollmentOrderParticipantEntity selected = buildParticipant(2, 102L, new BigDecimal("125.00"));
+        EnrollmentOrderParticipantEntity third = buildParticipant(3, 103L, new BigDecimal("125.00"));
+        List<EnrollmentOrderParticipantEntity> participants = List.of(first, selected, third);
+
+        CoursePackageEntity selectedPackage = new CoursePackageEntity();
+        selectedPackage.setId(3202L);
+        selectedPackage.setEnrollmentOrderId(2001L);
+        selectedPackage.setStudentId(102L);
+        selectedPackage.setPackageStatus("ACTIVE");
+        selectedPackage.setReceivedAmount(new BigDecimal("125.00"));
+
+        List<PaymentRecordEntity> payments = new ArrayList<>(List.of(
+                buildPayment(1, new BigDecimal("125.00"), 1),
+                buildPayment(2, new BigDecimal("125.00"), 2),
+                buildPayment(3, new BigDecimal("125.00"), 3)
+        ));
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(enrollmentOrderParticipantMapper.selectOne(any())).thenReturn(selected);
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(participants);
+        when(paymentRecordMapper.selectList(any())).thenAnswer(invocation -> payments);
+        doAnswer(invocation -> {
+            PaymentRecordEntity record = invocation.getArgument(0);
+            record.setId(9002L);
+            payments.add(record);
+            return 1;
+        }).when(paymentRecordMapper).insert(any(PaymentRecordEntity.class));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(selectedPackage));
+        when(receiptRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setParticipantIndex(2);
+        request.setRefundAmount(new BigDecimal("125.00"));
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+
+        enrollmentOrderService.refundOrder(2001L, request);
+
+        verify(paymentRecordMapper).insert(paymentCaptor.capture());
+        assertThat(paymentCaptor.getValue().getParticipantIndex()).isEqualTo(2);
+        assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("-125.00"));
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("250.00"));
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("125.00"));
+        assertThat(order.getPaymentStatus()).isEqualTo("PARTIAL");
+        assertThat(order.getOrderStatus()).isEqualTo("CONFIRMED");
+        assertThat(selected.getPaidAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(first.getPaidAmount()).isEqualByComparingTo(new BigDecimal("125.00"));
+        assertThat(third.getPaidAmount()).isEqualByComparingTo(new BigDecimal("125.00"));
+        assertThat(selectedPackage.getReceivedAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(selectedPackage.getPackageStatus()).isEqualTo("CLOSED");
+        verify(lessonOccurrenceMapper, never()).update(any());
     }
 
     @Test
@@ -738,6 +821,28 @@ class EnrollmentOrderServiceImplTest {
             entity.setId(6001L);
             return 1;
         }).when(receiptRecordMapper).insert(any(ReceiptRecordEntity.class));
+    }
+
+    private EnrollmentOrderParticipantEntity buildParticipant(int index, Long studentId, BigDecimal amount) {
+        EnrollmentOrderParticipantEntity participant = new EnrollmentOrderParticipantEntity();
+        participant.setEnrollmentOrderId(2001L);
+        participant.setParticipantIndex(index);
+        participant.setStudentId(studentId);
+        participant.setAmountDue(amount);
+        participant.setPaidAmount(amount);
+        participant.setBalanceAmount(BigDecimal.ZERO);
+        return participant;
+    }
+
+    private PaymentRecordEntity buildPayment(long id, BigDecimal amount, int participantIndex) {
+        PaymentRecordEntity payment = new PaymentRecordEntity();
+        payment.setId(id);
+        payment.setEnrollmentOrderId(2001L);
+        payment.setParticipantIndex(participantIndex);
+        payment.setPaymentType("PAYMENT");
+        payment.setPaymentStatus("PAID");
+        payment.setAmount(amount);
+        return payment;
     }
 
     private EnrollmentCreateRequest buildCreateRequest() {

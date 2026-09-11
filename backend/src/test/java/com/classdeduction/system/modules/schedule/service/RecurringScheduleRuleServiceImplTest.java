@@ -10,6 +10,8 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleCreateRequest;
@@ -67,6 +69,12 @@ class RecurringScheduleRuleServiceImplTest {
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
+    private PrivateLessonGroupMapper privateLessonGroupMapper;
+
+    @Mock
+    private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+
+    @Mock
     private StudentMapper studentMapper;
 
     @Mock
@@ -97,6 +105,8 @@ class RecurringScheduleRuleServiceImplTest {
                 lessonOccurrenceMapper,
                 lessonRecordMapper,
                 coursePackageMapper,
+                privateLessonGroupMapper,
+                privateLessonGroupMemberMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper

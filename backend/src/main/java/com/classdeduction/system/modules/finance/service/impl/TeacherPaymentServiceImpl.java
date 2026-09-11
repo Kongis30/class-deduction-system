@@ -20,6 +20,8 @@ import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEn
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.finance.dto.TeacherPaymentCreateRequest;
 import com.classdeduction.system.modules.finance.dto.UnpaidLessonQuery;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
@@ -69,6 +71,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
     private final TeacherPaymentItemMapper paymentItemMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
 
     @Override
     public List<UnpaidLessonVO> queryUnpaidLessons(UnpaidLessonQuery query) {
@@ -81,9 +84,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 .map(TeacherPaymentItemEntity::getLessonRecordId)
                 .toList();
 
-        // 1a. 如果已结算记录中有班课，找到其 occurrence_id，
-        //     将同 occurrence 的所有记录排除（班课只结算一次，不按学生数重复结算）
-        Set<Long> settledGroupOccurrenceIds = Collections.emptySet();
+        // 1a. 共享课次（班课或 1 对 N 私教）只结算一次，不按学生记录重复结算。
+        Set<Long> settledSharedOccurrenceIds = Collections.emptySet();
         if (!paidRecordIds.isEmpty()) {
             List<LessonRecordEntity> paidRecords = lessonRecordMapper.selectBatchIds(paidRecordIds);
             Set<Long> paidOccurrenceIds = paidRecords.stream()
@@ -91,8 +93,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                     .filter(Objects::nonNull)
                     .collect(Collectors.toSet());
             if (!paidOccurrenceIds.isEmpty()) {
-                settledGroupOccurrenceIds = lessonOccurrenceMapper.selectBatchIds(paidOccurrenceIds).stream()
-                        .filter(o -> o.getClassGroupId() != null)
+                settledSharedOccurrenceIds = lessonOccurrenceMapper.selectBatchIds(paidOccurrenceIds).stream()
+                        .filter(this::isSharedOccurrence)
                         .map(LessonOccurrenceEntity::getId)
                         .collect(Collectors.toSet());
             }
@@ -110,8 +112,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                         .eq(LessonRecordEntity::getConfirmStage, "CONFIRMED")
                         .in(LessonRecordEntity::getResultStatus, PAYABLE_STATUSES)
                         .notIn(!paidRecordIds.isEmpty(), LessonRecordEntity::getId, paidRecordIds)
-                        .notIn(!settledGroupOccurrenceIds.isEmpty(),
-                                LessonRecordEntity::getOccurrenceId, settledGroupOccurrenceIds)
+                        .notIn(!settledSharedOccurrenceIds.isEmpty(),
+                                LessonRecordEntity::getOccurrenceId, settledSharedOccurrenceIds)
                         .ge(start != null, LessonRecordEntity::getConfirmedAt, start)
                         .lt(end != null, LessonRecordEntity::getConfirmedAt, end)
                         .orderByAsc(LessonRecordEntity::getConfirmedAt)
@@ -155,6 +157,7 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ? classGroupMapper.selectBatchIds(classGroupIds).stream()
                 .collect(Collectors.toMap(ClassGroupEntity::getId, cg -> cg))
                 : Collections.emptyMap();
+        Map<Long, Long> privatePrimaryPackageByGroup = loadPrivatePrimaryPackageByGroup(occurrenceMap.values());
         Map<Long, EnrollmentOrderItemEntity> orderItemMap = loadOrderItems(packageMap.values());
         Map<Long, EnrollmentOrderEntity> orderMap = loadOrders(packageMap.values());
         Map<Long, ClassroomEntity> classroomMap = loadClassrooms(occurrenceMap.values(), classGroupMap.values());
@@ -187,42 +190,51 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         Map<Long, Long> representativeRecordByOccurrence = records.stream()
                 .filter(record -> {
                     LessonOccurrenceEntity occurrence = occurrenceMap.get(record.getOccurrenceId());
-                    return occurrence != null && occurrence.getClassGroupId() != null;
+                    return isSharedOccurrence(occurrence);
                 })
                 .collect(Collectors.toMap(
                         LessonRecordEntity::getOccurrenceId,
                         LessonRecordEntity::getId,
-                        Math::min));
+                        (left, right) -> chooseRepresentativeRecord(left, right, records, occurrenceMap,
+                                privatePrimaryPackageByGroup)));
 
         for (LessonRecordEntity rec : records) {
             LessonOccurrenceEntity occurrence = occurrenceMap.get(rec.getOccurrenceId());
 
-            // 班课：同一 occurrence 固定使用最小 lesson_record_id，确保列表和结算使用同一代表记录。
-            if (occurrence != null && occurrence.getClassGroupId() != null) {
+            // 共享课次固定使用最小 lesson_record_id，确保列表和结算使用同一代表记录。
+            if (isSharedOccurrence(occurrence)) {
                 if (!Objects.equals(rec.getId(), representativeRecordByOccurrence.get(rec.getOccurrenceId()))) {
                     continue;
                 }
 
-                // 班课没有 packageId，从 class_group 获取 productId
                 ClassGroupEntity cg = classGroupMap.get(occurrence.getClassGroupId());
-                Long productId = cg != null ? cg.getProductId() : null;
-                BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId, null,
-                        resolveGradeBand(null, null, cg),
-                        resolveDeliveryMode(occurrence, cg, null, classroomMap));
+                CoursePackageEntity privatePackage = occurrence.getPrivateLessonGroupId() == null
+                        ? null : packageMap.get(rec.getPackageId());
+                EnrollmentOrderItemEntity privateOrderItem = privatePackage == null
+                        ? null : orderItemMap.get(privatePackage.getEnrollmentOrderItemId());
+                EnrollmentOrderEntity privateOrder = privatePackage == null
+                        ? null : orderMap.get(privatePackage.getEnrollmentOrderId());
+                Long productId = cg != null
+                        ? cg.getProductId()
+                        : privatePackage == null ? null : privatePackage.getCourseProductId();
+                BigDecimal hourlyRate = resolvePayRate(rateMap, query.getTeacherId(), productId,
+                        cg == null ? rec.getStudentId() : null,
+                        resolveGradeBand(privateOrderItem, studentMap.get(rec.getStudentId()), cg),
+                        resolveDeliveryMode(occurrence, cg, privateOrder, classroomMap));
 
                 BigDecimal hours = BigDecimal.valueOf(rec.getActualUnits())
                         .divide(BigDecimal.valueOf(2), 1, RoundingMode.HALF_UP);
                 BigDecimal amount = hours.multiply(hourlyRate).setScale(2, RoundingMode.HALF_UP);
 
+                StudentEntity sharedStudent = studentMap.get(rec.getStudentId());
                 CourseProductEntity product = productId != null ? productMap.get(productId) : null;
-
                 result.add(UnpaidLessonVO.builder()
                         .lessonRecordId(rec.getId())
                         .lessonDate(rec.getConfirmedAt())
                         .studentId(rec.getStudentId())
-                        .studentName(null) // 班课不显示学生名字
-                        .packageId(null)
-                        .packageName(null)
+                        .studentName(sharedStudent == null ? null : sharedStudent.getStudentName())
+                        .packageId(privatePackage == null ? null : privatePackage.getId())
+                        .packageName(privatePackage == null ? null : privatePackage.getPackageName())
                         .courseProductId(productId)
                         .productName(product != null ? product.getProductName() : null)
                         .subjectName(product != null ? product.getSubjectName() : null)
@@ -233,7 +245,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                         .resultStatus(rec.getResultStatus())
                         .occurrenceType(occurrence.getOccurrenceType())
                         .className(cg != null ? cg.getClassName() : null)
-                        .lessonRecordId(rec.getId()) // 只用一条 lessonRecordId 去结算
+                        .participantNames(resolvePrivateParticipantNames(
+                                rec.getOccurrenceId(), records, studentMap, occurrenceMap))
                         .lessonRecordIds(null)
                         .build());
                 continue;
@@ -320,7 +333,27 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 ? classGroupMapper.selectBatchIds(classGroupIds).stream()
                 .collect(Collectors.toMap(ClassGroupEntity::getId, cg -> cg))
                 : Collections.emptyMap();
-        validateRepresentativeClassRecords(records, occurrenceMap);
+        Map<Long, Long> privatePrimaryPackageByGroup = loadPrivatePrimaryPackageByGroup(occurrenceMap.values());
+        validateRepresentativeSharedRecords(records, occurrenceMap, privatePrimaryPackageByGroup);
+
+        Set<Long> sharedOccurrenceIds = occurrenceMap.values().stream()
+                .filter(this::isSharedOccurrence)
+                .map(LessonOccurrenceEntity::getId)
+                .collect(Collectors.toSet());
+        if (!sharedOccurrenceIds.isEmpty()) {
+            List<Long> sharedRecordIds = lessonRecordMapper.selectList(
+                            new LambdaQueryWrapper<LessonRecordEntity>()
+                                    .in(LessonRecordEntity::getOccurrenceId, sharedOccurrenceIds)
+                                    .eq(LessonRecordEntity::getIsDeleted, 0))
+                    .stream().map(LessonRecordEntity::getId).toList();
+            List<Long> paidSharedRecordIds = sharedRecordIds.isEmpty() ? Collections.emptyList() : paymentItemMapper.selectList(
+                            new LambdaQueryWrapper<TeacherPaymentItemEntity>()
+                                    .in(TeacherPaymentItemEntity::getLessonRecordId, sharedRecordIds))
+                    .stream().map(TeacherPaymentItemEntity::getLessonRecordId).toList();
+            if (!paidSharedRecordIds.isEmpty()) {
+                throw new BusinessException("ALREADY_PAID", "A shared lesson occurrence is already settled.");
+            }
+        }
 
         Set<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, CoursePackageEntity> packageMap = !packageIds.isEmpty()
@@ -428,20 +461,25 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
         }
     }
 
-    private void validateRepresentativeClassRecords(List<LessonRecordEntity> selectedRecords,
-                                                    Map<Long, LessonOccurrenceEntity> occurrenceMap) {
+    private void validateRepresentativeSharedRecords(List<LessonRecordEntity> selectedRecords,
+                                                     Map<Long, LessonOccurrenceEntity> occurrenceMap,
+                                                     Map<Long, Long> privatePrimaryPackageByGroup) {
         Map<Long, List<LessonRecordEntity>> selectedByOccurrence = selectedRecords.stream()
                 .filter(record -> {
                     LessonOccurrenceEntity occurrence = occurrenceMap.get(record.getOccurrenceId());
-                    return occurrence != null && occurrence.getClassGroupId() != null;
+                    return isSharedOccurrence(occurrence);
                 })
                 .collect(Collectors.groupingBy(LessonRecordEntity::getOccurrenceId));
         if (selectedByOccurrence.isEmpty()) {
             return;
         }
         if (selectedByOccurrence.values().stream().anyMatch(records -> records.size() > 1)) {
-            throw new BusinessException("DUPLICATE_CLASS_LESSON_PAYMENT",
-                    "A group class occurrence can only be included once in a teacher payment.");
+            boolean includesGroupClass = selectedByOccurrence.keySet().stream()
+                    .map(occurrenceMap::get)
+                    .anyMatch(occurrence -> occurrence != null && occurrence.getClassGroupId() != null);
+            throw new BusinessException(
+                    includesGroupClass ? "DUPLICATE_CLASS_LESSON_PAYMENT" : "DUPLICATE_SHARED_LESSON_PAYMENT",
+                    "A shared lesson occurrence can only be included once in a teacher payment.");
         }
 
         List<LessonRecordEntity> classRecords = lessonRecordMapper.selectList(
@@ -453,14 +491,75 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 .collect(Collectors.toMap(
                         LessonRecordEntity::getOccurrenceId,
                         LessonRecordEntity::getId,
-                        Math::min));
+                        (left, right) -> chooseRepresentativeRecord(left, right, classRecords, occurrenceMap,
+                                privatePrimaryPackageByGroup)));
         for (Map.Entry<Long, List<LessonRecordEntity>> entry : selectedByOccurrence.entrySet()) {
             Long selectedRecordId = entry.getValue().get(0).getId();
             if (!Objects.equals(selectedRecordId, representativeRecordByOccurrence.get(entry.getKey()))) {
-                throw new BusinessException("CLASS_LESSON_RECORD_NOT_REPRESENTATIVE",
+                throw new BusinessException("SHARED_LESSON_RECORD_NOT_REPRESENTATIVE",
                         "Refresh unpaid lessons before creating the teacher payment.");
             }
         }
+    }
+
+    private boolean isSharedOccurrence(LessonOccurrenceEntity occurrence) {
+        return occurrence != null && (occurrence.getClassGroupId() != null
+                || occurrence.getPrivateLessonGroupId() != null);
+    }
+
+    private Map<Long, Long> loadPrivatePrimaryPackageByGroup(Collection<LessonOccurrenceEntity> occurrences) {
+        Set<Long> groupIds = occurrences.stream()
+                .map(LessonOccurrenceEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        if (groupIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupIds)
+                        .eq(PrivateLessonGroupMemberEntity::getParticipantIndex, 1)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream()
+                .collect(Collectors.toMap(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId,
+                        PrivateLessonGroupMemberEntity::getPackageId, (left, right) -> left));
+    }
+
+    private Long chooseRepresentativeRecord(Long leftId,
+                                            Long rightId,
+                                            List<LessonRecordEntity> records,
+                                            Map<Long, LessonOccurrenceEntity> occurrenceMap,
+                                            Map<Long, Long> privatePrimaryPackageByGroup) {
+        LessonRecordEntity left = records.stream().filter(item -> Objects.equals(item.getId(), leftId)).findFirst().orElse(null);
+        LessonRecordEntity right = records.stream().filter(item -> Objects.equals(item.getId(), rightId)).findFirst().orElse(null);
+        LessonOccurrenceEntity occurrence = left == null ? null : occurrenceMap.get(left.getOccurrenceId());
+        if (occurrence != null && occurrence.getPrivateLessonGroupId() != null) {
+            Long primaryPackageId = privatePrimaryPackageByGroup.get(occurrence.getPrivateLessonGroupId());
+            if (primaryPackageId != null) {
+                if (left != null && Objects.equals(left.getPackageId(), primaryPackageId)) return leftId;
+                if (right != null && Objects.equals(right.getPackageId(), primaryPackageId)) return rightId;
+            }
+        }
+        return leftId == null ? rightId : rightId == null ? leftId : Math.min(leftId, rightId);
+    }
+
+    private List<String> resolvePrivateParticipantNames(Long occurrenceId,
+                                                         List<LessonRecordEntity> records,
+                                                         Map<Long, StudentEntity> studentMap,
+                                                         Map<Long, LessonOccurrenceEntity> occurrenceMap) {
+        LessonOccurrenceEntity occurrence = occurrenceMap.get(occurrenceId);
+        if (occurrence == null || occurrence.getPrivateLessonGroupId() == null) {
+            return Collections.emptyList();
+        }
+        return records.stream()
+                .filter(record -> Objects.equals(record.getOccurrenceId(), occurrenceId))
+                .sorted(Comparator.comparing(LessonRecordEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(record -> studentMap.get(record.getStudentId()))
+                .filter(Objects::nonNull)
+                .map(StudentEntity::getStudentName)
+                .filter(StringUtils::hasText)
+                .distinct()
+                .toList();
     }
 
     private Map<String, BigDecimal> toRateMap(List<TeacherPayRateEntity> rates) {

@@ -189,7 +189,7 @@
                 </td>
                 <td
                   v-if="rowIndex === 0"
-                  class="workbook-column--studentClass workbook-cell--group workbook-cell--merged"
+                  class="workbook-column--studentClass workbook-cell--group workbook-cell--center workbook-cell--merged"
                   :rowspan="classGroup.rows.length"
                 >
                   {{ classGroup.className }}
@@ -308,6 +308,7 @@
           'product-tab--active': tab.id === activeTabId,
           'product-tab--global': tab.global,
           'product-tab--unassigned': tab.unassigned,
+          'product-tab--private': tab.privateLesson,
           'product-tab--dragging': dragState.fromId === tab.id,
           'product-tab--drop-target': dragState.overId === tab.id && dragState.fromId !== tab.id,
         }"
@@ -414,6 +415,7 @@ interface ProductTab {
   label: string;
   global?: boolean;
   unassigned?: boolean;
+  privateLesson?: boolean;
 }
 
 type SaturdayRosterSeason = 'FALL' | 'SPRING';
@@ -505,6 +507,7 @@ const productTabs = computed<ProductTab[]>(() =>
   products.value.map((product) => ({
     id: String(product.id),
     label: product.productName,
+    privateLesson: product.teachingMode?.toUpperCase() === 'ONE_ON_ONE',
   })),
 );
 
@@ -641,7 +644,10 @@ const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
       groups.set(campusKey, campusGroup);
     }
 
-    const classKey = `${campusKey}::${className}`;
+    const groupKey = isPrivateLessonRow(row)
+      ? `private:${row.privateLessonGroupId ?? `order:${row.orderId}`}`
+      : 'shared-class';
+    const classKey = `${campusKey}::${className}::${groupKey}`;
     let classGroup = campusGroup.classGroups.find((group) => group.key === classKey);
     if (!classGroup) {
       classGroup = {
@@ -810,7 +816,6 @@ function canPayFromDataSummary(row: DataSummaryDisplayRow | null) {
   return Boolean(
     row
       && row.orderStatus === 'CONFIRMED'
-      && row.paymentStatus !== 'PAID'
       // Data Summary 将待收余额按负数展示；订单页内部仍使用正数做支付计算。
       && Number(row.balanceAmount ?? 0) < 0,
   );
@@ -836,6 +841,9 @@ function openOrderAction(action: 'pay' | 'refund') {
       orderId: String(row.orderId),
       action,
       productName: row.courseProductName || undefined,
+      participantIndex: (action === 'pay' || action === 'refund') && row.participantIndex != null
+        ? String(row.participantIndex)
+        : undefined,
     },
   });
 }
@@ -1062,10 +1070,21 @@ function sortValue(row: DataSummaryRow, key: ColumnKey) {
 function compareRowsByBusinessGroup(left: DataSummaryDisplayRow, right: DataSummaryDisplayRow) {
   return compareCampus(displayText(left.campusName), displayText(right.campusName))
     || compareClassName(displayText(left.displayStudentClass ?? displayClassName(left)), displayText(right.displayStudentClass ?? displayClassName(right)))
+    || comparePrivateLessonGroup(left, right)
     || naturalCompare(displayText(left.studentName), displayText(right.studentName))
     || compareClassName(displayText(left.grade), displayText(right.grade))
     || naturalCompare(left.signupDate ?? '', right.signupDate ?? '')
     || naturalCompare(rowKey(left), rowKey(right));
+}
+
+function comparePrivateLessonGroup(left: DataSummaryDisplayRow, right: DataSummaryDisplayRow) {
+  const leftKey = isPrivateLessonRow(left)
+    ? String(left.privateLessonGroupId ?? `order:${left.orderId}`)
+    : '';
+  const rightKey = isPrivateLessonRow(right)
+    ? String(right.privateLessonGroupId ?? `order:${right.orderId}`)
+    : '';
+  return naturalCompare(leftKey, rightKey);
 }
 
 function compareCampus(left: string, right: string) {
@@ -1116,6 +1135,7 @@ function rowKey(row: DataSummaryDisplayRow) {
   return [
     row.orderId,
     row.orderItemId ?? row.classId ?? row.courseProductId ?? row.enrollmentNo,
+    row.studentId ?? row.studentName,
     row.displayStudentClass ?? displayClassName(row),
   ].join('-');
 }
@@ -1190,7 +1210,19 @@ function saturdayBaseClass(row: DataSummaryRow) {
 
 /** 汇总页 Class 只展示报名关联的 actual class，不读取学生档案中的旧 Class 字段。 */
 function displayClassName(row: DataSummaryRow) {
+  if (isPrivateLessonRow(row)) {
+    return privateLessonModeLabel(row.privateLessonParticipantCount);
+  }
   return row.className || '';
+}
+
+function isPrivateLessonRow(row: DataSummaryRow) {
+  return row.courseType?.toUpperCase() === 'ONE_ON_ONE';
+}
+
+function privateLessonModeLabel(participantCount?: number) {
+  const count = Math.min(3, Math.max(1, Number(participantCount) || 1));
+  return `1-on-${count}`;
 }
 
 function displayText(value?: string) {
@@ -1584,6 +1616,11 @@ onMounted(() => {
   text-align: center;
 }
 
+.workbook-column--studentClass.workbook-cell--group {
+  text-align: center;
+  vertical-align: middle;
+}
+
 .workbook-cell--group {
   color: #1f3f36;
   font-weight: 800;
@@ -1791,6 +1828,25 @@ th.workbook-column--studentName {
   color: #1f3d32;
   font-weight: 700;
   box-shadow: inset 0 3px 0 #2f8f6f;
+}
+
+.product-tab--private {
+  border-color: #b5cfee;
+  background: #edf5ff;
+  color: #245c98;
+}
+
+.product-tab--private:hover {
+  border-color: #94b9e8;
+  background: #f6faff;
+  color: #194b83;
+}
+
+.product-tab--private.product-tab--active {
+  border-color: #94b9e8;
+  background: #fff;
+  color: #194b83;
+  box-shadow: inset 0 3px 0 #4a90df;
 }
 
 .product-tab--global {

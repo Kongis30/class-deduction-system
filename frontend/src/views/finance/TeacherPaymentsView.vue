@@ -111,7 +111,11 @@
                 <el-tag size="small" type="primary">1:1</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Student" min-width="110" prop="studentName" />
+            <el-table-column label="Student" min-width="150">
+              <template #default="{ row }">
+                <span>{{ row.participantNames?.length ? row.participantNames.join(' / ') : row.studentName }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="Product" min-width="120" prop="productName" show-overflow-tooltip />
             <el-table-column label="Hours" width="65" align="center" prop="hours" />
             <el-table-column label="Rate" width="90" align="right">

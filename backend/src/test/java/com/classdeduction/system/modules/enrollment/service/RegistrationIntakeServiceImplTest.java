@@ -25,8 +25,11 @@ import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.RegistrationIntakeServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
@@ -91,7 +94,16 @@ class RegistrationIntakeServiceImplTest {
     private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
 
     @Mock
+    private EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
+
+    @Mock
     private CoursePackageMapper coursePackageMapper;
+
+    @Mock
+    private PrivateLessonGroupMapper privateLessonGroupMapper;
+
+    @Mock
+    private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
 
     @Mock
     private ClassGroupMapper classGroupMapper;
@@ -154,7 +166,10 @@ class RegistrationIntakeServiceImplTest {
                 teacherMapper,
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
+                enrollmentOrderParticipantMapper,
                 coursePackageMapper,
+                privateLessonGroupMapper,
+                privateLessonGroupMemberMapper,
                 classGroupMapper,
                 classGroupScheduleSlotMapper,
                 classEnrollmentMapper,

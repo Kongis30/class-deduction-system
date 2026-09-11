@@ -13,7 +13,11 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -72,6 +76,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final CoursePackageMapper coursePackageMapper;
+    private final PrivateLessonGroupMapper privateLessonGroupMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -182,6 +188,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     @Transactional(rollbackFor = Exception.class)
     public ScheduleRuleCreateResultVO createRule(RecurringScheduleRuleCreateRequest request) {
         CoursePackageEntity coursePackage = requireActivePackage(request.getPackageId());
+        Long privateLessonGroupId = resolvePrivateLessonGroupId(request.getPrivateLessonGroupId(), coursePackage.getId());
+        coursePackage = primaryPackageForPrivateGroup(coursePackage, privateLessonGroupId);
         StudentEntity student = requireStudent(coursePackage.getStudentId());
         ClassroomEntity classroom = resolveClassroom(request.getDefaultClassroomId());
         validateRuleDates(request);
@@ -191,6 +199,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
         RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
         rule.setPackageId(coursePackage.getId());
+        rule.setPrivateLessonGroupId(privateLessonGroupId);
         rule.setPrimaryTeacherId(null);
         rule.setDefaultClassroomId(classroom == null ? null : classroom.getId());
         rule.setRuleStatus("ACTIVE");
@@ -210,7 +219,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Map<Long, LessonRecordEntity> recordByOccurrenceId = listActiveRecordsByOccurrenceId(existingOccurrences);
         generatedOccurrences = removeOccurrencesOverlappingPreserved(generatedOccurrences, existingOccurrences);
         generatedOccurrences = capGeneratedOccurrencesToPackageBalance(generatedOccurrences, existingOccurrences, recordByOccurrenceId, coursePackage);
-        ensureNoConflicts(generatedOccurrences, student.getId(), rule.getDefaultClassroomId());
+        ensureNoConflictsForPrivateLessonGroup(generatedOccurrences, student.getId(), rule.getDefaultClassroomId(), privateLessonGroupId);
         generatedOccurrences.forEach(lessonOccurrenceMapper::insert);
 
         LocalDateTime firstStart = generatedOccurrences.stream().map(LessonOccurrenceEntity::getPlannedStartAt).min(LocalDateTime::compareTo).orElse(null);
@@ -247,6 +256,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
             return 0;
         }
+        coursePackage = primaryPackageForPrivateGroup(coursePackage, rule.getPrivateLessonGroupId());
         List<RecurringScheduleSlotEntity> slots = recurringScheduleSlotMapper.selectList(
                 new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                         .eq(RecurringScheduleSlotEntity::getRuleId, rule.getId())
@@ -279,7 +289,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return 0;
         }
 
-        ensureNoConflicts(toInsert, coursePackage.getStudentId(), rule.getDefaultClassroomId());
+        ensureNoConflictsForPrivateLessonGroup(toInsert, coursePackage.getStudentId(), rule.getDefaultClassroomId(), rule.getPrivateLessonGroupId());
         toInsert.forEach(lessonOccurrenceMapper::insert);
         return toInsert.size();
     }
@@ -295,6 +305,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
         // b) Validate package
         CoursePackageEntity coursePackage = requirePackage(existingRule.getPackageId());
+        Long privateLessonGroupId = resolvePrivateLessonGroupId(
+                request.getPrivateLessonGroupId(), existingRule.getPackageId());
+        coursePackage = primaryPackageForPrivateGroup(coursePackage, privateLessonGroupId);
         StudentEntity student = requireStudent(coursePackage.getStudentId());
 
         // c) Resolve teacher and classroom: use request value if provided, otherwise keep existing
@@ -320,6 +333,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     "Keep this schedule paused while the 1-on-1 package is paused. Resume the package to generate lessons.");
         }
         existingRule.setPrimaryTeacherId(null);
+        existingRule.setPackageId(coursePackage.getId());
+        existingRule.setPrivateLessonGroupId(privateLessonGroupId);
         existingRule.setDefaultClassroomId(classroom == null ? null : classroom.getId());
         existingRule.setRuleStatus(newStatus);
         existingRule.setStartDate(request.getStartDate());
@@ -395,8 +410,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
 
         // j) Conflict check excluding this rule's preserved occurrences
-        ensureNoConflictsExcludingRule(newOccurrences, student.getId(),
-                existingRule.getDefaultClassroomId(), id);
+        ensureNoConflictsExcludingPrivateLessonGroup(newOccurrences, student.getId(),
+                existingRule.getDefaultClassroomId(), id, existingRule.getPrivateLessonGroupId());
 
         newOccurrences.forEach(lessonOccurrenceMapper::insert);
 
@@ -482,6 +497,113 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         if (!conflicts.isEmpty()) {
             throw new BusinessException("SCHEDULE_CONFLICT", String.join("; ", conflicts), details);
         }
+    }
+
+    /** 共享私教课只生成一条 occurrence，但每个成员都必须通过学生冲突校验。 */
+    private void ensureNoConflictsForPrivateLessonGroup(List<LessonOccurrenceEntity> candidates,
+                                                        Long primaryStudentId,
+                                                        Long classroomId,
+                                                        Long privateLessonGroupId) {
+        ensureNoConflicts(candidates, primaryStudentId, classroomId);
+        if (privateLessonGroupId == null) {
+            return;
+        }
+        for (PrivateLessonGroupMemberEntity member : activeGroupMembers(privateLessonGroupId)) {
+            if (Objects.equals(member.getStudentId(), primaryStudentId)) {
+                continue;
+            }
+            ensureNoConflicts(copyCandidatesForStudent(candidates, member.getStudentId()),
+                    member.getStudentId(), classroomId);
+        }
+    }
+
+    private void ensureNoConflictsExcludingPrivateLessonGroup(List<LessonOccurrenceEntity> candidates,
+                                                              Long primaryStudentId,
+                                                              Long classroomId,
+                                                              Long excludeRuleId,
+                                                              Long privateLessonGroupId) {
+        ensureNoConflictsExcludingRule(candidates, primaryStudentId, classroomId, excludeRuleId);
+        if (privateLessonGroupId == null) {
+            return;
+        }
+        for (PrivateLessonGroupMemberEntity member : activeGroupMembers(privateLessonGroupId)) {
+            if (Objects.equals(member.getStudentId(), primaryStudentId)) {
+                continue;
+            }
+            ensureNoConflictsExcludingRule(copyCandidatesForStudent(candidates, member.getStudentId()),
+                    member.getStudentId(), classroomId, excludeRuleId);
+        }
+    }
+
+    private List<LessonOccurrenceEntity> copyCandidatesForStudent(List<LessonOccurrenceEntity> candidates,
+                                                                  Long studentId) {
+        return candidates.stream().map(candidate -> {
+            LessonOccurrenceEntity copy = new LessonOccurrenceEntity();
+            copy.setId(candidate.getId());
+            copy.setStudentId(studentId);
+            copy.setPrivateLessonGroupId(candidate.getPrivateLessonGroupId());
+            copy.setPlannedTeacherId(candidate.getPlannedTeacherId());
+            copy.setPlannedClassroomId(candidate.getPlannedClassroomId());
+            copy.setPlannedStartAt(candidate.getPlannedStartAt());
+            copy.setPlannedEndAt(candidate.getPlannedEndAt());
+            copy.setPlannedUnits(candidate.getPlannedUnits());
+            return copy;
+        }).toList();
+    }
+
+    private Long resolvePrivateLessonGroupId(Long requestedGroupId, Long packageId) {
+        if (requestedGroupId != null) {
+            requireActivePrivateLessonGroup(requestedGroupId, packageId);
+            return requestedGroupId;
+        }
+        PrivateLessonGroupMemberEntity member = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+        return member == null ? null : member.getPrivateLessonGroupId();
+    }
+
+    private void requireActivePrivateLessonGroup(Long groupId, Long packageId) {
+        PrivateLessonGroupEntity group = privateLessonGroupMapper.selectById(groupId);
+        if (group == null || !"ACTIVE".equals(group.getGroupStatus())) {
+            throw new BusinessException("PRIVATE_LESSON_GROUP_NOT_FOUND", "Private lesson group not found or inactive.");
+        }
+        Long memberCount = privateLessonGroupMemberMapper.selectCount(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupId)
+                .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0));
+        if (memberCount == null || memberCount == 0) {
+            throw new BusinessException("PRIVATE_LESSON_GROUP_PACKAGE_MISMATCH",
+                    "The selected package does not belong to this private lesson group.");
+        }
+    }
+
+    private CoursePackageEntity primaryPackageForPrivateGroup(CoursePackageEntity coursePackage,
+                                                              Long privateLessonGroupId) {
+        if (privateLessonGroupId == null) {
+            return coursePackage;
+        }
+        PrivateLessonGroupMemberEntity primaryMember = activeGroupMembers(privateLessonGroupId).stream()
+                .findFirst()
+                .orElseThrow(() -> new BusinessException("PRIVATE_LESSON_GROUP_EMPTY",
+                        "This private lesson group has no active students."));
+        CoursePackageEntity primaryPackage = coursePackageMapper.selectById(primaryMember.getPackageId());
+        if (primaryPackage == null || !"ACTIVE".equals(primaryPackage.getPackageStatus())) {
+            throw new BusinessException("PRIVATE_LESSON_MEMBER_PACKAGE_INVALID",
+                    "The primary private lesson package is missing or inactive.");
+        }
+        return primaryPackage;
+    }
+
+    private List<PrivateLessonGroupMemberEntity> activeGroupMembers(Long groupId) {
+        return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupId)
+                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex));
     }
 
     private int normalizeGenerationHorizon(Integer generationHorizonDays) {
@@ -626,6 +748,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
                 occurrence.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
                 occurrence.setPackageId(coursePackage.getId());
+                occurrence.setPrivateLessonGroupId(rule.getPrivateLessonGroupId());
                 occurrence.setStudentId(studentId);
                 occurrence.setScheduleRuleId(rule.getId());
                 occurrence.setScheduleSlotId(slot.getId());

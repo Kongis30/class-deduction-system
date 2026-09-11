@@ -42,6 +42,15 @@ export interface OneOnOneLesson {
   notes?: string;
 }
 
+export interface OneOnOneParticipant {
+  studentId: EntityId;
+  studentNo?: string;
+  studentName?: string;
+  packageId: EntityId;
+  priceMultiplier?: number;
+  remainingUnits?: number;
+}
+
 export interface OneOnOnePackage {
   packageId: EntityId;
   packageNo: string;
@@ -58,6 +67,10 @@ export interface OneOnOnePackage {
   packageStatus: string;
   startDate?: string;
   estimatedEndDate?: string;
+  privateLessonGroupId?: EntityId;
+  participantCount?: number;
+  privateLessonGroupPrimary?: boolean;
+  participants?: OneOnOneParticipant[];
   lessons: OneOnOneLesson[];
 }
 

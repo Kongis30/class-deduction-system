@@ -38,6 +38,9 @@ public record CoursePackageDetailVO(
         LocalDate startDate,
         LocalDate estimatedEndDate,
         String remark,
+        Long privateLessonGroupId,
+        Integer privateLessonParticipantCount,
+        List<PrivateLessonGroupParticipantVO> privateLessonParticipants,
         List<PackageTeacherAssignmentVO> teacherAssignments,
         LocalDateTime createdAt,
         LocalDateTime updatedAt

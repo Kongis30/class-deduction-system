@@ -22,6 +22,9 @@ import java.time.LocalDateTime;
 @Schema(description = "组合支付明细")
 public class PaymentSplitDTO {
 
+    @Schema(description = "Participant index within a shared private lesson", example = "2")
+    private Integer participantIndex;
+
     @NotBlank(message = "Payment method is required")
     @Schema(description = "支付方式编码", example = "CASH")
     private String paymentMethod;

@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 public record PaymentRecordVO(
         Long id,
         String paymentNo,
+        Integer participantIndex,
         String paymentMethod,
         String paymentType,
         String paymentStatus,

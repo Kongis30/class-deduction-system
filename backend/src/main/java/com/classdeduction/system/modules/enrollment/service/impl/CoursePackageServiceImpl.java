@@ -20,18 +20,23 @@ import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjust
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
 import com.classdeduction.system.modules.enrollment.vo.GroupClassPackageProgressVO;
 import com.classdeduction.system.modules.enrollment.vo.GroupClassStudentProgressVO;
 import com.classdeduction.system.modules.enrollment.vo.PackageTeacherAssignmentVO;
+import com.classdeduction.system.modules.enrollment.vo.PrivateLessonGroupParticipantVO;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
@@ -76,6 +81,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     private final CoursePackageMapper coursePackageMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
+    private final PrivateLessonGroupMapper privateLessonGroupMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final CourseProductMapper courseProductMapper;
@@ -240,6 +247,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .stream()
                 .collect(Collectors.toMap(TeacherEntity::getId, item -> item));
         Map<Long, Integer> consumedUnitsByTeacher = loadConsumedUnitsByTeacher(id);
+        PrivateLessonGroupEntity privateLessonGroup = loadPrivateLessonGroupByPackageId(id);
+        List<PrivateLessonGroupParticipantVO> privateLessonParticipants = loadPrivateLessonParticipants(privateLessonGroup);
 
         return CoursePackageDetailVO.builder()
                 .id(coursePackage.getId())
@@ -265,6 +274,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .startDate(coursePackage.getStartDate())
                 .estimatedEndDate(coursePackage.getEstimatedEndDate())
                 .remark(coursePackage.getRemark())
+                .privateLessonGroupId(privateLessonGroup == null ? null : privateLessonGroup.getId())
+                .privateLessonParticipantCount(privateLessonGroup == null ? null : privateLessonGroup.getParticipantCount())
+                .privateLessonParticipants(privateLessonParticipants)
                 .teacherAssignments(assignments.stream()
                         .map(item -> toAssignmentVO(
                                 item,
@@ -274,6 +286,56 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .createdAt(coursePackage.getCreatedAt())
                 .updatedAt(coursePackage.getUpdatedAt())
                 .build();
+    }
+
+    private PrivateLessonGroupEntity loadPrivateLessonGroupByPackageId(Long packageId) {
+        PrivateLessonGroupMemberEntity member = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+        if (member == null) {
+            return null;
+        }
+        return privateLessonGroupMapper.selectOne(new LambdaQueryWrapper<PrivateLessonGroupEntity>()
+                .eq(PrivateLessonGroupEntity::getId, member.getPrivateLessonGroupId())
+                .eq(PrivateLessonGroupEntity::getGroupStatus, "ACTIVE")
+                .eq(PrivateLessonGroupEntity::getIsDeleted, 0)
+                .last("LIMIT 1"));
+    }
+
+    private List<PrivateLessonGroupParticipantVO> loadPrivateLessonParticipants(PrivateLessonGroupEntity group) {
+        if (group == null) {
+            return Collections.emptyList();
+        }
+        List<PrivateLessonGroupMemberEntity> members = privateLessonGroupMemberMapper.selectList(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, group.getId())
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex));
+        if (members.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Map<Long, StudentEntity> students = studentMapper.selectBatchIds(members.stream()
+                        .map(PrivateLessonGroupMemberEntity::getStudentId)
+                        .collect(Collectors.toSet()))
+                .stream()
+                .collect(Collectors.toMap(StudentEntity::getId, item -> item));
+        return members.stream().map(member -> {
+            StudentEntity student = students.get(member.getStudentId());
+            return new PrivateLessonGroupParticipantVO(
+                    member.getStudentId(),
+                    student == null ? null : student.getStudentName(),
+                    student == null ? null : student.getStudentNo(),
+                    student == null ? null : student.getGrade(),
+                    student == null ? null : student.getSchool(),
+                    member.getPackageId(),
+                    member.getParticipantIndex(),
+                    member.getPriceMultiplier(),
+                    member.getMemberStatus());
+        }).toList();
     }
 
     private double resolvePurchasedHours(CoursePackageEntity coursePackage, EnrollmentOrderItemEntity orderItem) {
