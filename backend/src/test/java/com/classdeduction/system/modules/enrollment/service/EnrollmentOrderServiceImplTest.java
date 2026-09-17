@@ -11,6 +11,8 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentCreateRequest;
+import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderCorrectionRequest;
+import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
@@ -27,6 +29,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
+import com.classdeduction.system.modules.enrollment.service.impl.ClassBillingServiceImpl;
 import com.classdeduction.system.modules.enrollment.service.impl.EnrollmentOrderServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
@@ -120,6 +123,9 @@ class EnrollmentOrderServiceImplTest {
     @Mock
     private JsonHelper jsonHelper;
 
+    // 直接用真实实现，让测试负载与生产一致的到期日计算逻辑。
+    private ClassBillingServiceImpl classBillingService;
+
     @Mock
     private com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper recurringScheduleRuleMapper;
 
@@ -165,6 +171,9 @@ class EnrollmentOrderServiceImplTest {
     @Captor
     private ArgumentCaptor<ReceiptRecordEntity> receiptCaptor;
 
+    @Captor
+    private ArgumentCaptor<ClassEnrollmentEntity> classEnrollmentCaptor;
+
     private EnrollmentOrderServiceImpl enrollmentOrderService;
 
     @BeforeAll
@@ -185,6 +194,7 @@ class EnrollmentOrderServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper);
         enrollmentOrderService = new EnrollmentOrderServiceImpl(
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
@@ -193,6 +203,7 @@ class EnrollmentOrderServiceImplTest {
                 paymentRecordMapper,
                 privateLessonGroupMemberMapper,
                 receiptRecordMapper,
+                classBillingService,
                 packageTeacherAssignmentMapper,
                 studentMapper,
                 courseProductMapper,
@@ -372,6 +383,81 @@ class EnrollmentOrderServiceImplTest {
         assertThat(packageCaptor.getValue().getPackageStatus()).isEqualTo("CLOSED");
         assertThat(orderCaptor.getValue().getOrderStatus()).isEqualTo("CANCELLED");
         assertThat(orderCaptor.getValue().getPaymentStatus()).isEqualTo("UNPAID");
+    }
+
+    @Test
+    void shouldCorrectGroupReceiptGradeChangeAndRecomputeExpiryDate() {
+        // 回归：Edit Receipt 修改 grade（班课换班）时，重建 class_enrollment 的 expiry_date
+        // 必须按计费规则重算（MONTH × 2 → 结课当月月末），不能落回 NULL。
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setStudentId(101L);
+        order.setClassId(801L);
+        order.setSignupDate(LocalDate.of(2026, 9, 16));
+
+        StudentEntity student = buildStudent();
+        student.setGrade("G1");
+
+        ClassGroupEntity oldClass = buildClassGroup(202L);
+        oldClass.setGradeBand("G1-G5");
+        ClassGroupEntity newClass = buildClassGroup(202L);
+        newClass.setId(802L);
+        newClass.setGradeBand("G1-G5");
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setEnrollmentOrderId(2001L);
+        item.setCourseType("GROUP");
+        item.setCourseProductId(202L);
+        item.setClassId(801L);
+        item.setGradeBand("G1-G5");
+        item.setPackageUnit("MONTH");
+        item.setPackageQuantity(new BigDecimal("2"));
+        item.setStartDate(LocalDate.of(2026, 9, 16));
+
+        ClassEnrollmentEntity activeEnrollment = new ClassEnrollmentEntity();
+        activeEnrollment.setId(9001L);
+        activeEnrollment.setClassId(801L);
+        activeEnrollment.setStudentId(101L);
+        activeEnrollment.setEnrollmentOrderItemId(8001L);
+        activeEnrollment.setEnrollmentDate(LocalDate.of(2026, 9, 16));
+        activeEnrollment.setStatus("ACTIVE");
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(student);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectById(802L)).thenReturn(newClass);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(activeEnrollment));
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        RegistrationIntakeRequest.CourseItemPayload payload = new RegistrationIntakeRequest.CourseItemPayload();
+        payload.setOrderItemId(8001L);
+        payload.setClassId(802L);
+        payload.setGradeBand("G1-G5");
+        payload.setCourseType("GROUP");
+        payload.setCourseProductId(202L);
+        payload.setPackageUnit("MONTH");
+        payload.setPackageQuantity(new BigDecimal("2"));
+        payload.setStartDate(LocalDate.of(2026, 9, 16));
+        request.setItems(List.of(payload));
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classEnrollmentMapper).insert(classEnrollmentCaptor.capture());
+        ClassEnrollmentEntity replacement = classEnrollmentCaptor.getValue();
+        assertThat(replacement.getExpiryDate()).isEqualTo(LocalDate.of(2026, 10, 31));
+        assertThat(replacement.getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 16));
+        assertThat(replacement.getBillingType()).isEqualTo("MONTH");
+        assertThat(replacement.getPurchasedQuantity()).isEqualTo(2);
+
+        // 旧班级的 ACTIVE 在册记录应被标记为 CANCELLED
+        ArgumentCaptor<ClassEnrollmentEntity> updatedCaptor = ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(classEnrollmentMapper, atLeastOnce()).updateById(updatedCaptor.capture());
+        assertThat(updatedCaptor.getAllValues()).anySatisfy(updated ->
+                assertThat(updated.getStatus()).isEqualTo("CANCELLED"));
     }
 
     @Test

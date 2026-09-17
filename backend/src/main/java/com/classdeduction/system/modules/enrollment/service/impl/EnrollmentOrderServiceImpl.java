@@ -41,6 +41,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
+import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
@@ -124,6 +125,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final PaymentRecordMapper paymentRecordMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
+    private final ClassBillingService classBillingService;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
     private final CourseProductMapper courseProductMapper;
@@ -1326,7 +1328,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .filter(enrollment -> "ACTIVE".equals(enrollment.getStatus()))
                 .findFirst().orElse(null);
         if (Objects.equals(oldClassId, item.getClassId()) && current != null) {
-            current.setEnrollmentDate(item.getStartDate() == null ? current.getEnrollmentDate() : item.getStartDate());
+            // 班级未变：以原在册起始日（或更正后的 start）为基线重算有效期，
+            // 保证购买数量等字段调整后 expiry_date 同步刷新。
+            LocalDate baseline = item.getStartDate() == null ? current.getEnrollmentDate() : item.getStartDate();
+            ClassBillingService.ClassBilling billing = computeCorrectedClassBilling(targetClass, baseline, item);
+            current.setEnrollmentDate(billing.enrollmentDate());
+            current.setExpiryDate(billing.expiryDate());
+            current.setBillingType(item.getPackageUnit());
+            current.setPurchasedQuantity(billing.purchasedQuantity());
             current.setAttendanceOption(item.getAttendanceOption());
             classEnrollmentMapper.updateById(current);
             return;
@@ -1341,16 +1350,34 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             return;
         }
         ClassEnrollmentEntity replacement = new ClassEnrollmentEntity();
+        // 换班/换年级：按新班级同一套计费规则重建在册记录，expiry_date 取自计算结果而非订单/班级的冗余字段。
+        ClassBillingService.ClassBilling billing = computeCorrectedClassBilling(targetClass,
+                item.getStartDate() == null ? order.getSignupDate() : item.getStartDate(), item);
         replacement.setClassId(targetClass.getId());
         replacement.setStudentId(student.getId());
         replacement.setEnrollmentOrderItemId(item.getId());
-        replacement.setEnrollmentDate(item.getStartDate() == null ? order.getSignupDate() : item.getStartDate());
-        replacement.setExpiryDate(order.getPeriodEndDate() != null ? order.getPeriodEndDate() : targetClass.getEndDate());
+        replacement.setEnrollmentDate(billing.enrollmentDate());
+        replacement.setExpiryDate(billing.expiryDate());
         replacement.setBillingType(item.getPackageUnit());
-        replacement.setPurchasedQuantity(item.getPackageQuantity() == null ? null : item.getPackageQuantity().intValue());
+        replacement.setPurchasedQuantity(billing.purchasedQuantity());
         replacement.setAttendanceOption(item.getAttendanceOption());
         replacement.setStatus("ACTIVE");
         classEnrollmentMapper.insert(replacement);
+    }
+
+    /**
+     * 更正后的班课在册有效期：与报名新增链路共用同一套计费规则（ClassBillingService），
+     * 保证 expiry_date 口径一致且永不为空。
+     *
+     * @param targetClass 新班级
+     * @param baseline    起始日期：item 更正后的 start；为空时由调用方回退（换班用 signupDate，原班保留原在册起始日）
+     * @param item        更正后的订单课程项
+     */
+    private ClassBillingService.ClassBilling computeCorrectedClassBilling(ClassGroupEntity targetClass,
+                                                                          LocalDate baseline,
+                                                                          EnrollmentOrderItemEntity item) {
+        return classBillingService.compute(targetClass, baseline, null,
+                item.getPackageUnit(), item.getPackageQuantity());
     }
 
     private void updateCorrectedOneOnOnePackage(EnrollmentOrderEntity order, EnrollmentOrderItemEntity item) {

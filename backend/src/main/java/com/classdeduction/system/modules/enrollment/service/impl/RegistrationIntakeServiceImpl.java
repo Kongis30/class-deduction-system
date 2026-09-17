@@ -40,6 +40,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
+import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
@@ -110,6 +111,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final PaymentMethodMapper paymentMethodMapper;
     private final PaymentRecordMapper paymentRecordMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
+    private final ClassBillingService classBillingService;
     private final UserAccountMapper userAccountMapper;
     private final RoleMapper roleMapper;
     private final UserRoleMapper userRoleMapper;
@@ -1820,55 +1822,13 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private ClassBillingResult computeClassBilling(ClassGroupEntity classGroup,
                                                     ResolvedCourseLine line,
                                                     LocalDate signupDate) {
-        LocalDate today = signupDate == null ? LocalDate.now(AppTime.APP_ZONE_ID) : signupDate;
-        List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup);
-        String unit = StringUtils.hasText(line.packageUnit) ? line.packageUnit : "MONTH";
         int quantity = line.packageQuantity == null
                 ? resolveGroupPurchasedQuantity(line)
                 : line.packageQuantity.setScale(0, RoundingMode.CEILING).intValue();
-        if (quantity < 1) {
-            throw new BusinessException("REGISTRATION_DURATION_INVALID",
-                    "Selected package quantity must be greater than zero.");
-        }
-        LocalDate enrollmentDate = line.startDate == null ? today : line.startDate;
-        LocalDate expiryDate;
-        LocalDate configuredStart = classGroup.getStartDate();
-        LocalDate configuredEnd = classGroup.getEndDate();
-        if (configuredStart != null && configuredEnd != null && configuredEnd.isBefore(configuredStart)) {
-            throw new BusinessException("INVALID_GROUP_DATE_RANGE",
-                    "Class end date cannot be earlier than the start date.");
-        }
-        if (configuredStart != null) {
-            if (line.startDate != null && line.startDate.isBefore(configuredStart)) {
-                throw new BusinessException("ENROLLMENT_START_OUT_OF_RANGE",
-                        "Enrollment start date must be within the class date range.");
-            }
-            if (line.startDate == null && enrollmentDate.isBefore(configuredStart)) {
-                enrollmentDate = configuredStart;
-            }
-        }
-        if (configuredEnd != null) {
-            if (enrollmentDate.isAfter(configuredEnd)) {
-                throw new BusinessException("ENROLLMENT_START_OUT_OF_RANGE",
-                        "Enrollment start date must be within the class date range.");
-            }
-        }
-        if ("MONTH".equals(unit)) {
-            YearMonth selectedEnd = YearMonth.from(enrollmentDate).plusMonths(quantity - 1L);
-            expiryDate = selectedEnd.atEndOfMonth();
-        } else if ("WEEK".equals(unit)) {
-            expiryDate = enrollmentDate.plusWeeks(quantity).minusDays(1);
-        } else if ("SESSION".equals(unit)) {
-            expiryDate = computeSessionExpiryDate(enrollmentDate, slots, quantity, configuredEnd);
-        } else {
-            throw new BusinessException("INVALID_PACKAGE_UNIT",
-                    "Group class package unit must be MONTH, WEEK, or SESSION.");
-        }
-        if (configuredEnd != null && expiryDate.isAfter(configuredEnd)) {
-            // 班课结束日是实际有效期边界；购买数量仍保留，用于课时/次数统计。
-            expiryDate = configuredEnd;
-        }
-        return new ClassBillingResult(enrollmentDate, expiryDate, enrollmentDate, expiryDate, quantity);
+        ClassBillingService.ClassBilling billing = classBillingService.compute(
+                classGroup, line.startDate, signupDate, line.packageUnit, line.packageQuantity);
+        return new ClassBillingResult(billing.enrollmentDate(), billing.expiryDate(),
+                billing.enrollmentDate(), billing.expiryDate(), quantity);
     }
 
     private int ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
@@ -2028,36 +1988,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
                         .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId())
                         .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
-    }
-
-    private LocalDate computeNthSessionDate(LocalDate startDate, List<ClassGroupScheduleSlotEntity> slots, int n) {
-        Set<Integer> weekdays = slots.stream()
-                .map(ClassGroupScheduleSlotEntity::getWeekday)
-                .collect(Collectors.toCollection(java.util.TreeSet::new));
-        int count = 0;
-        LocalDate limit = startDate.plusYears(10);
-        for (LocalDate date = startDate; !date.isAfter(limit); date = date.plusDays(1)) {
-            if (weekdays.contains(date.getDayOfWeek().getValue())) {
-                count++;
-                if (count >= n) {
-                    return date;
-                }
-            }
-        }
-        throw new BusinessException("SESSION_DATE_UNRESOLVED", "Cannot resolve the date for the selected sessions.");
-    }
-
-    private LocalDate computeSessionExpiryDate(LocalDate startDate,
-                                               List<ClassGroupScheduleSlotEntity> slots,
-                                               int quantity,
-                                               LocalDate configuredEnd) {
-        if (!slots.isEmpty()) {
-            return computeNthSessionDate(startDate, slots, quantity);
-        }
-        if (configuredEnd != null && !configuredEnd.isBefore(startDate)) {
-            return configuredEnd;
-        }
-        return startDate.plusDays(quantity - 1L);
     }
 
     private YearMonth parseRequestMonth(String value, String fieldName) {

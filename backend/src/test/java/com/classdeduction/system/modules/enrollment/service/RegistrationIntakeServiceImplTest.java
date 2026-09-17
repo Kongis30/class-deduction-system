@@ -31,6 +31,8 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
+import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
+import com.classdeduction.system.modules.enrollment.service.impl.ClassBillingServiceImpl;
 import com.classdeduction.system.modules.enrollment.service.impl.RegistrationIntakeServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
@@ -141,6 +143,9 @@ class RegistrationIntakeServiceImplTest {
     @Mock
     private JsonHelper jsonHelper;
 
+    // 直接用真实实现，让测试负载与生产一致的到期日计算逻辑。
+    private ClassBillingServiceImpl classBillingService;
+
     @Captor
     private ArgumentCaptor<CoursePackageEntity> coursePackageCaptor;
 
@@ -157,6 +162,7 @@ class RegistrationIntakeServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper);
         registrationIntakeService = new RegistrationIntakeServiceImpl(
                 studentMapper,
                 studentNoGenerator,
@@ -177,6 +183,7 @@ class RegistrationIntakeServiceImplTest {
                 paymentMethodMapper,
                 paymentRecordMapper,
                 receiptRecordMapper,
+                classBillingService,
                 userAccountMapper,
                 roleMapper,
                 userRoleMapper,
