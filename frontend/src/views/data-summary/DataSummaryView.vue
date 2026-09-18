@@ -281,18 +281,6 @@
       </button>
     </div>
 
-    <div class="workbook-pager">
-      <el-pagination
-        v-model:current-page="pagination.page"
-        v-model:page-size="pagination.pageSize"
-        :total="filteredRows.length"
-        :page-sizes="[25, 50, 100, 200]"
-        layout="total, sizes, prev, pager, next"
-        small
-        background
-      />
-    </div>
-
     <nav
       v-if="tabs.length"
       class="product-tab-bar"
@@ -400,14 +388,12 @@ interface WorkbookCampusGroup {
   classGroups: WorkbookClassGroup[];
 }
 
-/** 每个 Product Tab 独立保留的视图状态（月份、筛选、分页、排序）。 */
+/** 每个 Product Tab 独立保留的视图状态（月份、筛选、排序）。 */
 interface ProductViewState {
   selectedMonth: string;
   columnFilters: Record<ColumnKey, ColumnFilter>;
   sortKey: ColumnKey | null;
   sortDirection: SortDirection;
-  page: number;
-  pageSize: number;
 }
 
 interface ProductTab {
@@ -467,10 +453,6 @@ const selectedMonth = ref<string>('ALL');
 const sortState = reactive<SortState>({
   key: null,
   direction: 'asc',
-});
-const pagination = reactive({
-  page: 1,
-  pageSize: 50,
 });
 const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>(
   Object.fromEntries(columns.map((column) => [column.key, createEmptyFilter()])) as Record<ColumnKey, ColumnFilter>,
@@ -636,12 +618,8 @@ const sortedRows = computed<DataSummaryDisplayRow[]>(() => {
   });
 });
 
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredRows.value.length / pagination.pageSize)));
-
-const pagedRows = computed(() => {
-  const start = (pagination.page - 1) * pagination.pageSize;
-  return sortedRows.value.slice(start, start + pagination.pageSize);
-});
+/** 不再分页：每个 Tab 一次性渲染全部数据行。 */
+const pagedRows = computed(() => sortedRows.value);
 
 const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
   const groups = new Map<string, WorkbookCampusGroup>();
@@ -717,8 +695,6 @@ function snapshotCurrentState(): ProductViewState {
     ) as Record<ColumnKey, ColumnFilter>,
     sortKey: sortState.key,
     sortDirection: sortState.direction,
-    page: pagination.page,
-    pageSize: pagination.pageSize,
   };
 }
 
@@ -730,8 +706,6 @@ function createDefaultState(): ProductViewState {
     ) as Record<ColumnKey, ColumnFilter>,
     sortKey: null,
     sortDirection: 'asc',
-    page: 1,
-    pageSize: 50,
   };
 }
 
@@ -742,18 +716,6 @@ function restoreState(state: ProductViewState) {
   });
   sortState.key = state.sortKey;
   sortState.direction = state.sortDirection;
-  pagination.pageSize = state.pageSize;
-  pagination.page = state.page;
-  clampPage();
-}
-
-function clampPage() {
-  if (pagination.page > totalPages.value) {
-    pagination.page = totalPages.value;
-  }
-  if (pagination.page < 1) {
-    pagination.page = 1;
-  }
 }
 
 async function loadPage() {
@@ -1375,11 +1337,6 @@ function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-// 筛选结果变化或数据重载后，把页码收敛到有效范围。
-watch(() => filteredRows.value.length, () => {
-  clampPage();
-});
-
 // Tab 列表变化（产品新增/删除/排序保存失败回滚）后校正当前选中 Tab。
 watch(tabs, () => {
   ensureActiveTab();
@@ -1777,15 +1734,6 @@ th.workbook-column--studentName {
 
 .workbook-empty-row span {
   margin-right: 8px;
-}
-
-.workbook-pager {
-  display: flex;
-  justify-content: flex-end;
-  padding: 6px 12px;
-  border: 1px solid #9eafa7;
-  border-top: 0;
-  background: #f4f8f5;
 }
 
 /* ── Product Tab 工作表页签（位于表格底部） ── */
