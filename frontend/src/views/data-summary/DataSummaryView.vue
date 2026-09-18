@@ -536,11 +536,27 @@ const productRows = computed(() => {
   return rows.value.filter((row) => String(row.courseProductId ?? '') === activeTabId.value);
 });
 
+/** 周六班特殊显示的名称回退识别：产品/班级名里出现「周六」或「Saturday」即视为周六班。 */
+const SATURDAY_NAME_PATTERN = /saturday|周六/i;
+
 const isSaturdayProductTab = computed(() => {
-  if (activeProduct.value?.courseType?.toUpperCase() === 'SATURDAY') {
+  const product = activeProduct.value;
+  if (!product) {
+    // 全量/未分配视图不做周六班特殊显示，避免混合数据误触发拆行。
+    return false;
+  }
+  if (product.courseType?.toUpperCase() === 'SATURDAY') {
     return true;
   }
-  return productRows.value.some((row) => row.courseType?.toUpperCase() === 'SATURDAY');
+  // course_product.course_type 无历史维护入口，产品名或行班级名兜底识别。
+  if (SATURDAY_NAME_PATTERN.test(product.productName)) {
+    return true;
+  }
+  return productRows.value.some((row) =>
+    row.courseType?.toUpperCase() === 'SATURDAY'
+    || SATURDAY_NAME_PATTERN.test(row.registerClass ?? '')
+    || SATURDAY_NAME_PATTERN.test(row.className ?? '')
+    || SATURDAY_NAME_PATTERN.test(row.courseProductName ?? ''));
 });
 
 const displayProductRows = computed<DataSummaryDisplayRow[]>(() => {

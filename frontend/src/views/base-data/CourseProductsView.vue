@@ -205,6 +205,14 @@
 
         <section class="product-step product-step--settings">
           <div class="product-form__row">
+            <el-form-item v-if="form.teachingMode === 'GROUP'" label="Course type" prop="courseType">
+              <el-select v-model="form.courseType" style="width: 100%;">
+                <el-option label="After-school" value="AFTER_SCHOOL" />
+                <el-option label="Saturday class" value="SATURDAY" />
+                <el-option label="Summer class" value="SUMMER" />
+                <el-option label="Sprint class" value="SPRINT" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="Status" prop="status">
               <el-select v-model="form.status" style="width: 100%;">
                 <el-option label="Active" value="ACTIVE" />
@@ -465,7 +473,7 @@ function openProductDialog(row?: CourseProductItem) {
     Object.assign(form, {
       productCode: '',
       productName: '',
-      courseType: mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : undefined,
+      courseType: mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL',
       registerClass: '',
       teachingMode: mode,
       sortOrder: 99,
