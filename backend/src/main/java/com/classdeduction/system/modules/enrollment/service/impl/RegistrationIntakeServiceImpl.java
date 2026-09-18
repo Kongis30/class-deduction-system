@@ -42,6 +42,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMem
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService;
+import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
@@ -111,6 +112,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final PaymentMethodMapper paymentMethodMapper;
     private final PaymentRecordMapper paymentRecordMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
+    private final PaymentAllocationService paymentAllocationService;
     private final ClassBillingService classBillingService;
     private final UserAccountMapper userAccountMapper;
     private final RoleMapper roleMapper;
@@ -167,6 +169,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
 
         List<RegistrationIntakeResultVO.PaymentResultVO> payments = createPayments(order, request, money, participantResolutions.size());
+        // 课程级付款分摊：按课程项平均分摊收款（私教共享按学生维度付款时不走课程分摊）
+        if (participantResolutions.size() <= 1 || request.getParticipantBillings() == null
+                || request.getParticipantBillings().isEmpty()) {
+            paymentAllocationService.replayAllocations(order);
+        }
         RegistrationIntakeResultVO.AccountResultVO studentAccount = participantResults.isEmpty()
                 ? null : participantResults.get(0).studentAccount();
 

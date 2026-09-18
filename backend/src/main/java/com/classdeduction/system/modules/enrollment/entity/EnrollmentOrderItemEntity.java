@@ -68,6 +68,15 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
 
     private Boolean manualPriceOverride;
 
+    /** 课程项应收：item 价格 + 按比例分摊的附加费 - 按比例分摊的折扣 */
+    private BigDecimal amountDue;
+
+    /** 课程项累计已付（按 payment_allocation 汇总，退款为负数回冲） */
+    private BigDecimal paidAmount;
+
+    /** 课程项余额：amount_due - paid_amount */
+    private BigDecimal balanceAmount;
+
     private BigDecimal oneOnOneHours;
 
     private BigDecimal openingUsedHours;

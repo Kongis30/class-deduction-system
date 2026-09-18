@@ -736,6 +736,39 @@
           </span>
         </div>
 
+        <!-- 课程级分摊预览：按课程平均分摊、封顶顺延 -->
+        <div v-if="payForm.splits.some(s => (s.amount || 0) > 0)" class="payment-allocation-preview">
+          <div class="payment-allocation-preview__title">Allocation by course</div>
+          <el-alert
+            v-if="allocationError"
+            :title="allocationError"
+            type="error"
+            :closable="false"
+            style="margin-bottom: 8px;"
+          />
+          <el-table v-else-if="allocationPreview.length" :data="allocationPreview" size="small">
+            <el-table-column prop="courseName" label="Course" min-width="140">
+              <template #default="{ row }">{{ row.courseName || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="Due" width="110" align="right">
+              <template #default="{ row }">${{ Number(row.itemAmountDue ?? 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="Paid" width="110" align="right">
+              <template #default="{ row }">${{ Number(row.itemPaidAmount ?? 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="This payment" width="120" align="right">
+              <template #default="{ row }">
+                <strong>${{ Number(row.allocatedAmount ?? 0).toFixed(2) }}</strong>
+              </template>
+            </el-table-column>
+            <el-table-column label="Balance after" width="120" align="right">
+              <template #default="{ row }">
+                ${{ Math.max(0, Number(row.itemBalanceAmount ?? 0) - Number(row.allocatedAmount ?? 0)).toFixed(2) }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+
       </el-form>
 
       <template #footer>
@@ -1040,7 +1073,7 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
-import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
+import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, previewPaymentAllocation, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery, type PaymentAllocationPreview } from '@/api/enrollment';
 import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
@@ -1550,6 +1583,40 @@ const paySplitTotal = computed(() => {
 const paySplitRemaining = computed(() => {
   return payAmountDue.value - paySplitTotal.value;
 });
+
+// ─── 课程级分摊预览（平均分摊、封顶顺延）────────────
+const allocationPreview = ref<PaymentAllocationPreview[]>([]);
+const allocationError = ref('');
+let allocationTimer: number | undefined;
+
+const previewAllocationDebounced = () => {
+  window.clearTimeout(allocationTimer);
+  allocationTimer = window.setTimeout(async () => {
+    const order = payOrder.value;
+    if (!order || paySplitTotal.value <= 0 || payParticipant.value) {
+      allocationPreview.value = [];
+      allocationError.value = '';
+      return;
+    }
+    try {
+      const res = await previewPaymentAllocation(order.id, Number(paySplitTotal.value.toFixed(2)));
+      allocationPreview.value = res.data.data;
+      allocationError.value = '';
+    } catch (err: any) {
+      allocationPreview.value = [];
+      allocationError.value = err?.response?.data?.message ?? 'Unable to allocate this payment.';
+    }
+  }, 300);
+};
+
+watch([() => payForm.splits.map(s => s.amount), () => payDialogVisible.value, () => payOrder.value?.id], () => {
+  if (!payDialogVisible.value) {
+    allocationPreview.value = [];
+    allocationError.value = '';
+    return;
+  }
+  previewAllocationDebounced();
+}, { deep: true });
 
 function addPaySplit() {
   payForm.splits.push(createPaySplit());
@@ -2791,6 +2858,19 @@ void initializePage();
 }
 .payment-split-balanced {
   color: #67c23a;
+  font-weight: 600;
+}
+.payment-allocation-preview {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-extra-light);
+}
+.payment-allocation-preview__title {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 6px;
   font-weight: 600;
 }
 

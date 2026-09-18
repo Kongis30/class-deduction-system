@@ -183,6 +183,7 @@ class RegistrationIntakeServiceImplTest {
                 paymentMethodMapper,
                 paymentRecordMapper,
                 receiptRecordMapper,
+                org.mockito.Mockito.mock(com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService.class),
                 classBillingService,
                 userAccountMapper,
                 roleMapper,

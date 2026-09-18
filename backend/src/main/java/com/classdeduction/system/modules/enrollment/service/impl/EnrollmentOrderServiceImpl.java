@@ -27,6 +27,7 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
+import com.classdeduction.system.modules.enrollment.entity.PaymentAllocationEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
@@ -39,10 +40,12 @@ import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignm
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
+import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
@@ -123,6 +126,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PaymentRecordMapper paymentRecordMapper;
+    private final PaymentAllocationMapper paymentAllocationMapper;
+    private final PaymentAllocationService paymentAllocationService;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
     private final ClassBillingService classBillingService;
@@ -435,6 +440,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             PaymentRecordEntity paymentRecord = createPaymentRecord(order, request);
             paymentIds.add(paymentRecord.getId());
             paymentNos.add(paymentRecord.getPaymentNo());
+            // 课程级付款分摊（单课程订单全额计入唯一课程项）
+            paymentAllocationService.replayAllocations(order);
         }
         if (!Boolean.FALSE.equals(request.getIssueReceipt())) {
             ReceiptRecordEntity receiptRecord = createReceipt(order, coursePackage, student, product, request);
@@ -901,6 +908,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .priceAmount(item.getPriceAmount())
                 .originalPriceAmount(item.getOriginalPriceAmount())
                 .manualPriceOverride(Boolean.TRUE.equals(item.getManualPriceOverride()))
+                .amountDue(item.getAmountDue())
+                .paidAmount(item.getPaidAmount())
+                .balanceAmount(item.getBalanceAmount())
                 .oneOnOneHours(item.getOneOnOneHours())
                 .oneOnOneUnits(item.getOneOnOneUnits())
                 .itemStatus(item.getItemStatus())
@@ -1075,6 +1085,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
         studentMapper.updateById(student);
         enrollmentOrderMapper.updateById(order);
+        // 更正可能改变课程价格/附加费/折扣：课程项应收重算并重放付款分摊
+        if (request.getItems() != null || request.getExtraFees() != null || request.getDiscounts() != null
+                || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null) {
+            invalidateItemAmountDue(order.getId());
+            paymentAllocationService.replayAllocations(order);
+        }
         // updateById skips null fields, so a campus switch to a no-id campus (e.g. Online)
         // would keep the stale campus_id. Apply the campus snapshot explicitly so it can be nulled.
         if (campusChanged) {
@@ -1747,6 +1763,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         refundRecord.setRemark(request.getRemark());
         paymentRecordMapper.insert(refundRecord);
 
+        // 非共享订单：课程级分摊按已付比例回冲（退款为负数分摊行）
+        Long participantCount = enrollmentOrderParticipantMapper.selectCount(
+                new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                        .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                        .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+        if (participantCount == null || participantCount <= 1) {
+            paymentAllocationService.replayAllocations(order);
+        }
+
         BigDecimal remainingReceived = received.subtract(refundAmount);
         order.setReceivedAmount(remainingReceived);
         if (fullOrderRefund) {
@@ -2275,7 +2300,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .in(CoursePackageEntity::getId, packageIds));
     }
 
+    /**
+     * 课程价格/订单附加费更正后，把课程项应收置空，由分摊重放时按新价格重算。
+     */
+    private void invalidateItemAmountDue(Long orderId) {
+        enrollmentOrderItemMapper.update(null, new LambdaUpdateWrapper<EnrollmentOrderItemEntity>()
+                .eq(EnrollmentOrderItemEntity::getEnrollmentOrderId, orderId)
+                .eq(EnrollmentOrderItemEntity::getIsDeleted, 0)
+                .set(EnrollmentOrderItemEntity::getAmountDue, null));
+    }
+
     private void deleteOrderFinancialArtifacts(EnrollmentOrderEntity order, List<Long> itemIds) {
+        // 课程级分摊明细随订单一并软删
+        paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                .eq(PaymentAllocationEntity::getEnrollmentOrderId, order.getId()));
         // 软删前把业务唯一号追加行级唯一后缀：uk_xxx_no(receipt_no/payment_no, is_deleted)
         // 复合唯一键只允许一行 (no,1)，若历史软删行占用键位，批量软删会撞 Duplicate entry。
         // 列宽 varchar(32)：原号截前 8 位 + '-DEL-' + 19 位雪花 id 恰好 32。

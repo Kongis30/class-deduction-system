@@ -99,6 +99,10 @@ class EnrollmentOrderServiceImplTest {
     @Mock
     private PaymentRecordMapper paymentRecordMapper;
 
+    private com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper paymentAllocationMapper;
+
+    private com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService paymentAllocationService;
+
     @Mock
     private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
 
@@ -195,12 +199,16 @@ class EnrollmentOrderServiceImplTest {
     @BeforeEach
     void setUp() {
         classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper);
+        paymentAllocationService = org.mockito.Mockito.mock(com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService.class);
+        paymentAllocationMapper = org.mockito.Mockito.mock(com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper.class);
         enrollmentOrderService = new EnrollmentOrderServiceImpl(
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
                 enrollmentOrderParticipantMapper,
                 coursePackageMapper,
                 paymentRecordMapper,
+                paymentAllocationMapper,
+                paymentAllocationService,
                 privateLessonGroupMemberMapper,
                 receiptRecordMapper,
                 classBillingService,

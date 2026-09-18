@@ -6,12 +6,18 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.PaymentRecordSaveRequest;
 import com.classdeduction.system.modules.enrollment.service.PaymentRecordService;
+import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
+import jakarta.validation.constraints.NotNull;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
@@ -56,6 +62,14 @@ public class PaymentRecordController {
         return ApiResponse.success("Payment recorded successfully.", paymentRecordService.createPaymentRecord(request));
     }
 
+    @PostMapping("/order/{enrollmentOrderId}/allocation-preview")
+    @Operation(summary = "预览付款在各课程项上的分摊结果（平均分摊、封顶顺延，不落库）")
+    public ApiResponse<List<PaymentAllocationService.AllocationPreview>> previewAllocation(
+            @Parameter(description = "报名订单ID") @PathVariable Long enrollmentOrderId,
+            @Valid @RequestBody AllocationPreviewRequest request) {
+        return ApiResponse.success(paymentRecordService.previewAllocation(enrollmentOrderId, request.getAmount()));
+    }
+
     @GetMapping("/package/{packageId}/balance")
     @Operation(summary = "获取课时包余额")
     public ApiResponse<Integer> getPackageBalance(
@@ -69,5 +83,18 @@ public class PaymentRecordController {
                 .header(HttpHeaders.PRAGMA, "no-cache")
                 .header(HttpHeaders.EXPIRES, "0")
                 .body(body);
+    }
+
+    /**
+     * 分摊预览请求体。
+     */
+    @Data
+    public static class AllocationPreviewRequest {
+
+        @NotNull(message = "Payment amount is required")
+        @DecimalMin(value = "0.01", message = "Payment amount must be greater than 0")
+        @Digits(integer = 12, fraction = 2, message = "Payment amount must use at most 2 decimal places")
+        @Schema(description = "本次付款总额", example = "5000.00")
+        private java.math.BigDecimal amount;
     }
 }

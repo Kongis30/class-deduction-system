@@ -68,6 +68,9 @@ class PaymentRecordServiceImplTest {
     @Mock
     private JsonHelper jsonHelper;
 
+    @Mock
+    private com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService paymentAllocationService;
+
     @InjectMocks
     private PaymentRecordServiceImpl paymentRecordService;
 

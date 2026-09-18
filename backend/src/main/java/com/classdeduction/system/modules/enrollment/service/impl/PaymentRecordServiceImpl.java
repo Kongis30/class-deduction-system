@@ -19,6 +19,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentMethodMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.PaymentRecordService;
+import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
@@ -50,6 +51,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
     private final CoursePackageMapper coursePackageMapper;
     private final PaymentMethodMapper paymentMethodMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
+    private final PaymentAllocationService paymentAllocationService;
     private final JsonHelper jsonHelper;
 
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO;
@@ -183,6 +185,10 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         // 支付流水保留为审计账本；报名收据只维护这一笔报名的累计支付状态，不再新增支付收据。
         updateEnrollmentOrderPayment(order, totalAmount);
         syncParticipantPaymentSnapshots(order.getId());
+        // 非私教共享付款：按课程项平均分摊（封顶顺延），同步各课程已付/余额快照
+        if (targetParticipant == null) {
+            paymentAllocationService.replayAllocations(order);
+        }
         return syncRegistrationReceipt(order, request.getHandledByUserId());
     }
 
@@ -245,6 +251,8 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         payload.put("paymentStatus", order.getPaymentStatus());
         // Pay 更新参与学生快照，保证收据里的分摊金额与 Data Summary、订单详情一致。
         payload.put("participants", receiptParticipantPayloads(order.getId()));
+        // 课程级付款分摊结果（每个课程的应付/已付/余额）
+        payload.put("items", paymentAllocationService.listItemAllocationPayloads(order.getId()));
         payload.put("payments", listPaymentLedger(order.getId()));
         receipt.setReceiptPayload(jsonHelper.toJson(payload));
         receiptRecordMapper.updateById(receipt);
@@ -354,6 +362,15 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
 
     private String resolveRemark(PaymentRecordSaveRequest request, PaymentSplitDTO split) {
         return StringUtils.hasText(split.getRemark()) ? split.getRemark().trim() : request.getRemark();
+    }
+
+    @Override
+    public List<PaymentAllocationService.AllocationPreview> previewAllocation(Long enrollmentOrderId, BigDecimal amount) {
+        EnrollmentOrderEntity order = requireEnrollmentOrder(enrollmentOrderId);
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("INVALID_AMOUNT", "Payment amount must be greater than 0.");
+        }
+        return paymentAllocationService.preview(order, amount);
     }
 
     @Override

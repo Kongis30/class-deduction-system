@@ -383,6 +383,23 @@ export function createPaymentRecord(data: PaymentRecordSavePayload) {
   return http.post<ApiResponse<ReceiptRecordItem>>('/v1/enrollment/payments', data);
 }
 
+// ─── Payment Allocation（课程级付款分摊）────────────────
+export interface PaymentAllocationPreview {
+  enrollmentOrderItemId: EntityId;
+  courseName: string | null;
+  itemAmountDue: number;
+  itemPaidAmount: number;
+  itemBalanceAmount: number;
+  allocatedAmount: number;
+}
+
+export function previewPaymentAllocation(orderId: EntityId, amount: number) {
+  return http.post<ApiResponse<PaymentAllocationPreview[]>>(
+    `/v1/enrollment/payments/order/${orderId}/allocation-preview`,
+    { amount },
+  );
+}
+
 // ─── Payment Methods ─────────────────────────────────
 export function fetchPaymentMethods() {
   return http.get<ApiResponse<PaymentMethodItem[]>>('/v1/enrollment/payment-methods');

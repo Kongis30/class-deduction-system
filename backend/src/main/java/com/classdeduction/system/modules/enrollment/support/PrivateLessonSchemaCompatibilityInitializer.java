@@ -64,6 +64,17 @@ public class PrivateLessonSchemaCompatibilityInitializer {
         addColumnIfMissing("lesson_record", "class_enrollment_id",
                 "bigint DEFAULT NULL COMMENT 'Student class enrollment settled by this record'",
                 "class enrollment cascade support");
+        // 课程级付款分摊（见 doc/migrations/20260919_payment_allocation.sql）
+        createPaymentAllocationTableIfMissing();
+        addColumnIfMissing("enrollment_order_item", "amount_due",
+                "decimal(12,2) DEFAULT NULL COMMENT 'Amount due for this course item (gross + allocated fees - allocated discount)' AFTER price_amount",
+                "course item payment allocation");
+        addColumnIfMissing("enrollment_order_item", "paid_amount",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Cumulative allocated payments for this course item' AFTER amount_due",
+                "course item payment allocation");
+        addColumnIfMissing("enrollment_order_item", "balance_amount",
+                "decimal(12,2) DEFAULT NULL COMMENT 'amount_due - paid_amount' AFTER paid_amount",
+                "course item payment allocation");
     }
 
     private void createTablesIfMissing() {
@@ -141,6 +152,42 @@ public class PrivateLessonSchemaCompatibilityInitializer {
                     KEY idx_order_participant_student (student_id, is_deleted)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
                 """);
+    }
+
+    private void createPaymentAllocationTableIfMissing() {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'payment_allocation'
+                """, Integer.class);
+        if (count != null && count > 0) {
+            return;
+        }
+        jdbcTemplate.execute("""
+                CREATE TABLE payment_allocation (
+                    id bigint NOT NULL,
+                    payment_record_id bigint NOT NULL,
+                    enrollment_order_id bigint NOT NULL,
+                    enrollment_order_item_id bigint NOT NULL,
+                    amount decimal(12,2) NOT NULL,
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    KEY idx_payment_alloc_payment (payment_record_id),
+                    KEY idx_payment_alloc_item (enrollment_order_item_id),
+                    KEY idx_payment_alloc_order (enrollment_order_id),
+                    CONSTRAINT fk_payment_alloc_payment FOREIGN KEY (payment_record_id) REFERENCES payment_record (id),
+                    CONSTRAINT fk_payment_alloc_item FOREIGN KEY (enrollment_order_item_id) REFERENCES enrollment_order_item (id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
+        log.info("Created table payment_allocation for course item payment allocation.");
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String definition) {
