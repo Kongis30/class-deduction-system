@@ -7,7 +7,7 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 
 /**
- * 私教课组的幂等 schema 兼容入口。
+ * 幂等 schema 兼容入口。
  * 线上已有库由应用启动自动补齐结构，完整迁移脚本仍保留在 doc/migrations 供发布审计使用。
  */
 @Slf4j
@@ -56,6 +56,14 @@ public class PrivateLessonSchemaCompatibilityInitializer {
                 "tinyint(1) DEFAULT NULL COMMENT 'Participant dropoff flag snapshot'");
         addColumnIfMissing("enrollment_order_participant", "dropoff_address_snapshot",
                 "varchar(255) DEFAULT NULL COMMENT 'Participant dropoff address snapshot'");
+        // 班课报名单删除级联依赖的列（见 doc/migrations/20260828_sync_local_to_production_schema.sql），
+        // hour_ledger 的删除走裸列名 class_enrollment_id，线上缺列会导致删除报名单 500。
+        addColumnIfMissing("hour_ledger", "class_enrollment_id",
+                "bigint DEFAULT NULL COMMENT 'HOURLY class enrollment affected by this ledger row'",
+                "class enrollment cascade support");
+        addColumnIfMissing("lesson_record", "class_enrollment_id",
+                "bigint DEFAULT NULL COMMENT 'Student class enrollment settled by this record'",
+                "class enrollment cascade support");
     }
 
     private void createTablesIfMissing() {
@@ -136,6 +144,10 @@ public class PrivateLessonSchemaCompatibilityInitializer {
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String definition) {
+        addColumnIfMissing(tableName, columnName, definition, "shared private lesson support");
+    }
+
+    private void addColumnIfMissing(String tableName, String columnName, String definition, String purpose) {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                 FROM information_schema.COLUMNS
@@ -147,6 +159,6 @@ public class PrivateLessonSchemaCompatibilityInitializer {
             return;
         }
         jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN `" + columnName + "` " + definition);
-        log.info("Added {}.{} for shared private lesson support.", tableName, columnName);
+        log.info("Added {}.{} for {}.", tableName, columnName, purpose);
     }
 }
