@@ -21,6 +21,7 @@
           : 'Fill the familiar paper form, save the record, then print the receipt when ready.' }}</p>
       </div>
       <div class="registration-desk__actions">
+        <el-button type="primary" @click="startNewRegistration">New Registration</el-button>
         <el-button class="action-secondary" @click="openCurrentStudentHistory">Find student &amp; history</el-button>
         <el-button v-if="isReadOnly && !editingCorrection" type="primary" @click="startCorrection">Edit Receipt</el-button>
         <template v-if="isReadOnly && editingCorrection">
@@ -755,7 +756,7 @@
 
 <script setup lang="ts">
 import { QuestionFilled } from '@element-plus/icons-vue';
-import { ElMessage, ElNotification } from 'element-plus';
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -3445,6 +3446,41 @@ function buildMoneyPayload(lines: MoneyLine[]) {
       label: line.label.trim(),
       amount: roundMoney(line.amount),
     }));
+}
+
+/**
+ * 点击「New Registration」：不离开页面，清空 URL 模式参数（只读收据/续费），
+ * 重置全部表单状态并重新拉取基础数据，等价于离开再切回报名页的效果。
+ */
+async function startNewRegistration() {
+  if (formHasUnsavedContent()) {
+    try {
+      await ElMessageBox.confirm(
+        'The current form will be cleared. Start a new registration?',
+        'New Registration',
+        { confirmButtonText: 'Start new', cancelButtonText: 'Cancel', type: 'warning' },
+      );
+    } catch {
+      return;
+    }
+  }
+  editingCorrection.value = false;
+  await router.replace({ name: 'registration' });
+  resetForNextRegistration();
+  await loadInitialData();
+}
+
+/** 表单里是否有值得保护的填写内容（学生名、课程行、收据更正中、查看历史订单）。 */
+function formHasUnsavedContent() {
+  if (editingCorrection.value || isReadOnly.value || isRenewalMode.value) {
+    return true;
+  }
+  if (fullStudentName.value.trim()
+      || form.student.guardianPhone.trim()
+      || reusableStudent.value) {
+    return true;
+  }
+  return courseLines.value.some((line) => line.courseProductId || line.coursePriceOptionId);
 }
 
 function resetForNextRegistration() {
