@@ -198,11 +198,20 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 .collect(Collectors.groupingBy(item -> new StudentClassKey(item.getStudentId(), item.getClassId())));
 
         Context context = buildContext(orders, items, packages, classEnrollments);
+        // 行级金额分摊：同一订单的多行按「参与人 → 订单项」分摊整单金额，避免汇总时金额按行数翻倍。
+        Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId = new HashMap<>();
+        for (EnrollmentOrderEntity order : orders) {
+            allocationByOrderId.put(order.getId(), allocateOrderAmounts(order,
+                    itemsByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
+                    participantsByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
+                    paidAmountByParticipant));
+        }
         List<DataSummaryResponseVO.RowVO> rows = buildRows(orderMap, itemsByOrderId, packagesByOrderId,
                         participantsByOrderId, privateLessonGroupIdByOrderId, privateLessonParticipantCountByOrderId,
                         packageByOrderItemId,
                         classEnrollmentByOrderItemId, classEnrollmentsByStudentClass, reviewIssuesByOrderId,
                         latestPaymentMethodByOrderId, latestPaymentMethodByParticipant, paidAmountByParticipant,
+                        allocationByOrderId,
                         studentById, campusById, context)
                 .stream()
                 .filter(this::hasDisplayableStudent)
@@ -355,6 +364,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, String> latestPaymentMethodByOrderId,
             Map<PaymentParticipantKey, String> latestPaymentMethodByParticipant,
             Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
+            Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId,
             Map<Long, StudentEntity> studentById,
             Map<Long, CampusEntity> campusById,
             Context context) {
@@ -383,6 +393,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
                             paidAmountByParticipant,
+                            allocationByOrderId,
                             studentById, campusById, context, today, soonLimit));
                 }
                 continue;
@@ -406,6 +417,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
                             paidAmountByParticipant,
+                            allocationByOrderId,
                             studentById, campusById, context, today, soonLimit));
                 }
             }
@@ -558,6 +570,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                               String paymentMethod,
                                               Map<PaymentParticipantKey, String> latestPaymentMethodByParticipant,
                                               Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
+                                              Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId,
                                               Map<Long, StudentEntity> studentById,
                                               Map<Long, CampusEntity> campusById,
                                               Context context,
@@ -620,6 +633,19 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         BigDecimal rowAmountDue = amount(order.getAmountDue());
         BigDecimal rowPaidAmount = amount(order.getReceivedAmount());
         BigDecimal rowBalanceAmount = amount(order.getBalanceAmount());
+        if (!sharedPrivateLesson) {
+            AllocatedAmounts allocated = allocatedAmounts(allocationByOrderId, order.getId(), participant, item);
+            if (allocated != null) {
+                // 非共享私教的行使用分摊后的金额，保证同一订单各行金额之和等于订单总额。
+                rowPickupFeeAmount = allocated.pickupFeeAmount();
+                rowExtraFeeAmount = allocated.extraFeeAmount();
+                rowDiscountAmount = allocated.discountAmount();
+                rowAmountDue = allocated.amountDue();
+                rowPaidAmount = allocated.paidAmount();
+                rowBalanceAmount = allocated.amountDue().subtract(allocated.paidAmount())
+                        .setScale(2, RoundingMode.HALF_UP);
+            }
+        }
         if (sharedPrivateLesson) {
             rowLinePriceAmount = resolveParticipantGrossAmount(participant, coursePackage, item, order,
                     privateLessonParticipantCount);
@@ -1018,6 +1044,227 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     }
 
     private record PaymentParticipantKey(Long orderId, Integer participantIndex) {
+    }
+
+    /** 行级金额分摊的定位键：参与人索引（可为 null）+ 订单项 ID（可为 null）。 */
+    private record AllocationKey(Integer participantIndex, Long orderItemId) {
+    }
+
+    /** 按订单项分摊后的行级金额。 */
+    private record AllocatedAmounts(BigDecimal pickupFeeAmount,
+                                    BigDecimal extraFeeAmount,
+                                    BigDecimal discountAmount,
+                                    BigDecimal amountDue,
+                                    BigDecimal paidAmount) {
+    }
+
+    /**
+     * 订单级金额按「参与人 → 订单项」两级分摊到行，保证同一订单所有行的金额之和等于订单总额。
+     * 单参与人（或无参与人记录）订单只有一个桶，直接按订单项价格占比拆分；
+     * 无订单项的多参与人订单退化为仅按参与人分桶。
+     */
+    private Map<AllocationKey, AllocatedAmounts> allocateOrderAmounts(EnrollmentOrderEntity order,
+                                                                      List<EnrollmentOrderItemEntity> items,
+                                                                      List<EnrollmentOrderParticipantEntity> participants,
+                                                                      Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant) {
+        Map<AllocationKey, AllocatedAmounts> allocation = new LinkedHashMap<>();
+        if (items.isEmpty()) {
+            if (participants.size() > 1) {
+                participantBucketAmounts(order, participants, paidAmountByParticipant)
+                        .forEach((index, amounts) -> allocation.put(new AllocationKey(index, null), amounts));
+            }
+            return allocation;
+        }
+        List<BigDecimal> itemWeights = itemPriceWeights(items);
+        if (participants.size() <= 1) {
+            Integer participantIndex = participants.isEmpty() ? null : participants.get(0).getParticipantIndex();
+            putItemAllocation(allocation, participantIndex, items, itemWeights,
+                    amount(order.getPickupFeeAmount()), amount(order.getExtraFeeAmount()),
+                    amount(order.getDiscountAmount()), amount(order.getAmountDue()),
+                    amount(order.getReceivedAmount()));
+            return allocation;
+        }
+        participantBucketAmounts(order, participants, paidAmountByParticipant).forEach((index, bucket) ->
+                putItemAllocation(allocation, index, items, itemWeights,
+                        bucket.pickupFeeAmount(), bucket.extraFeeAmount(), bucket.discountAmount(),
+                        bucket.amountDue(), bucket.paidAmount()));
+        return allocation;
+    }
+
+    private void putItemAllocation(Map<AllocationKey, AllocatedAmounts> allocation,
+                                   Integer participantIndex,
+                                   List<EnrollmentOrderItemEntity> items,
+                                   List<BigDecimal> itemWeights,
+                                   BigDecimal pickupFee,
+                                   BigDecimal extraFee,
+                                   BigDecimal discount,
+                                   BigDecimal amountDue,
+                                   BigDecimal paid) {
+        List<BigDecimal> pickupShares = allocateByWeights(pickupFee, itemWeights);
+        List<BigDecimal> extraFeeShares = allocateByWeights(extraFee, itemWeights);
+        List<BigDecimal> discountShares = allocateByWeights(discount, itemWeights);
+        List<BigDecimal> amountDueShares = allocateByWeights(amountDue, itemWeights);
+        List<BigDecimal> paidShares = allocateByWeights(paid, itemWeights);
+        for (int i = 0; i < items.size(); i++) {
+            allocation.put(new AllocationKey(participantIndex, items.get(i).getId()), new AllocatedAmounts(
+                    pickupShares.get(i), extraFeeShares.get(i), discountShares.get(i),
+                    amountDueShares.get(i), paidShares.get(i)));
+        }
+    }
+
+    /** 多参与人订单：先按参与人把整单金额切成桶，参与人快照缺失时回退等分。 */
+    private Map<Integer, AllocatedAmounts> participantBucketAmounts(EnrollmentOrderEntity order,
+                                                                    List<EnrollmentOrderParticipantEntity> participants,
+                                                                    Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant) {
+        List<BigDecimal> dueWeights = participantDueWeights(participants);
+        List<BigDecimal> paidWeights = participantPaidWeights(order, participants, paidAmountByParticipant, dueWeights);
+        List<BigDecimal> pickupShares = allocateByWeights(amount(order.getPickupFeeAmount()), dueWeights);
+        List<BigDecimal> extraFeeShares = allocateByWeights(amount(order.getExtraFeeAmount()), dueWeights);
+        List<BigDecimal> discountShares = allocateByWeights(amount(order.getDiscountAmount()), dueWeights);
+        List<BigDecimal> amountDueShares = allocateByWeights(amount(order.getAmountDue()), dueWeights);
+        List<BigDecimal> paidShares = allocateByWeights(amount(order.getReceivedAmount()), paidWeights);
+        Map<Integer, AllocatedAmounts> buckets = new LinkedHashMap<>();
+        for (int i = 0; i < participants.size(); i++) {
+            buckets.put(participants.get(i).getParticipantIndex(), new AllocatedAmounts(
+                    pickupShares.get(i), extraFeeShares.get(i), discountShares.get(i),
+                    amountDueShares.get(i), paidShares.get(i)));
+        }
+        return buckets;
+    }
+
+    /** 参与人应收权重：全部参与人都有应收快照且合计为正时按快照占比，否则等分。 */
+    private List<BigDecimal> participantDueWeights(List<EnrollmentOrderParticipantEntity> participants) {
+        BigDecimal dueSum = ZERO_AMOUNT;
+        boolean allPresent = true;
+        for (EnrollmentOrderParticipantEntity participant : participants) {
+            if (participant.getAmountDue() == null) {
+                allPresent = false;
+                break;
+            }
+            dueSum = dueSum.add(amount(participant.getAmountDue()));
+        }
+        if (!allPresent || !positive(dueSum)) {
+            return equalWeights(participants.size());
+        }
+        return participants.stream().map(participant -> amount(participant.getAmountDue())).toList();
+    }
+
+    /**
+     * 参与人实付权重：优先用参与人实付快照，其次用按参与人记录的付款流水，最后回退应收权重。
+     */
+    private List<BigDecimal> participantPaidWeights(EnrollmentOrderEntity order,
+                                                    List<EnrollmentOrderParticipantEntity> participants,
+                                                    Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
+                                                    List<BigDecimal> dueWeights) {
+        List<BigDecimal> snapshotWeights = new ArrayList<>();
+        BigDecimal snapshotSum = ZERO_AMOUNT;
+        boolean allPresent = true;
+        for (EnrollmentOrderParticipantEntity participant : participants) {
+            if (participant.getPaidAmount() == null) {
+                allPresent = false;
+                break;
+            }
+            BigDecimal paid = amount(participant.getPaidAmount());
+            snapshotWeights.add(paid);
+            snapshotSum = snapshotSum.add(paid);
+        }
+        if (allPresent && positive(snapshotSum)) {
+            return snapshotWeights;
+        }
+        List<BigDecimal> recordWeights = new ArrayList<>();
+        BigDecimal recordSum = ZERO_AMOUNT;
+        for (EnrollmentOrderParticipantEntity participant : participants) {
+            BigDecimal paid = amount(paidAmountByParticipant.get(
+                    new PaymentParticipantKey(order.getId(), participant.getParticipantIndex())));
+            recordWeights.add(paid);
+            recordSum = recordSum.add(paid);
+        }
+        if (positive(recordSum)) {
+            return recordWeights;
+        }
+        return dueWeights;
+    }
+
+    /** 订单项分摊权重：按 priceAmount 占比；价格缺失或存在非正价格时回退等分。 */
+    private List<BigDecimal> itemPriceWeights(List<EnrollmentOrderItemEntity> items) {
+        List<BigDecimal> weights = new ArrayList<>();
+        BigDecimal weightSum = ZERO_AMOUNT;
+        boolean allPositive = true;
+        for (EnrollmentOrderItemEntity item : items) {
+            BigDecimal price = item.getPriceAmount() == null ? ZERO_AMOUNT : amount(item.getPriceAmount());
+            if (!positive(price)) {
+                allPositive = false;
+            }
+            weights.add(price);
+            weightSum = weightSum.add(price);
+        }
+        if (!allPositive || !positive(weightSum)) {
+            return equalWeights(items.size());
+        }
+        return weights;
+    }
+
+    private List<BigDecimal> equalWeights(int size) {
+        List<BigDecimal> weights = new ArrayList<>();
+        for (int i = 0; i < size; i++) {
+            weights.add(BigDecimal.ONE);
+        }
+        return weights;
+    }
+
+    /**
+     * 按权重把金额拆成 n 份：每份 scale=2 向下取整，尾差并入最后一份，保证合计精确等于总额。
+     */
+    private List<BigDecimal> allocateByWeights(BigDecimal total, List<BigDecimal> weights) {
+        BigDecimal normalizedTotal = amount(total);
+        int size = weights.size();
+        List<BigDecimal> shares = new ArrayList<>();
+        if (size == 0) {
+            return shares;
+        }
+        if (size == 1) {
+            shares.add(normalizedTotal);
+            return shares;
+        }
+        BigDecimal weightSum = ZERO_AMOUNT;
+        for (BigDecimal weight : weights) {
+            weightSum = weightSum.add(weight == null ? ZERO_AMOUNT : weight);
+        }
+        BigDecimal allocated = ZERO_AMOUNT;
+        for (int i = 0; i < size; i++) {
+            if (i == size - 1) {
+                shares.add(normalizedTotal.subtract(allocated).setScale(2, RoundingMode.HALF_UP));
+                break;
+            }
+            BigDecimal weight = weights.get(i) == null ? ZERO_AMOUNT : weights.get(i);
+            BigDecimal share = weightSum.compareTo(ZERO_AMOUNT) == 0
+                    ? normalizedTotal.divide(BigDecimal.valueOf(size), 2, RoundingMode.DOWN)
+                    : normalizedTotal.multiply(weight).divide(weightSum, 2, RoundingMode.DOWN);
+            shares.add(share);
+            allocated = allocated.add(share);
+        }
+        return shares;
+    }
+
+    private AllocatedAmounts allocatedAmounts(Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId,
+                                              Long orderId,
+                                              EnrollmentOrderParticipantEntity participant,
+                                              EnrollmentOrderItemEntity item) {
+        Map<AllocationKey, AllocatedAmounts> allocation = allocationByOrderId.get(orderId);
+        if (allocation == null || allocation.isEmpty()) {
+            return null;
+        }
+        Integer participantIndex = participant == null ? null : participant.getParticipantIndex();
+        Long itemId = item == null ? null : item.getId();
+        AllocatedAmounts exact = allocation.get(new AllocationKey(participantIndex, itemId));
+        if (exact != null) {
+            return exact;
+        }
+        // 兼容参与人索引缺失的行：回退到仅按订单项匹配的份额。
+        if (participantIndex != null) {
+            return allocation.get(new AllocationKey(null, itemId));
+        }
+        return null;
     }
 
     private record GroupLabel(String key, String name) {

@@ -438,6 +438,96 @@ class DataSummaryServiceImplTest {
                 });
     }
 
+    @Test
+    void shouldSplitOrderAmountsAcrossOrderItemsByPriceShare() {
+        // 复刻多课程报名场景：课后班 3499 + 周六班 1399，整单折扣 99，实付 4799。
+        EnrollmentOrderEntity order = order(1L, "4799.00", "4799.00", "0.00");
+        order.setDiscountAmount(new BigDecimal("99.00"));
+        EnrollmentOrderItemEntity afterSchool = item(21L, 1, "3499.00");
+        EnrollmentOrderItemEntity saturday = item(22L, 2, "1399.00");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(afterSchool, saturday));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "4799.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::paidAmount)
+                .containsExactly(new BigDecimal("3428.27"), new BigDecimal("1370.73"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::amountDue)
+                .containsExactly(new BigDecimal("3428.27"), new BigDecimal("1370.73"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::discountAmount)
+                .containsExactly(new BigDecimal("70.72"), new BigDecimal("28.28"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::balanceAmount)
+                .containsExactly(new BigDecimal("0.00"), new BigDecimal("0.00"));
+    }
+
+    @Test
+    void shouldSplitAmountsEquallyWhenItemPricesAreMissing() {
+        EnrollmentOrderEntity order = order(1L, "200.00", "100.00", "100.00");
+        EnrollmentOrderItemEntity first = item(21L, 1, null);
+        EnrollmentOrderItemEntity second = item(22L, 2, null);
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::paidAmount)
+                .containsExactly(new BigDecimal("50.00"), new BigDecimal("50.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::amountDue)
+                .containsExactly(new BigDecimal("100.00"), new BigDecimal("100.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::balanceAmount)
+                .containsExactly(new BigDecimal("-50.00"), new BigDecimal("-50.00"));
+    }
+
+    @Test
+    void shouldKeepSingleItemOrderAmountsUnchanged() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "60.00", "40.00");
+        EnrollmentOrderItemEntity only = item(21L, 1, "100.00");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(only));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "60.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.amountDue()).isEqualTo(new BigDecimal("100.00"));
+            assertThat(row.paidAmount()).isEqualTo(new BigDecimal("60.00"));
+            assertThat(row.balanceAmount()).isEqualTo(new BigDecimal("-40.00"));
+        });
+    }
+
+    @Test
+    void shouldSplitAmountsAcrossParticipantsAndItemsWithoutDuplication() {
+        EnrollmentOrderEntity order = order(1L, "200.00", "100.00", "100.00");
+        EnrollmentOrderItemEntity first = item(21L, 1, "300.00");
+        EnrollmentOrderItemEntity second = item(22L, 2, "100.00");
+        EnrollmentOrderParticipantEntity firstParticipant = participant(1L, 1, "Student 1");
+        EnrollmentOrderParticipantEntity secondParticipant = participant(2L, 2, "Student 2");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(firstParticipant, secondParticipant));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).hasSize(4);
+        BigDecimal paidSum = response.rows().stream()
+                .map(DataSummaryResponseVO.RowVO::paidAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal dueSum = response.rows().stream()
+                .map(DataSummaryResponseVO.RowVO::amountDue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        assertThat(paidSum).isEqualByComparingTo("100.00");
+        assertThat(dueSum).isEqualByComparingTo("200.00");
+        assertThat(response.totalIncomeAmount()).isEqualByComparingTo("100.00");
+    }
+
     private EnrollmentOrderEntity order(Long id, String amountDue, String receivedAmount, String balanceAmount) {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(id);
@@ -467,6 +557,18 @@ class DataSummaryServiceImplTest {
         participant.setParticipantIndex(index);
         participant.setStudentNameSnapshot(name);
         return participant;
+    }
+
+    private EnrollmentOrderItemEntity item(long id, int lineNo, String priceAmount) {
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(id);
+        item.setEnrollmentOrderId(1L);
+        item.setLineNo(lineNo);
+        item.setCourseType("GROUP");
+        if (priceAmount != null) {
+            item.setPriceAmount(new BigDecimal(priceAmount));
+        }
+        return item;
     }
 
     private CoursePackageEntity packageForParticipant(Long id, Long studentId, String originalAmount) {
