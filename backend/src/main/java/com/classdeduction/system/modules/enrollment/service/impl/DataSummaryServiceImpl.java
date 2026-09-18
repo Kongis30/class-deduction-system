@@ -1093,13 +1093,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             putItemAllocation(allocation, participantIndex, items, itemWeights,
                     amount(order.getPickupFeeAmount()), amount(order.getExtraFeeAmount()),
                     amount(order.getDiscountAmount()), amount(order.getAmountDue()),
-                    amount(order.getReceivedAmount()));
+                    amount(order.getReceivedAmount()), true);
             return allocation;
         }
         participantBucketAmounts(order, participants, paidAmountByParticipant).forEach((index, bucket) ->
                 putItemAllocation(allocation, index, items, itemWeights,
                         bucket.pickupFeeAmount(), bucket.extraFeeAmount(), bucket.discountAmount(),
-                        bucket.amountDue(), bucket.paidAmount()));
+                        bucket.amountDue(), bucket.paidAmount(), false));
         return allocation;
     }
 
@@ -1111,17 +1111,37 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                    BigDecimal extraFee,
                                    BigDecimal discount,
                                    BigDecimal amountDue,
-                                   BigDecimal paid) {
+                                   BigDecimal paid,
+                                   boolean preferStoredCourseAmounts) {
         List<BigDecimal> pickupShares = allocateByWeights(pickupFee, itemWeights);
         List<BigDecimal> extraFeeShares = allocateByWeights(extraFee, itemWeights);
-        List<BigDecimal> discountShares = allocateByWeights(discount, itemWeights);
-        List<BigDecimal> amountDueShares = allocateByWeights(amountDue, itemWeights);
-        List<BigDecimal> paidShares = allocateByWeights(paid, itemWeights);
+        List<BigDecimal> discountShares = storedShares(items, EnrollmentOrderItemEntity::getDiscountAmount,
+                discount, itemWeights, preferStoredCourseAmounts);
+        List<BigDecimal> amountDueShares = storedShares(items, EnrollmentOrderItemEntity::getAmountDue,
+                amountDue, itemWeights, preferStoredCourseAmounts);
+        List<BigDecimal> paidShares = storedShares(items, EnrollmentOrderItemEntity::getPaidAmount,
+                paid, itemWeights, preferStoredCourseAmounts);
         for (int i = 0; i < items.size(); i++) {
             allocation.put(new AllocationKey(participantIndex, items.get(i).getId()), new AllocatedAmounts(
                     pickupShares.get(i), extraFeeShares.get(i), discountShares.get(i),
                     amountDueShares.get(i), paidShares.get(i)));
         }
+    }
+
+    /** 优先采用课程明细快照；旧订单快照缺失或合计不一致时，兼容原订单级加权分配。 */
+    private List<BigDecimal> storedShares(List<EnrollmentOrderItemEntity> items,
+                                          Function<EnrollmentOrderItemEntity, BigDecimal> valueOf,
+                                          BigDecimal expectedTotal,
+                                          List<BigDecimal> fallbackWeights,
+                                          boolean preferStoredCourseAmounts) {
+        if (!preferStoredCourseAmounts || items.stream().anyMatch(item -> valueOf.apply(item) == null)) {
+            return allocateByWeights(expectedTotal, fallbackWeights);
+        }
+        List<BigDecimal> shares = items.stream().map(item -> amount(valueOf.apply(item))).toList();
+        BigDecimal storedTotal = shares.stream().reduce(ZERO_AMOUNT, BigDecimal::add);
+        return storedTotal.subtract(expectedTotal).abs().compareTo(new BigDecimal("0.01")) <= 0
+                ? shares
+                : allocateByWeights(expectedTotal, fallbackWeights);
     }
 
     /** 多参与人订单：先按参与人把整单金额切成桶，参与人快照缺失时回退等分。 */

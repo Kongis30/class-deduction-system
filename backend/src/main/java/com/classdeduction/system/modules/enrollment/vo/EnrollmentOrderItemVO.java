@@ -29,6 +29,7 @@ public record EnrollmentOrderItemVO(
         BigDecimal priceAmount,
         BigDecimal originalPriceAmount,
         Boolean manualPriceOverride,
+        BigDecimal discountAmount,
         BigDecimal amountDue,
         BigDecimal paidAmount,
         BigDecimal balanceAmount,

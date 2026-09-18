@@ -160,6 +160,7 @@ export interface RegistrationCourseItemPayload {
   priceAmount?: number;
   originalPriceAmount?: number;
   manualPriceOverride?: boolean;
+  discountAmount?: number;
   oneOnOneHours?: number;
   openingUsedHours?: number;
   oneOnOneUnits?: number;
@@ -175,6 +176,12 @@ export interface RegistrationFeeLinePayload {
   label: string;
   amount: number;
   note?: string;
+  orderItemLineNo?: number;
+}
+
+export interface RegistrationCoursePaymentAllocationPayload {
+  orderItemLineNo: number;
+  amount: number;
 }
 
 export interface RegistrationPaymentPayload {
@@ -185,6 +192,7 @@ export interface RegistrationPaymentPayload {
   handledByUserId?: EntityId;
   handledByName?: string;
   remark?: string;
+  allocations?: RegistrationCoursePaymentAllocationPayload[];
 }
 
 export interface RegistrationParticipantBillingPayload {
@@ -366,6 +374,10 @@ export interface PaymentSplit {
   amount: number;
   paidAt?: string;
   participantIndex?: number;
+  allocations?: Array<{
+    enrollmentOrderItemId: EntityId;
+    amount: number;
+  }>;
   handledByName?: string;
   remark?: string;
 }

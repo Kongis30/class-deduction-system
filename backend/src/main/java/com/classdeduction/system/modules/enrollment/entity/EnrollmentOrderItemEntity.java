@@ -68,6 +68,9 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
 
     private Boolean manualPriceOverride;
 
+    /** 课程级优惠快照；订单级 discount_amount 为所有课程优惠之和。 */
+    private BigDecimal discountAmount;
+
     /** 课程项应收：item 价格 + 按比例分摊的附加费 - 按比例分摊的折扣 */
     private BigDecimal amountDue;
 

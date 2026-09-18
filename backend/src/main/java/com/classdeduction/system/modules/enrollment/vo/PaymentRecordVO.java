@@ -5,6 +5,7 @@ import lombok.Builder;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 支付记录响应结构。
@@ -21,6 +22,10 @@ public record PaymentRecordVO(
         BigDecimal amount,
         LocalDateTime paidAt,
         String handledByName,
-        String remark
+        String remark,
+        List<CourseAllocationVO> allocations
 ) {
+
+    public record CourseAllocationVO(Long enrollmentOrderItemId, BigDecimal amount) {
+    }
 }

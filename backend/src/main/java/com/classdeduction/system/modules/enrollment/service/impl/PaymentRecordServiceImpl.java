@@ -115,6 +115,37 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
                 throw new BusinessException("PAYMENT_METHOD_DETAIL_REQUIRED",
                         "Payment method details are required when using Other.");
             }
+            if (split.getAllocations() != null && !split.getAllocations().isEmpty()) {
+                if (split.getParticipantIndex() != null) {
+                    throw new BusinessException("PAYMENT_ALLOCATION_SCOPE_MISMATCH",
+                            "A participant-specific payment cannot also allocate by course.");
+                }
+                for (PaymentSplitDTO.CoursePaymentAllocationDTO allocation : split.getAllocations()) {
+                    if (allocation == null || allocation.getEnrollmentOrderItemId() == null
+                            || allocation.getAmount() == null
+                            || allocation.getAmount().compareTo(BigDecimal.ZERO) <= 0
+                            || allocation.getAmount().stripTrailingZeros().scale() > 2) {
+                        throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
+                                "Each course allocation must have a course and a positive amount with at most 2 decimals.");
+                    }
+                }
+                BigDecimal allocationTotal = split.getAllocations().stream()
+                        .map(PaymentSplitDTO.CoursePaymentAllocationDTO::getAmount)
+                        .reduce(BigDecimal.ZERO, BigDecimal::add);
+                if (allocationTotal.compareTo(split.getAmount()) != 0) {
+                    throw new BusinessException("PAYMENT_ALLOCATION_TOTAL_MISMATCH",
+                            "Course allocations must add up to each payment method amount.");
+                }
+                long uniqueItemCount = split.getAllocations().stream()
+                        .map(PaymentSplitDTO.CoursePaymentAllocationDTO::getEnrollmentOrderItemId)
+                        .filter(Objects::nonNull)
+                        .distinct()
+                        .count();
+                if (uniqueItemCount != split.getAllocations().size()) {
+                    throw new BusinessException("PAYMENT_ALLOCATION_DUPLICATE_ITEM",
+                            "Each course can appear only once in a payment allocation.");
+                }
+            }
         }
 
         // 3. Calculate total from splits
@@ -180,12 +211,18 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
             paymentRecord.setRemark(resolveRemark(request, split));
             paymentRecordMapper.insert(paymentRecord);
             paymentRecords.add(paymentRecord);
+            if (split.getAllocations() != null && !split.getAllocations().isEmpty()) {
+                Map<Long, BigDecimal> allocations = new LinkedHashMap<>();
+                split.getAllocations().forEach(allocation -> allocations.put(
+                        allocation.getEnrollmentOrderItemId(), allocation.getAmount()));
+                paymentAllocationService.recordExplicitAllocations(paymentRecord, order.getId(), allocations);
+            }
         }
 
         // 支付流水保留为审计账本；报名收据只维护这一笔报名的累计支付状态，不再新增支付收据。
         updateEnrollmentOrderPayment(order, totalAmount);
         syncParticipantPaymentSnapshots(order.getId());
-        // 非私教共享付款：按课程项平均分摊（封顶顺延），同步各课程已付/余额快照
+        // 非多人私教付款：保留明确课程分配，并为旧流水补齐兼容分配。
         if (targetParticipant == null) {
             paymentAllocationService.replayAllocations(order);
         }

@@ -824,6 +824,9 @@ function openOrderAction(action: 'pay' | 'refund') {
       orderId: String(row.orderId),
       action,
       productName: row.courseProductName || undefined,
+      orderItemId: action === 'pay' && row.orderItemId != null
+        ? String(row.orderItemId)
+        : undefined,
       participantIndex: (action === 'pay' || action === 'refund') && row.participantIndex != null
         ? String(row.participantIndex)
         : undefined,

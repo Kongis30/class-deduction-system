@@ -10,6 +10,7 @@ Run from this `database` directory so the `SOURCE` path inside the seed file res
 cd deploy/database
 mysql -uroot -p < init_schema_current.sql
 mysql -uroot -p < init_seed_required.sql
+mysql -uroot -p class_deduction_system < migrations/20260919_payment_allocation.sql
 ```
 
 If the SQL client does not support MySQL `SOURCE`, run the course matrix seed separately after `init_seed_required.sql`:
@@ -23,6 +24,7 @@ mysql -uroot -p class_deduction_system < 20260727_seed_ppt_course_matrix.sql
 - `init_schema_current.sql`: current schema-only dump, including `CREATE DATABASE`, `USE`, tables, indexes, foreign keys, checks, triggers/routines/events if present.
 - `init_seed_required.sql`: required baseline data only. It intentionally avoids demo students, demo teachers, orders, payments, and E2E records.
 - `20260727_seed_ppt_course_matrix.sql`: customer course matrix seed loaded by `init_seed_required.sql`.
+- `migrations/20260919_payment_allocation.sql`: adds course-level discount/payment snapshots and their allocation ledger; run after initializing the base schema.
 
 ## Required Seed Data
 

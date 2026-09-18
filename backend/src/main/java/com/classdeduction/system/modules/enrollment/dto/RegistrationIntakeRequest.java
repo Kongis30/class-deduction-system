@@ -8,6 +8,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.Min;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -219,6 +220,10 @@ public class RegistrationIntakeRequest {
 
         @Schema(description = "Fee note")
         private String note;
+
+        @Min(value = 1, message = "Course line number must be at least 1")
+        @Schema(description = "Course line receiving this discount; omitted only for legacy clients")
+        private Integer orderItemLineNo;
     }
 
     @Getter
@@ -250,6 +255,25 @@ public class RegistrationIntakeRequest {
 
         @Schema(description = "Payment remark")
         private String remark;
+
+        @Valid
+        @Schema(description = "Course-level portions of this payment")
+        private List<CoursePaymentAllocationPayload> allocations;
+    }
+
+    @Getter
+    @Setter
+    @Schema(description = "A payment portion assigned to one course line")
+    public static class CoursePaymentAllocationPayload {
+
+        @NotNull(message = "Course line number is required")
+        @Min(value = 1, message = "Course line number must be at least 1")
+        private Integer orderItemLineNo;
+
+        @NotNull(message = "Course payment amount is required")
+        @DecimalMin(value = "0.01", message = "Course payment amount must be greater than zero")
+        @Digits(integer = 12, fraction = 2, message = "Course payment amount must use at most 2 decimal places")
+        private BigDecimal amount;
     }
 
     @Getter

@@ -606,7 +606,27 @@
               <el-button text size="small" @click="openDiscountPresetManagement">Manage presets</el-button>
             </div>
           </div>
-          <div v-for="(discount, index) in activeDiscountLines" :key="discount.rowKey" class="adjustment-row">
+          <div
+            v-for="(discount, index) in activeDiscountLines"
+            :key="discount.rowKey"
+            class="adjustment-row"
+            :class="{ 'adjustment-row--course-discount': !activeParticipantBilling }"
+          >
+            <el-select
+              v-if="!activeParticipantBilling"
+              v-model="discount.courseRowKey"
+              class="discount-course-select"
+              placeholder="Course"
+              :disabled="courseLines.length === 1"
+              @change="recalculatePresetDiscount(discount)"
+            >
+              <el-option
+                v-for="(line, lineIndex) in courseLines"
+                :key="line.rowKey"
+                :label="courseLineOptionLabel(line, lineIndex)"
+                :value="line.rowKey"
+              />
+            </el-select>
             <div class="discount-preset-control">
               <el-select v-model="discount.presetId" placeholder="Select discount" @change="applyDiscountPreset(discount)">
                 <el-option label="Custom discount" value="__custom__" />
@@ -649,6 +669,21 @@
               class="payment-other-method"
               placeholder="Describe the payment method"
             />
+            <div v-if="!activeParticipantBilling && courseLines.length > 1" class="payment-course-allocation-inputs">
+              <label v-for="(line, lineIndex) in courseLines" :key="line.rowKey">
+                <span>{{ courseLineOptionLabel(line, lineIndex) }}</span>
+                <el-input-number
+                  :model-value="payment.courseAllocations?.[line.rowKey] ?? 0"
+                  :min="0"
+                  :precision="2"
+                  :controls="false"
+                  @update:model-value="setPaymentCourseAllocation(payment, line.rowKey, $event)"
+                />
+              </label>
+              <small :class="{ 'payment-allocation-error': paymentAllocationRemainder(payment) !== 0 }">
+                Assigned {{ formatMoney(paymentCourseAllocationTotal(payment)) }} / {{ formatMoney(payment.amount) }}
+              </small>
+            </div>
           </div>
           <el-button class="action-secondary" text @click="addActivePaymentLine">Add payment</el-button>
         </div>
@@ -834,6 +869,7 @@ type DiscountPresetSelection = EntityId | '__custom__';
 
 interface DiscountLine extends MoneyLine {
   presetId: DiscountPresetSelection;
+  courseRowKey: string;
 }
 
 interface PaymentLine {
@@ -845,6 +881,7 @@ interface PaymentLine {
   handledByName?: string;
   remark?: string;
   paymentType?: string;
+  courseAllocations: Record<string, number>;
 }
 
 interface RegistrationForm {
@@ -1897,10 +1934,9 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   if (extraFees.value.length === 0) {
     extraFees.value = [createMoneyLineWithAmount('Other fee', firstPositiveNumber(getNumber(receiptPayload, 'extraFeeAmount'), order.extraFeeAmount))];
   }
-  discounts.value = getMoneyLines(receiptPayload, 'discounts')
-    .map((discount) => createDiscountLine(discount.label, discount.amount));
+  discounts.value = historicalDiscountLines(receiptPayload, order);
   if (discounts.value.length === 0) {
-    discounts.value = [createDiscountLine('Custom discount', firstPositiveNumber(getNumber(receiptPayload, 'discountAmount'), order.discountAmount))];
+    discounts.value = [createDiscountLine('Custom discount')];
   }
 
   // 订单支付流水是报名收据的实时账本；收据 payload 只保留报名信息，不能覆盖后续 Pay 记录。
@@ -1917,6 +1953,10 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
       handledByName: payment.handledByName,
       remark: payment.remark,
       paymentType: payment.paymentType,
+      courseAllocations: Object.fromEntries((payment.allocations ?? []).flatMap((allocation) => {
+        const course = courseLines.value.find((line) => String(line.orderItemId) === String(allocation.enrollmentOrderItemId));
+        return course ? [[course.rowKey, numeric(allocation.amount)]] : [];
+      })),
     }));
   const savedPayments = getHistoricalPayments(receiptPayload);
   payments.value = livePayments.length > 0 ? livePayments : savedPayments;
@@ -2153,12 +2193,13 @@ function createMoneyLineWithAmount(label: string, amount: number): MoneyLine {
   };
 }
 
-function createDiscountLine(label = 'Custom discount', amount = 0): DiscountLine {
+function createDiscountLine(label = 'Custom discount', amount = 0, courseRowKey = courseLines.value[0]?.rowKey ?? ''): DiscountLine {
   return {
     rowKey: `discount-${++rowSeed}`,
     presetId: '__custom__',
     label,
     amount: roundMoney(amount),
+    courseRowKey,
   };
 }
 
@@ -2169,6 +2210,7 @@ function createPaymentLine(): PaymentLine {
     amount: 0,
     paidAt: today,
     remark: '',
+    courseAllocations: {},
   };
 }
 
@@ -2177,9 +2219,20 @@ function addCourseLine() {
 }
 
 function removeCourseLine(index: number) {
-  if (courseLines.value.length > 1) {
-    courseLines.value.splice(index, 1);
+  if (courseLines.value.length <= 1) {
+    return;
   }
+  const line = courseLines.value[index];
+  if (!line) return;
+  const hasDiscount = discounts.value.some((discount) =>
+    discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
+  const hasPayment = payments.value.some((payment) =>
+    numeric(payment.courseAllocations?.[line.rowKey]) > 0);
+  if (hasDiscount || hasPayment) {
+    ElMessage.warning('Move this course’s discount and payment allocations before removing it.');
+    return;
+  }
+  courseLines.value.splice(index, 1);
 }
 
 function addExtraFee() {
@@ -2257,9 +2310,120 @@ function recalculatePresetDiscount(discount: DiscountLine) {
   if (!preset) {
     return;
   }
+  const courseLine = courseLines.value.find((line) => line.rowKey === discount.courseRowKey);
+  const baseAmount = courseLine ? numeric(courseLine.priceAmount) : discountableAmount.value;
   discount.amount = preset.discountType === 'PERCENTAGE'
-    ? roundMoney(discountableAmount.value * numeric(preset.discountValue) / 100)
+    ? roundMoney(baseAmount * numeric(preset.discountValue) / 100)
     : roundMoney(preset.discountValue);
+}
+
+function courseLineOptionLabel(line: RegistrationCourseLine, index: number) {
+  return printCourseProductLabel(line) || line.detail || `Course ${index + 1}`;
+}
+
+function courseDiscountAmount(courseRowKey: string) {
+  if (isSharedPrivateLesson.value) {
+    return 0;
+  }
+  return roundMoney(discounts.value
+    .filter((discount) => discount.courseRowKey === courseRowKey)
+    .reduce((total, discount) => total + numeric(discount.amount), 0));
+}
+
+function paymentCourseAllocationTotal(payment: PaymentLine) {
+  return roundMoney(Object.values(payment.courseAllocations ?? {})
+    .reduce((total, amount) => total + numeric(amount), 0));
+}
+
+function paymentAllocationRemainder(payment: PaymentLine) {
+  return roundMoney(numeric(payment.amount) - paymentCourseAllocationTotal(payment));
+}
+
+function setPaymentCourseAllocation(payment: PaymentLine, courseRowKey: string, value: number | undefined) {
+  payment.courseAllocations[courseRowKey] = roundMoney(Math.max(0, numeric(value)));
+}
+
+function buildCoursePaymentAllocations(payment: PaymentLine) {
+  if (courseLines.value.length === 1) {
+    return [{ orderItemLineNo: 1, amount: roundMoney(payment.amount) }];
+  }
+  return courseLines.value
+    .map((line, index) => ({
+      orderItemLineNo: index + 1,
+      amount: roundMoney(payment.courseAllocations?.[line.rowKey] ?? 0),
+    }))
+    .filter((allocation) => allocation.amount > 0);
+}
+
+function courseAmountDue(line: RegistrationCourseLine, index: number) {
+  const tuition = courseLines.value.reduce((total, item) => total + numeric(item.priceAmount), 0);
+  const fees = serviceFeeTotal.value + extraFeeTotal.value;
+  const feeShareFor = (item: RegistrationCourseLine) => tuition > 0
+    ? Math.floor((fees * numeric(item.priceAmount) / tuition + 1e-8) * 100) / 100
+    : Math.floor((fees / courseLines.value.length + 1e-8) * 100) / 100;
+  const feeShare = index === courseLines.value.length - 1
+    ? roundMoney(fees - courseLines.value.slice(0, index).reduce((total, item) => total + feeShareFor(item), 0))
+    : feeShareFor(line);
+  return roundMoney(numeric(line.priceAmount) + feeShare - courseDiscountAmount(line.rowKey));
+}
+
+function historicalDiscountLines(
+  receiptPayload: Record<string, unknown> | null,
+  order: EnrollmentOrderDetailItem,
+) {
+  const saved = getMoneyLines(receiptPayload, 'discounts');
+  const totalDiscount = firstPositiveNumber(getNumber(receiptPayload, 'discountAmount'), order.discountAmount);
+  if (courseLines.value.length <= 1) {
+    const lines = saved.map((discount) => createDiscountLine(discount.label, discount.amount));
+    return lines.length > 0 || totalDiscount <= 0
+      ? lines
+      : [createDiscountLine('Custom discount', totalDiscount)];
+  }
+
+  const savedWithCourse = getArray(receiptPayload, 'discounts');
+  if (savedWithCourse.some((discount) => {
+    const lineNo = getNumber(discount, 'orderItemLineNo');
+    return Number.isInteger(lineNo) && lineNo >= 1;
+  })) {
+    return savedWithCourse
+      .map((discount) => {
+        const lineNo = getNumber(discount, 'orderItemLineNo');
+        const line = courseLines.value.find((course, index) => index + 1 === lineNo);
+        return line
+          ? createDiscountLine(getString(discount, 'label') || 'Discount', getNumber(discount, 'amount'), line.rowKey)
+          : null;
+      })
+      .filter((discount): discount is DiscountLine => discount !== null);
+  }
+
+  const itemDiscounts = order.items
+    .filter((item) => numeric(item.discountAmount) > 0)
+    .flatMap((item) => {
+      const line = courseLines.value.find((course) => String(course.orderItemId) === String(item.id));
+      return line ? [createDiscountLine('Discount', numeric(item.discountAmount), line.rowKey)] : [];
+    });
+  if (itemDiscounts.length > 0
+      && Math.abs(roundMoney(itemDiscounts.reduce((sum, line) => sum + line.amount, 0)) - totalDiscount) <= 0.01) {
+    return itemDiscounts;
+  }
+
+  // 旧收据没有课程归属时，按课程价格沿用旧的比例分配，避免编辑后把整笔优惠误挂到首课。
+  const tuition = courseLines.value.reduce((total, line) => total + numeric(line.priceAmount), 0);
+  const sourceDiscounts = saved.length > 0 ? saved : totalDiscount > 0
+    ? [{ label: 'Custom discount', amount: totalDiscount }]
+    : [];
+  return sourceDiscounts.flatMap((discount) => {
+    let assigned = 0;
+    return courseLines.value.map((line, index) => {
+      const amount = index === courseLines.value.length - 1
+        ? roundMoney(discount.amount - assigned)
+        : roundMoney(tuition > 0
+          ? discount.amount * numeric(line.priceAmount) / tuition
+          : discount.amount / courseLines.value.length);
+      assigned = roundMoney(assigned + amount);
+      return createDiscountLine(discount.label, amount, line.rowKey);
+    }).filter((line) => line.amount > 0);
+  });
 }
 
 function addPaymentLine() {
@@ -3010,6 +3174,30 @@ function validateForm() {
   } else {
     validateMoneyLines(discounts.value, 'Discount', errors);
     validatePaymentLines(payments.value, 'Payment', errors);
+    discounts.value.forEach((discount, index) => {
+      if (discount.amount > 0 && !courseLines.value.some((line) => line.rowKey === discount.courseRowKey)) {
+        errors.push(`Discount row ${index + 1}: assign the discount to a course.`);
+      }
+    });
+    courseLines.value.forEach((line, index) => {
+      if (courseAmountDue(line, index) < 0) {
+        errors.push(`Course row ${index + 1}: discount cannot exceed this course's amount due.`);
+      }
+    });
+    if (courseLines.value.length > 1) {
+      payments.value.forEach((payment, index) => {
+        if (payment.amount > 0 && paymentAllocationRemainder(payment) !== 0) {
+          errors.push(`Payment row ${index + 1}: assign the full payment amount to courses.`);
+        }
+      });
+      courseLines.value.forEach((line, lineIndex) => {
+        const allocated = payments.value.reduce((sum, payment) =>
+          sum + numeric(payment.courseAllocations?.[line.rowKey]), 0);
+        if (roundMoney(allocated) > courseAmountDue(line, lineIndex)) {
+          errors.push(`Course row ${lineIndex + 1}: allocated payments exceed this course's amount due.`);
+        }
+      });
+    }
   }
   return errors;
 }
@@ -3377,6 +3565,7 @@ function buildPayload(): RegistrationIntakePayload {
       priceAmount: roundMoney(line.priceAmount),
       originalPriceAmount: line.originalPriceAmount,
       manualPriceOverride: line.manualPriceOverride,
+      discountAmount: isSharedPrivateLesson.value ? undefined : courseDiscountAmount(line.rowKey),
       oneOnOneHours: isOneOnOneLine(line) ? line.oneOnOneHours : undefined,
       oneOnOneBonusHours: isOneOnOneLine(line) && numeric(line.oneOnOneBonusHours) > 0 ? line.oneOnOneBonusHours : undefined,
       openingUsedHours: isOneOnOneLine(line) && numeric(line.openingUsedHours) > 0 ? line.openingUsedHours : undefined,
@@ -3395,7 +3584,9 @@ function buildPayload(): RegistrationIntakePayload {
     extraFeeAmount: roundMoney(extraFeeTotal.value),
     extraFees: buildMoneyPayload(extraFees.value),
     discountAmount: roundMoney(discountTotal.value),
-    discounts: buildMoneyPayload(discounts.value),
+    discounts: isSharedPrivateLesson.value
+      ? buildMoneyPayload(discounts.value)
+      : buildCourseDiscountPayload(),
     payments: isSharedPrivateLesson.value
       ? undefined
       : payments.value
@@ -3406,6 +3597,7 @@ function buildPayload(): RegistrationIntakePayload {
           paidAt: toLocalDateTime(payment.paidAt),
           handledByName: form.handledByName.trim(),
           remark: payment.remark?.trim() || undefined,
+          allocations: buildCoursePaymentAllocations(payment),
         })),
     receiptOptions: {
       issueReceipt: true,
@@ -3446,6 +3638,19 @@ function buildMoneyPayload(lines: MoneyLine[]) {
       label: line.label.trim(),
       amount: roundMoney(line.amount),
     }));
+}
+
+function buildCourseDiscountPayload() {
+  return discounts.value
+    .filter((discount) => discount.amount > 0)
+    .map((discount) => {
+      const lineNo = courseLines.value.findIndex((line) => line.rowKey === discount.courseRowKey) + 1;
+      return {
+        label: discount.label.trim(),
+        amount: roundMoney(discount.amount),
+        orderItemLineNo: lineNo > 0 ? lineNo : undefined,
+      };
+    });
 }
 
 /**
@@ -4927,6 +5132,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   min-width: 0;
 }
 
+.adjustment-row--course-discount {
+  grid-template-columns: minmax(92px, 0.8fr) minmax(0, 1fr) 100px auto !important;
+}
+
+.discount-course-select {
+  min-width: 0;
+}
+
 .discount-preset-control {
   display: grid;
   gap: 4px;
@@ -5006,6 +5219,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   grid-column: 2 / 5;
 }
 
+.payment-course-allocation-inputs {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  padding: 7px 9px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.payment-course-allocation-inputs label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 100px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: #475569;
+  font-size: 11px;
+}
+
+.payment-course-allocation-inputs label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.payment-course-allocation-inputs small {
+  grid-column: 1 / -1;
+  color: #64748b;
+  font-size: 11px;
+  text-align: right;
+}
+
+.payment-course-allocation-inputs .payment-allocation-error {
+  color: #dc2626;
+}
+
 @media (max-width: 720px) {
   .private-lesson-switcher__header {
     align-items: flex-start;
@@ -5075,6 +5326,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     grid-column: 3;
     grid-row: 2 / span 2;
     align-self: center;
+  }
+
+  .adjustment-row--course-discount {
+    grid-template-columns: minmax(0, 1fr) 100px auto !important;
+  }
+
+  .adjustment-row--course-discount .discount-course-select {
+    grid-column: 1 / -1;
+  }
+
+  .payment-course-allocation-inputs {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .adjustment-row--payment :deep(.el-date-editor) {

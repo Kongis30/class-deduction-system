@@ -80,6 +80,10 @@ public class EnrollmentOrderItemDTO {
     @Schema(description = "Whether the price was manually overridden", example = "false")
     private Boolean manualPriceOverride;
 
+    @DecimalMin(value = "0.00", message = "Course discount cannot be negative")
+    @Schema(description = "Discount assigned to this course line", example = "50.00")
+    private BigDecimal discountAmount;
+
     @DecimalMin(value = "0.00", message = "One-on-one hours cannot be negative")
     @Schema(description = "One-on-one purchased hours", example = "20")
     private BigDecimal oneOnOneHours;

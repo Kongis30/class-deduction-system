@@ -464,6 +464,38 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldPreferSavedCourseDiscountAndPaymentSnapshots() {
+        EnrollmentOrderEntity order = order(1L, "270.00", "220.00", "50.00");
+        order.setDiscountAmount(new BigDecimal("30.00"));
+        order.setTuitionSubtotalAmount(new BigDecimal("300.00"));
+        EnrollmentOrderItemEntity first = item(21L, 1, "200.00");
+        first.setDiscountAmount(new BigDecimal("10.00"));
+        first.setAmountDue(new BigDecimal("180.00"));
+        first.setPaidAmount(new BigDecimal("150.00"));
+        first.setBalanceAmount(new BigDecimal("30.00"));
+        EnrollmentOrderItemEntity second = item(22L, 2, "100.00");
+        second.setDiscountAmount(new BigDecimal("20.00"));
+        second.setAmountDue(new BigDecimal("90.00"));
+        second.setPaidAmount(new BigDecimal("70.00"));
+        second.setBalanceAmount(new BigDecimal("20.00"));
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "220.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::discountAmount)
+                .containsExactly(new BigDecimal("10.00"), new BigDecimal("20.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::amountDue)
+                .containsExactly(new BigDecimal("180.00"), new BigDecimal("90.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::paidAmount)
+                .containsExactly(new BigDecimal("150.00"), new BigDecimal("70.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::balanceAmount)
+                .containsExactly(new BigDecimal("-30.00"), new BigDecimal("-20.00"));
+    }
+
+    @Test
     void shouldSplitAmountsEquallyWhenItemPricesAreMissing() {
         EnrollmentOrderEntity order = order(1L, "200.00", "100.00", "100.00");
         EnrollmentOrderItemEntity first = item(21L, 1, null);

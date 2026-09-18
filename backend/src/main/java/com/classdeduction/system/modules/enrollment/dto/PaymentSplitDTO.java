@@ -6,12 +6,14 @@ import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.PastOrPresent;
+import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 组合支付明细：一条支付方式 + 金额。
@@ -24,6 +26,10 @@ public class PaymentSplitDTO {
 
     @Schema(description = "Participant index within a shared private lesson", example = "2")
     private Integer participantIndex;
+
+    @Valid
+    @Schema(description = "Course allocations for this payment; required for multi-course orders")
+    private List<CoursePaymentAllocationDTO> allocations;
 
     @NotBlank(message = "Payment method is required")
     @Schema(description = "支付方式编码", example = "CASH")
@@ -48,5 +54,22 @@ public class PaymentSplitDTO {
     public PaymentSplitDTO(String paymentMethod, BigDecimal amount) {
         this.paymentMethod = paymentMethod;
         this.amount = amount;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Schema(description = "Course-level allocation for a payment")
+    public static class CoursePaymentAllocationDTO {
+
+        @NotNull
+        @Schema(description = "Enrollment order item ID")
+        private Long enrollmentOrderItemId;
+
+        @NotNull
+        @DecimalMin(value = "0.01")
+        @Digits(integer = 12, fraction = 2)
+        @Schema(description = "Amount allocated to the course")
+        private BigDecimal amount;
     }
 }

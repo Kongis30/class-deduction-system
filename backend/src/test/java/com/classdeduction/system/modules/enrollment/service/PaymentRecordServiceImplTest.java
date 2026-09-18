@@ -172,6 +172,40 @@ class PaymentRecordServiceImplTest {
         }
 
         @Test
+        @DisplayName("Should persist an explicitly selected course allocation")
+        void shouldPersistExplicitCourseAllocation() {
+            PaymentSplitDTO split = new PaymentSplitDTO("CASH", new BigDecimal("500.00"));
+            split.setAllocations(List.of(new PaymentSplitDTO.CoursePaymentAllocationDTO(
+                    21L, new BigDecimal("500.00"))));
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(split));
+            request.setHandledByName("Admin");
+
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+            when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+            when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(invocation -> {
+                PaymentRecordEntity payment = invocation.getArgument(0);
+                payment.setId(7101L);
+                return 1;
+            });
+            when(jsonHelper.toJson(any())).thenReturn("{}");
+            when(receiptRecordMapper.insert(any(ReceiptRecordEntity.class))).thenAnswer(invocation -> {
+                ReceiptRecordEntity receipt = invocation.getArgument(0);
+                receipt.setId(9003L);
+                return 1;
+            });
+
+            paymentRecordService.createPaymentRecord(request);
+
+            verify(paymentAllocationService).recordExplicitAllocations(
+                    any(PaymentRecordEntity.class),
+                    org.mockito.ArgumentMatchers.eq(1L),
+                    org.mockito.ArgumentMatchers.eq(Map.of(21L, new BigDecimal("500.00"))));
+            verify(paymentAllocationService).replayAllocations(testOrder);
+        }
+
+        @Test
         @DisplayName("Should record payment against the selected private lesson participant")
         void shouldRecordPaymentAgainstSelectedPrivateLessonParticipant() {
             testOrder.setOriginalAmount(new BigDecimal("150.00"));

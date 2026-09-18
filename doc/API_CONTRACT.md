@@ -80,6 +80,14 @@ Shared conventions:
 - `GET /api/v1/enrollment/receipts`
 - `GET /api/v1/enrollment/receipts/{id}`
 
+#### Course-level discounts and payments
+
+- `POST /api/v1/registration/intake` accepts `items[].discountAmount` and `discounts[].orderItemLineNo` so each discount can be tied to a course line. Each initial `payments[]` entry can include `allocations[]` with `orderItemLineNo` and `amount`; allocations must total that payment amount.
+- `PUT /api/v1/enrollment/orders/{id}/correction` uses the same course line and initial-payment allocation fields when correcting a registration.
+- `POST /api/v1/enrollment/payments` accepts per-split `allocations[]` containing `enrollmentOrderItemId` and `amount`. A participant-specific payment cannot also use course allocations.
+- `GET /api/v1/enrollment/orders/{id}` returns each item’s `discountAmount`, `amountDue`, `paidAmount`, and `balanceAmount`, plus each payment’s course allocations.
+- Legacy clients may omit allocations; the backend keeps the existing automatic allocation behavior for those requests.
+
 ### Scheduling
 
 - `GET /api/v1/schedule/rules`

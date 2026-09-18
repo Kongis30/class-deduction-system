@@ -908,6 +908,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .priceAmount(item.getPriceAmount())
                 .originalPriceAmount(item.getOriginalPriceAmount())
                 .manualPriceOverride(Boolean.TRUE.equals(item.getManualPriceOverride()))
+                .discountAmount(item.getDiscountAmount())
                 .amountDue(item.getAmountDue())
                 .paidAmount(item.getPaidAmount())
                 .balanceAmount(item.getBalanceAmount())
@@ -957,6 +958,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .paidAt(item.getPaidAt())
                 .handledByName(item.getHandledByName())
                 .remark(item.getRemark())
+                .allocations(paymentAllocationMapper.selectList(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                                .eq(PaymentAllocationEntity::getPaymentRecordId, item.getId()))
+                        .stream()
+                        .map(allocation -> new PaymentRecordVO.CourseAllocationVO(
+                                allocation.getEnrollmentOrderItemId(), allocation.getAmount()))
+                        .toList())
                 .build();
     }
 
@@ -1322,6 +1329,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         item.setPriceAmount(defaultAmount(payload.getPriceAmount()));
         item.setOriginalPriceAmount(defaultAmount(payload.getOriginalPriceAmount()));
         item.setManualPriceOverride(payload.getManualPriceOverride());
+        if (payload.getDiscountAmount() != null) {
+            item.setDiscountAmount(defaultAmount(payload.getDiscountAmount()));
+        }
         item.setOneOnOneHours(payload.getOneOnOneHours());
         item.setOpeningUsedHours(payload.getOpeningUsedHours());
         item.setOneOnOneUnits(payload.getOneOnOneUnits());
@@ -1444,6 +1454,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     private void reconcileCorrectedPayments(EnrollmentOrderEntity order,
                                             List<RegistrationIntakeRequest.PaymentPayload> payloads) {
+        Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo = listOrderItemsByOrderId(order.getId()).stream()
+                .collect(Collectors.toMap(EnrollmentOrderItemEntity::getLineNo, item -> item,
+                        (left, right) -> left));
         List<PaymentRecordEntity> existing = paymentRecordMapper.selectList(new LambdaQueryWrapper<PaymentRecordEntity>()
                 .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId())
                 .eq(PaymentRecordEntity::getPaymentType, "PAYMENT")
@@ -1466,6 +1479,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 payment.setHandledByName(payload.getHandledByName());
                 payment.setRemark(payload.getRemark());
                 if (payment.getId() == null) paymentRecordMapper.insert(payment); else paymentRecordMapper.updateById(payment);
+                if (payload.getAllocations() != null && !payload.getAllocations().isEmpty()) {
+                    Map<Long, BigDecimal> allocations = new LinkedHashMap<>();
+                    for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payload.getAllocations()) {
+                        EnrollmentOrderItemEntity item = itemsByLineNo.get(allocation.getOrderItemLineNo());
+                        if (item == null || allocation.getAmount() == null) {
+                            throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                                    "A corrected payment references a course that is not in this order.");
+                        }
+                        allocations.merge(item.getId(), allocation.getAmount(), BigDecimal::add);
+                    }
+                    paymentAllocationService.replaceExplicitAllocations(payment, order.getId(), allocations);
+                }
             } else {
                 PaymentRecordEntity payment = existing.get(i);
                 payment.setPaymentStatus("VOIDED");

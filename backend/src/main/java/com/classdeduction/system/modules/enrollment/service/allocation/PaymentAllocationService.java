@@ -28,11 +28,9 @@ import java.util.stream.Collectors;
 
 /**
  * 课程级付款分摊账本：
- * - 以"全量重放"方式维护该订单的分摊明细（payment_allocation）与课程项快照
- *   （enrollment_order_item.paid_amount / balance_amount）。
- * - 重放按支付时间顺序逐笔消费每条有效流水：PAYMENT 平均分摊（封顶顺延）、
- *   REFUND 按已分摊比例回冲（负数行），从而与历史写入顺序无关，任何写入路径
- *   （报名收款 / Pay / 更正 / 退款）之后调用一次即可保持一致。
+ * - 维护付款到课程项的显式分摊账本，并由账本刷新课程已付与余额快照。
+ * - 新流水保留提交时的课程分配；只有尚无 allocation 的历史流水才沿用旧的自动分摊规则。
+ *   这样后续付款或退款重算时不会覆盖人工指定的课程归属。
  * - 校验语义：任何一笔流水分摊失败（超付等）都会让整个事务回滚，等效于拦截。
  */
 @Slf4j
@@ -45,7 +43,7 @@ public class PaymentAllocationService {
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
 
     /**
-     * 全量重放订单分摊并刷新课程项快照。必须在同一事务内于付款写入后调用。
+     * 按时间顺序补齐历史流水分摊并刷新课程快照。由付款、报名、退款或金额更正事务调用。
      */
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.MANDATORY)
     public void replayAllocations(EnrollmentOrderEntity order) {
@@ -54,10 +52,6 @@ public class PaymentAllocationService {
             return;
         }
         ensureItemAmountDue(order, items, true);
-
-        // 软删旧分摊后按时间顺序重放
-        paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
-                .eq(PaymentAllocationEntity::getEnrollmentOrderId, order.getId()));
 
         List<PaymentRecordEntity> ledger = paymentRecordMapper.selectList(
                         new LambdaQueryWrapper<PaymentRecordEntity>()
@@ -69,49 +63,79 @@ public class PaymentAllocationService {
                         .thenComparing(PaymentRecordEntity::getId))
                 .toList();
 
+        Map<Long, List<PaymentAllocationEntity>> existingByPaymentId = paymentAllocationMapper.selectList(
+                        new LambdaQueryWrapper<PaymentAllocationEntity>()
+                                .eq(PaymentAllocationEntity::getEnrollmentOrderId, order.getId()))
+                .stream()
+                .collect(Collectors.groupingBy(PaymentAllocationEntity::getPaymentRecordId));
+
         // 重放期间各课程的剩余可收额度（amount_due - 已分摊）
         Map<Long, BigDecimal> remaining = items.stream()
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId,
                         item -> defaultAmount(item.getAmountDue())));
 
-        List<PaymentAllocationEntity> allocations = new ArrayList<>();
-        boolean isRefund = false;
+        int createdAllocationCount = 0;
         for (PaymentRecordEntity record : ledger) {
             BigDecimal amount = defaultAmount(record.getAmount());
             if (amount.compareTo(BigDecimal.ZERO) == 0) {
                 continue;
             }
-            List<PaymentAllocationCalculator.AllocationLine> lines;
-            if (amount.compareTo(BigDecimal.ZERO) > 0) {
-                isRefund = false;
-                lines = evenPay(amount, remaining);
-                for (PaymentAllocationCalculator.AllocationLine line : lines) {
-                    remaining.merge(line.orderItemId(), line.amount(), BigDecimal::subtract);
-                }
+            List<PaymentAllocationEntity> saved = existingByPaymentId.get(record.getId());
+            if (saved != null && !saved.isEmpty()) {
+                validateSavedAllocation(record, saved, remaining, items);
+                applySavedAllocation(saved, remaining);
             } else {
-                isRefund = true;
-                // 各课程累计已付 = amount_due - remaining；退款按已付比例回冲，cap 到已付
-                Map<Long, BigDecimal> paid = remaining.entrySet().stream()
-                        .collect(Collectors.toMap(Map.Entry::getKey,
-                                entry -> defaultAmount(amountDueOf(items, entry.getKey()))
-                                        .subtract(entry.getValue())));
-                lines = proportionalRefund(amount.negate(), paid);
+                List<PaymentAllocationCalculator.AllocationLine> lines = amount.compareTo(BigDecimal.ZERO) > 0
+                        ? evenPay(amount, remaining)
+                        : legacyRefund(amount.negate(), items, remaining);
                 for (PaymentAllocationCalculator.AllocationLine line : lines) {
-                    remaining.merge(line.orderItemId(), line.amount(), BigDecimal::add);
+                    BigDecimal signedAmount = amount.signum() > 0 ? line.amount() : line.amount().negate();
+                    insertAllocation(record, order.getId(), line.orderItemId(), signedAmount);
+                    remaining.merge(line.orderItemId(), signedAmount.negate(), BigDecimal::add);
+                    createdAllocationCount++;
                 }
-            }
-            for (PaymentAllocationCalculator.AllocationLine line : lines) {
-                PaymentAllocationEntity entity = new PaymentAllocationEntity();
-                entity.setPaymentRecordId(record.getId());
-                entity.setEnrollmentOrderId(order.getId());
-                entity.setEnrollmentOrderItemId(line.orderItemId());
-                entity.setAmount(isRefund ? line.amount().negate() : line.amount());
-                paymentAllocationMapper.insert(entity);
-                allocations.add(entity);
             }
         }
-        syncItemSnapshots(items);
-        log.debug("Replayed {} payment allocations for order {}", allocations.size(), order.getId());
+        syncItemSnapshots(items, remaining);
+        log.debug("Created {} missing payment allocations for order {}", createdAllocationCount, order.getId());
+    }
+
+    /** 保存前端明确指定的课程分配，后续重算会原样保留。 */
+    @Transactional(rollbackFor = Exception.class, propagation = Propagation.MANDATORY)
+    public void recordExplicitAllocations(PaymentRecordEntity payment,
+                                          Long orderId,
+                                          Map<Long, BigDecimal> allocations) {
+        if (allocations == null || allocations.isEmpty()) {
+            return;
+        }
+        BigDecimal total = allocations.values().stream()
+                .map(this::defaultAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (payment.getAmount() == null || total.compareTo(payment.getAmount()) != 0) {
+            throw new BusinessException("PAYMENT_ALLOCATION_TOTAL_MISMATCH",
+                    "Course allocations must add up to the payment amount.");
+        }
+        Map<Long, EnrollmentOrderItemEntity> itemsById = listActiveItems(orderId).stream()
+                .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, Function.identity()));
+        for (Map.Entry<Long, BigDecimal> entry : allocations.entrySet()) {
+            EnrollmentOrderItemEntity item = itemsById.get(entry.getKey());
+            BigDecimal amount = defaultAmount(entry.getValue());
+            if (item == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new BusinessException("PAYMENT_ALLOCATION_ITEM_INVALID",
+                        "Each allocation must reference a course in this enrollment order and be greater than zero.");
+            }
+            insertAllocation(payment, orderId, item.getId(), amount);
+        }
+    }
+
+    /** 更正报名收款时替换该流水的课程分配，避免旧分配与新金额不一致。 */
+    @Transactional(rollbackFor = Exception.class, propagation = Propagation.MANDATORY)
+    public void replaceExplicitAllocations(PaymentRecordEntity payment,
+                                           Long orderId,
+                                           Map<Long, BigDecimal> allocations) {
+        paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                .eq(PaymentAllocationEntity::getPaymentRecordId, payment.getId()));
+        recordExplicitAllocations(payment, orderId, allocations);
     }
 
     /**
@@ -199,6 +223,59 @@ public class PaymentAllocationService {
         }
     }
 
+    private List<PaymentAllocationCalculator.AllocationLine> legacyRefund(BigDecimal refundAmount,
+                                                                           List<EnrollmentOrderItemEntity> items,
+                                                                           Map<Long, BigDecimal> remaining) {
+        Map<Long, BigDecimal> paid = remaining.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey,
+                        entry -> defaultAmount(amountDueOf(items, entry.getKey())).subtract(entry.getValue())));
+        return proportionalRefund(refundAmount, paid);
+    }
+
+    private void validateSavedAllocation(PaymentRecordEntity payment,
+                                         List<PaymentAllocationEntity> allocations,
+                                         Map<Long, BigDecimal> remaining,
+                                         List<EnrollmentOrderItemEntity> items) {
+        BigDecimal allocatedTotal = allocations.stream()
+                .map(PaymentAllocationEntity::getAmount)
+                .map(this::defaultAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (allocatedTotal.compareTo(defaultAmount(payment.getAmount())) != 0) {
+            throw new BusinessException("PAYMENT_ALLOCATION_TOTAL_MISMATCH",
+                    "Saved course allocations no longer match the payment amount.");
+        }
+        for (PaymentAllocationEntity allocation : allocations) {
+            Long itemId = allocation.getEnrollmentOrderItemId();
+            BigDecimal amount = defaultAmount(allocation.getAmount());
+            BigDecimal available = remaining.get(itemId);
+            BigDecimal paid = available == null ? BigDecimal.ZERO
+                    : defaultAmount(amountDueOf(items, itemId)).subtract(available);
+            if (available == null || amount.compareTo(BigDecimal.ZERO) == 0
+                    || (amount.signum() > 0 && amount.compareTo(available) > 0)
+                    || (amount.signum() < 0 && amount.negate().compareTo(paid) > 0)) {
+                throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
+                        "Saved course allocation exceeds the current course balance.");
+            }
+        }
+    }
+
+    private void applySavedAllocation(List<PaymentAllocationEntity> allocations,
+                                      Map<Long, BigDecimal> remaining) {
+        for (PaymentAllocationEntity allocation : allocations) {
+            remaining.merge(allocation.getEnrollmentOrderItemId(),
+                    defaultAmount(allocation.getAmount()).negate(), BigDecimal::add);
+        }
+    }
+
+    private void insertAllocation(PaymentRecordEntity payment, Long orderId, Long itemId, BigDecimal amount) {
+        PaymentAllocationEntity entity = new PaymentAllocationEntity();
+        entity.setPaymentRecordId(payment.getId());
+        entity.setEnrollmentOrderId(orderId);
+        entity.setEnrollmentOrderItemId(itemId);
+        entity.setAmount(amount);
+        paymentAllocationMapper.insert(entity);
+    }
+
     private List<PaymentAllocationCalculator.AllocationTarget> toTargets(Map<Long, BigDecimal> remaining) {
         return remaining.entrySet().stream()
                 .filter(entry -> entry.getValue().compareTo(BigDecimal.ZERO) > 0)
@@ -220,7 +297,7 @@ public class PaymentAllocationService {
     }
 
     /**
-     * item.amount_due 为空时按公式补算：item 价格 + 按比例摊入附加费/折扣，余差归末项。
+     * item.amount_due 为空时按课程优惠快照和加权分配附加费补算；旧订单没有课程优惠快照时沿用整单优惠的加权拆分。
      *
      * @param persist true 时落库（重放链路）；false 仅在内存补算（预览链路）
      */
@@ -230,28 +307,30 @@ public class PaymentAllocationService {
         if (!missing) {
             return;
         }
-        BigDecimal subtotal = defaultAmount(order.getTuitionSubtotalAmount());
         BigDecimal feeTotal = defaultAmount(order.getPickupFeeAmount())
-                .add(defaultAmount(order.getExtraFeeAmount()))
-                .subtract(defaultAmount(order.getDiscountAmount()));
+                .add(defaultAmount(order.getDropoffFeeAmount()))
+                .add(defaultAmount(order.getExtraFeeAmount()));
+        List<BigDecimal> weights = itemWeights(items);
+        List<BigDecimal> feeShares = allocateByWeights(feeTotal, weights);
+        boolean explicitDiscounts = items.stream().allMatch(item -> item.getDiscountAmount() != null);
+        List<BigDecimal> discountShares = explicitDiscounts
+                ? items.stream().map(item -> defaultAmount(item.getDiscountAmount())).toList()
+                : allocateByWeights(defaultAmount(order.getDiscountAmount()), weights);
         BigDecimal assigned = BigDecimal.ZERO;
         for (int i = 0; i < items.size(); i++) {
             EnrollmentOrderItemEntity item = items.get(i);
-            BigDecimal due;
+            BigDecimal discount = discountShares.get(i);
+            BigDecimal due = defaultAmount(item.getPriceAmount()).add(feeShares.get(i)).subtract(discount);
             if (i == items.size() - 1) {
-                // 余差归末项，保证 SUM(item.amount_due) = order.amount_due
-                due = defaultAmount(order.getAmountDue()).subtract(assigned);
-            } else if (subtotal.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal gross = defaultAmount(item.getPriceAmount());
-                due = gross.add(feeTotal.multiply(gross)
-                                .divide(subtotal, 6, RoundingMode.HALF_UP))
-                        .setScale(2, RoundingMode.HALF_UP);
-            } else {
-                due = BigDecimal.ZERO;
+                // 尾项吸收舍入差，确保课程应收合计与订单一致。
+                due = due.add(defaultAmount(order.getAmountDue())
+                        .subtract(assigned.add(due)));
             }
             if (due.compareTo(BigDecimal.ZERO) < 0) {
-                due = BigDecimal.ZERO;
+                throw new BusinessException("COURSE_DISCOUNT_EXCEEDS_AMOUNT",
+                        "A course discount cannot exceed that course's gross amount and allocated fees.");
             }
+            item.setDiscountAmount(discount);
             item.setAmountDue(due);
             assigned = assigned.add(due);
             if (persist) {
@@ -267,15 +346,37 @@ public class PaymentAllocationService {
         }
     }
 
-    private void syncItemSnapshots(List<EnrollmentOrderItemEntity> items) {
+    private List<BigDecimal> itemWeights(List<EnrollmentOrderItemEntity> items) {
+        List<BigDecimal> weights = items.stream().map(item -> defaultAmount(item.getPriceAmount())).toList();
+        if (weights.stream().anyMatch(weight -> weight.compareTo(BigDecimal.ZERO) <= 0)) {
+            return items.stream().map(item -> BigDecimal.ONE).toList();
+        }
+        return weights;
+    }
+
+    private List<BigDecimal> allocateByWeights(BigDecimal total, List<BigDecimal> weights) {
+        if (weights.isEmpty()) {
+            return List.of();
+        }
+        BigDecimal normalizedTotal = defaultAmount(total);
+        BigDecimal weightSum = weights.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal assigned = BigDecimal.ZERO;
+        List<BigDecimal> result = new ArrayList<>(weights.size());
+        for (int i = 0; i < weights.size(); i++) {
+            BigDecimal share = i == weights.size() - 1
+                    ? normalizedTotal.subtract(assigned)
+                    : normalizedTotal.multiply(weights.get(i))
+                    .divide(weightSum, 2, RoundingMode.DOWN);
+            result.add(share);
+            assigned = assigned.add(share);
+        }
+        return result;
+    }
+
+    private void syncItemSnapshots(List<EnrollmentOrderItemEntity> items, Map<Long, BigDecimal> remaining) {
         for (EnrollmentOrderItemEntity item : items) {
-            BigDecimal paid = paymentAllocationMapper.selectList(
-                            new LambdaQueryWrapper<PaymentAllocationEntity>()
-                                    .eq(PaymentAllocationEntity::getEnrollmentOrderItemId, item.getId()))
-                    .stream()
-                    .map(PaymentAllocationEntity::getAmount)
-                    .filter(Objects::nonNull)
-                    .reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal paid = defaultAmount(item.getAmountDue()).subtract(
+                    defaultAmount(remaining.get(item.getId())));
             item.setPaidAmount(paid);
             item.setBalanceAmount(defaultAmount(item.getAmountDue()).subtract(paid));
             enrollmentOrderItemMapper.updateById(item);

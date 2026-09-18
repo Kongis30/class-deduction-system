@@ -133,6 +133,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         applyParticipantPricing(lines, participantResolutions.size());
         validateRenewalLines(request, lines);
         MoneySnapshot money = calculateMoney(request, lines, participantResolutions.size());
+        prepareCourseBilling(request, lines, money, participantResolutions.size());
 
         EnrollmentOrderEntity order = createOrder(request, studentResolution.student(), lines, money);
         createOrderParticipants(order, participantResolutions, lines, request, money);
@@ -145,7 +146,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             EnrollmentOrderItemEntity orderItem = createOrderItem(order.getId(), line);
             line.orderItemId = orderItem.getId();
 
-            BigDecimal allocatedPaid = unallocatedPaid.min(line.priceAmount);
+            BigDecimal allocatedPaid = line.initialPaidAmount == null
+                    ? unallocatedPaid.min(line.amountDue)
+                    : line.initialPaidAmount;
             unallocatedPaid = unallocatedPaid.subtract(allocatedPaid);
             if (line.oneOnOne && participantResolutions.size() > 1) {
                 PrivateLessonRegistrationResult groupResult = isSharedPrivateLessonRenewal(request)
@@ -168,8 +171,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             }
         }
 
-        List<RegistrationIntakeResultVO.PaymentResultVO> payments = createPayments(order, request, money, participantResolutions.size());
-        // 课程级付款分摊：按课程项平均分摊收款（私教共享按学生维度付款时不走课程分摊）
+        List<RegistrationIntakeResultVO.PaymentResultVO> payments = createPayments(
+                order, request, money, participantResolutions.size(), lines);
+        // 课程级付款分摊：优先保留请求中的逐课金额，旧请求才回退到历史分配规则。
         if (participantResolutions.size() <= 1 || request.getParticipantBillings() == null
                 || request.getParticipantBillings().isEmpty()) {
             paymentAllocationService.replayAllocations(order);
@@ -682,6 +686,180 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 discount, paid, amountDue, amountDue.subtract(paid), paymentStatus);
     }
 
+    /** 把课程优惠、应收和首次实付固定到报名明细，供后续付款与汇总复用。 */
+    private void prepareCourseBilling(RegistrationIntakeRequest request,
+                                      List<ResolvedCourseLine> lines,
+                                      MoneySnapshot money,
+                                      int participantCount) {
+        assignCourseDiscounts(request, lines, money.discountAmount());
+        List<BigDecimal> feeShares = allocateByCoursePrice(
+                money.pickupFeeAmount().add(money.dropoffFeeAmount()).add(money.extraFeeAmount()), lines);
+        BigDecimal assignedDue = ZERO_AMOUNT;
+        for (int index = 0; index < lines.size(); index++) {
+            ResolvedCourseLine line = lines.get(index);
+            BigDecimal due = line.priceAmount.add(feeShares.get(index)).subtract(line.discountAmount);
+            if (index == lines.size() - 1) {
+                due = due.add(money.amountDue().subtract(assignedDue.add(due)));
+            }
+            if (due.compareTo(ZERO_AMOUNT) < 0) {
+                throw new BusinessException("COURSE_DISCOUNT_EXCEEDS_AMOUNT",
+                        "A course discount cannot exceed that course's price and allocated fees.");
+            }
+            line.amountDue = due.setScale(2, RoundingMode.HALF_UP);
+            assignedDue = assignedDue.add(line.amountDue);
+        }
+
+        assignInitialCoursePayments(request, lines, money, participantCount);
+    }
+
+    private void assignCourseDiscounts(RegistrationIntakeRequest request,
+                                       List<ResolvedCourseLine> lines,
+                                       BigDecimal totalDiscount) {
+        Map<Integer, ResolvedCourseLine> linesByNo = lines.stream().collect(Collectors.toMap(
+                line -> line.lineNo,
+                line -> line,
+                (left, right) -> {
+                    throw new BusinessException("COURSE_LINE_NUMBER_DUPLICATE",
+                            "Course line numbers must be unique when assigning discounts.");
+                },
+                LinkedHashMap::new));
+        List<RegistrationIntakeRequest.FeeLinePayload> discounts = request.getDiscounts() == null
+                ? Collections.emptyList() : request.getDiscounts();
+        boolean hasCourseAssignments = discounts.stream()
+                .filter(Objects::nonNull)
+                .anyMatch(discount -> discount.getOrderItemLineNo() != null);
+        Map<Integer, BigDecimal> discountByLine = new LinkedHashMap<>();
+        if (hasCourseAssignments) {
+            for (RegistrationIntakeRequest.FeeLinePayload discount : discounts) {
+                if (discount == null) {
+                    throw new BusinessException("COURSE_DISCOUNT_INVALID", "Discount detail rows cannot be empty.");
+                }
+                BigDecimal amount = defaultAmount(discount.getAmount());
+                Integer lineNo = discount.getOrderItemLineNo();
+                if (amount.compareTo(ZERO_AMOUNT) > 0 && lineNo == null) {
+                    throw new BusinessException("COURSE_DISCOUNT_ASSIGNMENT_REQUIRED",
+                            "Assign every discount to a course.");
+                }
+                if (lineNo != null && !linesByNo.containsKey(lineNo)) {
+                    throw new BusinessException("COURSE_DISCOUNT_LINE_NOT_FOUND",
+                            "A discount references a course line that is not in this registration.");
+                }
+                if (lineNo != null) {
+                    discountByLine.merge(lineNo, amount, BigDecimal::add);
+                }
+            }
+        } else if (lines.stream().anyMatch(line -> line.discountAmount != null)) {
+            for (ResolvedCourseLine line : lines) {
+                discountByLine.put(line.lineNo, defaultAmount(line.discountAmount));
+            }
+        } else {
+            List<BigDecimal> legacyShares = allocateByCoursePrice(totalDiscount, lines);
+            for (int index = 0; index < lines.size(); index++) {
+                discountByLine.put(lines.get(index).lineNo, legacyShares.get(index));
+            }
+        }
+
+        BigDecimal assignedDiscount = ZERO_AMOUNT;
+        for (ResolvedCourseLine line : lines) {
+            line.discountAmount = defaultAmount(discountByLine.get(line.lineNo));
+            assignedDiscount = assignedDiscount.add(line.discountAmount);
+        }
+        if (assignedDiscount.compareTo(totalDiscount) != 0) {
+            throw new BusinessException("COURSE_DISCOUNT_TOTAL_MISMATCH",
+                    "Course discounts must add up to the registration discount total.");
+        }
+    }
+
+    private void assignInitialCoursePayments(RegistrationIntakeRequest request,
+                                             List<ResolvedCourseLine> lines,
+                                             MoneySnapshot money,
+                                             int participantCount) {
+        if (participantCount > 1 && request.getParticipantBillings() != null
+                && !request.getParticipantBillings().isEmpty()) {
+            if (lines.size() == 1) {
+                lines.get(0).initialPaidAmount = money.paidAmount();
+            }
+            return;
+        }
+        Map<Integer, BigDecimal> paidByLine = new LinkedHashMap<>();
+        boolean hasExplicitAllocations = request.getPayments() != null && request.getPayments().stream()
+                .filter(Objects::nonNull)
+                .anyMatch(payment -> payment.getAllocations() != null && !payment.getAllocations().isEmpty());
+        if (hasExplicitAllocations) {
+            Map<Integer, ResolvedCourseLine> linesByNo = lines.stream().collect(Collectors.toMap(
+                    line -> line.lineNo, line -> line));
+            BigDecimal totalAllocated = ZERO_AMOUNT;
+            for (RegistrationIntakeRequest.PaymentPayload payment : request.getPayments()) {
+                List<RegistrationIntakeRequest.CoursePaymentAllocationPayload> allocations = payment.getAllocations();
+                BigDecimal paymentAllocated = allocations == null ? ZERO_AMOUNT : allocations.stream()
+                        .filter(Objects::nonNull)
+                        .map(RegistrationIntakeRequest.CoursePaymentAllocationPayload::getAmount)
+                        .map(this::defaultAmount)
+                        .reduce(ZERO_AMOUNT, BigDecimal::add);
+                if (paymentAllocated.compareTo(defaultAmount(payment.getAmount())) != 0) {
+                    throw new BusinessException("COURSE_PAYMENT_ALLOCATION_TOTAL_MISMATCH",
+                            "Course amounts must add up to each initial payment.");
+                }
+                if (allocations != null) {
+                    for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : allocations) {
+                        if (allocation == null) {
+                            throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                                    "Each initial payment allocation must reference a course and be greater than zero.");
+                        }
+                        ResolvedCourseLine line = linesByNo.get(allocation.getOrderItemLineNo());
+                        if (line == null || allocation.getAmount() == null
+                                || allocation.getAmount().compareTo(ZERO_AMOUNT) <= 0) {
+                            throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                                    "Each initial payment allocation must reference a course and be greater than zero.");
+                        }
+                        paidByLine.merge(line.lineNo, allocation.getAmount(), BigDecimal::add);
+                        totalAllocated = totalAllocated.add(allocation.getAmount());
+                    }
+                }
+            }
+            if (totalAllocated.compareTo(money.paidAmount()) != 0) {
+                throw new BusinessException("COURSE_PAYMENT_TOTAL_MISMATCH",
+                        "Course payment allocations must add up to the amount received at registration.");
+            }
+            for (ResolvedCourseLine line : lines) {
+                line.initialPaidAmount = defaultAmount(paidByLine.get(line.lineNo));
+                if (line.initialPaidAmount.compareTo(line.amountDue) > 0) {
+                    throw new BusinessException("COURSE_PAYMENT_EXCEEDS_AMOUNT_DUE",
+                            "A course's initial payment cannot exceed its amount due.");
+                }
+            }
+            return;
+        }
+
+        BigDecimal unallocated = money.paidAmount();
+        for (ResolvedCourseLine line : lines) {
+            line.initialPaidAmount = unallocated.min(line.amountDue);
+            unallocated = unallocated.subtract(line.initialPaidAmount);
+        }
+    }
+
+    private List<BigDecimal> allocateByCoursePrice(BigDecimal total, List<ResolvedCourseLine> lines) {
+        if (lines.isEmpty()) {
+            return List.of();
+        }
+        BigDecimal totalAmount = defaultAmount(total);
+        BigDecimal weightSum = lines.stream().map(line -> defaultAmount(line.priceAmount))
+                .reduce(ZERO_AMOUNT, BigDecimal::add);
+        BigDecimal assigned = ZERO_AMOUNT;
+        List<BigDecimal> amounts = new ArrayList<>(lines.size());
+        for (int index = 0; index < lines.size(); index++) {
+            BigDecimal amount = index == lines.size() - 1
+                    ? totalAmount.subtract(assigned)
+                    : weightSum.compareTo(ZERO_AMOUNT) <= 0
+                    ? totalAmount.divide(BigDecimal.valueOf(lines.size()), 2, RoundingMode.DOWN)
+                    : totalAmount.multiply(lines.get(index).priceAmount)
+                    .divide(weightSum, 2, RoundingMode.DOWN);
+            amounts.add(amount);
+            assigned = assigned.add(amount);
+        }
+        return amounts;
+    }
+
     private boolean isPickupFeeCharged(RegistrationIntakeRequest request) {
         return Boolean.TRUE.equals(request.getPickupFeeCharged())
                 && request.getStudent() != null
@@ -851,6 +1029,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.setPriceAmount(line.priceAmount);
         item.setOriginalPriceAmount(line.originalPriceAmount);
         item.setManualPriceOverride(line.manualPriceOverride);
+        item.setDiscountAmount(line.discountAmount);
+        item.setAmountDue(line.amountDue);
+        item.setPaidAmount(defaultAmount(line.initialPaidAmount));
+        item.setBalanceAmount(line.amountDue.subtract(defaultAmount(line.initialPaidAmount)));
         item.setOneOnOneHours(line.oneOnOneHours);
         item.setOpeningUsedHours(line.openingUsedHours);
         item.setOneOnOneUnits(resolveLineOneOnOneUnits(line));
@@ -1422,7 +1604,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private List<RegistrationIntakeResultVO.PaymentResultVO> createPayments(EnrollmentOrderEntity order,
                                                                             RegistrationIntakeRequest request,
                                                                             MoneySnapshot money,
-                                                                            int participantCount) {
+                                                                            int participantCount,
+                                                                            List<ResolvedCourseLine> lines) {
         List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads = registrationPayments(request, participantCount);
         if (paymentPayloads.isEmpty()) {
             return Collections.emptyList();
@@ -1453,6 +1636,24 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             entity.setHandledByName(firstText(payment.getHandledByName(), order.getHandledByName()));
             entity.setRemark(payment.getRemark());
             paymentRecordMapper.insert(entity);
+            if (payment.getAllocations() != null && !payment.getAllocations().isEmpty()) {
+                Map<Integer, ResolvedCourseLine> linesByNo = lines.stream().collect(Collectors.toMap(
+                        line -> line.lineNo, line -> line));
+                Map<Long, BigDecimal> allocations = new LinkedHashMap<>();
+                for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payment.getAllocations()) {
+                    if (allocation == null) {
+                        throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                                "An initial payment allocation cannot be empty.");
+                    }
+                    ResolvedCourseLine line = linesByNo.get(allocation.getOrderItemLineNo());
+                    if (line == null || line.orderItemId == null) {
+                        throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                                "An initial payment references a course that was not saved.");
+                    }
+                    allocations.merge(line.orderItemId, allocation.getAmount(), BigDecimal::add);
+                }
+                paymentAllocationService.recordExplicitAllocations(entity, order.getId(), allocations);
+            }
             result.add(RegistrationIntakeResultVO.PaymentResultVO.builder()
                     .paymentId(entity.getId())
                     .paymentNo(entity.getPaymentNo())
@@ -1650,6 +1851,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("attendanceOption", line.attendanceOption);
         item.put("attendanceScheduleJson", line.attendanceScheduleJson);
         item.put("priceAmount", line.priceAmount);
+        item.put("discountAmount", line.discountAmount);
+        item.put("amountDue", line.amountDue);
+        item.put("paidAmount", line.initialPaidAmount);
+        item.put("balanceAmount", line.amountDue.subtract(defaultAmount(line.initialPaidAmount)));
         item.put("originalPriceAmount", line.originalPriceAmount);
         item.put("manualPriceOverride", line.manualPriceOverride);
         item.put("oneOnOneHours", line.oneOnOneHours);
@@ -2298,6 +2503,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private String attendanceOption;
         private String attendanceScheduleJson;
         private BigDecimal priceAmount;
+        private BigDecimal discountAmount;
+        private BigDecimal amountDue;
+        private BigDecimal initialPaidAmount;
         private BigDecimal basePriceAmount;
         private BigDecimal originalPriceAmount;
         private Boolean manualPriceOverride;

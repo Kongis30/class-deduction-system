@@ -334,6 +334,10 @@ export interface EnrollmentOrderLineItem {
   priceAmount?: number;
   originalPriceAmount?: number;
   manualPriceOverride?: boolean;
+  discountAmount?: number;
+  amountDue?: number;
+  paidAmount?: number;
+  balanceAmount?: number;
   oneOnOneHours?: number;
   oneOnOneUnits?: number;
   itemStatus?: string;
@@ -448,6 +452,10 @@ export interface PaymentRecordItem {
   paidAt: string;
   handledByName?: string;
   remark?: string;
+  allocations?: Array<{
+    enrollmentOrderItemId: EntityId;
+    amount: number;
+  }>;
 }
 
 export interface ReceiptRecordItem {

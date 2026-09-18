@@ -21,6 +21,8 @@ import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeReques
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
+import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
+import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -57,6 +59,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -126,6 +129,9 @@ class RegistrationIntakeServiceImplTest {
     private PaymentRecordMapper paymentRecordMapper;
 
     @Mock
+    private com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService paymentAllocationService;
+
+    @Mock
     private ReceiptRecordMapper receiptRecordMapper;
 
     @Mock
@@ -183,7 +189,7 @@ class RegistrationIntakeServiceImplTest {
                 paymentMethodMapper,
                 paymentRecordMapper,
                 receiptRecordMapper,
-                org.mockito.Mockito.mock(com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService.class),
+                paymentAllocationService,
                 classBillingService,
                 userAccountMapper,
                 roleMapper,
@@ -551,6 +557,48 @@ class RegistrationIntakeServiceImplTest {
         assertThat(enrollmentOrderCaptor.getValue().getPickupFeeAmount()).isEqualByComparingTo("0.00");
         assertThat(enrollmentOrderCaptor.getValue().getOriginalAmount()).isEqualByComparingTo("800.00");
         assertThat(enrollmentOrderCaptor.getValue().getAmountDue()).isEqualByComparingTo("800.00");
+    }
+
+    @Test
+    void shouldSaveCourseDiscountAndInitialPaymentAllocation() {
+        stubSuccessfulIntake(false);
+        when(paymentMethodMapper.selectOne(any())).thenReturn(new PaymentMethodEntity());
+        when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(invocation -> {
+            PaymentRecordEntity payment = invocation.getArgument(0);
+            payment.setId(7101L);
+            return 1;
+        });
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setLineNo(1);
+        item.setDiscountAmount(new BigDecimal("75.00"));
+        request.setDiscountAmount(new BigDecimal("75.00"));
+        RegistrationIntakeRequest.FeeLinePayload discount = new RegistrationIntakeRequest.FeeLinePayload();
+        discount.setLabel("Course-specific discount");
+        discount.setAmount(new BigDecimal("75.00"));
+        discount.setOrderItemLineNo(1);
+        request.setDiscounts(List.of(discount));
+        RegistrationIntakeRequest.PaymentPayload payment = new RegistrationIntakeRequest.PaymentPayload();
+        payment.setPaymentMethod("CASH");
+        payment.setAmount(new BigDecimal("100.00"));
+        RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation =
+                new RegistrationIntakeRequest.CoursePaymentAllocationPayload();
+        allocation.setOrderItemLineNo(1);
+        allocation.setAmount(new BigDecimal("100.00"));
+        payment.setAllocations(List.of(allocation));
+        request.setPayments(List.of(payment));
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getDiscountAmount()).isEqualByComparingTo("75.00");
+        assertThat(orderItemCaptor.getValue().getAmountDue()).isEqualByComparingTo("725.00");
+        assertThat(orderItemCaptor.getValue().getPaidAmount()).isEqualByComparingTo("100.00");
+        assertThat(orderItemCaptor.getValue().getBalanceAmount()).isEqualByComparingTo("625.00");
+        verify(paymentAllocationService).recordExplicitAllocations(
+                any(PaymentRecordEntity.class),
+                org.mockito.ArgumentMatchers.eq(2001L),
+                org.mockito.ArgumentMatchers.eq(Map.of(2101L, new BigDecimal("100.00"))));
     }
 
     @Test

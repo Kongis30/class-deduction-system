@@ -736,37 +736,39 @@
           </span>
         </div>
 
-        <!-- 课程级分摊预览：按课程平均分摊、封顶顺延 -->
-        <div v-if="payForm.splits.some(s => (s.amount || 0) > 0)" class="payment-allocation-preview">
-          <div class="payment-allocation-preview__title">Allocation by course</div>
-          <el-alert
-            v-if="allocationError"
-            :title="allocationError"
-            type="error"
-            :closable="false"
-            style="margin-bottom: 8px;"
-          />
-          <el-table v-else-if="allocationPreview.length" :data="allocationPreview" size="small">
-            <el-table-column prop="courseName" label="Course" min-width="140">
-              <template #default="{ row }">{{ row.courseName || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="Due" width="110" align="right">
-              <template #default="{ row }">${{ Number(row.itemAmountDue ?? 0).toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column label="Paid" width="110" align="right">
-              <template #default="{ row }">${{ Number(row.itemPaidAmount ?? 0).toFixed(2) }}</template>
-            </el-table-column>
-            <el-table-column label="This payment" width="120" align="right">
-              <template #default="{ row }">
-                <strong>${{ Number(row.allocatedAmount ?? 0).toFixed(2) }}</strong>
-              </template>
-            </el-table-column>
-            <el-table-column label="Balance after" width="120" align="right">
-              <template #default="{ row }">
-                ${{ Math.max(0, Number(row.itemBalanceAmount ?? 0) - Number(row.allocatedAmount ?? 0)).toFixed(2) }}
-              </template>
-            </el-table-column>
-          </el-table>
+        <div v-if="!payParticipant && payCourseItems.length > 1" class="payment-allocation-preview">
+          <div class="payment-allocation-preview__title">Assign each payment to courses</div>
+          <div v-for="(split, splitIndex) in payForm.splits" :key="`allocation-${splitIndex}`" class="course-payment-allocation">
+            <strong>Payment {{ splitIndex + 1 }} · {{ paymentMethodName(split.paymentMethod) }} · ${{ split.amount.toFixed(2) }}</strong>
+            <el-table :data="payCourseItems" size="small">
+              <el-table-column label="Course" min-width="180">
+                <template #default="{ row }">{{ row.detail || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="Outstanding" width="120" align="right">
+                <template #default="{ row }">${{ courseBalance(row).toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column label="This payment" width="170" align="right">
+                <template #default="{ row }">
+                  <el-input-number
+                    :model-value="split.allocations[String(row.id)] ?? 0"
+                    :min="0"
+                    :max="courseBalance(row)"
+                    :precision="2"
+                    :controls="false"
+                    @update:model-value="setSplitCourseAllocation(split, row.id, $event)"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="Remaining after" width="140" align="right">
+                <template #default="{ row }">
+                  ${{ Math.max(0, courseBalance(row) - courseAllocated(row.id)).toFixed(2) }}
+                </template>
+              </el-table-column>
+            </el-table>
+            <div :class="['course-payment-allocation__total', { 'payment-split-over': splitAllocationRemaining(split) < 0 }]">
+              Assigned ${{ splitAllocationTotal(split).toFixed(2) }} / ${{ split.amount.toFixed(2) }}
+            </div>
+          </div>
         </div>
 
       </el-form>
@@ -1073,12 +1075,12 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
-import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, previewPaymentAllocation, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery, type PaymentAllocationPreview } from '@/api/enrollment';
+import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
 import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminUser } from '@/types/auth';
-import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, EnrollmentOrderParticipantItem, PaymentMethodItem, PaymentRecordItem } from '@/types/domain';
+import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, EnrollmentOrderLineItem, EnrollmentOrderParticipantItem, PaymentMethodItem, PaymentRecordItem } from '@/types/domain';
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => isAdminUser(authStore.currentUser));
@@ -1552,6 +1554,7 @@ const paying = ref(false);
 const payFormRef = ref();
 const payOrder = ref<EnrollmentOrderItem | null>(null);
 const payParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
+const payCourseItems = ref<EnrollmentOrderLineItem[]>([]);
 
 interface PaySplit {
   paymentMethod: string;
@@ -1559,6 +1562,7 @@ interface PaySplit {
   paidAt: string;
   handledByName: string;
   remark: string;
+  allocations: Record<string, number>;
 }
 
 const paymentMethods = ref<PaymentMethodItem[]>([]);
@@ -1584,40 +1588,6 @@ const paySplitRemaining = computed(() => {
   return payAmountDue.value - paySplitTotal.value;
 });
 
-// ─── 课程级分摊预览（平均分摊、封顶顺延）────────────
-const allocationPreview = ref<PaymentAllocationPreview[]>([]);
-const allocationError = ref('');
-let allocationTimer: number | undefined;
-
-const previewAllocationDebounced = () => {
-  window.clearTimeout(allocationTimer);
-  allocationTimer = window.setTimeout(async () => {
-    const order = payOrder.value;
-    if (!order || paySplitTotal.value <= 0 || payParticipant.value) {
-      allocationPreview.value = [];
-      allocationError.value = '';
-      return;
-    }
-    try {
-      const res = await previewPaymentAllocation(order.id, Number(paySplitTotal.value.toFixed(2)));
-      allocationPreview.value = res.data.data;
-      allocationError.value = '';
-    } catch (err: any) {
-      allocationPreview.value = [];
-      allocationError.value = err?.response?.data?.message ?? 'Unable to allocate this payment.';
-    }
-  }, 300);
-};
-
-watch([() => payForm.splits.map(s => s.amount), () => payDialogVisible.value, () => payOrder.value?.id], () => {
-  if (!payDialogVisible.value) {
-    allocationPreview.value = [];
-    allocationError.value = '';
-    return;
-  }
-  previewAllocationDebounced();
-}, { deep: true });
-
 function addPaySplit() {
   payForm.splits.push(createPaySplit());
 }
@@ -1626,13 +1596,14 @@ function removePaySplit(index: number) {
   payForm.splits.splice(index, 1);
 }
 
-function createPaySplit(amount = 0): PaySplit {
+function createPaySplit(amount = 0, allocations: Record<string, number> = {}): PaySplit {
   return {
     paymentMethod: paymentMethods.value[0]?.methodCode ?? 'CASH',
     amount,
     paidAt: dayjs().format('YYYY-MM-DD'),
     handledByName: '',
     remark: '',
+    allocations,
   };
 }
 
@@ -2004,6 +1975,7 @@ async function openRequestedOrderAction() {
   const action = String(route.query.action ?? '');
   const participantIndexText = String(route.query.participantIndex ?? '').trim();
   const participantIndex = participantIndexText ? Number(participantIndexText) : null;
+  const orderItemId = String(route.query.orderItemId ?? '').trim();
   if (!orderId || (action !== 'pay' && action !== 'refund')) {
     return;
   }
@@ -2025,7 +1997,7 @@ async function openRequestedOrderAction() {
       if (!canPayOrder(order, participant)) {
         ElMessage.warning('This order does not have an outstanding balance.');
       } else {
-        openPayDialog(order, participant);
+        await openPayDialog(order, participant, orderItemId || undefined);
       }
     } else if (!canRefundOrder(order, participant)) {
       ElMessage.warning('This order has no refundable payment.');
@@ -2041,6 +2013,7 @@ async function openRequestedOrderAction() {
         orderId: undefined,
         action: undefined,
         productName: undefined,
+        orderItemId: undefined,
         participantIndex: undefined,
       },
     });
@@ -2182,11 +2155,62 @@ async function handleRefundSubmit() {
 }
 
 // ─── Payment Dialog ──────────────────────────────────
-function openPayDialog(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
+async function openPayDialog(row: EnrollmentOrderItem,
+                             participant: EnrollmentOrderParticipantItem | null = null,
+                             targetOrderItemId?: string | number) {
+  let items = row.items ?? [];
+  if (items.length === 0 && !participant) {
+    try {
+      items = (await fetchEnrollmentOrder(row.id)).data.data.items ?? [];
+    } catch (err: any) {
+      ElMessage.error(err?.response?.data?.message ?? 'Failed to load course balances.');
+      return;
+    }
+  }
   payOrder.value = row;
   payParticipant.value = participant;
-  payForm.splits = [createPaySplit(payAmountDue.value)];
+  payCourseItems.value = items;
+  const targetCourse = targetOrderItemId == null
+    ? null
+    : items.find((item) => String(item.id) === String(targetOrderItemId)) ?? null;
+  if (targetOrderItemId != null && !targetCourse) {
+    ElMessage.warning('The selected course is not part of this enrollment order.');
+    return;
+  }
+  const amount = targetCourse ? Math.min(payAmountDue.value, courseBalance(targetCourse)) : payAmountDue.value;
+  const allocations: Record<string, number> = {};
+  if (!participant && items.length === 1) {
+    allocations[String(items[0].id)] = amount;
+  } else if (!participant && targetCourse && amount > 0) {
+    allocations[String(targetCourse.id)] = amount;
+  }
+  payForm.splits = [createPaySplit(amount, allocations)];
   payDialogVisible.value = true;
+}
+
+function courseBalance(item: EnrollmentOrderLineItem) {
+  return Math.max(0, Number(item.balanceAmount ?? (Number(item.amountDue ?? 0) - Number(item.paidAmount ?? 0))));
+}
+
+function courseAllocated(orderItemId: EntityId) {
+  const key = String(orderItemId);
+  return payForm.splits.reduce((total, split) => total + Number(split.allocations[key] ?? 0), 0);
+}
+
+function splitAllocationTotal(split: PaySplit) {
+  return Object.values(split.allocations).reduce((total, amount) => total + Number(amount || 0), 0);
+}
+
+function splitAllocationRemaining(split: PaySplit) {
+  return Number((split.amount - splitAllocationTotal(split)).toFixed(2));
+}
+
+function setSplitCourseAllocation(split: PaySplit, orderItemId: EntityId, value: number | undefined) {
+  split.allocations[String(orderItemId)] = Number(Number(value ?? 0).toFixed(2));
+}
+
+function paymentMethodName(methodCode: string) {
+  return paymentMethods.value.find((method) => method.methodCode === methodCode)?.methodName ?? methodCode;
 }
 
 async function handlePaySubmit() {
@@ -2210,6 +2234,20 @@ async function handlePaySubmit() {
     return;
   }
   if (!payOrder.value) return;
+  if (!payParticipant.value && payCourseItems.value.length > 1) {
+    if (rows.some((row) => splitAllocationRemaining(row) !== 0)) {
+      ElMessage.warning('Assign the full amount of each payment to one or more courses.');
+      return;
+    }
+    const allocatedByCourse = new Map<string, number>();
+    rows.forEach((row) => Object.entries(row.allocations).forEach(([itemId, amount]) => {
+      allocatedByCourse.set(itemId, (allocatedByCourse.get(itemId) ?? 0) + Number(amount || 0));
+    }));
+    if (payCourseItems.value.some((item) => (allocatedByCourse.get(String(item.id)) ?? 0) > courseBalance(item) + 0.001)) {
+      ElMessage.warning('A course allocation cannot exceed that course’s outstanding balance.');
+      return;
+    }
+  }
 
   paying.value = true;
   try {
@@ -2220,6 +2258,11 @@ async function handlePaySubmit() {
         amount: row.amount,
         paidAt: `${row.paidAt}T00:00:00`,
         participantIndex: payParticipant.value?.participantIndex,
+        allocations: !payParticipant.value
+          ? Object.entries(row.allocations)
+            .filter(([, amount]) => amount > 0)
+            .map(([orderItemId, amount]) => ({ enrollmentOrderItemId: orderItemId, amount }))
+          : undefined,
         handledByName: row.handledByName,
         remark: row.remark || undefined,
       })),
@@ -2872,6 +2915,23 @@ void initializePage();
   color: var(--el-text-color-secondary);
   margin-bottom: 6px;
   font-weight: 600;
+}
+.course-payment-allocation {
+  padding: 8px 0;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.course-payment-allocation > strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--el-text-color-primary);
+  font-size: 12px;
+}
+.course-payment-allocation__total {
+  padding-top: 5px;
+  color: var(--el-color-success);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: right;
 }
 
 /* Group Class hierarchy */
