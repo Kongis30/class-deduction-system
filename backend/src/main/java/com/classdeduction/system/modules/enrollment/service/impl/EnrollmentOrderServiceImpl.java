@@ -1077,19 +1077,31 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         } else if (request.getPayments() != null) {
             reconcileCorrectedPayments(order, request.getPayments());
         }
-        if (request.getItems() != null || request.getPayments() != null
+        boolean moneyChanged = request.getItems() != null || request.getPayments() != null
                 || request.getParticipantBillings() != null
                 || request.getExtraFees() != null || request.getDiscounts() != null
-                || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null) {
+                || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null;
+        if (moneyChanged) {
             applyCorrectedMoney(order, request);
         }
         studentMapper.updateById(student);
         enrollmentOrderMapper.updateById(order);
-        // 更正可能改变课程价格/附加费/折扣：课程项应收重算并重放付款分摊
-        if (request.getItems() != null || request.getExtraFees() != null || request.getDiscounts() != null
-                || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null) {
-            invalidateItemAmountDue(order.getId());
-            paymentAllocationService.replayAllocations(order);
+        // 更正金额相关内容后重放课程级分摊：价格/附加费/折扣变化需重算课程项应收，
+        // 仅付款金额变化也需重放（课程分摊随付款金额演进）。
+        if (moneyChanged) {
+            boolean priceChanged = request.getItems() != null || request.getExtraFees() != null
+                    || request.getDiscounts() != null
+                    || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null;
+            if (priceChanged) {
+                invalidateItemAmountDue(order.getId());
+            }
+            Long allocationParticipantCount = enrollmentOrderParticipantMapper.selectCount(
+                    new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                            .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                            .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+            if (allocationParticipantCount == null || allocationParticipantCount <= 1) {
+                paymentAllocationService.replayAllocations(order);
+            }
         }
         // updateById skips null fields, so a campus switch to a no-id campus (e.g. Online)
         // would keep the stale campus_id. Apply the campus snapshot explicitly so it can be nulled.
