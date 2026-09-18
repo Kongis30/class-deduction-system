@@ -559,6 +559,16 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         return startsBeforeTarget && endsAfterTarget;
     }
 
+    /**
+     * 上课形态（上午/下午/全天）：优先订单项快照，历史订单回退班课报名记录。
+     * NONE 表示该课程维度不适用（如 1 对 1），统一返回 null 由前端展示空值。
+     */
+    private String resolveAttendanceOption(EnrollmentOrderItemEntity item, ClassEnrollmentEntity classEnrollment) {
+        String option = firstText(item == null ? null : item.getAttendanceOption(),
+                classEnrollment == null ? null : classEnrollment.getAttendanceOption());
+        return option == null || "NONE".equals(option) ? null : option;
+    }
+
     private DataSummaryResponseVO.RowVO toRow(EnrollmentOrderEntity order,
                                               EnrollmentOrderItemEntity item,
                                               CoursePackageEntity coursePackage,
@@ -711,6 +721,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 periodStartDate,
                 periodEndDate,
                 item == null ? null : item.getPeriodLabel(),
+                resolveAttendanceOption(item, classEnrollment),
+                item == null ? null : item.getTimeSlotLabel(),
                 resolvedCampusId,
                 firstText(order.getCampusNameSnapshot(), campus == null ? null : campus.getCampusName()),
                 classId,

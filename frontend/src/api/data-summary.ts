@@ -38,6 +38,9 @@ export interface DataSummaryRow {
   periodStartDate?: string;
   periodEndDate?: string;
   periodLabel?: string;
+  /** 上课形态：FULL_DAY 全天 / MORNING 上午 / AFTERNOON 下午 / CUSTOM 自定义时段；1 对 1 等不适用时为空。 */
+  attendanceOption?: string;
+  timeSlotLabel?: string;
   campusId?: EntityId;
   campusName?: string;
   classId?: EntityId;

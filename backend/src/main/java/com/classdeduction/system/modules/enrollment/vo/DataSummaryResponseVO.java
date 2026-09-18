@@ -46,6 +46,9 @@ public record DataSummaryResponseVO(
             LocalDate periodStartDate,
             LocalDate periodEndDate,
             String periodLabel,
+            String attendanceOption,
+            @Schema(description = "Custom attendance slot description, e.g. 9am-10am for CUSTOM rows.")
+            String timeSlotLabel,
             Long campusId,
             String campusName,
             Long classId,

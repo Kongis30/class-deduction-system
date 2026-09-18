@@ -222,6 +222,9 @@
                     {{ displayText(row.paymentMethod) }}
                   </span>
                 </td>
+                <td class="workbook-cell--center">
+                  {{ attendanceLabelRow(row) }}
+                </td>
                 <td class="workbook-cell--center" :class="{ 'workbook-cell--renewal-due': isPeriodRenewalDue(row) }">
                   {{ formatPeriod(row) }}
                 </td>
@@ -343,6 +346,7 @@ type ColumnKey =
   | 'pickup'
   | 'dropoff'
   | 'paymentMethod'
+  | 'attendance'
   | 'period'
   | 'tuition'
   | 'transportFee'
@@ -431,6 +435,7 @@ const columns: WorkbookColumn[] = [
   { key: 'pickup', label: 'Pick up', width: 84, filterType: 'select' },
   { key: 'dropoff', label: 'Drop off', width: 86, filterType: 'select' },
   { key: 'paymentMethod', label: 'Pay Method', width: 108, filterType: 'select' },
+  { key: 'attendance', label: 'AM/PM', width: 96, filterType: 'select' },
   { key: 'period', label: 'Period', width: 176, filterType: 'date' },
   { key: 'tuition', label: 'Tuition', width: 104, filterType: 'number' },
   { key: 'transportFee', label: 'Pickup/Dropoff', width: 128, filterType: 'number' },
@@ -982,6 +987,8 @@ function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | numbe
       return row.dropoffRequired ? 'Yes' : 'No';
     case 'paymentMethod':
       return displayText(row.paymentMethod);
+    case 'attendance':
+      return attendanceLabelRow(row);
     case 'period':
       return row.periodStartDate || row.periodLabel;
     case 'tuition':
@@ -1187,6 +1194,16 @@ function saturdayBaseClass(row: DataSummaryRow) {
 }
 
 /** 汇总页 Class 只展示报名关联的 actual class，不读取学生档案中的旧 Class 字段。 */
+/** 上课形态展示：全天 / AM / PM / 自定义时段；不适用显示 —。 */
+function attendanceLabelRow(row: DataSummaryDisplayRow) {
+  const option = row.attendanceOption?.toUpperCase();
+  if (option === 'FULL_DAY') return 'Full day';
+  if (option === 'MORNING') return 'AM';
+  if (option === 'AFTERNOON') return 'PM';
+  if (option === 'CUSTOM') return displayText(row.timeSlotLabel) || 'Custom';
+  return '';
+}
+
 function displayClassName(row: DataSummaryRow) {
   if (isPrivateLessonRow(row)) {
     return privateLessonModeLabel(row.privateLessonParticipantCount);
