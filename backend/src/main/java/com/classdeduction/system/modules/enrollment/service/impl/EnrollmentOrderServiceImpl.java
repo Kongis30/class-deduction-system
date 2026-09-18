@@ -2278,14 +2278,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private void deleteOrderFinancialArtifacts(EnrollmentOrderEntity order, List<Long> itemIds) {
         // 软删前把业务唯一号追加行级唯一后缀：uk_xxx_no(receipt_no/payment_no, is_deleted)
         // 复合唯一键只允许一行 (no,1)，若历史软删行占用键位，批量软删会撞 Duplicate entry。
+        // 列宽 varchar(32)：原号截前 8 位 + '-DEL-' + 19 位雪花 id 恰好 32。
         paymentRecordMapper.update(null, new LambdaUpdateWrapper<PaymentRecordEntity>()
                 .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId())
                 .eq(PaymentRecordEntity::getIsDeleted, 0)
-                .setSql("payment_no = CONCAT(payment_no, '-DEL-', id)"));
+                .setSql("payment_no = CONCAT(LEFT(payment_no, 8), '-DEL-', id)"));
         receiptRecordMapper.update(null, new LambdaUpdateWrapper<ReceiptRecordEntity>()
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId())
                 .eq(ReceiptRecordEntity::getIsDeleted, 0)
-                .setSql("receipt_no = CONCAT(receipt_no, '-DEL-', id)"));
+                .setSql("receipt_no = CONCAT(LEFT(receipt_no, 8), '-DEL-', id)"));
         if (!itemIds.isEmpty()) {
             enrollmentOrderItemMapper.delete(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
                     .in(EnrollmentOrderItemEntity::getId, itemIds));
