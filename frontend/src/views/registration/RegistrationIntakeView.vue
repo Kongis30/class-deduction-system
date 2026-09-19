@@ -2484,13 +2484,22 @@ function paymentAllocationRemainder(payment: PaymentLine) {
   return roundMoney(numeric(payment.amount) - paymentCourseAllocationTotal(payment));
 }
 
-/** 课程卡片只展示本课付款；旧的未分配付款会出现在各课中供重新分配。 */
+/**
+ * 课程卡片只展示本课付款。
+ * 历史上没有课程归属的付款只能暂挂在第一门课，不能复制到其他课程后造成锁定的假付款行。
+ */
 function paymentsForCourse(courseRowKey: string) {
-  return activePaymentLines.value.filter((payment) => (
-    payment.courseRowKey === courseRowKey
-    || numeric(payment.courseAllocations?.[courseRowKey]) > 0
-    || (!payment.courseRowKey && paymentCourseAllocationTotal(payment) === 0)
-  ));
+  const firstCourseRowKey = courseLines.value[0]?.rowKey;
+  return activePaymentLines.value.filter((payment) => {
+    if (payment.courseRowKey) {
+      return payment.courseRowKey === courseRowKey;
+    }
+    if (numeric(payment.courseAllocations?.[courseRowKey]) > 0) {
+      return true;
+    }
+    // 无课程归属且没有任何分配的历史付款只显示在第一门课，避免跨课程重复渲染。
+    return paymentCourseAllocationTotal(payment) === 0 && courseRowKey === firstCourseRowKey;
+  });
 }
 
 function coursePaymentAmount(payment: PaymentLine, courseRowKey: string) {
