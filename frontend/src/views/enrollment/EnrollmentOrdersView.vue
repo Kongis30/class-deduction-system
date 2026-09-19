@@ -24,7 +24,8 @@
             placeholder="Order no. or student name"
             clearable
             style="width: 180px;"
-            @input="handleFilterChange"
+            @input="handleKeywordInput"
+            @clear="handleKeywordInput"
           />
         </el-form-item>
         <el-form-item label="Order status" class="filters__item">
@@ -76,7 +77,8 @@
                     size="small"
                     clearable
                     placeholder="Course / student / order no."
-                    @input="handleFilterChange"
+                    @input="handleKeywordInput"
+                    @clear="handleKeywordInput"
                   />
                 </div>
               </template>
@@ -1711,9 +1713,24 @@ function sharedLessonLabel(row: EnrollmentOrderItem): string | null {
   return count > 1 ? `1-on-${count}` : null;
 }
 
+let keywordSearchTimer: number | undefined;
+let latestOrderListRequest = 0;
+
+// 关键词筛选入口：等待用户停止输入后再查询，避免并发响应覆盖最新结果。
+function handleKeywordInput() {
+  pagination.page = 1;
+  if (keywordSearchTimer != null) {
+    window.clearTimeout(keywordSearchTimer);
+  }
+  keywordSearchTimer = window.setTimeout(() => {
+    keywordSearchTimer = undefined;
+    void loadData();
+  }, 250);
+}
+
 function handleFilterChange() {
   pagination.page = 1;
-  loadData();
+  void loadData();
 }
 
 function handleGroupOrderFilterChange() {
@@ -1762,10 +1779,12 @@ function paymentStatusLabel(status: string) {
 
 // ─── Load Data ──────────────────────────────────────
 async function loadData() {
+  const requestId = ++latestOrderListRequest;
   loading.value = true;
   try {
+    const keyword = filters.keyword.trim();
     const params: EnrollmentOrderQuery = {
-      keyword: filters.keyword || undefined,
+      keyword: keyword || undefined,
       orderStatus: filters.orderStatus || undefined,
       paymentStatus: filters.paymentStatus || undefined,
       excludeClassOrders: true,
@@ -1773,13 +1792,21 @@ async function loadData() {
       pageSize: pagination.size,
     };
     const res = await fetchEnrollmentOrders(params);
+    if (requestId !== latestOrderListRequest) {
+      return;
+    }
     const data = res.data.data;
     tableData.value = expandSharedPrivateLessonRows(data.records);
     pagination.total = data.total;
   } catch {
+    if (requestId !== latestOrderListRequest) {
+      return;
+    }
     ElMessage.error('Failed to load enrollment orders.');
   } finally {
-    loading.value = false;
+    if (requestId === latestOrderListRequest) {
+      loading.value = false;
+    }
   }
 }
 
@@ -1986,6 +2013,10 @@ function orderSummaryFromDetail(detail: EnrollmentOrderDetailItem): EnrollmentOr
   };
 }
 
+let pageInitialized = false;
+let requestedActionInFlight = false;
+
+// 路由动作入口：既支持首次进入页面，也支持页面复用时由 Data Summary 更新 query 后打开支付窗口。
 async function openRequestedOrderAction() {
   const orderId = String(route.query.orderId ?? '').trim();
   const action = String(route.query.action ?? '');
@@ -1997,6 +2028,10 @@ async function openRequestedOrderAction() {
   if (!orderId || (action !== 'pay' && action !== 'refund')) {
     return;
   }
+  if (requestedActionInFlight) {
+    return;
+  }
+  requestedActionInFlight = true;
 
   try {
     const response = await fetchEnrollmentOrder(orderId);
@@ -2036,10 +2071,27 @@ async function openRequestedOrderAction() {
         productName: undefined,
         orderItemId: undefined,
         participantIndex: undefined,
+        courseBalance: undefined,
       },
     });
+    requestedActionInFlight = false;
   }
 }
+
+watch(
+  () => [
+    route.query.orderId,
+    route.query.action,
+    route.query.orderItemId,
+    route.query.participantIndex,
+    route.query.courseBalance,
+  ],
+  () => {
+    if (pageInitialized) {
+      void openRequestedOrderAction();
+    }
+  },
+);
 
 // ─── Delete Dialog ──────────────────────────────────
 const DELETE_COOLDOWN_SECONDS = 10;
@@ -2105,6 +2157,10 @@ async function confirmDeleteOrder() {
 
 onBeforeUnmount(() => {
   clearDeleteCooldown();
+  if (keywordSearchTimer != null) {
+    window.clearTimeout(keywordSearchTimer);
+    keywordSearchTimer = undefined;
+  }
 });
 
 // ─── Refund Dialog ──────────────────────────────────
@@ -2472,6 +2528,7 @@ async function initializePage() {
     loadDiscountPresets(),
     loadActivePaymentMethods(),
   ]);
+  pageInitialized = true;
   await openRequestedOrderAction();
 }
 

@@ -205,12 +205,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Override
     public PageResponse<EnrollmentOrderListItemVO> pageOrders(EnrollmentOrderPageQuery query) {
         Page<EnrollmentOrderEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
-        List<Long> matchedStudentIds = findMatchedStudentIds(query.getKeyword());
-        List<Long> matchedCourseOrderIds = findMatchedCourseOrderIds(query.getKeyword());
-        List<Long> matchedClassIds = findMatchedClassIds(query.getKeyword());
+        // 统一清理关键词后再查学生、课程和班课，避免输入框中的首尾空格让筛选看起来失效。
+        String keyword = StringUtils.hasText(query.getKeyword()) ? query.getKeyword().trim() : null;
+        List<Long> matchedStudentIds = findMatchedStudentIds(keyword);
+        List<Long> matchedCourseOrderIds = findMatchedCourseOrderIds(keyword);
+        List<Long> matchedClassIds = findMatchedClassIds(keyword);
         LambdaQueryWrapper<EnrollmentOrderEntity> wrapper = new LambdaQueryWrapper<EnrollmentOrderEntity>()
-                .and(StringUtils.hasText(query.getKeyword()), w -> w
-                        .like(EnrollmentOrderEntity::getEnrollmentNo, query.getKeyword())
+                .and(StringUtils.hasText(keyword), w -> w
+                        .like(EnrollmentOrderEntity::getEnrollmentNo, keyword)
                         .or(!matchedStudentIds.isEmpty(), nested -> nested.in(EnrollmentOrderEntity::getStudentId, matchedStudentIds))
                         .or(!matchedCourseOrderIds.isEmpty(), nested -> nested.in(EnrollmentOrderEntity::getId, matchedCourseOrderIds))
                         .or(!matchedClassIds.isEmpty(), nested -> nested.in(EnrollmentOrderEntity::getClassId, matchedClassIds)))
