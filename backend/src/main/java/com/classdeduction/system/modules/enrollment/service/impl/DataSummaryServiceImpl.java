@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.enrollment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.util.UnitConverter;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
@@ -17,6 +18,7 @@ import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEn
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
+import com.classdeduction.system.modules.enrollment.entity.PaymentAllocationEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -24,6 +26,7 @@ import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
@@ -36,6 +39,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -67,6 +71,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final CoursePackageMapper coursePackageMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final PaymentRecordMapper paymentRecordMapper;
+    private final PaymentAllocationMapper paymentAllocationMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final ClassGroupMapper classGroupMapper;
     private final CourseProductMapper courseProductMapper;
@@ -74,6 +79,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final HourLedgerMapper hourLedgerMapper;
     private final StudentMapper studentMapper;
     private final CampusMapper campusMapper;
+    private final JsonHelper jsonHelper;
 
     @Override
     public DataSummaryResponseVO getSummary(DataSummaryQuery query) {
@@ -160,6 +166,26 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Map<Long, List<String>> reviewIssuesByOrderId = buildReviewIssues(orders, packages, paymentRecords);
 
         Set<Long> itemIds = items.stream().map(EnrollmentOrderItemEntity::getId).collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, PaymentRecordEntity> paymentRecordsById = paymentRecords.stream()
+                .collect(Collectors.toMap(PaymentRecordEntity::getId, Function.identity(), (left, right) -> left));
+        List<PaymentAllocationEntity> paymentAllocations = itemIds.isEmpty()
+                ? Collections.emptyList()
+                : paymentAllocationMapper.selectList(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                        .in(PaymentAllocationEntity::getEnrollmentOrderItemId, itemIds));
+        Map<PaymentParticipantItemKey, BigDecimal> paidAmountByParticipantAndItem = new LinkedHashMap<>();
+        Set<PaymentParticipantKey> participantsWithCourseAllocations = new LinkedHashSet<>();
+        for (PaymentAllocationEntity allocation : paymentAllocations) {
+            PaymentRecordEntity payment = paymentRecordsById.get(allocation.getPaymentRecordId());
+            if (payment == null || payment.getParticipantIndex() == null || allocation.getEnrollmentOrderItemId() == null) {
+                continue;
+            }
+            PaymentParticipantKey participantKey = new PaymentParticipantKey(
+                    payment.getEnrollmentOrderId(), payment.getParticipantIndex());
+            PaymentParticipantItemKey itemKey = new PaymentParticipantItemKey(
+                    participantKey, allocation.getEnrollmentOrderItemId());
+            paidAmountByParticipantAndItem.merge(itemKey, amount(allocation.getAmount()), BigDecimal::add);
+            participantsWithCourseAllocations.add(participantKey);
+        }
         Set<Long> studentIds = orders.stream().map(EnrollmentOrderEntity::getStudentId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
@@ -211,6 +237,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         packageByOrderItemId,
                         classEnrollmentByOrderItemId, classEnrollmentsByStudentClass, reviewIssuesByOrderId,
                         latestPaymentMethodByOrderId, latestPaymentMethodByParticipant, paidAmountByParticipant,
+                        paidAmountByParticipantAndItem, participantsWithCourseAllocations,
                         allocationByOrderId,
                         studentById, campusById, context)
                 .stream()
@@ -364,6 +391,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, String> latestPaymentMethodByOrderId,
             Map<PaymentParticipantKey, String> latestPaymentMethodByParticipant,
             Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
+            Map<PaymentParticipantItemKey, BigDecimal> paidAmountByParticipantAndItem,
+            Set<PaymentParticipantKey> participantsWithCourseAllocations,
             Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId,
             Map<Long, StudentEntity> studentById,
             Map<Long, CampusEntity> campusById,
@@ -387,12 +416,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                     CoursePackageEntity coursePackage = participant == null
                             ? firstPackage(packagesByOrderId.get(order.getId()))
                             : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, null);
-                    rows.add(toRow(order, null, coursePackage, null, participant,
+                    rows.add(toRow(order, null, Collections.emptyList(), coursePackage, null, participant,
                             privateLessonGroupId,
                             sharedPrivateLesson ? privateLessonParticipantCount : null,
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
-                            paidAmountByParticipant,
+                            paidAmountByParticipant, paidAmountByParticipantAndItem,
+                            participantsWithCourseAllocations,
                             allocationByOrderId,
                             studentById, campusById, context, today, soonLimit));
                 }
@@ -409,14 +439,14 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, item);
                     ClassEnrollmentEntity classEnrollment = participant == null
                             ? defaultClassEnrollment
-                            : firstNonNull(classEnrollmentByOrderItemId.get(item.getId()),
-                                    findClassEnrollmentForItem(order, item, participant.getStudentId(), classEnrollmentsByStudentClass));
-                    rows.add(toRow(order, item, coursePackage, classEnrollment, participant,
+                            : findClassEnrollmentForItem(order, item, participant.getStudentId(), classEnrollmentsByStudentClass);
+                    rows.add(toRow(order, item, orderItems, coursePackage, classEnrollment, participant,
                             privateLessonGroupId,
                             sharedPrivateLesson ? privateLessonParticipantCount : null,
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
-                            paidAmountByParticipant,
+                            paidAmountByParticipant, paidAmountByParticipantAndItem,
+                            participantsWithCourseAllocations,
                             allocationByOrderId,
                             studentById, campusById, context, today, soonLimit));
                 }
@@ -571,6 +601,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
     private DataSummaryResponseVO.RowVO toRow(EnrollmentOrderEntity order,
                                               EnrollmentOrderItemEntity item,
+                                              List<EnrollmentOrderItemEntity> orderItems,
                                               CoursePackageEntity coursePackage,
                                               ClassEnrollmentEntity classEnrollment,
                                               EnrollmentOrderParticipantEntity participant,
@@ -580,6 +611,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                               String paymentMethod,
                                               Map<PaymentParticipantKey, String> latestPaymentMethodByParticipant,
                                               Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
+                                              Map<PaymentParticipantItemKey, BigDecimal> paidAmountByParticipantAndItem,
+                                              Set<PaymentParticipantKey> participantsWithCourseAllocations,
                                               Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId,
                                               Map<Long, StudentEntity> studentById,
                                               Map<Long, CampusEntity> campusById,
@@ -621,8 +654,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         LocalDate expiryDate = periodEndDate;
         boolean expiringSoon = expiryDate != null && !expiryDate.isBefore(today) && !expiryDate.isAfter(soonLimit);
         boolean oneOnOne = "ONE_ON_ONE".equals(courseType) || isOneOnOne(product, coursePackage);
-        boolean sharedPrivateLesson = oneOnOne && isSharedPrivateLesson(privateLessonParticipantCount)
-                && participant != null;
+        boolean sharedParticipantOrder = isSharedPrivateLesson(privateLessonParticipantCount)
+                && participant != null && (privateLessonGroupId != null || oneOnOne);
         boolean primaryParticipant = participant == null
                 || Objects.equals(displayStudentId, order.getStudentId())
                 || Objects.equals(participant.getParticipantIndex(), 1);
@@ -632,7 +665,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         String participantPaymentMethod = paymentParticipantKey == null
                 ? null
                 : latestPaymentMethodByParticipant.get(paymentParticipantKey);
-        String resolvedPaymentMethod = sharedPrivateLesson
+        String resolvedPaymentMethod = sharedParticipantOrder
                 ? firstText(participantPaymentMethod, primaryParticipant ? paymentMethod : null)
                 : firstText(participantPaymentMethod, paymentMethod);
 
@@ -643,8 +676,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         BigDecimal rowAmountDue = amount(order.getAmountDue());
         BigDecimal rowPaidAmount = amount(order.getReceivedAmount());
         BigDecimal rowBalanceAmount = amount(order.getBalanceAmount());
-        if (!sharedPrivateLesson) {
-            AllocatedAmounts allocated = allocatedAmounts(allocationByOrderId, order.getId(), participant, item);
+        AllocatedAmounts allocated = allocatedAmounts(allocationByOrderId, order.getId(), participant, item);
+        if (!sharedParticipantOrder) {
             if (allocated != null) {
                 // 非共享私教的行使用分摊后的金额，保证同一订单各行金额之和等于订单总额。
                 rowPickupFeeAmount = allocated.pickupFeeAmount();
@@ -656,17 +689,29 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         .setScale(2, RoundingMode.HALF_UP);
             }
         }
-        if (sharedPrivateLesson) {
-            rowLinePriceAmount = resolveParticipantGrossAmount(participant, coursePackage, item, order,
+        if (sharedParticipantOrder) {
+            rowLinePriceAmount = item == null
+                    ? resolveParticipantGrossAmount(participant, coursePackage, null, order, privateLessonParticipantCount)
+                    : splitAmount(item.getPriceAmount(), privateLessonParticipantCount, participant.getParticipantIndex());
+            rowDiscountAmount = participantCourseDiscountAmount(participant, item, orderItems,
                     privateLessonParticipantCount);
-            rowDiscountAmount = resolveParticipantDiscountAmount(participant, order, privateLessonParticipantCount);
-            rowPickupFeeAmount = primaryParticipant ? amount(order.getPickupFeeAmount()) : ZERO_AMOUNT;
-            rowExtraFeeAmount = primaryParticipant ? amount(order.getExtraFeeAmount()) : ZERO_AMOUNT;
-            rowAmountDue = resolveParticipantAmountDue(participant, rowLinePriceAmount, rowPickupFeeAmount,
-                    rowExtraFeeAmount, rowDiscountAmount);
-            rowPaidAmount = resolveParticipantPaidAmount(participant, paymentParticipantKey,
-                    paidAmountByParticipant, order, primaryParticipant);
-            rowBalanceAmount = resolveParticipantBalanceAmount(participant, rowAmountDue, rowPaidAmount);
+            BigDecimal courseFeeAmount = item == null
+                    ? amount(order.getPickupFeeAmount()).add(amount(order.getDropoffFeeAmount())).add(amount(order.getExtraFeeAmount()))
+                    : amount(item.getAmountDue()).subtract(amount(item.getPriceAmount()))
+                            .add(amount(item.getDiscountAmount())).max(ZERO_AMOUNT);
+            rowPickupFeeAmount = primaryParticipant
+                    ? item == null ? amount(order.getPickupFeeAmount())
+                            : allocateOrderAmountToItem(order.getPickupFeeAmount(), orderItems, item)
+                    : ZERO_AMOUNT;
+            rowExtraFeeAmount = primaryParticipant
+                    ? courseFeeAmount.subtract(rowPickupFeeAmount).max(ZERO_AMOUNT)
+                    : ZERO_AMOUNT;
+            rowAmountDue = rowLinePriceAmount.add(rowPickupFeeAmount).add(rowExtraFeeAmount)
+                    .subtract(rowDiscountAmount).max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
+            rowPaidAmount = participantCoursePaidAmount(participant, paymentParticipantKey, item, orderItems,
+                    paidAmountByParticipant, paidAmountByParticipantAndItem, participantsWithCourseAllocations,
+                    allocated, order, primaryParticipant);
+            rowBalanceAmount = rowAmountDue.subtract(rowPaidAmount).setScale(2, RoundingMode.HALF_UP);
         }
         boolean overdue = positive(rowBalanceAmount);
         boolean lowOneOnOneHours = oneOnOne && coursePackage != null
@@ -780,27 +825,131 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         return splitAmount(totalAmount, participantCount, participant.getParticipantIndex());
     }
 
-    private BigDecimal resolveParticipantDiscountAmount(EnrollmentOrderParticipantEntity participant,
-                                                        EnrollmentOrderEntity order,
+    private BigDecimal participantCourseDiscountAmount(EnrollmentOrderParticipantEntity participant,
+                                                        EnrollmentOrderItemEntity item,
+                                                        List<EnrollmentOrderItemEntity> orderItems,
                                                         Integer participantCount) {
-        if (participant.getDiscountAmount() != null) {
-            return amount(participant.getDiscountAmount());
+        if (participant == null) {
+            return item == null ? ZERO_AMOUNT : splitAmount(item.getDiscountAmount(), participantCount, null);
         }
-        return splitAmount(order.getDiscountAmount(), participantCount, participant.getParticipantIndex());
+        BigDecimal participantDiscount = amount(participant.getDiscountAmount());
+        if (item == null) {
+            return participantDiscount;
+        }
+        List<Map<String, Object>> details = jsonHelper.fromJson(participant.getDiscountDetail(),
+                new TypeReference<List<Map<String, Object>>>() { });
+        boolean hasCourseAssignments = details != null && details.stream()
+                .filter(Objects::nonNull)
+                .anyMatch(detail -> detail.get("orderItemLineNo") != null);
+        if (hasCourseAssignments) {
+            return details.stream()
+                    .filter(Objects::nonNull)
+                    .filter(detail -> Objects.equals(toInteger(detail.get("orderItemLineNo")), item.getLineNo()))
+                    .map(detail -> amount(toBigDecimal(detail.get("amount"))))
+                    .reduce(ZERO_AMOUNT, BigDecimal::add);
+        }
+        if (orderItems == null || orderItems.size() <= 1) {
+            return participantDiscount;
+        }
+        BigDecimal totalWeight = orderItems.stream().map(course -> amount(course.getPriceAmount()))
+                .reduce(ZERO_AMOUNT, BigDecimal::add);
+        BigDecimal assigned = ZERO_AMOUNT;
+        for (int index = 0; index < orderItems.size(); index++) {
+            EnrollmentOrderItemEntity course = orderItems.get(index);
+            BigDecimal share = index == orderItems.size() - 1
+                    ? participantDiscount.subtract(assigned)
+                    : totalWeight.compareTo(ZERO_AMOUNT) <= 0
+                    ? participantDiscount.divide(BigDecimal.valueOf(orderItems.size()), 2, RoundingMode.DOWN)
+                    : participantDiscount.multiply(amount(course.getPriceAmount()))
+                    .divide(totalWeight, 2, RoundingMode.DOWN);
+            if (Objects.equals(course.getId(), item.getId())) {
+                return share.setScale(2, RoundingMode.HALF_UP);
+            }
+            assigned = assigned.add(share);
+        }
+        return ZERO_AMOUNT;
     }
 
-    private BigDecimal resolveParticipantAmountDue(EnrollmentOrderParticipantEntity participant,
-                                                   BigDecimal grossAmount,
-                                                   BigDecimal pickupFeeAmount,
-                                                   BigDecimal extraFeeAmount,
-                                                   BigDecimal discountAmount) {
-        if (participant.getAmountDue() != null) {
-            return amount(participant.getAmountDue());
+    private Integer toInteger(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
         }
-        return grossAmount.add(pickupFeeAmount).add(extraFeeAmount)
-                .subtract(discountAmount)
-                .max(ZERO_AMOUNT)
-                .setScale(2, RoundingMode.HALF_UP);
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(value.toString());
+        } catch (NumberFormatException exception) {
+            return null;
+        }
+    }
+
+    private BigDecimal toBigDecimal(Object value) {
+        if (value instanceof BigDecimal decimal) {
+            return decimal;
+        }
+        if (value instanceof Number number) {
+            return new BigDecimal(number.toString());
+        }
+        if (value == null) {
+            return ZERO_AMOUNT;
+        }
+        try {
+            return new BigDecimal(value.toString());
+        } catch (NumberFormatException exception) {
+            return ZERO_AMOUNT;
+        }
+    }
+
+    private BigDecimal allocateOrderAmountToItem(BigDecimal totalAmount,
+                                                 List<EnrollmentOrderItemEntity> items,
+                                                 EnrollmentOrderItemEntity targetItem) {
+        if (items == null || items.isEmpty()) {
+            return ZERO_AMOUNT;
+        }
+        List<BigDecimal> shares = allocateByWeights(totalAmount, itemPriceWeights(items));
+        for (int index = 0; index < items.size(); index++) {
+            if (Objects.equals(items.get(index).getId(), targetItem.getId())) {
+                return shares.get(index);
+            }
+        }
+        return ZERO_AMOUNT;
+    }
+
+    /**
+     * 优先使用课程级付款分摊；混有历史未分摊付款时，将差额按课程金额分配，避免丢失或重复统计。
+     */
+    private BigDecimal participantCoursePaidAmount(EnrollmentOrderParticipantEntity participant,
+                                                  PaymentParticipantKey participantKey,
+                                                  EnrollmentOrderItemEntity item,
+                                                  List<EnrollmentOrderItemEntity> orderItems,
+                                                  Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
+                                                  Map<PaymentParticipantItemKey, BigDecimal> paidAmountByParticipantAndItem,
+                                                  Set<PaymentParticipantKey> participantsWithCourseAllocations,
+                                                  AllocatedAmounts allocated,
+                                                  EnrollmentOrderEntity order,
+                                                  boolean primaryParticipant) {
+        if (participantKey == null || item == null
+                || !participantsWithCourseAllocations.contains(participantKey)) {
+            if (allocated != null) {
+                return allocated.paidAmount();
+            }
+            BigDecimal participantPaid = resolveParticipantPaidAmount(participant, participantKey,
+                    paidAmountByParticipant, order, primaryParticipant);
+            return item == null ? participantPaid : allocateOrderAmountToItem(participantPaid, orderItems, item);
+        }
+
+        BigDecimal coursePaid = amount(paidAmountByParticipantAndItem.get(
+                new PaymentParticipantItemKey(participantKey, item.getId())));
+        BigDecimal explicitPaid = paidAmountByParticipantAndItem.entrySet().stream()
+                .filter(entry -> Objects.equals(entry.getKey().participant(), participantKey))
+                .map(Map.Entry::getValue)
+                .map(value -> amount(value))
+                .reduce(ZERO_AMOUNT, BigDecimal::add);
+        BigDecimal participantPaid = resolveParticipantPaidAmount(participant, participantKey,
+                paidAmountByParticipant, order, primaryParticipant);
+        BigDecimal legacyUnallocatedPaid = participantPaid.subtract(explicitPaid).max(ZERO_AMOUNT);
+        return coursePaid.add(allocateOrderAmountToItem(legacyUnallocatedPaid, orderItems, item));
     }
 
     private BigDecimal resolveParticipantPaidAmount(EnrollmentOrderParticipantEntity participant,
@@ -816,15 +965,6 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         }
         // 兼容尚未写入参与人分摊字段的历史订单：未标记参与人的付款归主学生，避免每行重复显示。
         return primaryParticipant ? amount(order.getReceivedAmount()) : ZERO_AMOUNT;
-    }
-
-    private BigDecimal resolveParticipantBalanceAmount(EnrollmentOrderParticipantEntity participant,
-                                                       BigDecimal amountDue,
-                                                       BigDecimal paidAmount) {
-        if (participant.getBalanceAmount() != null) {
-            return amount(participant.getBalanceAmount());
-        }
-        return amountDue.subtract(paidAmount).setScale(2, RoundingMode.HALF_UP);
     }
 
     private BigDecimal splitAmount(BigDecimal totalAmount, Integer participantCount, Integer participantIndex) {
@@ -1056,6 +1196,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     }
 
     private record PaymentParticipantKey(Long orderId, Integer participantIndex) {
+    }
+
+    private record PaymentParticipantItemKey(PaymentParticipantKey participant, Long orderItemId) {
     }
 
     /** 行级金额分摊的定位键：参与人索引（可为 null）+ 订单项 ID（可为 null）。 */

@@ -55,6 +55,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -85,6 +86,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class RegistrationIntakeServiceImpl implements RegistrationIntakeService {
 
     private static final String DEFAULT_CURRENCY = "USD";
@@ -152,21 +154,25 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             unallocatedPaid = unallocatedPaid.subtract(allocatedPaid);
             if (line.oneOnOne && participantResolutions.size() > 1) {
                 PrivateLessonRegistrationResult groupResult = isSharedPrivateLessonRenewal(request)
-                        ? renewPrivateLessonGroup(order, orderItem, line, participantResolutions, allocatedPaid,
+                        ? renewPrivateLessonGroup(order, orderItem, line, participantResolutions, request,
                         findPrivateLessonGroupIdByPackageId(request.getRenewPackageId()))
-                        : createPrivateLessonGroup(order, orderItem, line, participantResolutions, allocatedPaid);
+                        : createPrivateLessonGroup(order, orderItem, line, participantResolutions, request);
                 privateLessonGroupId = groupResult.groupId();
                 artifacts.add(groupResult.primaryArtifact());
                 participantResults.addAll(groupResult.participants());
             } else {
-                RegistrationIntakeResultVO.CourseArtifactVO artifact = line.oneOnOne
-                        ? createOneOnOneArtifact(order, studentResolution.student(), line, allocatedPaid, request.getRenewPackageId())
-                        : createGroupClassArtifact(order, studentResolution.student(), line, request.getRenewClassEnrollmentId());
-                artifacts.add(artifact);
                 if (line.oneOnOne) {
+                    RegistrationIntakeResultVO.CourseArtifactVO artifact = createOneOnOneArtifact(
+                            order, studentResolution.student(), line, allocatedPaid, request.getRenewPackageId());
+                    artifacts.add(artifact);
                     participantResults.add(toParticipantResult(
                             studentResolution, artifact.packageId(), artifact.packageNo(), line.priceAmount,
                             ensureStudentAccount(studentResolution.student())));
+                } else {
+                    for (StudentResolution participant : participantResolutions) {
+                        artifacts.add(createGroupClassArtifact(order, participant.student(), line,
+                                request.getRenewClassEnrollmentId(), allowStudentConflicts(request)));
+                    }
                 }
             }
         }
@@ -312,13 +318,33 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("PRIVATE_LESSON_RENEWAL_UNSUPPORTED",
                     "The selected renewal package is not a member of a shared private lesson.");
         }
-        if (lines.size() != 1 || !lines.get(0).oneOnOne) {
+        long privateLineCount = lines.stream().filter(line -> line.oneOnOne).count();
+        if (privateLineCount == 0) {
+            throw new BusinessException("PRIVATE_LESSON_MODE_REQUIRED",
+                    "Multiple participants require at least one one-on-one course.");
+        }
+        if (privateLineCount > 1) {
             throw new BusinessException("PRIVATE_LESSON_SINGLE_LINE_REQUIRED",
-                    "A shared private lesson registration must contain exactly one one-on-one course line.");
+                    "A shared private lesson registration supports one one-on-one course plus group courses.");
+        }
+        if (request.getRenewPackageId() != null && lines.size() != 1) {
+            throw new BusinessException("PRIVATE_LESSON_RENEWAL_UNSUPPORTED",
+                    "A shared private lesson renewal must contain one course line.");
         }
         Set<Long> studentIds = participants.stream().map(item -> item.student().getId()).collect(Collectors.toSet());
         if (studentIds.size() != participants.size()) {
             throw new BusinessException("PRIVATE_LESSON_DUPLICATE_STUDENT", "The same student cannot be added twice to one private lesson.");
+        }
+        Set<Integer> billingIndexes = request.getParticipantBillings() == null ? Collections.emptySet()
+                : request.getParticipantBillings().stream()
+                        .filter(Objects::nonNull)
+                        .map(RegistrationIntakeRequest.ParticipantBillingPayload::getParticipantIndex)
+                        .filter(Objects::nonNull)
+                        .collect(Collectors.toSet());
+        if (billingIndexes.size() != participants.size()
+                || java.util.stream.IntStream.rangeClosed(1, participants.size()).anyMatch(index -> !billingIndexes.contains(index))) {
+            throw new BusinessException("PARTICIPANT_BILLING_REQUIRED",
+                    "Each participant needs their own course discounts and payment details.");
         }
     }
 
@@ -326,16 +352,16 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if (participantCount <= 1) {
             return;
         }
-        BigDecimal multiplier = BigDecimal.ONE.add(
+        BigDecimal privateLessonMultiplier = BigDecimal.ONE.add(
                 BigDecimal.valueOf(participantCount - 1).multiply(new BigDecimal("0.50")));
         for (ResolvedCourseLine line : lines) {
-            if (!line.oneOnOne) {
-                throw new BusinessException("PRIVATE_LESSON_MODE_REQUIRED", "Only one-on-one courses support multiple participants.");
-            }
             line.basePriceAmount = line.priceAmount;
-            line.priceAmount = line.priceAmount.multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
+            BigDecimal orderMultiplier = line.oneOnOne
+                    ? privateLessonMultiplier
+                    : BigDecimal.valueOf(participantCount);
+            line.priceAmount = line.priceAmount.multiply(orderMultiplier).setScale(2, RoundingMode.HALF_UP);
             line.originalPriceAmount = defaultAmount(line.originalPriceAmount)
-                    .multiply(multiplier).setScale(2, RoundingMode.HALF_UP);
+                    .multiply(orderMultiplier).setScale(2, RoundingMode.HALF_UP);
         }
     }
 
@@ -691,7 +717,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                       List<ResolvedCourseLine> lines,
                                       MoneySnapshot money,
                                       int participantCount) {
-        assignCourseDiscounts(request, lines, money.discountAmount());
+        assignCourseDiscounts(request, lines, money.discountAmount(), participantCount);
         List<BigDecimal> feeShares = allocateByCoursePrice(
                 money.pickupFeeAmount().add(money.dropoffFeeAmount()).add(money.extraFeeAmount()), lines);
         BigDecimal assignedDue = ZERO_AMOUNT;
@@ -710,11 +736,13 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
 
         assignInitialCoursePayments(request, lines, money, participantCount);
+        validateParticipantCourseBilling(request, lines, feeShares, participantCount);
     }
 
     private void assignCourseDiscounts(RegistrationIntakeRequest request,
                                        List<ResolvedCourseLine> lines,
-                                       BigDecimal totalDiscount) {
+                                       BigDecimal totalDiscount,
+                                       int participantCount) {
         Map<Integer, ResolvedCourseLine> linesByNo = lines.stream().collect(Collectors.toMap(
                 line -> line.lineNo,
                 line -> line,
@@ -725,6 +753,23 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 LinkedHashMap::new));
         List<RegistrationIntakeRequest.FeeLinePayload> discounts = request.getDiscounts() == null
                 ? Collections.emptyList() : request.getDiscounts();
+        if (participantCount > 1 && request.getParticipantBillings() != null
+                && !request.getParticipantBillings().isEmpty()) {
+            Map<Integer, BigDecimal> participantDiscountByLine = new LinkedHashMap<>();
+            for (RegistrationIntakeRequest.ParticipantBillingPayload billing : request.getParticipantBillings()) {
+                participantDiscountAmountsByLine(billing, lines).forEach((lineNo, amount) ->
+                        participantDiscountByLine.merge(lineNo, amount, BigDecimal::add));
+            }
+            BigDecimal assigned = participantDiscountByLine.values().stream().reduce(ZERO_AMOUNT, BigDecimal::add);
+            if (assigned.compareTo(totalDiscount) != 0) {
+                throw new BusinessException("COURSE_DISCOUNT_TOTAL_MISMATCH",
+                        "Participant course discounts must add up to the registration discount total.");
+            }
+            for (ResolvedCourseLine line : lines) {
+                line.discountAmount = defaultAmount(participantDiscountByLine.get(line.lineNo));
+            }
+            return;
+        }
         boolean hasCourseAssignments = discounts.stream()
                 .filter(Objects::nonNull)
                 .anyMatch(discount -> discount.getOrderItemLineNo() != null);
@@ -770,14 +815,166 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
     }
 
+    private Map<Integer, BigDecimal> participantDiscountAmountsByLine(
+            RegistrationIntakeRequest.ParticipantBillingPayload billing,
+            List<ResolvedCourseLine> lines) {
+        Map<Integer, ResolvedCourseLine> linesByNo = lines.stream()
+                .collect(Collectors.toMap(line -> line.lineNo, line -> line));
+        List<RegistrationIntakeRequest.FeeLinePayload> discounts = billing == null || billing.getDiscounts() == null
+                ? Collections.emptyList() : billing.getDiscounts();
+        boolean hasAssignments = discounts.stream().filter(Objects::nonNull)
+                .anyMatch(discount -> discount.getOrderItemLineNo() != null);
+        Map<Integer, BigDecimal> amountsByLine = new LinkedHashMap<>();
+        if (hasAssignments) {
+            for (RegistrationIntakeRequest.FeeLinePayload discount : discounts) {
+                if (discount == null) {
+                    throw new BusinessException("COURSE_DISCOUNT_INVALID", "Discount detail rows cannot be empty.");
+                }
+                Integer lineNo = discount.getOrderItemLineNo();
+                BigDecimal amount = defaultAmount(discount.getAmount());
+                if (amount.compareTo(ZERO_AMOUNT) > 0 && lineNo == null) {
+                    throw new BusinessException("COURSE_DISCOUNT_ASSIGNMENT_REQUIRED",
+                            "Assign every participant discount to a course.");
+                }
+                if (lineNo != null && !linesByNo.containsKey(lineNo)) {
+                    throw new BusinessException("COURSE_DISCOUNT_LINE_NOT_FOUND",
+                            "A participant discount references a course line that is not in this registration.");
+                }
+                if (lineNo != null) {
+                    amountsByLine.merge(lineNo, amount, BigDecimal::add);
+                }
+            }
+            return amountsByLine;
+        }
+
+        BigDecimal amount = billing == null ? ZERO_AMOUNT : defaultAmount(firstNonNull(
+                billing.getDiscountAmount(), sumFeeLines(discounts)));
+        if (lines.size() == 1) {
+            amountsByLine.put(lines.get(0).lineNo, amount);
+            return amountsByLine;
+        }
+        List<BigDecimal> legacyShares = allocateByCoursePrice(amount, lines);
+        for (int index = 0; index < lines.size(); index++) {
+            amountsByLine.put(lines.get(index).lineNo, legacyShares.get(index));
+        }
+        return amountsByLine;
+    }
+
+    private void validateParticipantCourseBilling(RegistrationIntakeRequest request,
+                                                  List<ResolvedCourseLine> lines,
+                                                  List<BigDecimal> feeShares,
+                                                  int participantCount) {
+        if (participantCount <= 1 || request.getParticipantBillings() == null
+                || request.getParticipantBillings().isEmpty()) {
+            return;
+        }
+        Set<Integer> participantIndexes = request.getParticipantBillings().stream()
+                .filter(Objects::nonNull)
+                .map(RegistrationIntakeRequest.ParticipantBillingPayload::getParticipantIndex)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        for (int index = 1; index <= participantCount; index++) {
+            if (!participantIndexes.contains(index)) {
+                throw new BusinessException("PARTICIPANT_BILLING_REQUIRED",
+                        "Each participant needs their own discounts and payment allocation details.");
+            }
+        }
+
+        for (int participantIndex = 1; participantIndex <= participantCount; participantIndex++) {
+            RegistrationIntakeRequest.ParticipantBillingPayload billing = participantBilling(request, participantIndex);
+            Map<Integer, BigDecimal> discounts = participantDiscountAmountsByLine(billing, lines);
+            Map<Integer, BigDecimal> paid = participantPaidAmountsByLine(billing, lines);
+            for (int lineIndex = 0; lineIndex < lines.size(); lineIndex++) {
+                ResolvedCourseLine line = lines.get(lineIndex);
+                BigDecimal tuition = line.oneOnOne
+                        ? splitSharedTuition(line.priceAmount, participantCount, participantIndex - 1)
+                        : defaultAmount(line.basePriceAmount);
+                BigDecimal fees = participantIndex == 1 ? feeShares.get(lineIndex) : ZERO_AMOUNT;
+                BigDecimal discount = defaultAmount(discounts.get(line.lineNo));
+                BigDecimal amountDue = tuition.add(fees).subtract(discount);
+                if (discount.compareTo(tuition.add(fees)) > 0) {
+                    throw new BusinessException("COURSE_DISCOUNT_EXCEEDS_AMOUNT",
+                            "A participant's course discount cannot exceed their course amount due.");
+                }
+                if (defaultAmount(paid.get(line.lineNo)).compareTo(amountDue) > 0) {
+                    throw new BusinessException("COURSE_PAYMENT_EXCEEDS_AMOUNT_DUE",
+                            "A participant's course payment cannot exceed their course amount due.");
+                }
+            }
+        }
+    }
+
+    private Map<Integer, BigDecimal> participantPaidAmountsByLine(
+            RegistrationIntakeRequest.ParticipantBillingPayload billing,
+            List<ResolvedCourseLine> lines) {
+        Map<Integer, BigDecimal> paidByLine = new LinkedHashMap<>();
+        if (billing == null || billing.getPayments() == null) {
+            return paidByLine;
+        }
+        Map<Integer, ResolvedCourseLine> linesByNo = lines.stream()
+                .collect(Collectors.toMap(line -> line.lineNo, line -> line));
+        for (RegistrationIntakeRequest.PaymentPayload payment : billing.getPayments()) {
+            if (payment == null) {
+                continue;
+            }
+            List<RegistrationIntakeRequest.CoursePaymentAllocationPayload> allocations = payment.getAllocations();
+            if (allocations == null || allocations.isEmpty()) {
+                if (lines.size() == 1) {
+                    paidByLine.merge(lines.get(0).lineNo, defaultAmount(payment.getAmount()), BigDecimal::add);
+                    continue;
+                }
+                throw new BusinessException("COURSE_PAYMENT_ASSIGNMENT_REQUIRED",
+                        "Assign every participant payment to a course.");
+            }
+            BigDecimal allocationTotal = ZERO_AMOUNT;
+            for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : allocations) {
+                if (allocation == null || allocation.getAmount() == null
+                        || allocation.getAmount().compareTo(ZERO_AMOUNT) <= 0
+                        || !linesByNo.containsKey(allocation.getOrderItemLineNo())) {
+                    throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                            "Each participant payment allocation must reference a course and be greater than zero.");
+                }
+                allocationTotal = allocationTotal.add(allocation.getAmount());
+                paidByLine.merge(allocation.getOrderItemLineNo(), allocation.getAmount(), BigDecimal::add);
+            }
+            if (allocationTotal.compareTo(defaultAmount(payment.getAmount())) != 0) {
+                throw new BusinessException("COURSE_PAYMENT_ALLOCATION_TOTAL_MISMATCH",
+                        "Course amounts must add up to each participant payment.");
+            }
+        }
+        return paidByLine;
+    }
+
     private void assignInitialCoursePayments(RegistrationIntakeRequest request,
                                              List<ResolvedCourseLine> lines,
                                              MoneySnapshot money,
                                              int participantCount) {
         if (participantCount > 1 && request.getParticipantBillings() != null
                 && !request.getParticipantBillings().isEmpty()) {
-            if (lines.size() == 1) {
-                lines.get(0).initialPaidAmount = money.paidAmount();
+            Map<Integer, BigDecimal> paidByLine = new LinkedHashMap<>();
+            BigDecimal totalPaid = ZERO_AMOUNT;
+            for (RegistrationIntakeRequest.ParticipantBillingPayload billing : request.getParticipantBillings()) {
+                if (billing == null) {
+                    continue;
+                }
+                participantPaidAmountsByLine(billing, lines).forEach((lineNo, amount) ->
+                        paidByLine.merge(lineNo, amount, BigDecimal::add));
+                totalPaid = totalPaid.add(billing.getPayments() == null ? ZERO_AMOUNT : billing.getPayments().stream()
+                        .filter(Objects::nonNull)
+                        .map(RegistrationIntakeRequest.PaymentPayload::getAmount)
+                        .map(this::defaultAmount)
+                        .reduce(ZERO_AMOUNT, BigDecimal::add));
+            }
+            if (totalPaid.compareTo(money.paidAmount()) != 0) {
+                throw new BusinessException("COURSE_PAYMENT_TOTAL_MISMATCH",
+                        "Participant course payment allocations must add up to the registration amount received.");
+            }
+            for (ResolvedCourseLine line : lines) {
+                line.initialPaidAmount = defaultAmount(paidByLine.get(line.lineNo));
+                if (line.initialPaidAmount.compareTo(line.amountDue) > 0) {
+                    throw new BusinessException("COURSE_PAYMENT_EXCEEDS_AMOUNT_DUE",
+                            "A course's initial payments cannot exceed its amount due.");
+                }
             }
             return;
         }
@@ -921,9 +1118,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                          List<ResolvedCourseLine> lines,
                                          RegistrationIntakeRequest request,
                                          MoneySnapshot money) {
-        BigDecimal sharedTuition = lines.size() == 1 && lines.get(0).oneOnOne
-                ? defaultAmount(lines.get(0).priceAmount)
-                : money.tuitionSubtotal();
         for (int index = 0; index < participants.size(); index++) {
             StudentEntity student = participants.get(index).student();
             EnrollmentOrderParticipantEntity participant = new EnrollmentOrderParticipantEntity();
@@ -943,9 +1137,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             participant.setPickupAddressSnapshot(student.getPickupAddress());
             participant.setDropoffRequiredSnapshot(student.getDropoffRequired());
             participant.setDropoffAddressSnapshot(student.getDropoffAddress());
-            BigDecimal grossAmount = participants.size() > 1
-                    ? splitSharedTuition(sharedTuition, participants.size(), index)
-                    : sharedTuition;
+            BigDecimal grossAmount = participantTuition(lines, participants.size(), index);
             BigDecimal discountAmount = participantDiscountAmount(request, index + 1,
                     participants.size() > 1 ? null : money.discountAmount());
             BigDecimal sharedFees = money.pickupFeeAmount().add(money.dropoffFeeAmount()).add(money.extraFeeAmount());
@@ -954,6 +1146,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     .max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
             BigDecimal paidAmount = participantPaidAmount(request, index + 1,
                     participants.size() > 1 ? null : money.paidAmount());
+            if (discountAmount.compareTo(grossAmount.add(participantFees)) > 0) {
+                throw new BusinessException("PARTICIPANT_DISCOUNT_EXCEEDS_AMOUNT",
+                        "A participant's discount cannot exceed their course tuition and fees.");
+            }
+            if (paidAmount.compareTo(amountDue) > 0) {
+                throw new BusinessException("PARTICIPANT_PAYMENT_EXCEEDS_AMOUNT_DUE",
+                        "A participant's payments cannot exceed their amount due.");
+            }
             participant.setGrossAmount(grossAmount);
             participant.setDiscountAmount(discountAmount);
             participant.setDiscountDetail(jsonHelper.toJson(participantDiscounts(request, index + 1)));
@@ -962,6 +1162,20 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             participant.setBalanceAmount(amountDue.subtract(paidAmount).setScale(2, RoundingMode.HALF_UP));
             enrollmentOrderParticipantMapper.insert(participant);
         }
+    }
+
+    /** 每位参与人按课程类型计价：私教分摊加价后的总额，班课按每人原价收取。 */
+    private BigDecimal participantTuition(List<ResolvedCourseLine> lines, int participantCount, int participantIndex) {
+        if (participantCount <= 1) {
+            return lines.stream().map(line -> defaultAmount(line.priceAmount))
+                    .reduce(ZERO_AMOUNT, BigDecimal::add);
+        }
+        return lines.stream()
+                .map(line -> line.oneOnOne
+                        ? splitSharedTuition(line.priceAmount, participantCount, participantIndex)
+                        : defaultAmount(line.basePriceAmount))
+                .reduce(ZERO_AMOUNT, BigDecimal::add)
+                .setScale(2, RoundingMode.HALF_UP);
     }
 
     private RegistrationIntakeRequest.ParticipantBillingPayload participantBilling(
@@ -1145,7 +1359,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                                        EnrollmentOrderItemEntity orderItem,
                                                                        ResolvedCourseLine line,
                                                                        List<StudentResolution> participants,
-                                                                       BigDecimal allocatedPaid) {
+                                                                       RegistrationIntakeRequest request) {
         PrivateLessonGroupEntity group = new PrivateLessonGroupEntity();
         group.setGroupNo("PLG" + BusinessNoGenerator.generateLessonOccurrenceNo().substring(2));
         group.setEnrollmentOrderId(order.getId());
@@ -1166,7 +1380,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             BigDecimal multiplier = defaultAmount(line.basePriceAmount).compareTo(ZERO_AMOUNT) == 0
                     ? ZERO_AMOUNT
                     : memberPrice.divide(line.basePriceAmount, 8, RoundingMode.HALF_UP);
-            BigDecimal memberPaid = index == 0 ? allocatedPaid : ZERO_AMOUNT;
+            BigDecimal memberPaid = participantCoursePaidAmount(request, index + 1, line.lineNo);
             RegistrationIntakeResultVO.CourseArtifactVO artifact = createOneOnOneArtifact(
                     order, participant.student(), line, memberPaid, null, memberPrice, false);
             if (index == 0) {
@@ -1198,7 +1412,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                                       EnrollmentOrderItemEntity orderItem,
                                                                       ResolvedCourseLine line,
                                                                       List<StudentResolution> participants,
-                                                                      BigDecimal allocatedPaid,
+                                                                      RegistrationIntakeRequest request,
                                                                       Long groupId) {
         PrivateLessonGroupEntity group = groupId == null ? null : privateLessonGroupMapper.selectById(groupId);
         if (group == null || Integer.valueOf(1).equals(group.getIsDeleted())
@@ -1228,7 +1442,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             BigDecimal multiplier = defaultAmount(line.basePriceAmount).compareTo(ZERO_AMOUNT) == 0
                     ? ZERO_AMOUNT
                     : memberPrice.divide(line.basePriceAmount, 8, RoundingMode.HALF_UP);
-            BigDecimal memberPaid = member.getParticipantIndex() == 1 ? allocatedPaid : ZERO_AMOUNT;
+            BigDecimal memberPaid = participantCoursePaidAmount(request, member.getParticipantIndex(), line.lineNo);
 
             coursePackage.setEnrollmentOrderId(order.getId());
             coursePackage.setEnrollmentOrderItemId(orderItem.getId());
@@ -1267,6 +1481,30 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         group.setParticipantCount(members.size());
         privateLessonGroupMapper.updateById(group);
         return new PrivateLessonRegistrationResult(group.getId(), primaryArtifact, participantResults);
+    }
+
+    private BigDecimal participantCoursePaidAmount(RegistrationIntakeRequest request,
+                                                   int participantIndex,
+                                                   int lineNo) {
+        RegistrationIntakeRequest.ParticipantBillingPayload billing = participantBilling(request, participantIndex);
+        if (billing == null || billing.getPayments() == null) {
+            return ZERO_AMOUNT;
+        }
+        return billing.getPayments().stream()
+                .filter(Objects::nonNull)
+                .map(payment -> {
+                    List<RegistrationIntakeRequest.CoursePaymentAllocationPayload> allocations = payment.getAllocations();
+                    if (allocations == null || allocations.isEmpty()) {
+                        return defaultAmount(payment.getAmount());
+                    }
+                    return allocations.stream()
+                            .filter(Objects::nonNull)
+                            .filter(allocation -> Objects.equals(allocation.getOrderItemLineNo(), lineNo))
+                            .map(RegistrationIntakeRequest.CoursePaymentAllocationPayload::getAmount)
+                            .map(this::defaultAmount)
+                            .reduce(ZERO_AMOUNT, BigDecimal::add);
+                })
+                .reduce(ZERO_AMOUNT, BigDecimal::add);
     }
 
     private boolean isSharedPrivateLessonRenewal(RegistrationIntakeRequest request) {
@@ -1365,7 +1603,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private RegistrationIntakeResultVO.CourseArtifactVO createGroupClassArtifact(EnrollmentOrderEntity order,
                                                                                  StudentEntity student,
                                                                                  ResolvedCourseLine line,
-                                                                                 Long renewClassEnrollmentId) {
+                                                                                 Long renewClassEnrollmentId,
+                                                                                 boolean allowStudentConflicts) {
         if (renewClassEnrollmentId != null) {
             ClassEnrollmentEntity enrollment = requireRenewableClassEnrollment(renewClassEnrollmentId);
             if (!Objects.equals(enrollment.getStudentId(), student.getId())) {
@@ -1389,7 +1628,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             ensureClassOccurrencesThrough(line.classGroup, line.product,
                     billing.occurrenceWindowStart(), billing.occurrenceWindowEnd());
             ensureNoStudentClassEnrollmentConflicts(student.getId(), line.classId,
-                    billing.occurrenceWindowStart(), billing.occurrenceWindowEnd(), line.attendanceOption);
+                    billing.occurrenceWindowStart(), billing.occurrenceWindowEnd(), line.attendanceOption,
+                    allowStudentConflicts);
 
             enrollment.setEnrollmentOrderItemId(line.orderItemId);
             if (enrollment.getEnrollmentDate() == null || billing.enrollmentDate().isBefore(enrollment.getEnrollmentDate())) {
@@ -1428,7 +1668,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         ensureClassOccurrencesThrough(line.classGroup, line.product,
                 billing.occurrenceWindowStart(), billing.occurrenceWindowEnd());
         ensureNoStudentClassEnrollmentConflicts(student.getId(), line.classId,
-                billing.occurrenceWindowStart(), billing.occurrenceWindowEnd(), line.attendanceOption);
+                billing.occurrenceWindowStart(), billing.occurrenceWindowEnd(), line.attendanceOption,
+                allowStudentConflicts);
 
         ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
         enrollment.setClassId(line.classId);
@@ -1487,11 +1728,17 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         return value == null ? 0 : value;
     }
 
+    /** 用户在前端确认冲突后重新提交时，该标志允许继续创建报名。 */
+    private boolean allowStudentConflicts(RegistrationIntakeRequest request) {
+        return Boolean.TRUE.equals(request.getIgnoreStudentConflicts());
+    }
+
     private void ensureNoStudentClassEnrollmentConflicts(Long studentId,
                                                          Long targetClassId,
                                                          LocalDate windowStart,
                                                          LocalDate windowEnd,
-                                                         String attendanceOption) {
+                                                         String attendanceOption,
+                                                         boolean allowStudentConflicts) {
         LocalDateTime startAt = windowStart.atStartOfDay();
         LocalDateTime endAt = windowEnd.plusDays(1).atStartOfDay();
         List<LessonOccurrenceEntity> targetOccurrences = lessonOccurrenceMapper.selectList(
@@ -1526,6 +1773,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         .lt(LessonOccurrenceEntity::getPlannedStartAt, endAt)
                         .gt(LessonOccurrenceEntity::getPlannedEndAt, startAt));
 
+        LessonOccurrenceEntity conflict = null;
         for (LessonOccurrenceEntity target : targetOccurrences) {
             ClassGroupScheduleSlotEntity targetSlot = target.getScheduleSlotId() == null
                     ? null
@@ -1533,24 +1781,32 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             if (!attendanceMatches(attendanceOption, targetSlot)) {
                 continue;
             }
-            LessonOccurrenceEntity conflict = firstOverlap(target, oneOnOneOccurrences);
-            if (conflict != null) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the selected class.",
-                        List.of(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), conflict)));
+            conflict = firstOverlap(target, oneOnOneOccurrences);
+            if (conflict == null) {
+                conflict = existingClassOccurrences.stream()
+                        .filter(existing -> isEnrollmentEffectiveOnAndMatchesAttendance(
+                                enrollmentsByClassId.get(existing.getClassGroupId()),
+                                target.getPlannedStartAt().toLocalDate(),
+                                existing))
+                        .filter(existing -> overlaps(target, existing))
+                        .findFirst()
+                        .orElse(null);
             }
-            conflict = existingClassOccurrences.stream()
-                    .filter(existing -> isEnrollmentEffectiveOnAndMatchesAttendance(
-                            enrollmentsByClassId.get(existing.getClassGroupId()),
-                            target.getPlannedStartAt().toLocalDate(),
-                            existing))
-                    .filter(existing -> overlaps(target, existing))
-                    .findFirst()
-                    .orElse(null);
             if (conflict != null) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the selected class.",
-                        List.of(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), conflict)));
+                break;
             }
         }
+        if (conflict == null) {
+            return;
+        }
+        if (allowStudentConflicts) {
+            // 确认后的重试仍需命中当前冲突，避免请求标记无条件跳过检测。
+            log.info("Registration proceeds with acknowledged student class conflict: studentId={}, classId={}, occurrenceId={}",
+                    studentId, targetClassId, conflict.getId());
+            return;
+        }
+        throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the selected class.",
+                List.of(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), conflict)));
     }
 
     private boolean isEnrollmentEffectiveOnAndMatchesAttendance(List<ClassEnrollmentEntity> enrollments,

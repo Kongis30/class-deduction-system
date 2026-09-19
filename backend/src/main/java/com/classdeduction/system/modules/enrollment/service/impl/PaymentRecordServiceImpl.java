@@ -116,10 +116,6 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
                         "Payment method details are required when using Other.");
             }
             if (split.getAllocations() != null && !split.getAllocations().isEmpty()) {
-                if (split.getParticipantIndex() != null) {
-                    throw new BusinessException("PAYMENT_ALLOCATION_SCOPE_MISMATCH",
-                            "A participant-specific payment cannot also allocate by course.");
-                }
                 for (PaymentSplitDTO.CoursePaymentAllocationDTO allocation : split.getAllocations()) {
                     if (allocation == null || allocation.getEnrollmentOrderItemId() == null
                             || allocation.getAmount() == null
@@ -222,8 +218,10 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
         // 支付流水保留为审计账本；报名收据只维护这一笔报名的累计支付状态，不再新增支付收据。
         updateEnrollmentOrderPayment(order, totalAmount);
         syncParticipantPaymentSnapshots(order.getId());
-        // 非多人私教付款：保留明确课程分配，并为旧流水补齐兼容分配。
-        if (targetParticipant == null) {
+        // 有明确课程分配时重放账本，刷新课程付款快照；多人付款仍保留流水上的参与人归属。
+        boolean hasCourseAllocations = splits.stream()
+                .anyMatch(split -> split.getAllocations() != null && !split.getAllocations().isEmpty());
+        if (targetParticipant == null || hasCourseAllocations) {
             paymentAllocationService.replayAllocations(order);
         }
         return syncRegistrationReceipt(order, request.getHandledByUserId());

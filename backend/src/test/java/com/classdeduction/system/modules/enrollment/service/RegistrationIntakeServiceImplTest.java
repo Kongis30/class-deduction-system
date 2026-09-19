@@ -21,8 +21,10 @@ import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeReques
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentMethodEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -602,7 +604,152 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldPriceSharedPrivateAndGroupCoursesPerParticipant() {
+        when(campusMapper.selectById(1L)).thenReturn(buildCampus());
+        when(jsonHelper.toJson(any())).thenReturn("{}");
+        when(passwordEncoder.encode(any())).thenReturn("encoded");
+        when(roleMapper.selectOne(any())).thenReturn(buildRole(1L, "STUDENT"));
+        when(userAccountMapper.selectOne(any())).thenReturn(null);
+        doAnswer(invocation -> {
+            ((EnrollmentOrderEntity) invocation.getArgument(0)).setId(2001L);
+            return 1;
+        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+        doAnswer(invocation -> {
+            ((ReceiptRecordEntity) invocation.getArgument(0)).setId(5001L);
+            return 1;
+        }).when(receiptRecordMapper).insert(any(ReceiptRecordEntity.class));
+        doAnswer(invocation -> {
+            ((UserAccountEntity) invocation.getArgument(0)).setId(6001L);
+            return 1;
+        }).when(userAccountMapper).insert(any(UserAccountEntity.class));
+        CoursePriceOptionEntity groupOption = buildOption("15:30-17:00");
+        groupOption.setId(301L);
+        groupOption.setCourseProductId(302L);
+        groupOption.setCourseType("GROUP");
+        groupOption.setRegisterClass("Group class");
+        groupOption.setPackageUnit("MONTH");
+        groupOption.setPackageQuantity(BigDecimal.ONE);
+        groupOption.setPriceAmount(new BigDecimal("200.00"));
+        CourseProductEntity groupProduct = new CourseProductEntity();
+        groupProduct.setId(302L);
+        groupProduct.setProductName("Group class");
+        groupProduct.setTeachingMode("GROUP");
+        groupProduct.setStatus("ACTIVE");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setProductId(302L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setBillingType("MONTHLY");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 12, 31));
+        CoursePriceOptionEntity privateOption = buildOption("15:30-17:00");
+        privateOption.setPriceAmount(new BigDecimal("100.00"));
+        when(coursePriceOptionMapper.selectById(201L)).thenReturn(privateOption);
+        when(coursePriceOptionMapper.selectById(301L)).thenReturn(groupOption);
+        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+        when(courseProductMapper.selectById(302L)).thenReturn(groupProduct);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        when(paymentMethodMapper.selectOne(any())).thenReturn(activePaymentMethod("CASH"));
+        when(roleMapper.selectOne(any())).thenReturn(buildRole(1L, "STUDENT"));
+        when(userRoleMapper.selectCount(any())).thenReturn(0L);
+        when(passwordEncoder.encode(any())).thenReturn("encoded");
+        doAnswer(invocation -> {
+            PrivateLessonGroupEntity group = invocation.getArgument(0);
+            group.setId(4101L);
+            return 1;
+        }).when(privateLessonGroupMapper).insert(any(PrivateLessonGroupEntity.class));
+        java.util.concurrent.atomic.AtomicInteger itemId = new java.util.concurrent.atomic.AtomicInteger(2100);
+        doAnswer(invocation -> {
+            ((EnrollmentOrderItemEntity) invocation.getArgument(0)).setId((long) itemId.incrementAndGet());
+            return 1;
+        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
+        java.util.concurrent.atomic.AtomicInteger packageId = new java.util.concurrent.atomic.AtomicInteger(3000);
+        doAnswer(invocation -> {
+            ((CoursePackageEntity) invocation.getArgument(0)).setId((long) packageId.incrementAndGet());
+            return 1;
+        }).when(coursePackageMapper).insert(any(CoursePackageEntity.class));
+        java.util.concurrent.atomic.AtomicInteger paymentId = new java.util.concurrent.atomic.AtomicInteger(7100);
+        doAnswer(invocation -> {
+            ((PaymentRecordEntity) invocation.getArgument(0)).setId((long) paymentId.incrementAndGet());
+            return 1;
+        }).when(paymentRecordMapper).insert(any(PaymentRecordEntity.class));
+
+        List<StudentEntity> students = List.of(
+                existingStudent(101L, "Student 1"), existingStudent(102L, "Student 2"), existingStudent(103L, "Student 3"));
+        students.forEach(student -> when(studentMapper.selectById(student.getId())).thenReturn(student));
+        List<RegistrationIntakeRequest.StudentPayload> participantPayloads = List.of(
+                participantPayload(101L, "Student 1"), participantPayload(102L, "Student 2"), participantPayload(103L, "Student 3"));
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getStudent().setStudentId(101L);
+        request.getStudent().setStudentName("Student 1");
+        request.setParticipants(participantPayloads);
+        RegistrationIntakeRequest.CourseItemPayload privateItem = buildOneOnOneItem();
+        privateItem.setLineNo(1);
+        RegistrationIntakeRequest.CourseItemPayload groupItem = new RegistrationIntakeRequest.CourseItemPayload();
+        groupItem.setLineNo(2);
+        groupItem.setCoursePriceOptionId(301L);
+        groupItem.setClassId(501L);
+        groupItem.setPackageUnit("MONTH");
+        groupItem.setPackageQuantity(BigDecimal.ONE);
+        groupItem.setPurchasedMonths(1);
+        groupItem.setStartDate(LocalDate.of(2026, 9, 1));
+        groupItem.setStartMonth("2026-09");
+        groupItem.setEndMonth("2026-09");
+        request.setItems(List.of(privateItem, groupItem));
+        request.setParticipantBillings(List.of(
+                participantBilling(1, "0.00", null, payment("50.00", 2, "50.00")),
+                participantBilling(2, "5.00", feeLine("Private discount", "5.00", 1), payment("50.00", 1, "50.00")),
+                participantBilling(3, "10.00", feeLine("Group discount", "10.00", 2), payment("40.00", 2, "40.00"))));
+        request.setDiscountAmount(new BigDecimal("15.00"));
+
+        registrationIntakeService.submitIntake(request);
+
+        ArgumentCaptor<EnrollmentOrderItemEntity> itemCaptor = ArgumentCaptor.forClass(EnrollmentOrderItemEntity.class);
+        verify(enrollmentOrderItemMapper, times(2)).insert(itemCaptor.capture());
+        assertThat(itemCaptor.getAllValues()).extracting(EnrollmentOrderItemEntity::getPriceAmount)
+                .containsExactly(new BigDecimal("200.00"), new BigDecimal("600.00"));
+        assertThat(itemCaptor.getAllValues()).extracting(EnrollmentOrderItemEntity::getAmountDue)
+                .containsExactly(new BigDecimal("195.00"), new BigDecimal("590.00"));
+        assertThat(itemCaptor.getAllValues()).extracting(EnrollmentOrderItemEntity::getPaidAmount)
+                .containsExactly(new BigDecimal("50.00"), new BigDecimal("90.00"));
+
+        ArgumentCaptor<EnrollmentOrderParticipantEntity> billingCaptor =
+                ArgumentCaptor.forClass(EnrollmentOrderParticipantEntity.class);
+        verify(enrollmentOrderParticipantMapper, times(3)).insert(billingCaptor.capture());
+        assertThat(billingCaptor.getAllValues()).extracting(EnrollmentOrderParticipantEntity::getGrossAmount)
+                .containsExactly(new BigDecimal("266.66"), new BigDecimal("266.66"), new BigDecimal("266.68"));
+        assertThat(billingCaptor.getAllValues()).extracting(EnrollmentOrderParticipantEntity::getDiscountAmount)
+                .containsExactly(new BigDecimal("0.00"), new BigDecimal("5.00"), new BigDecimal("10.00"));
+        assertThat(billingCaptor.getAllValues()).extracting(EnrollmentOrderParticipantEntity::getPaidAmount)
+                .containsExactly(new BigDecimal("50.00"), new BigDecimal("50.00"), new BigDecimal("40.00"));
+        verify(classEnrollmentMapper, times(3)).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
     void shouldRejectGroupClassIntakeWhenStudentScheduleConflicts() {
+        stubGroupClassStudentConflict();
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(buildGroupClassRequest()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("SCHEDULE_CONFLICT");
+        verify(classEnrollmentMapper, never()).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldAllowGroupClassIntakeAfterStudentScheduleConflictAcknowledgement() {
+        stubGroupClassStudentConflict();
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.setIgnoreStudentConflicts(true);
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
+    }
+
+    private void stubGroupClassStudentConflict() {
         stubStudentCreationOnly();
         CoursePriceOptionEntity option = buildOption("15:30-17:00");
         option.setCourseType("GROUP");
@@ -643,7 +790,7 @@ class RegistrationIntakeServiceImplTest {
                 .thenReturn(Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
                         List.of(targetOccurrence), List.of(existingOccurrence));
         lenient().when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
-        when(studentMapper.selectById(101L)).thenReturn(buildExistingStudent());
+        lenient().when(studentMapper.selectById(101L)).thenReturn(buildExistingStudent());
         doAnswer(invocation -> {
             EnrollmentOrderEntity order = invocation.getArgument(0);
             order.setId(2001L);
@@ -659,12 +806,6 @@ class RegistrationIntakeServiceImplTest {
             occurrence.setId(4001L);
             return 1;
         }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
-
-        assertThatThrownBy(() -> registrationIntakeService.submitIntake(buildGroupClassRequest()))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo("SCHEDULE_CONFLICT");
-        verify(classEnrollmentMapper, never()).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
     }
 
     @Test
@@ -1142,6 +1283,62 @@ class RegistrationIntakeServiceImplTest {
         student.setStudentName("Jin Tang");
         student.setGuardianPhone("9175550101");
         return student;
+    }
+
+    private RegistrationIntakeRequest.StudentPayload participantPayload(Long studentId, String name) {
+        RegistrationIntakeRequest.StudentPayload payload = buildStudentPayload();
+        payload.setStudentId(studentId);
+        payload.setStudentName(name);
+        return payload;
+    }
+
+    private StudentEntity existingStudent(Long id, String name) {
+        StudentEntity student = new StudentEntity();
+        student.setId(id);
+        student.setStudentName(name);
+        student.setStudentNo("STU-" + id);
+        student.setGuardianPhone("9175550101");
+        return student;
+    }
+
+    private RegistrationIntakeRequest.ParticipantBillingPayload participantBilling(
+            int participantIndex,
+            String discountAmount,
+            RegistrationIntakeRequest.FeeLinePayload discount,
+            RegistrationIntakeRequest.PaymentPayload payment) {
+        RegistrationIntakeRequest.ParticipantBillingPayload billing = new RegistrationIntakeRequest.ParticipantBillingPayload();
+        billing.setParticipantIndex(participantIndex);
+        billing.setDiscountAmount(new BigDecimal(discountAmount));
+        billing.setDiscounts(discount == null ? Collections.emptyList() : List.of(discount));
+        billing.setPayments(List.of(payment));
+        return billing;
+    }
+
+    private RegistrationIntakeRequest.FeeLinePayload feeLine(String label, String amount, int lineNo) {
+        RegistrationIntakeRequest.FeeLinePayload fee = new RegistrationIntakeRequest.FeeLinePayload();
+        fee.setLabel(label);
+        fee.setAmount(new BigDecimal(amount));
+        fee.setOrderItemLineNo(lineNo);
+        return fee;
+    }
+
+    private RegistrationIntakeRequest.PaymentPayload payment(String amount, int lineNo, String allocationAmount) {
+        RegistrationIntakeRequest.PaymentPayload payment = new RegistrationIntakeRequest.PaymentPayload();
+        payment.setPaymentMethod("CASH");
+        payment.setAmount(new BigDecimal(amount));
+        RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation =
+                new RegistrationIntakeRequest.CoursePaymentAllocationPayload();
+        allocation.setOrderItemLineNo(lineNo);
+        allocation.setAmount(new BigDecimal(allocationAmount));
+        payment.setAllocations(List.of(allocation));
+        return payment;
+    }
+
+    private PaymentMethodEntity activePaymentMethod(String methodCode) {
+        PaymentMethodEntity method = new PaymentMethodEntity();
+        method.setMethodCode(methodCode);
+        method.setStatus("ACTIVE");
+        return method;
     }
 
     private StudentEntity buildExistingStudent() {

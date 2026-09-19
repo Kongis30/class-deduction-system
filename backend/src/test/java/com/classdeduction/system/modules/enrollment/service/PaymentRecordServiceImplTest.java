@@ -206,8 +206,8 @@ class PaymentRecordServiceImplTest {
         }
 
         @Test
-        @DisplayName("Should record payment against the selected private lesson participant")
-        void shouldRecordPaymentAgainstSelectedPrivateLessonParticipant() {
+        @DisplayName("Should record a course allocation against the selected private lesson participant")
+        void shouldRecordCourseAllocationAgainstSelectedPrivateLessonParticipant() {
             testOrder.setOriginalAmount(new BigDecimal("150.00"));
             testOrder.setDiscountAmount(BigDecimal.ZERO);
             testOrder.setAmountDue(new BigDecimal("150.00"));
@@ -246,6 +246,8 @@ class PaymentRecordServiceImplTest {
 
             PaymentSplitDTO split = new PaymentSplitDTO("CASH", new BigDecimal("75.00"));
             split.setParticipantIndex(2);
+            split.setAllocations(List.of(new PaymentSplitDTO.CoursePaymentAllocationDTO(
+                    31L, new BigDecimal("75.00"))));
             PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
             request.setEnrollmentOrderId(1L);
             request.setSplits(List.of(split));
@@ -261,6 +263,11 @@ class PaymentRecordServiceImplTest {
             assertThat(participant.getPaidAmount()).isEqualByComparingTo(new BigDecimal("75.00"));
             assertThat(participant.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
             verify(enrollmentOrderParticipantMapper).updateById(participant);
+            verify(paymentAllocationService).recordExplicitAllocations(
+                    any(PaymentRecordEntity.class),
+                    org.mockito.ArgumentMatchers.eq(1L),
+                    org.mockito.ArgumentMatchers.eq(Map.of(31L, new BigDecimal("75.00"))));
+            verify(paymentAllocationService).replayAllocations(testOrder);
         }
 
         @Test

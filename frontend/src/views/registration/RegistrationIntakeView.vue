@@ -88,7 +88,7 @@
           </button>
         </div>
         <div v-if="activePrivateWorkspaceTab === 'all'" class="private-lesson-shared-summary">
-          <span>{{ printCourseProductLabel(courseLines[0]) || 'Select a 1-on-1 course' }}</span>
+          <span>{{ primaryPrivateCourseLabel || 'Select a 1-on-1 course' }}</span>
           <span>{{ privateParticipantMultiplier.toFixed(1) }}x tuition · {{ formatMoney(privateParticipantShareAmount) }} each</span>
         </div>
       </template>
@@ -606,48 +606,45 @@
               <el-button text size="small" @click="openDiscountPresetManagement">Manage presets</el-button>
             </div>
           </div>
-          <div
-            v-for="(discount, index) in activeDiscountLines"
-            :key="discount.rowKey"
-            class="adjustment-row"
-            :class="{ 'adjustment-row--course-discount': !activeParticipantBilling }"
-          >
-            <el-select
-              v-if="!activeParticipantBilling"
-              v-model="discount.courseRowKey"
-              class="discount-course-select"
-              placeholder="Course"
-              :disabled="courseLines.length === 1"
-              @change="recalculatePresetDiscount(discount)"
-            >
-              <el-option
-                v-for="(line, lineIndex) in courseLines"
-                :key="line.rowKey"
-                :label="courseLineOptionLabel(line, lineIndex)"
-                :value="line.rowKey"
-              />
-            </el-select>
-            <div class="discount-preset-control">
-              <el-select v-model="discount.presetId" placeholder="Select discount" @change="applyDiscountPreset(discount)">
-                <el-option label="Custom discount" value="__custom__" />
-                <el-option
-                  v-for="preset in discountPresets"
-                  :key="preset.id"
-                  :label="discountPresetLabel(preset)"
-                  :value="preset.id"
-                />
-              </el-select>
-            </div>
-            <el-input-number
-              v-model="discount.amount"
-              :min="0"
-              :precision="2"
-              :controls="false"
-              :disabled="!isCustomDiscount(discount)"
-            />
-            <el-button v-if="activeDiscountLines.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove discount" @click="removeActiveDiscount(index)">×</el-button>
+          <div class="course-adjustment-list">
+            <article v-for="(line, lineIndex) in courseLines" :key="line.rowKey" class="course-adjustment-card course-adjustment-card--discount">
+              <header class="course-adjustment-card__header">
+                <div class="course-adjustment-card__title">
+                  <span>Course {{ lineIndex + 1 }}</span>
+                  <strong>{{ courseLineOptionLabel(line, lineIndex) }}</strong>
+                </div>
+                <span class="course-adjustment-card__context">Tuition {{ formatMoney(activeCoursePrice(line)) }}</span>
+              </header>
+              <div v-if="discountsForCourse(line.rowKey).length" class="course-adjustment-card__lines">
+                <div v-for="discount in discountsForCourse(line.rowKey)" :key="discount.rowKey" class="course-adjustment-card__line adjustment-row">
+                  <div class="discount-preset-control">
+                    <el-select v-model="discount.presetId" placeholder="Select discount" @change="applyDiscountPreset(discount)">
+                      <el-option label="Custom discount" value="__custom__" />
+                      <el-option
+                        v-for="preset in discountPresets"
+                        :key="preset.id"
+                        :label="discountPresetLabel(preset)"
+                        :value="preset.id"
+                      />
+                    </el-select>
+                  </div>
+                  <el-input-number
+                    v-model="discount.amount"
+                    :min="0"
+                    :precision="2"
+                    :controls="false"
+                    :disabled="!isCustomDiscount(discount)"
+                  />
+                  <el-button v-if="discountsForCourse(line.rowKey).length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove discount" @click="removeActiveDiscount(discount)">×</el-button>
+                </div>
+              </div>
+              <p v-else class="course-adjustment-card__empty">No discounts assigned to this course.</p>
+              <footer class="course-adjustment-card__footer">
+                <el-button class="action-secondary" text @click="addActiveDiscount(line.rowKey)">Add discount</el-button>
+                <strong>Discount {{ formatMoney(activeCourseDiscountAmount(line.rowKey)) }}</strong>
+              </footer>
+            </article>
           </div>
-          <el-button class="action-secondary" text @click="addActiveDiscount">Add discount</el-button>
         </div>
 
         <div class="adjustment-column adjustment-column--payments">
@@ -655,37 +652,69 @@
             <strong>Payments</strong>
             <span>{{ activeBillingScopeLabel }}</span>
           </div>
-          <div v-for="(payment, index) in activePaymentLines" :key="payment.rowKey" class="adjustment-row adjustment-row--payment">
-            <span>Payment {{ index + 1 }}</span>
-            <el-select v-model="payment.paymentMethod" placeholder="Method" filterable>
-              <el-option v-for="method in paymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
-            </el-select>
-            <el-input-number v-model="payment.amount" :min="0" :precision="2" :controls="false" />
-            <el-date-picker v-model="payment.paidAt" type="date" value-format="YYYY-MM-DD" placeholder="Date" />
-            <el-button v-if="activePaymentLines.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove payment" @click="removeActivePaymentLine(index)">×</el-button>
-            <el-input
-              v-if="isOtherPaymentMethod(payment.paymentMethod)"
-              v-model="payment.remark"
-              class="payment-other-method"
-              placeholder="Describe the payment method"
-            />
-            <div v-if="!activeParticipantBilling && courseLines.length > 1" class="payment-course-allocation-inputs">
-              <label v-for="(line, lineIndex) in courseLines" :key="line.rowKey">
-                <span>{{ courseLineOptionLabel(line, lineIndex) }}</span>
-                <el-input-number
-                  :model-value="payment.courseAllocations?.[line.rowKey] ?? 0"
-                  :min="0"
-                  :precision="2"
-                  :controls="false"
-                  @update:model-value="setPaymentCourseAllocation(payment, line.rowKey, $event)"
-                />
-              </label>
-              <small :class="{ 'payment-allocation-error': paymentAllocationRemainder(payment) !== 0 }">
-                Assigned {{ formatMoney(paymentCourseAllocationTotal(payment)) }} / {{ formatMoney(payment.amount) }}
-              </small>
-            </div>
+          <div class="course-adjustment-list course-adjustment-list--payments">
+            <article v-for="(line, lineIndex) in courseLines" :key="line.rowKey" class="course-adjustment-card course-adjustment-card--payment">
+              <header class="course-adjustment-card__header">
+                <div class="course-adjustment-card__title">
+                  <span>Course {{ lineIndex + 1 }}</span>
+                  <strong>{{ courseLineOptionLabel(line, lineIndex) }}</strong>
+                </div>
+                <span class="course-adjustment-card__context">{{ formatMoney(activeCourseAmountDue(line, lineIndex)) }} due</span>
+              </header>
+              <div v-if="paymentsForCourse(line.rowKey).length" class="course-payment-list">
+                <div v-for="(payment, paymentIndex) in paymentsForCourse(line.rowKey)" :key="payment.rowKey" class="course-payment-entry">
+                  <div class="course-payment-entry__fields">
+                    <span class="course-payment-entry__number">Payment {{ paymentIndex + 1 }}</span>
+                    <el-select
+                      v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
+                      v-model="payment.paymentMethod"
+                      placeholder="Method"
+                      filterable
+                    >
+                      <el-option v-for="method in paymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
+                    </el-select>
+                    <span v-else class="course-payment-entry__history">
+                      {{ displayPaymentMethod(payment.paymentMethod) }} · {{ formatDateValue(payment.paidAt) }}
+                    </span>
+                    <el-input-number
+                      :model-value="coursePaymentAmount(payment, line.rowKey)"
+                      :min="0"
+                      :precision="2"
+                      :controls="false"
+                      @update:model-value="setCoursePaymentAmount(payment, line.rowKey, $event)"
+                    />
+                    <el-date-picker
+                      v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
+                      v-model="payment.paidAt"
+                      type="date"
+                      value-format="YYYY-MM-DD"
+                      placeholder="Date"
+                    />
+                    <el-button
+                      v-if="activePaymentLines.length > 1 && canEditCoursePaymentDetails(payment, line.rowKey)"
+                      class="remove-adjustment-row"
+                      text
+                      type="danger"
+                      aria-label="Remove payment"
+                      @click="removeActivePaymentLine(payment)"
+                    >×</el-button>
+                    <el-input
+                      v-if="canEditCoursePaymentDetails(payment, line.rowKey) && isOtherPaymentMethod(payment.paymentMethod)"
+                      v-model="payment.remark"
+                      class="payment-other-method"
+                      placeholder="Describe the payment method"
+                    />
+                  </div>
+                </div>
+              </div>
+              <p v-else class="course-adjustment-card__empty">No payments recorded for this course.</p>
+              <footer class="course-adjustment-card__footer">
+                <span>Paid {{ formatMoney(coursePaymentAllocationTotal(line.rowKey)) }}</span>
+                <el-button class="action-secondary" text @click="addActivePaymentLine(line.rowKey)">Add payment</el-button>
+                <strong>Balance {{ formatMoney(activeCourseAmountDue(line, lineIndex) - coursePaymentAllocationTotal(line.rowKey)) }}</strong>
+              </footer>
+            </article>
           </div>
-          <el-button class="action-secondary" text @click="addActivePaymentLine">Add payment</el-button>
         </div>
       </section>
 
@@ -870,6 +899,7 @@ type DiscountPresetSelection = EntityId | '__custom__';
 interface DiscountLine extends MoneyLine {
   presetId: DiscountPresetSelection;
   courseRowKey: string;
+  courseLineNo?: number;
 }
 
 interface PaymentLine {
@@ -877,6 +907,7 @@ interface PaymentLine {
   paymentMethod: string;
   amount: number;
   paidAt: string;
+  courseRowKey?: string;
   participantIndex?: number;
   handledByName?: string;
   remark?: string;
@@ -998,7 +1029,7 @@ const privateParticipantForms = ref<PrivateParticipantForm[]>([]);
 const privateParticipantPriceSnapshots = ref<Array<number | undefined>>([]);
 const extraFees = ref<MoneyLine[]>([createMoneyLine('Other fee')]);
 const discounts = ref<DiscountLine[]>([createDiscountLine()]);
-const payments = ref<PaymentLine[]>([createPaymentLine()]);
+const payments = ref<PaymentLine[]>([createPaymentLine(courseLines.value[0]?.rowKey)]);
 const printedOrderId = ref<string | null>(null);
 const activePrivateWorkspaceTab = ref<PrivateWorkspaceTab>('all');
 const participantBillings = ref<ParticipantBillingForm[]>([]);
@@ -1164,8 +1195,9 @@ const privateParticipantMultiplier = computed(() =>
     : 1,
 );
 const privateParticipantTotalPrice = computed(() => {
-  const line = courseLines.value.find(isOneOnOneLine);
-  return line ? privateParticipantLineTotalPrice(line) : 0;
+  return roundMoney(courseLines.value
+    .filter(isOneOnOneLine)
+    .reduce((total, line) => total + privateParticipantLineTotalPrice(line), 0));
 });
 const privateParticipantShareAmount = computed(() => {
   const total = privateParticipantTotalPrice.value;
@@ -1173,18 +1205,21 @@ const privateParticipantShareAmount = computed(() => {
     ? splitShareAmount(total, privateParticipantCount.value, 0)
     : 0;
 });
+const primaryPrivateCourseLabel = computed(() => {
+  const line = courseLines.value.find(isOneOnOneLine);
+  return line ? printCourseProductLabel(line) : '';
+});
 const privateParticipantReceiptRows = computed(() => {
   const names = Array.from({ length: privateParticipantCount.value }, (_, index) =>
     index === 0 ? fullStudentName.value : privateParticipantForms.value[index - 1]?.studentName.trim() || '',
   );
-  const totalPrice = privateParticipantTotalPrice.value;
   const count = names.length;
   return names.map((name, index) => {
     const billing = participantBillings.value[index];
     const grossPrice = privateParticipantPriceSnapshots.value.length === count
       && privateParticipantPriceSnapshots.value[index] !== undefined
       ? privateParticipantPriceSnapshots.value[index]!
-      : splitShareAmount(totalPrice, count, index);
+      : roundMoney(courseLines.value.reduce((total, line) => total + participantCoursePrice(line, index), 0));
     const discount = sumNumbers(billing?.discounts.map((item) => item.amount) ?? []);
     const participantFees = index === 0 ? serviceFeeTotal.value + extraFeeTotal.value : 0;
     const amountDue = Math.max(0, roundMoney(grossPrice + participantFees - discount));
@@ -1205,13 +1240,7 @@ const privateParticipantReceiptRows = computed(() => {
   });
 });
 const courseSubtotal = computed(() => sumNumbers(courseLines.value.map((line) => {
-  if (!isOneOnOneLine(line)) {
-    return line.priceAmount;
-  }
-  const multiplier = isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1
-    ? 1
-    : privateParticipantMultiplier.value;
-  return roundMoney(line.priceAmount * multiplier);
+  return courseAggregatePrice(line);
 })));
 const extraFeeTotal = computed(() => sumNumbers(extraFees.value.map((line) => line.amount)));
 const effectivePickupFeeAmount = computed(() => form.pickupFeeCharged ? roundMoney(form.pickupFeeAmount) : 0);
@@ -1893,6 +1922,9 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         paymentMethod: payment.paymentMethod,
         amount: numeric(payment.amount),
         paidAt: normalizeDate(payment.paidAt),
+        courseAllocations: Object.fromEntries((payment.allocations ?? []).map((allocation) => [
+          String(allocation.enrollmentOrderItemId), numeric(allocation.amount),
+        ])),
         participantIndex: index + 1,
         handledByName: payment.handledByName,
         remark: payment.remark,
@@ -1900,7 +1932,19 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
       }));
     return {
       participantIndex: index + 1,
-      discounts: discounts.length > 0 ? discounts.map((discount) => createDiscountLine(discount.label, discount.amount)) : [createDiscountLine('Custom discount', getNumber(item, 'discountAmount'))],
+      discounts: getArray(item, 'discounts').length > 0
+        ? getArray(item, 'discounts').map((discount) => {
+          const line = createDiscountLine(
+            getString(discount, 'label') || 'Discount',
+            getNumber(discount, 'amount'),
+            '',
+          );
+          line.courseLineNo = getNumber(discount, 'orderItemLineNo') || undefined;
+          return line;
+        })
+        : discounts.length > 0
+          ? discounts.map((discount) => createDiscountLine(discount.label, discount.amount, ''))
+          : [createDiscountLine('Custom discount', getNumber(item, 'discountAmount'), '')],
       payments: paymentsForParticipant.length > 0 ? paymentsForParticipant : [createPaymentLine()],
     };
   });
@@ -1910,6 +1954,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   courseLines.value = (payloadItems.length > 0 ? payloadItems : order.items)
     .map((item, index) => toHistoricalCourseLine(item, index, findOrderItemFallback(item, order.items, index)));
   normalizeHistoricalLineReferences();
+  mapHistoricalParticipantBillingCourseReferences();
   // 历史报名单（收据无 items、订单无明细行时）用订单课包兜底还原课程行，
   // 课程名取课包快照，避免依赖已删除的 course_product 联表。
   if (courseLines.value.length === 0) {
@@ -1944,24 +1989,32 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
     .filter((payment) => numeric(payment.amount) !== 0 && payment.paymentStatus !== 'VOIDED')
     .slice()
     .sort((left, right) => String(left.paidAt ?? '').localeCompare(String(right.paidAt ?? '')))
-    .map((payment) => ({
-      rowKey: `payment-${payment.id}`,
-      paymentMethod: payment.paymentMethod,
-      amount: numeric(payment.amount),
-      paidAt: normalizeDate(payment.paidAt),
-      participantIndex: payment.participantIndex,
-      handledByName: payment.handledByName,
-      remark: payment.remark,
-      paymentType: payment.paymentType,
-      courseAllocations: Object.fromEntries((payment.allocations ?? []).flatMap((allocation) => {
+    .map((payment) => {
+      const courseAllocations = Object.fromEntries((payment.allocations ?? []).flatMap((allocation) => {
         const course = courseLines.value.find((line) => String(line.orderItemId) === String(allocation.enrollmentOrderItemId));
         return course ? [[course.rowKey, numeric(allocation.amount)]] : [];
-      })),
-    }));
+      }));
+      const allocatedCourses = courseLines.value.filter((line) => numeric(courseAllocations[line.rowKey]) > 0);
+      const onlyCourseAllocation = allocatedCourses[0];
+      const allocationMatchesPayment = onlyCourseAllocation
+        && Math.abs(roundMoney(numeric(payment.amount) - numeric(courseAllocations[onlyCourseAllocation.rowKey]))) <= 0.01;
+      return {
+        rowKey: `payment-${payment.id}`,
+        paymentMethod: payment.paymentMethod,
+        amount: numeric(payment.amount),
+        paidAt: normalizeDate(payment.paidAt),
+        courseRowKey: allocatedCourses.length === 1 && allocationMatchesPayment ? onlyCourseAllocation?.rowKey : undefined,
+        participantIndex: payment.participantIndex,
+        handledByName: payment.handledByName,
+        remark: payment.remark,
+        paymentType: payment.paymentType,
+        courseAllocations,
+      };
+    });
   const savedPayments = getHistoricalPayments(receiptPayload);
   payments.value = livePayments.length > 0 ? livePayments : savedPayments;
   if (payments.value.length === 0) {
-    payments.value = [createPaymentLine()];
+    payments.value = [createPaymentLine(courseLines.value[0]?.rowKey)];
   }
 
   showTaxIdOnForm.value = getBoolean(receiptPayload, 'showTaxId', false);
@@ -2035,6 +2088,39 @@ function normalizeHistoricalLineReferences() {
       line.className = classGroup.className;
     }
   });
+}
+
+/** 将历史账单里的行号/订单项 ID 重新关联到当前课程行 key，供同一表单继续编辑。 */
+function mapHistoricalParticipantBillingCourseReferences() {
+  for (const billing of participantBillings.value) {
+    for (const discount of billing.discounts) {
+      const line = discount.courseLineNo
+        ? courseLines.value[discount.courseLineNo - 1]
+        : courseLines.value.length === 1 ? courseLines.value[0] : undefined;
+      if (line) {
+        discount.courseRowKey = line.rowKey;
+      }
+      delete discount.courseLineNo;
+    }
+    for (const payment of billing.payments) {
+      const savedAllocations = payment.courseAllocations;
+      const mappedAllocations: Record<string, number> = {};
+      courseLines.value.forEach((line) => {
+        if (!line.orderItemId) return;
+        const amount = numeric(savedAllocations[String(line.orderItemId)]);
+        if (amount > 0) {
+          mappedAllocations[line.rowKey] = amount;
+        }
+      });
+      if (courseLines.value.length === 1 && Object.keys(mappedAllocations).length === 0 && payment.amount > 0) {
+        mappedAllocations[courseLines.value[0].rowKey] = payment.amount;
+      }
+      payment.courseAllocations = mappedAllocations;
+      if (courseLines.value.length === 1) {
+        payment.courseRowKey = courseLines.value[0].rowKey;
+      }
+    }
+  }
 }
 
 function toHistoricalCourseLine(
@@ -2203,14 +2289,15 @@ function createDiscountLine(label = 'Custom discount', amount = 0, courseRowKey 
   };
 }
 
-function createPaymentLine(): PaymentLine {
+function createPaymentLine(courseRowKey?: string): PaymentLine {
   return {
     rowKey: `payment-${++rowSeed}`,
     paymentMethod: paymentMethods.value[0]?.methodCode ?? '',
     amount: 0,
     paidAt: today,
+    courseRowKey,
     remark: '',
-    courseAllocations: {},
+    courseAllocations: courseRowKey ? { [courseRowKey]: 0 } : {},
   };
 }
 
@@ -2228,10 +2315,38 @@ function removeCourseLine(index: number) {
     discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
   const hasPayment = payments.value.some((payment) =>
     numeric(payment.courseAllocations?.[line.rowKey]) > 0);
-  if (hasDiscount || hasPayment) {
+  const hasParticipantBilling = participantBillings.value.some((billing) =>
+    billing.discounts.some((discount) => discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0)
+    || billing.payments.some((payment) => numeric(payment.courseAllocations?.[line.rowKey]) > 0));
+  if (hasDiscount || hasPayment || hasParticipantBilling) {
     ElMessage.warning('Move this course’s discount and payment allocations before removing it.');
     return;
   }
+  const nextCourse = courseLines.value.find((candidate) => candidate.rowKey !== line.rowKey);
+  payments.value.forEach((payment) => {
+    if (payment.courseRowKey === line.rowKey && nextCourse) {
+      delete payment.courseAllocations[line.rowKey];
+      payment.courseRowKey = nextCourse.rowKey;
+      payment.courseAllocations[nextCourse.rowKey] = 0;
+      return;
+    }
+    delete payment.courseAllocations[line.rowKey];
+  });
+  participantBillings.value.forEach((billing) => {
+    billing.discounts.forEach((discount) => {
+      if (discount.courseRowKey === line.rowKey && nextCourse) {
+        discount.courseRowKey = nextCourse.rowKey;
+      }
+    });
+    billing.payments.forEach((payment) => {
+      const amount = numeric(payment.courseAllocations[line.rowKey]);
+      delete payment.courseAllocations[line.rowKey];
+      if (payment.courseRowKey === line.rowKey && nextCourse) {
+        payment.courseRowKey = nextCourse.rowKey;
+        payment.courseAllocations[nextCourse.rowKey] = amount;
+      }
+    });
+  });
   courseLines.value.splice(index, 1);
 }
 
@@ -2245,8 +2360,8 @@ function removeExtraFee(index: number) {
   }
 }
 
-function addDiscount() {
-  discounts.value.push(createDiscountLine());
+function addDiscount(courseRowKey?: string) {
+  discounts.value.push(createDiscountLine('Custom discount', 0, courseRowKey));
 }
 
 function removeDiscount(index: number) {
@@ -2255,22 +2370,24 @@ function removeDiscount(index: number) {
   }
 }
 
-function addActiveDiscount() {
+function addActiveDiscount(courseRowKey?: string) {
   const participantIndex = activeParticipantBilling.value?.participantIndex;
   if (participantIndex) {
-    addParticipantDiscount(participantIndex);
+    addParticipantDiscount(participantIndex, courseRowKey);
     return;
   }
-  addDiscount();
+  addDiscount(courseRowKey);
 }
 
-function removeActiveDiscount(index: number) {
+function removeActiveDiscount(discount: DiscountLine) {
+  const lineIndex = activeDiscountLines.value.indexOf(discount);
+  if (lineIndex < 0) return;
   const participantIndex = activeParticipantBilling.value?.participantIndex;
   if (participantIndex) {
-    removeParticipantDiscount(participantIndex, index);
+    removeParticipantDiscount(participantIndex, lineIndex);
     return;
   }
-  removeDiscount(index);
+  removeDiscount(lineIndex);
 }
 
 function isCustomDiscount(discount: DiscountLine) {
@@ -2311,7 +2428,12 @@ function recalculatePresetDiscount(discount: DiscountLine) {
     return;
   }
   const courseLine = courseLines.value.find((line) => line.rowKey === discount.courseRowKey);
-  const baseAmount = courseLine ? numeric(courseLine.priceAmount) : discountableAmount.value;
+  const participantIndex = activeParticipantBilling.value?.participantIndex;
+  const baseAmount = courseLine
+    ? participantIndex
+      ? participantCoursePrice(courseLine, participantIndex - 1)
+      : courseAggregatePrice(courseLine)
+    : discountableAmount.value;
   discount.amount = preset.discountType === 'PERCENTAGE'
     ? roundMoney(baseAmount * numeric(preset.discountValue) / 100)
     : roundMoney(preset.discountValue);
@@ -2322,12 +2444,35 @@ function courseLineOptionLabel(line: RegistrationCourseLine, index: number) {
 }
 
 function courseDiscountAmount(courseRowKey: string) {
-  if (isSharedPrivateLesson.value) {
-    return 0;
-  }
   return roundMoney(discounts.value
     .filter((discount) => discount.courseRowKey === courseRowKey)
     .reduce((total, discount) => total + numeric(discount.amount), 0));
+}
+
+/** 当前学生课程级折扣；非多人报名时回退到整单课程折扣。 */
+function activeCourseDiscountAmount(courseRowKey: string) {
+  if (activeParticipantBilling.value) {
+    return roundMoney(activeParticipantBilling.value.discounts
+      .filter((discount) => discount.courseRowKey === courseRowKey)
+      .reduce((total, discount) => total + numeric(discount.amount), 0));
+  }
+  return isSharedPrivateLesson.value
+    ? roundMoney(participantBillings.value.reduce((total, billing) => total + billing.discounts
+      .filter((discount) => discount.courseRowKey === courseRowKey)
+      .reduce((sum, discount) => sum + numeric(discount.amount), 0), 0))
+    : courseDiscountAmount(courseRowKey);
+}
+
+function activeCoursePrice(line: RegistrationCourseLine) {
+  const participantIndex = activeParticipantBilling.value?.participantIndex;
+  return participantIndex
+    ? participantCoursePrice(line, participantIndex - 1)
+    : courseAggregatePrice(line);
+}
+
+/** 报名页按课程分组展示折扣，但仍复用同一份账单折扣状态。 */
+function discountsForCourse(courseRowKey: string) {
+  return activeDiscountLines.value.filter((discount) => discount.courseRowKey === courseRowKey);
 }
 
 function paymentCourseAllocationTotal(payment: PaymentLine) {
@@ -2339,8 +2484,44 @@ function paymentAllocationRemainder(payment: PaymentLine) {
   return roundMoney(numeric(payment.amount) - paymentCourseAllocationTotal(payment));
 }
 
-function setPaymentCourseAllocation(payment: PaymentLine, courseRowKey: string, value: number | undefined) {
-  payment.courseAllocations[courseRowKey] = roundMoney(Math.max(0, numeric(value)));
+/** 课程卡片只展示本课付款；旧的未分配付款会出现在各课中供重新分配。 */
+function paymentsForCourse(courseRowKey: string) {
+  return activePaymentLines.value.filter((payment) => (
+    payment.courseRowKey === courseRowKey
+    || numeric(payment.courseAllocations?.[courseRowKey]) > 0
+    || (!payment.courseRowKey && paymentCourseAllocationTotal(payment) === 0)
+  ));
+}
+
+function coursePaymentAmount(payment: PaymentLine, courseRowKey: string) {
+  return payment.courseRowKey === courseRowKey || courseLines.value.length === 1
+    ? payment.amount
+    : numeric(payment.courseAllocations?.[courseRowKey]);
+}
+
+/** 新增付款按课程独立记账；历史跨课付款只更新该课程分配，保留原交易总额。 */
+function setCoursePaymentAmount(payment: PaymentLine, courseRowKey: string, value: number | undefined) {
+  const amount = roundMoney(Math.max(0, numeric(value)));
+  payment.courseAllocations ??= {};
+  payment.courseAllocations[courseRowKey] = amount;
+  if (payment.courseRowKey === courseRowKey || courseLines.value.length === 1) {
+    payment.amount = amount;
+  }
+}
+
+function canEditCoursePaymentDetails(payment: PaymentLine, courseRowKey: string) {
+  if (payment.courseRowKey) {
+    return payment.courseRowKey === courseRowKey;
+  }
+  const firstAllocatedCourse = courseLines.value.find((line) => numeric(payment.courseAllocations?.[line.rowKey]) > 0);
+  return (firstAllocatedCourse?.rowKey ?? courseLines.value[0]?.rowKey) === courseRowKey;
+}
+
+/** 汇总课程已收金额；单课报名无需显式分配，付款总额自然归属该课程。 */
+function coursePaymentAllocationTotal(courseRowKey: string) {
+  return roundMoney(activePaymentLines.value.reduce((total, payment) => total + numeric(
+    courseLines.value.length === 1 ? payment.amount : payment.courseAllocations?.[courseRowKey],
+  ), 0));
 }
 
 function buildCoursePaymentAllocations(payment: PaymentLine) {
@@ -2356,15 +2537,51 @@ function buildCoursePaymentAllocations(payment: PaymentLine) {
 }
 
 function courseAmountDue(line: RegistrationCourseLine, index: number) {
-  const tuition = courseLines.value.reduce((total, item) => total + numeric(item.priceAmount), 0);
   const fees = serviceFeeTotal.value + extraFeeTotal.value;
-  const feeShareFor = (item: RegistrationCourseLine) => tuition > 0
-    ? Math.floor((fees * numeric(item.priceAmount) / tuition + 1e-8) * 100) / 100
-    : Math.floor((fees / courseLines.value.length + 1e-8) * 100) / 100;
-  const feeShare = index === courseLines.value.length - 1
-    ? roundMoney(fees - courseLines.value.slice(0, index).reduce((total, item) => total + feeShareFor(item), 0))
-    : feeShareFor(line);
-  return roundMoney(numeric(line.priceAmount) + feeShare - courseDiscountAmount(line.rowKey));
+  const feeShare = courseFeeShare(index, fees);
+  return roundMoney(courseAggregatePrice(line) + feeShare - activeCourseDiscountAmount(line.rowKey));
+}
+
+function activeCourseAmountDue(line: RegistrationCourseLine, index: number) {
+  const billing = activeParticipantBilling.value;
+  if (!billing) {
+    return courseAmountDue(line, index);
+  }
+  const fees = billing.participantIndex === 1
+    ? serviceFeeTotal.value + extraFeeTotal.value
+    : 0;
+  return roundMoney(participantCoursePrice(line, billing.participantIndex - 1)
+    + courseFeeShare(index, fees)
+    - activeCourseDiscountAmount(line.rowKey));
+}
+
+function participantCourseAmountDue(
+  line: RegistrationCourseLine,
+  index: number,
+  billing: ParticipantBillingForm,
+  afterDiscount: boolean,
+) {
+  const fees = billing.participantIndex === 1
+    ? serviceFeeTotal.value + extraFeeTotal.value
+    : 0;
+  const discount = afterDiscount
+    ? billing.discounts.filter((item) => item.courseRowKey === line.rowKey)
+      .reduce((total, item) => total + numeric(item.amount), 0)
+    : 0;
+  return roundMoney(participantCoursePrice(line, billing.participantIndex - 1)
+    + courseFeeShare(index, fees)
+    - discount);
+}
+
+function courseFeeShare(index: number, totalFees: number) {
+  const weights = courseLines.value.map(courseAggregatePrice);
+  const weightTotal = sumNumbers(weights);
+  const shareAt = (lineIndex: number) => weightTotal > 0
+    ? Math.floor((totalFees * weights[lineIndex] / weightTotal + 1e-8) * 100) / 100
+    : Math.floor((totalFees / Math.max(1, weights.length) + 1e-8) * 100) / 100;
+  return index === weights.length - 1
+    ? roundMoney(totalFees - weights.slice(0, index).reduce((total, _weight, lineIndex) => total + shareAt(lineIndex), 0))
+    : shareAt(index);
 }
 
 function historicalDiscountLines(
@@ -2426,8 +2643,8 @@ function historicalDiscountLines(
   });
 }
 
-function addPaymentLine() {
-  payments.value.push(createPaymentLine());
+function addPaymentLine(courseRowKey?: string) {
+  payments.value.push(createPaymentLine(courseRowKey));
 }
 
 function removePaymentLine(index: number) {
@@ -2441,16 +2658,18 @@ function removePaymentLine(index: number) {
   }
 }
 
-function addActivePaymentLine() {
+function addActivePaymentLine(courseRowKey?: string) {
   const participantIndex = activeParticipantBilling.value?.participantIndex;
   if (participantIndex) {
-    addParticipantPayment(participantIndex);
+    addParticipantPayment(participantIndex, courseRowKey ?? courseLines.value[0]?.rowKey);
     return;
   }
-  addPaymentLine();
+  addPaymentLine(courseRowKey ?? courseLines.value[0]?.rowKey);
 }
 
-function removeActivePaymentLine(index: number) {
+function removeActivePaymentLine(payment: PaymentLine) {
+  const index = activePaymentLines.value.indexOf(payment);
+  if (index < 0) return;
   const participantIndex = activeParticipantBilling.value?.participantIndex;
   if (participantIndex) {
     removeParticipantPayment(participantIndex, index);
@@ -2811,33 +3030,48 @@ function printCourseProductLabel(line: RegistrationCourseLine) {
 }
 
 function formatCourseLinePrice(line: RegistrationCourseLine) {
-  if (!isOneOnOneLine(line) || !isSharedPrivateLesson.value) {
+  if (!isSharedPrivateLesson.value) {
     return formatMoney(line.priceAmount);
   }
   const activeIndex = activePrivateParticipantIndex.value;
   const amount = isPrivateAllReceiptView.value || activeIndex === null
-    ? privateParticipantLineTotalPrice(line)
-    : privateParticipantLineSharePrice(line, activeIndex - 1);
+    ? courseAggregatePrice(line)
+    : participantCoursePrice(line, activeIndex - 1);
   return formatMoney(amount);
 }
 
+/** 共享报名的订单课程金额：私教按倍率计价，班课按参与人数乘原价。 */
+function courseAggregatePrice(line: RegistrationCourseLine) {
+  if (!isSharedPrivateLesson.value) {
+    return numeric(line.priceAmount);
+  }
+  if (isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1) {
+    return numeric(line.priceAmount);
+  }
+  return roundMoney(numeric(line.priceAmount)
+    * (isOneOnOneLine(line) ? privateParticipantMultiplier.value : privateParticipantCount.value));
+}
+
+/** 单个参与人的课程金额，用于学生标签页、折扣和付款上限。 */
+function participantCoursePrice(line: RegistrationCourseLine, participantIndex: number) {
+  if (!isSharedPrivateLesson.value) {
+    return numeric(line.priceAmount);
+  }
+  if (isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1) {
+    return splitShareAmount(numeric(line.priceAmount), privateParticipantCount.value, participantIndex);
+  }
+  if (!isOneOnOneLine(line)) {
+    return numeric(line.priceAmount);
+  }
+  return splitShareAmount(courseAggregatePrice(line), privateParticipantCount.value, participantIndex);
+}
+
 function privateParticipantLineTotalPrice(line: RegistrationCourseLine) {
-  const total = isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1
-    ? numeric(line.priceAmount)
-    : numeric(line.priceAmount) * privateParticipantMultiplier.value;
-  return roundMoney(total);
+  return courseAggregatePrice(line);
 }
 
 function privateParticipantLineSharePrice(line: RegistrationCourseLine, participantIndex: number) {
-  const participantCount = Math.max(1, privateParticipantCount.value);
-  const snapshotPrice = isReadOnly.value
-    && privateParticipantPriceSnapshots.value.length === participantCount
-    ? privateParticipantPriceSnapshots.value[participantIndex]
-    : undefined;
-  if (snapshotPrice !== undefined) {
-    return roundMoney(snapshotPrice);
-  }
-  return splitShareAmount(privateParticipantLineTotalPrice(line), participantCount, participantIndex);
+  return participantCoursePrice(line, participantIndex);
 }
 
 function printCourseScheduleLabel(line: RegistrationCourseLine) {
@@ -3004,8 +3238,30 @@ async function submitForm() {
   submitting.value = true;
   try {
     const payload = buildPayload();
-    const res = await submitRegistrationIntake(payload);
-    const saved = res.data.data;
+    let response: Awaited<ReturnType<typeof submitRegistrationIntake>>;
+    try {
+      response = await submitRegistrationIntake(payload);
+    } catch (error) {
+      if (!isStudentScheduleConflict(error)) {
+        throw error;
+      }
+      try {
+        await ElMessageBox.confirm(
+          `${extractErrorMessage(error)} Registration has not been saved. Continue anyway?`,
+          'Schedule conflict detected',
+          {
+            confirmButtonText: 'Continue anyway',
+            cancelButtonText: 'Cancel registration',
+            distinguishCancelAndClose: true,
+            type: 'warning',
+          },
+        );
+      } catch {
+        return;
+      }
+      response = await submitRegistrationIntake({ ...payload, ignoreStudentConflicts: true });
+    }
+    const saved = response.data.data;
     notifyRegistrationSaved(saved);
     // 报名保存后先回到只读收据页，方便立即打印；排课由后续的学生历史/课包流程单独进入。
     await router.replace({
@@ -3022,6 +3278,27 @@ async function submitForm() {
   } finally {
     submitting.value = false;
   }
+}
+
+/** 仅对学生已有课程冲突开放确认流程；教师、教室等排课错误仍按原规则阻断。 */
+function isStudentScheduleConflict(error: unknown) {
+  if (!error || typeof error !== 'object' || !('response' in error)) {
+    return false;
+  }
+  const response = (error as { response?: { data?: unknown } }).response;
+  const body = response?.data;
+  if (!body || typeof body !== 'object') {
+    return false;
+  }
+  const apiError = body as { code?: unknown; data?: unknown };
+  return apiError.code === 'SCHEDULE_CONFLICT'
+    && Array.isArray(apiError.data)
+    && apiError.data.length > 0
+    && apiError.data.every((detail) => (
+      Boolean(detail)
+      && typeof detail === 'object'
+      && (detail as { resourceType?: unknown }).resourceType === 'STUDENT'
+    ));
 }
 
 function notifyRegistrationSaved(saved: RegistrationIntakeResult) {
@@ -3081,8 +3358,14 @@ function validateForm() {
     if (!hasOneOnOneLine.value) {
       errors.push('Additional students are available only for a 1-on-1 course.');
     }
-    if (courseLines.value.filter(isOneOnOneLine).length !== 1 || courseLines.value.length !== 1) {
-      errors.push('A shared private lesson registration must contain exactly one course line.');
+    if (courseLines.value.filter(isOneOnOneLine).length !== 1) {
+      errors.push('A shared registration must contain exactly one 1-on-1 course. Other course rows can be group classes.');
+    }
+    if (isRenewalMode.value && courseLines.value.length !== 1) {
+      errors.push('A shared private lesson renewal must contain one course line.');
+    }
+    if (isRenewalMode.value && courseLines.value.filter(isOneOnOneLine).length > 1) {
+      errors.push('A shared private lesson renewal can renew one private course at a time.');
     }
     privateParticipantForms.value.forEach((participant, index) => {
       if (!participant.studentName.trim()) {
@@ -3170,6 +3453,32 @@ function validateForm() {
     participantBillings.value.slice(0, privateParticipantCount.value).forEach((billing) => {
       validateMoneyLines(billing.discounts, `${privateWorkspaceTabLabel(billing.participantIndex)} discount`, errors);
       validatePaymentLines(billing.payments, `${privateWorkspaceTabLabel(billing.participantIndex)} payment`, errors);
+      billing.discounts.forEach((discount, discountIndex) => {
+        if (discount.amount > 0 && !courseLines.value.some((line) => line.rowKey === discount.courseRowKey)) {
+          errors.push(`${privateWorkspaceTabLabel(billing.participantIndex)} discount ${discountIndex + 1}: assign the discount to a course.`);
+        }
+      });
+      if (courseLines.value.length > 1) {
+        billing.payments.forEach((payment, paymentIndex) => {
+          if (payment.amount > 0 && paymentAllocationRemainder(payment) !== 0) {
+            errors.push(`${privateWorkspaceTabLabel(billing.participantIndex)} payment ${paymentIndex + 1}: assign the full payment amount to courses.`);
+          }
+        });
+      }
+      courseLines.value.forEach((line, lineIndex) => {
+        const discount = billing.discounts
+          .filter((item) => item.courseRowKey === line.rowKey)
+          .reduce((total, item) => total + numeric(item.amount), 0);
+        if (discount > participantCourseAmountDue(line, lineIndex, billing, false)) {
+          errors.push(`${privateWorkspaceTabLabel(billing.participantIndex)}: discount cannot exceed ${courseLineOptionLabel(line, lineIndex)} tuition.`);
+        }
+        const allocated = billing.payments.reduce((total, payment) => total + numeric(
+          courseLines.value.length === 1 ? payment.amount : payment.courseAllocations?.[line.rowKey],
+        ), 0);
+        if (roundMoney(allocated) > participantCourseAmountDue(line, lineIndex, billing, true)) {
+          errors.push(`${privateWorkspaceTabLabel(billing.participantIndex)}: payments exceed ${courseLineOptionLabel(line, lineIndex)} amount due.`);
+        }
+      });
     });
   } else {
     validateMoneyLines(discounts.value, 'Discount', errors);
@@ -3330,10 +3639,11 @@ function createStudentPickerOption(
 }
 
 function createParticipantBilling(participantIndex: number): ParticipantBillingForm {
+  const firstCourseRowKey = courseLines.value[0]?.rowKey ?? '';
   return {
     participantIndex,
-    discounts: [createDiscountLine()],
-    payments: [createPaymentLine()],
+    discounts: [createDiscountLine('Custom discount', 0, firstCourseRowKey)],
+    payments: [createPaymentLine(firstCourseRowKey)],
   };
 }
 
@@ -3439,9 +3749,9 @@ function selectPrivateParticipant(index: number, student: StudentItem) {
   participant.dropoffAddress = student.dropoffAddress || '';
 }
 
-function addParticipantDiscount(index: number) {
+function addParticipantDiscount(index: number, courseRowKey?: string) {
   const billing = participantBillings.value[index - 1];
-  billing?.discounts.push(createDiscountLine());
+  billing?.discounts.push(createDiscountLine('Custom discount', 0, courseRowKey ?? courseLines.value[0]?.rowKey ?? ''));
 }
 
 function removeParticipantDiscount(index: number, lineIndex: number) {
@@ -3451,9 +3761,9 @@ function removeParticipantDiscount(index: number, lineIndex: number) {
   }
 }
 
-function addParticipantPayment(index: number) {
+function addParticipantPayment(index: number, courseRowKey?: string) {
   const billing = participantBillings.value[index - 1];
-  billing?.payments.push(createPaymentLine());
+  billing?.payments.push(createPaymentLine(courseRowKey));
 }
 
 function removeParticipantPayment(index: number, lineIndex: number) {
@@ -3585,7 +3895,7 @@ function buildPayload(): RegistrationIntakePayload {
     extraFees: buildMoneyPayload(extraFees.value),
     discountAmount: roundMoney(discountTotal.value),
     discounts: isSharedPrivateLesson.value
-      ? buildMoneyPayload(discounts.value)
+      ? []
       : buildCourseDiscountPayload(),
     payments: isSharedPrivateLesson.value
       ? undefined
@@ -3617,7 +3927,7 @@ function toParticipantBillingPayload(billing: ParticipantBillingForm): Registrat
   return {
     participantIndex: billing.participantIndex,
     discountAmount: roundMoney(sumNumbers(billing.discounts.map((line) => line.amount))),
-    discounts: buildMoneyPayload(billing.discounts),
+    discounts: buildParticipantDiscountPayload(billing.discounts),
     payments: billing.payments
       .filter((payment) => payment.amount > 0)
       .map((payment) => ({
@@ -3627,8 +3937,19 @@ function toParticipantBillingPayload(billing: ParticipantBillingForm): Registrat
         participantIndex: billing.participantIndex,
         handledByName: form.handledByName.trim(),
         remark: payment.remark?.trim() || undefined,
+        allocations: buildCoursePaymentAllocations(payment),
       })),
   };
+}
+
+function buildParticipantDiscountPayload(lines: DiscountLine[]) {
+  return lines
+    .filter((line) => line.amount > 0)
+    .map((line) => ({
+      label: line.label.trim(),
+      amount: roundMoney(line.amount),
+      orderItemLineNo: courseLines.value.findIndex((course) => course.rowKey === line.courseRowKey) + 1,
+    }));
 }
 
 function buildMoneyPayload(lines: MoneyLine[]) {
@@ -3719,7 +4040,7 @@ function resetForNextRegistration() {
   studentPickerQuery.value = '';
   extraFees.value = [createMoneyLine('Other fee')];
   discounts.value = [createDiscountLine()];
-  payments.value = [createPaymentLine()];
+  payments.value = [createPaymentLine(courseLines.value[0]?.rowKey)];
   studentReuseStatus.value = 'idle';
   reusableStudent.value = null;
   historicalPrimaryStudentId.value = undefined;
@@ -3961,6 +4282,7 @@ function getHistoricalPayments(payload: Record<string, unknown> | null): Payment
       paymentMethod: getString(payment, 'paymentMethod'),
       amount: getNumber(payment, 'amount'),
       paidAt: normalizeDate(getString(payment, 'paidAt')) || form.signupDate || today,
+      courseAllocations: {},
       handledByName: getString(payment, 'handledByName') || form.handledByName,
       remark: getString(payment, 'remark'),
       paymentType: getString(payment, 'paymentType'),
@@ -5132,18 +5454,191 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   min-width: 0;
 }
 
-.adjustment-row--course-discount {
-  grid-template-columns: minmax(92px, 0.8fr) minmax(0, 1fr) 100px auto !important;
-}
-
-.discount-course-select {
-  min-width: 0;
-}
-
 .discount-preset-control {
   display: grid;
   gap: 4px;
   min-width: 0;
+}
+
+.adjustment-line-list,
+.payment-record-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.course-adjustment-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.course-adjustment-card {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #fbfdff;
+}
+
+.course-adjustment-card--discount {
+  border-color: #d6e6da;
+  background: #fbfefb;
+}
+
+.course-adjustment-card--payment {
+  border-color: #ddd7ed;
+  background: #fdfcff;
+}
+
+.course-adjustment-card__header,
+.course-adjustment-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.course-adjustment-card__header {
+  padding-bottom: 7px;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.course-adjustment-card__title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.course-adjustment-card__title > span {
+  color: #718096;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.course-adjustment-card__title strong {
+  overflow: hidden;
+  color: #253247;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-adjustment-card__context {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.course-adjustment-card__lines {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.course-adjustment-card__line {
+  grid-template-columns: minmax(0, 1fr) 100px auto;
+}
+
+.course-adjustment-card__line .discount-preset-control,
+.course-adjustment-card__line :deep(.el-input-number) {
+  width: 100%;
+  min-width: 0;
+}
+
+.course-adjustment-card__empty {
+  margin: 0;
+  padding: 4px 0;
+  color: #7b8795;
+  font-size: 11px;
+}
+
+.course-adjustment-card__footer {
+  padding-top: 6px;
+  border-top: 1px solid #e8edf2;
+  color: #475569;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.course-adjustment-card__footer :deep(.el-button) {
+  min-height: 22px;
+  margin-left: -4px;
+}
+
+.payment-record-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.course-adjustment-list--payments {
+  grid-template-columns: 1fr;
+}
+
+.course-payment-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.course-payment-entry {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.course-payment-entry__fields {
+  display: grid;
+  grid-template-columns:
+    minmax(66px, 0.55fr)
+    minmax(120px, 1.3fr)
+    minmax(90px, 0.85fr)
+    minmax(120px, 1fr)
+    22px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.course-payment-entry__fields > * {
+  min-width: 0;
+}
+
+.course-payment-entry__number {
+  color: #334155;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.course-payment-entry__history {
+  grid-column: 2 / 3;
+  overflow: hidden;
+  color: #7b8795;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-payment-entry__fields :deep(.el-select),
+.course-payment-entry__fields :deep(.el-input-number),
+.course-payment-entry__fields :deep(.el-date-editor) {
+  width: 100%;
+  min-width: 0;
+}
+
+.course-payment-entry__fields :deep(.el-date-editor) {
+  max-width: 100%;
 }
 
 .adjustment-column :deep(.el-input-number) {
@@ -5219,44 +5714,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   grid-column: 2 / 5;
 }
 
-.payment-course-allocation-inputs {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 10px;
-  padding: 7px 9px;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-  background: #f8fafc;
-}
-
-.payment-course-allocation-inputs label {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 100px;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: #475569;
-  font-size: 11px;
-}
-
-.payment-course-allocation-inputs label span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.payment-course-allocation-inputs small {
-  grid-column: 1 / -1;
-  color: #64748b;
-  font-size: 11px;
-  text-align: right;
-}
-
-.payment-course-allocation-inputs .payment-allocation-error {
-  color: #dc2626;
-}
-
 @media (max-width: 720px) {
   .private-lesson-switcher__header {
     align-items: flex-start;
@@ -5328,21 +5785,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     align-self: center;
   }
 
-  .adjustment-row--course-discount {
-    grid-template-columns: minmax(0, 1fr) 100px auto !important;
+  .course-adjustment-card__line {
+    grid-template-columns: minmax(0, 1fr) 92px auto;
   }
 
-  .adjustment-row--course-discount .discount-course-select {
-    grid-column: 1 / -1;
-  }
-
-  .payment-course-allocation-inputs {
-    grid-template-columns: minmax(0, 1fr);
+  .course-adjustment-card__header,
+  .course-adjustment-card__footer {
+    align-items: flex-start;
   }
 
   .adjustment-row--payment :deep(.el-date-editor) {
     grid-column: 1 / 3;
     width: 100%;
+  }
+
+  .course-payment-entry__fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 22px;
+  }
+
+  .course-payment-entry__number {
+    grid-column: 1 / -1;
+  }
+
+  .course-payment-entry__history {
+    grid-column: 1 / 3;
+  }
+
+  .course-payment-entry__fields :deep(.el-date-editor) {
+    grid-column: 1 / 3;
+  }
+
+  .course-payment-entry__fields > .remove-adjustment-row {
+    grid-column: 3;
+    grid-row: 2 / span 2;
+    align-self: center;
+  }
+
+  .course-payment-entry .payment-other-method {
+    grid-column: 1 / -1;
   }
 }
 

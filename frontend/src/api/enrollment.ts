@@ -240,6 +240,8 @@ export interface RegistrationIntakePayload {
   payments?: RegistrationPaymentPayload[];
   participantBillings?: RegistrationParticipantBillingPayload[];
   receiptOptions?: RegistrationReceiptOptionsPayload;
+  /** 用户确认班课冲突后重新提交时置 true，允许报名继续。 */
+  ignoreStudentConflicts?: boolean;
   remark?: string;
 }
 

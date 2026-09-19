@@ -66,6 +66,9 @@ public class PrivateLessonSchemaCompatibilityInitializer {
                 "class enrollment cascade support");
         // 课程级付款分摊（见 doc/migrations/20260919_payment_allocation.sql）
         createPaymentAllocationTableIfMissing();
+        addColumnIfMissing("enrollment_order_item", "discount_amount",
+                "decimal(12,2) DEFAULT NULL COMMENT 'Discount allocated to this course item' AFTER manual_price_override",
+                "course item discount allocation");
         addColumnIfMissing("enrollment_order_item", "amount_due",
                 "decimal(12,2) DEFAULT NULL COMMENT 'Amount due for this course item (gross + allocated fees - allocated discount)' AFTER price_amount",
                 "course item payment allocation");

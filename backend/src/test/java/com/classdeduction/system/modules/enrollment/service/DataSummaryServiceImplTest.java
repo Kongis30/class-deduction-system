@@ -12,6 +12,7 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
+import com.classdeduction.system.modules.enrollment.entity.PaymentAllocationEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
@@ -19,6 +20,7 @@ import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMa
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.DataSummaryServiceImpl;
@@ -31,6 +33,8 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
+import com.classdeduction.system.common.util.JsonHelper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -75,6 +79,9 @@ class DataSummaryServiceImplTest {
     private PaymentRecordMapper paymentRecordMapper;
 
     @Mock
+    private PaymentAllocationMapper paymentAllocationMapper;
+
+    @Mock
     private ClassEnrollmentMapper classEnrollmentMapper;
 
     @Mock
@@ -103,6 +110,7 @@ class DataSummaryServiceImplTest {
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PrivateLessonGroupEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PaymentAllocationEntity.class);
     }
 
     @BeforeEach
@@ -115,13 +123,15 @@ class DataSummaryServiceImplTest {
                 coursePackageMapper,
                 packageTeacherAssignmentMapper,
                 paymentRecordMapper,
+                paymentAllocationMapper,
                 classEnrollmentMapper,
                 classGroupMapper,
                 courseProductMapper,
                 teacherMapper,
                 hourLedgerMapper,
                 studentMapper,
-                campusMapper
+                campusMapper,
+                new JsonHelper(new ObjectMapper())
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());
@@ -560,6 +570,72 @@ class DataSummaryServiceImplTest {
         assertThat(response.totalIncomeAmount()).isEqualByComparingTo("100.00");
     }
 
+    @Test
+    void shouldAllocateMixedSharedRegistrationAmountsPerParticipantAndCourse() {
+        EnrollmentOrderEntity order = order(1L, "775.00", "210.00", "565.00");
+        order.setDiscountAmount(new BigDecimal("25.00"));
+        EnrollmentOrderItemEntity privateCourse = item(11L, 1, "200.00");
+        privateCourse.setCourseType("ONE_ON_ONE");
+        privateCourse.setDiscountAmount(new BigDecimal("10.00"));
+        privateCourse.setAmountDue(new BigDecimal("190.00"));
+        privateCourse.setPaidAmount(new BigDecimal("40.00"));
+        EnrollmentOrderItemEntity groupCourse = item(12L, 2, "600.00");
+        groupCourse.setDiscountAmount(new BigDecimal("15.00"));
+        groupCourse.setAmountDue(new BigDecimal("585.00"));
+        groupCourse.setPaidAmount(new BigDecimal("160.00"));
+        List<EnrollmentOrderParticipantEntity> participants = List.of(
+                billedParticipant(1L, 1, "Student 1", "266.66", "15.00", "251.66", "60.00",
+                        "[{\"label\":\"Private\",\"amount\":10,\"orderItemLineNo\":1},{\"label\":\"Group\",\"amount\":5,\"orderItemLineNo\":2}]"),
+                billedParticipant(2L, 2, "Student 2", "266.66", "10.00", "256.66", "100.00",
+                        "[{\"label\":\"Group\",\"amount\":10,\"orderItemLineNo\":2}]"),
+                billedParticipant(3L, 3, "Student 3", "266.68", "0.00", "266.68", "50.00", "[]"));
+        PrivateLessonGroupEntity privateGroup = new PrivateLessonGroupEntity();
+        privateGroup.setId(91L);
+        privateGroup.setEnrollmentOrderId(1L);
+        privateGroup.setEnrollmentOrderItemId(11L);
+        privateGroup.setParticipantCount(3);
+
+        // 该参与人有 50 元显式课程分摊，另有 10 元历史未分摊款。
+        PaymentRecordEntity firstPayment = payment(1L, "60.00");
+        firstPayment.setId(31L);
+        firstPayment.setParticipantIndex(1);
+        PaymentRecordEntity secondPayment = payment(1L, "100.00");
+        secondPayment.setId(32L);
+        secondPayment.setParticipantIndex(2);
+        PaymentRecordEntity thirdPayment = payment(1L, "50.00");
+        thirdPayment.setId(33L);
+        thirdPayment.setParticipantIndex(3);
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(privateCourse, groupCourse));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(participants);
+        when(privateLessonGroupMapper.selectList(any())).thenReturn(List.of(privateGroup));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(firstPayment, secondPayment, thirdPayment));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(
+                paymentAllocation(31L, 11L, "30.00"), paymentAllocation(31L, 12L, "20.00"),
+                paymentAllocation(32L, 12L, "100.00"),
+                paymentAllocation(33L, 11L, "10.00"), paymentAllocation(33L, 12L, "40.00")));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(
+                student(1L, "Student 1"), student(2L, "Student 2"), student(3L, "Student 3")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).hasSize(6);
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::linePriceAmount)
+                .containsExactly(new BigDecimal("66.66"), new BigDecimal("66.66"), new BigDecimal("66.68"),
+                        new BigDecimal("200.00"), new BigDecimal("200.00"), new BigDecimal("200.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::discountAmount)
+                .containsExactly(new BigDecimal("10.00"), new BigDecimal("0.00"), new BigDecimal("0.00"),
+                        new BigDecimal("5.00"), new BigDecimal("10.00"), new BigDecimal("0.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::paidAmount)
+                .containsExactly(new BigDecimal("32.50"), new BigDecimal("0.00"), new BigDecimal("10.00"),
+                        new BigDecimal("27.50"), new BigDecimal("100.00"), new BigDecimal("40.00"));
+        assertThat(response.rows().stream().map(DataSummaryResponseVO.RowVO::amountDue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("775.00");
+        assertThat(response.rows().stream().map(DataSummaryResponseVO.RowVO::paidAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("210.00");
+    }
+
     private EnrollmentOrderEntity order(Long id, String amountDue, String receivedAmount, String balanceAmount) {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(id);
@@ -589,6 +665,38 @@ class DataSummaryServiceImplTest {
         participant.setParticipantIndex(index);
         participant.setStudentNameSnapshot(name);
         return participant;
+    }
+
+    private EnrollmentOrderParticipantEntity billedParticipant(Long studentId,
+                                                                int index,
+                                                                String name,
+                                                                String gross,
+                                                                String discount,
+                                                                String due,
+                                                                String paid,
+                                                                String discountDetail) {
+        EnrollmentOrderParticipantEntity participant = participant(studentId, index, name);
+        participant.setGrossAmount(new BigDecimal(gross));
+        participant.setDiscountAmount(new BigDecimal(discount));
+        participant.setAmountDue(new BigDecimal(due));
+        participant.setPaidAmount(new BigDecimal(paid));
+        participant.setDiscountDetail(discountDetail);
+        return participant;
+    }
+
+    private PaymentAllocationEntity paymentAllocation(Long paymentId, Long orderItemId, String amount) {
+        PaymentAllocationEntity allocation = new PaymentAllocationEntity();
+        allocation.setPaymentRecordId(paymentId);
+        allocation.setEnrollmentOrderItemId(orderItemId);
+        allocation.setAmount(new BigDecimal(amount));
+        return allocation;
+    }
+
+    private StudentEntity student(Long id, String name) {
+        StudentEntity student = new StudentEntity();
+        student.setId(id);
+        student.setStudentName(name);
+        return student;
     }
 
     private EnrollmentOrderItemEntity item(long id, int lineNo, String priceAmount) {

@@ -736,11 +736,11 @@
           </span>
         </div>
 
-        <div v-if="!payParticipant && payCourseItems.length > 1" class="payment-allocation-preview">
+        <div v-if="payCourseItems.length > 1 && (!payParticipant || payTargetCourseId)" class="payment-allocation-preview">
           <div class="payment-allocation-preview__title">Assign each payment to courses</div>
           <div v-for="(split, splitIndex) in payForm.splits" :key="`allocation-${splitIndex}`" class="course-payment-allocation">
             <strong>Payment {{ splitIndex + 1 }} · {{ paymentMethodName(split.paymentMethod) }} · ${{ split.amount.toFixed(2) }}</strong>
-            <el-table :data="payCourseItems" size="small">
+            <el-table :data="payAllocatableCourseItems" size="small">
               <el-table-column label="Course" min-width="180">
                 <template #default="{ row }">{{ row.detail || '—' }}</template>
               </el-table-column>
@@ -1555,6 +1555,8 @@ const payFormRef = ref();
 const payOrder = ref<EnrollmentOrderItem | null>(null);
 const payParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
 const payCourseItems = ref<EnrollmentOrderLineItem[]>([]);
+const payTargetCourseId = ref<string | null>(null);
+const payTargetCourseBalance = ref<number | null>(null);
 
 interface PaySplit {
   paymentMethod: string;
@@ -1571,8 +1573,22 @@ const payForm = reactive({
 });
 
 const payAmountDue = computed(() => {
-  return Math.max(0, payParticipant.value?.balanceAmount ?? payOrder.value?.balanceAmount ?? 0);
+  const accountBalance = payParticipant.value?.balanceAmount ?? payOrder.value?.balanceAmount ?? 0;
+  if (!payTargetCourseId.value) {
+    return Math.max(0, accountBalance);
+  }
+  const target = payCourseItems.value.find((item) => String(item.id) === payTargetCourseId.value);
+  const courseBalanceAmount = target
+    ? payParticipant.value && payTargetCourseBalance.value != null
+      ? Math.min(payTargetCourseBalance.value, courseBalance(target))
+      : courseBalance(target)
+    : 0;
+  return Math.max(0, Math.min(accountBalance, courseBalanceAmount));
 });
+
+const payAllocatableCourseItems = computed(() => payParticipant.value && payTargetCourseId.value
+  ? payCourseItems.value.filter((item) => String(item.id) === payTargetCourseId.value)
+  : payCourseItems.value);
 
 const payStudentName = computed(() => payParticipant.value?.studentName ?? payOrder.value?.studentName ?? '—');
 const payOriginalAmount = computed(() => payParticipant.value?.grossAmount ?? payOrder.value?.originalAmount ?? 0);
@@ -1976,6 +1992,8 @@ async function openRequestedOrderAction() {
   const participantIndexText = String(route.query.participantIndex ?? '').trim();
   const participantIndex = participantIndexText ? Number(participantIndexText) : null;
   const orderItemId = String(route.query.orderItemId ?? '').trim();
+  const courseBalanceText = String(route.query.courseBalance ?? '').trim();
+  const requestedCourseBalance = courseBalanceText ? Number(courseBalanceText) : null;
   if (!orderId || (action !== 'pay' && action !== 'refund')) {
     return;
   }
@@ -1997,7 +2015,10 @@ async function openRequestedOrderAction() {
       if (!canPayOrder(order, participant)) {
         ElMessage.warning('This order does not have an outstanding balance.');
       } else {
-        await openPayDialog(order, participant, orderItemId || undefined);
+        await openPayDialog(order, participant, orderItemId || undefined,
+          requestedCourseBalance != null && Number.isFinite(requestedCourseBalance)
+            ? Math.max(0, requestedCourseBalance)
+            : undefined);
       }
     } else if (!canRefundOrder(order, participant)) {
       ElMessage.warning('This order has no refundable payment.');
@@ -2157,7 +2178,8 @@ async function handleRefundSubmit() {
 // ─── Payment Dialog ──────────────────────────────────
 async function openPayDialog(row: EnrollmentOrderItem,
                              participant: EnrollmentOrderParticipantItem | null = null,
-                             targetOrderItemId?: string | number) {
+                             targetOrderItemId?: string | number,
+                             targetParticipantCourseBalance?: number) {
   let items = row.items ?? [];
   if (items.length === 0 && !participant) {
     try {
@@ -2170,6 +2192,8 @@ async function openPayDialog(row: EnrollmentOrderItem,
   payOrder.value = row;
   payParticipant.value = participant;
   payCourseItems.value = items;
+  payTargetCourseId.value = null;
+  payTargetCourseBalance.value = null;
   const targetCourse = targetOrderItemId == null
     ? null
     : items.find((item) => String(item.id) === String(targetOrderItemId)) ?? null;
@@ -2177,19 +2201,32 @@ async function openPayDialog(row: EnrollmentOrderItem,
     ElMessage.warning('The selected course is not part of this enrollment order.');
     return;
   }
-  const amount = targetCourse ? Math.min(payAmountDue.value, courseBalance(targetCourse)) : payAmountDue.value;
+  payTargetCourseId.value = targetCourse ? String(targetCourse.id) : null;
+  payTargetCourseBalance.value = targetCourse && targetParticipantCourseBalance != null
+    ? targetParticipantCourseBalance
+    : null;
+  const amount = payAmountDue.value;
   const allocations: Record<string, number> = {};
-  if (!participant && items.length === 1) {
-    allocations[String(items[0].id)] = amount;
-  } else if (!participant && targetCourse && amount > 0) {
+  if (targetCourse && amount > 0) {
     allocations[String(targetCourse.id)] = amount;
+  } else if (!participant && items.length === 1) {
+    allocations[String(items[0].id)] = amount;
   }
   payForm.splits = [createPaySplit(amount, allocations)];
   payDialogVisible.value = true;
 }
 
 function courseBalance(item: EnrollmentOrderLineItem) {
-  return Math.max(0, Number(item.balanceAmount ?? (Number(item.amountDue ?? 0) - Number(item.paidAmount ?? 0))));
+  const orderItemBalance = Math.max(0, Number(item.balanceAmount ?? (Number(item.amountDue ?? 0) - Number(item.paidAmount ?? 0))));
+  if (!payParticipant.value || !payTargetCourseId.value) {
+    return orderItemBalance;
+  }
+  if (String(item.id) !== payTargetCourseId.value) {
+    return 0;
+  }
+  return payTargetCourseBalance.value == null
+    ? orderItemBalance
+    : Math.min(orderItemBalance, payTargetCourseBalance.value);
 }
 
 function courseAllocated(orderItemId: EntityId) {
@@ -2234,7 +2271,9 @@ async function handlePaySubmit() {
     return;
   }
   if (!payOrder.value) return;
-  if (!payParticipant.value && payCourseItems.value.length > 1) {
+  const requiresCourseAllocation = Boolean(payTargetCourseId.value)
+    || (!payParticipant.value && payCourseItems.value.length > 1);
+  if (requiresCourseAllocation) {
     if (rows.some((row) => splitAllocationRemaining(row) !== 0)) {
       ElMessage.warning('Assign the full amount of each payment to one or more courses.');
       return;
@@ -2243,7 +2282,7 @@ async function handlePaySubmit() {
     rows.forEach((row) => Object.entries(row.allocations).forEach(([itemId, amount]) => {
       allocatedByCourse.set(itemId, (allocatedByCourse.get(itemId) ?? 0) + Number(amount || 0));
     }));
-    if (payCourseItems.value.some((item) => (allocatedByCourse.get(String(item.id)) ?? 0) > courseBalance(item) + 0.001)) {
+    if (payAllocatableCourseItems.value.some((item) => (allocatedByCourse.get(String(item.id)) ?? 0) > courseBalance(item) + 0.001)) {
       ElMessage.warning('A course allocation cannot exceed that course’s outstanding balance.');
       return;
     }
@@ -2258,11 +2297,9 @@ async function handlePaySubmit() {
         amount: row.amount,
         paidAt: `${row.paidAt}T00:00:00`,
         participantIndex: payParticipant.value?.participantIndex,
-        allocations: !payParticipant.value
-          ? Object.entries(row.allocations)
-            .filter(([, amount]) => amount > 0)
-            .map(([orderItemId, amount]) => ({ enrollmentOrderItemId: orderItemId, amount }))
-          : undefined,
+        allocations: Object.entries(row.allocations)
+          .filter(([, amount]) => amount > 0)
+          .map(([orderItemId, amount]) => ({ enrollmentOrderItemId: orderItemId, amount })),
         handledByName: row.handledByName,
         remark: row.remark || undefined,
       })),

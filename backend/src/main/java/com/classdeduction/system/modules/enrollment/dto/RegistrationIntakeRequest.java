@@ -71,6 +71,13 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Currency code", example = "USD")
     private String currencyCode;
 
+    /**
+     * 冲突确认开关：用户在前端确认班课时间冲突后重新提交时置为 true，
+     * 允许报名继续（仅放开学生维度的班课冲突，老师/教室等基础冲突仍然阻断）。
+     */
+    @Schema(description = "Acknowledge the student schedule conflict and create the registration anyway")
+    private Boolean ignoreStudentConflicts;
+
     @NotEmpty(message = "At least one course item is required")
     @Valid
     @Schema(description = "Course line items")
