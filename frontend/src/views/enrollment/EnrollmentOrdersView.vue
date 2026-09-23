@@ -362,17 +362,6 @@
                             </section>
                           </template>
 
-                          <div v-if="(expandedClassPagination[row.id]?.total ?? 0) > 0" class="expand-pagination">
-                            <el-pagination
-                              background
-                              layout="prev, pager, next"
-                              small
-                              :total="expandedClassPagination[row.id]?.total ?? 0"
-                              :page-size="expandedClassPagination[row.id]?.size ?? 10"
-                              :current-page="expandedClassPagination[row.id]?.page ?? 1"
-                              @current-change="(p: number) => loadExpandedClassOrders(row.id, p)"
-                            />
-                          </div>
                         </div>
                       </template>
                     </el-table-column>
@@ -1330,7 +1319,6 @@ function groupRowClassName({ row }: { row: GroupFlatRow }) {
 // ─── Group Class expandable rows ──────────────────
 const expandedClassOrders = reactive<Record<string, EnrollmentOrderItem[]>>({});
 const expandedClassLoading = reactive<Record<string, boolean>>({});
-const expandedClassPagination = reactive<Record<string, { page: number; size: number; total: number }>>({});
 const expandedClassIds = reactive(new Set<string>());
 
 interface CampusOrderGroup {
@@ -1362,29 +1350,36 @@ function campusOrderGroups(orders: EnrollmentOrderItem[]): CampusOrderGroup[] {
 const keywordExpandedClassIds = reactive(new Set<string>());
 let latestGroupKeywordSearch = 0;
 
-async function loadExpandedClassOrders(classId: string | number, pageNum = 1) {
+// 展开班级后加载完整名单；接口单页最多 200 条，因此按页读完以取消列表分页。
+async function loadExpandedClassOrders(classId: string | number) {
   const classKey = String(classId);
   expandedClassLoading[classKey] = true;
   try {
-    if (!expandedClassPagination[classKey]) {
-      expandedClassPagination[classKey] = { page: 1, size: 10, total: 0 };
+    const pageSize = 200;
+    const records: EnrollmentOrderItem[] = [];
+    let pageNum = 1;
+    let total = Number.POSITIVE_INFINITY;
+
+    while (records.length < total) {
+      const res = await fetchEnrollmentOrders({
+        classId,
+        teachingMode: 'GROUP',
+        keyword: groupOrderFilters.keyword || undefined,
+        orderStatus: groupOrderFilters.orderStatus || undefined,
+        paymentStatus: groupOrderFilters.paymentStatus || undefined,
+        pageNum,
+        pageSize,
+      });
+      const data = res.data.data;
+      records.push(...data.records);
+      total = data.total;
+      if (!data.records.length) break;
+      pageNum += 1;
     }
-    expandedClassPagination[classKey].page = pageNum;
-    const res = await fetchEnrollmentOrders({
-      classId,
-      teachingMode: 'GROUP',
-      keyword: groupOrderFilters.keyword || undefined,
-      orderStatus: groupOrderFilters.orderStatus || undefined,
-      paymentStatus: groupOrderFilters.paymentStatus || undefined,
-      pageNum,
-      pageSize: expandedClassPagination[classKey].size,
-    });
-    const data = res.data.data;
-    expandedClassOrders[classKey] = data.records;
-    expandedClassPagination[classKey].total = data.total;
+
+    expandedClassOrders[classKey] = records;
   } catch {
     expandedClassOrders[classKey] = [];
-    expandedClassPagination[classKey] = { page: 1, size: 10, total: 0 };
   } finally {
     expandedClassLoading[classKey] = false;
   }
@@ -1932,7 +1927,7 @@ function handleFilterChange() {
 
 function handleGroupOrderFilterChange() {
   Object.keys(expandedClassOrders).forEach((classId) => {
-    loadExpandedClassOrders(classId, 1);
+    loadExpandedClassOrders(classId);
   });
 }
 
@@ -2037,7 +2032,6 @@ function collapseKeywordExpandedClasses() {
     expandedClassIds.delete(classId);
     // 关键词结果只适用于当前搜索；下次手动展开时必须重新加载完整班级记录。
     delete expandedClassOrders[classId];
-    delete expandedClassPagination[classId];
   }
   keywordExpandedClassIds.clear();
 }
@@ -2052,7 +2046,6 @@ function collapseClassExpansionsExcept(allowedClassIds: Set<string>) {
     expandedClassIds.delete(classId);
     keywordExpandedClassIds.delete(classId);
     delete expandedClassOrders[classId];
-    delete expandedClassPagination[classId];
   }
 }
 
@@ -2063,7 +2056,7 @@ async function searchGroupOrdersByKeyword(rawKeyword: string) {
   groupOrderFilters.keyword = keyword;
   collapseKeywordExpandedClasses();
   const expandedClassKeys = Array.from(expandedClassIds);
-  await Promise.all(expandedClassKeys.map((classId) => loadExpandedClassOrders(classId, 1)));
+  await Promise.all(expandedClassKeys.map((classId) => loadExpandedClassOrders(classId)));
   keywordMatchedClassIds.clear();
   if (!keyword) return;
 
@@ -2103,7 +2096,7 @@ async function searchGroupOrdersByKeyword(rawKeyword: string) {
       // 关键词切换会重建表格行，即使之前已展开也要显式恢复展开状态。
       expandedClassIds.add(rowKey);
       groupTableRef.value?.toggleRowExpansion(row, true);
-      await loadExpandedClassOrders(row.id, 1);
+      await loadExpandedClassOrders(row.id);
     }
   } catch {
     if (requestId === latestGroupKeywordSearch) {
@@ -2161,7 +2154,7 @@ async function handleCancel(row: EnrollmentOrderItem) {
     await cancelEnrollmentOrder(row.id);
     ElMessage.success('Order cancelled.');
     if (row.classId) {
-      await loadExpandedClassOrders(row.classId, expandedClassPagination[row.classId]?.page ?? 1);
+      await loadExpandedClassOrders(row.classId);
     } else {
       await loadData();
     }
@@ -2234,7 +2227,7 @@ async function handleForceVoid(row: EnrollmentOrderItem) {
     await forceVoidEnrollmentOrder(row.id, value?.trim() || undefined);
     ElMessage.success('Order voided.');
     if (row.classId) {
-      await loadExpandedClassOrders(row.classId, expandedClassPagination[row.classId]?.page ?? 1);
+      await loadExpandedClassOrders(row.classId);
       await loadClassEnrollments();
     } else {
       await loadData();
@@ -2429,7 +2422,7 @@ async function confirmDeleteOrder() {
     ElMessage.success('Order deleted.');
     deleteDialogVisible.value = false;
     if (order.classId) {
-      await loadExpandedClassOrders(order.classId, expandedClassPagination[order.classId]?.page ?? 1);
+      await loadExpandedClassOrders(order.classId);
       await loadClassEnrollments();
     } else {
       await loadData();
@@ -2508,7 +2501,7 @@ async function handleRefundSubmit() {
     refundDialogVisible.value = false;
     const order = refundOrder.value;
     if (order.classId) {
-      await loadExpandedClassOrders(order.classId, expandedClassPagination[order.classId]?.page ?? 1);
+      await loadExpandedClassOrders(order.classId);
     } else {
       await loadData();
     }
@@ -2681,7 +2674,7 @@ async function handlePaySubmit() {
 
 async function refreshAfterPayment(order: EnrollmentOrderItem) {
   if (order.classId) {
-    await loadExpandedClassOrders(order.classId, expandedClassPagination[order.classId]?.page ?? 1);
+    await loadExpandedClassOrders(order.classId);
   } else {
     await loadData();
   }
@@ -3269,11 +3262,6 @@ void initializePage();
 }
 .expand-orders-container {
   padding: 8px 0;
-}
-.expand-pagination {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
 }
 .expand-empty {
   padding: 12px;
