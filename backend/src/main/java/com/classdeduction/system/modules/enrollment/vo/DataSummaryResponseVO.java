@@ -69,6 +69,7 @@ public record DataSummaryResponseVO(
             String paymentStatus,
             BigDecimal linePriceAmount,
             BigDecimal pickupFeeAmount,
+            BigDecimal dropoffFeeAmount,
             BigDecimal extraFeeAmount,
             BigDecimal discountAmount,
             BigDecimal amountDue,

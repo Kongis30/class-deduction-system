@@ -64,6 +64,7 @@ export interface DataSummaryRow {
   paymentStatus: string;
   linePriceAmount?: number;
   pickupFeeAmount: number;
+  dropoffFeeAmount: number;
   extraFeeAmount: number;
   discountAmount: number;
   amountDue: number;

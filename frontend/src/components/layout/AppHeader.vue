@@ -130,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, ArrowLeft, DataAnalysis, Files, Fold, Money, Setting, Tickets, User } from '@element-plus/icons-vue';
+import { ArrowDown, ArrowLeft, DataAnalysis, Files, Fold, Key, Money, Setting, Tickets, User } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import type { FormInstance, FormRules } from 'element-plus';
 import { computed, reactive, ref } from 'vue';

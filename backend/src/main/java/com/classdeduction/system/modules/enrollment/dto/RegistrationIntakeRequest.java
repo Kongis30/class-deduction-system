@@ -5,7 +5,6 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.Min;
@@ -78,10 +77,20 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Acknowledge the student schedule conflict and create the registration anyway")
     private Boolean ignoreStudentConflicts;
 
-    @NotEmpty(message = "At least one course item is required")
     @Valid
     @Schema(description = "Course line items")
     private List<CourseItemPayload> items;
+
+    @DecimalMin(value = "0.00", message = "Credit top-up amount cannot be negative")
+    @Digits(integer = 12, fraction = 2, message = "Credit top-up amount must use at most 2 decimal places")
+    @Schema(description = "Amount deposited into the student's Credit balance when no course is registered", example = "300.00")
+    private BigDecimal creditTopUpAmount;
+
+    @Schema(description = "Payment method used for a Credit top-up")
+    private String creditTopUpPaymentMethod;
+
+    @Schema(description = "Payment time for a Credit top-up")
+    private LocalDateTime creditTopUpPaidAt;
 
     @Schema(description = "Whether pickup fee is charged on this registration")
     private Boolean pickupFeeCharged;
@@ -253,6 +262,9 @@ public class RegistrationIntakeRequest {
 
         @Schema(description = "Payment time, defaults to now")
         private LocalDateTime paidAt;
+
+        @Schema(description = "Whether this payment funds a Student Credit top-up instead of a course")
+        private Boolean creditTopUp;
 
         @Schema(description = "Handler user ID")
         private Long handledByUserId;

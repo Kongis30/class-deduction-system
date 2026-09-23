@@ -71,7 +71,7 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
     /** 课程级优惠快照；订单级 discount_amount 为所有课程优惠之和。 */
     private BigDecimal discountAmount;
 
-    /** 课程项应收：item 价格 + 按比例分摊的附加费 - 按比例分摊的折扣 */
+    /** 课程项应收：课程价格 + 该课程的附加费 - 该课程的折扣 */
     private BigDecimal amountDue;
 
     /** 课程项累计已付（按 payment_allocation 汇总，退款为负数回冲） */
@@ -91,6 +91,22 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
     private LocalDateTime initialLessonEndAt;
 
     private Long teacherId;
+
+    private Boolean pickupRequiredSnapshot;
+
+    private String pickupAddressSnapshot;
+
+    private Boolean dropoffRequiredSnapshot;
+
+    private String dropoffAddressSnapshot;
+
+    private BigDecimal pickupFeeAmount;
+
+    private BigDecimal dropoffFeeAmount;
+
+    private BigDecimal extraFeeAmount;
+
+    private String extraFeeDetail;
 
     private String itemStatus;
 

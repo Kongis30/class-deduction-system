@@ -119,43 +119,41 @@
                     unlink-panels
                   />
 
-                  <div v-else class="workbook-number-tools">
-                    <div class="workbook-filter-section">
-                      <span class="workbook-filter-label">Sort</span>
-                      <el-button-group class="workbook-sort-buttons">
-                        <el-button
-                          size="small"
-                          :type="isColumnSorted(column.key, 'asc') ? 'primary' : 'default'"
-                          @click="setSort(column.key, 'asc')"
-                        >
-                          Asc
-                        </el-button>
-                        <el-button
-                          size="small"
-                          :type="isColumnSorted(column.key, 'desc') ? 'primary' : 'default'"
-                          @click="setSort(column.key, 'desc')"
-                        >
-                          Desc
-                        </el-button>
-                        <el-button size="small" @click="clearSort(column.key)">Clear</el-button>
-                      </el-button-group>
-                    </div>
+                  <div v-if="column.filterType === 'date' || column.filterType === 'number'" class="workbook-filter-section">
+                    <span class="workbook-filter-label">Sort</span>
+                    <el-button-group class="workbook-sort-buttons">
+                      <el-button
+                        size="small"
+                        :type="isColumnSorted(column.key, 'asc') ? 'primary' : 'default'"
+                        @click="setSort(column.key, 'asc')"
+                      >
+                        Asc
+                      </el-button>
+                      <el-button
+                        size="small"
+                        :type="isColumnSorted(column.key, 'desc') ? 'primary' : 'default'"
+                        @click="setSort(column.key, 'desc')"
+                      >
+                        Desc
+                      </el-button>
+                      <el-button size="small" @click="clearSort(column.key)">Clear</el-button>
+                    </el-button-group>
+                  </div>
 
-                    <div class="workbook-filter-section">
-                      <span class="workbook-filter-label">Range</span>
-                      <div class="workbook-number-filter">
-                        <el-input-number
-                          v-model="columnFilters[column.key].min"
-                          :controls="false"
-                          placeholder="Min"
-                        />
-                        <span>to</span>
-                        <el-input-number
-                          v-model="columnFilters[column.key].max"
-                          :controls="false"
-                          placeholder="Max"
-                        />
-                      </div>
+                  <div v-if="column.filterType === 'number'" class="workbook-filter-section">
+                    <span class="workbook-filter-label">Range</span>
+                    <div class="workbook-number-filter">
+                      <el-input-number
+                        v-model="columnFilters[column.key].min"
+                        :controls="false"
+                        placeholder="Min"
+                      />
+                      <span>to</span>
+                      <el-input-number
+                        v-model="columnFilters[column.key].max"
+                        :controls="false"
+                        placeholder="Max"
+                      />
                     </div>
                   </div>
 
@@ -229,7 +227,7 @@
                   {{ formatPeriod(row) }}
                 </td>
                 <td class="workbook-cell--money">{{ formatMoney(row.linePriceAmount) }}</td>
-                <td class="workbook-cell--money">{{ formatMoney(row.pickupFeeAmount) }}</td>
+                <td class="workbook-cell--money">{{ formatMoney(transportFeeAmount(row)) }}</td>
                 <td class="workbook-cell--money">{{ formatMoney(row.discountAmount) }}</td>
                 <td class="workbook-cell--money">{{ formatMoney(row.paidAmount) }}</td>
                 <td
@@ -1000,7 +998,7 @@ function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | numbe
     case 'tuition':
       return Number(row.linePriceAmount ?? 0);
     case 'transportFee':
-      return Number(row.pickupFeeAmount ?? 0);
+      return transportFeeAmount(row);
     case 'discount':
       return Number(row.discountAmount ?? 0);
     case 'paid':
@@ -1280,6 +1278,10 @@ function formatMoney(value?: number) {
   }).format(Number(value ?? 0));
 }
 
+function transportFeeAmount(row: DataSummaryRow) {
+  return Number(row.pickupFeeAmount ?? 0) + Number(row.dropoffFeeAmount ?? 0);
+}
+
 // ─── Excel 导出 ─────────────────────────────────
 // 金额列导出为数值，便于在 Excel 中直接求和/计算；其余列导出为展示文本。
 const EXPORT_NUMERIC_COLUMNS: ReadonlySet<ColumnKey> = new Set([
@@ -1548,11 +1550,6 @@ onMounted(() => {
   width: 100%;
 }
 
-.workbook-number-tools {
-  display: grid;
-  gap: 12px;
-}
-
 .workbook-filter-section {
   display: grid;
   gap: 6px;
@@ -1757,129 +1754,6 @@ th.workbook-column--studentName {
 
 .workbook-empty-row span {
   margin-right: 8px;
-}
-
-/* ── Product Tab 工作表页签（位于表格底部） ── */
-.product-tab-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  padding: 4px 8px 0;
-  border: 1px solid #9eafa7;
-  border-top: 0;
-  border-bottom: 0;
-  background: #dce8e2;
-  overflow-x: auto;
-  scrollbar-width: none; /* Firefox: 隐藏横向滚动条，保留滚轮/触控板滚动 */
-}
-
-/* Chrome / Safari (Chromium)：隐藏横向滚动条，但保留滚动能力 */
-.product-tab-bar::-webkit-scrollbar {
-  display: none;
-}
-
-.product-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex: 0 0 auto;
-  max-width: 220px;
-  height: 30px;
-  padding: 0 14px;
-  border: 1px solid #b7cec5;
-  border-bottom: 0;
-  border-radius: 7px 7px 0 0;
-  background: #eef5f1;
-  color: #376451;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, transform 0.15s ease;
-}
-
-.product-tab:hover {
-  background: #f7fbf9;
-  color: #224a3b;
-}
-
-.product-tab__label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.product-tab--active {
-  background: #fff;
-  border-color: #9eafa7;
-  color: #1f3d32;
-  font-weight: 700;
-  box-shadow: inset 0 3px 0 #2f8f6f;
-}
-
-.product-tab--private {
-  border-color: #b5cfee;
-  background: #edf5ff;
-  color: #245c98;
-}
-
-.product-tab--private:hover {
-  border-color: #94b9e8;
-  background: #f6faff;
-  color: #194b83;
-}
-
-.product-tab--private.product-tab--active {
-  border-color: #94b9e8;
-  background: #fff;
-  color: #194b83;
-  box-shadow: inset 0 3px 0 #4a90df;
-}
-
-.product-tab--global {
-  min-width: 96px;
-  border-color: #2f6b55;
-  background: #376451;
-  color: #fff;
-  font-weight: 800;
-}
-
-.product-tab--global:hover {
-  background: #2f5b49;
-  color: #fff;
-}
-
-.product-tab--global.product-tab--active {
-  background: #fff;
-  border-color: #9eafa7;
-  color: #214d3b;
-}
-
-.product-tab--unassigned {
-  background: #f4f1e8;
-  border-style: dashed;
-  border-color: #c9bfa5;
-  color: #7a6a3f;
-}
-
-.product-tab--unassigned.product-tab--active {
-  background: #fffdf5;
-  box-shadow: inset 0 3px 0 #b09a55;
-  color: #5c4d24;
-}
-
-.product-tab[draggable='true'] {
-  cursor: grab;
-}
-
-.product-tab--dragging {
-  opacity: 0.45;
-  transform: translateY(2px) rotate(-1deg);
-}
-
-.product-tab--drop-target {
-  border-color: #2f8f6f;
-  box-shadow: inset 0 0 0 2px rgb(47 143 111 / 35%);
 }
 
 @media (max-width: 720px) {

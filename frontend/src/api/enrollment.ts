@@ -18,6 +18,7 @@ export interface EnrollmentOrderQuery {
   paymentStatus?: string;
   studentId?: string | number;
   classId?: string | number;
+  teachingMode?: 'ONE_ON_ONE' | 'GROUP';
   excludeClassOrders?: boolean;
   pageNum?: number;
   pageSize?: number;
@@ -103,6 +104,7 @@ export interface RefundPayload {
   handledByName: string;
   handledByUserId?: string | number;
   remark?: string;
+  disposition?: 'REFUND' | 'CREDIT';
 }
 
 export function refundEnrollmentOrder(id: string | number, data: RefundPayload) {
@@ -165,6 +167,15 @@ export interface RegistrationCourseItemPayload {
   openingUsedHours?: number;
   oneOnOneUnits?: number;
   teacherId?: EntityId;
+  pickupRequired?: boolean;
+  pickupAddress?: string;
+  dropoffRequired?: boolean;
+  dropoffAddress?: string;
+  pickupFeeCharged?: boolean;
+  pickupFeeAmount?: number;
+  dropoffFeeCharged?: boolean;
+  dropoffFeeAmount?: number;
+  serviceFees?: RegistrationFeeLinePayload[];
   sessions?: number;
   purchasedMonths?: number;
   startMonth?: string;
@@ -188,6 +199,7 @@ export interface RegistrationPaymentPayload {
   paymentMethod: string;
   amount: number;
   paidAt?: string;
+  creditTopUp?: boolean;
   participantIndex?: number;
   handledByUserId?: EntityId;
   handledByName?: string;
@@ -228,6 +240,7 @@ export interface RegistrationIntakePayload {
   cashierUserId?: EntityId;
   handledByName: string;
   currencyCode?: string;
+  creditTopUpAmount?: number;
   items: RegistrationCourseItemPayload[];
   pickupFeeCharged?: boolean;
   pickupFeeAmount?: number;
@@ -304,6 +317,8 @@ export interface RegistrationIntakeResult {
   paidAmount: number;
   balanceAmount: number;
   paymentStatus: string;
+  creditTopUpOrderId?: EntityId;
+  creditTopUpAmount?: number;
 }
 
 export function submitRegistrationIntake(data: RegistrationIntakePayload) {

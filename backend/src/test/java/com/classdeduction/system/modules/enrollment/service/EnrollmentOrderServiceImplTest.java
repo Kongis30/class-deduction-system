@@ -186,6 +186,7 @@ class EnrollmentOrderServiceImplTest {
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassEnrollmentEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderItemEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonRecordEntity.class);
@@ -521,6 +522,7 @@ class EnrollmentOrderServiceImplTest {
         verify(packageBalanceSnapshotMapper).deleteById(3001L);
         verify(paymentRecordMapper).delete(any());
         verify(receiptRecordMapper).delete(any());
+        verify(enrollmentOrderMapper).update(org.mockito.ArgumentMatchers.isNull(), any());
         verify(enrollmentOrderMapper).deleteById(2001L);
     }
 

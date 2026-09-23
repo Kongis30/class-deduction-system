@@ -650,8 +650,14 @@
               style="width: 100%;"
             />
           </el-form-item>
+          <el-form-item label="Refund handling">
+            <el-radio-group v-model="refundForm.disposition">
+              <el-radio value="CREDIT">Convert to Student Credit</el-radio>
+              <el-radio value="REFUND">Continue refund</el-radio>
+            </el-radio-group>
+          </el-form-item>
           <el-form-item label="Refund method">
-            <el-select v-model="refundForm.paymentMethod" placeholder="Select method" style="width: 100%;">
+            <el-select v-model="refundForm.paymentMethod" placeholder="Select method" style="width: 100%;" :disabled="refundForm.disposition === 'CREDIT'">
               <el-option v-for="method in paymentMethods" :key="method.methodCode" :label="method.methodName" :value="method.methodCode" />
             </el-select>
           </el-form-item>
@@ -811,6 +817,9 @@ async function loadPaymentMethods() {
   try {
     const res = await fetchActivePaymentMethods();
     paymentMethods.value = res.data.data ?? [];
+    if (!paymentMethods.value.some((method) => method.methodCode === 'STUDENT_CREDIT')) {
+      paymentMethods.value.unshift({ id: 'student-credit', methodCode: 'STUDENT_CREDIT', methodName: 'Student Credit', sortOrder: -1, status: 'ACTIVE' });
+    }
   } catch {
     paymentMethods.value = [];
   }
@@ -874,6 +883,7 @@ const refundForm = reactive({
   paymentMethod: 'CASH',
   handledByName: '',
   remark: '',
+  disposition: 'CREDIT' as 'REFUND' | 'CREDIT',
 });
 
 const DELETE_COOLDOWN_SECONDS = 10;
@@ -1337,6 +1347,7 @@ function createPaymentDraft(amount = 0): PaymentDraft {
     paidAt: currentDate(),
     handledByName: '',
     remark: '',
+    disposition: 'CREDIT',
   };
 }
 
@@ -1424,7 +1435,7 @@ async function submitRefund() {
     ElMessage.warning('Refund amount cannot exceed the currently received amount.');
     return;
   }
-  if (!refundForm.paymentMethod || !refundForm.handledByName.trim()) {
+  if ((refundForm.disposition === 'REFUND' && !refundForm.paymentMethod) || !refundForm.handledByName.trim()) {
     ElMessage.warning('Refund method and handler are required.');
     return;
   }
@@ -1436,6 +1447,7 @@ async function submitRefund() {
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName.trim(),
       remark: refundForm.remark.trim() || undefined,
+      disposition: refundForm.disposition,
     });
     ElMessage.success('Refund completed.');
     refundDialogVisible.value = false;

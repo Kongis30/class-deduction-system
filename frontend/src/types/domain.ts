@@ -196,6 +196,8 @@ export interface CourseProductItem {
 
 export interface EnrollmentOrderItem {
   id: EntityId;
+  /** 原报名单 ID；同一报名单的不同课程项会分别出现在对应 Tab。 */
+  orderItemId?: EntityId;
   enrollmentNo: string;
   studentId: EntityId;
   studentName: string;
@@ -203,6 +205,7 @@ export interface EnrollmentOrderItem {
   className?: string;
   courseProductId?: EntityId;
   courseProductName?: string;
+  courseType?: string;
   campusId?: EntityId;
   campusNameSnapshot?: string;
   handledByName?: string;
@@ -340,6 +343,14 @@ export interface EnrollmentOrderLineItem {
   balanceAmount?: number;
   oneOnOneHours?: number;
   oneOnOneUnits?: number;
+  pickupRequiredSnapshot?: boolean;
+  pickupAddressSnapshot?: string;
+  dropoffRequiredSnapshot?: boolean;
+  dropoffAddressSnapshot?: string;
+  pickupFeeAmount?: number;
+  dropoffFeeAmount?: number;
+  extraFeeAmount?: number;
+  extraFeeDetail?: string;
   itemStatus?: string;
   remark?: string;
   createdAt?: string;

@@ -11,6 +11,10 @@
 </template>
 
 <script setup lang="ts">
+import { useAppStore } from '@/stores/app';
+
 import AppHeader from './AppHeader.vue';
 import AppSidebar from './AppSidebar.vue';
+
+useAppStore().initializePreferences();
 </script>

@@ -32,7 +32,9 @@ public record RegistrationIntakeResultVO(
         BigDecimal amountDue,
         BigDecimal paidAmount,
         BigDecimal balanceAmount,
-        String paymentStatus
+        String paymentStatus,
+        Long creditTopUpOrderId,
+        BigDecimal creditTopUpAmount
 ) {
 
     @Builder

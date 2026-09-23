@@ -8,6 +8,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Course line payload shared by future registration intake requests.
@@ -99,6 +100,26 @@ public class EnrollmentOrderItemDTO {
     @Min(value = 0, message = "One-on-one units cannot be negative")
     @Schema(description = "One-on-one units, 1 unit = 0.5 hour", example = "40")
     private Integer oneOnOneUnits;
+
+    /** 课程级接送快照；旧客户端不传时由订单级字段兼容计算。 */
+    private Boolean pickupRequired;
+
+    private String pickupAddress;
+
+    private Boolean dropoffRequired;
+
+    private String dropoffAddress;
+
+    private Boolean pickupFeeCharged;
+
+    private BigDecimal pickupFeeAmount;
+
+    private Boolean dropoffFeeCharged;
+
+    private BigDecimal dropoffFeeAmount;
+
+    /** 课程级其他费用，最终会写入订单明细的费用快照。 */
+    private List<RegistrationIntakeRequest.FeeLinePayload> serviceFees;
 
     @Schema(description = "Line item remark")
     private String remark;

@@ -45,6 +45,7 @@ import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeSe
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
+import com.classdeduction.system.modules.finance.service.StudentCreditService;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
@@ -121,6 +122,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final UserRoleMapper userRoleMapper;
     private final PasswordEncoder passwordEncoder;
     private final JsonHelper jsonHelper;
+    private final StudentCreditService studentCreditService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -130,6 +132,13 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         validateRenewalRequestShape(request);
         List<StudentResolution> participantResolutions = resolveParticipantStudents(request);
         StudentResolution studentResolution = participantResolutions.get(0);
+        if (isCreditTopUpRequest(request)) {
+            return submitCreditTopUp(request, studentResolution);
+        }
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new BusinessException("COURSE_ITEM_REQUIRED",
+                    "Add at least one course or enter a Credit top-up amount.");
+        }
         List<ResolvedCourseLine> lines = resolveCourseLines(request.getItems());
         validatePrivateLessonParticipants(request, participantResolutions, lines);
         applyParticipantPricing(lines, participantResolutions.size());
@@ -179,6 +188,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
 
         List<RegistrationIntakeResultVO.PaymentResultVO> payments = createPayments(
                 order, request, money, participantResolutions.size(), lines);
+        CreditTopUpTransaction creditTopUp = defaultAmount(request.getCreditTopUpAmount()).compareTo(ZERO_AMOUNT) > 0
+                ? createCreditTopUpTransaction(request, studentResolution, creditTopUpPayments(request))
+                : null;
         // 课程级付款分摊：优先保留请求中的逐课金额，旧请求才回退到历史分配规则。
         if (participantResolutions.size() <= 1 || request.getParticipantBillings() == null
                 || request.getParticipantBillings().isEmpty()) {
@@ -210,7 +222,180 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .paidAmount(money.paidAmount())
                 .balanceAmount(money.balanceAmount())
                 .paymentStatus(money.paymentStatus())
+                .creditTopUpOrderId(creditTopUp == null ? null : creditTopUp.order().getId())
+                .creditTopUpAmount(creditTopUp == null ? null : creditTopUp.money().amountDue())
                 .build();
+    }
+
+    /**
+     * 充值是报名页面上的独立交易：不创建课程明细，只创建订单、收款流水和正向 Credit 台账。
+     * 这样充值仍然有可追溯的收据和操作人，但不会被课程应收或课程分摊逻辑误处理。
+     */
+    private RegistrationIntakeResultVO submitCreditTopUp(RegistrationIntakeRequest request,
+                                                         StudentResolution studentResolution) {
+        if (request.getRenewPackageId() != null || request.getRenewClassEnrollmentId() != null) {
+            throw new BusinessException("CREDIT_TOP_UP_RENEWAL_CONFLICT",
+                    "A Credit top-up cannot be combined with a course renewal.");
+        }
+        if (request.getParticipants() != null && request.getParticipants().size() > 1) {
+            throw new BusinessException("CREDIT_TOP_UP_SINGLE_STUDENT_REQUIRED",
+                    "A Credit top-up applies to one student at a time.");
+        }
+        if (hasPositiveFeeOrDiscount(request)) {
+            throw new BusinessException("CREDIT_TOP_UP_COURSE_FIELDS_NOT_ALLOWED",
+                    "Credit top-up does not accept course fees or discounts.");
+        }
+        List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads = creditTopUpPayments(request);
+        CreditTopUpTransaction transaction = createCreditTopUpTransaction(request, studentResolution, paymentPayloads);
+        return RegistrationIntakeResultVO.builder()
+                .enrollmentOrderId(transaction.order().getId())
+                .enrollmentNo(transaction.order().getEnrollmentNo())
+                .studentId(studentResolution.student().getId())
+                .studentNo(studentResolution.student().getStudentNo())
+                .studentName(studentResolution.student().getStudentName())
+                .studentReused(studentResolution.reused())
+                .studentAccount(null)
+                .privateLessonGroupId(null)
+                .participants(Collections.emptyList())
+                .teacherAccounts(Collections.emptyList())
+                .courseArtifacts(Collections.emptyList())
+                .payments(transaction.payments())
+                .receiptId(transaction.receipt().receiptId())
+                .receiptNo(transaction.receipt().receiptNo())
+                .receiptPreviewData(transaction.receipt().previewData())
+                .amountDue(transaction.money().amountDue())
+                .paidAmount(transaction.money().paidAmount())
+                .balanceAmount(transaction.money().balanceAmount())
+                .paymentStatus(transaction.money().paymentStatus())
+                .creditTopUpOrderId(transaction.order().getId())
+                .creditTopUpAmount(transaction.money().amountDue())
+                .build();
+    }
+
+    private CreditTopUpTransaction createCreditTopUpTransaction(
+            RegistrationIntakeRequest request,
+            StudentResolution studentResolution,
+            List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads) {
+        BigDecimal topUpAmount = defaultAmount(request.getCreditTopUpAmount());
+        if (topUpAmount.compareTo(ZERO_AMOUNT) <= 0) {
+            throw new BusinessException("CREDIT_TOP_UP_AMOUNT_REQUIRED",
+                    "Enter a Credit top-up amount greater than zero.");
+        }
+        if (paymentPayloads == null || paymentPayloads.isEmpty()) {
+            throw new BusinessException("CREDIT_TOP_UP_PAYMENT_REQUIRED",
+                    "Add a payment for the Credit top-up in the Payments section.");
+        }
+        BigDecimal paidAmount = paymentPayloads.stream()
+                .filter(Objects::nonNull)
+                .map(RegistrationIntakeRequest.PaymentPayload::getAmount)
+                .map(this::defaultAmount)
+                .reduce(ZERO_AMOUNT, BigDecimal::add);
+        if (paidAmount.compareTo(topUpAmount) != 0) {
+            throw new BusinessException("CREDIT_TOP_UP_PAYMENT_MISMATCH",
+                    "Credit top-up payments must equal the top-up amount.");
+        }
+        for (RegistrationIntakeRequest.PaymentPayload payment : paymentPayloads) {
+            if (payment == null || !StringUtils.hasText(payment.getPaymentMethod())
+                    || StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(payment.getPaymentMethod())) {
+                throw new BusinessException("CREDIT_TOP_UP_PAYMENT_METHOD_INVALID",
+                        "A Credit top-up must be paid with a real payment method, not Student Credit.");
+            }
+            if (payment.getAllocations() != null && !payment.getAllocations().isEmpty()) {
+                throw new BusinessException("CREDIT_TOP_UP_ALLOCATION_INVALID",
+                        "Credit top-up payments cannot be allocated to courses.");
+            }
+        }
+
+        MoneySnapshot money = new MoneySnapshot(
+                ZERO_AMOUNT, ZERO_AMOUNT, ZERO_AMOUNT, ZERO_AMOUNT,
+                topUpAmount, ZERO_AMOUNT, paidAmount, topUpAmount,
+                topUpAmount.subtract(paidAmount).setScale(2, RoundingMode.HALF_UP),
+                resolvePaymentStatus(topUpAmount, paidAmount));
+        RegistrationIntakeRequest topUpRequest = copyCreditTopUpRequest(request, paymentPayloads);
+        EnrollmentOrderEntity order = createOrder(topUpRequest, studentResolution.student(), Collections.emptyList(), money);
+        order.setRemark(firstText(request.getRemark(), "Student Credit top-up"));
+        enrollmentOrderMapper.updateById(order);
+        createOrderParticipants(order, List.of(studentResolution), Collections.emptyList(), topUpRequest, money);
+
+        List<RegistrationIntakeResultVO.PaymentResultVO> payments = createPayments(
+                order, topUpRequest, money, paymentPayloads, Collections.emptyList());
+        for (RegistrationIntakeResultVO.PaymentResultVO payment : payments) {
+            studentCreditService.creditFromTopUp(studentResolution.student().getId(), payment.amount(), order.getId(),
+                    payment.paymentId(), null, payment.handledByName(),
+                    firstText(payment.remark(), "Student Credit top-up"));
+        }
+        ReceiptResult receipt = createReceiptIfNeeded(order, studentResolution.student(),
+                List.of(studentResolution), Collections.emptyList(), topUpRequest, Collections.emptyList(),
+                money, payments, Collections.emptyList());
+        return new CreditTopUpTransaction(order, money, payments, receipt);
+    }
+
+    private RegistrationIntakeRequest.PaymentPayload buildCreditTopUpPayment(RegistrationIntakeRequest request) {
+        RegistrationIntakeRequest.PaymentPayload payment = new RegistrationIntakeRequest.PaymentPayload();
+        payment.setCreditTopUp(true);
+        payment.setPaymentMethod(request.getCreditTopUpPaymentMethod());
+        payment.setAmount(request.getCreditTopUpAmount());
+        payment.setPaidAt(request.getCreditTopUpPaidAt());
+        payment.setHandledByName(request.getHandledByName());
+        payment.setRemark(firstText(request.getRemark(), "Student Credit top-up"));
+        return payment;
+    }
+
+    /** 统一从 Payments 区提取 Credit 充值付款；旧客户端仍可通过兼容字段回退生成一笔付款。 */
+    private List<RegistrationIntakeRequest.PaymentPayload> creditTopUpPayments(RegistrationIntakeRequest request) {
+        List<RegistrationIntakeRequest.PaymentPayload> topUpPayments = request.getPayments() == null
+                ? Collections.emptyList()
+                : request.getPayments().stream()
+                .filter(this::isCreditTopUpPayment)
+                .toList();
+        if (!topUpPayments.isEmpty()) {
+            return topUpPayments;
+        }
+        return StringUtils.hasText(request.getCreditTopUpPaymentMethod())
+                ? List.of(buildCreditTopUpPayment(request))
+                : Collections.emptyList();
+    }
+
+    private boolean isCreditTopUpPayment(RegistrationIntakeRequest.PaymentPayload payment) {
+        return payment != null && Boolean.TRUE.equals(payment.getCreditTopUp());
+    }
+
+    private RegistrationIntakeRequest copyCreditTopUpRequest(
+            RegistrationIntakeRequest source,
+            List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads) {
+        RegistrationIntakeRequest copy = new RegistrationIntakeRequest();
+        copy.setStudent(source.getStudent());
+        copy.setCampusId(source.getCampusId());
+        copy.setCampusName(source.getCampusName());
+        copy.setSignupDate(source.getSignupDate());
+        copy.setPeriodStartDate(source.getPeriodStartDate());
+        copy.setPeriodEndDate(source.getPeriodEndDate());
+        copy.setCashierUserId(source.getCashierUserId());
+        copy.setHandledByName(source.getHandledByName());
+        copy.setCurrencyCode(source.getCurrencyCode());
+        copy.setCreditTopUpAmount(source.getCreditTopUpAmount());
+        copy.setCreditTopUpPaymentMethod(source.getCreditTopUpPaymentMethod());
+        copy.setCreditTopUpPaidAt(source.getCreditTopUpPaidAt());
+        copy.setPayments(paymentPayloads);
+        copy.setReceiptOptions(source.getReceiptOptions());
+        copy.setRemark(source.getRemark());
+        return copy;
+    }
+
+    private boolean isCreditTopUpRequest(RegistrationIntakeRequest request) {
+        boolean hasItems = request.getItems() != null && !request.getItems().isEmpty();
+        return !hasItems && defaultAmount(request.getCreditTopUpAmount()).compareTo(ZERO_AMOUNT) > 0;
+    }
+
+    private boolean hasPositiveFeeOrDiscount(RegistrationIntakeRequest request) {
+        return defaultAmount(request.getPickupFeeAmount()).compareTo(ZERO_AMOUNT) > 0
+                || defaultAmount(request.getDropoffFeeAmount()).compareTo(ZERO_AMOUNT) > 0
+                || defaultAmount(request.getExtraFeeAmount()).compareTo(ZERO_AMOUNT) > 0
+                || defaultAmount(request.getDiscountAmount()).compareTo(ZERO_AMOUNT) > 0
+                || sumFeeLines(request.getExtraFees()).compareTo(ZERO_AMOUNT) > 0
+                || sumFeeLines(request.getDiscounts()).compareTo(ZERO_AMOUNT) > 0
+                || Boolean.TRUE.equals(request.getPickupFeeCharged())
+                || Boolean.TRUE.equals(request.getDropoffFeeCharged());
     }
 
     private StudentResolution createOrReuseStudent(RegistrationIntakeRequest request) {
@@ -227,6 +412,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private StudentResolution createOrReuseStudent(RegistrationIntakeRequest.StudentPayload payload, Long campusId) {
         if (payload.getStudentId() != null) {
             StudentEntity existing = requireStudent(payload.getStudentId());
+            updateExistingStudentFromRegistration(existing, payload, campusId);
+            studentMapper.updateById(existing);
             return new StudentResolution(existing, true);
         }
         StudentEntity student = null;
@@ -249,6 +436,67 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             studentMapper.insert(student);
         }
         return new StudentResolution(student, reused);
+    }
+
+    /**
+     * 更新注册页明确提交的学生字段，同时保留学生主档案中注册页没有编辑的字段。
+     * 调用方已经通过 studentId 明确选择了学生，因此不能再按姓名重新创建学生。
+     */
+    private void updateExistingStudentFromRegistration(StudentEntity student,
+                                                        RegistrationIntakeRequest.StudentPayload payload,
+                                                        Long campusId) {
+        student.setStudentName(payload.getStudentName().trim());
+        if (payload.getEnglishName() != null) {
+            student.setEnglishName(payload.getEnglishName());
+        }
+        if (payload.getGender() != null) {
+            student.setGender(payload.getGender());
+        }
+        if (payload.getBirthDate() != null) {
+            student.setBirthDate(payload.getBirthDate());
+        }
+        if (payload.getGrade() != null) {
+            student.setGrade(payload.getGrade());
+        }
+        if (payload.getStudentClass() != null) {
+            student.setStudentClass(payload.getStudentClass());
+        }
+        if (payload.getSchool() != null) {
+            student.setSchool(payload.getSchool());
+        }
+        if (payload.getSourceChannel() != null) {
+            student.setSourceChannel(payload.getSourceChannel());
+        }
+        if (payload.getGuardianName() != null) {
+            student.setGuardianName(payload.getGuardianName());
+        }
+        if (payload.getGuardianPhone() != null) {
+            student.setGuardianPhone(normalizePhone(payload.getGuardianPhone()));
+        }
+        if (payload.getGuardianPhone2() != null) {
+            student.setGuardianPhone2(normalizePhone(payload.getGuardianPhone2()));
+        }
+        if (payload.getGuardianEmail() != null) {
+            student.setGuardianEmail(payload.getGuardianEmail());
+        }
+        if (payload.getGuardianRelationType() != null) {
+            student.setGuardianRelationType(payload.getGuardianRelationType());
+        }
+        if (payload.getPickupRequired() != null) {
+            boolean pickupRequired = Boolean.TRUE.equals(payload.getPickupRequired());
+            student.setPickupRequired(pickupRequired);
+            student.setPickupAddress(pickupRequired ? payload.getPickupAddress() : null);
+        }
+        if (payload.getDropoffRequired() != null) {
+            boolean dropoffRequired = Boolean.TRUE.equals(payload.getDropoffRequired());
+            student.setDropoffRequired(dropoffRequired);
+            student.setDropoffAddress(dropoffRequired ? payload.getDropoffAddress() : null);
+        }
+        // Credit-only registration does not require a campus; keep the existing campus in that case.
+        if (campusId != null) {
+            student.setCampusId(campusId);
+        }
+        student.setStatus("ACTIVE");
     }
 
     private List<StudentResolution> resolveParticipantStudents(RegistrationIntakeRequest request) {
@@ -502,6 +750,16 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.startMonth = item.getStartMonth();
             line.endMonth = item.getEndMonth();
             line.remark = item.getRemark();
+            line.pickupRequired = Boolean.TRUE.equals(item.getPickupRequired());
+            line.pickupAddress = cleanText(item.getPickupAddress());
+            line.dropoffRequired = Boolean.TRUE.equals(item.getDropoffRequired());
+            line.dropoffAddress = cleanText(item.getDropoffAddress());
+            // Pickup/Drop-off 勾选即收费；保留旧字段仅用于兼容历史客户端提交。
+            line.pickupFeeCharged = line.pickupRequired;
+            line.pickupFeeAmount = line.pickupFeeCharged ? defaultAmount(item.getPickupFeeAmount()) : ZERO_AMOUNT;
+            line.dropoffFeeCharged = line.dropoffRequired;
+            line.dropoffFeeAmount = line.dropoffFeeCharged ? defaultAmount(item.getDropoffFeeAmount()) : ZERO_AMOUNT;
+            line.serviceFees = item.getServiceFees() == null ? Collections.emptyList() : item.getServiceFees();
             line.product = product;
             line.oneOnOne = isOneOnOneLine(line, product);
             applyLinePricing(line, item, configuredUnitPrice, option.getOneOnOneHours());
@@ -601,6 +859,24 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("MANUAL_PRICE_REASON_REQUIRED",
                     "Manual course price requires a reason.");
         }
+        if (Boolean.TRUE.equals(line.pickupRequired) && !StringUtils.hasText(line.pickupAddress)) {
+            throw new BusinessException("PICKUP_ADDRESS_REQUIRED", "Pickup address is required for a course line.");
+        }
+        if (Boolean.TRUE.equals(line.dropoffRequired) && !StringUtils.hasText(line.dropoffAddress)) {
+            throw new BusinessException("DROPOFF_ADDRESS_REQUIRED", "Drop-off address is required for a course line.");
+        }
+        if (Boolean.TRUE.equals(line.pickupFeeCharged) && defaultAmount(line.pickupFeeAmount).compareTo(ZERO_AMOUNT) <= 0) {
+            throw new BusinessException("PICKUP_FEE_REQUIRED", "Pickup fee must be greater than zero when charged.");
+        }
+        if (Boolean.TRUE.equals(line.dropoffFeeCharged) && defaultAmount(line.dropoffFeeAmount).compareTo(ZERO_AMOUNT) <= 0) {
+            throw new BusinessException("DROPOFF_FEE_REQUIRED", "Drop-off fee must be greater than zero when charged.");
+        }
+        for (RegistrationIntakeRequest.FeeLinePayload fee : line.serviceFees) {
+            if (fee != null && defaultAmount(fee.getAmount()).compareTo(ZERO_AMOUNT) > 0
+                    && !StringUtils.hasText(fee.getLabel())) {
+                throw new BusinessException("SERVICE_FEE_LABEL_REQUIRED", "Each course service fee needs a label.");
+            }
+        }
         if (line.oneOnOne) {
             if (line.oneOnOneHours == null
                     || line.oneOnOneHours.compareTo(new BigDecimal("0.5")) < 0
@@ -671,13 +947,25 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         BigDecimal tuitionSubtotal = lines.stream()
                 .map(line -> line.priceAmount)
                 .reduce(ZERO_AMOUNT, BigDecimal::add);
-        BigDecimal pickupFee = isPickupFeeCharged(request)
-                ? defaultAmount(request.getPickupFeeAmount())
-                : ZERO_AMOUNT;
-        BigDecimal dropoffFee = isDropoffFeeCharged(request)
-                ? defaultAmount(request.getDropoffFeeAmount())
-                : ZERO_AMOUNT;
+        boolean hasCourseServiceFees = lines.stream().anyMatch(this::hasExplicitCourseServiceFees)
+                || (request.getExtraFees() != null && request.getExtraFees().stream()
+                .filter(Objects::nonNull).anyMatch(item -> item.getOrderItemLineNo() != null));
+        BigDecimal pickupFee = hasCourseServiceFees
+                ? lines.stream().map(line -> defaultAmount(line.pickupFeeAmount)).reduce(ZERO_AMOUNT, BigDecimal::add)
+                : isPickupFeeCharged(request) ? defaultAmount(request.getPickupFeeAmount()) : ZERO_AMOUNT;
+        BigDecimal dropoffFee = hasCourseServiceFees
+                ? lines.stream().map(line -> defaultAmount(line.dropoffFeeAmount)).reduce(ZERO_AMOUNT, BigDecimal::add)
+                : isDropoffFeeCharged(request) ? defaultAmount(request.getDropoffFeeAmount()) : ZERO_AMOUNT;
         BigDecimal extraFee = defaultAmount(firstNonNull(request.getExtraFeeAmount(), sumFeeLines(request.getExtraFees())));
+        if (hasCourseServiceFees) {
+            extraFee = lines.stream().map(line -> sumFeeLines(line.serviceFees)).reduce(ZERO_AMOUNT, BigDecimal::add)
+                    .add(request.getExtraFees() == null ? ZERO_AMOUNT : request.getExtraFees().stream()
+                            .filter(Objects::nonNull)
+                            .filter(item -> item.getOrderItemLineNo() != null)
+                            .map(RegistrationIntakeRequest.FeeLinePayload::getAmount)
+                            .map(this::defaultAmount)
+                            .reduce(ZERO_AMOUNT, BigDecimal::add));
+        }
         BigDecimal participantDiscount = participantCount > 1 && request.getParticipantBillings() != null
                 ? request.getParticipantBillings().stream()
                 .filter(Objects::nonNull)
@@ -696,10 +984,12 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .filter(Objects::nonNull)
                 .flatMap(item -> item.getPayments() == null ? java.util.stream.Stream.empty() : item.getPayments().stream())
                 .filter(Objects::nonNull)
+                .filter(payment -> !isCreditTopUpPayment(payment))
                 .map(RegistrationIntakeRequest.PaymentPayload::getAmount)
                 .map(this::defaultAmount)
                 .reduce(ZERO_AMOUNT, BigDecimal::add)
                 : request.getPayments() == null ? ZERO_AMOUNT : request.getPayments().stream()
+                .filter(payment -> !isCreditTopUpPayment(payment))
                 .map(RegistrationIntakeRequest.PaymentPayload::getAmount)
                 .map(this::defaultAmount)
                 .reduce(ZERO_AMOUNT, BigDecimal::add);
@@ -718,8 +1008,12 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                       MoneySnapshot money,
                                       int participantCount) {
         assignCourseDiscounts(request, lines, money.discountAmount(), participantCount);
-        List<BigDecimal> feeShares = allocateByCoursePrice(
-                money.pickupFeeAmount().add(money.dropoffFeeAmount()).add(money.extraFeeAmount()), lines);
+        boolean hasCourseServiceFees = lines.stream().anyMatch(this::hasExplicitCourseServiceFees)
+                || (request.getExtraFees() != null && request.getExtraFees().stream()
+                .filter(Objects::nonNull).anyMatch(item -> item.getOrderItemLineNo() != null));
+        List<BigDecimal> feeShares = hasCourseServiceFees
+                ? courseServiceFeesByLine(request, lines)
+                : allocateByCoursePrice(money.pickupFeeAmount().add(money.dropoffFeeAmount()).add(money.extraFeeAmount()), lines);
         BigDecimal assignedDue = ZERO_AMOUNT;
         for (int index = 0; index < lines.size(); index++) {
             ResolvedCourseLine line = lines.get(index);
@@ -737,6 +1031,30 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
 
         assignInitialCoursePayments(request, lines, money, participantCount);
         validateParticipantCourseBilling(request, lines, feeShares, participantCount);
+    }
+
+    private boolean hasExplicitCourseServiceFees(ResolvedCourseLine line) {
+        return Boolean.TRUE.equals(line.pickupRequired) || Boolean.TRUE.equals(line.dropoffRequired)
+                || defaultAmount(line.pickupFeeAmount).compareTo(ZERO_AMOUNT) > 0
+                || defaultAmount(line.dropoffFeeAmount).compareTo(ZERO_AMOUNT) > 0
+                || (line.serviceFees != null && !line.serviceFees.isEmpty());
+    }
+
+    private List<BigDecimal> courseServiceFeesByLine(RegistrationIntakeRequest request,
+                                                      List<ResolvedCourseLine> lines) {
+        Map<Integer, BigDecimal> assignedExtraFees = new LinkedHashMap<>();
+        if (request.getExtraFees() != null) {
+            request.getExtraFees().stream().filter(Objects::nonNull)
+                    .filter(item -> item.getOrderItemLineNo() != null)
+                    .forEach(item -> assignedExtraFees.merge(item.getOrderItemLineNo(),
+                            defaultAmount(item.getAmount()), BigDecimal::add));
+        }
+        return lines.stream().map(line -> defaultAmount(line.pickupFeeAmount)
+                .add(defaultAmount(line.dropoffFeeAmount))
+                .add(sumFeeLines(line.serviceFees))
+                .add(defaultAmount(assignedExtraFees.get(line.lineNo))))
+                .map(item -> item.setScale(2, RoundingMode.HALF_UP))
+                .toList();
     }
 
     private void assignCourseDiscounts(RegistrationIntakeRequest request,
@@ -914,7 +1232,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         Map<Integer, ResolvedCourseLine> linesByNo = lines.stream()
                 .collect(Collectors.toMap(line -> line.lineNo, line -> line));
         for (RegistrationIntakeRequest.PaymentPayload payment : billing.getPayments()) {
-            if (payment == null) {
+            if (payment == null || isCreditTopUpPayment(payment)) {
                 continue;
             }
             List<RegistrationIntakeRequest.CoursePaymentAllocationPayload> allocations = payment.getAllocations();
@@ -961,6 +1279,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         paidByLine.merge(lineNo, amount, BigDecimal::add));
                 totalPaid = totalPaid.add(billing.getPayments() == null ? ZERO_AMOUNT : billing.getPayments().stream()
                         .filter(Objects::nonNull)
+                        .filter(payment -> !isCreditTopUpPayment(payment))
                         .map(RegistrationIntakeRequest.PaymentPayload::getAmount)
                         .map(this::defaultAmount)
                         .reduce(ZERO_AMOUNT, BigDecimal::add));
@@ -979,14 +1298,18 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             return;
         }
         Map<Integer, BigDecimal> paidByLine = new LinkedHashMap<>();
-        boolean hasExplicitAllocations = request.getPayments() != null && request.getPayments().stream()
-                .filter(Objects::nonNull)
-                .anyMatch(payment -> payment.getAllocations() != null && !payment.getAllocations().isEmpty());
+            boolean hasExplicitAllocations = request.getPayments() != null && request.getPayments().stream()
+                    .filter(Objects::nonNull)
+                    .filter(payment -> !isCreditTopUpPayment(payment))
+                    .anyMatch(payment -> payment.getAllocations() != null && !payment.getAllocations().isEmpty());
         if (hasExplicitAllocations) {
             Map<Integer, ResolvedCourseLine> linesByNo = lines.stream().collect(Collectors.toMap(
                     line -> line.lineNo, line -> line));
             BigDecimal totalAllocated = ZERO_AMOUNT;
-            for (RegistrationIntakeRequest.PaymentPayload payment : request.getPayments()) {
+            for (RegistrationIntakeRequest.PaymentPayload payment : request.getPayments().stream()
+                    .filter(Objects::nonNull)
+                    .filter(item -> !isCreditTopUpPayment(item))
+                    .toList()) {
                 List<RegistrationIntakeRequest.CoursePaymentAllocationPayload> allocations = payment.getAllocations();
                 BigDecimal paymentAllocated = allocations == null ? ZERO_AMOUNT : allocations.stream()
                         .filter(Objects::nonNull)
@@ -1058,13 +1381,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     private boolean isPickupFeeCharged(RegistrationIntakeRequest request) {
-        return Boolean.TRUE.equals(request.getPickupFeeCharged())
+        return request.getItems() != null
+                && !request.getItems().isEmpty()
                 && request.getStudent() != null
                 && Boolean.TRUE.equals(request.getStudent().getPickupRequired());
     }
 
     private boolean isDropoffFeeCharged(RegistrationIntakeRequest request) {
-        return Boolean.TRUE.equals(request.getDropoffFeeCharged())
+        return request.getItems() != null
+                && !request.getItems().isEmpty()
                 && request.getStudent() != null
                 && Boolean.TRUE.equals(request.getStudent().getDropoffRequired());
     }
@@ -1078,7 +1403,12 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         order.setStudentId(student.getId());
         order.setClassId(resolveSingleClassId(lines));
         order.setCampusId(request.getCampusId());
-        order.setCampusNameSnapshot(resolveCampusName(request));
+        String campusNameSnapshot = lines.isEmpty()
+                && request.getCampusId() == null
+                && !StringUtils.hasText(request.getCampusName())
+                ? null
+                : resolveCampusName(request);
+        order.setCampusNameSnapshot(campusNameSnapshot);
         order.setOrderStatus("CONFIRMED");
         order.setCashierUserId(request.getCashierUserId());
         order.setHandledByName(request.getHandledByName());
@@ -1142,9 +1472,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     participants.size() > 1 ? null : money.discountAmount());
             BigDecimal sharedFees = money.pickupFeeAmount().add(money.dropoffFeeAmount()).add(money.extraFeeAmount());
             BigDecimal participantFees = index == 0 ? sharedFees : ZERO_AMOUNT;
-            BigDecimal amountDue = grossAmount.add(participantFees).subtract(discountAmount)
+            boolean creditTopUp = lines.isEmpty();
+            BigDecimal amountDue = creditTopUp
+                    ? money.amountDue()
+                    : grossAmount.add(participantFees).subtract(discountAmount)
                     .max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal paidAmount = participantPaidAmount(request, index + 1,
+            BigDecimal paidAmount = creditTopUp
+                    ? money.paidAmount()
+                    : participantPaidAmount(request, index + 1,
                     participants.size() > 1 ? null : money.paidAmount());
             if (discountAmount.compareTo(grossAmount.add(participantFees)) > 0) {
                 throw new BusinessException("PARTICIPANT_DISCOUNT_EXCEEDS_AMOUNT",
@@ -1216,6 +1551,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
         return billing.getPayments().stream()
                 .filter(Objects::nonNull)
+                .filter(payment -> !isCreditTopUpPayment(payment))
                 .map(RegistrationIntakeRequest.PaymentPayload::getAmount)
                 .map(this::defaultAmount)
                 .reduce(ZERO_AMOUNT, BigDecimal::add);
@@ -1253,6 +1589,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.setInitialLessonStartAt(null);
         item.setInitialLessonEndAt(null);
         item.setTeacherId(null);
+        item.setPickupRequiredSnapshot(line.pickupRequired);
+        item.setPickupAddressSnapshot(line.pickupAddress);
+        item.setDropoffRequiredSnapshot(line.dropoffRequired);
+        item.setDropoffAddressSnapshot(line.dropoffAddress);
+        item.setPickupFeeAmount(defaultAmount(line.pickupFeeAmount));
+        item.setDropoffFeeAmount(defaultAmount(line.dropoffFeeAmount));
+        item.setExtraFeeAmount(sumFeeLines(line.serviceFees));
+        item.setExtraFeeDetail(jsonHelper.toJson(line.serviceFees));
         item.setItemStatus("ACTIVE");
         item.setRemark(line.remark);
         enrollmentOrderItemMapper.insert(item);
@@ -1492,6 +1836,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
         return billing.getPayments().stream()
                 .filter(Objects::nonNull)
+                .filter(payment -> !isCreditTopUpPayment(payment))
                 .map(payment -> {
                     List<RegistrationIntakeRequest.CoursePaymentAllocationPayload> allocations = payment.getAllocations();
                     if (allocations == null || allocations.isEmpty()) {
@@ -1862,7 +2207,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                                             MoneySnapshot money,
                                                                             int participantCount,
                                                                             List<ResolvedCourseLine> lines) {
-        List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads = registrationPayments(request, participantCount);
+        return createPayments(order, request, money, registrationPayments(request, participantCount), lines);
+    }
+
+    private List<RegistrationIntakeResultVO.PaymentResultVO> createPayments(
+            EnrollmentOrderEntity order,
+            RegistrationIntakeRequest request,
+            MoneySnapshot money,
+            List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads,
+            List<ResolvedCourseLine> lines) {
         if (paymentPayloads.isEmpty()) {
             return Collections.emptyList();
         }
@@ -1892,6 +2245,19 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             entity.setHandledByName(firstText(payment.getHandledByName(), order.getHandledByName()));
             entity.setRemark(payment.getRemark());
             paymentRecordMapper.insert(entity);
+            if (StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(payment.getPaymentMethod())) {
+                EnrollmentOrderParticipantEntity creditParticipant = payment.getParticipantIndex() == null ? null
+                        : enrollmentOrderParticipantMapper.selectOne(new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                        .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                        .eq(EnrollmentOrderParticipantEntity::getParticipantIndex, payment.getParticipantIndex())
+                        .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+                if (payment.getParticipantIndex() != null && creditParticipant == null) {
+                    throw new BusinessException("PAYMENT_PARTICIPANT_NOT_FOUND", "The selected Credit student is not part of this order.");
+                }
+                Long creditStudentId = creditParticipant == null ? order.getStudentId() : creditParticipant.getStudentId();
+                studentCreditService.consumeForPayment(creditStudentId, payment.getAmount(), order.getId(), entity.getId(),
+                        entity.getHandledByUserId(), entity.getHandledByName(), entity.getRemark());
+            }
             if (payment.getAllocations() != null && !payment.getAllocations().isEmpty()) {
                 Map<Integer, ResolvedCourseLine> linesByNo = lines.stream().collect(Collectors.toMap(
                         line -> line.lineNo, line -> line));
@@ -1930,7 +2296,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private List<RegistrationIntakeRequest.PaymentPayload> registrationPayments(
             RegistrationIntakeRequest request, int participantCount) {
         if (participantCount <= 1 || request.getParticipantBillings() == null) {
-            return request.getPayments() == null ? Collections.emptyList() : request.getPayments();
+            return request.getPayments() == null ? Collections.emptyList() : request.getPayments().stream()
+                    .filter(Objects::nonNull)
+                    .filter(payment -> !isCreditTopUpPayment(payment))
+                    .toList();
         }
         List<RegistrationIntakeRequest.PaymentPayload> result = new ArrayList<>();
         for (RegistrationIntakeRequest.ParticipantBillingPayload billing : request.getParticipantBillings()) {
@@ -1938,7 +2307,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 continue;
             }
             for (RegistrationIntakeRequest.PaymentPayload payment : billing.getPayments()) {
-                if (payment != null) {
+                if (payment != null && !isCreditTopUpPayment(payment)) {
                     payment.setParticipantIndex(billing.getParticipantIndex());
                     result.add(payment);
                 }
@@ -2060,6 +2429,18 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         payload.put("handledByName", order.getHandledByName());
         payload.put("registrationRemark", order.getRemark());
         payload.put("currencyCode", order.getCurrencyCode());
+        payload.put("creditTopUpAmount", request.getCreditTopUpAmount());
+        List<RegistrationIntakeRequest.PaymentPayload> creditPayments = creditTopUpPayments(request);
+        if (!creditPayments.isEmpty()) {
+            RegistrationIntakeRequest.PaymentPayload creditPayment = creditPayments.get(0);
+            Map<String, Object> creditPaymentSnapshot = new LinkedHashMap<>();
+            creditPaymentSnapshot.put("paymentMethod", creditPayment.getPaymentMethod());
+            creditPaymentSnapshot.put("amount", creditPayment.getAmount());
+            creditPaymentSnapshot.put("paidAt", creditPayment.getPaidAt());
+            creditPaymentSnapshot.put("handledByName", creditPayment.getHandledByName());
+            creditPaymentSnapshot.put("remark", creditPayment.getRemark());
+            payload.put("creditTopUpPayment", creditPaymentSnapshot);
+        }
         payload.put("items", lines.stream().map(this::toReceiptItem).toList());
         payload.put("extraFees", request.getExtraFees());
         payload.put("discounts", request.getDiscounts());
@@ -2121,6 +2502,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("oneOnOneUnits", resolveLineOneOnOneUnits(line));
         item.put("classId", line.classId);
         item.put("className", line.classGroup == null ? null : line.classGroup.getClassName());
+        item.put("pickupRequiredSnapshot", line.pickupRequired);
+        item.put("pickupAddressSnapshot", line.pickupAddress);
+        item.put("dropoffRequiredSnapshot", line.dropoffRequired);
+        item.put("dropoffAddressSnapshot", line.dropoffAddress);
+        item.put("pickupFeeAmount", line.pickupFeeAmount);
+        item.put("dropoffFeeAmount", line.dropoffFeeAmount);
+        item.put("extraFeeAmount", sumFeeLines(line.serviceFees));
+        item.put("extraFees", line.serviceFees);
         if (!line.oneOnOne) {
             item.put("groupBillingType", line.classGroup == null ? null : line.classGroup.getBillingType());
             item.put("groupTotalSessions", line.classGroup == null ? null : line.classGroup.getTotalSessions());
@@ -2559,6 +2948,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     private void requireActivePaymentMethod(String methodCode) {
+        if (StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(methodCode)) {
+            return;
+        }
         PaymentMethodEntity method = paymentMethodMapper.selectOne(new LambdaQueryWrapper<PaymentMethodEntity>()
                 .eq(PaymentMethodEntity::getMethodCode, methodCode)
                 .eq(PaymentMethodEntity::getStatus, "ACTIVE")
@@ -2580,6 +2972,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     private void validateCampusSelection(RegistrationIntakeRequest request) {
+        if (isCreditTopUpRequest(request)) {
+            return;
+        }
         resolveCampusName(request);
     }
 
@@ -2731,6 +3126,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private record ReceiptResult(Long receiptId, String receiptNo, Map<String, Object> previewData) {
     }
 
+    private record CreditTopUpTransaction(
+            EnrollmentOrderEntity order,
+            MoneySnapshot money,
+            List<RegistrationIntakeResultVO.PaymentResultVO> payments,
+            ReceiptResult receipt
+    ) {
+    }
+
     private record ClassBillingResult(
             LocalDate enrollmentDate,
             LocalDate expiryDate,
@@ -2762,6 +3165,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private BigDecimal discountAmount;
         private BigDecimal amountDue;
         private BigDecimal initialPaidAmount;
+        private Boolean pickupRequired;
+        private String pickupAddress;
+        private Boolean dropoffRequired;
+        private String dropoffAddress;
+        private Boolean pickupFeeCharged;
+        private BigDecimal pickupFeeAmount;
+        private Boolean dropoffFeeCharged;
+        private BigDecimal dropoffFeeAmount;
+        private List<RegistrationIntakeRequest.FeeLinePayload> serviceFees;
         private BigDecimal basePriceAmount;
         private BigDecimal originalPriceAmount;
         private Boolean manualPriceOverride;

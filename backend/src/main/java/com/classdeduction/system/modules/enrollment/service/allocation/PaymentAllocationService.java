@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 /**
  * 课程级付款分摊账本：
@@ -250,11 +251,21 @@ public class PaymentAllocationService {
             BigDecimal available = remaining.get(itemId);
             BigDecimal paid = available == null ? BigDecimal.ZERO
                     : defaultAmount(amountDueOf(items, itemId)).subtract(available);
-            if (available == null || amount.compareTo(BigDecimal.ZERO) == 0
-                    || (amount.signum() > 0 && amount.compareTo(available) > 0)
-                    || (amount.signum() < 0 && amount.negate().compareTo(paid) > 0)) {
+            if (available == null) {
                 throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
-                        "Saved course allocation exceeds the current course balance.");
+                        "Saved course allocation references a course that is no longer in this order.");
+            }
+            if (amount.compareTo(BigDecimal.ZERO) == 0) {
+                throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
+                        "Saved course allocation cannot be zero.");
+            }
+            if (amount.signum() > 0 && amount.compareTo(available) > 0) {
+                throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
+                        "Saved course payment allocation exceeds the current course balance.");
+            }
+            if (amount.signum() < 0 && amount.negate().compareTo(paid) > 0) {
+                throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
+                        "Saved refund allocation exceeds the amount already paid for this course.");
             }
         }
     }
@@ -297,7 +308,7 @@ public class PaymentAllocationService {
     }
 
     /**
-     * item.amount_due 为空时按课程优惠快照和加权分配附加费补算；旧订单没有课程优惠快照时沿用整单优惠的加权拆分。
+     * item.amount_due 为空时按课程费用/优惠快照补算；旧订单没有课程费用快照时沿用整单费用的加权拆分。
      *
      * @param persist true 时落库（重放链路）；false 仅在内存补算（预览链路）
      */
@@ -307,11 +318,8 @@ public class PaymentAllocationService {
         if (!missing) {
             return;
         }
-        BigDecimal feeTotal = defaultAmount(order.getPickupFeeAmount())
-                .add(defaultAmount(order.getDropoffFeeAmount()))
-                .add(defaultAmount(order.getExtraFeeAmount()));
         List<BigDecimal> weights = itemWeights(items);
-        List<BigDecimal> feeShares = allocateByWeights(feeTotal, weights);
+        List<BigDecimal> feeShares = resolveFeeShares(order, items, weights);
         boolean explicitDiscounts = items.stream().allMatch(item -> item.getDiscountAmount() != null);
         List<BigDecimal> discountShares = explicitDiscounts
                 ? items.stream().map(item -> defaultAmount(item.getDiscountAmount())).toList()
@@ -352,6 +360,48 @@ public class PaymentAllocationService {
             return items.stream().map(item -> BigDecimal.ONE).toList();
         }
         return weights;
+    }
+
+    /**
+     * 课程级费用存在时必须按课程快照恢复应收，不能把总费用再次按学费比例摊开。
+     * 首次报名和收据编辑都会把 pickup/drop-off/service fee 固定到订单明细；只有旧订单
+     * 没有课程费用快照时，才回退到历史的整单加权分摊规则。
+     */
+    private List<BigDecimal> resolveFeeShares(EnrollmentOrderEntity order,
+                                              List<EnrollmentOrderItemEntity> items,
+                                              List<BigDecimal> weights) {
+        boolean hasCourseFeeSnapshots = items.stream().anyMatch(this::hasCourseFeeSnapshot);
+        if (hasCourseFeeSnapshots) {
+            List<BigDecimal> courseFees = items.stream()
+                    .map(item -> defaultAmount(item.getPickupFeeAmount())
+                            .add(defaultAmount(item.getDropoffFeeAmount()))
+                            .add(defaultAmount(item.getExtraFeeAmount())))
+                    .toList();
+            BigDecimal orderFeeTotal = defaultAmount(order.getPickupFeeAmount())
+                    .add(defaultAmount(order.getDropoffFeeAmount()))
+                    .add(defaultAmount(order.getExtraFeeAmount()));
+            BigDecimal explicitFeeTotal = courseFees.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+            BigDecimal unassignedFeeTotal = orderFeeTotal.subtract(explicitFeeTotal).max(BigDecimal.ZERO);
+            if (unassignedFeeTotal.compareTo(BigDecimal.ZERO) == 0) {
+                return courseFees;
+            }
+            List<BigDecimal> unassignedShares = allocateByWeights(unassignedFeeTotal, weights);
+            return IntStream.range(0, items.size())
+                    .mapToObj(index -> courseFees.get(index).add(unassignedShares.get(index)))
+                    .toList();
+        }
+        BigDecimal feeTotal = defaultAmount(order.getPickupFeeAmount())
+                .add(defaultAmount(order.getDropoffFeeAmount()))
+                .add(defaultAmount(order.getExtraFeeAmount()));
+        return allocateByWeights(feeTotal, weights);
+    }
+
+    private boolean hasCourseFeeSnapshot(EnrollmentOrderItemEntity item) {
+        return Boolean.TRUE.equals(item.getPickupRequiredSnapshot())
+                || Boolean.TRUE.equals(item.getDropoffRequiredSnapshot())
+                || defaultAmount(item.getPickupFeeAmount()).compareTo(BigDecimal.ZERO) > 0
+                || defaultAmount(item.getDropoffFeeAmount()).compareTo(BigDecimal.ZERO) > 0
+                || defaultAmount(item.getExtraFeeAmount()).compareTo(BigDecimal.ZERO) > 0;
     }
 
     private List<BigDecimal> allocateByWeights(BigDecimal total, List<BigDecimal> weights) {

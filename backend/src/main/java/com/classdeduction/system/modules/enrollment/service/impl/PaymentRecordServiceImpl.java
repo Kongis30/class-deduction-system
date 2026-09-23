@@ -23,6 +23,7 @@ import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAl
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.classdeduction.system.modules.finance.service.StudentCreditService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
     private final ReceiptRecordMapper receiptRecordMapper;
     private final PaymentAllocationService paymentAllocationService;
     private final JsonHelper jsonHelper;
+    private final StudentCreditService studentCreditService;
 
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO;
     private static final String DEFAULT_RECEIPT_TEMPLATE = "DEFAULT_RECEIPT";
@@ -207,6 +209,12 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
             paymentRecord.setRemark(resolveRemark(request, split));
             paymentRecordMapper.insert(paymentRecord);
             paymentRecords.add(paymentRecord);
+            if (StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(split.getPaymentMethod())) {
+                Long creditStudentId = targetParticipant == null
+                        ? order.getStudentId() : targetParticipant.getStudentId();
+                studentCreditService.consumeForPayment(creditStudentId, split.getAmount(), order.getId(), paymentRecord.getId(),
+                        request.getHandledByUserId(), resolveHandledByName(request, split), resolveRemark(request, split));
+            }
             if (split.getAllocations() != null && !split.getAllocations().isEmpty()) {
                 Map<Long, BigDecimal> allocations = new LinkedHashMap<>();
                 split.getAllocations().forEach(allocation -> allocations.put(
@@ -525,6 +533,9 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
     }
 
     private void requireActivePaymentMethod(String methodCode) {
+        if (StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(methodCode)) {
+            return;
+        }
         Long count = paymentMethodMapper.selectCount(new LambdaQueryWrapper<PaymentMethodEntity>()
                 .eq(PaymentMethodEntity::getMethodCode, methodCode)
                 .eq(PaymentMethodEntity::getStatus, "ACTIVE")

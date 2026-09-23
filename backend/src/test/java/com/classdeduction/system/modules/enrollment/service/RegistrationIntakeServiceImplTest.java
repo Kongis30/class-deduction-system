@@ -39,6 +39,7 @@ import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.service.impl.ClassBillingServiceImpl;
 import com.classdeduction.system.modules.enrollment.service.impl.RegistrationIntakeServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
+import com.classdeduction.system.modules.finance.service.StudentCreditService;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -151,6 +152,9 @@ class RegistrationIntakeServiceImplTest {
     @Mock
     private JsonHelper jsonHelper;
 
+    @Mock
+    private StudentCreditService studentCreditService;
+
     // 直接用真实实现，让测试负载与生产一致的到期日计算逻辑。
     private ClassBillingServiceImpl classBillingService;
 
@@ -197,7 +201,8 @@ class RegistrationIntakeServiceImplTest {
                 roleMapper,
                 userRoleMapper,
                 passwordEncoder,
-                jsonHelper
+                jsonHelper,
+                studentCreditService
         );
     }
 

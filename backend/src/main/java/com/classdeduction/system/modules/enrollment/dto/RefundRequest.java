@@ -27,6 +27,9 @@ public class RefundRequest {
     @Schema(description = "退款方式", example = "CASH")
     private String paymentMethod;
 
+    @Schema(description = "退款处理方式：REFUND 实际退款，CREDIT 转为学生 Credit", example = "CREDIT")
+    private String disposition = "REFUND";
+
     @Schema(description = "经手人用户ID", example = "1880000000000000002")
     private Long handledByUserId;
 

@@ -20,6 +20,7 @@ public class PrivateLessonSchemaCompatibilityInitializer {
     @PostConstruct
     public void initialize() {
         createTablesIfMissing();
+        createTransportTablesIfMissing();
         addColumnIfMissing("recurring_schedule_rule", "private_lesson_group_id",
                 "bigint DEFAULT NULL COMMENT 'Shared private lesson group ID' AFTER package_id");
         addColumnIfMissing("lesson_occurrence", "private_lesson_group_id",
@@ -78,9 +79,64 @@ public class PrivateLessonSchemaCompatibilityInitializer {
         addColumnIfMissing("enrollment_order_item", "balance_amount",
                 "decimal(12,2) DEFAULT NULL COMMENT 'amount_due - paid_amount' AFTER paid_amount",
                 "course item payment allocation");
+        addColumnIfMissing("enrollment_order_item", "pickup_required_snapshot",
+                "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Pickup requirement for this course line' AFTER teacher_id",
+                "course transport snapshot");
+        addColumnIfMissing("enrollment_order_item", "pickup_address_snapshot",
+                "varchar(255) DEFAULT NULL COMMENT 'Pickup address for this course line' AFTER pickup_required_snapshot",
+                "course transport snapshot");
+        addColumnIfMissing("enrollment_order_item", "dropoff_required_snapshot",
+                "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Drop-off requirement for this course line' AFTER pickup_address_snapshot",
+                "course transport snapshot");
+        addColumnIfMissing("enrollment_order_item", "dropoff_address_snapshot",
+                "varchar(255) DEFAULT NULL COMMENT 'Drop-off address for this course line' AFTER dropoff_required_snapshot",
+                "course transport snapshot");
+        addColumnIfMissing("enrollment_order_item", "pickup_fee_amount",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Pickup fee for this course line' AFTER dropoff_address_snapshot",
+                "course transport snapshot");
+        addColumnIfMissing("enrollment_order_item", "dropoff_fee_amount",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Drop-off fee for this course line' AFTER pickup_fee_amount",
+                "course transport snapshot");
+        addColumnIfMissing("enrollment_order_item", "extra_fee_amount",
+                "decimal(12,2) NOT NULL DEFAULT 0.00 COMMENT 'Other fees for this course line' AFTER dropoff_fee_amount",
+                "course transport snapshot");
+        addColumnIfMissing("enrollment_order_item", "extra_fee_detail",
+                "json DEFAULT NULL COMMENT 'Other fee detail for this course line' AFTER extra_fee_amount",
+                "course transport snapshot");
     }
 
     private void createTablesIfMissing() {
+        // Credit 余额是报名页读取和支付扣款的基础表；旧库没有执行发布迁移时也要由应用自动补齐。
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS student_credit_ledger (
+                    id bigint NOT NULL,
+                    student_id bigint NOT NULL,
+                    entry_type varchar(32) NOT NULL,
+                    amount decimal(12,2) NOT NULL,
+                    source_enrollment_order_id bigint DEFAULT NULL,
+                    source_payment_record_id bigint DEFAULT NULL,
+                    reference_no varchar(64) DEFAULT NULL,
+                    handled_by_name varchar(64) DEFAULT NULL,
+                    handled_by_user_id bigint DEFAULT NULL,
+                    occurred_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    remark varchar(500) DEFAULT NULL,
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    KEY idx_student_credit_student_time (student_id, occurred_at DESC),
+                    KEY idx_student_credit_order (source_enrollment_order_id),
+                    CONSTRAINT fk_student_credit_student FOREIGN KEY (student_id) REFERENCES student (id),
+                    CONSTRAINT fk_student_credit_order FOREIGN KEY (source_enrollment_order_id) REFERENCES enrollment_order (id),
+                    CONSTRAINT fk_student_credit_payment FOREIGN KEY (source_payment_record_id) REFERENCES payment_record (id),
+                    CONSTRAINT fk_student_credit_user FOREIGN KEY (handled_by_user_id) REFERENCES sys_user (id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
         jdbcTemplate.execute("""
                 CREATE TABLE IF NOT EXISTS private_lesson_group (
                     id bigint NOT NULL,
@@ -191,6 +247,55 @@ public class PrivateLessonSchemaCompatibilityInitializer {
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
                 """);
         log.info("Created table payment_allocation for course item payment allocation.");
+    }
+
+    private void createTransportTablesIfMissing() {
+        // 接送司机属于接送名单的配置数据，应用启动时自动补齐，避免新环境漏执行迁移脚本。
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS transport_driver (
+                    id bigint NOT NULL,
+                    driver_name varchar(128) NOT NULL,
+                    display_order int NOT NULL DEFAULT 99,
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uk_transport_driver_name (driver_name, is_deleted),
+                    KEY idx_transport_driver_order (display_order, is_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS transport_driver_assignment (
+                    id bigint NOT NULL,
+                    assignment_key varchar(255) NOT NULL,
+                    order_id bigint NOT NULL,
+                    order_item_id bigint DEFAULT NULL,
+                    student_id bigint NOT NULL,
+                    participant_index int NOT NULL DEFAULT 1,
+                    transport_type varchar(16) NOT NULL DEFAULT 'BOTH',
+                    driver_id bigint DEFAULT NULL,
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uk_transport_assignment_key (assignment_key, is_deleted),
+                    KEY idx_transport_assignment_driver (driver_id, is_deleted),
+                    KEY idx_transport_assignment_student (student_id, is_deleted)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
+        addColumnIfMissing("transport_driver_assignment", "transport_type",
+                "varchar(16) NOT NULL DEFAULT 'BOTH' COMMENT 'Pickup or drop-off assignment direction'",
+                "independent pickup/drop-off driver assignments");
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String definition) {

@@ -100,6 +100,61 @@ class PaymentAllocationServiceTest {
         verify(paymentAllocationMapper, never()).delete(any());
     }
 
+    @Test
+    void replayUsesCourseFeeSnapshotsWhenReceiptEditRebuildsMissingItemDue() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2L);
+        order.setTuitionSubtotalAmount(new BigDecimal("200.00"));
+        order.setPickupFeeAmount(new BigDecimal("300.00"));
+        order.setAmountDue(new BigDecimal("500.00"));
+
+        EnrollmentOrderItemEntity first = item(31L, 1);
+        first.setAmountDue(null);
+        first.setPickupRequiredSnapshot(true);
+        first.setPickupFeeAmount(new BigDecimal("300.00"));
+        EnrollmentOrderItemEntity second = item(32L, 2);
+        second.setAmountDue(null);
+
+        PaymentRecordEntity payment = new PaymentRecordEntity();
+        payment.setId(601L);
+        payment.setEnrollmentOrderId(2L);
+        payment.setAmount(new BigDecimal("400.00"));
+        payment.setPaidAt(LocalDateTime.of(2026, 9, 1, 10, 0));
+        payment.setPaymentStatus("PAID");
+        PaymentAllocationEntity saved = new PaymentAllocationEntity();
+        saved.setPaymentRecordId(601L);
+        saved.setEnrollmentOrderId(2L);
+        saved.setEnrollmentOrderItemId(31L);
+        saved.setAmount(new BigDecimal("400.00"));
+
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(saved));
+
+        paymentAllocationService.replayAllocations(order);
+
+        ArgumentCaptor<EnrollmentOrderItemEntity> itemCaptor =
+                ArgumentCaptor.forClass(EnrollmentOrderItemEntity.class);
+        verify(enrollmentOrderItemMapper, org.mockito.Mockito.times(4)).updateById(itemCaptor.capture());
+        assertThat(itemCaptor.getAllValues())
+                .filteredOn(item -> item.getId().equals(31L))
+                .last()
+                .satisfies(item -> {
+                    assertThat(item.getAmountDue()).isEqualByComparingTo("400.00");
+                    assertThat(item.getPaidAmount()).isEqualByComparingTo("400.00");
+                    assertThat(item.getBalanceAmount()).isEqualByComparingTo("0.00");
+                });
+        assertThat(itemCaptor.getAllValues())
+                .filteredOn(item -> item.getId().equals(32L))
+                .last()
+                .satisfies(item -> {
+                    assertThat(item.getAmountDue()).isEqualByComparingTo("100.00");
+                    assertThat(item.getPaidAmount()).isEqualByComparingTo("0.00");
+                    assertThat(item.getBalanceAmount()).isEqualByComparingTo("100.00");
+                });
+        verify(paymentAllocationMapper, never()).insert(any(PaymentAllocationEntity.class));
+    }
+
     private EnrollmentOrderItemEntity item(Long id, int lineNo) {
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
         item.setId(id);

@@ -238,13 +238,26 @@
                           Loading orders...
                         </div>
                         <div v-else class="expand-orders-container">
-                          <el-table
-                            :data="(expandedClassOrders[row.id] ?? [])"
-                            row-key="id"
-                            size="small"
-                            class="nested-table"
-                            empty-text="No enrollment orders for this class."
-                          >
+                          <div v-if="!(expandedClassOrders[row.id] ?? []).length" class="campus-order-empty">
+                            No enrollment orders for this class.
+                          </div>
+                          <template v-else>
+                            <section
+                              v-for="campusGroup in campusOrderGroups(expandedClassOrders[row.id] ?? [])"
+                              :key="campusGroup.key"
+                              class="campus-order-group"
+                            >
+                              <header class="campus-order-group__header">
+                                <strong>{{ campusGroup.campusName }}</strong>
+                                <span>{{ campusGroup.orders.length }} {{ campusGroup.orders.length === 1 ? 'student' : 'students' }}</span>
+                              </header>
+                              <el-table
+                                :data="campusGroup.orders"
+                                :row-key="orderRowKey"
+                                size="small"
+                                class="nested-table"
+                                empty-text="No enrollment orders for this campus."
+                              >
                             <el-table-column min-width="150">
                               <template #header>
                                 <div class="table-header-filter">
@@ -345,7 +358,9 @@
                                 </el-dropdown>
                               </template>
                             </el-table-column>
-                          </el-table>
+                              </el-table>
+                            </section>
+                          </template>
 
                           <div v-if="(expandedClassPagination[row.id]?.total ?? 0) > 0" class="expand-pagination">
                             <el-pagination
@@ -669,6 +684,36 @@
         </div>
       </div>
 
+      <div v-if="payCourseItems.length" class="payment-course-summary">
+        <div class="payment-course-summary__title">Courses in this order</div>
+        <el-table :data="payCourseItems" size="small" class="payment-course-summary__table">
+          <el-table-column label="Course" min-width="220">
+            <template #default="{ row }">
+              <div class="payment-course-summary__course">
+                <strong>{{ courseLabel(row) }}</strong>
+                <el-tag
+                  v-if="payTargetCourseId && String(row.id) === payTargetCourseId"
+                  size="small"
+                  type="primary"
+                  effect="plain"
+                >Selected</el-tag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="Amount due" width="120" align="right">
+            <template #default="{ row }">${{ Number(row.amountDue ?? 0).toFixed(2) }}</template>
+          </el-table-column>
+          <el-table-column label="Paid" width="110" align="right">
+            <template #default="{ row }">${{ Number(row.paidAmount ?? 0).toFixed(2) }}</template>
+          </el-table-column>
+          <el-table-column label="Balance" width="120" align="right">
+            <template #default="{ row }">
+              <strong>${{ courseOutstandingBalance(row).toFixed(2) }}</strong>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
+
       <el-form
         ref="payFormRef"
         label-position="top"
@@ -702,6 +747,7 @@
                 :controls="false"
                 style="flex: 1;"
                 placeholder="Amount"
+                @change="handlePaySplitAmountChange(split)"
               />
               <el-date-picker
                 v-model="split.paidAt"
@@ -738,13 +784,24 @@
           </span>
         </div>
 
-        <div v-if="payCourseItems.length > 1 && (!payParticipant || payTargetCourseId)" class="payment-allocation-preview">
-          <div class="payment-allocation-preview__title">Assign each payment to courses</div>
+        <div v-if="payAllocationVisible" class="payment-allocation-preview">
+          <div class="payment-allocation-preview__title">
+            Choose the course(s) covered by each payment
+          </div>
           <div v-for="(split, splitIndex) in payForm.splits" :key="`allocation-${splitIndex}`" class="course-payment-allocation">
             <strong>Payment {{ splitIndex + 1 }} · {{ paymentMethodName(split.paymentMethod) }} · ${{ split.amount.toFixed(2) }}</strong>
             <el-table :data="payAllocatableCourseItems" size="small">
+              <el-table-column label="Use" width="70" align="center">
+                <template #default="{ row }">
+                  <el-checkbox
+                    :model-value="Number(split.allocations[String(row.id)] ?? 0) > 0"
+                    :disabled="courseAllocationLimit(split, row) <= 0 || (payTargetCourseId != null && String(row.id) !== payTargetCourseId)"
+                    @change="toggleSplitCourseAllocation(split, row.id, $event)"
+                  />
+                </template>
+              </el-table-column>
               <el-table-column label="Course" min-width="180">
-                <template #default="{ row }">{{ row.detail || '—' }}</template>
+                <template #default="{ row }">{{ courseLabel(row) }}</template>
               </el-table-column>
               <el-table-column label="Outstanding" width="120" align="right">
                 <template #default="{ row }">${{ courseBalance(row).toFixed(2) }}</template>
@@ -754,9 +811,10 @@
                   <el-input-number
                     :model-value="split.allocations[String(row.id)] ?? 0"
                     :min="0"
-                    :max="courseBalance(row)"
+                    :max="courseAllocationLimit(split, row)"
                     :precision="2"
                     :controls="false"
+                    :disabled="courseAllocationLimit(split, row) <= 0 || (payTargetCourseId != null && String(row.id) !== payTargetCourseId)"
                     @update:model-value="setSplitCourseAllocation(split, row.id, $event)"
                   />
                 </template>
@@ -830,8 +888,14 @@
             style="width: 100%;"
           />
         </el-form-item>
+        <el-form-item label="Refund handling" prop="disposition">
+          <el-radio-group v-model="refundForm.disposition">
+            <el-radio value="CREDIT">Convert to Student Credit</el-radio>
+            <el-radio value="REFUND">Continue refund</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item label="Refund method" prop="paymentMethod">
-          <el-select v-model="refundForm.paymentMethod" placeholder="Select method" style="width: 100%;">
+          <el-select v-model="refundForm.paymentMethod" placeholder="Select method" style="width: 100%;" :disabled="refundForm.disposition === 'CREDIT'">
             <el-option v-for="m in paymentMethods" :key="m.methodCode" :label="m.methodName" :value="m.methodCode" />
           </el-select>
         </el-form-item>
@@ -1073,7 +1137,7 @@
 <script setup lang="ts">
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
@@ -1117,16 +1181,24 @@ const groupOrderFilters = reactive({
   orderStatus: '',
   paymentStatus: '',
 });
+// 顶部 Keyword 在班课页按报名记录定位班级；仅保留有匹配报名的班级，避免展开无结果的下拉行。
+const keywordMatchedClassIds = reactive(new Set<string>());
 const filteredClassEnrollmentData = computed(() => {
-  const keyword = groupFilters.keyword.trim().toLowerCase();
-  if (!keyword) return classEnrollmentData.value;
-  return classEnrollmentData.value.filter((row) => [
-    row.className,
-    row.productName,
-    row.teacherName,
-    row.classroomName,
-    row.scheduleDesc,
-  ].some((value) => String(value ?? '').toLowerCase().includes(keyword)));
+  const classKeyword = groupFilters.keyword.trim().toLowerCase();
+  const enrollmentKeywordActive = activeTab.value === 'GROUP' && filters.keyword.trim().length > 0;
+  return classEnrollmentData.value.filter((row) => {
+    if (enrollmentKeywordActive && !keywordMatchedClassIds.has(String(row.id))) {
+      return false;
+    }
+    if (!classKeyword) return true;
+    return [
+      row.className,
+      row.productName,
+      row.teacherName,
+      row.classroomName,
+      row.scheduleDesc,
+    ].some((value) => String(value ?? '').toLowerCase().includes(classKeyword));
+  });
 });
 
 // ─── Group Class hierarchical grouping (product → grade → class) ──
@@ -1186,11 +1258,11 @@ function toggleGrade(gradeKey: string) {
   else expandedGrades.add(gradeKey);
 }
 function isProductExpanded(productId: string) {
-  if (groupFilters.keyword.trim()) return true;
+  if (groupFilters.keyword.trim() || filters.keyword.trim()) return true;
   return expandedProducts.has(String(productId));
 }
 function isGradeExpanded(gradeKey: string) {
-  if (groupFilters.keyword.trim()) return true;
+  if (groupFilters.keyword.trim() || filters.keyword.trim()) return true;
   return expandedGrades.has(gradeKey);
 }
 
@@ -1261,6 +1333,35 @@ const expandedClassLoading = reactive<Record<string, boolean>>({});
 const expandedClassPagination = reactive<Record<string, { page: number; size: number; total: number }>>({});
 const expandedClassIds = reactive(new Set<string>());
 
+interface CampusOrderGroup {
+  key: string;
+  campusName: string;
+  orders: EnrollmentOrderItem[];
+}
+
+// 班级展开后按报名单保存的校区快照分组，避免不同校区的学生混在同一张名单里。
+function campusOrderGroups(orders: EnrollmentOrderItem[]): CampusOrderGroup[] {
+  const groups = new Map<string, CampusOrderGroup>();
+  for (const order of orders) {
+    const campusName = order.campusNameSnapshot?.trim() || 'Campus not set';
+    const key = order.campusId == null
+      ? `name:${campusName.toLowerCase()}`
+      : `id:${String(order.campusId)}`;
+    const group = groups.get(key) ?? { key, campusName, orders: [] };
+    group.orders.push(order);
+    groups.set(key, group);
+  }
+  return Array.from(groups.values()).sort((left, right) => {
+    if (left.campusName === 'Campus not set') return 1;
+    if (right.campusName === 'Campus not set') return -1;
+    return left.campusName.localeCompare(right.campusName);
+  });
+}
+
+// 记录由顶部 Keyword 自动展开的班级，清空关键词时只收起这些班级，保留用户手动展开的状态。
+const keywordExpandedClassIds = reactive(new Set<string>());
+let latestGroupKeywordSearch = 0;
+
 async function loadExpandedClassOrders(classId: string | number, pageNum = 1) {
   const classKey = String(classId);
   expandedClassLoading[classKey] = true;
@@ -1271,6 +1372,7 @@ async function loadExpandedClassOrders(classId: string | number, pageNum = 1) {
     expandedClassPagination[classKey].page = pageNum;
     const res = await fetchEnrollmentOrders({
       classId,
+      teachingMode: 'GROUP',
       keyword: groupOrderFilters.keyword || undefined,
       orderStatus: groupOrderFilters.orderStatus || undefined,
       paymentStatus: groupOrderFilters.paymentStatus || undefined,
@@ -1456,6 +1558,9 @@ async function loadActivePaymentMethods() {
   try {
     const res = await fetchActivePaymentMethods();
     paymentMethods.value = res.data.data;
+    if (!paymentMethods.value.some((method) => method.methodCode === 'STUDENT_CREDIT')) {
+      paymentMethods.value.unshift({ id: 'student-credit', methodCode: 'STUDENT_CREDIT', methodName: 'Student Credit', sortOrder: -1, status: 'ACTIVE' });
+    }
   } catch {
     paymentMethods.value = [];
   }
@@ -1588,9 +1693,16 @@ const payAmountDue = computed(() => {
   return Math.max(0, Math.min(accountBalance, courseBalanceAmount));
 });
 
-const payAllocatableCourseItems = computed(() => payParticipant.value && payTargetCourseId.value
-  ? payCourseItems.value.filter((item) => String(item.id) === payTargetCourseId.value)
-  : payCourseItems.value);
+const payAllocationVisible = computed(() => payCourseItems.value.length > 1
+  && (!payParticipant.value || Boolean(payTargetCourseId.value)));
+const payAllocatableCourseItems = computed(() => {
+  if (payParticipant.value && !payTargetCourseId.value) {
+    return [];
+  }
+  return payTargetCourseId.value
+    ? payCourseItems.value.filter((item) => String(item.id) === payTargetCourseId.value)
+    : payCourseItems.value;
+});
 
 const payStudentName = computed(() => payParticipant.value?.studentName ?? payOrder.value?.studentName ?? '—');
 const payOriginalAmount = computed(() => payParticipant.value?.grossAmount ?? payOrder.value?.originalAmount ?? 0);
@@ -1607,7 +1719,8 @@ const paySplitRemaining = computed(() => {
 });
 
 function addPaySplit() {
-  payForm.splits.push(createPaySplit());
+  const amount = Math.max(0, Number((payAmountDue.value - paySplitTotal.value).toFixed(2)));
+  payForm.splits.push(createPaySplit(amount, buildDefaultAllocations(amount)));
 }
 
 function removePaySplit(index: number) {
@@ -1623,6 +1736,84 @@ function createPaySplit(amount = 0, allocations: Record<string, number> = {}): P
     remark: '',
     allocations,
   };
+}
+
+/**
+ * 为新付款行生成课程分配初值：优先使用 Data Summary 传入的目标课程，
+ * 否则按课程顺序填充未结余额，确保打开窗口后每笔付款都有明确归属。
+ */
+function buildDefaultAllocations(amount: number, ignoredSplit?: PaySplit): Record<string, number> {
+  const allocations: Record<string, number> = {};
+  let remaining = Math.max(0, Number(amount || 0));
+  for (const item of payAllocatableCourseItems.value) {
+    if (remaining <= 0) break;
+    const alreadyAllocated = payForm.splits
+      .filter((split) => split !== ignoredSplit)
+      .reduce((total, split) => total + Number(split.allocations[String(item.id)] || 0), 0);
+    const available = Math.max(0, courseBalance(item) - alreadyAllocated);
+    const allocated = Math.min(available, remaining);
+    if (allocated > 0) {
+      allocations[String(item.id)] = Number(allocated.toFixed(2));
+      remaining = Number((remaining - allocated).toFixed(2));
+    }
+  }
+  return allocations;
+}
+
+/**
+ * 金额变化后只补足已选课程的可用余额；没有选择课程时按未结课程自动分配。
+ * 用户手动调整过的分配会保留，剩余金额由其他已选课程承接。
+ */
+function handlePaySplitAmountChange(split: PaySplit) {
+  const amount = Math.max(0, Number(split.amount || 0));
+  const selectedIds = Object.keys(split.allocations)
+    .filter((itemId) => Number(split.allocations[itemId] || 0) > 0);
+  const candidateItems = selectedIds.length
+    ? payAllocatableCourseItems.value.filter((item) => selectedIds.includes(String(item.id)))
+    : payAllocatableCourseItems.value;
+  const nextAllocations: Record<string, number> = {};
+  let remaining = amount;
+  for (const item of candidateItems) {
+    if (remaining <= 0) break;
+    const available = courseBalance(item);
+    const current = Math.min(available, Math.max(0, Number(split.allocations[String(item.id)] || 0)));
+    const allocated = Math.min(current, remaining);
+    if (allocated > 0) {
+      nextAllocations[String(item.id)] = Number(allocated.toFixed(2));
+      remaining = Number((remaining - allocated).toFixed(2));
+    }
+  }
+  if (remaining > 0 && selectedIds.length === 0) {
+    Object.assign(nextAllocations, buildDefaultAllocations(remaining, split));
+  } else if (remaining > 0) {
+    for (const item of candidateItems) {
+      if (remaining <= 0) break;
+      const key = String(item.id);
+      const available = courseBalance(item) - Number(nextAllocations[key] || 0);
+      const extra = Math.min(Math.max(0, available), remaining);
+      if (extra > 0) {
+        nextAllocations[key] = Number((Number(nextAllocations[key] || 0) + extra).toFixed(2));
+        remaining = Number((remaining - extra).toFixed(2));
+      }
+    }
+  }
+  split.allocations = nextAllocations;
+}
+
+function toggleSplitCourseAllocation(split: PaySplit, orderItemId: EntityId, selected: boolean) {
+  const key = String(orderItemId);
+  if (!selected) {
+    delete split.allocations[key];
+    return;
+  }
+  const item = payAllocatableCourseItems.value.find((candidate) => String(candidate.id) === key);
+  if (!item) return;
+  const selectedTotal = splitAllocationTotal(split);
+  const remaining = Math.max(0, Number((split.amount - selectedTotal).toFixed(2)));
+  split.allocations[key] = Number(Math.min(courseAllocationLimit(split, item), remaining).toFixed(2));
+  if (split.allocations[key] <= 0) {
+    delete split.allocations[key];
+  }
 }
 
 // ─── Payment method management state ──────────────
@@ -1700,7 +1891,7 @@ function expandSharedPrivateLessonRows(records: EnrollmentOrderItem[]): Enrollme
 }
 
 function orderRowKey(row: EnrollmentOrderItem) {
-  return `${row.id}-${row.participantIndex ?? 0}`;
+  return `${row.id}-${row.orderItemId ?? 'order'}-${row.participantIndex ?? 0}`;
 }
 
 function rowParticipant(row: EnrollmentOrderItem): EnrollmentOrderParticipantItem | null {
@@ -1725,12 +1916,18 @@ function handleKeywordInput() {
   keywordSearchTimer = window.setTimeout(() => {
     keywordSearchTimer = undefined;
     void loadData();
+    if (activeTab.value === 'GROUP') {
+      void searchGroupOrdersByKeyword(filters.keyword);
+    }
   }, 250);
 }
 
 function handleFilterChange() {
   pagination.page = 1;
   void loadData();
+  if (activeTab.value === 'GROUP') {
+    void searchGroupOrdersByKeyword(filters.keyword);
+  }
 }
 
 function handleGroupOrderFilterChange() {
@@ -1787,7 +1984,7 @@ async function loadData() {
       keyword: keyword || undefined,
       orderStatus: filters.orderStatus || undefined,
       paymentStatus: filters.paymentStatus || undefined,
-      excludeClassOrders: true,
+      teachingMode: 'ONE_ON_ONE',
       pageNum: pagination.page,
       pageSize: pagination.size,
     };
@@ -1828,6 +2025,90 @@ async function loadClassEnrollments() {
     classEnrollmentData.value = [];
   } finally {
     loadingClasses.value = false;
+  }
+}
+
+function collapseKeywordExpandedClasses() {
+  for (const classId of keywordExpandedClassIds) {
+    const row = groupFlatRows.value.find((item) => item.rowType === 'class' && String(item.id) === classId);
+    if (row && expandedClassIds.has(classId)) {
+      groupTableRef.value?.toggleRowExpansion(row, false);
+    }
+    expandedClassIds.delete(classId);
+    // 关键词结果只适用于当前搜索；下次手动展开时必须重新加载完整班级记录。
+    delete expandedClassOrders[classId];
+    delete expandedClassPagination[classId];
+  }
+  keywordExpandedClassIds.clear();
+}
+
+function collapseClassExpansionsExcept(allowedClassIds: Set<string>) {
+  for (const classId of Array.from(expandedClassIds)) {
+    if (allowedClassIds.has(classId)) continue;
+    const row = groupFlatRows.value.find((item) => item.rowType === 'class' && String(item.id) === classId);
+    if (row) {
+      groupTableRef.value?.toggleRowExpansion(row, false);
+    }
+    expandedClassIds.delete(classId);
+    keywordExpandedClassIds.delete(classId);
+    delete expandedClassOrders[classId];
+    delete expandedClassPagination[classId];
+  }
+}
+
+// 顶部 Keyword 的班课搜索入口：先查出命中的班级，再展开班级行并复用嵌套订单表展示学生。
+async function searchGroupOrdersByKeyword(rawKeyword: string) {
+  const keyword = rawKeyword.trim();
+  const requestId = ++latestGroupKeywordSearch;
+  groupOrderFilters.keyword = keyword;
+  collapseKeywordExpandedClasses();
+  const expandedClassKeys = Array.from(expandedClassIds);
+  await Promise.all(expandedClassKeys.map((classId) => loadExpandedClassOrders(classId, 1)));
+  keywordMatchedClassIds.clear();
+  if (!keyword) return;
+
+  try {
+    if (!classEnrollmentData.value.length) {
+      await loadClassEnrollments();
+    }
+    const res = await fetchEnrollmentOrders({
+      keyword,
+      orderStatus: filters.orderStatus || undefined,
+      paymentStatus: filters.paymentStatus || undefined,
+      teachingMode: 'GROUP',
+      pageNum: 1,
+      // 这里只用于定位班级，使用接口允许的最大页大小，避免同一学生报名多个班时漏掉班级。
+      pageSize: 200,
+    });
+    if (requestId !== latestGroupKeywordSearch) return;
+
+    const classIds = new Set(
+      res.data.data.records
+        .map((item) => item.classId)
+        .filter((classId): classId is string | number => classId != null)
+        .map((classId) => String(classId)),
+    );
+    collapseClassExpansionsExcept(classIds);
+    classIds.forEach((classId) => keywordMatchedClassIds.add(classId));
+    if (!classIds.size) return;
+
+    await nextTick();
+    for (const row of groupFlatRows.value) {
+      if (row.rowType !== 'class' || !classIds.has(String(row.id))) continue;
+      const rowKey = String(row.id);
+      const alreadyExpanded = expandedClassIds.has(rowKey);
+      if (!alreadyExpanded) {
+        keywordExpandedClassIds.add(rowKey);
+      }
+      // 关键词切换会重建表格行，即使之前已展开也要显式恢复展开状态。
+      expandedClassIds.add(rowKey);
+      groupTableRef.value?.toggleRowExpansion(row, true);
+      await loadExpandedClassOrders(row.id, 1);
+    }
+  } catch {
+    if (requestId === latestGroupKeywordSearch) {
+      ElMessage.error('Failed to search group class enrollments.');
+    }
   }
 }
 
@@ -1929,7 +2210,7 @@ function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
   const actions: Record<OrderAction, () => void> = {
     detail: () => openDetailDialog(row),
     receipt: () => openReceipt(row),
-    pay: () => openPayDialog(row, participant),
+    pay: () => openPayDialog(row, participant, row.orderItemId),
     refund: () => openRefundDialog(row, participant),
     cancel: () => handleCancel(row),
     delete: () => openDeleteDialog(row),
@@ -2043,9 +2324,14 @@ async function openRequestedOrderAction() {
       ElMessage.warning('The selected student is not part of this enrollment order.');
       return;
     }
-    if (order.classId) {
-      activeTab.value = 'GROUP';
-    }
+    const requestedCourse = orderItemId
+      ? order.items?.find((item) => String(item.id) === orderItemId)
+      : undefined;
+    activeTab.value = requestedCourse?.courseType === 'ONE_ON_ONE'
+      ? 'ONE_ON_ONE'
+      : requestedCourse?.classId || order.classId
+        ? 'GROUP'
+        : 'ONE_ON_ONE';
     if (action === 'pay') {
       if (!canPayOrder(order, participant)) {
         ElMessage.warning('This order does not have an outstanding balance.');
@@ -2174,6 +2460,7 @@ const refundForm = reactive({
   paymentMethod: 'CASH',
   handledByName: '',
   remark: '',
+  disposition: 'CREDIT' as 'REFUND' | 'CREDIT',
 });
 const refundFormRules = {
   refundAmount: [
@@ -2199,6 +2486,7 @@ function openRefundDialog(row: EnrollmentOrderItem, participant: EnrollmentOrder
     paymentMethod: 'CASH',
     handledByName: '',
     remark: '',
+    disposition: 'CREDIT',
   });
   refundDialogVisible.value = true;
 }
@@ -2214,6 +2502,7 @@ async function handleRefundSubmit() {
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName,
       remark: refundForm.remark || undefined,
+      disposition: refundForm.disposition,
     });
     ElMessage.success('Refund completed.');
     refundDialogVisible.value = false;
@@ -2237,7 +2526,7 @@ async function openPayDialog(row: EnrollmentOrderItem,
                              targetOrderItemId?: string | number,
                              targetParticipantCourseBalance?: number) {
   let items = row.items ?? [];
-  if (items.length === 0 && !participant) {
+  if (items.length === 0) {
     try {
       items = (await fetchEnrollmentOrder(row.id)).data.data.items ?? [];
     } catch (err: any) {
@@ -2262,32 +2551,42 @@ async function openPayDialog(row: EnrollmentOrderItem,
     ? targetParticipantCourseBalance
     : null;
   const amount = payAmountDue.value;
-  const allocations: Record<string, number> = {};
-  if (targetCourse && amount > 0) {
-    allocations[String(targetCourse.id)] = amount;
-  } else if (!participant && items.length === 1) {
-    allocations[String(items[0].id)] = amount;
-  }
+  const allocations = buildDefaultAllocations(amount);
   payForm.splits = [createPaySplit(amount, allocations)];
   payDialogVisible.value = true;
 }
 
 function courseBalance(item: EnrollmentOrderLineItem) {
-  const orderItemBalance = Math.max(0, Number(item.balanceAmount ?? (Number(item.amountDue ?? 0) - Number(item.paidAmount ?? 0))));
+  const orderItemBalance = courseOutstandingBalance(item);
+  if (payTargetCourseId.value && String(item.id) !== payTargetCourseId.value) {
+    return 0;
+  }
   if (!payParticipant.value || !payTargetCourseId.value) {
     return orderItemBalance;
-  }
-  if (String(item.id) !== payTargetCourseId.value) {
-    return 0;
   }
   return payTargetCourseBalance.value == null
     ? orderItemBalance
     : Math.min(orderItemBalance, payTargetCourseBalance.value);
 }
 
+function courseOutstandingBalance(item: EnrollmentOrderLineItem) {
+  return Math.max(0, Number(item.balanceAmount ?? (Number(item.amountDue ?? 0) - Number(item.paidAmount ?? 0))));
+}
+
+function courseLabel(item: EnrollmentOrderLineItem) {
+  return item.detail || item.registerClass || `Course ${item.lineNo ?? ''}`.trim();
+}
+
 function courseAllocated(orderItemId: EntityId) {
   const key = String(orderItemId);
   return payForm.splits.reduce((total, split) => total + Number(split.allocations[key] ?? 0), 0);
+}
+
+function courseAllocationLimit(split: PaySplit, item: EnrollmentOrderLineItem) {
+  const usedByOtherSplits = payForm.splits
+    .filter((candidate) => candidate !== split)
+    .reduce((total, candidate) => total + Number(candidate.allocations[String(item.id)] || 0), 0);
+  return Math.max(0, Number((courseBalance(item) - usedByOtherSplits).toFixed(2)));
 }
 
 function splitAllocationTotal(split: PaySplit) {
@@ -2299,7 +2598,14 @@ function splitAllocationRemaining(split: PaySplit) {
 }
 
 function setSplitCourseAllocation(split: PaySplit, orderItemId: EntityId, value: number | undefined) {
-  split.allocations[String(orderItemId)] = Number(Number(value ?? 0).toFixed(2));
+  const item = payAllocatableCourseItems.value.find((candidate) => String(candidate.id) === String(orderItemId));
+  if (!item) return;
+  const amount = Math.min(courseAllocationLimit(split, item), Math.max(0, Number(value ?? 0)));
+  if (amount <= 0) {
+    delete split.allocations[String(orderItemId)];
+    return;
+  }
+  split.allocations[String(orderItemId)] = Number(amount.toFixed(2));
 }
 
 function paymentMethodName(methodCode: string) {
@@ -2515,7 +2821,13 @@ function receiptHtml(cfg: ReceiptConfig): string {
 // ─── Reload class enrollments when entering GROUP tab ──
 watch(activeTab, () => {
   if (activeTab.value === 'GROUP') {
-    loadClassEnrollments();
+    void loadClassEnrollments().then(() => {
+      if (filters.keyword.trim()) {
+        void searchGroupOrdersByKeyword(filters.keyword);
+      }
+    });
+  } else {
+    collapseKeywordExpandedClasses();
   }
 });
 
@@ -2997,6 +3309,27 @@ void initializePage();
   color: #67c23a;
   font-weight: 600;
 }
+.payment-course-summary {
+  margin: 12px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #fafafa;
+}
+.payment-course-summary__title {
+  margin-bottom: 7px;
+  color: #303133;
+  font-size: 13px;
+  font-weight: 600;
+}
+.payment-course-summary__table {
+  width: 100%;
+}
+.payment-course-summary__course {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .payment-allocation-preview {
   margin-top: 4px;
   padding: 8px 10px;
@@ -3245,6 +3578,32 @@ void initializePage();
   border: 1px solid #dce7f1;
   border-radius: 8px;
   background: #f8fbfe;
+}
+.campus-order-group + .campus-order-group {
+  margin-top: 12px;
+}
+.campus-order-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border: 1px solid #dce7f1;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  color: #294562;
+  background: #eef5fb;
+  font-size: 12px;
+}
+.campus-order-group__header span {
+  color: #6f8298;
+  font-size: 11px;
+}
+.campus-order-empty {
+  padding: 20px 12px;
+  color: #8a98a8;
+  font-size: 12px;
+  text-align: center;
 }
 .group-table :deep(.el-table__expanded-cell) {
   padding: 0 !important;

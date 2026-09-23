@@ -544,6 +544,35 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldUseCourseTransportSnapshotInsteadOfOrderTransportSnapshot() {
+        EnrollmentOrderEntity order = order(1L, "200.00", "200.00", "0.00");
+        order.setPickupRequiredSnapshot(true);
+        order.setPickupAddressSnapshot("Order-level address");
+        order.setPickupFeeAmount(new BigDecimal("30.00"));
+
+        EnrollmentOrderItemEntity pickupCourse = item(21L, 1, "100.00");
+        pickupCourse.setPickupRequiredSnapshot(true);
+        pickupCourse.setPickupAddressSnapshot("Course A address");
+        pickupCourse.setPickupFeeAmount(new BigDecimal("10.00"));
+        EnrollmentOrderItemEntity nonPickupCourse = item(22L, 2, "100.00");
+        nonPickupCourse.setPickupRequiredSnapshot(false);
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(pickupCourse, nonPickupCourse));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "200.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::pickupRequired)
+                .containsExactly(true, false);
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::pickupAddress)
+                .containsExactly("Course A address", null);
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::pickupFeeAmount)
+                .containsExactly(new BigDecimal("10.00"), new BigDecimal("0.00"));
+    }
+
+    @Test
     void shouldSplitAmountsAcrossParticipantsAndItemsWithoutDuplication() {
         EnrollmentOrderEntity order = order(1L, "200.00", "100.00", "100.00");
         EnrollmentOrderItemEntity first = item(21L, 1, "300.00");

@@ -15,6 +15,7 @@ import java.util.List;
 @Schema(description = "报名单列表项响应结构")
 public record EnrollmentOrderListItemVO(
         Long id,
+        Long orderItemId,
         String enrollmentNo,
         Long studentId,
         String studentName,
@@ -22,6 +23,7 @@ public record EnrollmentOrderListItemVO(
         String className,
         Long courseProductId,
         String courseProductName,
+        String courseType,
         Long campusId,
         String campusNameSnapshot,
         String handledByName,

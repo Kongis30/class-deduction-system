@@ -17,6 +17,8 @@ const CoursePackagesView = () => import('@/views/enrollment/CoursePackagesView.v
 const ReceiptRecordsView = () => import('@/views/enrollment/ReceiptRecordsView.vue');
 const RegistrationIntakeView = () => import('@/views/registration/RegistrationIntakeView.vue');
 const DataSummaryView = () => import('@/views/data-summary/DataSummaryView.vue');
+const StudentCreditView = () => import('@/views/finance/StudentCreditView.vue');
+const PickupDropoffListView = () => import('@/views/transport/PickupDropoffListView.vue');
 const CalendarView = () => import('@/views/schedule/CalendarView.vue');
 const RecurringScheduleView = () => import('@/views/schedule/RecurringScheduleView.vue');
 const ScheduleAdjustmentsView = () => import('@/views/schedule/ScheduleAdjustmentsView.vue');
@@ -164,6 +166,26 @@ const routes: RouteRecordRaw[] = [
           title: 'Data Summary',
           section: 'Data Summary',
           description: 'Review registrations, payments, courses, and remaining hours.',
+        },
+      },
+      {
+        path: 'student-credit',
+        name: 'student-credit',
+        component: StudentCreditView,
+        meta: {
+          title: 'Student Credit',
+          section: 'Student Credit',
+          description: 'Review available student Credit balances and their source transactions.',
+        },
+      },
+      {
+        path: 'pickup-dropoff-list',
+        name: 'pickup-dropoff-list',
+        component: PickupDropoffListView,
+        meta: {
+          title: 'Pickup / Drop-off List',
+          section: 'Pickup / Drop-off List',
+          description: 'Review transport requirements and addresses by course and class.',
         },
       },
       {

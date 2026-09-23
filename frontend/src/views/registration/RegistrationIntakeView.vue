@@ -98,6 +98,10 @@
       <div class="registration-student-picker__heading">
         <strong>{{ activeStudentName || 'Existing student' }}</strong>
         <span>Select an existing student or search by name. Leave blank for a new student.</span>
+        <span class="student-credit-balance" :class="{ 'student-credit-balance--loading': studentCreditLoading }">
+          <small>Student Credit</small>
+          <strong>{{ formatMoney(studentCreditBalance) }}</strong>
+        </span>
       </div>
       <el-select
         v-model="activeStudentPickerSelection"
@@ -203,6 +207,7 @@
             <el-input v-model="activeStudentLastName" :disabled="contactLocked" placeholder="Last name" />
           </div>
           <strong class="printed-student-name">{{ activeStudentName || '—' }}</strong>
+          <span v-if="!isPrivateAllReceiptView" class="student-credit-inline">Credit {{ formatMoney(studentCreditBalance) }}</span>
           <template v-if="!privateWorkspaceVisible || activePrivateWorkspaceTab === 1">
             <el-tag v-if="!isReadOnly && studentReuseStatus === 'existing'" size="small" type="success" class="reuse-tag">Reuse</el-tag>
             <el-tag v-else-if="!isReadOnly && studentReuseStatus === 'new'" size="small" type="info" class="reuse-tag">New</el-tag>
@@ -242,21 +247,21 @@
           </label>
         </div>
 
-        <label class="address-line">
-          <input type="checkbox" v-model="activeStudentPickupRequired" :disabled="contactLocked" />
-          <span>Pickup needed</span>
-          <el-input v-model="activeStudentPickupAddress" :disabled="contactLocked" class="line-input" />
-        </label>
-        <label class="address-line">
-          <input type="checkbox" v-model="activeStudentDropoffRequired" :disabled="contactLocked" />
-          <span>Drop-off needed</span>
-          <el-input v-model="activeStudentDropoffAddress" :disabled="contactLocked" class="line-input" />
-        </label>
       </section>
 
       <section class="payment-line">
         <span>Pay method:</span>
-        <strong class="paper-payment-summary">{{ activePaymentMethodSummary }}</strong>
+        <div class="payment-method-block">
+          <strong class="paper-payment-summary">{{ activePaymentMethodSummary }}</strong>
+          <div v-if="printablePaymentDetails.length" class="payment-details-print print-only">
+            <strong>Payment details:</strong>
+            <span
+              v-for="detail in printablePaymentDetails"
+              :key="detail.key"
+              :class="{ 'payment-detail-refund': detail.refund }"
+            >{{ detail.method }} {{ detail.refund ? '-' : '' }}{{ formatMoney(detail.amount) }}</span>
+          </div>
+        </div>
         <span class="amount-label">Amount:</span>
         <strong class="paper-payment-summary paper-payment-summary--amount">{{ formatMoney(activePaidAmount) }}</strong>
       </section>
@@ -317,7 +322,7 @@
                   <strong>{{ printCourseProductLabel(line) }}</strong>
                 </div>
                 <div v-else>
-                  <div class="course-class-cell screen-only">
+                  <div class="course-class-cell course-picker-control screen-only">
                     <el-select
                       v-model="line.courseProductId"
                       class="table-select table-select--primary"
@@ -344,6 +349,13 @@
                         />
                       </el-option-group>
                     </el-select>
+                    <button
+                      v-if="receiptEditingEnabled && !isPrivateAllReceiptView && !isRenewalMode && (line.courseProductId || courseLines.length > 1)"
+                      type="button"
+                      class="remove-row no-print"
+                      aria-label="Clear course"
+                      @click="clearOrRemoveCourseLine(index)"
+                    >×</button>
                   </div>
                   <strong class="print-only print-course-value">{{ printCourseProductLabel(line) }}</strong>
                 </div>
@@ -556,11 +568,44 @@
                   <el-input-number v-model="line.priceAmount" :min="0" :precision="2" :controls="false" class="table-price" @change="() => handlePriceChange(line)" />
                   <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
-                <button v-if="receiptEditingEnabled && !isPrivateAllReceiptView && !isRenewalMode && courseLines.length > 1" type="button" class="remove-row no-print" @click="removeCourseLine(index)">×</button>
               </td>
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <section v-if="hasPrintableTransportDetails" class="receipt-transport-summary print-only">
+        <article v-for="line in printableCourseTransportLines" :key="`print-transport-${line.rowKey}`" class="receipt-transport-summary__course">
+          <div class="receipt-transport-summary__heading">
+            <strong>{{ courseLineOptionLabel(line, courseLines.indexOf(line)) }}</strong>
+            <span>Course transport &amp; fees</span>
+          </div>
+          <div class="receipt-transport-summary__grid">
+            <div v-if="line.pickupRequired">
+              <span>Pickup address</span>
+              <strong>{{ effectiveCoursePickupAddress(line) || '—' }}</strong>
+            </div>
+            <div v-if="line.dropoffRequired">
+              <span>Drop-off address</span>
+              <strong>{{ effectiveCourseDropoffAddress(line) || '—' }}</strong>
+            </div>
+            <div v-if="line.pickupRequired && numeric(line.pickupFeeAmount) > 0">
+              <span>Pickup fee</span>
+              <strong>{{ formatMoney(line.pickupFeeAmount) }}</strong>
+            </div>
+            <div v-if="line.dropoffRequired && numeric(line.dropoffFeeAmount) > 0">
+              <span>Drop-off fee</span>
+              <strong>{{ formatMoney(line.dropoffFeeAmount) }}</strong>
+            </div>
+          </div>
+          <div v-if="line.serviceFees.some((fee) => numeric(fee.amount) > 0)" class="receipt-transport-summary__fees">
+            <span>Other fees</span>
+            <div v-for="fee in line.serviceFees.filter((item) => numeric(item.amount) > 0)" :key="`print-transport-fee-${fee.rowKey}`" class="receipt-financial-summary__row">
+              <span>{{ fee.label || 'Other fee' }}</span>
+              <b>{{ formatMoney(fee.amount) }}</b>
+            </div>
+          </div>
+        </article>
       </section>
 
       <section v-if="!isReadOnly && !isPrivateAllReceiptView" class="paper-actions no-print">
@@ -571,31 +616,61 @@
         <div class="adjustment-column adjustment-column--fees">
           <div class="adjustment-heading">
             <strong>Service & other fees</strong>
-            <span>Pickup/drop-off fees are per registration, not per student profile</span>
+            <span>Use the registration address by default, or override it for a specific course.</span>
           </div>
-          <div v-if="activeStudentPickupRequired" class="adjustment-row adjustment-row--service">
-            <label class="service-charge-toggle">
-              <input type="checkbox" v-model="form.pickupFeeCharged" />
-              <span>Charge pickup on this registration</span>
-            </label>
-            <el-input-number v-model="form.pickupFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!form.pickupFeeCharged" />
+          <div class="course-adjustment-list">
+            <article v-for="(line, lineIndex) in courseLines" :key="line.rowKey" class="course-adjustment-card course-adjustment-card--fees">
+              <header class="course-adjustment-card__header">
+                <div class="course-adjustment-card__title">
+                  <span>Course {{ lineIndex + 1 }}</span>
+                  <strong>{{ courseLineOptionLabel(line, lineIndex) }}</strong>
+                </div>
+                <span class="course-adjustment-card__context">Fees {{ formatMoney(courseFeeAmount(line, lineIndex)) }}</span>
+              </header>
+              <div class="course-service-list">
+                <div class="course-service-row">
+                  <div class="course-service-row__controls">
+                    <label class="service-charge-toggle"><input type="checkbox" v-model="line.pickupRequired" @change="syncCourseTransportFee(line, 'pickup')" /><span>Pickup needed</span></label>
+                  </div>
+                  <div class="course-service-row__fields">
+                    <div class="course-service-field">
+                      <span>Pickup address</span>
+                      <el-input v-model="line.pickupAddress" placeholder="Enter pickup address" :disabled="!line.pickupRequired" />
+                    </div>
+                    <label class="course-service-field course-service-field--amount">
+                      <span>Fee</span>
+                      <el-input-number v-model="line.pickupFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!line.pickupRequired" />
+                    </label>
+                  </div>
+                </div>
+                <div class="course-service-row">
+                  <div class="course-service-row__controls">
+                    <label class="service-charge-toggle"><input type="checkbox" v-model="line.dropoffRequired" @change="syncCourseTransportFee(line, 'dropoff')" /><span>Drop-off needed</span></label>
+                  </div>
+                  <div class="course-service-row__fields">
+                    <div class="course-service-field">
+                      <span>Drop-off address</span>
+                      <el-input v-model="line.dropoffAddress" placeholder="Enter drop-off address" :disabled="!line.dropoffRequired" />
+                    </div>
+                    <label class="course-service-field course-service-field--amount">
+                      <span>Fee</span>
+                      <el-input-number v-model="line.dropoffFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!line.dropoffRequired" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+              <div v-if="line.serviceFees.length" class="course-service-other-title">Other fees</div>
+              <div v-for="(fee, feeIndex) in line.serviceFees" :key="fee.rowKey" class="adjustment-row">
+                <el-input v-model="fee.label" placeholder="Other fee label" />
+                <el-input-number v-model="fee.amount" :min="0" :precision="2" :controls="false" />
+                <el-button v-if="line.serviceFees.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove fee" @click="removeCourseServiceFee(line, feeIndex)">×</el-button>
+              </div>
+              <footer class="course-adjustment-card__footer">
+                <el-button class="action-secondary" text @click="addCourseServiceFee(line)">Add fee</el-button>
+                <strong>Total fees {{ formatMoney(courseFeeAmount(line, lineIndex)) }}</strong>
+              </footer>
+            </article>
           </div>
-          <div v-if="activeStudentDropoffRequired" class="adjustment-row adjustment-row--service">
-            <label class="service-charge-toggle">
-              <input type="checkbox" v-model="form.dropoffFeeCharged" />
-              <span>Charge drop-off on this registration</span>
-            </label>
-            <el-input-number v-model="form.dropoffFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!form.dropoffFeeCharged" />
-          </div>
-          <div v-if="!activeStudentPickupRequired && !activeStudentDropoffRequired" class="adjustment-empty">
-            Select Pickup needed or Drop-off needed above, then explicitly choose whether to charge this registration.
-          </div>
-          <div v-for="(fee, index) in extraFees" :key="fee.rowKey" class="adjustment-row">
-            <el-input v-model="fee.label" placeholder="Other fee label" />
-            <el-input-number v-model="fee.amount" :min="0" :precision="2" :controls="false" />
-            <el-button v-if="extraFees.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove fee" @click="removeExtraFee(index)">×</el-button>
-          </div>
-          <el-button class="action-secondary" text @click="addExtraFee">Add fee</el-button>
         </div>
 
         <div class="adjustment-column adjustment-column--discounts">
@@ -616,7 +691,13 @@
                 <span class="course-adjustment-card__context">Tuition {{ formatMoney(activeCoursePrice(line)) }}</span>
               </header>
               <div v-if="discountsForCourse(line.rowKey).length" class="course-adjustment-card__lines">
-                <div v-for="discount in discountsForCourse(line.rowKey)" :key="discount.rowKey" class="course-adjustment-card__line adjustment-row">
+                <div
+                  v-for="discount in discountsForCourse(line.rowKey)"
+                  :key="discount.rowKey"
+                  class="course-adjustment-card__line adjustment-row"
+                  :class="{ 'course-adjustment-card__line--custom': isCustomDiscount(discount) }"
+                >
+                  <el-button class="remove-adjustment-row" text type="danger" aria-label="Remove discount" @click="removeActiveDiscount(discount)">×</el-button>
                   <div class="discount-preset-control">
                     <el-select v-model="discount.presetId" placeholder="Select discount" @change="applyDiscountPreset(discount)">
                       <el-option label="Custom discount" value="__custom__" />
@@ -628,6 +709,12 @@
                       />
                     </el-select>
                   </div>
+                  <el-input
+                    v-if="isCustomDiscount(discount)"
+                    v-model="discount.label"
+                    class="discount-name-input"
+                    placeholder="Discount name"
+                  />
                   <el-input-number
                     v-model="discount.amount"
                     :min="0"
@@ -635,7 +722,6 @@
                     :controls="false"
                     :disabled="!isCustomDiscount(discount)"
                   />
-                  <el-button v-if="discountsForCourse(line.rowKey).length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove discount" @click="removeActiveDiscount(discount)">×</el-button>
                 </div>
               </div>
               <p v-else class="course-adjustment-card__empty">No discounts assigned to this course.</p>
@@ -653,69 +739,135 @@
             <span>{{ activeBillingScopeLabel }}</span>
           </div>
           <div class="course-adjustment-list course-adjustment-list--payments">
-            <article v-for="(line, lineIndex) in courseLines" :key="line.rowKey" class="course-adjustment-card course-adjustment-card--payment">
+            <template v-for="(line, lineIndex) in courseLines" :key="line.rowKey">
+              <article class="course-adjustment-card course-adjustment-card--payment">
+                <header class="course-adjustment-card__header">
+                  <div class="course-adjustment-card__title">
+                    <span>Course {{ lineIndex + 1 }}</span>
+                    <strong>{{ courseLineOptionLabel(line, lineIndex) }}</strong>
+                  </div>
+                  <span class="course-adjustment-card__context">{{ formatMoney(activeCourseAmountDue(line, lineIndex)) }} due</span>
+                </header>
+                <div v-if="paymentsForCourse(line.rowKey).length" class="course-payment-list">
+                  <div
+                    v-for="(payment, paymentIndex) in paymentsForCourse(line.rowKey)"
+                    :key="payment.rowKey"
+                    class="course-payment-entry"
+                    :class="{ 'course-payment-entry--historical': payment.isHistorical }"
+                  >
+                    <div class="course-payment-entry__fields">
+                      <span class="course-payment-entry__number">
+                        Payment {{ paymentIndex + 1 }}
+                        <small v-if="payment.isHistorical">Historical</small>
+                      </span>
+                      <el-select
+                        v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
+                        v-model="payment.paymentMethod"
+                        placeholder="Method"
+                        filterable
+                        @change="normalizePaymentAmount(payment, line.rowKey)"
+                      >
+                        <el-option v-for="method in paymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
+                      </el-select>
+                      <span v-else class="course-payment-entry__history">
+                        {{ displayPaymentMethod(payment.paymentMethod) }} · {{ formatDateValue(payment.paidAt) }}
+                      </span>
+                      <div class="payment-amount-field">
+                        <el-input-number
+                          :model-value="coursePaymentAmount(payment, line.rowKey)"
+                          :min="0"
+                          :max="maxCoursePaymentAmount(payment, line.rowKey)"
+                          :precision="2"
+                          :controls="false"
+                          @input="handlePaymentInput(payment, line.rowKey, $event)"
+                          @update:model-value="setCoursePaymentAmount(payment, line.rowKey, $event)"
+                        />
+                        <span
+                        v-if="paymentLimitHint(payment)"
+                        class="payment-limit-hint"
+                        role="status"
+                      >{{ paymentLimitHint(payment) }}</span>
+                      </div>
+                      <el-date-picker
+                        v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
+                        v-model="payment.paidAt"
+                        type="date"
+                        value-format="YYYY-MM-DD"
+                        placeholder="Date"
+                      />
+                      <el-button
+                        v-if="activePaymentLines.length > 1 && canEditCoursePaymentDetails(payment, line.rowKey)"
+                        class="remove-adjustment-row"
+                        text
+                        type="danger"
+                        aria-label="Remove payment"
+                        @click="removeActivePaymentLine(payment)"
+                      >×</el-button>
+                      <el-input
+                        v-if="canEditCoursePaymentDetails(payment, line.rowKey) && isOtherPaymentMethod(payment.paymentMethod)"
+                        v-model="payment.remark"
+                        class="payment-other-method"
+                        placeholder="Describe the payment method"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <p v-else class="course-adjustment-card__empty">No payments recorded for this course.</p>
+                <div v-if="refundPaymentsForCourse(line.rowKey).length" class="course-payment-refund-list" aria-label="Refund history">
+                  <div v-for="refund in refundPaymentsForCourse(line.rowKey)" :key="refund.rowKey" class="course-payment-refund-entry">
+                    <span>Refund · {{ displayPaymentMethod(refund.paymentMethod) }} · {{ formatDateValue(refund.paidAt) }} · Read-only</span>
+                    <strong>-{{ formatMoney(Math.abs(refund.amount)) }}</strong>
+                  </div>
+                </div>
+                <footer class="course-adjustment-card__footer">
+                  <span>Paid {{ formatMoney(coursePaymentAllocationTotal(line.rowKey)) }}</span>
+                  <span v-if="courseRefundAmount(line.rowKey) > 0" class="course-payment-refund-total">
+                    Refunded {{ formatMoney(courseRefundAmount(line.rowKey)) }}
+                  </span>
+                  <el-button class="action-secondary" text @click="addActivePaymentLine(line.rowKey)">Add payment</el-button>
+                  <strong>Balance {{ formatMoney(activeCourseAmountDue(line, lineIndex) - coursePaymentAllocationTotal(line.rowKey)) }}</strong>
+                </footer>
+              </article>
+            </template>
+            <article
+              v-if="creditTopUpAmount > 0"
+              class="course-adjustment-card course-adjustment-card--payment course-adjustment-card--credit-payment"
+              :class="{ 'course-adjustment-card--readonly': isReadOnly }"
+            >
               <header class="course-adjustment-card__header">
                 <div class="course-adjustment-card__title">
-                  <span>Course {{ lineIndex + 1 }}</span>
-                  <strong>{{ courseLineOptionLabel(line, lineIndex) }}</strong>
+                  <span>Student Credit</span>
+                  <strong>Credit top-up</strong>
                 </div>
-                <span class="course-adjustment-card__context">{{ formatMoney(activeCourseAmountDue(line, lineIndex)) }} due</span>
+                <span class="course-adjustment-card__context">{{ formatMoney(creditTopUpAmount) }} to store</span>
               </header>
-              <div v-if="paymentsForCourse(line.rowKey).length" class="course-payment-list">
-                <div v-for="(payment, paymentIndex) in paymentsForCourse(line.rowKey)" :key="payment.rowKey" class="course-payment-entry">
+              <div class="course-payment-list">
+                <div class="course-payment-entry">
                   <div class="course-payment-entry__fields">
-                    <span class="course-payment-entry__number">Payment {{ paymentIndex + 1 }}</span>
-                    <el-select
-                      v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
-                      v-model="payment.paymentMethod"
-                      placeholder="Method"
-                      filterable
-                    >
-                      <el-option v-for="method in paymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
+                    <span class="course-payment-entry__number">Credit payment</span>
+                    <el-select v-model="creditTopUpPayment.paymentMethod" placeholder="Method" filterable :disabled="isReadOnly">
+                      <el-option v-for="method in realPaymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
                     </el-select>
-                    <span v-else class="course-payment-entry__history">
-                      {{ displayPaymentMethod(payment.paymentMethod) }} · {{ formatDateValue(payment.paidAt) }}
-                    </span>
-                    <el-input-number
-                      :model-value="coursePaymentAmount(payment, line.rowKey)"
-                      :min="0"
-                      :precision="2"
-                      :controls="false"
-                      @update:model-value="setCoursePaymentAmount(payment, line.rowKey, $event)"
-                    />
-                    <el-date-picker
-                      v-if="canEditCoursePaymentDetails(payment, line.rowKey)"
-                      v-model="payment.paidAt"
-                      type="date"
-                      value-format="YYYY-MM-DD"
-                      placeholder="Date"
-                    />
-                    <el-button
-                      v-if="activePaymentLines.length > 1 && canEditCoursePaymentDetails(payment, line.rowKey)"
-                      class="remove-adjustment-row"
-                      text
-                      type="danger"
-                      aria-label="Remove payment"
-                      @click="removeActivePaymentLine(payment)"
-                    >×</el-button>
+                    <el-input-number :model-value="creditTopUpAmount" :min="0" :precision="2" :controls="false" disabled />
+                    <el-date-picker v-model="creditTopUpPayment.paidAt" type="date" value-format="YYYY-MM-DD" placeholder="Date" :disabled="isReadOnly" />
                     <el-input
-                      v-if="canEditCoursePaymentDetails(payment, line.rowKey) && isOtherPaymentMethod(payment.paymentMethod)"
-                      v-model="payment.remark"
+                      v-if="isOtherPaymentMethod(creditTopUpPayment.paymentMethod)"
+                      v-model="creditTopUpPayment.remark"
                       class="payment-other-method"
                       placeholder="Describe the payment method"
+                      :disabled="isReadOnly"
                     />
                   </div>
                 </div>
               </div>
-              <p v-else class="course-adjustment-card__empty">No payments recorded for this course.</p>
               <footer class="course-adjustment-card__footer">
-                <span>Paid {{ formatMoney(coursePaymentAllocationTotal(line.rowKey)) }}</span>
-                <el-button class="action-secondary" text @click="addActivePaymentLine(line.rowKey)">Add payment</el-button>
-                <strong>Balance {{ formatMoney(activeCourseAmountDue(line, lineIndex) - coursePaymentAllocationTotal(line.rowKey)) }}</strong>
+                <span>Paid {{ formatMoney(creditTopUpAmount) }}</span>
+                <strong>Credit {{ formatMoney(creditTopUpAmount) }}</strong>
               </footer>
             </article>
           </div>
         </div>
+
       </section>
 
       <section class="receipt-financial-summary print-only">
@@ -754,16 +906,41 @@
         <div class="receipt-financial-summary__column receipt-financial-summary__column--totals">
           <strong>Payment summary</strong>
           <div class="receipt-financial-summary__row">
-            <span>Amount due</span>
-            <b>{{ formatMoney(amountDue) }}</b>
+            <span>Total amount due</span>
+            <b>{{ formatMoney(printTotalAmountDue) }}</b>
           </div>
-          <div class="receipt-financial-summary__row">
+          <div class="receipt-financial-summary__row receipt-financial-summary__row--paid">
             <span>Paid</span>
-            <b>{{ formatMoney(paidAmount) }}</b>
+            <b>{{ formatMoney(printPaidThisTime) }}</b>
+          </div>
+          <div v-if="refundTotalAmount > 0" class="receipt-financial-summary__row receipt-financial-summary__row--refund">
+            <span>Refunded</span>
+            <b>-{{ formatMoney(refundTotalAmount) }}</b>
           </div>
           <div class="receipt-financial-summary__row receipt-financial-summary__row--balance">
             <span>Balance due</span>
-            <b>{{ formatMoney(Math.max(0, balanceAmount)) }}</b>
+            <b>{{ printBalanceDueLabel }}</b>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="printableCreditTopUpAmount > 0" class="receipt-credit-summary print-only">
+        <div class="receipt-credit-summary__heading">
+          <strong>Student Credit</strong>
+          <span>Stored balance deposit</span>
+        </div>
+        <div class="receipt-credit-summary__grid">
+          <div>
+            <span>Credit added</span>
+            <strong>{{ formatMoney(printableCreditTopUpAmount) }}</strong>
+          </div>
+          <div>
+            <span>Payment method</span>
+            <strong>{{ printableCreditTopUpPayment?.paymentMethod ? displayPaymentMethod(printableCreditTopUpPayment.paymentMethod) : 'Not recorded' }}</strong>
+          </div>
+          <div>
+            <span>Paid date</span>
+            <strong>{{ formatDateValue(printableCreditTopUpPayment?.paidAt) }}</strong>
           </div>
         </div>
       </section>
@@ -774,20 +951,43 @@
       </section>
 
       <section class="policies">
-        <div class="policy-copy">
-          <p><strong>退款政策 / Refund Policy</strong></p>
-          <p>开课前退还50%，其余转为学费抵用金；开课后不退，剩余学费转为抵用金。</p>
-          <p>Before class starts: 50% refund; remaining becomes tuition credit.</p>
-          <p>After class starts: No refund; remaining becomes credit for future courses.</p>
-          <p><strong>停课政策 / Course Suspension Policy</strong></p>
-          <p>课程中途如需停课，需支付$50手续费，剩余学费转为学费抵用金。</p>
-          <p>Mid-course Suspension: $50 fee; remaining tuition becomes credit.</p>
-          <p><strong>材料政策 / Material Policy</strong></p>
-          <p>首次报名含全套教材。如有遗失，每本需支付$10重新打印教材。</p>
-          <p>Materials included. If lost, each item requires a $10 reprint fee.</p>
-          <p><strong>纪律政策 / Discipline Policy</strong></p>
-          <p>学生须遵守校规。如有三次以上严重违纪（如扰乱课堂、霸凌等），将被劝退。</p>
-          <p>Students must follow rules. 3 serious violations may lead to dismissal.</p>
+        <div class="policies-layout">
+          <div class="policy-copy">
+            <p><strong>退款政策 / Refund Policy</strong></p>
+            <p>开课前退还50%，其余转为学费抵用金；开课后不退，剩余学费转为抵用金。</p>
+            <p>Before class starts: 50% refund; remaining becomes tuition credit.</p>
+            <p>After class starts: No refund; remaining becomes credit for future courses.</p>
+            <p><strong>停课政策 / Course Suspension Policy</strong></p>
+            <p>课程中途如需停课，需支付$50手续费，剩余学费转为学费抵用金。</p>
+            <p>Mid-course Suspension: $50 fee; remaining tuition becomes credit.</p>
+            <p><strong>材料政策 / Material Policy</strong></p>
+            <p>首次报名含全套教材。如有遗失，每本需支付$10重新打印教材。</p>
+            <p>Materials included. If lost, each item requires a $10 reprint fee.</p>
+            <p><strong>纪律政策 / Discipline Policy</strong></p>
+            <p>学生须遵守校规。如有三次以上严重违纪（如扰乱课堂、霸凌等），将被劝退。</p>
+            <p>Students must follow rules. 3 serious violations may lead to dismissal.</p>
+          </div>
+          <section v-if="receiptEditingEnabled && !isPrivateAllReceiptView" class="credit-top-up-compact no-print">
+            <div class="credit-top-up-compact__header">
+              <div>
+                <span class="section-kicker">Stored balance</span>
+                <strong>Student Credit</strong>
+              </div>
+              <span>Current {{ formatMoney(studentCreditBalance) }}</span>
+            </div>
+            <p>Deposit money now and use it on a future registration.</p>
+            <label class="credit-top-up-compact__input">
+              <span>Top-up amount</span>
+              <el-input-number
+                v-model="creditTopUpAmount"
+                :min="0"
+                :precision="2"
+                :controls="false"
+                :disabled="isReadOnly"
+              />
+            </label>
+            <strong class="credit-top-up-compact__summary">Adds {{ formatMoney(creditTopUpAmount) }} to Credit</strong>
+          </section>
         </div>
       </section>
     </section>
@@ -802,12 +1002,19 @@
           <small>Paid</small>
           <strong>{{ formatMoney(paidAmount) }}</strong>
         </span>
+        <span v-if="refundTotalAmount > 0" class="fee-totals__refund">
+          <small>Refunded</small>
+          <strong>-{{ formatMoney(refundTotalAmount) }}</strong>
+        </span>
         <span :class="['balance-pill', { 'balance-pill--due': hasOutstandingBalance, 'balance-pill--paid': isPaidInFull }]">
           <small>Balance</small>
           <strong>{{ balanceLabel }}</strong>
         </span>
+        <em v-if="unallocatedPaymentAmount > 0" class="fee-totals__warning">
+          {{ formatMoney(unallocatedPaymentAmount) }} payment is not assigned to a course.
+        </em>
         <em v-if="hasOutstandingBalance">Balance due. Record the remaining payment from student history later.</em>
-        <em v-else-if="isPaidInFull">Paid in full.</em>
+        <em v-else-if="isPaidInFull && unallocatedPaymentAmount === 0">Paid in full.</em>
       </div>
       <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.handledByName" placeholder="Handled by" class="handled-by" />
       <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
@@ -827,6 +1034,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { fetchActiveCoursePriceOptions, fetchAllStudents, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
 import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
 import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult, type RegistrationParticipantBillingPayload } from '@/api/enrollment';
+import { fetchStudentCreditBalance } from '@/api/student-credit';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
 import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
@@ -885,6 +1093,15 @@ interface RegistrationCourseLine {
   groupPurchasedMonths?: number;
   groupRegistrationStartMonth?: string;
   groupRegistrationEndMonth?: string;
+  pickupRequired: boolean;
+  pickupAddress: string;
+  dropoffRequired: boolean;
+  dropoffAddress: string;
+  pickupFeeCharged: boolean;
+  pickupFeeAmount: number;
+  dropoffFeeCharged: boolean;
+  dropoffFeeAmount: number;
+  serviceFees: MoneyLine[];
   remark?: string;
 }
 
@@ -907,6 +1124,9 @@ interface PaymentLine {
   paymentMethod: string;
   amount: number;
   paidAt: string;
+  isCreditTopUp?: boolean;
+  /** 历史流水标记：编辑收据时仍允许修改正向付款，但退款流水保持只读。 */
+  isHistorical?: boolean;
   courseRowKey?: string;
   participantIndex?: number;
   handledByName?: string;
@@ -1022,6 +1242,8 @@ const submitting = ref(false);
 const showTaxIdOnForm = ref(false);
 const receiptTaxId = ref('');
 let rowSeed = 0;
+const paymentLimitHints = reactive<Record<string, string>>({});
+const paymentLimitHintTimers = new Map<string, number>();
 const courseLines = ref<RegistrationCourseLine[]>([createCourseLine()]);
 const privateParticipantCount = ref(1);
 const privateParticipantForms = ref<PrivateParticipantForm[]>([]);
@@ -1030,6 +1252,21 @@ const privateParticipantPriceSnapshots = ref<Array<number | undefined>>([]);
 const extraFees = ref<MoneyLine[]>([createMoneyLine('Other fee')]);
 const discounts = ref<DiscountLine[]>([createDiscountLine()]);
 const payments = ref<PaymentLine[]>([createPaymentLine(courseLines.value[0]?.rowKey)]);
+const creditTopUpAmount = ref(0);
+const creditTopUpPayment = ref<PaymentLine>(createPaymentLine());
+creditTopUpPayment.value.isCreditTopUp = true;
+// 历史混合报名单的 Credit 充值属于独立交易，编辑课程时不能回填到可编辑付款行，
+// 但打印收据仍需展示这笔充值。单独保存打印快照，避免保存更正时重复创建充值。
+const historicalCreditTopUpAmount = ref(0);
+const historicalCreditTopUpPayment = ref<PaymentLine | null>(null);
+const printableCreditTopUpAmount = computed(() => creditTopUpAmount.value > 0
+  ? roundMoney(creditTopUpAmount.value)
+  : roundMoney(historicalCreditTopUpAmount.value));
+const printableCreditTopUpPayment = computed<PaymentLine | null>(() => creditTopUpAmount.value > 0
+  ? creditTopUpPayment.value
+  : historicalCreditTopUpPayment.value);
+const studentCreditBalance = ref(0);
+const studentCreditLoading = ref(false);
 const printedOrderId = ref<string | null>(null);
 const activePrivateWorkspaceTab = ref<PrivateWorkspaceTab>('all');
 const participantBillings = ref<ParticipantBillingForm[]>([]);
@@ -1081,6 +1318,15 @@ const courseSetupHint = computed(() => courseProducts.value.length === 0
     : 'No active price is available for this course. Ask an administrator to update Back office setup.'));
 
 const hasOneOnOneLine = computed(() => courseLines.value.some(isOneOnOneLine));
+const hasSelectedCourse = computed(() => courseLines.value.some((line) => Boolean(line.courseProductId || line.coursePriceOptionId)));
+// 充值金额大于 0 且尚未选课时，提交独立充值订单；选课后同一次提交拆成课程订单和充值订单。
+const isCreditTopUpOnly = computed(() => creditTopUpAmount.value > 0 && !hasSelectedCourse.value);
+// 历史纯充值单的 Credit 已写入独立台账，编辑收据时不能再次提交付款流水。
+// 这里同时检查历史金额，避免用户在编辑界面把充值金额改成 0 后仍被识别成课程收据。
+const isStandaloneCreditTopUpReceipt = computed(() =>
+  !hasSelectedCourse.value
+  && (creditTopUpAmount.value > 0 || historicalCreditTopUpAmount.value > 0),
+);
 const isSharedPrivateLesson = computed(() => hasOneOnOneLine.value && privateParticipantCount.value > 1);
 // 只有 1-on-2 / 1-on-3 才需要多人工作区；1-on-1 沿用原来的单学生注册表。
 const privateWorkspaceVisible = computed(() => isSharedPrivateLesson.value);
@@ -1174,6 +1420,7 @@ const activeStudentPickerSelection = computed<EntityId | ''>({
 const activeStudentPickerLoading = computed(() => {
   return studentPickerLoading.value;
 });
+const realPaymentMethods = computed(() => paymentMethods.value.filter((method) => method.methodCode !== 'STUDENT_CREDIT'));
 const activeStudentPickerPlaceholder = computed(() => {
   const name = activeStudentName.value;
   if (name) {
@@ -1221,9 +1468,9 @@ const privateParticipantReceiptRows = computed(() => {
       ? privateParticipantPriceSnapshots.value[index]!
       : roundMoney(courseLines.value.reduce((total, line) => total + participantCoursePrice(line, index), 0));
     const discount = sumNumbers(billing?.discounts.map((item) => item.amount) ?? []);
-    const participantFees = index === 0 ? serviceFeeTotal.value + extraFeeTotal.value : 0;
+    const participantFees = index === 0 ? serviceFeeTotal.value + courseServiceExtraFeeTotal.value : 0;
     const amountDue = Math.max(0, roundMoney(grossPrice + participantFees - discount));
-    const paid = sumNumbers(billing?.payments.map((item) => item.amount) ?? []);
+    const paid = appliedPaymentAmountForLines(billing?.payments ?? []);
     return {
     key: `receipt-participant-${index}`,
     name,
@@ -1243,14 +1490,70 @@ const courseSubtotal = computed(() => sumNumbers(courseLines.value.map((line) =>
   return courseAggregatePrice(line);
 })));
 const extraFeeTotal = computed(() => sumNumbers(extraFees.value.map((line) => line.amount)));
-const effectivePickupFeeAmount = computed(() => form.pickupFeeCharged ? roundMoney(form.pickupFeeAmount) : 0);
-const effectiveDropoffFeeAmount = computed(() => form.dropoffFeeCharged ? roundMoney(form.dropoffFeeAmount) : 0);
+const hasExplicitCourseFees = computed(() => courseLines.value.some((line) =>
+  line.pickupRequired || line.dropoffRequired
+  || line.serviceFees.some((fee) => numeric(fee.amount) > 0)));
+const effectivePickupFeeAmount = computed(() => hasExplicitCourseFees.value
+  ? roundMoney(courseLines.value.reduce((total, line) => total + (line.pickupRequired ? numeric(line.pickupFeeAmount) : 0), 0))
+  : form.student.pickupRequired ? roundMoney(form.pickupFeeAmount) : 0);
+const effectiveDropoffFeeAmount = computed(() => hasExplicitCourseFees.value
+  ? roundMoney(courseLines.value.reduce((total, line) => total + (line.dropoffRequired ? numeric(line.dropoffFeeAmount) : 0), 0))
+  : form.student.dropoffRequired ? roundMoney(form.dropoffFeeAmount) : 0);
+const courseServiceExtraFeeTotal = computed(() => hasExplicitCourseFees.value
+  ? roundMoney(courseLines.value.reduce((total, line) => total + sumNumbers(line.serviceFees.map((fee) => fee.amount)), 0))
+  : extraFeeTotal.value);
 const serviceFeeTotal = computed(() => roundMoney(effectivePickupFeeAmount.value + effectiveDropoffFeeAmount.value));
-const discountableAmount = computed(() => roundMoney(courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value));
+const discountableAmount = computed(() => roundMoney(courseSubtotal.value + serviceFeeTotal.value + courseServiceExtraFeeTotal.value));
+const printableCourseTransportLines = computed(() => courseLines.value.filter((line) =>
+  line.pickupRequired
+  || line.dropoffRequired
+  || line.serviceFees.some((fee) => numeric(fee.amount) > 0)));
+const hasPrintableTransportDetails = computed(() => printableCourseTransportLines.value.length > 0);
 const participantDiscountTotal = computed(() => participantBillings.value
   .reduce((total, billing) => total + sumNumbers(billing.discounts.map((line) => line.amount)), 0));
 const participantPaidAmount = computed(() => participantBillings.value
-  .reduce((total, billing) => total + sumNumbers(billing.payments.map((line) => line.amount)), 0));
+  .reduce((total, billing) => total + appliedPaymentAmountForLines(billing.payments), 0));
+
+function effectiveCoursePickupAddress(line: RegistrationCourseLine) {
+  return line.pickupAddress.trim();
+}
+
+function effectiveCourseDropoffAddress(line: RegistrationCourseLine) {
+  return line.dropoffAddress.trim();
+}
+
+/**
+ * 多课程报名的订单已付金额按课程分摊统计；付款流水原始金额只代表实际收款交易。
+ * 这样历史上存在“收款总额大于课程分摊”的数据时，不会把未分配金额误算成 Credit。
+ */
+// 底部 Paid 表示真实收款流水净额（正向付款减退款）；课程卡片的 Paid 则使用下面的分摊金额。
+// 一笔历史付款可能暂时没有 courseAllocations，但仍然是已收到的钱，不能从整单 Paid 中漏掉。
+function isRefundPayment(payment: PaymentLine) {
+  return payment.paymentType === 'REFUND' || numeric(payment.amount) < 0;
+}
+
+function netPaymentAmount(payment: PaymentLine) {
+  const amount = Math.abs(numeric(payment.amount));
+  return isRefundPayment(payment) ? -amount : amount;
+}
+
+const paymentTotalAmount = computed(() => roundMoney(payments.value.reduce(
+  (total, payment) => total + netPaymentAmount(payment),
+  0,
+)));
+const unallocatedPaymentAmount = computed(() => {
+  if (courseLines.value.length <= 1) {
+    return 0;
+  }
+  return roundMoney(payments.value.reduce((total, payment) => {
+    if (payment.isHistorical) {
+      return total;
+    }
+    const rawAmount = numeric(payment.amount);
+    const appliedAmount = paymentAppliedAmount(payment);
+    return total + Math.max(0, rawAmount - appliedAmount);
+  }, 0));
+});
 const receiptPaymentRows = computed(() => {
   if (!isSharedPrivateLesson.value) {
     return payments.value;
@@ -1264,15 +1567,51 @@ const receiptPaymentRows = computed(() => {
     participantIndex: billing.participantIndex,
   })));
 });
+const printTotalAmountDue = computed(() => amountDue.value);
+const printPaidThisTime = computed(() => paidAmount.value);
+const printBalanceDue = computed(() => balanceAmount.value);
+const printBalanceDueLabel = computed(() => printBalanceDue.value < 0
+  ? `Credit ${formatMoney(Math.abs(printBalanceDue.value))}`
+  : formatMoney(printBalanceDue.value));
+const creditPaymentAmount = computed(() => {
+  const lines = isSharedPrivateLesson.value
+    ? participantBillings.value.flatMap((billing) => billing.payments)
+    : payments.value;
+  return roundMoney(lines.reduce((total, payment) => {
+    if (payment.paymentMethod !== 'STUDENT_CREDIT' || numeric(payment.amount) <= 0) {
+      return total;
+    }
+    return total + numeric(payment.amount);
+  }, 0));
+});
 const discountTotal = computed(() => isSharedPrivateLesson.value
   ? roundMoney(participantDiscountTotal.value)
   : sumNumbers(discounts.value.map((line) => line.amount)));
-const paidAmount = computed(() => isSharedPrivateLesson.value
-  ? roundMoney(participantPaidAmount.value)
-  : sumNumbers(payments.value.map((line) => line.amount)));
+const paidCourseAmount = computed(() => isCreditTopUpOnly.value
+  ? 0
+  : isSharedPrivateLesson.value
+    ? roundMoney(participantPaidAmount.value)
+    : paymentTotalAmount.value);
+const paidAmount = computed(() => isCreditTopUpOnly.value && historicalCreditTopUpAmount.value > 0
+  // 历史纯 Credit 收据的付款流水本身包含充值和可能的退款，不能再次用充值金额覆盖净支付额。
+  ? paymentTotalAmount.value
+  : roundMoney(paidCourseAmount.value + printableCreditTopUpAmount.value));
+const refundTotalAmount = computed(() => {
+  const lines = isSharedPrivateLesson.value
+    ? participantBillings.value.flatMap((billing) => billing.payments)
+    : payments.value;
+  return roundMoney(lines.reduce((total, payment) => (
+    isRefundPayment(payment) ? total + Math.abs(numeric(payment.amount)) : total
+  ), 0));
+});
 const paymentMethodSummary = computed(() => {
+  if (isCreditTopUpOnly.value) {
+    return creditTopUpPayment.value.paymentMethod
+      ? displayPaymentMethod(creditTopUpPayment.value.paymentMethod)
+      : 'Not recorded';
+  }
   const methodCodes = Array.from(new Set(receiptPaymentRows.value
-    .filter((payment) => payment.amount > 0 && Boolean(payment.paymentMethod))
+    .filter((payment) => !isRefundPayment(payment) && payment.amount > 0 && Boolean(payment.paymentMethod))
     .map((payment) => payment.paymentMethod)));
   if (methodCodes.length === 0) {
     return 'Not recorded';
@@ -1281,6 +1620,33 @@ const paymentMethodSummary = computed(() => {
     return 'Mixed';
   }
   return paymentMethods.value.find((method) => method.methodCode === methodCodes[0])?.methodName ?? methodCodes[0];
+});
+const printablePaymentDetails = computed(() => {
+  const totals = new Map<string, { method: string; amount: number; refund: boolean }>();
+  const addPayment = (paymentMethod: string | undefined, amount: number, refund = false) => {
+    if (Math.abs(amount) <= 0) return;
+    const method = paymentMethod ? displayPaymentMethod(paymentMethod) : 'Not recorded';
+    const key = `${refund ? 'refund' : 'payment'}:${method}`;
+    const current = totals.get(key);
+    totals.set(key, {
+      method: refund ? `Refund · ${method}` : method,
+      amount: roundMoney((current?.amount ?? 0) + Math.abs(amount)),
+      refund,
+    });
+  };
+
+  // Credit-only receipts keep the top-up payment outside the course payment rows.
+  if (!isCreditTopUpOnly.value) {
+    receiptPaymentRows.value.forEach((payment) => addPayment(
+      payment.paymentMethod,
+      numeric(payment.amount),
+      isRefundPayment(payment),
+    ));
+  }
+  if (printableCreditTopUpAmount.value > 0) {
+    addPayment(printableCreditTopUpPayment.value?.paymentMethod, printableCreditTopUpAmount.value);
+  }
+  return Array.from(totals, ([key, detail]) => ({ key, ...detail }));
 });
 const activeParticipantBilling = computed(() => {
   const index = activePrivateParticipantIndex.value;
@@ -1291,13 +1657,13 @@ const activeParticipantBilling = computed(() => {
 const activeDiscountLines = computed(() => activeParticipantBilling.value?.discounts ?? discounts.value);
 const activePaymentLines = computed(() => {
   const lines = activeParticipantBilling.value?.payments ?? payments.value;
-  return lines.filter((payment) => payment.amount >= 0);
+  return lines.filter((payment) => !isRefundPayment(payment));
 });
 const activeBillingScopeLabel = computed(() => activeParticipantBilling.value
   ? `${privateWorkspaceTabLabel(activeParticipantBilling.value.participantIndex)} only`
   : 'Applied to this receipt');
 const activePaidAmount = computed(() => activeParticipantBilling.value
-  ? sumNumbers(activeParticipantBilling.value.payments.map((payment) => payment.amount))
+  ? appliedPaymentAmountForLines(activeParticipantBilling.value.payments)
   : paidAmount.value);
 const activePaymentMethodSummary = computed(() => {
   const billingPayments = activeParticipantBilling.value?.payments;
@@ -1305,7 +1671,7 @@ const activePaymentMethodSummary = computed(() => {
     return paymentMethodSummary.value;
   }
   const methodCodes = Array.from(new Set(billingPayments
-    .filter((payment) => payment.amount > 0 && Boolean(payment.paymentMethod))
+    .filter((payment) => !isRefundPayment(payment) && payment.amount > 0 && Boolean(payment.paymentMethod))
     .map((payment) => payment.paymentMethod)));
   if (methodCodes.length === 0) {
     return 'Not recorded';
@@ -1318,7 +1684,10 @@ const activePaymentMethodSummary = computed(() => {
 const paymentParticipantLabel = (payment: PaymentLine) => payment.participantIndex
   ? privateWorkspaceTabLabel(payment.participantIndex)
   : '';
-const amountDue = computed(() => Math.max(0, roundMoney(courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value - discountTotal.value)));
+const courseRegistrationAmountDue = computed(() => Math.max(0, roundMoney(
+  courseSubtotal.value + serviceFeeTotal.value + courseServiceExtraFeeTotal.value - discountTotal.value,
+)));
+const amountDue = computed(() => roundMoney(courseRegistrationAmountDue.value + printableCreditTopUpAmount.value));
 const balanceAmount = computed(() => roundMoney(amountDue.value - paidAmount.value));
 const balanceLabel = computed(() => {
   if (balanceAmount.value < 0) {
@@ -1328,7 +1697,8 @@ const balanceLabel = computed(() => {
 });
 const hasOutstandingBalance = computed(() => balanceAmount.value > 0);
 const isPaidInFull = computed(() => amountDue.value > 0 && balanceAmount.value === 0);
-const currentStudentContextId = computed(() => reusableStudent.value?.id);
+const currentStudentContextId = computed(() => reusableStudent.value?.id ?? historicalPrimaryStudentId.value);
+const selectedStudentCreditId = computed(() => reusableStudent.value?.id ?? historicalPrimaryStudentId.value);
 const fullStudentName = computed(() => [form.student.firstName, form.student.lastName]
   .map((part) => part.trim())
   .filter(Boolean)
@@ -1366,19 +1736,13 @@ const activeStudentLastName = computed({
   set: (value: string) => updateActiveParticipantName(activeStudentFirstName.value, value),
 });
 
-type ActiveStudentStringField = 'grade' | 'school' | 'guardianPhone' | 'guardianPhone2' | 'pickupAddress' | 'dropoffAddress';
+type ActiveStudentStringField = 'grade' | 'school' | 'guardianPhone' | 'guardianPhone2';
 function createActiveStudentStringField(field: ActiveStudentStringField) {
   return computed({
     get: () => activePrivateParticipant.value?.[field] ?? form.student[field],
     set: (value: string) => {
       if (activePrivateParticipant.value) {
         activePrivateParticipant.value[field] = value;
-        if (field === 'pickupAddress' && value.trim()) {
-          activePrivateParticipant.value.pickupRequired = true;
-        }
-        if (field === 'dropoffAddress' && value.trim()) {
-          activePrivateParticipant.value.dropoffRequired = true;
-        }
       } else {
         form.student[field] = value;
       }
@@ -1390,28 +1754,6 @@ const activeStudentGrade = createActiveStudentStringField('grade');
 const activeStudentSchool = createActiveStudentStringField('school');
 const activeStudentGuardianPhone = createActiveStudentStringField('guardianPhone');
 const activeStudentGuardianPhone2 = createActiveStudentStringField('guardianPhone2');
-const activeStudentPickupAddress = createActiveStudentStringField('pickupAddress');
-const activeStudentDropoffAddress = createActiveStudentStringField('dropoffAddress');
-const activeStudentPickupRequired = computed({
-  get: () => activePrivateParticipant.value?.pickupRequired ?? form.student.pickupRequired,
-  set: (value: boolean) => {
-    if (activePrivateParticipant.value) {
-      activePrivateParticipant.value.pickupRequired = value;
-    } else {
-      form.student.pickupRequired = value;
-    }
-  },
-});
-const activeStudentDropoffRequired = computed({
-  get: () => activePrivateParticipant.value?.dropoffRequired ?? form.student.dropoffRequired,
-  set: (value: boolean) => {
-    if (activePrivateParticipant.value) {
-      activePrivateParticipant.value.dropoffRequired = value;
-    } else {
-      form.student.dropoffRequired = value;
-    }
-  },
-});
 const studentLookupQuery = computed(() => ({
   keyword: fullStudentName.value || undefined,
   guardian: form.student.guardianPhone.trim() || undefined,
@@ -1443,29 +1785,17 @@ watch(() => form.student.dropoffAddress, (value) => {
 });
 
 watch(() => form.student.pickupRequired, (pickupRequired) => {
+  form.pickupFeeCharged = pickupRequired;
   if (!pickupRequired) {
-    form.pickupFeeCharged = false;
-    form.pickupFeeAmount = 0;
-  }
-});
-
-watch(() => form.student.dropoffRequired, (dropoffRequired) => {
-  if (!dropoffRequired) {
-    form.dropoffFeeCharged = false;
-    form.dropoffFeeAmount = 0;
-  }
-});
-
-watch(() => form.pickupFeeCharged, (charged) => {
-  if (!charged) {
     form.pickupFeeAmount = 0;
   } else if (!isReadOnly.value && form.pickupFeeAmount === 0) {
     form.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
   }
 });
 
-watch(() => form.dropoffFeeCharged, (charged) => {
-  if (!charged) {
+watch(() => form.student.dropoffRequired, (dropoffRequired) => {
+  form.dropoffFeeCharged = dropoffRequired;
+  if (!dropoffRequired) {
     form.dropoffFeeAmount = 0;
   } else if (!isReadOnly.value && form.dropoffFeeAmount === 0) {
     form.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
@@ -1476,12 +1806,16 @@ watch(() => form.campusKey, () => {
   if (isReadOnly.value) {
     return;
   }
-  if (form.pickupFeeCharged) {
+  if (form.student.pickupRequired) {
     form.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
   }
-  if (form.dropoffFeeCharged) {
+  if (form.student.dropoffRequired) {
     form.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
   }
+});
+
+watch(selectedStudentCreditId, () => {
+  void refreshStudentCreditBalance();
 });
 
 watch(
@@ -1533,7 +1867,19 @@ async function loadInitialData() {
     ]);
     campuses.value = campusRes.data.data ?? [];
     teachers.value = teacherRes.data.data ?? [];
-    paymentMethods.value = paymentRes.data.data ?? [];
+    // 支付方式保持后台配置顺序，Student Credit 固定放到最后；新付款行留空，交由用户主动选择。
+    const configuredPaymentMethods = paymentRes.data.data ?? [];
+    const studentCreditMethod = configuredPaymentMethods.find((method) => method.methodCode === 'STUDENT_CREDIT') ?? {
+      id: 'student-credit',
+      methodCode: 'STUDENT_CREDIT',
+      methodName: 'Student Credit',
+      sortOrder: 999,
+      status: 'ACTIVE',
+    };
+    paymentMethods.value = [
+      ...configuredPaymentMethods.filter((method) => method.methodCode !== 'STUDENT_CREDIT'),
+      studentCreditMethod,
+    ];
     priceOptions.value = optionRes.data.data ?? [];
     courseProducts.value = productRes.data.data.records ?? [];
     classGroups.value = classRes.data.data ?? [];
@@ -1543,11 +1889,26 @@ async function loadInitialData() {
     void loadCourseCategoryLabels();
     // 校区默认留空，交由用户主动选择（提交时 validateForm 校验已拦截未选校区的提交）。
     // 编辑既有订单(loadHistoricalOrder) / 续费(loadRenewalRegistration) / 预览学生(loadExistingStudent) 仍会按数据带出校区。
-    if (paymentMethods.value.length > 0) {
-      payments.value[0].paymentMethod = paymentMethods.value[0].methodCode;
-    }
+    creditTopUpPayment.value.paymentMethod = '';
+    creditTopUpPayment.value.paidAt = today;
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
+  }
+}
+
+async function refreshStudentCreditBalance() {
+  const studentId = selectedStudentCreditId.value;
+  if (!studentId) {
+    studentCreditBalance.value = 0;
+    return;
+  }
+  studentCreditLoading.value = true;
+  try {
+    studentCreditBalance.value = Number((await fetchStudentCreditBalance(studentId)).data.data ?? 0);
+  } catch {
+    studentCreditBalance.value = 0;
+  } finally {
+    studentCreditLoading.value = false;
   }
 }
 
@@ -1661,6 +2022,14 @@ async function saveCorrection() {
 
 function buildCorrectionPayload(): EnrollmentOrderCorrectionPayload {
   const payload = buildPayload();
+  if (isStandaloneCreditTopUpReceipt.value) {
+    // 充值交易已经在 Student Credit 台账中落账。纯充值收据的更正只同步
+    // 学生资料和收据展示信息，不能把历史付款行再次作为普通课程付款提交。
+    return {
+      participants: payload.participants,
+      receiptOptions: payload.receiptOptions,
+    };
+  }
   return {
     pickupFeeCharged: payload.pickupFeeCharged,
     pickupFeeAmount: payload.pickupFeeAmount,
@@ -1922,6 +2291,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         paymentMethod: payment.paymentMethod,
         amount: numeric(payment.amount),
         paidAt: normalizeDate(payment.paidAt),
+        isHistorical: true,
         courseAllocations: Object.fromEntries((payment.allocations ?? []).map((allocation) => [
           String(allocation.enrollmentOrderItemId), numeric(allocation.amount),
         ])),
@@ -1951,16 +2321,36 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   ensurePrivateParticipantState();
 
   const payloadItems = getArray(receiptPayload, 'items');
+  const historicalTopUpAmount = getNumber(receiptPayload, 'creditTopUpAmount');
+  const historicalTopUpOnly = historicalTopUpAmount > 0 && payloadItems.length === 0 && order.items.length === 0;
+  const historicalTopUpPayment = isRecord(receiptPayload.creditTopUpPayment)
+    ? receiptPayload.creditTopUpPayment
+    : null;
+  historicalCreditTopUpAmount.value = historicalTopUpAmount;
+  historicalCreditTopUpPayment.value = historicalTopUpPayment
+    ? {
+      ...createPaymentLine(),
+      isCreditTopUp: true,
+      paymentMethod: getString(historicalTopUpPayment, 'paymentMethod'),
+      amount: historicalTopUpAmount,
+      paidAt: normalizeDate(getString(historicalTopUpPayment, 'paidAt'))
+        || normalizeDate(getString(receiptPayload, 'signupDate')),
+      handledByName: getString(historicalTopUpPayment, 'handledByName'),
+      remark: getString(historicalTopUpPayment, 'remark'),
+    }
+    : null;
+  // 混合报名的 Credit 已落在独立充值订单中，课程收据编辑页不重复展示不可编辑的充值付款。
+  creditTopUpAmount.value = historicalTopUpOnly ? historicalTopUpAmount : 0;
   courseLines.value = (payloadItems.length > 0 ? payloadItems : order.items)
     .map((item, index) => toHistoricalCourseLine(item, index, findOrderItemFallback(item, order.items, index)));
   normalizeHistoricalLineReferences();
   mapHistoricalParticipantBillingCourseReferences();
   // 历史报名单（收据无 items、订单无明细行时）用订单课包兜底还原课程行，
   // 课程名取课包快照，避免依赖已删除的 course_product 联表。
-  if (courseLines.value.length === 0) {
+  if (courseLines.value.length === 0 && !historicalTopUpOnly) {
     courseLines.value = buildCourseLinesFromPackages(order.packages);
   }
-  if (courseLines.value.length === 0) {
+  if (courseLines.value.length === 0 && !historicalTopUpOnly) {
     courseLines.value = [createCourseLine()];
   }
 
@@ -1971,10 +2361,19 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
     form.pickupFeeAmount = savedPickupFee.amount;
     form.pickupFeeCharged = true;
   }
+  // 早期收据只有服务费金额，没有同步保存 pickupRequired 标记；金额本身就是历史上
+  // 已收费的事实，编辑时要把它恢复成当前按课程编辑器可见的接送需求。
+  if (!form.student.pickupRequired && form.pickupFeeAmount > 0) {
+    form.student.pickupRequired = true;
+  }
   if (form.dropoffFeeAmount === 0 && savedDropoffFee) {
     form.dropoffFeeAmount = savedDropoffFee.amount;
     form.dropoffFeeCharged = true;
   }
+  if (!form.student.dropoffRequired && form.dropoffFeeAmount > 0) {
+    form.student.dropoffRequired = true;
+  }
+  applyHistoricalRegistrationTransportFallback();
   extraFees.value = historicalExtraFees.filter((fee) => !['Pickup service', 'Drop-off service'].includes(fee.label));
   if (extraFees.value.length === 0) {
     extraFees.value = [createMoneyLineWithAmount('Other fee', firstPositiveNumber(getNumber(receiptPayload, 'extraFeeAmount'), order.extraFeeAmount))];
@@ -1983,6 +2382,10 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   if (discounts.value.length === 0) {
     discounts.value = [createDiscountLine('Custom discount')];
   }
+
+  // 参与人账单需要等课程行完成历史兜底后再关联一次，否则旧订单没有 items 时
+  // 会因为当时没有 rowKey 而丢失课程级折扣和付款分摊。
+  mapHistoricalParticipantBillingCourseReferences();
 
   // 订单支付流水是报名收据的实时账本；收据 payload 只保留报名信息，不能覆盖后续 Pay 记录。
   const livePayments = (order.payments ?? [])
@@ -2003,6 +2406,7 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         paymentMethod: payment.paymentMethod,
         amount: numeric(payment.amount),
         paidAt: normalizeDate(payment.paidAt),
+        isHistorical: true,
         courseRowKey: allocatedCourses.length === 1 && allocationMatchesPayment ? onlyCourseAllocation?.rowKey : undefined,
         participantIndex: payment.participantIndex,
         handledByName: payment.handledByName,
@@ -2013,6 +2417,16 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
     });
   const savedPayments = getHistoricalPayments(receiptPayload);
   payments.value = livePayments.length > 0 ? livePayments : savedPayments;
+  if (historicalTopUpOnly) {
+    const topUpPayment = payments.value.find((payment) => payment.amount > 0);
+    creditTopUpPayment.value = {
+      ...(topUpPayment ?? createPaymentLine()),
+      isCreditTopUp: true,
+      paymentMethod: topUpPayment?.paymentMethod ?? '',
+      paidAt: topUpPayment?.paidAt ?? normalizeDate(getString(receiptPayload, 'signupDate')),
+    };
+    historicalCreditTopUpPayment.value ??= creditTopUpPayment.value;
+  }
   if (payments.value.length === 0) {
     payments.value = [createPaymentLine(courseLines.value[0]?.rowKey)];
   }
@@ -2022,6 +2436,35 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   validationErrors.value = [];
   studentReuseStatus.value = 'idle';
   reusableStudent.value = null;
+}
+
+/**
+ * 兼容早期只保存整单接送费的收据：编辑时把整单快照迁移到课程行，
+ * 保证现行按课程编辑器能看到原来的地址和金额，同时不重复计费。
+ */
+function applyHistoricalRegistrationTransportFallback() {
+  const line = courseLines.value.find((candidate) => candidate.pickupRequired || numeric(candidate.pickupFeeAmount) > 0)
+    ?? courseLines.value[0];
+  const dropoffLine = courseLines.value.find((candidate) => candidate.dropoffRequired || numeric(candidate.dropoffFeeAmount) > 0)
+    ?? courseLines.value[0];
+  if (!line) return;
+
+  if (form.student.pickupRequired) {
+    line.pickupRequired = true;
+    line.pickupAddress ||= form.student.pickupAddress;
+    if (numeric(line.pickupFeeAmount) <= 0) {
+      line.pickupFeeAmount = roundMoney(form.pickupFeeAmount);
+    }
+    line.pickupFeeCharged = true;
+  }
+  if (dropoffLine && form.student.dropoffRequired) {
+    dropoffLine.dropoffRequired = true;
+    dropoffLine.dropoffAddress ||= form.student.dropoffAddress;
+    if (numeric(dropoffLine.dropoffFeeAmount) <= 0) {
+      dropoffLine.dropoffFeeAmount = roundMoney(form.dropoffFeeAmount);
+    }
+    dropoffLine.dropoffFeeCharged = true;
+  }
 }
 
 /**
@@ -2129,6 +2572,27 @@ function toHistoricalCourseLine(
   fallback?: EnrollmentOrderDetailItem['items'][number],
 ): RegistrationCourseLine {
   const periodLabel = getString(item, 'periodLabel') || getString(fallback, 'periodLabel');
+  const pickupFeeAmount = firstPositiveNumber(getNumber(item, 'pickupFeeAmount'), getNumber(fallback, 'pickupFeeAmount'));
+  const dropoffFeeAmount = firstPositiveNumber(getNumber(item, 'dropoffFeeAmount'), getNumber(fallback, 'dropoffFeeAmount'));
+  const pickupRequired = getBoolean(
+    item,
+    'pickupRequiredSnapshot',
+    getBoolean(item, 'pickupRequired', getBoolean(fallback, 'pickupRequiredSnapshot', getBoolean(fallback, 'pickupRequired', false))),
+  ) || pickupFeeAmount > 0;
+  const dropoffRequired = getBoolean(
+    item,
+    'dropoffRequiredSnapshot',
+    getBoolean(item, 'dropoffRequired', getBoolean(fallback, 'dropoffRequiredSnapshot', getBoolean(fallback, 'dropoffRequired', false))),
+  ) || dropoffFeeAmount > 0;
+  const itemServiceFees = getMoneyLines(item, 'extraFees');
+  const fallbackServiceFees = parseMoneyDetail(getString(fallback, 'extraFeeDetail'))
+    .filter(isRecord)
+    .map((fee, feeIndex) => ({
+      rowKey: `history-fee-${index}-${feeIndex}`,
+      label: getString(fee, 'label') || 'Other fee',
+      amount: getNumber(fee, 'amount'),
+    }))
+    .filter((fee) => fee.amount > 0);
   return {
     rowKey: `history-course-${getString(item, 'id') || getString(item, 'orderItemId') || getString(fallback, 'id') || index}`,
     // 订单明细是业务主数据；收据 payload 是历史快照，内部 JSON 的 Snowflake ID
@@ -2169,6 +2633,21 @@ function toHistoricalCourseLine(
     groupEndMonth: getString(item, 'groupEndMonth') || getString(item, 'endMonth') || undefined,
     groupRegistrationStartMonth: getString(item, 'startMonth') || undefined,
     groupRegistrationEndMonth: getString(item, 'endMonth') || undefined,
+    pickupRequired,
+    pickupAddress: getString(item, 'pickupAddressSnapshot')
+      || getString(item, 'pickupAddress')
+      || getString(fallback, 'pickupAddressSnapshot')
+      || getString(fallback, 'pickupAddress'),
+    dropoffRequired,
+    dropoffAddress: getString(item, 'dropoffAddressSnapshot')
+      || getString(item, 'dropoffAddress')
+      || getString(fallback, 'dropoffAddressSnapshot')
+      || getString(fallback, 'dropoffAddress'),
+    pickupFeeCharged: pickupRequired,
+    pickupFeeAmount,
+    dropoffFeeCharged: dropoffRequired,
+    dropoffFeeAmount,
+    serviceFees: itemServiceFees.length > 0 ? itemServiceFees : fallbackServiceFees,
     remark: getString(item, 'remark') || undefined,
   };
 }
@@ -2206,6 +2685,12 @@ function buildCourseLinesFromPackages(packages: CoursePackageItem[]): Registrati
 }
 
 async function checkReusableStudent() {
+  // 下拉框选中的学生已经由 studentId 标识。姓名或电话的修改只更新该学生资料，
+  // 不能因为重新执行模糊匹配没有找到新姓名就丢失原来的身份。
+  if (reusableStudent.value) {
+    studentReuseStatus.value = 'existing';
+    return;
+  }
   const studentName = fullStudentName.value;
   const guardianPhone = form.student.guardianPhone.replace(/\D/g, '');
   reusableStudent.value = null;
@@ -2216,6 +2701,11 @@ async function checkReusableStudent() {
   studentReuseStatus.value = 'loading';
   try {
     const res = await fetchReusableStudent({ studentName, guardianPhone });
+    // 查询返回前用户可能已经从下拉框选中了学生，保留这次明确选择。
+    if (reusableStudent.value) {
+      studentReuseStatus.value = 'existing';
+      return;
+    }
     reusableStudent.value = res.data.data ?? null;
     studentReuseStatus.value = reusableStudent.value ? 'existing' : 'new';
   } catch {
@@ -2254,6 +2744,15 @@ function createCourseLine(): RegistrationCourseLine {
     groupPurchasedMonths: 2,
     groupRegistrationStartMonth: undefined,
     groupRegistrationEndMonth: undefined,
+    pickupRequired: false,
+    pickupAddress: '',
+    dropoffRequired: false,
+    dropoffAddress: '',
+    pickupFeeCharged: false,
+    pickupFeeAmount: 0,
+    dropoffFeeCharged: false,
+    dropoffFeeAmount: 0,
+    serviceFees: [],
   };
 }
 
@@ -2292,7 +2791,7 @@ function createDiscountLine(label = 'Custom discount', amount = 0, courseRowKey 
 function createPaymentLine(courseRowKey?: string): PaymentLine {
   return {
     rowKey: `payment-${++rowSeed}`,
-    paymentMethod: paymentMethods.value[0]?.methodCode ?? '',
+    paymentMethod: '',
     amount: 0,
     paidAt: today,
     courseRowKey,
@@ -2303,6 +2802,64 @@ function createPaymentLine(courseRowKey?: string): PaymentLine {
 
 function addCourseLine() {
   courseLines.value.push(createCourseLine());
+}
+
+function clearOrRemoveCourseLine(index: number) {
+  if (courseLines.value.length > 1) {
+    removeCourseLine(index);
+    return;
+  }
+  const line = courseLines.value[index];
+  if (!line) return;
+  const hasDiscount = discounts.value.some((discount) =>
+    discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
+  const hasPayment = payments.value.some((payment) =>
+    numeric(payment.courseAllocations?.[line.rowKey]) > 0 ||
+    (payment.courseRowKey === line.rowKey && numeric(payment.amount) > 0));
+  const hasParticipantBilling = participantBillings.value.some((billing) =>
+    billing.discounts.some((discount) => discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0)
+    || billing.payments.some((payment) =>
+      numeric(payment.courseAllocations?.[line.rowKey]) > 0
+      || (payment.courseRowKey === line.rowKey && numeric(payment.amount) > 0)));
+  if (hasDiscount || hasPayment || hasParticipantBilling) {
+    ElMessage.warning('Move this course’s discount and payment allocations before clearing it.');
+    return;
+  }
+
+  const rowKey = line.rowKey;
+  Object.assign(line, createCourseLine(), { rowKey });
+  discounts.value.forEach((discount) => {
+    if (discount.courseRowKey === rowKey) {
+      discount.presetId = '__custom__';
+      discount.label = 'Custom discount';
+      discount.amount = 0;
+    }
+  });
+  payments.value.forEach((payment) => {
+    if (payment.courseRowKey === rowKey || payment.courseAllocations?.[rowKey] !== undefined) {
+      payment.amount = 0;
+      payment.courseRowKey = rowKey;
+      payment.courseAllocations = { [rowKey]: 0 };
+      clearPaymentLimitHint(payment);
+    }
+  });
+  participantBillings.value.forEach((billing) => {
+    billing.discounts.forEach((discount) => {
+      if (discount.courseRowKey === rowKey) {
+        discount.presetId = '__custom__';
+        discount.label = 'Custom discount';
+        discount.amount = 0;
+      }
+    });
+    billing.payments.forEach((payment) => {
+      if (payment.courseRowKey === rowKey || payment.courseAllocations?.[rowKey] !== undefined) {
+        payment.amount = 0;
+        payment.courseRowKey = rowKey;
+        payment.courseAllocations = { [rowKey]: 0 };
+        clearPaymentLimitHint(payment);
+      }
+    });
+  });
 }
 
 function removeCourseLine(index: number) {
@@ -2354,6 +2911,16 @@ function addExtraFee() {
   extraFees.value.push(createMoneyLine(''));
 }
 
+function addCourseServiceFee(line: RegistrationCourseLine) {
+  line.serviceFees.push(createMoneyLine(''));
+}
+
+function removeCourseServiceFee(line: RegistrationCourseLine, index: number) {
+  if (line.serviceFees.length > 1) {
+    line.serviceFees.splice(index, 1);
+  }
+}
+
 function removeExtraFee(index: number) {
   if (extraFees.value.length > 1) {
     extraFees.value.splice(index, 1);
@@ -2365,7 +2932,7 @@ function addDiscount(courseRowKey?: string) {
 }
 
 function removeDiscount(index: number) {
-  if (discounts.value.length > 1) {
+  if (discounts.value[index]) {
     discounts.value.splice(index, 1);
   }
 }
@@ -2403,7 +2970,7 @@ function discountPresetLabel(preset: DiscountPresetItem) {
 
 function applyDiscountPreset(discount: DiscountLine) {
   if (isCustomDiscount(discount)) {
-    discount.label = 'Custom discount';
+    discount.label = discount.label.trim() || 'Custom discount';
     return;
   }
   const preset = discountPresets.value.find((item) => item.id === discount.presetId);
@@ -2480,8 +3047,31 @@ function paymentCourseAllocationTotal(payment: PaymentLine) {
     .reduce((total, amount) => total + numeric(amount), 0));
 }
 
+function isUnallocatedOrderPayment(payment: PaymentLine) {
+  // 历史订单可能没有保存课程分摊；单课程付款也要归到唯一课程，不能在编辑页被隐藏。
+  return !payment.courseRowKey
+    && paymentCourseAllocationTotal(payment) === 0;
+}
+
 function paymentAllocationRemainder(payment: PaymentLine) {
-  return roundMoney(numeric(payment.amount) - paymentCourseAllocationTotal(payment));
+  return roundMoney(numeric(payment.amount) - paymentAppliedAmount(payment));
+}
+
+/** 计算一笔付款真正计入当前课程订单的金额。 */
+function paymentAppliedAmount(payment: PaymentLine) {
+  if (courseLines.value.length === 1) {
+    return netPaymentAmount(payment);
+  }
+  const allocationTotal = paymentCourseAllocationTotal(payment);
+  if (allocationTotal !== 0) {
+    return allocationTotal;
+  }
+  // 兼容早期单课程归属付款：没有分摊明细时，courseRowKey 仍能确定归属。
+  return payment.courseRowKey ? netPaymentAmount(payment) : 0;
+}
+
+function appliedPaymentAmountForLines(lines: PaymentLine[]) {
+  return roundMoney(lines.reduce((total, payment) => total + paymentAppliedAmount(payment), 0));
 }
 
 /**
@@ -2489,48 +3079,210 @@ function paymentAllocationRemainder(payment: PaymentLine) {
  * 历史上没有课程归属的付款只能暂挂在第一门课，不能复制到其他课程后造成锁定的假付款行。
  */
 function paymentsForCourse(courseRowKey: string) {
-  const firstCourseRowKey = courseLines.value[0]?.rowKey;
   return activePaymentLines.value.filter((payment) => {
     if (payment.courseRowKey) {
       return payment.courseRowKey === courseRowKey;
     }
-    if (numeric(payment.courseAllocations?.[courseRowKey]) > 0) {
+    const courseAllocation = numeric(payment.courseAllocations?.[courseRowKey]);
+    if (courseAllocation > 0) {
       return true;
     }
-    // 无课程归属且没有任何分配的历史付款只显示在第一门课，避免跨课程重复渲染。
-    return paymentCourseAllocationTotal(payment) === 0 && courseRowKey === firstCourseRowKey;
+    // 历史整笔付款没有课程归属时，只在第一门课展示一次，避免同一笔交易在多门课重复出现。
+    return isUnallocatedOrderPayment(payment) && courseRowKey === courseLines.value[0]?.rowKey;
   });
 }
 
+/** 编辑收据时退款流水不可编辑，但必须在课程付款区明确展示并参与 Paid/Balance 汇总。 */
+function refundPaymentsForCourse(courseRowKey: string) {
+  const lines = activeParticipantBilling.value?.payments ?? payments.value;
+  return lines.filter((payment) => {
+    if (!isRefundPayment(payment)) {
+      return false;
+    }
+    if (courseLines.value.length === 1) {
+      return true;
+    }
+    const allocation = numeric(payment.courseAllocations?.[courseRowKey]);
+    if (allocation < 0) {
+      return true;
+    }
+    if (payment.courseRowKey === courseRowKey) {
+      return true;
+    }
+    return isUnallocatedOrderPayment(payment) && courseRowKey === courseLines.value[0]?.rowKey;
+  });
+}
+
+function courseRefundAmount(courseRowKey: string) {
+  return roundMoney(refundPaymentsForCourse(courseRowKey)
+    .reduce((total, payment) => total + Math.abs(numeric(payment.amount)), 0));
+}
+
 function coursePaymentAmount(payment: PaymentLine, courseRowKey: string) {
-  return payment.courseRowKey === courseRowKey || courseLines.value.length === 1
-    ? payment.amount
-    : numeric(payment.courseAllocations?.[courseRowKey]);
+  if (payment.courseRowKey === courseRowKey || courseLines.value.length === 1) {
+    return payment.amount;
+  }
+  if (isUnallocatedOrderPayment(payment) && courseRowKey === courseLines.value[0]?.rowKey) {
+    return payment.amount;
+  }
+  return numeric(payment.courseAllocations?.[courseRowKey]);
+}
+
+function creditPaymentLinesForActiveScope() {
+  return activeParticipantBilling.value?.payments ?? payments.value;
+}
+
+/**
+ * 当前付款行可输入的 Credit 上限；先扣除同一账单中其他 Credit 付款，避免多付款行合计超额。
+ * 多课程历史付款还要保留本付款行分配到其他课程的金额，再计算当前课程可用额度。
+ */
+function maxStudentCreditPaymentAmount(payment: PaymentLine, courseRowKey: string) {
+  if (payment.paymentMethod !== 'STUDENT_CREDIT') {
+    return undefined;
+  }
+  const otherCreditPayments = creditPaymentLinesForActiveScope().reduce((total, candidate) => {
+    if (candidate === payment || candidate.paymentMethod !== 'STUDENT_CREDIT') {
+      return total;
+    }
+    return total + numeric(candidate.amount);
+  }, 0);
+  const otherCourseAllocations = courseLines.value.length > 1
+    ? Object.entries(payment.courseAllocations ?? {})
+      .filter(([rowKey]) => rowKey !== courseRowKey)
+      .reduce((total, [, amount]) => total + numeric(amount), 0)
+    : 0;
+  return roundMoney(Math.max(0, studentCreditBalance.value - otherCreditPayments - otherCourseAllocations));
+}
+
+function remainingCoursePaymentAmount(payment: PaymentLine, courseRowKey: string) {
+  const otherPayments = creditPaymentLinesForActiveScope().reduce((total, candidate) => {
+    if (candidate === payment) {
+      return total;
+    }
+    return total + numeric(candidate.amount);
+  }, 0);
+  const otherCourseAllocations = courseLines.value.length > 1
+    ? Object.entries(payment.courseAllocations ?? {})
+      .filter(([rowKey]) => rowKey !== courseRowKey)
+      .reduce((total, [, amount]) => total + numeric(amount), 0)
+    : 0;
+  return roundMoney(Math.max(0, courseRegistrationAmountDue.value - otherPayments - otherCourseAllocations));
+}
+
+function maxCoursePaymentAmount(payment: PaymentLine, courseRowKey: string) {
+  const remainingAmount = remainingCoursePaymentAmount(payment, courseRowKey);
+  const creditAmount = maxStudentCreditPaymentAmount(payment, courseRowKey);
+  return creditAmount === undefined ? remainingAmount : Math.min(remainingAmount, creditAmount);
+}
+
+function normalizePaymentAmount(payment: PaymentLine, courseRowKey: string) {
+  const maxAmount = maxCoursePaymentAmount(payment, courseRowKey);
+  if (maxAmount === undefined) {
+    clearPaymentLimitHint(payment);
+    return;
+  }
+  const currentAmount = coursePaymentAmount(payment, courseRowKey);
+  if (currentAmount > maxAmount) {
+    showPaymentLimitHint(payment, maxAmount);
+    setCoursePaymentAmount(payment, courseRowKey, maxAmount);
+    return;
+  }
+  clearPaymentLimitHint(payment);
+}
+
+function handlePaymentInput(
+  payment: PaymentLine,
+  courseRowKey: string,
+  value: number | string | null | undefined,
+) {
+  const maxAmount = maxCoursePaymentAmount(payment, courseRowKey);
+  if (maxAmount === undefined || numeric(value) <= maxAmount) {
+    clearPaymentLimitHint(payment);
+    return;
+  }
+  showPaymentLimitHint(payment, maxAmount);
+  setCoursePaymentAmount(payment, courseRowKey, maxAmount);
+}
+
+function paymentLimitHint(payment: PaymentLine) {
+  return paymentLimitHints[payment.rowKey] ?? '';
+}
+
+function clearPaymentLimitHint(payment: PaymentLine) {
+  delete paymentLimitHints[payment.rowKey];
+  const timer = paymentLimitHintTimers.get(payment.rowKey);
+  if (timer !== undefined) {
+    window.clearTimeout(timer);
+    paymentLimitHintTimers.delete(payment.rowKey);
+  }
+}
+
+function showPaymentLimitHint(payment: PaymentLine, maxAmount: number) {
+  const rowKey = payment.rowKey;
+  paymentLimitHints[rowKey] = `Max payable: ${formatMoney(maxAmount)}`;
+  const previousTimer = paymentLimitHintTimers.get(rowKey);
+  if (previousTimer !== undefined) {
+    window.clearTimeout(previousTimer);
+  }
+  paymentLimitHintTimers.set(rowKey, window.setTimeout(() => {
+    delete paymentLimitHints[rowKey];
+    paymentLimitHintTimers.delete(rowKey);
+  }, 2400));
 }
 
 /** 新增付款按课程独立记账；历史跨课付款只更新该课程分配，保留原交易总额。 */
 function setCoursePaymentAmount(payment: PaymentLine, courseRowKey: string, value: number | undefined) {
-  const amount = roundMoney(Math.max(0, numeric(value)));
+  const wasUnallocatedOrderPayment = isUnallocatedOrderPayment(payment)
+    && courseRowKey === courseLines.value[0]?.rowKey;
+  const requestedAmount = roundMoney(Math.max(0, numeric(value)));
+  const maxAmount = maxCoursePaymentAmount(payment, courseRowKey);
+  if (maxAmount !== undefined && requestedAmount > maxAmount) {
+    showPaymentLimitHint(payment, maxAmount);
+  }
+  const amount = maxAmount === undefined
+    ? requestedAmount
+    : Math.min(requestedAmount, maxAmount);
   payment.courseAllocations ??= {};
   payment.courseAllocations[courseRowKey] = amount;
-  if (payment.courseRowKey === courseRowKey || courseLines.value.length === 1) {
+  if (payment.courseRowKey === courseRowKey || courseLines.value.length === 1 || wasUnallocatedOrderPayment) {
     payment.amount = amount;
   }
 }
 
 function canEditCoursePaymentDetails(payment: PaymentLine, courseRowKey: string) {
+  if (!receiptEditingEnabled.value || isRefundPayment(payment)) {
+    return false;
+  }
   if (payment.courseRowKey) {
     return payment.courseRowKey === courseRowKey;
   }
-  const firstAllocatedCourse = courseLines.value.find((line) => numeric(payment.courseAllocations?.[line.rowKey]) > 0);
-  return (firstAllocatedCourse?.rowKey ?? courseLines.value[0]?.rowKey) === courseRowKey;
+  // 未绑定课程的历史付款在所有课程卡片中都代表同一笔交易，允许分别编辑各课程的分摊金额。
+  // 完成分配后只保留已有分摊的课程可编辑，避免无意间给付款增加新的归属。
+  const allocationTotal = paymentCourseAllocationTotal(payment);
+  if (allocationTotal < numeric(payment.amount)) {
+    return courseLines.value.length === 1 || courseRowKey === courseLines.value[0]?.rowKey;
+  }
+  return numeric(payment.courseAllocations?.[courseRowKey]) > 0;
 }
 
 /** 汇总课程已收金额；单课报名无需显式分配，付款总额自然归属该课程。 */
 function coursePaymentAllocationTotal(courseRowKey: string) {
-  return roundMoney(activePaymentLines.value.reduce((total, payment) => total + numeric(
-    courseLines.value.length === 1 ? payment.amount : payment.courseAllocations?.[courseRowKey],
-  ), 0));
+  const lines = activeParticipantBilling.value?.payments ?? payments.value;
+  return roundMoney(lines.reduce((total, payment) => {
+    if (courseLines.value.length === 1) {
+      return total + netPaymentAmount(payment);
+    }
+    const allocation = payment.courseAllocations?.[courseRowKey];
+    if (allocation !== undefined) {
+      return total + numeric(allocation);
+    }
+    if (payment.courseRowKey === courseRowKey) {
+      return total + netPaymentAmount(payment);
+    }
+    return total + (isUnallocatedOrderPayment(payment) && courseRowKey === courseLines.value[0]?.rowKey
+      ? netPaymentAmount(payment)
+      : 0);
+  }, 0));
 }
 
 function buildCoursePaymentAllocations(payment: PaymentLine) {
@@ -2546,8 +3298,8 @@ function buildCoursePaymentAllocations(payment: PaymentLine) {
 }
 
 function courseAmountDue(line: RegistrationCourseLine, index: number) {
-  const fees = serviceFeeTotal.value + extraFeeTotal.value;
-  const feeShare = courseFeeShare(index, fees);
+  const fees = serviceFeeTotal.value + courseServiceExtraFeeTotal.value;
+  const feeShare = courseFeeShare(index, fees, line);
   return roundMoney(courseAggregatePrice(line) + feeShare - activeCourseDiscountAmount(line.rowKey));
 }
 
@@ -2557,10 +3309,10 @@ function activeCourseAmountDue(line: RegistrationCourseLine, index: number) {
     return courseAmountDue(line, index);
   }
   const fees = billing.participantIndex === 1
-    ? serviceFeeTotal.value + extraFeeTotal.value
+    ? serviceFeeTotal.value + courseServiceExtraFeeTotal.value
     : 0;
   return roundMoney(participantCoursePrice(line, billing.participantIndex - 1)
-    + courseFeeShare(index, fees)
+    + courseFeeShare(index, fees, line)
     - activeCourseDiscountAmount(line.rowKey));
 }
 
@@ -2571,18 +3323,21 @@ function participantCourseAmountDue(
   afterDiscount: boolean,
 ) {
   const fees = billing.participantIndex === 1
-    ? serviceFeeTotal.value + extraFeeTotal.value
+    ? serviceFeeTotal.value + courseServiceExtraFeeTotal.value
     : 0;
   const discount = afterDiscount
     ? billing.discounts.filter((item) => item.courseRowKey === line.rowKey)
       .reduce((total, item) => total + numeric(item.amount), 0)
     : 0;
   return roundMoney(participantCoursePrice(line, billing.participantIndex - 1)
-    + courseFeeShare(index, fees)
+    + courseFeeShare(index, fees, line)
     - discount);
 }
 
-function courseFeeShare(index: number, totalFees: number) {
+function courseFeeShare(index: number, totalFees: number, line?: RegistrationCourseLine) {
+  if (hasExplicitCourseFees.value && line) {
+    return courseFeeAmount(line, index);
+  }
   const weights = courseLines.value.map(courseAggregatePrice);
   const weightTotal = sumNumbers(weights);
   const shareAt = (lineIndex: number) => weightTotal > 0
@@ -2593,12 +3348,37 @@ function courseFeeShare(index: number, totalFees: number) {
     : shareAt(index);
 }
 
+function courseFeeAmount(line: RegistrationCourseLine, _index = 0) {
+  if (!hasExplicitCourseFees.value) {
+    return 0;
+  }
+  return roundMoney(
+    (line.pickupRequired ? numeric(line.pickupFeeAmount) : 0)
+    + (line.dropoffRequired ? numeric(line.dropoffFeeAmount) : 0)
+    + sumNumbers(line.serviceFees.map((fee) => fee.amount)),
+  );
+}
+
 function historicalDiscountLines(
   receiptPayload: Record<string, unknown> | null,
   order: EnrollmentOrderDetailItem,
 ) {
-  const saved = getMoneyLines(receiptPayload, 'discounts');
-  const totalDiscount = firstPositiveNumber(getNumber(receiptPayload, 'discountAmount'), order.discountAmount);
+  const receiptDiscountRecords = getArray(receiptPayload, 'discounts');
+  const orderDiscountRecords = parseMoneyDetail(order.discountDetail).filter(isRecord);
+  const savedWithCourse = receiptDiscountRecords.length > 0 ? receiptDiscountRecords : orderDiscountRecords;
+  const saved = savedWithCourse
+    .map((discount, index) => ({
+      rowKey: `historical-discount-${index}`,
+      label: getString(discount, 'label') || 'Discount',
+      amount: getNumber(discount, 'amount'),
+    }))
+    .filter((discount) => discount.amount > 0);
+  const itemDiscountTotal = (order.items ?? []).reduce((total, item) => total + numeric(item.discountAmount), 0);
+  const totalDiscount = firstPositiveNumber(
+    getNumber(receiptPayload, 'discountAmount'),
+    order.discountAmount,
+    itemDiscountTotal,
+  );
   if (courseLines.value.length <= 1) {
     const lines = saved.map((discount) => createDiscountLine(discount.label, discount.amount));
     return lines.length > 0 || totalDiscount <= 0
@@ -2606,7 +3386,6 @@ function historicalDiscountLines(
       : [createDiscountLine('Custom discount', totalDiscount)];
   }
 
-  const savedWithCourse = getArray(receiptPayload, 'discounts');
   if (savedWithCourse.some((discount) => {
     const lineNo = getNumber(discount, 'orderItemLineNo');
     return Number.isInteger(lineNo) && lineNo >= 1;
@@ -2658,7 +3437,7 @@ function addPaymentLine(courseRowKey?: string) {
 
 function removePaymentLine(index: number) {
   if (payments.value.length <= 1) return;
-  const editable = payments.value.filter((payment) => payment.amount >= 0);
+  const editable = payments.value.filter((payment) => !isRefundPayment(payment));
   const target = editable[index];
   if (!target) return;
   const actualIndex = payments.value.indexOf(target);
@@ -2668,6 +3447,14 @@ function removePaymentLine(index: number) {
 }
 
 function addActivePaymentLine(courseRowKey?: string) {
+  if (courseLines.value.length > 1
+      && activePaymentLines.value.some((payment) =>
+        !payment.isHistorical
+        && !payment.courseRowKey
+        && numeric(payment.amount) > paymentCourseAllocationTotal(payment))) {
+    ElMessage.warning('Assign the existing payment to all courses before adding a new payment.');
+    return;
+  }
   const participantIndex = activeParticipantBilling.value?.participantIndex;
   if (participantIndex) {
     addParticipantPayment(participantIndex, courseRowKey ?? courseLines.value[0]?.rowKey);
@@ -2687,6 +3474,25 @@ function removeActivePaymentLine(payment: PaymentLine) {
   removePaymentLine(index);
 }
 
+/** Pickup/Drop-off 勾选即代表收费，统一同步旧字段以兼容历史收据和后端 DTO。 */
+function syncCourseTransportFee(line: RegistrationCourseLine, type: 'pickup' | 'dropoff') {
+  if (type === 'pickup') {
+    line.pickupFeeCharged = line.pickupRequired;
+    if (!line.pickupRequired) {
+      line.pickupFeeAmount = 0;
+    } else if (!isReadOnly.value && numeric(line.pickupFeeAmount) === 0) {
+      line.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
+    }
+    return;
+  }
+  line.dropoffFeeCharged = line.dropoffRequired;
+  if (!line.dropoffRequired) {
+    line.dropoffFeeAmount = 0;
+  } else if (!isReadOnly.value && numeric(line.dropoffFeeAmount) === 0) {
+    line.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
+  }
+}
+
 function handleCourseProductChange(line: RegistrationCourseLine) {
   const product = courseProducts.value.find((item) => String(item.id) === String(line.courseProductId));
   const firstOption = priceOptionsForLineProduct(line)[0];
@@ -2695,6 +3501,14 @@ function handleCourseProductChange(line: RegistrationCourseLine) {
   clearSelectedOption(line);
   line.courseType = product?.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : (firstOption?.courseType || 'GROUP');
   line.registerClass = product?.registerClass || firstOption?.registerClass || '';
+  if (!line.pickupAddress && !line.dropoffAddress && !line.pickupRequired && !line.dropoffRequired) {
+    line.pickupRequired = form.student.pickupRequired;
+    line.pickupAddress = form.student.pickupAddress;
+    line.dropoffRequired = form.student.dropoffRequired;
+    line.dropoffAddress = form.student.dropoffAddress;
+    syncCourseTransportFee(line, 'pickup');
+    syncCourseTransportFee(line, 'dropoff');
+  }
 }
 
 function handleGradeChange(line: RegistrationCourseLine) {
@@ -3311,6 +4125,26 @@ function isStudentScheduleConflict(error: unknown) {
 }
 
 function notifyRegistrationSaved(saved: RegistrationIntakeResult) {
+  if (saved.creditTopUpAmount && saved.courseArtifacts.length > 0) {
+    ElNotification({
+      title: 'Registration and Credit top-up completed',
+      message: `${saved.studentName} was registered and ${formatMoney(saved.creditTopUpAmount)} was added to Student Credit.`,
+      type: 'success',
+      position: 'top-right',
+      duration: 6500,
+    });
+    return;
+  }
+  if (saved.courseArtifacts.length === 0 && saved.amountDue > 0) {
+    ElNotification({
+      title: 'Credit top-up completed',
+      message: `${saved.studentName} now has a new Credit deposit of ${formatMoney(saved.amountDue)}.`,
+      type: 'success',
+      position: 'top-right',
+      duration: 6500,
+    });
+    return;
+  }
   const account = saved.studentAccount;
   const accountMessage = account
     ? account.created
@@ -3354,7 +4188,7 @@ function buildStudentContextRoute() {
 
 function validateForm() {
   const errors: string[] = [];
-  if (!selectedCampus.value) {
+  if (!selectedCampus.value && !isCreditTopUpOnly.value) {
     errors.push('Select one campus before submitting.');
   }
   if (!form.student.firstName.trim() || !form.student.lastName.trim()) {
@@ -3362,6 +4196,29 @@ function validateForm() {
   }
   if (!form.student.guardianPhone.trim()) {
     errors.push('Guardian phone is required.');
+  }
+  if (creditTopUpAmount.value > 0) {
+    if (!creditTopUpPayment.value.paymentMethod || creditTopUpPayment.value.paymentMethod === 'STUDENT_CREDIT') {
+      errors.push('Select a real payment method for the Credit top-up.');
+    }
+    if (!creditTopUpPayment.value.paidAt) {
+      errors.push('Payment date is required for the Credit top-up.');
+    }
+  }
+  if (creditPaymentAmount.value > 0) {
+    if (studentCreditLoading.value) {
+      errors.push('Student Credit balance is still loading. Please wait and try again.');
+    } else if (!selectedStudentCreditId.value) {
+      errors.push('Student Credit can only be used for an existing student with a Credit balance.');
+    } else if (creditPaymentAmount.value > studentCreditBalance.value + 0.01) {
+      errors.push(`Student Credit payment ${formatMoney(creditPaymentAmount.value)} exceeds the available balance of ${formatMoney(studentCreditBalance.value)}.`);
+    }
+  }
+  if (isCreditTopUpOnly.value) {
+    if (creditTopUpAmount.value <= 0) {
+      errors.push('Enter a Credit top-up amount greater than zero.');
+    }
+    return errors;
   }
   if (privateParticipantCount.value > 1) {
     if (!hasOneOnOneLine.value) {
@@ -3401,23 +4258,30 @@ function validateForm() {
   if (!form.handledByName.trim()) {
     errors.push('Handled by is required.');
   }
-  if (form.student.pickupRequired && !form.student.pickupAddress.trim()) {
-    errors.push('Pick up address is required when Pick up is checked.');
-  }
-  if (form.student.dropoffRequired && !form.student.dropoffAddress.trim()) {
-    errors.push('Drop off address is required when Drop off is checked.');
-  }
-  if (form.pickupFeeCharged && form.pickupFeeAmount <= 0) {
-    errors.push('Pickup fee is marked for this registration. Enter an amount or uncheck the charge option.');
-  }
-  if (form.dropoffFeeCharged && form.dropoffFeeAmount <= 0) {
-    errors.push('Drop-off fee is marked for this registration. Enter an amount or uncheck the charge option.');
+  const hasCourseTransport = courseLines.value.some((line) => line.pickupRequired || line.dropoffRequired);
+  if (hasCourseTransport) {
+    courseLines.value.forEach((line, index) => {
+      if (line.pickupRequired && numeric(line.pickupFeeAmount) <= 0) {
+        errors.push(`Course row ${index + 1}: enter a pickup fee amount.`);
+      }
+      if (line.dropoffRequired && numeric(line.dropoffFeeAmount) <= 0) {
+        errors.push(`Course row ${index + 1}: enter a drop-off fee amount.`);
+      }
+    });
+  } else if (!hasExplicitCourseFees.value) {
+    // 仅历史整单接送费没有课程级明细时，继续兼容旧字段。
+    if (form.student.pickupRequired && form.pickupFeeAmount <= 0) {
+      errors.push('Pickup is enabled for this registration. Enter a pickup fee amount.');
+    }
+    if (form.student.dropoffRequired && form.dropoffFeeAmount <= 0) {
+      errors.push('Drop-off is enabled for this registration. Enter a drop-off fee amount.');
+    }
   }
   if (discountTotal.value > courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value) {
     errors.push('Discount cannot exceed tuition plus fees.');
   }
   if (paidAmount.value > amountDue.value) {
-    errors.push('Paid amount cannot exceed amount due. Credit handling is not supported by the intake API yet.');
+    errors.push('Paid amount cannot exceed amount due.');
   }
   courseLines.value.forEach((line, index) => {
     const label = `Course row ${index + 1}`;
@@ -3440,6 +4304,12 @@ function validateForm() {
     }
     if (line.manualPriceOverride && !line.remark?.trim()) {
       errors.push(`${label}: manual price reason is required.`);
+    }
+    if (line.pickupRequired && !effectiveCoursePickupAddress(line)) {
+      errors.push(`${label}: pickup address is required when pickup is checked.`);
+    }
+    if (line.dropoffRequired && !effectiveCourseDropoffAddress(line)) {
+      errors.push(`${label}: drop-off address is required when drop-off is checked.`);
     }
     if (!isOneOnOneLine(line) && classOptionsForLine(line).length > 0 && !line.classId) {
       errors.push(`${label}: select an active class for group registration.`);
@@ -3469,7 +4339,7 @@ function validateForm() {
       });
       if (courseLines.value.length > 1) {
         billing.payments.forEach((payment, paymentIndex) => {
-          if (payment.amount > 0 && paymentAllocationRemainder(payment) !== 0) {
+          if (payment.amount > 0 && !payment.isHistorical && paymentAllocationRemainder(payment) !== 0) {
             errors.push(`${privateWorkspaceTabLabel(billing.participantIndex)} payment ${paymentIndex + 1}: assign the full payment amount to courses.`);
           }
         });
@@ -3504,7 +4374,7 @@ function validateForm() {
     });
     if (courseLines.value.length > 1) {
       payments.value.forEach((payment, index) => {
-        if (payment.amount > 0 && paymentAllocationRemainder(payment) !== 0) {
+        if (payment.amount > 0 && !payment.isHistorical && paymentAllocationRemainder(payment) !== 0) {
           errors.push(`Payment row ${index + 1}: assign the full payment amount to courses.`);
         }
       });
@@ -3765,7 +4635,7 @@ function addParticipantDiscount(index: number, courseRowKey?: string) {
 
 function removeParticipantDiscount(index: number, lineIndex: number) {
   const billing = participantBillings.value[index - 1];
-  if (billing && billing.discounts.length > 1) {
+  if (billing?.discounts[lineIndex]) {
     billing.discounts.splice(lineIndex, 1);
   }
 }
@@ -3778,7 +4648,7 @@ function addParticipantPayment(index: number, courseRowKey?: string) {
 function removeParticipantPayment(index: number, lineIndex: number) {
   const billing = participantBillings.value[index - 1];
   if (!billing || billing.payments.length <= 1) return;
-  const editable = billing.payments.filter((payment) => payment.amount >= 0);
+  const editable = billing.payments.filter((payment) => !isRefundPayment(payment));
   const target = editable[lineIndex];
   if (!target) return;
   const actualIndex = billing.payments.indexOf(target);
@@ -3835,6 +4705,12 @@ function buildPayload(): RegistrationIntakePayload {
     student: {
       studentId: reusableStudent.value?.id ?? historicalPrimaryStudentId.value,
       studentName: fullStudentName.value,
+      // 下拉框选中的学生仍沿用主档案字段；注册页未编辑的字段不能因重新提交而被清空。
+      englishName: reusableStudent.value?.englishName || undefined,
+      gender: reusableStudent.value?.gender || undefined,
+      birthDate: reusableStudent.value?.birthDate || undefined,
+      sourceChannel: reusableStudent.value?.sourceChannel || undefined,
+      guardianRelationType: reusableStudent.value?.guardianRelationType || undefined,
       grade: form.student.grade.trim() || undefined,
       studentClass: form.student.studentClass.trim() || undefined,
       school: form.student.school.trim() || undefined,
@@ -3863,7 +4739,8 @@ function buildPayload(): RegistrationIntakePayload {
     renewClassEnrollmentId: stringToEntityId(renewClassEnrollmentId.value),
     handledByName: form.handledByName.trim(),
     currencyCode: 'USD',
-    items: courseLines.value.map((line, index) => ({
+    creditTopUpAmount: creditTopUpAmount.value > 0 ? roundMoney(creditTopUpAmount.value) : undefined,
+    items: isCreditTopUpOnly.value ? [] : courseLines.value.map((line, index) => ({
       orderItemId: line.orderItemId,
       lineNo: index + 1,
       registerClass: line.registerClass,
@@ -3894,22 +4771,33 @@ function buildPayload(): RegistrationIntakePayload {
       startMonth: isOneOnOneLine(line) ? undefined : line.groupRegistrationStartMonth,
       endMonth: isOneOnOneLine(line) ? undefined : line.groupRegistrationEndMonth,
       teacherId: undefined,
+      pickupRequired: line.pickupRequired || undefined,
+      pickupAddress: effectiveCoursePickupAddress(line) || undefined,
+      dropoffRequired: line.dropoffRequired || undefined,
+      dropoffAddress: effectiveCourseDropoffAddress(line) || undefined,
+      pickupFeeCharged: line.pickupRequired || undefined,
+      pickupFeeAmount: line.pickupRequired ? roundMoney(line.pickupFeeAmount) : undefined,
+      dropoffFeeCharged: line.dropoffRequired || undefined,
+      dropoffFeeAmount: line.dropoffRequired ? roundMoney(line.dropoffFeeAmount) : undefined,
+      serviceFees: line.serviceFees.filter((fee) => fee.amount > 0).map((fee) => ({
+        label: fee.label.trim(),
+        amount: roundMoney(fee.amount),
+      })),
       remark: line.remark,
     })),
-    pickupFeeCharged: form.pickupFeeCharged,
-    pickupFeeAmount: roundMoney(effectivePickupFeeAmount.value),
-    dropoffFeeCharged: form.dropoffFeeCharged,
-    dropoffFeeAmount: roundMoney(effectiveDropoffFeeAmount.value),
-    extraFeeAmount: roundMoney(extraFeeTotal.value),
-    extraFees: buildMoneyPayload(extraFees.value),
-    discountAmount: roundMoney(discountTotal.value),
-    discounts: isSharedPrivateLesson.value
+    pickupFeeCharged: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : form.student.pickupRequired,
+    pickupFeeAmount: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : roundMoney(effectivePickupFeeAmount.value),
+    dropoffFeeCharged: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : form.student.dropoffRequired,
+    dropoffFeeAmount: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : roundMoney(effectiveDropoffFeeAmount.value),
+    extraFeeAmount: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : roundMoney(extraFeeTotal.value),
+    extraFees: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? [] : buildMoneyPayload(extraFees.value),
+    discountAmount: isCreditTopUpOnly.value ? 0 : roundMoney(discountTotal.value),
+    discounts: isCreditTopUpOnly.value || isSharedPrivateLesson.value
       ? []
       : buildCourseDiscountPayload(),
-    payments: isSharedPrivateLesson.value
-      ? undefined
-      : payments.value
-        .filter((payment) => payment.amount > 0)
+    payments: [
+      ...(isSharedPrivateLesson.value ? [] : payments.value
+        .filter((payment) => payment.amount > 0 && !isRefundPayment(payment))
         .map((payment) => ({
           paymentMethod: payment.paymentMethod,
           amount: roundMoney(payment.amount),
@@ -3917,7 +4805,16 @@ function buildPayload(): RegistrationIntakePayload {
           handledByName: form.handledByName.trim(),
           remark: payment.remark?.trim() || undefined,
           allocations: buildCoursePaymentAllocations(payment),
-        })),
+        }))),
+      ...(creditTopUpAmount.value > 0 ? [{
+        paymentMethod: creditTopUpPayment.value.paymentMethod,
+        amount: roundMoney(creditTopUpAmount.value),
+        paidAt: toLocalDateTime(creditTopUpPayment.value.paidAt),
+        handledByName: form.handledByName.trim(),
+        remark: creditTopUpPayment.value.remark?.trim() || form.remark.trim() || 'Student Credit top-up',
+        creditTopUp: true,
+      }] : []),
+    ],
     receiptOptions: {
       issueReceipt: true,
       templateCode: 'DEFAULT_RECEIPT',
@@ -3938,7 +4835,7 @@ function toParticipantBillingPayload(billing: ParticipantBillingForm): Registrat
     discountAmount: roundMoney(sumNumbers(billing.discounts.map((line) => line.amount))),
     discounts: buildParticipantDiscountPayload(billing.discounts),
     payments: billing.payments
-      .filter((payment) => payment.amount > 0)
+      .filter((payment) => payment.amount > 0 && !isRefundPayment(payment))
       .map((payment) => ({
         paymentMethod: payment.paymentMethod,
         amount: roundMoney(payment.amount),
@@ -4012,7 +4909,8 @@ function formHasUnsavedContent() {
   }
   if (fullStudentName.value.trim()
       || form.student.guardianPhone.trim()
-      || reusableStudent.value) {
+      || reusableStudent.value
+      || creditTopUpAmount.value > 0) {
     return true;
   }
   return courseLines.value.some((line) => line.courseProductId || line.coursePriceOptionId);
@@ -4027,6 +4925,16 @@ function resetForNextRegistration() {
   form.dropoffFeeCharged = false;
   form.dropoffFeeAmount = 0;
   form.remark = '';
+  creditTopUpAmount.value = 0;
+  historicalCreditTopUpAmount.value = 0;
+  historicalCreditTopUpPayment.value = null;
+  creditTopUpPayment.value = {
+    ...createPaymentLine(),
+    isCreditTopUp: true,
+    paymentMethod: '',
+    paidAt: today,
+  };
+  studentCreditBalance.value = 0;
   form.student.firstName = '';
   form.student.lastName = '';
   form.student.grade = '';
@@ -4291,12 +5199,13 @@ function getHistoricalPayments(payload: Record<string, unknown> | null): Payment
       paymentMethod: getString(payment, 'paymentMethod'),
       amount: getNumber(payment, 'amount'),
       paidAt: normalizeDate(getString(payment, 'paidAt')) || form.signupDate || today,
+      isHistorical: true,
       courseAllocations: {},
       handledByName: getString(payment, 'handledByName') || form.handledByName,
       remark: getString(payment, 'remark'),
       paymentType: getString(payment, 'paymentType'),
     }))
-    .filter((payment) => payment.amount > 0);
+    .filter((payment) => payment.amount !== 0);
 }
 
 function getString(payload: unknown, key: string) {
@@ -4556,16 +5465,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   margin-bottom: 5px;
 }
 
-.campus-line,
-.address-line {
+.campus-line {
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 28px;
 }
 
-.campus-line input,
-.address-line input {
+.campus-line input {
   width: 17px;
   height: 17px;
   margin: 0;
@@ -4860,6 +5767,116 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   font-size: 11px;
 }
 
+.student-credit-balance {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: auto;
+  padding: 5px 9px;
+  border: 1px solid #c7d9ef;
+  border-radius: 7px;
+  background: #f3f8ff;
+  color: #1f4f82 !important;
+  white-space: nowrap;
+}
+
+.student-credit-balance small {
+  color: #6282a6 !important;
+  font-size: 10px !important;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.student-credit-balance strong {
+  color: #174a80 !important;
+  font-size: 14px !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.student-credit-balance--loading {
+  opacity: 0.65;
+}
+
+.student-credit-inline {
+  margin-left: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #2c5d8f;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.policies-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 0.48fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.credit-top-up-compact {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid #c7d9ef;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f7fbff, #eef6ff);
+  color: #5e7692;
+}
+
+.credit-top-up-compact__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #d6e4f3;
+}
+
+.credit-top-up-compact__header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.credit-top-up-compact__header strong {
+  color: #173b63;
+  font-size: 14px;
+}
+
+.credit-top-up-compact__header > span {
+  color: #557594;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.credit-top-up-compact p {
+  margin: 0;
+  color: #6c829b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.credit-top-up-compact__input {
+  display: grid;
+  gap: 4px;
+  color: #5e7692;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.credit-top-up-compact__input :deep(.el-input-number) {
+  width: 100%;
+}
+
+.credit-top-up-compact__summary {
+  color: #174a80;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .registration-student-picker__select {
   width: 100%;
 }
@@ -4874,7 +5891,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .full-line,
 .two-col-line label,
-.address-line,
 .payment-line {
   display: flex;
   align-items: center;
@@ -4883,8 +5899,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 .full-line > span,
-.two-col-line span,
-.address-line span {
+.two-col-line span {
   white-space: nowrap;
 }
 
@@ -4987,13 +6002,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   font-family: inherit;
 }
 
-.address-line .line-input {
-  min-width: 0;
-}
-
 .payment-line {
   margin-top: 1px;
   border-bottom: 2px solid #222;
+}
+
+.payment-method-block {
+  display: grid;
+  flex: 1;
+  min-width: 0;
 }
 
 .payment-line > span:first-child {
@@ -5017,6 +6034,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   flex: 0 0 116px;
   justify-content: flex-end;
   font-variant-numeric: tabular-nums;
+}
+
+.payment-details-print {
+  display: none;
 }
 
 .payment-history {
@@ -5127,6 +6148,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 .course-detail-cell {
   display: grid;
   gap: 8px;
+}
+
+.course-picker-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.course-picker-control :deep(.el-select) {
+  flex: 1;
+  min-width: 0;
+}
+
+.course-picker-control .remove-row {
+  flex: 0 0 18px;
 }
 
 .print-only {
@@ -5322,7 +6358,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .intake-adjustment-panel {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   justify-content: start;
   gap: 8px;
   margin-top: 10px;
@@ -5440,6 +6476,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   overflow-wrap: anywhere;
 }
 
+.service-charge-toggle--muted {
+  color: #64748b;
+}
+
 .remove-adjustment-row {
   width: 22px;
   height: 22px;
@@ -5452,9 +6492,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   grid-template-columns: minmax(0, 1fr) 112px;
 }
 
-.adjustment-column--fees .adjustment-row:not(.adjustment-row--service),
-.adjustment-column--discounts .adjustment-row {
+.adjustment-column--fees .adjustment-row:not(.adjustment-row--service) {
   grid-template-columns: minmax(0, 1fr) 110px auto;
+}
+
+.adjustment-column--discounts .adjustment-row {
+  grid-template-columns: 22px minmax(0, 1fr) 110px;
 }
 
 .adjustment-column--fees .adjustment-row :deep(.el-input),
@@ -5483,6 +6526,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   min-width: 0;
 }
 
+.adjustment-column--fees .course-adjustment-list {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.adjustment-column--discounts .course-adjustment-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.adjustment-column--discounts {
+  container-type: inline-size;
+}
+
 .course-adjustment-card {
   display: grid;
   align-content: start;
@@ -5502,6 +6557,80 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 .course-adjustment-card--payment {
   border-color: #ddd7ed;
   background: #fdfcff;
+}
+
+.course-adjustment-card--payment.course-adjustment-card--readonly {
+  background: #f7f7fb;
+  opacity: 0.82;
+}
+
+.course-adjustment-card--fees {
+  border-color: #d7e2ef;
+  background: #fbfdff;
+}
+
+.course-service-list {
+  display: grid;
+  gap: 0;
+}
+
+.course-service-row {
+  display: grid;
+  gap: 7px;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid #e8edf2;
+}
+
+.course-service-row:last-child {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+
+.course-service-row__controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.course-service-row__fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 86px;
+  gap: 7px;
+  min-width: 0;
+}
+
+.course-service-field {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.course-service-field span {
+  color: #7b8795;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.course-service-field--amount :deep(.el-input-number) {
+  width: 100%;
+}
+
+.course-service-other-title {
+  padding: 8px 0 2px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.course-service-field :deep(.el-input),
+.course-service-field :deep(.el-input-number) {
+  width: 100%;
+  min-width: 0;
 }
 
 .course-adjustment-card__header,
@@ -5554,10 +6683,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 .course-adjustment-card__line {
-  grid-template-columns: minmax(0, 1fr) 100px auto;
+  grid-template-columns: 22px minmax(0, 1fr) 100px;
+}
+
+.course-adjustment-card__line--custom {
+  grid-template-columns: 22px minmax(0, 1.2fr) minmax(0, 1fr) 100px;
+}
+
+.adjustment-column--discounts .course-adjustment-card__line--custom {
+  grid-template-columns: 22px minmax(0, 1.2fr) minmax(0, 1fr) 100px;
 }
 
 .course-adjustment-card__line .discount-preset-control,
+.course-adjustment-card__line .discount-name-input,
 .course-adjustment-card__line :deep(.el-input-number) {
   width: 100%;
   min-width: 0;
@@ -5630,6 +6768,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   font-weight: 600;
 }
 
+.course-payment-entry__number small {
+  margin-left: 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.course-payment-entry--historical {
+  border-color: #cbd5e1;
+}
+
 .course-payment-entry__history {
   grid-column: 2 / 3;
   overflow: hidden;
@@ -5648,6 +6797,60 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .course-payment-entry__fields :deep(.el-date-editor) {
   max-width: 100%;
+}
+
+.course-payment-refund-list {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 7px 8px;
+  border: 1px dashed #f0b4b4;
+  border-radius: 6px;
+  background: #fff8f8;
+  color: #9f4141;
+  font-size: 11px;
+}
+
+.course-payment-refund-total {
+  color: #b42318;
+}
+
+.course-payment-refund-entry {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.course-payment-refund-entry span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-payment-refund-entry strong {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.payment-amount-field {
+  position: relative;
+  min-width: 0;
+}
+
+.payment-limit-hint {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 3;
+  padding: 2px 5px;
+  border: 1px solid #f5c2c7;
+  border-radius: 4px;
+  background: #fff5f5;
+  color: #b42318;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 
 .adjustment-column :deep(.el-input-number) {
@@ -5723,6 +6926,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   grid-column: 2 / 5;
 }
 
+@container (max-width: 900px) {
+  .adjustment-column--discounts .course-adjustment-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1100px) {
+  .adjustment-column--discounts .course-adjustment-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 @media (max-width: 720px) {
   .private-lesson-switcher__header {
     align-items: flex-start;
@@ -5760,14 +6975,25 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     grid-template-columns: 1fr;
   }
 
+  .policies-layout {
+    grid-template-columns: 1fr;
+  }
+
   .adjustment-column--payments {
     grid-column: auto;
     width: 100%;
   }
 
-  .adjustment-column--fees .adjustment-row:not(.adjustment-row--service),
-  .adjustment-column--discounts .adjustment-row {
+  .adjustment-column--discounts .course-adjustment-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adjustment-column--fees .adjustment-row:not(.adjustment-row--service) {
     grid-template-columns: minmax(0, 1fr) 110px auto;
+  }
+
+  .adjustment-column--discounts .adjustment-row {
+    grid-template-columns: 22px minmax(0, 1fr) 110px;
   }
 
   .adjustment-column--fees .adjustment-row :deep(.el-input),
@@ -5795,7 +7021,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 
   .course-adjustment-card__line {
-    grid-template-columns: minmax(0, 1fr) 92px auto;
+    grid-template-columns: 22px minmax(0, 1fr) 92px;
+  }
+
+  .adjustment-column--discounts .course-adjustment-card__line--custom {
+    grid-template-columns: 22px minmax(0, 1fr) minmax(0, 1fr) 92px;
   }
 
   .course-adjustment-card__header,
@@ -5900,11 +7130,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   font-size: 15px;
 }
 
+.fee-totals__refund strong {
+  color: #b42318;
+}
+
+.payment-detail-refund {
+  color: #b42318;
+}
+
 .fee-totals em {
   grid-column: 1 / -1;
   color: #92400e;
   font-size: 12px;
   font-style: normal;
+}
+
+.fee-totals__warning {
+  color: #b45309 !important;
+  font-weight: 600;
 }
 
 .balance-pill--due {
@@ -6169,8 +7412,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     min-height: 17px;
   }
 
-  .campus-line input,
-  .address-line input {
+  .campus-line input {
     width: 11px;
     height: 11px;
   }
@@ -6220,9 +7462,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     display: none !important;
   }
 
+  .student-credit-inline,
+  .reuse-tag {
+    display: none !important;
+  }
+
   .full-line,
   .two-col-line label,
-  .address-line,
   .payment-line {
     min-height: 25px;
     gap: 5px;
@@ -6255,6 +7501,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     padding: 0 3px;
     border-bottom-width: 1px;
     font-size: 11px;
+  }
+
+  .payment-line {
+    align-items: flex-start;
+    min-height: 25px;
+  }
+
+  .payment-method-block {
+    align-self: stretch;
+  }
+
+  .payment-details-print {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 2px 10px;
+    padding: 2px 3px 1px;
+    color: #111;
+    font-size: 9px;
+    line-height: 1.2;
+  }
+
+  .payment-details-print strong {
+    flex-basis: 100%;
+    font-size: 9px;
   }
 
   .payment-history {
@@ -6314,8 +7584,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
   .course-table .print-course-summary {
     display: grid !important;
-    grid-template-columns: 0.55fr 0.65fr 0.8fr minmax(0, 1.7fr);
-    gap: 4px 12px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 12px;
     align-items: start;
   }
 
@@ -6326,9 +7596,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 
   .print-course-summary span {
+    min-width: 0;
     color: #64748b;
     font-size: 7.5px;
     font-weight: 700;
+    overflow-wrap: anywhere;
     text-transform: uppercase;
   }
 
@@ -6373,6 +7645,69 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
   .receipt-course-detail p {
     display: none;
+  }
+
+  .receipt-transport-summary {
+    display: grid !important;
+    gap: 6px;
+    margin: 8px 0 6px;
+    padding: 7px 10px;
+    border: 1px solid #334155;
+    break-inside: avoid;
+    color: #111;
+    font-size: 10px;
+  }
+
+  .receipt-transport-summary__course + .receipt-transport-summary__course {
+    padding-top: 5px;
+    border-top: 1px solid #cbd5e1;
+  }
+
+  .receipt-transport-summary__heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 3px;
+  }
+
+  .receipt-transport-summary__heading strong {
+    font-size: 10.5px;
+  }
+
+  .receipt-transport-summary__heading span,
+  .receipt-transport-summary__grid span,
+  .receipt-transport-summary__fees > span {
+    color: #64748b;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .receipt-transport-summary__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 12px;
+  }
+
+  .receipt-transport-summary__grid > div {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .receipt-transport-summary__grid strong {
+    overflow-wrap: anywhere;
+    font-size: 9.5px;
+    font-weight: 600;
+  }
+
+  .receipt-transport-summary__fees {
+    display: grid;
+    gap: 2px;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid #e2e8f0;
   }
 
   .course-table .detail-row {
@@ -6438,6 +7773,69 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     font-size: 10.5px;
   }
 
+  .receipt-financial-summary__row--paid {
+    padding-bottom: 2px;
+    border-bottom: 1px solid #cbd5e1;
+  }
+
+  .receipt-financial-summary__row--refund {
+    color: #991b1b;
+  }
+
+  .receipt-credit-summary {
+    display: grid !important;
+    gap: 6px;
+    margin: 6px 0;
+    padding: 7px 10px;
+    border: 1px solid #334155;
+    break-inside: avoid;
+    color: #111;
+    font-size: 10px;
+  }
+
+  .receipt-credit-summary__heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #cbd5e1;
+  }
+
+  .receipt-credit-summary__heading strong {
+    font-size: 10.5px;
+  }
+
+  .receipt-credit-summary__heading span {
+    color: #64748b;
+    font-size: 8px;
+  }
+
+  .receipt-credit-summary__grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px 12px;
+  }
+
+  .receipt-credit-summary__grid > div {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+
+  .receipt-credit-summary__grid span {
+    color: #64748b;
+    font-size: 7.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .receipt-credit-summary__grid strong {
+    min-width: 0;
+    font-size: 10.5px;
+    overflow-wrap: anywhere;
+  }
+
   .registration-remark-print {
     display: block !important;
     margin: 6px 0;
@@ -6463,6 +7861,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   .policies {
     margin-top: 8px;
     break-inside: avoid;
+  }
+
+  .policies-layout {
+    display: block;
   }
 
   .policy-copy {

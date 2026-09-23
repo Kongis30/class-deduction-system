@@ -26,6 +26,18 @@ export const dailyMenus: AppMenuItem[] = [
     icon: 'DataAnalysis',
     path: '/data-summary',
   },
+  {
+    key: 'pickup-dropoff-list',
+    title: 'Pickup / Drop-off List',
+    icon: 'Van',
+    path: '/pickup-dropoff-list',
+  },
+  {
+    key: 'student-credit',
+    title: 'Student Credit',
+    icon: 'Money',
+    path: '/student-credit',
+  },
 ];
 
 export const adminGuideMenu: AppMenuItem = {

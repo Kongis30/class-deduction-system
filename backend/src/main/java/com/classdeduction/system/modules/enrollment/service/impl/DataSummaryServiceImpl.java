@@ -713,6 +713,29 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                     allocated, order, primaryParticipant);
             rowBalanceAmount = rowAmountDue.subtract(rowPaidAmount).setScale(2, RoundingMode.HALF_UP);
         }
+        // 课程明细存在时，接送状态必须以课程自己的快照为准。
+        // 不能根据“明细是否有非空接送字段”来决定是否回退订单级字段，否则课程 A 的接送设置
+        // 会被错误复制到同一订单的课程 B。只有没有课程明细的旧订单才使用订单级快照兼容展示。
+        Boolean pickupRequired = item != null
+                ? Boolean.TRUE.equals(item.getPickupRequiredSnapshot())
+                : primaryParticipant
+                ? Boolean.TRUE.equals(order.getPickupRequiredSnapshot())
+                : Boolean.TRUE.equals(student == null ? null : student.getPickupRequired());
+        Boolean dropoffRequired = item != null
+                ? Boolean.TRUE.equals(item.getDropoffRequiredSnapshot())
+                : primaryParticipant
+                ? Boolean.TRUE.equals(order.getDropoffRequiredSnapshot())
+                : Boolean.TRUE.equals(student == null ? null : student.getDropoffRequired());
+        BigDecimal rowDropoffFeeAmount = amount(order.getDropoffFeeAmount());
+        String rowPickupAddress = order.getPickupAddressSnapshot();
+        String rowDropoffAddress = order.getDropoffAddressSnapshot();
+        if (item != null) {
+            rowPickupFeeAmount = amount(item.getPickupFeeAmount());
+            rowDropoffFeeAmount = amount(item.getDropoffFeeAmount());
+            rowExtraFeeAmount = amount(item.getExtraFeeAmount());
+            rowPickupAddress = item.getPickupAddressSnapshot();
+            rowDropoffAddress = item.getDropoffAddressSnapshot();
+        }
         boolean overdue = positive(rowBalanceAmount);
         boolean lowOneOnOneHours = oneOnOne && coursePackage != null
                 && safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage);
@@ -745,13 +768,6 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         String phone2 = primaryParticipant
                 ? order.getParentPhone2Snapshot()
                 : firstText(student == null ? null : student.getGuardianPhone2(), order.getParentPhone2Snapshot());
-        Boolean pickupRequired = primaryParticipant
-                ? Boolean.TRUE.equals(order.getPickupRequiredSnapshot())
-                : Boolean.TRUE.equals(student == null ? null : student.getPickupRequired());
-        Boolean dropoffRequired = primaryParticipant
-                ? Boolean.TRUE.equals(order.getDropoffRequiredSnapshot())
-                : Boolean.TRUE.equals(student == null ? null : student.getDropoffRequired());
-
         return new DataSummaryResponseVO.RowVO(
                 order.getId(),
                 order.getEnrollmentNo(),
@@ -780,14 +796,15 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 phone,
                 phone2,
                 pickupRequired,
-                order.getPickupAddressSnapshot(),
+                rowPickupAddress,
                 dropoffRequired,
-                order.getDropoffAddressSnapshot(),
-                pickupDropoffLabel(order),
+                rowDropoffAddress,
+                pickupDropoffLabel(pickupRequired, dropoffRequired),
                 resolvedPaymentMethod,
                 order.getPaymentStatus(),
                 rowLinePriceAmount,
                 rowPickupFeeAmount,
+                rowDropoffFeeAmount,
                 rowExtraFeeAmount,
                 rowDiscountAmount,
                 rowAmountDue,
@@ -1106,12 +1123,12 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), Collections.emptyList(), Collections.emptyList());
     }
 
-    private String pickupDropoffLabel(EnrollmentOrderEntity order) {
+    private String pickupDropoffLabel(Boolean pickupRequired, Boolean dropoffRequired) {
         List<String> labels = new ArrayList<>();
-        if (Boolean.TRUE.equals(order.getPickupRequiredSnapshot())) {
+        if (Boolean.TRUE.equals(pickupRequired)) {
             labels.add("Pick up");
         }
-        if (Boolean.TRUE.equals(order.getDropoffRequiredSnapshot())) {
+        if (Boolean.TRUE.equals(dropoffRequired)) {
             labels.add("Drop off");
         }
         return labels.isEmpty() ? "None" : String.join(" / ", labels);

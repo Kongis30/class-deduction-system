@@ -28,6 +28,9 @@ public class EnrollmentOrderPageQuery extends PageQuery {
     @Schema(description = "班课ID（筛选班课订单时使用）", example = "1880000000000000005")
     private Long classId;
 
+    @Schema(description = "课程类型视图：ONE_ON_ONE 或 GROUP；按报名单中的课程项筛选")
+    private String teachingMode;
+
     @Schema(description = "排除班课订单（仅查询1v1订单）")
     private boolean excludeClassOrders;
 }

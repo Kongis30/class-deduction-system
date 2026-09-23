@@ -32,10 +32,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: '0.0.0.0',
-    hmr: {
-      host: '127.0.0.1',
-      clientPort: 5173,
-    },
+    // 让 Vite 根据实际启动端口推导 HMR 端口，避免切换到 5175 时仍连接 5173。
     watch: {
       usePolling: true,
       interval: 200,
