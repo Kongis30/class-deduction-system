@@ -112,6 +112,64 @@
   border-right: 0;
 }
 
+/* 工作表表头控件全局共用，避免局部 scoped 样式让按钮退回浏览器默认外观。 */
+.workbook-header-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 0;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.workbook-header-button:hover,
+.workbook-header--active .workbook-header-button {
+  background: #2d5544;
+}
+
+.workbook-header-button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid #ffd95a;
+  outline-offset: -2px;
+}
+
+.workbook-header-icons {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.workbook-sort-indicator {
+  color: #ffd95a;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.workbook-header--active .workbook-filter-arrow {
+  border-top-color: #ffd95a;
+}
+
+.workbook-filter-arrow {
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-top: 5px solid #d9ebe3;
+  border-right: 4px solid transparent;
+  border-left: 4px solid transparent;
+}
+
 .workbook-data-row td {
   background: #dcebf8;
 }

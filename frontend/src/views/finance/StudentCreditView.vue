@@ -18,20 +18,45 @@
     <div class="workbook-scroll">
       <table class="workbook-table student-credit-table">
         <colgroup>
-          <col style="width: 260px" />
-          <col style="width: 220px" />
-          <col style="width: 220px" />
-          <col style="width: 200px" />
+          <col v-for="column in creditColumns" :key="column.key" :style="{ width: `${column.width}px` }" />
         </colgroup>
         <thead>
           <tr>
-            <th>Student</th><th>Guardian phone</th><th>Credit balance</th><th>Last activity</th>
+            <th
+              v-for="column in creditColumns"
+              :key="column.key"
+              :class="{ 'workbook-header--active': creditSort.key === column.key }"
+            >
+              <el-popover placement="bottom-start" trigger="click" :width="260" popper-class="workbook-filter-popper">
+                <template #reference>
+                  <button class="workbook-header-button" type="button" :aria-label="`Sort ${column.label}`">
+                    <span>{{ column.label }}</span>
+                    <span class="workbook-header-icons">
+                      <span v-if="creditSort.key === column.key" class="workbook-sort-indicator">
+                        {{ creditSort.direction === 'asc' ? '↑' : '↓' }}
+                      </span>
+                      <span class="workbook-filter-arrow" aria-hidden="true" />
+                    </span>
+                  </button>
+                </template>
+                <div class="workbook-filter">
+                  <strong>Sort {{ column.label }}</strong>
+                  <div class="workbook-filter-section">
+                    <el-button-group class="workbook-sort-buttons">
+                      <el-button size="small" :type="isCreditColumnSorted(column.key, 'asc') ? 'primary' : 'default'" @click="setCreditSort(column.key, 'asc')">Asc</el-button>
+                      <el-button size="small" :type="isCreditColumnSorted(column.key, 'desc') ? 'primary' : 'default'" @click="setCreditSort(column.key, 'desc')">Desc</el-button>
+                      <el-button size="small" @click="clearCreditSort(column.key)">Clear</el-button>
+                    </el-button-group>
+                  </div>
+                </div>
+              </el-popover>
+            </th>
           </tr>
         </thead>
-        <tbody v-if="studentGroups.length">
-          <tr v-for="group in studentGroups" :key="String(group.studentId)" class="workbook-data-row">
+        <tbody v-if="sortedStudentGroups.length">
+          <tr v-for="group in sortedStudentGroups" :key="String(group.studentId)" class="workbook-data-row">
             <td>{{ group.studentName || '—' }}</td>
-            <td>{{ group.guardianPhone || '—' }}</td>
+            <td>{{ formatUsPhoneDisplay(group.guardianPhone) || '—' }}</td>
             <td class="workbook-cell--money">
               <span class="credit-balance-cell">
                 <span>{{ formatMoney(group.creditBalance) }}</span>
@@ -49,7 +74,7 @@
             <td>{{ formatDate(group.lastOccurredAt) }}</td>
           </tr>
         </tbody>
-        <tbody v-else-if="!loading"><tr class="workbook-empty-row"><td colspan="4">No available student Credit.</td></tr></tbody>
+        <tbody v-else-if="!loading"><tr class="workbook-empty-row"><td :colspan="creditColumns.length">No available student Credit.</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -87,8 +112,24 @@ import { EditPen } from '@element-plus/icons-vue';
 import { adjustStudentCredit, fetchStudentCreditBalances, type StudentCreditBalanceItem } from '@/api/student-credit';
 import { extractErrorMessage } from '@/api/http';
 import { ElMessage } from 'element-plus';
+import { formatUsPhoneDisplay } from '@/utils/phone-format';
 
 type StudentCreditGroup = Omit<StudentCreditBalanceItem, 'studentNo' | 'grade' | 'studentClass'>;
+type CreditColumnKey = 'student' | 'phone' | 'balance' | 'activity';
+type CreditSortDirection = 'asc' | 'desc';
+
+interface CreditColumn {
+  key: CreditColumnKey;
+  label: string;
+  width: number;
+}
+
+const creditColumns: CreditColumn[] = [
+  { key: 'student', label: 'Student', width: 260 },
+  { key: 'phone', label: 'Guardian phone', width: 220 },
+  { key: 'balance', label: 'Credit balance', width: 220 },
+  { key: 'activity', label: 'Last activity', width: 200 },
+];
 
 const studentGroups = ref<StudentCreditGroup[]>([]);
 const keyword = ref('');
@@ -96,10 +137,53 @@ const loading = ref(false);
 const editDialogVisible = ref(false);
 const editingGroup = ref<StudentCreditGroup | null>(null);
 const saving = ref(false);
+const creditSort = reactive<{ key: CreditColumnKey | null; direction: CreditSortDirection }>({
+  key: null,
+  direction: 'asc',
+});
 const editForm = reactive({
   creditBalance: 0,
 });
 const totalCredit = computed(() => studentGroups.value.reduce((sum, row) => sum + Number(row.creditBalance || 0), 0));
+const sortedStudentGroups = computed(() => {
+  const { key, direction } = creditSort;
+  if (!key) return studentGroups.value;
+  const multiplier = direction === 'asc' ? 1 : -1;
+  return [...studentGroups.value].sort((left, right) => {
+    const leftValue = creditSortValue(left, key);
+    const rightValue = creditSortValue(right, key);
+    if (leftValue == null && rightValue == null) return 0;
+    if (leftValue == null) return 1;
+    if (rightValue == null) return -1;
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+      return (leftValue - rightValue) * multiplier;
+    }
+    return String(leftValue).localeCompare(String(rightValue), undefined, { numeric: true, sensitivity: 'base' }) * multiplier;
+  });
+});
+
+function creditSortValue(group: StudentCreditGroup, key: CreditColumnKey): number | string | null {
+  switch (key) {
+    case 'student': return group.studentName || null;
+    case 'phone': return group.guardianPhone || null;
+    case 'balance': return Number(group.creditBalance || 0);
+    case 'activity': return group.lastOccurredAt || null;
+  }
+  return null;
+}
+
+function setCreditSort(key: CreditColumnKey, direction: CreditSortDirection) {
+  creditSort.key = key;
+  creditSort.direction = direction;
+}
+
+function clearCreditSort(key: CreditColumnKey) {
+  if (creditSort.key === key) creditSort.key = null;
+}
+
+function isCreditColumnSorted(key: CreditColumnKey, direction: CreditSortDirection) {
+  return creditSort.key === key && creditSort.direction === direction;
+}
 
 function mergeStudentRows(items: StudentCreditBalanceItem[]) {
   const grouped = new Map<string, StudentCreditGroup>();
@@ -172,9 +256,9 @@ async function loadBalances() {
 }
 
 function exportExcel() {
-  const sheet = XLSX.utils.json_to_sheet(studentGroups.value.map((group) => ({
+  const sheet = XLSX.utils.json_to_sheet(sortedStudentGroups.value.map((group) => ({
     Student: group.studentName,
-    'Guardian phone': group.guardianPhone || '',
+    'Guardian phone': formatUsPhoneDisplay(group.guardianPhone),
     'Credit balance': Number(group.creditBalance || 0),
     'Last activity': formatDate(group.lastOccurredAt),
   })));
@@ -190,6 +274,11 @@ onMounted(loadBalances);
 .student-credit-table th,
 .student-credit-table td,
 .student-credit-table .workbook-cell--money {
+  text-align: center;
+}
+
+.student-credit-table .workbook-header-button {
+  justify-content: center;
   text-align: center;
 }
 

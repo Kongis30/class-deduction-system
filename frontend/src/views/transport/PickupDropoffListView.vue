@@ -25,7 +25,8 @@
           <strong>Pickup</strong>
           <span>{{ selectedCourse.pickupRows.length }} students need pickup</span>
         </div>
-        <table class="workbook-table transport-detail-table">
+        <div class="transport-table-scroll" role="region" aria-label="Pickup table, scroll horizontally">
+          <table class="workbook-table transport-detail-table">
           <colgroup><col v-for="column in tableColumns('pickup')" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>
           <thead>
             <tr>
@@ -34,9 +35,9 @@
                 :key="column.key"
                 :class="{ 'workbook-header--active': hasTransportFilter(column.key) || isColumnSorted(column.key, 'pickup') }"
               >
-                <el-popover placement="bottom-start" trigger="click" :width="isSortableColumn(column.key, 'pickup') ? 300 : column.filterType === 'text' ? 260 : 240" popper-class="workbook-filter-popper">
+                <el-popover placement="bottom-start" trigger="click" :width="300" popper-class="workbook-filter-popper">
                   <template #reference>
-                    <button class="workbook-header-button" type="button" :aria-label="`Filter ${column.label}`">
+                    <button class="workbook-header-button" type="button" :aria-label="`Sort and filter ${column.label}`">
                       <span>{{ column.label }}</span>
                       <span class="workbook-header-icons">
                         <span v-if="isColumnSorted(column.key, 'pickup')" class="workbook-sort-indicator">
@@ -65,7 +66,7 @@
                     >
                       <el-option v-for="option in transportSelectOptions(column.key, 'pickup')" :key="option" :label="option" :value="option" />
                     </el-select>
-                    <div v-if="isSortableColumn(column.key, 'pickup')" class="workbook-filter-section">
+                    <div class="workbook-filter-section">
                       <span class="workbook-filter-label">Sort</span>
                       <el-button-group class="workbook-sort-buttons">
                         <el-button size="small" :type="isColumnSorted(column.key, 'pickup', 'asc') ? 'primary' : 'default'" @click="setSort(column.key, 'pickup', 'asc')">Asc</el-button>
@@ -74,7 +75,7 @@
                       </el-button-group>
                     </div>
                     <div class="workbook-filter-actions">
-                      <el-button text size="small" @click="clearTransportFilter(column.key)">Clear column</el-button>
+                      <el-button text size="small" @click="clearTransportFilter(column.key, 'pickup')">Clear column</el-button>
                       <el-button text size="small" @click="clearAllTransportFilters">Clear all</el-button>
                     </div>
                   </div>
@@ -103,7 +104,8 @@
           </tbody>
           <tbody v-else><tr class="workbook-empty-row"><td :colspan="tableColumns('pickup').length">No pickup students for this course.</td></tr></tbody>
           <tbody v-if="selectedCourse.pickupRows.length && !filteredPickupRows.length"><tr class="workbook-empty-row"><td :colspan="tableColumns('pickup').length">No pickup students match these filters.</td></tr></tbody>
-        </table>
+          </table>
+        </div>
       </section>
 
       <section class="transport-roster-section transport-roster-section--dropoff">
@@ -111,7 +113,8 @@
           <strong>Drop-off</strong>
           <span>{{ selectedCourse.dropoffRows.length }} students need drop-off</span>
         </div>
-        <table class="workbook-table transport-detail-table">
+        <div class="transport-table-scroll" role="region" aria-label="Drop-off table, scroll horizontally">
+          <table class="workbook-table transport-detail-table">
           <colgroup><col v-for="column in tableColumns('dropoff')" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>
           <thead>
             <tr>
@@ -120,9 +123,9 @@
                 :key="column.key"
                 :class="{ 'workbook-header--active': hasTransportFilter(column.key) || isColumnSorted(column.key, 'dropoff') }"
               >
-                <el-popover placement="bottom-start" trigger="click" :width="isSortableColumn(column.key, 'dropoff') ? 300 : column.filterType === 'text' ? 260 : 240" popper-class="workbook-filter-popper">
+                <el-popover placement="bottom-start" trigger="click" :width="300" popper-class="workbook-filter-popper">
                   <template #reference>
-                    <button class="workbook-header-button" type="button" :aria-label="`Filter ${column.label}`">
+                    <button class="workbook-header-button" type="button" :aria-label="`Sort and filter ${column.label}`">
                       <span>{{ column.label }}</span>
                       <span class="workbook-header-icons">
                         <span v-if="isColumnSorted(column.key, 'dropoff')" class="workbook-sort-indicator">
@@ -151,7 +154,7 @@
                     >
                       <el-option v-for="option in transportSelectOptions(column.key, 'dropoff')" :key="option" :label="option" :value="option" />
                     </el-select>
-                    <div v-if="isSortableColumn(column.key, 'dropoff')" class="workbook-filter-section">
+                    <div class="workbook-filter-section">
                       <span class="workbook-filter-label">Sort</span>
                       <el-button-group class="workbook-sort-buttons">
                         <el-button size="small" :type="isColumnSorted(column.key, 'dropoff', 'asc') ? 'primary' : 'default'" @click="setSort(column.key, 'dropoff', 'asc')">Asc</el-button>
@@ -160,7 +163,7 @@
                       </el-button-group>
                     </div>
                     <div class="workbook-filter-actions">
-                      <el-button text size="small" @click="clearTransportFilter(column.key)">Clear column</el-button>
+                      <el-button text size="small" @click="clearTransportFilter(column.key, 'dropoff')">Clear column</el-button>
                       <el-button text size="small" @click="clearAllTransportFilters">Clear all</el-button>
                     </div>
                   </div>
@@ -189,7 +192,8 @@
           </tbody>
           <tbody v-else><tr class="workbook-empty-row"><td :colspan="tableColumns('dropoff').length">No drop-off students for this course.</td></tr></tbody>
           <tbody v-if="selectedCourse.dropoffRows.length && !filteredDropoffRows.length"><tr class="workbook-empty-row"><td :colspan="tableColumns('dropoff').length">No drop-off students match these filters.</td></tr></tbody>
-        </table>
+          </table>
+        </div>
       </section>
     </div>
     <div v-else-if="!loading" class="transport-empty">No pickup or drop-off records.</div>
@@ -262,6 +266,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
+import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
 
 type TransportTable = 'pickup' | 'dropoff';
 type TransportColumnKey = 'period' | 'campus' | 'student' | 'grade' | 'class' | 'phone' | 'driver' | 'pickupAddress' | 'dropoffAddress';
@@ -403,10 +408,12 @@ const dropoffSortState = reactive<TransportSortState>({ key: null, direction: 'a
 const filteredPickupRows = computed(() => sortTransportRows(
   selectedCourse.value?.pickupRows.filter((row) => matchesTransportFilters(row, 'pickup')) ?? [],
   pickupSortState,
+  'pickup',
 ));
 const filteredDropoffRows = computed(() => sortTransportRows(
   selectedCourse.value?.dropoffRows.filter((row) => matchesTransportFilters(row, 'dropoff')) ?? [],
   dropoffSortState,
+  'dropoff',
 ));
 
 function rowKey(row: DataSummaryRow) {
@@ -464,7 +471,7 @@ function exportExcel() {
       Grade: row.grade || '',
     };
     if (course.showClass) exportRow.Class = classLabel(row);
-    exportRow.Phone = row.phone || row.phone2 || '';
+    exportRow.Phone = formatUsPhoneDisplay(row.phone || row.phone2);
     exportRow[addressLabel] = row[addressKey] || '';
     return exportRow;
   });
@@ -522,7 +529,7 @@ function transportCellValue(row: DataSummaryRow, key: TransportColumnKey, table:
     case 'student': return row.studentName || '—';
     case 'grade': return row.grade || '—';
     case 'class': return row.className || row.registerClass || '—';
-    case 'phone': return row.phone || row.phone2 || '—';
+    case 'phone': return formatUsPhoneDisplay(row.phone || row.phone2) || '—';
     case 'driver': return driverNameForRow(row, table);
     case 'pickupAddress': return row.pickupAddress || '—';
     case 'dropoffAddress': return row.dropoffAddress || '—';
@@ -682,6 +689,9 @@ function matchesTransportFilters(row: DataSummaryRow, table: TransportTable) {
     const value = transportCellValue(row, key, table);
     if (filter.selected.length > 0 && !filter.selected.includes(value)) return false;
     const keywordValue = filter.text.trim().toLowerCase();
+    if (key === 'phone') {
+      return matchesPhoneSearch(row.phone || row.phone2, keywordValue);
+    }
     return !keywordValue || value.toLowerCase().includes(keywordValue);
   });
 }
@@ -689,11 +699,6 @@ function matchesTransportFilters(row: DataSummaryRow, table: TransportTable) {
 function hasTransportFilter(key: TransportColumnKey) {
   const filter = transportFilters[key];
   return Boolean(filter.text.trim() || filter.selected.length);
-}
-
-function isSortableColumn(key: TransportColumnKey, table: TransportTable) {
-  return (table === 'pickup' && key === 'pickupAddress')
-    || (table === 'dropoff' && key === 'dropoffAddress');
 }
 
 function sortStateForTable(table: TransportTable) {
@@ -706,7 +711,6 @@ function isColumnSorted(key: TransportColumnKey, table: TransportTable, directio
 }
 
 function setSort(key: TransportColumnKey, table: TransportTable, direction: TransportSortDirection) {
-  if (!isSortableColumn(key, table)) return;
   const state = sortStateForTable(table);
   state.key = key;
   state.direction = direction;
@@ -717,15 +721,15 @@ function clearSort(key: TransportColumnKey, table: TransportTable) {
   if (state.key === key) state.key = null;
 }
 
-function sortTransportRows(items: DataSummaryRow[], state: TransportSortState) {
+function sortTransportRows(items: DataSummaryRow[], state: TransportSortState, table: TransportTable) {
   if (!state.key) return items;
   const key = state.key;
   const direction = state.direction === 'asc' ? 1 : -1;
   return items
     .map((row, index) => ({ row, index }))
     .sort((left, right) => {
-      const leftValue = transportCellValue(left.row, key);
-      const rightValue = transportCellValue(right.row, key);
+      const leftValue = transportSortValue(left.row, key, table);
+      const rightValue = transportSortValue(right.row, key, table);
       const leftEmpty = leftValue === '—';
       const rightEmpty = rightValue === '—';
       if (leftEmpty || rightEmpty) {
@@ -738,10 +742,16 @@ function sortTransportRows(items: DataSummaryRow[], state: TransportSortState) {
     .map(({ row }) => row);
 }
 
-function clearTransportFilter(key: TransportColumnKey) {
+function transportSortValue(row: DataSummaryRow, key: TransportColumnKey, table: TransportTable): string {
+  if (key === 'period') {
+    return row.periodStartDate || row.periodEndDate || row.periodLabel || '—';
+  }
+  return transportCellValue(row, key, table);
+}
+
+function clearTransportFilter(key: TransportColumnKey, table: TransportTable) {
   Object.assign(transportFilters[key], createEmptyTransportFilter());
-  if (key === 'pickupAddress') clearSort(key, 'pickup');
-  if (key === 'dropoffAddress') clearSort(key, 'dropoff');
+  clearSort(key, table);
 }
 
 function clearAllTransportFilters() {
@@ -833,6 +843,11 @@ onBeforeUnmount(() => {
 .transport-roster-section { margin-top: 12px; overflow: hidden; border: 1px solid #b8c5cb; border-radius: 6px; background: #fff; }
 .transport-roster-section--dropoff { margin-top: 40px; }
 .transport-roster-section__heading { border-bottom: 1px solid #b8c5cb; background: #f3f5f6; }
+.transport-table-scroll { width: 100%; max-width: 100%; overflow-x: auto; overflow-y: hidden; scrollbar-gutter: stable; scrollbar-color: #87949b #e7ecef; scrollbar-width: thin; }
+.transport-table-scroll::-webkit-scrollbar { height: 12px; }
+.transport-table-scroll::-webkit-scrollbar-track { background: #e7ecef; }
+.transport-table-scroll::-webkit-scrollbar-thumb { border: 2px solid #e7ecef; border-radius: 8px; background: #87949b; }
+.transport-table-scroll::-webkit-scrollbar-thumb:hover { background: #52636c; }
 .transport-detail-table { border: 0; }
 .transport-page .workbook-table th, .transport-page .workbook-table td { text-align: center; }
 .transport-page .transport-detail-table th { border-color: #87949b; background: #e7e7e7; color: #1f2b31; }

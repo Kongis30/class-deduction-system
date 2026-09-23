@@ -58,7 +58,9 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Phone" min-width="140" prop="mobile" />
+        <el-table-column label="Phone" min-width="140">
+          <template #default="{ row }">{{ formatUsPhoneDisplay(row.mobile) || '-' }}</template>
+        </el-table-column>
         <el-table-column label="Email" min-width="200" prop="email" />
         <el-table-column label="Subjects" min-width="160">
           <template #default="{ row }">
@@ -290,7 +292,7 @@
       <el-table v-loading="deletedLoading" :data="deletedRows" row-key="id" class="product-table" max-height="420">
         <el-table-column label="Name" min-width="140" prop="teacherName" />
         <el-table-column label="Phone" min-width="140">
-          <template #default="{ row }">{{ row.mobile || '-' }}</template>
+          <template #default="{ row }">{{ formatUsPhoneDisplay(row.mobile) || '-' }}</template>
         </el-table-column>
         <el-table-column label="Email" min-width="200">
           <template #default="{ row }">{{ row.email || '-' }}</template>
@@ -336,6 +338,7 @@ import {
 import { extractErrorMessage } from '@/api/http';
 import { fetchClassGroupsByTeacher } from '@/api/schedule';
 import type { TeacherAccountItem, TeacherItem } from '@/types/domain';
+import { formatUsPhoneDisplay } from '@/utils/phone-format';
 
 const loading = ref(false);
 const submitting = ref(false);

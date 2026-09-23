@@ -144,7 +144,7 @@
 
       <section class="contact-block">
         <strong>不止提分，更帮助孩子建立自信，掌握方法</strong>
-        <div class="phone-line">☎ Ms. Jin （929）528–1060 / 办公室 （929）701–9872</div>
+        <div class="phone-line">☎ Ms. Jin (929) 528-1060 / 办公室 (929) 701-9872</div>
 
         <label :class="['campus-line', { 'campus-line--selected': isCampusProfileSelected('SOUTH') }]">
           <input type="checkbox" :checked="isCampusProfileSelected('SOUTH')" :disabled="contactLocked || isPrivateAllReceiptView" @change="selectCampusProfile('SOUTH')" />
@@ -232,11 +232,29 @@
         <div class="two-col-line">
           <label>
             <span>Guardian phone:</span>
-            <el-input v-model="activeStudentGuardianPhone" :disabled="contactLocked" class="line-input" />
+            <el-input
+              v-if="!contactLocked"
+              :model-value="guardianPhoneFocused ? activeStudentGuardianPhone : formatUsPhoneDisplay(activeStudentGuardianPhone)"
+              class="line-input student-phone-input"
+              @update:model-value="activeStudentGuardianPhone = $event"
+              @focus="guardianPhoneFocused = true"
+              @blur="guardianPhoneFocused = false"
+            />
+            <span v-else class="line-input student-phone-display">{{ formatUsPhoneDisplay(activeStudentGuardianPhone) || '—' }}</span>
+            <span class="print-only student-phone-print">{{ formatUsPhoneDisplay(activeStudentGuardianPhone) || '—' }}</span>
           </label>
           <label>
             <span>Guardian phone 2:</span>
-            <el-input v-model="activeStudentGuardianPhone2" :disabled="contactLocked" class="line-input" />
+            <el-input
+              v-if="!contactLocked"
+              :model-value="guardianPhone2Focused ? activeStudentGuardianPhone2 : formatUsPhoneDisplay(activeStudentGuardianPhone2)"
+              class="line-input student-phone-input"
+              @update:model-value="activeStudentGuardianPhone2 = $event"
+              @focus="guardianPhone2Focused = true"
+              @blur="guardianPhone2Focused = false"
+            />
+            <span v-else class="line-input student-phone-display">{{ formatUsPhoneDisplay(activeStudentGuardianPhone2) || '—' }}</span>
+            <span class="print-only student-phone-print">{{ formatUsPhoneDisplay(activeStudentGuardianPhone2) || '—' }}</span>
           </label>
         </div>
 
@@ -1040,6 +1058,7 @@ import { APP_BRAND_NAME } from '@/config/app-config';
 import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
 import { getStoredAuthUser } from '@/utils/auth-storage';
 import { isAdminUser } from '@/types/auth';
+import { formatUsPhoneDisplay } from '@/utils/phone-format';
 
 type ReuseStatus = 'idle' | 'loading' | 'existing' | 'new';
 
@@ -1754,6 +1773,8 @@ const activeStudentGrade = createActiveStudentStringField('grade');
 const activeStudentSchool = createActiveStudentStringField('school');
 const activeStudentGuardianPhone = createActiveStudentStringField('guardianPhone');
 const activeStudentGuardianPhone2 = createActiveStudentStringField('guardianPhone2');
+const guardianPhoneFocused = ref(false);
+const guardianPhone2Focused = ref(false);
 const studentLookupQuery = computed(() => ({
   keyword: fullStudentName.value || undefined,
   guardian: form.student.guardianPhone.trim() || undefined,
@@ -6169,6 +6190,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   display: none;
 }
 
+.student-phone-display {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 4px;
+  border-bottom: 2px solid #222;
+}
+
 .print-course-value,
 .print-course-price {
   color: #111;
@@ -7400,6 +7429,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
   .contact-block strong {
     margin-bottom: 2px;
+    font-size: 11px;
+  }
+
+  .student-phone-input {
+    display: none !important;
+  }
+
+  .student-phone-print {
+    display: inline-flex !important;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 3px;
+    border-bottom: 1px solid #222;
     font-size: 11px;
   }
 

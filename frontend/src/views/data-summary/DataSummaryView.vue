@@ -119,7 +119,7 @@
                     unlink-panels
                   />
 
-                  <div v-if="column.filterType === 'date' || column.filterType === 'number'" class="workbook-filter-section">
+                  <div class="workbook-filter-section">
                     <span class="workbook-filter-label">Sort</span>
                     <el-button-group class="workbook-sort-buttons">
                       <el-button
@@ -203,8 +203,8 @@
                 <td>{{ displayText(row.school) }}</td>
                 <td class="workbook-cell--center">{{ displayText(row.grade) }}</td>
                 <td class="workbook-cell--center">{{ formatDate(row.signupDate) }}</td>
-                <td>{{ displayText(row.phone) }}</td>
-                <td>{{ displayText(row.phone2) }}</td>
+                <td>{{ formatUsPhoneDisplay(row.phone) || '—' }}</td>
+                <td>{{ formatUsPhoneDisplay(row.phone2) || '—' }}</td>
                 <td class="workbook-cell--center">
                   <span :class="['workbook-pill', row.pickupRequired ? 'workbook-pill--yes' : 'workbook-pill--no']">
                     {{ row.pickupRequired ? 'Yes' : 'No' }}
@@ -227,7 +227,8 @@
                   {{ formatPeriod(row) }}
                 </td>
                 <td class="workbook-cell--money">{{ formatMoney(row.linePriceAmount) }}</td>
-                <td class="workbook-cell--money">{{ formatMoney(transportFeeAmount(row)) }}</td>
+                <td class="workbook-cell--money">{{ formatMoney(row.pickupFeeAmount) }}</td>
+                <td class="workbook-cell--money">{{ formatMoney(row.dropoffFeeAmount) }}</td>
                 <td class="workbook-cell--money">{{ formatMoney(row.discountAmount) }}</td>
                 <td class="workbook-cell--money">{{ formatMoney(row.paidAmount) }}</td>
                 <td
@@ -331,6 +332,7 @@ import { useAuthStore } from '@/stores/auth';
 import { isAdminUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
 import { useRouter } from 'vue-router';
+import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
 
 type ColumnKey =
   | 'campus'
@@ -347,7 +349,8 @@ type ColumnKey =
   | 'attendance'
   | 'period'
   | 'tuition'
-  | 'transportFee'
+  | 'pickupFee'
+  | 'dropoffFee'
   | 'discount'
   | 'paid'
   | 'balance';
@@ -436,7 +439,8 @@ const columns: WorkbookColumn[] = [
   { key: 'attendance', label: 'AM/PM', width: 96, filterType: 'select' },
   { key: 'period', label: 'Period', width: 176, filterType: 'date' },
   { key: 'tuition', label: 'Tuition', width: 104, filterType: 'number' },
-  { key: 'transportFee', label: 'Pickup/Dropoff', width: 128, filterType: 'number' },
+  { key: 'pickupFee', label: 'Pickup', width: 104, filterType: 'number' },
+  { key: 'dropoffFee', label: 'Drop-off', width: 104, filterType: 'number' },
   { key: 'discount', label: 'Discount', width: 100, filterType: 'number' },
   { key: 'paid', label: 'Paid', width: 100, filterType: 'number' },
   { key: 'balance', label: 'Balance', width: 104, filterType: 'number' },
@@ -937,6 +941,9 @@ function matchesColumnFilter(row: DataSummaryDisplayRow, column: WorkbookColumn)
   const filter = columnFilters[column.key];
   if (column.filterType === 'text') {
     const keyword = filter.text.trim().toLowerCase();
+    if (column.key === 'phone' || column.key === 'phone2') {
+      return matchesPhoneSearch(String(columnValue(row, column.key) ?? ''), keyword);
+    }
     return !keyword || String(columnValue(row, column.key) ?? '').toLowerCase().includes(keyword);
   }
   if (column.filterType === 'select') {
@@ -997,8 +1004,10 @@ function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | numbe
       return row.periodStartDate || row.periodLabel;
     case 'tuition':
       return Number(row.linePriceAmount ?? 0);
-    case 'transportFee':
-      return transportFeeAmount(row);
+    case 'pickupFee':
+      return Number(row.pickupFeeAmount ?? 0);
+    case 'dropoffFee':
+      return Number(row.dropoffFeeAmount ?? 0);
     case 'discount':
       return Number(row.discountAmount ?? 0);
     case 'paid':
@@ -1278,15 +1287,12 @@ function formatMoney(value?: number) {
   }).format(Number(value ?? 0));
 }
 
-function transportFeeAmount(row: DataSummaryRow) {
-  return Number(row.pickupFeeAmount ?? 0) + Number(row.dropoffFeeAmount ?? 0);
-}
-
 // ─── Excel 导出 ─────────────────────────────────
 // 金额列导出为数值，便于在 Excel 中直接求和/计算；其余列导出为展示文本。
 const EXPORT_NUMERIC_COLUMNS: ReadonlySet<ColumnKey> = new Set([
   'tuition',
-  'transportFee',
+  'pickupFee',
+  'dropoffFee',
   'discount',
   'paid',
   'balance',
@@ -1324,6 +1330,9 @@ function exportCell(row: DataSummaryRow, key: ColumnKey): string | number {
   }
   if (value == null) {
     return '—';
+  }
+  if (key === 'phone' || key === 'phone2') {
+    return formatUsPhoneDisplay(String(value)) || '—';
   }
   return String(value).trim() || '—';
 }
@@ -1485,54 +1494,6 @@ onMounted(() => {
 .workbook-table th:last-child,
 .workbook-table td:last-child {
   border-right: 0;
-}
-
-.workbook-header-button {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  width: 100%;
-  height: 100%;
-  padding: 5px 7px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  text-align: left;
-}
-
-.workbook-header-button:hover,
-.workbook-header--active .workbook-header-button {
-  background: #2d5544;
-}
-
-.workbook-header-icons {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-}
-
-.workbook-sort-indicator {
-  color: #ffd95a;
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1;
-}
-
-.workbook-header--active .workbook-filter-arrow {
-  border-top-color: #ffd95a;
-}
-
-.workbook-filter-arrow {
-  flex: 0 0 auto;
-  width: 0;
-  height: 0;
-  border-top: 5px solid #d9ebe3;
-  border-right: 4px solid transparent;
-  border-left: 4px solid transparent;
 }
 
 .workbook-filter {

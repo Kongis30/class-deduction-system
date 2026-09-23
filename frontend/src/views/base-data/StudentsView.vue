@@ -71,7 +71,7 @@
           <template #default="{ row }">
             <div class="cell-stack">
               <strong>{{ row.guardianName || '-' }}</strong>
-              <span>{{ row.guardianPhone || row.phone || '-' }}</span>
+              <span>{{ formatUsPhoneDisplay(row.guardianPhone || row.phone) || '-' }}</span>
             </div>
           </template>
         </el-table-column>
@@ -368,11 +368,11 @@
             </div>
             <div>
               <label>Phone</label>
-              <strong>{{ selectedStudentForDisplay?.guardianPhone || selectedStudentForDisplay?.phone || '-' }}</strong>
+              <strong>{{ formatUsPhoneDisplay(selectedStudentForDisplay?.guardianPhone || selectedStudentForDisplay?.phone) || '-' }}</strong>
             </div>
             <div>
               <label>Phone #2</label>
-              <strong>{{ selectedStudentForDisplay?.guardianPhone2 || '-' }}</strong>
+              <strong>{{ formatUsPhoneDisplay(selectedStudentForDisplay?.guardianPhone2) || '-' }}</strong>
             </div>
             <div>
               <label>Email</label>
@@ -790,6 +790,7 @@ import {
 } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
 import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, StudentAccountItem, StudentItem } from '@/types/domain';
+import { formatUsPhoneDisplay } from '@/utils/phone-format';
 
 const loading = ref(false);
 const submitting = ref(false);
