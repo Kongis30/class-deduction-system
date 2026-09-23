@@ -590,8 +590,13 @@ const monthFilteredRows = computed<DataSummaryDisplayRow[]>(() => {
   return displayProductRows.value.filter((row) => monthKey(row) === selectedMonth.value);
 });
 
+const filteredRows = computed<DataSummaryDisplayRow[]>(() => monthFilteredRows.value.filter((row) => {
+  return columns.every((column) => matchesColumnFilter(row, column));
+}));
+
 const monthStats = computed(() => {
-  return uniqueSourceRows(monthFilteredRows.value).reduce(
+  // 汇总跟随月份、课程和表格筛选；周六班拆分行仍按原始报名记录计数。
+  return uniqueSourceRows(filteredRows.value).reduce(
     (acc, row) => {
       acc.count += 1;
       acc.paid += Number(row.paidAmount ?? 0);
@@ -601,10 +606,6 @@ const monthStats = computed(() => {
     { count: 0, paid: 0, balance: 0 },
   );
 });
-
-const filteredRows = computed<DataSummaryDisplayRow[]>(() => monthFilteredRows.value.filter((row) => {
-  return columns.every((column) => matchesColumnFilter(row, column));
-}));
 
 const sortedRows = computed<DataSummaryDisplayRow[]>(() => {
   const source = [...filteredRows.value];
