@@ -676,6 +676,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         BigDecimal rowAmountDue = amount(order.getAmountDue());
         BigDecimal rowPaidAmount = amount(order.getReceivedAmount());
         BigDecimal rowBalanceAmount = amount(order.getBalanceAmount());
+        // Data Summary 按报名行展示课时；合并课包会改绑到最新订单，不能用课包总量覆盖历史报名快照。
+        Double rowTotalHours = null;
+        if (oneOnOne && item != null && item.getOneOnOneHours() != null) {
+            rowTotalHours = item.getOneOnOneHours().doubleValue();
+        } else if (coursePackage != null) {
+            rowTotalHours = UnitConverter.toHoursDecimal(coursePackage.getTotalUnits());
+        }
         AllocatedAmounts allocated = allocatedAmounts(allocationByOrderId, order.getId(), participant, item);
         if (!sharedParticipantOrder) {
             if (allocated != null) {
@@ -810,7 +817,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 rowAmountDue,
                 rowPaidAmount,
                 displayBalanceAmount(rowBalanceAmount),
-                coursePackage == null ? null : UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()),
+                rowTotalHours,
                 coursePackage == null ? null : UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()),
                 coursePackage == null ? null : UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()),
                 teacherId,

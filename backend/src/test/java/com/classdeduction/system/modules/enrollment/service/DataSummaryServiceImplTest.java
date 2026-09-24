@@ -391,6 +391,45 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldDisplayEachOneOnOneEnrollmentHoursFromItsOwnOrderItemSnapshot() {
+        EnrollmentOrderEntity firstOrder = order(1L, "5999.00", "5999.00", "0.00");
+        EnrollmentOrderEntity secondOrder = order(2L, "5999.00", "5999.00", "0.00");
+        secondOrder.setSignupDate(LocalDate.of(2026, 8, 24));
+
+        EnrollmentOrderItemEntity firstItem = item(21L, 1, "5999.00");
+        firstItem.setEnrollmentOrderId(1L);
+        firstItem.setCourseType("ONE_ON_ONE");
+        firstItem.setOneOnOneHours(new BigDecimal("120.00"));
+        EnrollmentOrderItemEntity secondItem = item(22L, 1, "5999.00");
+        secondItem.setEnrollmentOrderId(2L);
+        secondItem.setCourseType("ONE_ON_ONE");
+        secondItem.setOneOnOneHours(new BigDecimal("120.00"));
+
+        // 合并课包只关联最新报名；较早订单仍应按自己的报名快照显示购买课时。
+        CoursePackageEntity mergedPackage = new CoursePackageEntity();
+        mergedPackage.setId(31L);
+        mergedPackage.setEnrollmentOrderId(2L);
+        mergedPackage.setEnrollmentOrderItemId(22L);
+        mergedPackage.setTotalUnits(240);
+        mergedPackage.setConsumedUnits(50);
+        mergedPackage.setRemainingUnits(190);
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(firstOrder, secondOrder));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(firstItem, secondItem));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(mergedPackage));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(
+                payment(1L, "5999.00"), payment(2L, "5999.00")));
+        when(hourLedgerMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(packageTeacherAssignmentMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).hasSize(2);
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::totalHours)
+                .containsExactly(120.0, 120.0);
+    }
+
+    @Test
     void shouldDisplayLegacyGroupClassEnrollmentPeriodWhenOrderItemLinkIsMissing() {
         EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
         order.setSignupDate(LocalDate.of(2026, 9, 15));
