@@ -182,7 +182,7 @@ class RecurringScheduleRuleServiceImplTest {
         // Monday: 2h/class, 4h allocated => 2 classes; Tuesday: 1h/class, 3h allocated => 3 classes.
         RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 8);
         RecurringScheduleSlotRequest tuesday = buildSlot(2, LocalTime.of(18, 0), 2, 6);
-        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(28, List.of(monday, tuesday));
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday, tuesday));
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(100);
         when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
@@ -204,10 +204,31 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
+    void shouldGenerateAllAllocatedLessonsBeyondTwoYears() {
+        RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 424);
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday));
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(424);
+        coursePackage.setRemainingUnits(424);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        stubGeneratedIds(true);
+
+        recurringScheduleRuleService.createRule(request);
+
+        verify(lessonOccurrenceMapper, times(106)).insert(occurrenceCaptor.capture());
+        LocalDate lastScheduledDate = occurrenceCaptor.getAllValues().get(105).getPlannedStartAt().toLocalDate();
+        assertThat(lastScheduledDate).isAfter(request.getStartDate().plusDays(730));
+    }
+
+    @Test
     void shouldScheduleRemainderAsLastClass() {
         // 22h allocated at 1.5h/class => 14 full classes + one 1h remainder class = 15 classes.
         RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 3, 44);
-        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(126, List.of(monday));
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday));
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(100);
         when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
@@ -235,7 +256,7 @@ class RecurringScheduleRuleServiceImplTest {
     void shouldRejectWhenSlotAllocationsExceedPackageTotal() {
         RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 10);
         RecurringScheduleSlotRequest tuesday = buildSlot(2, LocalTime.of(18, 0), 2, 10);
-        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(28, List.of(monday, tuesday));
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday, tuesday));
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(15);
         when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
@@ -249,9 +270,31 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
+    void shouldAllowScheduleTargetAtPackageTotalButGenerateOnlyCurrentRemainingBalance() {
+        RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 80);
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday));
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(80);
+        coursePackage.setConsumedUnits(32);
+        coursePackage.setRemainingUnits(48);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        stubGeneratedIds(true);
+
+        recurringScheduleRuleService.createRule(request);
+
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues().stream().mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum())
+                .isEqualTo(48);
+    }
+
+    @Test
     void shouldRejectWhenSlotAllocationIsMissing() {
         RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, null);
-        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(28, List.of(monday));
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday));
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(8);
         when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
@@ -343,7 +386,6 @@ class RecurringScheduleRuleServiceImplTest {
         request.setPackageId(1001L);
         request.setDefaultClassroomId(4001L);
         request.setStartDate(nextMonday);
-        request.setGenerationHorizonDays(14);
         request.setNotes("Weeknight math");
         request.setSlots(List.of(slot));
         return request;
@@ -361,7 +403,7 @@ class RecurringScheduleRuleServiceImplTest {
         return slot;
     }
 
-    private RecurringScheduleRuleCreateRequest buildCreateRequestWithSlots(int horizonDays, List<RecurringScheduleSlotRequest> slots) {
+    private RecurringScheduleRuleCreateRequest buildCreateRequestWithSlots(List<RecurringScheduleSlotRequest> slots) {
         LocalDate nextMonday = AppTime.nowLocalDateTime().toLocalDate().with(TemporalAdjusters.nextOrSame(DayOfWeek.MONDAY));
         if (!nextMonday.isAfter(AppTime.nowLocalDateTime().toLocalDate())) {
             nextMonday = nextMonday.plusWeeks(1);
@@ -370,7 +412,6 @@ class RecurringScheduleRuleServiceImplTest {
         request.setPackageId(1001L);
         request.setDefaultClassroomId(4001L);
         request.setStartDate(nextMonday);
-        request.setGenerationHorizonDays(horizonDays);
         request.setNotes("Per-slot allocation");
         request.setSlots(slots);
         return request;
@@ -394,7 +435,6 @@ class RecurringScheduleRuleServiceImplTest {
         request.setDefaultClassroomId(4001L);
         request.setRuleStatus("ACTIVE");
         request.setStartDate(nextMonday);
-        request.setGenerationHorizonDays(28);
         request.setNotes("Updated schedule");
         request.setSlots(List.of(slot));
         return request;
@@ -408,7 +448,6 @@ class RecurringScheduleRuleServiceImplTest {
         rule.setDefaultClassroomId(4001L);
         rule.setRuleStatus("ACTIVE");
         rule.setStartDate(buildUpdateRequest(4).getStartDate());
-        rule.setGenerationHorizonDays(28);
         return rule;
     }
 

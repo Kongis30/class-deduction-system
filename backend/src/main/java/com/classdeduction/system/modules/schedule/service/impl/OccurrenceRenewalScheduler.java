@@ -8,8 +8,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * 课次滚动续期定时任务：周期性为 ACTIVE 的一对一排课规则与班级补足未来课次，
- * 避免 horizon（一对一）或产品周期（班课）之后日历空白。生成逻辑本身幂等。
+ * 课次滚动续期定时任务：周期性为 ACTIVE 的一对一排课规则与班级补足未来课次。
+ * 一对一按课时分配生成，班课按产品周期生成；生成逻辑本身幂等。
  */
 @Slf4j
 @Component

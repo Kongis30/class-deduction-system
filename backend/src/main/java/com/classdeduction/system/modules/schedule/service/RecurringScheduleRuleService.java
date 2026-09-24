@@ -25,8 +25,11 @@ public interface RecurringScheduleRuleService {
 
     ScheduleRuleUpdateResultVO updateRule(Long id, RecurringScheduleRuleUpdateRequest request);
 
+    /** 按当前课包余额重建未来未确认课次，保留已确认和人工调整过的课次。 */
+    void refreshPackageSchedule(Long packageId);
+
     /**
-     * 滚动续期：为所有 ACTIVE 规则补足到 horizon 的未来课次，幂等去重。返回新增课次数。
+     * 滚动续期：为所有 ACTIVE 规则补齐尚未生成的分配课次，幂等去重。返回新增课次数。
      */
     int renewActiveRuleOccurrences();
 }

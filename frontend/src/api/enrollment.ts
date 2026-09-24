@@ -59,6 +59,10 @@ export function cancelEnrollmentOrder(id: string | number) {
   return http.post(`/v1/enrollment/orders/${id}/cancel`);
 }
 
+export function updateCoursePackageOpeningUsedHours(id: EntityId, openingUsedHours: number) {
+  return http.put(`/v1/enrollment/packages/${id}/opening-used-hours`, { openingUsedHours });
+}
+
 export interface EnrollmentOrderCorrectionPayload {
   participants?: RegistrationStudentPayload[];
   participantBillings?: RegistrationParticipantBillingPayload[];

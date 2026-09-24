@@ -74,6 +74,27 @@
 
             <!-- Schedule content -->
             <template v-else>
+              <section v-if="selectedPackage" class="package-hours-card">
+                <div class="package-hours-card__heading">
+                  <div>
+                    <div class="package-hours-card__eyebrow">PACKAGE HOURS</div>
+                    <strong>Already used</strong>
+                  </div>
+                  <el-button type="primary" size="small" :loading="savingOpeningUsedHours" @click="saveOpeningUsedHours">
+                    Save hours
+                  </el-button>
+                </div>
+                <div class="package-hours-card__fields">
+                  <div><span>Package total</span><strong>{{ packageHours(selectedPackage.totalUnits) }}h</strong></div>
+                  <label class="package-hours-card__input">
+                    <span>Already used</span>
+                    <el-input-number v-model="openingUsedHoursDraft" :min="0" :max="openingUsedHoursMax" :step="0.5" :precision="1" controls-position="right" />
+                  </label>
+                  <div><span>Already used (confirmed lessons)</span><strong>{{ trackedConsumedHours }}h</strong></div>
+                  <div><span>Remaining</span><strong>{{ projectedRemainingHours }}h</strong></div>
+                </div>
+                <p class="package-hours-card__hint">Changing this value recalculates future unconfirmed lessons. Confirmed lessons stay unchanged.</p>
+              </section>
               <div class="schedule-info">
                 <div class="schedule-info__header">
                   <span class="schedule-info__title">{{ selectedPackageName }}</span>
@@ -691,14 +712,14 @@
 <script setup lang="ts">
 import { ArrowLeft, ArrowRight, Calendar, Search, QuestionFilled, Delete, RefreshLeft, Close, Loading } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
 import { useRoute } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
-import { fetchCoursePackages } from '@/api/enrollment';
+import { fetchCoursePackages, updateCoursePackageOpeningUsedHours } from '@/api/enrollment';
 import {
   createRecurringScheduleRule,
   updateRecurringScheduleRule,
@@ -811,6 +832,23 @@ const currentWeekOccurrences = ref<LessonOccurrenceItem[]>([]);
 const studentSearch = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
+const openingUsedHoursDraft = ref(0);
+const savingOpeningUsedHours = ref(false);
+const selectedPackage = computed(() => studentPackages.value.find(p => String(p.id) === String(selectedPackageId.value)) ?? null);
+const packageHours = (hours?: number) => Number((hours ?? 0).toFixed(1));
+const trackedConsumedHours = computed(() => {
+  const pkg = selectedPackage.value;
+  return packageHours(Math.max(0, (pkg?.consumedUnits ?? 0) - (pkg?.openingUsedHours ?? 0)));
+});
+const openingUsedHoursMax = computed(() => Math.max(0,
+  packageHours(selectedPackage.value?.totalUnits) - trackedConsumedHours.value,
+));
+const projectedRemainingHours = computed(() => Number(Math.max(0,
+  packageHours(selectedPackage.value?.totalUnits) - trackedConsumedHours.value - openingUsedHoursDraft.value,
+).toFixed(1)));
+watch(selectedPackage, pkg => {
+  openingUsedHoursDraft.value = pkg?.openingUsedHours ?? 0;
+}, { immediate: true });
 const emptySlots = ref<SlotDef[]>([]);
 const weeklyRows = ref<WeeklyAdjustmentRow[]>([]);
 const weeklyReason = ref('');
@@ -1236,6 +1274,32 @@ function onPackageSelect(pkg: CoursePackageItem) {
   selectedPackageId.value = pkg.id;
 }
 
+async function saveOpeningUsedHours() {
+  const pkg = selectedPackage.value;
+  if (!pkg || !selectedStudentId.value || savingOpeningUsedHours.value) return;
+  if (!Number.isInteger(openingUsedHoursDraft.value * 2) || openingUsedHoursDraft.value > openingUsedHoursMax.value) {
+    ElMessage.warning('Already used hours must be in 0.5-hour increments and cannot exceed the package total after confirmed lesson hours.');
+    return;
+  }
+  savingOpeningUsedHours.value = true;
+  try {
+    await updateCoursePackageOpeningUsedHours(pkg.id, openingUsedHoursDraft.value);
+    const res = await fetchCoursePackages({
+      studentId: selectedStudentId.value,
+      packageStatus: 'ACTIVE',
+      teachingMode: 'ONE_ON_ONE',
+      pageSize: 50,
+    });
+    studentPackages.value = res.data.data.records;
+    await Promise.all([loadAllPackageRules(), loadCurrentWeekOccurrences(selectedStudentId.value)]);
+    ElMessage.success('Package hours and future schedule updated.');
+  } catch (err) {
+    ElMessage.error(extractErrorMessage(err));
+  } finally {
+    savingOpeningUsedHours.value = false;
+  }
+}
+
 // ─── Load rules for ALL packages ────────────────
 async function loadAllPackageRules() {
   const packages = studentPackages.value;
@@ -1336,11 +1400,11 @@ const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
 );
 
-// 可分配课时（小时）：剩余课时（总课时含赠送，已扣除报名时录入的已用课时），作为逐时段分配的上限。
+// 排课时段是课包级周计划，分配上限按购买加赠送的总课时；未来课次生成按实时余额截断。
 const packageTotalHours = computed(() => {
   const pkg = studentPackages.value.find(p => p.id === selectedPackageId.value);
   if (!pkg) return 0;
-  return pkg.remainingUnits ?? pkg.totalUnits ?? 0;
+  return pkg.totalUnits ?? 0;
 });
 
 // 已在各时段分配的课时合计（小时）。
@@ -2005,6 +2069,23 @@ function disabledPastDate(date: Date) {
 }
 
 /* ── Schedule display ────────────────────────── */
+.package-hours-card {
+  margin: 12px;
+  padding: 12px 14px;
+  border: 1px solid #cfe3f8;
+  border-radius: 8px;
+  background: #f7fbff;
+}
+.package-hours-card__heading,
+.package-hours-card__fields { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.package-hours-card__eyebrow { margin-bottom: 3px; color: #7d8da1; font-size: 10px; letter-spacing: .08em; }
+.package-hours-card__fields { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
+.package-hours-card__fields > div,
+.package-hours-card__input { display: flex; min-width: 110px; flex-direction: column; gap: 5px; color: #7d8da1; font-size: 11px; }
+.package-hours-card__fields strong { color: #273b53; font-size: 14px; }
+.package-hours-card__input :deep(.el-input-number) { width: 140px; }
+.package-hours-card__hint { margin: 10px 0 0; color: #8795a5; font-size: 11px; }
+
 .schedule-info {
   padding: 12px;
   border-bottom: 1px solid #ebeef5;

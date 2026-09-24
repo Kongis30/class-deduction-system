@@ -967,6 +967,10 @@ function matchesDateRange(
     return true;
   }
   if (key === 'period') {
+    // 1-on-1 的 Period 展示课时而非日期，因此日期范围筛选不匹配这类记录。
+    if (isPrivateLessonRow(row)) {
+      return false;
+    }
     const start = row.periodStartDate || row.periodEndDate;
     const end = row.periodEndDate || row.periodStartDate;
     return Boolean(start && end && start <= range[1] && end >= range[0]);
@@ -1002,6 +1006,9 @@ function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | numbe
     case 'attendance':
       return attendanceLabelRow(row);
     case 'period':
+      if (isPrivateLessonRow(row)) {
+        return row.totalHours == null ? undefined : Number(row.totalHours);
+      }
       return row.periodStartDate || row.periodLabel;
     case 'tuition':
       return Number(row.linePriceAmount ?? 0);
@@ -1243,6 +1250,9 @@ function formatDate(value?: string) {
 }
 
 function formatPeriod(row: DataSummaryRow) {
+  if (isPrivateLessonRow(row)) {
+    return row.totalHours == null ? '—' : `${Number(row.totalHours).toFixed(1)}h`;
+  }
   if (!row.periodStartDate && !row.periodEndDate) {
     return displayText(row.periodLabel);
   }
@@ -1252,7 +1262,7 @@ function formatPeriod(row: DataSummaryRow) {
 }
 
 function isPeriodRenewalDue(row: DataSummaryRow) {
-  if (!row.periodEndDate) {
+  if (isPrivateLessonRow(row) || !row.periodEndDate) {
     return false;
   }
   return remainingBusinessDays(row.periodEndDate) <= 7;

@@ -70,8 +70,6 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleService {
 
-    private static final int MAX_GENERATION_HORIZON_DAYS = 180;
-
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
@@ -140,7 +138,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                             .ruleStatus(rule.getRuleStatus())
                             .startDate(rule.getStartDate())
                             .endDate(rule.getEndDate())
-                            .generationHorizonDays(rule.getGenerationHorizonDays())
                             .slotCount(slotCountMap.getOrDefault(rule.getId(), 0))
                             .generatedOccurrenceCount(occurrences.size())
                             .nextLessonStartAt(nextLessonStartAt)
@@ -182,7 +179,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .ruleStatus(rule.getRuleStatus())
                 .startDate(rule.getStartDate())
                 .endDate(rule.getEndDate())
-                .generationHorizonDays(rule.getGenerationHorizonDays())
                 .notes(rule.getNotes())
                 .generatedOccurrenceCount(occurrences.size())
                 .nextLessonStartAt(nextLessonStartAt)
@@ -213,7 +209,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         rule.setRuleStatus("ACTIVE");
         rule.setStartDate(request.getStartDate());
         rule.setEndDate(request.getEndDate());
-        rule.setGenerationHorizonDays(normalizeGenerationHorizon(request.getGenerationHorizonDays()));
         rule.setNotes(request.getNotes());
         recurringScheduleRuleMapper.insert(rule);
 
@@ -347,9 +342,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         existingRule.setRuleStatus(newStatus);
         existingRule.setStartDate(request.getStartDate());
         existingRule.setEndDate(request.getEndDate() != null ? request.getEndDate() : existingRule.getEndDate());
-        existingRule.setGenerationHorizonDays(request.getGenerationHorizonDays() != null
-                ? normalizeGenerationHorizon(request.getGenerationHorizonDays())
-                : existingRule.getGenerationHorizonDays());
         existingRule.setNotes(request.getNotes());
         recurringScheduleRuleMapper.updateById(existingRule);
 
@@ -429,6 +421,51 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return new ScheduleRuleUpdateResultVO(
                 id, newSlots.size(), toPreserve.size(), toDelete.size(),
                 newOccurrences.size(), confirmedCount, firstStart, lastEnd);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void refreshPackageSchedule(Long packageId) {
+        CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
+        if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
+            return;
+        }
+        List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .eq(RecurringScheduleRuleEntity::getPackageId, packageId)
+                        .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE"));
+        for (RecurringScheduleRuleEntity rule : rules) {
+            List<RecurringScheduleSlotEntity> slots = recurringScheduleSlotMapper.selectList(
+                    new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                            .eq(RecurringScheduleSlotEntity::getRuleId, rule.getId())
+                            .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE")
+                            .orderByAsc(RecurringScheduleSlotEntity::getWeekday)
+                            .orderByAsc(RecurringScheduleSlotEntity::getStartTime));
+            if (slots.isEmpty()) {
+                continue;
+            }
+            RecurringScheduleRuleUpdateRequest request = new RecurringScheduleRuleUpdateRequest();
+            request.setPrivateLessonGroupId(rule.getPrivateLessonGroupId());
+            request.setDefaultClassroomId(rule.getDefaultClassroomId());
+            request.setRuleStatus(rule.getRuleStatus());
+            request.setStartDate(rule.getStartDate());
+            request.setEndDate(rule.getEndDate());
+            request.setNotes(rule.getNotes());
+            request.setSlots(slots.stream().map(this::toSlotRequest).toList());
+            updateRule(rule.getId(), request);
+        }
+    }
+
+    private RecurringScheduleSlotRequest toSlotRequest(RecurringScheduleSlotEntity slot) {
+        RecurringScheduleSlotRequest request = new RecurringScheduleSlotRequest();
+        request.setTeacherId(slot.getTeacherId());
+        request.setSubjectName(slot.getSubjectName());
+        request.setWeekday(slot.getWeekday());
+        request.setStartTime(slot.getStartTime());
+        request.setEndTime(slot.getEndTime());
+        request.setPlannedUnits(slot.getPlannedUnits());
+        request.setAllocatedUnits(slot.getAllocatedUnits());
+        return request;
     }
 
     private void validateUpdateRuleDates(RecurringScheduleRuleUpdateRequest request) {
@@ -614,14 +651,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex));
     }
 
-    private int normalizeGenerationHorizon(Integer generationHorizonDays) {
-        int horizon = generationHorizonDays == null ? 90 : generationHorizonDays;
-        if (horizon <= 0 || horizon > MAX_GENERATION_HORIZON_DAYS) {
-            throw new BusinessException("INVALID_GENERATION_HORIZON", "Generation horizon must be between 1 and 180 days.");
-        }
-        return horizon;
-    }
-
     private void validateRuleDates(RecurringScheduleRuleCreateRequest request) {
         if (request.getEndDate() != null && request.getEndDate().isBefore(request.getStartDate())) {
             throw new BusinessException("INVALID_RULE_DATE_RANGE", "Rule end date cannot be earlier than the start date.");
@@ -663,9 +692,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .forEach(this::resolveTeacherById);
     }
 
-    /**
-     * 校验各时段分配课时总和不超过课时包可分配课时（总课时含赠送，扣除报名时录入的已用课时）。
-     */
+    /** 排课时段代表课包的周计划，按课包总课时分配；生成的未来课次再按实时余额截断。 */
     private void validateSlotAllocations(List<RecurringScheduleSlotRequest> slots, CoursePackageEntity coursePackage) {
         int allocatedSum = 0;
         for (RecurringScheduleSlotRequest slot : slots) {
@@ -676,16 +703,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
             allocatedSum += slot.getAllocatedUnits();
         }
-        int allocatableUnits = allocatableUnits(coursePackage);
-        if (allocatedSum > allocatableUnits) {
+        int packageUnits = coursePackage.getTotalUnits() == null ? 0 : Math.max(0, coursePackage.getTotalUnits());
+        if (allocatedSum > packageUnits) {
             throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
-                    "Total allocated hours across slots cannot exceed the package's remaining hours.");
+                    "Total allocated hours across slots cannot exceed the package total hours.");
         }
     }
 
-    /**
-     * 课包可分配课时（unit）：优先用剩余课时，回退到总课时扣除已用课时。
-     */
+    /** 课时包当前可用于新生成课次的余额，单位为半小时。 */
     private int allocatableUnits(CoursePackageEntity coursePackage) {
         Integer remaining = coursePackage.getRemainingUnits();
         if (remaining != null) {
@@ -721,14 +746,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return entity;
     }
 
+    /** 按时段分配生成课次，不设固定日历上限；调用方随后按课包余额截断。 */
     private List<LessonOccurrenceEntity> buildOccurrences(RecurringScheduleRuleEntity rule,
                                                           List<RecurringScheduleSlotEntity> slots,
                                                           CoursePackageEntity coursePackage,
                                                           Long studentId) {
         LocalDate generationStart = Collections.max(List.of(rule.getStartDate(), AppTime.nowLocalDateTime().toLocalDate()));
-        LocalDate naturalWindowEnd = generationStart.plusDays(rule.getGenerationHorizonDays() - 1L);
-        LocalDate generationEnd = rule.getEndDate() == null ? naturalWindowEnd : Collections.min(List.of(rule.getEndDate(), naturalWindowEnd));
-        if (generationEnd.isBefore(generationStart)) {
+        LocalDate generationEnd = rule.getEndDate();
+        if (generationEnd != null && generationEnd.isBefore(generationStart)) {
             return Collections.emptyList();
         }
 
@@ -744,10 +769,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 continue;
             }
             int remaining = slot.getAllocatedUnits();
-            for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
-                if (remaining <= 0) {
-                    break;
-                }
+            for (LocalDate date = generationStart;
+                 remaining > 0 && (generationEnd == null || !date.isAfter(generationEnd));
+                 date = date.plusDays(1)) {
                 if (!Objects.equals(slot.getWeekday(), toWeekday(date.getDayOfWeek()))) {
                     continue;
                 }

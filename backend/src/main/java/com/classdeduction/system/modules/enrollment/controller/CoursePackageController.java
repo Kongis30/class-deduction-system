@@ -8,6 +8,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageOpeningUsedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
@@ -94,6 +95,16 @@ public class CoursePackageController {
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         coursePackageService.adjustPackageHours(id, request, currentUser.userId());
         return ApiResponse.success("Package hours adjusted successfully.", null);
+    }
+
+    @PutMapping("/{id}/opening-used-hours")
+    @Operation(summary = "Update already-used 1-on-1 hours and refresh future scheduled lessons")
+    public ApiResponse<Void> updateOpeningUsedHours(
+            @PathVariable Long id,
+            @Valid @RequestBody CoursePackageOpeningUsedHoursRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        coursePackageService.updateOpeningUsedHours(id, request, currentUser.userId());
+        return ApiResponse.success("Already used hours updated successfully.", null);
     }
 
     @PostMapping("/{id}/pause")

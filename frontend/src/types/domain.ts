@@ -373,6 +373,7 @@ export interface CoursePackageItem {
   purchasedHours?: number;
   totalUnits: number;
   consumedUnits: number;
+  openingUsedHours?: number;
   remainingUnits: number;
   receivedAmount: number;
   packageStatus: string;
@@ -494,7 +495,6 @@ export interface RecurringScheduleRuleItem {
   ruleStatus: string;
   startDate: string;
   endDate?: string;
-  generationHorizonDays: number;
   slotCount: number;
   generatedOccurrenceCount: number;
   nextLessonStartAt?: string;

@@ -17,6 +17,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageOpeningUsedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -53,6 +54,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -94,6 +96,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     private final LessonRecordMapper lessonRecordMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
+    private final RecurringScheduleRuleService recurringScheduleRuleService;
 
     @Override
     public PageResponse<CoursePackageListItemVO> pagePackages(CoursePackagePageQuery query) {
@@ -266,6 +269,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .purchasedHours(resolvePurchasedHours(coursePackage, orderItem))
                 .totalUnits(UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()))
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))
+                .openingUsedHours(UnitConverter.toHoursDecimal(coursePackage.getOpeningUsedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
                 .originalAmount(coursePackage.getOriginalAmount())
                 .discountAmount(coursePackage.getDiscountAmount())
@@ -656,6 +660,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .teachingMode(item.getTeachingMode())
                 .totalUnits(UnitConverter.toHoursDecimal(item.getTotalUnits()))
                 .consumedUnits(UnitConverter.toHoursDecimal(item.getConsumedUnits()))
+                .openingUsedHours(UnitConverter.toHoursDecimal(item.getOpeningUsedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
                 .receivedAmount(item.getReceivedAmount())
                 .packageStatus(item.getPackageStatus())
@@ -778,6 +783,63 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         ledger.setOperatedAt(AppTime.nowLocalDateTime());
         hourLedgerMapper.insert(ledger);
         upsertBalanceSnapshot(coursePackage, ledger.getId());
+        recurringScheduleRuleService.refreshPackageSchedule(id);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateOpeningUsedHours(Long id, CoursePackageOpeningUsedHoursRequest request, Long operatorId) {
+        CoursePackageEntity coursePackage = requireOneOnOnePackage(id);
+        int nextOpeningUsedUnits = UnitConverter.toHalfHourUnits(request.getOpeningUsedHours());
+        int currentOpeningUsedUnits = safeUnits(coursePackage.getOpeningUsedUnits());
+        if (nextOpeningUsedUnits == currentOpeningUsedUnits) {
+            return;
+        }
+
+        int totalUnits = safeUnits(coursePackage.getTotalUnits());
+        int currentConsumedUnits = safeUnits(coursePackage.getConsumedUnits());
+        int trackedLessonConsumedUnits = Math.max(0, currentConsumedUnits - currentOpeningUsedUnits);
+        int nextConsumedUnits = trackedLessonConsumedUnits + nextOpeningUsedUnits;
+        if (nextConsumedUnits > totalUnits) {
+            throw new BusinessException("OPENING_USED_HOURS_EXCEED_PACKAGE",
+                    "Already used hours plus confirmed lesson hours cannot exceed the package total.");
+        }
+
+        int currentRemainingUnits = coursePackage.getRemainingUnits() == null
+                ? Math.max(totalUnits - currentConsumedUnits, 0)
+                : coursePackage.getRemainingUnits();
+        int nextRemainingUnits = totalUnits - nextConsumedUnits;
+        int balanceChangeUnits = nextRemainingUnits - currentRemainingUnits;
+
+        coursePackage.setOpeningUsedUnits(nextOpeningUsedUnits);
+        coursePackage.setConsumedUnits(nextConsumedUnits);
+        coursePackage.setRemainingUnits(nextRemainingUnits);
+        if (nextRemainingUnits == 0) {
+            coursePackage.setPackageStatus("COMPLETED");
+            coursePackage.setCompletedAt(AppTime.nowLocalDateTime());
+        } else if ("COMPLETED".equals(coursePackage.getPackageStatus())) {
+            coursePackage.setPackageStatus("ACTIVE");
+            coursePackage.setCompletedAt(null);
+        }
+        if (coursePackageMapper.updateById(coursePackage) != 1) {
+            throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
+        }
+
+        HourLedgerEntity ledger = new HourLedgerEntity();
+        ledger.setPackageId(id);
+        ledger.setLedgerType("MANUAL_ADJUST");
+        ledger.setChangeUnits(balanceChangeUnits);
+        ledger.setBalanceAfterUnits(nextRemainingUnits);
+        ledger.setBusinessDate(AppTime.nowLocalDateTime().toLocalDate());
+        ledger.setReasonCode("OPENING_USED_HOURS");
+        ledger.setReasonDesc("Updated already used hours on the schedule page.");
+        ledger.setOperatedBy(operatorId);
+        ledger.setOperatedAt(AppTime.nowLocalDateTime());
+        hourLedgerMapper.insert(ledger);
+        upsertBalanceSnapshot(coursePackage, ledger.getId());
+
+        // 余额变化后重算未来课次；排课服务会保留已确认和人工调整过的课次。
+        recurringScheduleRuleService.refreshPackageSchedule(id);
     }
 
     @Override
@@ -842,7 +904,6 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         rule.setRuleStatus("ACTIVE");
         rule.setStartDate(request.getStartDate());
         rule.setEndDate(null);
-        rule.setGenerationHorizonDays(180);
         recurringScheduleRuleMapper.updateById(rule);
 
         List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(id);
@@ -940,6 +1001,10 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         return coursePackage;
     }
 
+    private int safeUnits(Integer units) {
+        return units == null ? 0 : Math.max(0, units);
+    }
+
     private List<RecurringScheduleRuleEntity> listPackageRules(Long packageId) {
         return recurringScheduleRuleMapper.selectList(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                 .eq(RecurringScheduleRuleEntity::getPackageId, packageId)
@@ -980,13 +1045,14 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
     }
 
+    /** 恢复课包时按每个时段尚未排完的额度继续生成，不再截断在固定天数内。 */
     private List<LessonOccurrenceEntity> buildResumeOccurrences(RecurringScheduleRuleEntity rule,
                                                                 List<RecurringScheduleSlotEntity> slots,
                                                                 CoursePackageEntity coursePackage,
                                                                 List<LessonOccurrenceEntity> existingOccurrences,
                                                                 Set<LocalDateTime> existingStarts) {
         LocalDate generationStart = Collections.max(List.of(rule.getStartDate(), AppTime.nowLocalDateTime().toLocalDate()));
-        LocalDate generationEnd = generationStart.plusDays(rule.getGenerationHorizonDays() - 1L);
+        LocalDate generationEnd = rule.getEndDate();
         Map<Long, Integer> scheduledUnitsBySlot = existingOccurrences.stream()
                 .filter(item -> item.getScheduleSlotId() != null)
                 .collect(Collectors.groupingBy(
@@ -1000,10 +1066,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
             if (allocationRemaining <= 0) {
                 continue;
             }
-            for (LocalDate date = generationStart; !date.isAfter(generationEnd); date = date.plusDays(1)) {
-                if (allocationRemaining <= 0) {
-                    break;
-                }
+            for (LocalDate date = generationStart;
+                 allocationRemaining > 0 && (generationEnd == null || !date.isAfter(generationEnd));
+                 date = date.plusDays(1)) {
                 if (!Objects.equals(slot.getWeekday(), toWeekday(date.getDayOfWeek()))) {
                     continue;
                 }

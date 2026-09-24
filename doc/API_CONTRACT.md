@@ -216,14 +216,13 @@ Key request fields:
 - `defaultClassroomId`
 - `startDate`
 - `endDate`
-- `generationHorizonDays`
 - `slots[]`
 
 The backend currently applies several production safeguards:
 
 - slot duration must equal `plannedUnits * 30 minutes`
 - same-weekday slots cannot overlap
-- generation window is capped at 180 days
+- occurrences are generated until the configured slot allocations or current package balance are exhausted, unless the rule has an explicit end date
 - teacher, student, and classroom conflicts are checked before insert
 
 ### `GET /api/v1/schedule/occurrences`

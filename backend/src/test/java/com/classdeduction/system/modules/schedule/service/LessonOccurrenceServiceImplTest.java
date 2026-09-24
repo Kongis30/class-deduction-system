@@ -136,6 +136,19 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldAllowPackageOccurrenceQueryWindowLongerThanTwoYears() {
+        LessonOccurrencePageQuery query = new LessonOccurrencePageQuery();
+        query.setPackageId(1001L);
+        query.setPageNum(1);
+        query.setPageSize(10);
+        query.setStartAt(LocalDateTime.of(2026, 1, 1, 0, 0));
+        query.setEndAt(LocalDateTime.of(2029, 1, 1, 0, 0));
+        when(lessonOccurrenceMapper.selectPage(any(), any())).thenReturn(new Page<>(1, 10));
+
+        assertThat(lessonOccurrenceService.pageOccurrences(query).records()).isEmpty();
+    }
+
+    @Test
     void shouldRejectTeacherCalendarQueryForOtherTeacher() {
         LessonOccurrencePageQuery query = new LessonOccurrencePageQuery();
         query.setTeacherId(302L);

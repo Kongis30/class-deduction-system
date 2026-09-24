@@ -490,19 +490,6 @@
                         @change="() => handleRegistrationDurationChange(line)"
                       />
                     </label>
-                    <label v-if="isOneOnOneLine(line) && !isRenewalMode" class="course-control">
-                      <span>Already used</span>
-                      <el-input-number
-                        v-model="line.openingUsedHours"
-                        class="table-price"
-                        :min="0"
-                        :max="totalOneOnOneHours(line) || 400"
-                        :step="0.5"
-                        :precision="1"
-                        :controls="true"
-                        :disabled="!receiptEditingEnabled || !line.coursePriceOptionId"
-                      />
-                    </label>
                     <label v-if="!isOneOnOneLine(line) && attendanceOptionsForLine(line).length > 0" class="course-control">
                       <span>Attendance</span>
                       <el-select
@@ -1512,12 +1499,15 @@ const extraFeeTotal = computed(() => sumNumbers(extraFees.value.map((line) => li
 const hasExplicitCourseFees = computed(() => courseLines.value.some((line) =>
   line.pickupRequired || line.dropoffRequired
   || line.serviceFees.some((fee) => numeric(fee.amount) > 0)));
+// 新报名按课程行记录接送；只有更正旧订单时才读取订单级接送字段。
+const usesLegacyOrderTransportFields = computed(() =>
+  isReadOnly.value && editingCorrection.value && !hasExplicitCourseFees.value);
 const effectivePickupFeeAmount = computed(() => hasExplicitCourseFees.value
   ? roundMoney(courseLines.value.reduce((total, line) => total + (line.pickupRequired ? numeric(line.pickupFeeAmount) : 0), 0))
-  : form.student.pickupRequired ? roundMoney(form.pickupFeeAmount) : 0);
+  : usesLegacyOrderTransportFields.value && form.student.pickupRequired ? roundMoney(form.pickupFeeAmount) : 0);
 const effectiveDropoffFeeAmount = computed(() => hasExplicitCourseFees.value
   ? roundMoney(courseLines.value.reduce((total, line) => total + (line.dropoffRequired ? numeric(line.dropoffFeeAmount) : 0), 0))
-  : form.student.dropoffRequired ? roundMoney(form.dropoffFeeAmount) : 0);
+  : usesLegacyOrderTransportFields.value && form.student.dropoffRequired ? roundMoney(form.dropoffFeeAmount) : 0);
 const courseServiceExtraFeeTotal = computed(() => hasExplicitCourseFees.value
   ? roundMoney(courseLines.value.reduce((total, line) => total + sumNumbers(line.serviceFees.map((fee) => fee.amount)), 0))
   : extraFeeTotal.value);
@@ -3495,22 +3485,32 @@ function removeActivePaymentLine(payment: PaymentLine) {
   removePaymentLine(index);
 }
 
-/** Pickup/Drop-off 勾选即代表收费，统一同步旧字段以兼容历史收据和后端 DTO。 */
+/** 接送开关记录本次课程需求，费用按输入金额计入；同步旧字段以兼容历史收据和后端 DTO。 */
 function syncCourseTransportFee(line: RegistrationCourseLine, type: 'pickup' | 'dropoff') {
   if (type === 'pickup') {
     line.pickupFeeCharged = line.pickupRequired;
     if (!line.pickupRequired) {
       line.pickupFeeAmount = 0;
-    } else if (!isReadOnly.value && numeric(line.pickupFeeAmount) === 0) {
-      line.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
+    } else {
+      if (!line.pickupAddress.trim()) {
+        line.pickupAddress = form.student.pickupAddress;
+      }
+      if (!isReadOnly.value && numeric(line.pickupFeeAmount) === 0) {
+        line.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
+      }
     }
     return;
   }
   line.dropoffFeeCharged = line.dropoffRequired;
   if (!line.dropoffRequired) {
     line.dropoffFeeAmount = 0;
-  } else if (!isReadOnly.value && numeric(line.dropoffFeeAmount) === 0) {
-    line.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
+  } else {
+    if (!line.dropoffAddress.trim()) {
+      line.dropoffAddress = form.student.dropoffAddress;
+    }
+    if (!isReadOnly.value && numeric(line.dropoffFeeAmount) === 0) {
+      line.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
+    }
   }
 }
 
@@ -3522,7 +3522,8 @@ function handleCourseProductChange(line: RegistrationCourseLine) {
   clearSelectedOption(line);
   line.courseType = product?.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : (firstOption?.courseType || 'GROUP');
   line.registerClass = product?.registerClass || firstOption?.registerClass || '';
-  if (!line.pickupAddress && !line.dropoffAddress && !line.pickupRequired && !line.dropoffRequired) {
+  if ((isReadOnly.value || isRenewalMode.value)
+      && !line.pickupAddress && !line.dropoffAddress && !line.pickupRequired && !line.dropoffRequired) {
     line.pickupRequired = form.student.pickupRequired;
     line.pickupAddress = form.student.pickupAddress;
     line.dropoffRequired = form.student.dropoffRequired;
@@ -3609,9 +3610,6 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
     const totalHours = totalOneOnOneHours(line);
     line.oneOnOneUnits = totalHours > 0 ? Math.round(totalHours * 2) : undefined;
     line.durationLabel = totalHours > 0 ? `${formatHours(totalHours)} hours` : '';
-    if (numeric(line.openingUsedHours) > totalHours) {
-      line.openingUsedHours = totalHours || undefined;
-    }
   } else {
     syncGroupDurationFromSelectedPackage(line);
     line.durationLabel = printRegistrationDurationLabel(line);
@@ -4279,25 +4277,6 @@ function validateForm() {
   if (!form.handledByName.trim()) {
     errors.push('Handled by is required.');
   }
-  const hasCourseTransport = courseLines.value.some((line) => line.pickupRequired || line.dropoffRequired);
-  if (hasCourseTransport) {
-    courseLines.value.forEach((line, index) => {
-      if (line.pickupRequired && numeric(line.pickupFeeAmount) <= 0) {
-        errors.push(`Course row ${index + 1}: enter a pickup fee amount.`);
-      }
-      if (line.dropoffRequired && numeric(line.dropoffFeeAmount) <= 0) {
-        errors.push(`Course row ${index + 1}: enter a drop-off fee amount.`);
-      }
-    });
-  } else if (!hasExplicitCourseFees.value) {
-    // 仅历史整单接送费没有课程级明细时，继续兼容旧字段。
-    if (form.student.pickupRequired && form.pickupFeeAmount <= 0) {
-      errors.push('Pickup is enabled for this registration. Enter a pickup fee amount.');
-    }
-    if (form.student.dropoffRequired && form.dropoffFeeAmount <= 0) {
-      errors.push('Drop-off is enabled for this registration. Enter a drop-off fee amount.');
-    }
-  }
   if (discountTotal.value > courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value) {
     errors.push('Discount cannot exceed tuition plus fees.');
   }
@@ -4434,8 +4413,6 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
   if (isOneOnOneLine(line)) {
     const hours = numeric(line.oneOnOneHours);
     const bonusHours = numeric(line.oneOnOneBonusHours);
-    const totalHours = totalOneOnOneHours(line);
-    const openingUsedHours = numeric(line.openingUsedHours);
     const invalid = hours < 0.5 || hours > 400 || !Number.isInteger(hours * 2);
     if (invalid) {
       errors.push(`${label}: enter 0.5 to 400 hours using 0.5-hour increments.`);
@@ -4444,11 +4421,7 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
     if (invalidBonus) {
       errors.push(`${label}: bonus hours must be between 0 and 400 using 0.5-hour increments.`);
     }
-    const invalidOpeningUsed = openingUsedHours < 0 || openingUsedHours > totalHours || !Number.isInteger(openingUsedHours * 2);
-    if (invalidOpeningUsed) {
-      errors.push(`${label}: already used hours must be between 0 and total package hours using 0.5-hour increments.`);
-    }
-    return invalid || invalidBonus || invalidOpeningUsed;
+    return invalid || invalidBonus;
   }
 
   const quantity = numeric(line.packageQuantity);
@@ -4722,6 +4695,7 @@ function buildPayload(): RegistrationIntakePayload {
   const campus = selectedCampus.value;
   const pickupAddress = form.student.pickupAddress.trim();
   const dropoffAddress = form.student.dropoffAddress.trim();
+  const useLegacyOrderTransportFields = usesLegacyOrderTransportFields.value && !isCreditTopUpOnly.value;
   const payload: RegistrationIntakePayload = {
     student: {
       studentId: reusableStudent.value?.id ?? historicalPrimaryStudentId.value,
@@ -4806,10 +4780,10 @@ function buildPayload(): RegistrationIntakePayload {
       })),
       remark: line.remark,
     })),
-    pickupFeeCharged: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : form.student.pickupRequired,
-    pickupFeeAmount: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : roundMoney(effectivePickupFeeAmount.value),
-    dropoffFeeCharged: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : form.student.dropoffRequired,
-    dropoffFeeAmount: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : roundMoney(effectiveDropoffFeeAmount.value),
+    pickupFeeCharged: useLegacyOrderTransportFields ? form.student.pickupRequired : undefined,
+    pickupFeeAmount: useLegacyOrderTransportFields ? roundMoney(effectivePickupFeeAmount.value) : undefined,
+    dropoffFeeCharged: useLegacyOrderTransportFields ? form.student.dropoffRequired : undefined,
+    dropoffFeeAmount: useLegacyOrderTransportFields ? roundMoney(effectiveDropoffFeeAmount.value) : undefined,
     extraFeeAmount: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? undefined : roundMoney(extraFeeTotal.value),
     extraFees: isCreditTopUpOnly.value || hasExplicitCourseFees.value ? [] : buildMoneyPayload(extraFees.value),
     discountAmount: isCreditTopUpOnly.value ? 0 : roundMoney(discountTotal.value),

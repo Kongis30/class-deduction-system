@@ -137,32 +137,55 @@
               </el-button>
             </div>
           </div>
-          <div v-if="visibleStudentGroups.length" class="oo-package-list">
+          <div v-if="visibleCourseGradeGroups.length" class="oo-package-list">
             <section
-              v-for="group in visibleStudentGroups"
-              :key="group.studentKey"
-              class="oo-student-group"
+              v-for="group in visibleCourseGradeGroups"
+              :key="group.key"
+              class="oo-course-grade-group"
             >
               <button
                 type="button"
-                class="oo-student-group__toggle"
-                :class="{ 'oo-student-group__toggle--open': expandedStudentKey === group.studentKey }"
-                @click="toggleStudentGroup(group.studentKey)"
+                class="oo-course-grade-toggle"
+                :class="{ 'oo-course-grade-toggle--collapsed': collapsedCourseGradeKeys.has(group.key) }"
+                :aria-expanded="!collapsedCourseGradeKeys.has(group.key)"
+                @click="toggleCourseGradeGroup(group.key)"
               >
-                <strong>{{ group.studentName }}</strong>
+                <span class="oo-course-grade-toggle__title">
+                  <strong>{{ group.courseName }}</strong>
+                  <span>{{ group.gradeBand }}</span>
+                </span>
+                <small>{{ group.studentGroups.length }} students</small>
                 <span aria-hidden="true">›</span>
               </button>
-              <div v-if="expandedStudentKey === group.studentKey" class="oo-student-group__packages">
-                <button
-                  v-for="candidate in group.candidates"
-                  :key="candidate.pkg.packageId"
-                  type="button"
-                  class="oo-package-item"
-                  :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
-                  @click="selectCandidatePackage(candidate)"
+              <div v-if="!collapsedCourseGradeKeys.has(group.key)" class="oo-course-grade-students">
+                <section
+                  v-for="studentGroup in group.studentGroups"
+                  :key="studentGroup.key"
+                  class="oo-student-group"
                 >
-                  <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
-                </button>
+                  <button
+                    type="button"
+                    class="oo-student-group__toggle"
+                    :class="{ 'oo-student-group__toggle--open': expandedStudentGroupKeys.has(studentGroup.key) }"
+                    :aria-expanded="expandedStudentGroupKeys.has(studentGroup.key)"
+                    @click="toggleStudentGroup(studentGroup.key)"
+                  >
+                    <strong>{{ studentGroup.studentName }}</strong>
+                    <span aria-hidden="true">›</span>
+                  </button>
+                  <div v-if="expandedStudentGroupKeys.has(studentGroup.key)" class="oo-student-group__packages">
+                    <button
+                      v-for="candidate in studentGroup.candidates"
+                      :key="candidate.pkg.packageId"
+                      type="button"
+                      class="oo-package-item"
+                      :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
+                      @click="selectCandidatePackage(candidate)"
+                    >
+                      <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
+                    </button>
+                  </div>
+                </section>
               </div>
             </section>
           </div>
@@ -170,13 +193,13 @@
             {{ candidateEmptyMessage }}
           </div>
           <el-pagination
-            v-if="studentPackageGroups.length > packagePageSize"
+            v-if="courseGradeGroups.length > packagePageSize"
             v-model:current-page="packagePage"
             class="oo-package-pagination"
             small
             layout="prev, pager, next"
             :page-size="packagePageSize"
-            :total="studentPackageGroups.length"
+            :total="courseGradeGroups.length"
           />
         </aside>
 
@@ -227,9 +250,17 @@
           <section class="oo-signature-sheet oo-parent-signature-sheet print-only">
             <div class="oo-signature-sheet__meta">
               <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
-              <p><strong>Purchased Hours:</strong> {{ formatHours(activePackage.purchasedUnits ?? activePackage.totalUnits) }}</p>
-              <p><strong>Bonus:</strong> {{ formatHours(activePackage.bonusUnits ?? 0) }}</p>
-              <p><strong>Total Hours:</strong>{{ formatHours(signatureAllocatedHours) }}</p>
+              <div class="oo-signature-hours">
+                <div class="oo-signature-hours__group">
+                  <p><strong>Total Hours:</strong> {{ formatHours(activePackage.totalUnits) }}</p>
+                  <p><strong>Purchased Hours:</strong> {{ formatHours(activePackage.purchasedUnits ?? activePackage.totalUnits) }}</p>
+                  <p><strong>Bonus Hours:</strong> {{ formatHours(activePackage.bonusUnits ?? 0) }}</p>
+                </div>
+                <div class="oo-signature-hours__group oo-signature-hours__group--balance">
+                  <p><strong>Consumed Hours:</strong> {{ formatHours(activePackage.consumedUnits) }}</p>
+                  <p><strong>Remaining Hours:</strong> {{ formatHours(activePackage.remainingUnits) }}</p>
+                </div>
+              </div>
             </div>
 
             <div class="oo-signature-subjects">
@@ -246,46 +277,24 @@
               </div>
             </div>
 
-            <div class="oo-signature-print-grid">
-              <table class="oo-signature-table oo-signature-table--detail">
-                <thead>
-                  <tr>
-                    <th>Lesson name</th>
-                    <th>Teacher</th>
-                    <th>Date</th>
-                    <th>Signature</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in signatureSheetRows" :key="row.occurrenceId">
-                    <td>{{ signatureSubjectLabel(row) }}</td>
-                    <td>{{ signatureLessonTeacher(row) }}</td>
-                    <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
-                    <td></td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <table class="oo-signature-table oo-signature-table--matrix">
-                <thead>
-                  <tr>
-                    <th v-for="subject in signatureMatrixSubjects" :key="subject">{{ subject }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in signatureSheetRows" :key="`matrix-${row.occurrenceId}`">
-                    <td v-for="subject in signatureMatrixSubjects" :key="`${row.occurrenceId}-${subject}`">
-                      {{ signatureSubjectLabel(row) === subject ? formatCompactHours(row.plannedUnits) : '' }}
-                    </td>
-                  </tr>
-                  <tr class="oo-signature-table__total-row">
-                    <td v-for="subject in signatureMatrixSubjects" :key="`total-${subject}`">
-                      {{ formatCompactHours(signatureSubjectHours[subject] ?? 0) }}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <table class="oo-signature-table oo-signature-table--detail">
+              <thead>
+                <tr>
+                  <th>Lesson name</th>
+                  <th>Teacher</th>
+                  <th>Date</th>
+                  <th>Signature</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in signatureSheetRows" :key="row.occurrenceId">
+                  <td>{{ signatureSubjectLabel(row) }}</td>
+                  <td>{{ signatureLessonTeacher(row) }}</td>
+                  <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
+                  <td></td>
+                </tr>
+              </tbody>
+            </table>
           </section>
 
           <section
@@ -607,12 +616,21 @@ interface PackageCandidate {
   teacherKey: string;
   courseProductKey: string;
   gradeKey: string;
+  courseGradeKey: string;
 }
 
-interface StudentPackageGroup {
+interface CourseGradeStudentGroup {
+  key: string;
   studentKey: string;
   studentName: string;
   candidates: PackageCandidate[];
+}
+
+interface CourseGradeGroup {
+  key: string;
+  courseName: string;
+  gradeBand: string;
+  studentGroups: CourseGradeStudentGroup[];
 }
 
 interface StudentEntry {
@@ -660,7 +678,8 @@ const studentSearchResults = ref<StudentEntry[]>([]);
 const packagePage = ref(1);
 const packagePageSize = 10;
 const packagePanelCollapsed = ref(false);
-const expandedStudentKey = ref('');
+const collapsedCourseGradeKeys = ref(new Set<string>());
+const expandedStudentGroupKeys = ref(new Set<string>());
 
 const studentEntries = computed<StudentEntry[]>(() => teachers.value.flatMap(teacher =>
   teacher.students.map(student => ({ teacher, student })),
@@ -679,6 +698,7 @@ const allPackageCandidates = computed<PackageCandidate[]>(() => {
           teacherKey: entityKey(teacher.teacherId),
           courseProductKey: optionKey(courseTypeLabel(pkg)),
           gradeKey: optionKey(normalizedGradeBand(pkg.gradeBand)),
+          courseGradeKey: courseGradeKey(pkg),
         });
       }
     }
@@ -713,25 +733,52 @@ const filteredPackageCandidates = computed(() =>
     ? allPackageCandidates.value.filter(matchesCandidateFilters)
     : allPackageCandidates.value,
 );
-const studentPackageGroups = computed<StudentPackageGroup[]>(() => {
-  const groups = new Map<string, StudentPackageGroup>();
+const courseGradeGroups = computed<CourseGradeGroup[]>(() => {
+  const groups = new Map<string, {
+    key: string;
+    courseName: string;
+    gradeBand: string;
+    students: Map<string, CourseGradeStudentGroup>;
+  }>();
   for (const candidate of filteredPackageCandidates.value) {
-    const existing = groups.get(candidate.studentKey);
-    if (existing) {
-      existing.candidates.push(candidate);
-      continue;
+    let group = groups.get(candidate.courseGradeKey);
+    if (!group) {
+      group = {
+        key: candidate.courseGradeKey,
+        courseName: courseTypeLabel(candidate.pkg),
+        gradeBand: normalizedGradeBand(candidate.pkg.gradeBand),
+        students: new Map(),
+      };
+      groups.set(group.key, group);
     }
-    groups.set(candidate.studentKey, {
-      studentKey: candidate.studentKey,
-      studentName: candidate.student.studentName,
-      candidates: [candidate],
-    });
+
+    const studentGroupKey = `${candidate.courseGradeKey}::${candidate.studentKey}`;
+    let studentGroup = group.students.get(candidate.studentKey);
+    if (!studentGroup) {
+      studentGroup = {
+        key: studentGroupKey,
+        studentKey: candidate.studentKey,
+        studentName: candidate.student.studentName,
+        candidates: [],
+      };
+      group.students.set(candidate.studentKey, studentGroup);
+    }
+    studentGroup.candidates.push(candidate);
   }
-  return Array.from(groups.values());
+  return Array.from(groups.values())
+    .map(group => ({
+      key: group.key,
+      courseName: group.courseName,
+      gradeBand: group.gradeBand,
+      studentGroups: Array.from(group.students.values())
+        .sort((left, right) => left.studentName.localeCompare(right.studentName)),
+    }))
+    .sort((left, right) => left.courseName.localeCompare(right.courseName)
+      || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
 });
-const visibleStudentGroups = computed(() => {
+const visibleCourseGradeGroups = computed(() => {
   const start = (packagePage.value - 1) * packagePageSize;
-  return studentPackageGroups.value.slice(start, start + packagePageSize);
+  return courseGradeGroups.value.slice(start, start + packagePageSize);
 });
 const candidateScopeLabel = computed(() => {
   if (!hasActiveFilters.value) return 'All active 1-on-1 student courses';
@@ -840,17 +887,6 @@ const teacherPrintOptions = computed(() => {
     }
   }
   return Array.from(options.values()).sort((left, right) => left.teacher.localeCompare(right.teacher));
-});
-const signatureMatrixSubjects = computed(() =>
-  Array.from(new Set(signatureSubjectSummaries.value.map(item => item.subject)))
-);
-const signatureSubjectHours = computed<Record<string, number>>(() => {
-  return signatureMatrixSubjects.value.reduce((result, subject) => {
-    result[subject] = signatureSheetRows.value
-      .filter(row => signatureSubjectLabel(row) === subject)
-      .reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0);
-    return result;
-  }, {} as Record<string, number>);
 });
 function signatureCourseLabel(row?: OneOnOneLesson) {
   const pkg = activePackage.value;
@@ -1096,6 +1132,10 @@ function courseTypeLabel(pkg: OneOnOnePackage) {
   return pkg.courseProductName?.trim() || pkg.packageName;
 }
 
+function courseGradeKey(pkg: OneOnOnePackage) {
+  return JSON.stringify([optionKey(courseTypeLabel(pkg)), optionKey(normalizedGradeBand(pkg.gradeBand))]);
+}
+
 function candidatePackageLabel(pkg: OneOnOnePackage) {
   const participantCount = pkg.participantCount ?? 1;
   if (participantCount <= 1) {
@@ -1149,22 +1189,45 @@ function selectCandidatePackage(candidate: PackageCandidate) {
   selectPackage(candidate.teacher, candidate.student, candidate.pkg);
 }
 
-function toggleStudentGroup(studentKey: string) {
-  expandedStudentKey.value = expandedStudentKey.value === studentKey ? '' : studentKey;
+function toggleCourseGradeGroup(groupKey: string) {
+  const next = new Set(collapsedCourseGradeKeys.value);
+  if (next.has(groupKey)) {
+    next.delete(groupKey);
+  } else {
+    next.add(groupKey);
+  }
+  collapsedCourseGradeKeys.value = next;
+}
+
+function toggleStudentGroup(studentGroupKey: string) {
+  const next = new Set(expandedStudentGroupKeys.value);
+  if (next.has(studentGroupKey)) {
+    next.delete(studentGroupKey);
+  } else {
+    next.add(studentGroupKey);
+  }
+  expandedStudentGroupKeys.value = next;
 }
 
 function selectPackage(teacher: OneOnOneTeacher, student: OneOnOneStudent, pkg: OneOnOnePackage) {
   activeTeacher.value = teacher;
   activeStudent.value = student;
   activePackage.value = pkg;
-  expandedStudentKey.value = entityKey(student.studentId);
+  const key = courseGradeKey(pkg);
+  const collapsed = new Set(collapsedCourseGradeKeys.value);
+  collapsed.delete(key);
+  collapsedCourseGradeKeys.value = collapsed;
+  expandedStudentGroupKeys.value = new Set([
+    ...expandedStudentGroupKeys.value,
+    `${key}::${entityKey(student.studentId)}`,
+  ]);
 }
 
 function clearSelection() {
   activeTeacher.value = null;
   activeStudent.value = null;
   activePackage.value = null;
-  expandedStudentKey.value = '';
+  expandedStudentGroupKeys.value = new Set();
 }
 
 function canAdminConfirm(row: OneOnOneLesson) {
@@ -1463,11 +1526,6 @@ function isFutureScheduleReconciliationError(error: unknown) {
 
 function formatHours(value?: number) {
   return Number(value ?? 0).toFixed(1);
-}
-
-function formatCompactHours(value?: number) {
-  const numberValue = Number(value ?? 0);
-  return Number.isInteger(numberValue) ? String(numberValue) : numberValue.toFixed(1);
 }
 
 function formatDate(value: string) {
@@ -1817,6 +1875,85 @@ onMounted(async () => {
   border-top: 1px solid #e2e8f0;
 }
 
+.oo-course-grade-group {
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.oo-course-grade-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  background: #f1f5f9;
+  color: #102a43;
+  cursor: pointer;
+  text-align: left;
+}
+
+.oo-course-grade-toggle:hover {
+  background: #eaf1f8;
+}
+
+.oo-course-grade-toggle__title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+
+.oo-course-grade-toggle__title strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-course-grade-toggle__title > span {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.oo-course-grade-toggle small {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 10px;
+}
+
+.oo-course-grade-toggle > span:last-child {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 18px;
+  line-height: 1;
+  transition: transform 0.15s ease;
+}
+
+.oo-course-grade-toggle--collapsed > span:last-child {
+  transform: rotate(0deg);
+}
+
+.oo-course-grade-toggle:not(.oo-course-grade-toggle--collapsed) > span:last-child {
+  transform: rotate(90deg);
+}
+
+.oo-course-grade-students {
+  display: grid;
+  gap: 5px;
+  padding: 6px;
+  border-top: 1px solid #e2e8f0;
+}
+
 .oo-student-group {
   overflow: hidden;
   border: 1px solid #e2e8f0;
@@ -1923,6 +2060,33 @@ onMounted(async () => {
   font-weight: 800;
 }
 
+.oo-signature-hours {
+  display: flex;
+  flex: 1 0 100%;
+  gap: 10px;
+}
+
+.oo-signature-hours__group {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 7px 10px;
+  border: 1px solid #777;
+  border-radius: 4px;
+}
+
+.oo-signature-hours__group p {
+  white-space: nowrap;
+}
+
+.oo-signature-hours__group--balance {
+  border-left: 3px solid #222;
+  background: #f2f2f2;
+}
+
 .oo-signature-subjects {
   display: grid;
   gap: 2px;
@@ -1936,13 +2100,6 @@ onMounted(async () => {
   color: #111;
   font-size: 15px;
   font-weight: 600;
-}
-
-.oo-signature-print-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(220px, 1fr);
-  gap: 60px;
-  align-items: start;
 }
 
 .oo-signature-table {
@@ -1965,15 +2122,6 @@ onMounted(async () => {
 
 .oo-signature-table th {
   font-weight: 700;
-}
-
-.oo-signature-table--matrix th,
-.oo-signature-table--matrix td {
-  text-align: center;
-}
-
-.oo-signature-table__total-row td {
-  font-weight: 800;
 }
 
 .oo-teacher-signature-sheet {
@@ -2377,9 +2525,5 @@ onMounted(async () => {
     border: 1px solid #111;
   }
 
-  .oo-signature-print-grid {
-    grid-template-columns: minmax(0, 1.55fr) minmax(220px, 1fr);
-    gap: 60px;
-  }
 }
 </style>

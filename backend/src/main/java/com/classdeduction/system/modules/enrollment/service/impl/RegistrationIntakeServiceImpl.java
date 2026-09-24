@@ -754,7 +754,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.pickupAddress = cleanText(item.getPickupAddress());
             line.dropoffRequired = Boolean.TRUE.equals(item.getDropoffRequired());
             line.dropoffAddress = cleanText(item.getDropoffAddress());
-            // Pickup/Drop-off 勾选即收费；保留旧字段仅用于兼容历史客户端提交。
+            // 接送开关表示本课程需要服务；接送费用允许为 0。
             line.pickupFeeCharged = line.pickupRequired;
             line.pickupFeeAmount = line.pickupFeeCharged ? defaultAmount(item.getPickupFeeAmount()) : ZERO_AMOUNT;
             line.dropoffFeeCharged = line.dropoffRequired;
@@ -865,12 +865,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if (Boolean.TRUE.equals(line.dropoffRequired) && !StringUtils.hasText(line.dropoffAddress)) {
             throw new BusinessException("DROPOFF_ADDRESS_REQUIRED", "Drop-off address is required for a course line.");
         }
-        if (Boolean.TRUE.equals(line.pickupFeeCharged) && defaultAmount(line.pickupFeeAmount).compareTo(ZERO_AMOUNT) <= 0) {
-            throw new BusinessException("PICKUP_FEE_REQUIRED", "Pickup fee must be greater than zero when charged.");
-        }
-        if (Boolean.TRUE.equals(line.dropoffFeeCharged) && defaultAmount(line.dropoffFeeAmount).compareTo(ZERO_AMOUNT) <= 0) {
-            throw new BusinessException("DROPOFF_FEE_REQUIRED", "Drop-off fee must be greater than zero when charged.");
-        }
         for (RegistrationIntakeRequest.FeeLinePayload fee : line.serviceFees) {
             if (fee != null && defaultAmount(fee.getAmount()).compareTo(ZERO_AMOUNT) > 0
                     && !StringUtils.hasText(fee.getLabel())) {
@@ -897,16 +891,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             }
             if (resolveOneOnOnePurchasedUnits(line) <= 0) {
                 throw new BusinessException("ONE_ON_ONE_UNITS_REQUIRED", "One-on-one purchased hours or units are required.");
-            }
-            int openingUsedUnits = resolveOpeningUsedUnits(line);
-            if (openingUsedUnits > resolveOneOnOneUnits(line)) {
-                throw new BusinessException("OPENING_USED_HOURS_EXCEED_PACKAGE",
-                        "Already used hours cannot exceed total package hours (purchased + bonus).");
-            }
-            if (line.openingUsedHours != null
-                    && line.openingUsedHours.multiply(BigDecimal.valueOf(2)).stripTrailingZeros().scale() > 0) {
-                throw new BusinessException("OPENING_USED_HOURS_INVALID",
-                        "Already used hours must use 0.5-hour increments.");
             }
             return;
         }
@@ -1381,17 +1365,19 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     private boolean isPickupFeeCharged(RegistrationIntakeRequest request) {
-        return request.getItems() != null
-                && !request.getItems().isEmpty()
-                && request.getStudent() != null
-                && Boolean.TRUE.equals(request.getStudent().getPickupRequired());
+        boolean coursePickup = request.getItems() != null && request.getItems().stream()
+                .filter(Objects::nonNull)
+                .anyMatch(item -> Boolean.TRUE.equals(item.getPickupRequired())
+                        || Boolean.TRUE.equals(item.getPickupFeeCharged()));
+        return coursePickup || Boolean.TRUE.equals(request.getPickupFeeCharged());
     }
 
     private boolean isDropoffFeeCharged(RegistrationIntakeRequest request) {
-        return request.getItems() != null
-                && !request.getItems().isEmpty()
-                && request.getStudent() != null
-                && Boolean.TRUE.equals(request.getStudent().getDropoffRequired());
+        boolean courseDropoff = request.getItems() != null && request.getItems().stream()
+                .filter(Objects::nonNull)
+                .anyMatch(item -> Boolean.TRUE.equals(item.getDropoffRequired())
+                        || Boolean.TRUE.equals(item.getDropoffFeeCharged()));
+        return courseDropoff || Boolean.TRUE.equals(request.getDropoffFeeCharged());
     }
 
     private EnrollmentOrderEntity createOrder(RegistrationIntakeRequest request,
@@ -1673,7 +1659,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         coursePackage.setPackageName(StringUtils.hasText(line.detail) ? line.detail : line.product.getProductName());
         coursePackage.setTeachingMode("ONE_ON_ONE");
         int totalUnits = resolveOneOnOneUnits(line);
-        int openingUsedUnits = resolveOpeningUsedUnits(line);
+        // Already-used hours are maintained on the scheduling page; a new receipt starts with no tracked consumption.
+        int openingUsedUnits = 0;
         coursePackage.setTotalUnits(totalUnits);
         coursePackage.setConsumedUnits(openingUsedUnits);
         coursePackage.setRemainingUnits(totalUnits - openingUsedUnits);

@@ -52,303 +52,81 @@
         </el-form-item>
       </el-form>
 
-      <el-tabs v-model="activeTab" class="package-tabs">
-        <el-tab-pane label="1 on 1" name="ONE_ON_ONE">
-          <el-table
-            v-loading="loading"
-            :data="tableData"
-            row-key="id"
-            class="product-table"
-            :show-empty="true"
-            :row-class-name="oneOnOneRowClassName"
-          >
-            <el-table-column label="Student" min-width="150" prop="studentName" />
-            <el-table-column label="Product / Package" min-width="230">
-              <template #default="{ row }">
-                <div class="package-name-cell">
-                  <strong class="package-name-cell__title">
-                    {{ row.packageName || row.courseProductName || 'Unnamed package' }}
-                  </strong>
-                  <span v-if="shouldShowProductName(row)" class="package-name-cell__context">
-                    Product · {{ row.courseProductName }}
-                  </span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="Available" min-width="145" align="center">
-              <template #default="{ row }">
-                <strong>{{ formatHours(row.remainingUnits) }} / {{ formatHours(row.totalUnits) }}</strong>
-                <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
-              </template>
-            </el-table-column>
-            <el-table-column label="Schedule setup" min-width="150" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" :type="scheduleStatusType(row.scheduleStatus)">
-                  {{ row.scheduleStatus }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Next lesson" min-width="180">
-              <template #default="{ row }">
-                <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
-                <span v-else class="muted-text">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Period" min-width="170">
-              <template #default="{ row }">
-                <span :class="{ 'renewal-due-text': isOneOnOneRenewalDue(row) }">
-                  {{ row.startDate ?? '—' }} ~ {{ row.estimatedEndDate ?? '—' }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Package status" min-width="110" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" :type="packageStatusType(row.packageStatus)">
-                  {{ packageStatusLabel(row.packageStatus) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Actions" width="150" fixed="right">
-              <template #default="{ row }">
-                <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
-                <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+      <el-table
+        v-loading="loading"
+        :data="tableData"
+        row-key="id"
+        class="product-table"
+        :show-empty="true"
+        :row-class-name="oneOnOneRowClassName"
+      >
+        <el-table-column label="Student" min-width="150" prop="studentName" />
+        <el-table-column label="Product / Package" min-width="230">
+          <template #default="{ row }">
+            <div class="package-name-cell">
+              <strong class="package-name-cell__title">
+                {{ row.packageName || row.courseProductName || 'Unnamed package' }}
+              </strong>
+              <span v-if="shouldShowProductName(row)" class="package-name-cell__context">
+                Product · {{ row.courseProductName }}
+              </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Available" min-width="145" align="center">
+          <template #default="{ row }">
+            <strong>{{ formatHours(row.remainingUnits) }} / {{ formatHours(row.totalUnits) }}</strong>
+            <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
+          </template>
+        </el-table-column>
+        <el-table-column label="Schedule setup" min-width="150" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="scheduleStatusType(row.scheduleStatus)">
+              {{ row.scheduleStatus }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Next lesson" min-width="180">
+          <template #default="{ row }">
+            <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
+            <span v-else class="muted-text">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Period" min-width="170">
+          <template #default="{ row }">
+            <span :class="{ 'renewal-due-text': isOneOnOneRenewalDue(row) }">
+              {{ row.startDate ?? '—' }} ~ {{ row.estimatedEndDate ?? '—' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Package status" min-width="110" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="packageStatusType(row.packageStatus)">
+              {{ packageStatusLabel(row.packageStatus) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="Actions" width="150" fixed="right">
+          <template #default="{ row }">
+            <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
+            <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
 
-          <div class="table-footer">
-            <span>Showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }}</span>
-            <el-pagination
-              v-model:current-page="pagination.page"
-              v-model:page-size="pagination.size"
-              background
-              layout="prev, pager, next, sizes"
-              :page-sizes="[10, 20, 50]"
-              :total="pagination.total"
-              @current-change="loadData"
-              @size-change="loadData"
-            />
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="Group Class" name="GROUP">
-          <el-table
-            v-loading="groupLoading"
-            :data="groupProductRows"
-            row-key="productKey"
-            class="product-table"
-            :show-empty="true"
-            @expand-change="handleGroupExpandChange"
-          >
-            <el-table-column type="expand">
-              <template #default="{ row }">
-                <div class="nested-package-card">
-                  <div class="nested-package-card__header">
-                    <span>Students in</span>
-                    <strong>{{ row.productName }}</strong>
-                    <span v-if="selectedGroupClass(row)" class="selected-class-label">
-                      {{ selectedGroupClass(row)?.className }}
-                    </span>
-                    <el-tag v-if="selectedGroupClass(row)" size="small" type="info">
-                      {{ classTypeLabel(selectedGroupClass(row)?.billingType) }}
-                    </el-tag>
-                  </div>
-                  <div v-if="expandedGroupLoading[selectedGroupClassKey(row)]" class="expand-loading">
-                    Loading student progress...
-                  </div>
-                  <el-table
-                    v-else
-                    :data="getVisibleGroupStudents(selectedGroupClassId(row))"
-                    row-key="enrollmentId"
-                    size="small"
-                    class="nested-table"
-                    empty-text="No active students in this grade."
-                    :row-class-name="groupStudentRowClassName"
-                  >
-                    <el-table-column label="Student" min-width="140">
-                      <template #default="{ row: student }">{{ displayStudentName(student) }}</template>
-                    </el-table-column>
-                    <el-table-column label="Purchased" min-width="100" align="center">
-                      <template #default="{ row: student }">
-                        {{ student.totalUnits }} {{ groupUnitLabel(student.billingType) }}
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="Used" min-width="90" align="center" prop="consumedUnits" />
-                    <el-table-column label="Remaining" min-width="110" align="center">
-                      <template #header>
-                        <button
-                          class="progress-sort-header progress-sort-header--center"
-                          type="button"
-                          @click="toggleGroupStudentSort(selectedGroupClassId(row), 'remainingUnits')"
-                        >
-                          <span>Remaining</span>
-                        </button>
-                      </template>
-                      <template #default="{ row: student }">
-                        {{ student.remainingUnits }}
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="Progress" min-width="160">
-                      <template #header>
-                        <button
-                          class="progress-sort-header"
-                          type="button"
-                          @click="toggleGroupStudentSort(selectedGroupClassId(row), 'progress')"
-                        >
-                          <span class="progress-sort-header__label">
-                            Progress
-                            <span class="progress-sort-header__hint">Sort by bar</span>
-                          </span>
-                        </button>
-                      </template>
-                      <template #default="{ row: student }">
-                        <el-progress :percentage="progressPercent(student)" :stroke-width="10" />
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="Period" min-width="170">
-                      <template #header>
-                        <el-popover
-                          trigger="hover"
-                          placement="bottom-start"
-                          width="188"
-                          popper-class="package-header-popover"
-                        >
-                          <template #reference>
-                            <button class="header-popover-trigger" type="button">
-                              <span>Period</span>
-                            </button>
-                          </template>
-                          <div class="header-popover-menu">
-                            <button type="button" @click="setGroupStudentSort(selectedGroupClassId(row), 'enrollmentDate', 'asc')">Enrollment date Asc</button>
-                            <button type="button" @click="setGroupStudentSort(selectedGroupClassId(row), 'enrollmentDate', 'desc')">Enrollment date Desc</button>
-                            <button type="button" @click="setGroupStudentSort(selectedGroupClassId(row), 'expiryDate', 'asc')">Expiry date Asc</button>
-                            <button type="button" @click="setGroupStudentSort(selectedGroupClassId(row), 'expiryDate', 'desc')">Expiry date Desc</button>
-                          </div>
-                        </el-popover>
-                      </template>
-                      <template #default="{ row: student }">
-                        <span :class="{ 'renewal-due-text': isGroupStudentRenewalDue(student) }">
-                          {{ student.enrollmentDate ?? '—' }} ~ {{ student.expiryDate ?? '—' }}
-                        </span>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="Status" min-width="90" align="center">
-                      <template #header>
-                        <el-popover
-                          trigger="hover"
-                          placement="bottom"
-                          width="150"
-                          popper-class="package-header-popover"
-                        >
-                          <template #reference>
-                            <button class="header-popover-trigger header-popover-trigger--center" type="button">
-                              <span>Status</span>
-                            </button>
-                          </template>
-                          <div class="header-popover-menu">
-                            <button type="button" @click="setGroupStudentStatusFilter(selectedGroupClassId(row), 'ACTIVE')">Active only</button>
-                            <button type="button" @click="setGroupStudentStatusFilter(selectedGroupClassId(row), 'ALL')">All statuses</button>
-                            <button type="button" @click="setGroupStudentStatusFilter(selectedGroupClassId(row), 'INACTIVE')">Inactive only</button>
-                          </div>
-                        </el-popover>
-                      </template>
-                      <template #default="{ row: student }">
-                        <el-tag size="small" :type="packageStatusType(student.enrollmentStatus)">
-                          {{ packageStatusLabel(student.enrollmentStatus) }}
-                        </el-tag>
-                      </template>
-                    </el-table-column>
-                    <el-table-column label="Actions" width="80" align="center">
-                      <template #default="{ row: student }">
-                        <el-button class="row-action-button" text type="primary" size="small" @click="openGroupClassRenewal(student)">Renew</el-button>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="Class / Product" min-width="190">
-              <template #default="{ row }">
-                <div class="cell-stack">
-                  <strong class="class-title">
-                    {{ row.productName }}
-                    <span v-if="selectedGroupClass(row)" :class="['class-type-badge', classTypeClass(selectedGroupClass(row)?.billingType)]">
-                      <span class="class-type-badge__icon">{{ classTypeInitial(selectedGroupClass(row)?.billingType) }}</span>
-                      {{ classTypeLabel(selectedGroupClass(row)?.billingType) }}
-                    </span>
-                  </strong>
-                  <span>{{ row.classes.length }} grade{{ row.classes.length === 1 ? '' : 's' }}</span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column label="Grade" min-width="140">
-              <template #default="{ row }">
-                <el-select
-                  :model-value="selectedGroupClassId(row)"
-                  size="small"
-                  placeholder="Select grade"
-                  @click.stop
-                  @change="(value) => selectGroupGrade(row, value)"
-                >
-                  <el-option
-                    v-for="groupClass in row.classes"
-                    :key="groupClass.classId"
-                    :label="groupClass.className"
-                    :value="groupClass.classId"
-                  />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column label="Sessions" min-width="100" align="center">
-              <template #default="{ row }">
-                <span v-if="selectedGroupClass(row)">
-                  {{ selectedGroupClass(row)?.remainingUnits }} / {{ selectedGroupClass(row)?.totalUnits }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Progress" min-width="150">
-              <template #default="{ row }">
-                <el-progress
-                  v-if="selectedGroupClass(row)"
-                  :percentage="progressPercent(selectedGroupClass(row)!)"
-                  :stroke-width="10"
-                />
-              </template>
-            </el-table-column>
-            <el-table-column label="Teacher" min-width="130">
-              <template #default="{ row }">{{ selectedGroupClass(row)?.teacherName || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="Students" min-width="90" align="center">
-              <template #default="{ row }">
-                <el-tag v-if="selectedGroupClass(row)" size="small" type="success">
-                  {{ displayGroupStudentCount(row) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Status" min-width="100" align="center">
-              <template #default="{ row }">
-                <el-tag v-if="selectedGroupClass(row)" size="small" :type="packageStatusType(selectedGroupClass(row)!.status)">
-                  {{ packageStatusLabel(selectedGroupClass(row)!.status) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-          </el-table>
-
-          <div class="table-footer">
-            <span>Showing {{ groupPagination.start }}–{{ groupPagination.end }} of {{ groupPagination.total }}</span>
-            <el-pagination
-              v-model:current-page="groupPagination.page"
-              v-model:page-size="groupPagination.size"
-              background
-              layout="prev, pager, next, sizes"
-              :page-sizes="[10, 20, 50]"
-              :total="groupPagination.total"
-              @current-change="loadGroupData"
-              @size-change="loadGroupData"
-            />
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+      <div class="table-footer">
+        <span>Showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }}</span>
+        <el-pagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.size"
+          background
+          layout="prev, pager, next, sizes"
+          :page-sizes="[10, 20, 50]"
+          :total="pagination.total"
+          @current-change="loadData"
+          @size-change="loadData"
+        />
+      </div>
     </section>
 
     <!-- Package detail dialog with tabs -->
@@ -723,8 +501,6 @@ import {
   closeCoursePackage,
   fetchCoursePackage,
   fetchCoursePackages,
-  fetchGroupClassPackageProgress,
-  fetchGroupClassStudentProgress,
   pauseCoursePackage,
   resumeCoursePackage,
   type CoursePackageQuery,
@@ -741,8 +517,6 @@ import type { OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
 import type {
   CoursePackageItem,
   EntityId,
-  GroupClassPackageProgressItem,
-  GroupClassStudentProgressItem,
   LessonRecordDetailItem,
   LessonRecordItem,
   RecurringScheduleRuleDetailItem,
@@ -752,8 +526,6 @@ import type {
 const router = useRouter();
 const RENEWAL_DUE_DAYS = 15;
 const loading = ref(false);
-const groupLoading = ref(false);
-const activeTab = ref<'ONE_ON_ONE' | 'GROUP'>('ONE_ON_ONE');
 const detailDialogVisible = ref(false);
 const detailTab = ref('overview');
 const detailData = ref<CoursePackageItem | null>(null);
@@ -825,73 +597,15 @@ const pagination = reactive({
   },
 });
 
-const groupPagination = reactive({
-  page: 1,
-  size: 10,
-  total: 0,
-  get start() {
-    return this.total === 0 ? 0 : (this.page - 1) * this.size + 1;
-  },
-  get end() {
-    return Math.min(this.page * this.size, this.total);
-  },
-});
-
 interface OneOnOnePackageRow extends CoursePackageItem {
   scheduleStatus: 'Scheduled' | 'Needs setup' | 'Incomplete' | 'Paused';
   nextLessonStartAt?: string;
 }
 
-type GroupStudentSortField = 'remainingUnits' | 'progress' | 'enrollmentDate' | 'expiryDate' | 'enrollmentStatus';
-type PackageSortOrder = 'asc' | 'desc';
-type PackageProgressFilter = 'ACTIVE' | 'ALL' | 'INACTIVE';
-
-interface GroupStudentSortState {
-  field: GroupStudentSortField;
-  order: PackageSortOrder;
-}
-
-interface GroupProductRow {
-  productKey: string;
-  productName: string;
-  classes: GroupClassPackageProgressItem[];
-  selectedClassId: EntityId;
-}
-
 const tableData = ref<OneOnOnePackageRow[]>([]);
-const groupTableData = ref<GroupClassPackageProgressItem[]>([]);
-const groupProductRows = computed<GroupProductRow[]>(() => {
-  const grouped = new Map<string, GroupProductRow>();
-  for (const groupClass of groupTableData.value) {
-    const key = String(groupClass.productId ?? `class-${groupClass.classId}`);
-    const productName = groupClass.productName || groupClass.className;
-    const existing = grouped.get(key);
-    if (existing) {
-      existing.classes.push(groupClass);
-      continue;
-    }
-    grouped.set(key, {
-      productKey: key,
-      productName,
-      classes: [groupClass],
-      selectedClassId: groupClass.classId,
-    });
-  }
-  return Array.from(grouped.values());
-});
-const expandedGroupLoading = reactive<Record<string, boolean>>({});
-const expandedGroupStudents = reactive<Record<string, GroupClassStudentProgressItem[]>>({});
-const groupStudentSortStates = reactive<Record<string, GroupStudentSortState>>({});
-const groupStudentStatusFilters = reactive<Record<string, 'ACTIVE' | 'ALL' | 'INACTIVE'>>({});
-
 function handleFilterChange() {
   pagination.page = 1;
-  groupPagination.page = 1;
-  if (activeTab.value === 'GROUP') {
-    loadGroupData();
-  } else {
-    loadData();
-  }
+  loadData();
 }
 
 function toggleRenewalDueFilter() {
@@ -901,106 +615,6 @@ function toggleRenewalDueFilter() {
 
 function progressPercent(row: { totalUnits: number; consumedUnits: number }): number {
   return row.totalUnits > 0 ? Math.round((row.consumedUnits / row.totalUnits) * 100) : 0;
-}
-
-function compareDateValue(left?: string, right?: string, order: PackageSortOrder = 'asc'): number {
-  const leftTime = parseDateValue(left);
-  const rightTime = parseDateValue(right);
-  const leftMissing = leftTime == null;
-  const rightMissing = rightTime == null;
-
-  // Keep empty dates at the bottom for both directions.
-  if (leftMissing && rightMissing) return 0;
-  if (leftMissing) return 1;
-  if (rightMissing) return -1;
-  return order === 'asc' ? leftTime - rightTime : rightTime - leftTime;
-}
-
-function getGroupStudentSortState(classId: EntityId): GroupStudentSortState {
-  return groupStudentSortStates[String(classId)] ?? { field: 'remainingUnits', order: 'desc' };
-}
-
-function toggleGroupStudentSort(classId: EntityId, field: GroupStudentSortField) {
-  const key = String(classId);
-  const current = getGroupStudentSortState(classId);
-  groupStudentSortStates[key] = {
-    field,
-    order: current.field === field && current.order === 'asc' ? 'desc' : 'asc',
-  };
-}
-
-function setGroupStudentSort(classId: EntityId, field: GroupStudentSortField, order: PackageSortOrder) {
-  groupStudentSortStates[String(classId)] = { field, order };
-}
-
-function getGroupStudentStatusFilter(classId: EntityId): PackageProgressFilter {
-  return groupStudentStatusFilters[String(classId)] ?? 'ACTIVE';
-}
-
-function setGroupStudentStatusFilter(classId: EntityId, value: PackageProgressFilter) {
-  groupStudentStatusFilters[String(classId)] = value;
-}
-
-function getVisibleGroupStudents(classId: EntityId): GroupClassStudentProgressItem[] {
-  const filter = getGroupStudentStatusFilter(classId);
-  const studentsInClass = (expandedGroupStudents[String(classId)] ?? []).filter((student) => {
-    if (filters.onlyRenewalDue && !isGroupStudentRenewalDue(student)) {
-      return false;
-    }
-    if (filter === 'ALL') return true;
-    if (filter === 'INACTIVE') return student.enrollmentStatus !== 'ACTIVE';
-    return student.enrollmentStatus === 'ACTIVE';
-  });
-  return sortGroupStudents(studentsInClass, getGroupStudentSortState(classId));
-}
-
-function selectedGroupClass(row: GroupProductRow): GroupClassPackageProgressItem | undefined {
-  return row.classes.find((groupClass) => String(groupClass.classId) === String(row.selectedClassId))
-    ?? row.classes[0];
-}
-
-function selectedGroupClassId(row: GroupProductRow): EntityId {
-  return selectedGroupClass(row)?.classId ?? row.selectedClassId;
-}
-
-function selectedGroupClassKey(row: GroupProductRow): string {
-  return String(selectedGroupClassId(row));
-}
-
-function selectGroupGrade(row: GroupProductRow, classId: EntityId) {
-  row.selectedClassId = classId;
-  if (!expandedGroupStudents[String(classId)]) {
-    loadGroupStudents(classId);
-  }
-}
-
-function displayGroupStudentCount(row: GroupProductRow): number {
-  const classId = selectedGroupClassId(row);
-  if (!filters.onlyRenewalDue) {
-    return selectedGroupClass(row)?.activeStudentCount ?? 0;
-  }
-  return getVisibleGroupStudents(classId).length;
-}
-
-function sortGroupStudents(
-  studentsInClass: GroupClassStudentProgressItem[],
-  state: GroupStudentSortState,
-): GroupClassStudentProgressItem[] {
-  return [...studentsInClass].sort((a, b) => {
-    let result = 0;
-    if (state.field === 'remainingUnits') {
-      result = a.remainingUnits - b.remainingUnits;
-    } else if (state.field === 'progress') {
-      result = progressPercent(a) - progressPercent(b);
-    } else if (state.field === 'enrollmentDate' || state.field === 'expiryDate') {
-      result = compareDateValue(a[state.field], b[state.field], 'asc');
-    } else {
-      result = a.enrollmentStatus.localeCompare(b.enrollmentStatus);
-    }
-
-    const ordered = state.order === 'asc' ? result : -result;
-    return ordered || displayStudentName(a).localeCompare(displayStudentName(b)) || String(a.enrollmentId).localeCompare(String(b.enrollmentId));
-  });
 }
 
 function parseDateValue(value?: string): number | undefined {
@@ -1029,46 +643,17 @@ function isOneOnOneRenewalDue(row: CoursePackageItem): boolean {
   return row.packageStatus === 'ACTIVE' && isRenewalDueByDate(row.estimatedEndDate);
 }
 
-function isGroupStudentRenewalDue(row: GroupClassStudentProgressItem): boolean {
-  return row.enrollmentStatus === 'ACTIVE' && isRenewalDueByDate(row.expiryDate);
-}
-
 function oneOnOneRowClassName({ row }: { row: OneOnOnePackageRow }) {
   return isOneOnOneRenewalDue(row) ? 'renewal-due-row' : '';
-}
-
-function groupStudentRowClassName({ row }: { row: GroupClassStudentProgressItem }) {
-  return isGroupStudentRenewalDue(row) ? 'renewal-due-row' : '';
-}
-
-function groupUnitLabel(billingType?: string): string {
-  return billingType === 'MONTHLY' ? 'sessions' : 'sessions';
 }
 
 function normalizeLabel(value?: string | null): string {
   return (value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
-function displayStudentName(row: Pick<GroupClassStudentProgressItem, 'studentName' | 'studentId'>): string {
-  const name = row.studentName?.trim();
-  return name || `Unknown student #${row.studentId}`;
-}
-
 function shouldShowProductName(row: CoursePackageItem): boolean {
   return Boolean(row.courseProductName)
     && normalizeLabel(row.courseProductName) !== normalizeLabel(row.packageName);
-}
-
-function classTypeInitial(billingType?: string): string {
-  return billingType === 'MONTHLY' ? 'M' : 'S';
-}
-
-function classTypeLabel(billingType?: string): string {
-  return billingType === 'MONTHLY' ? 'Monthly' : 'Per session';
-}
-
-function classTypeClass(billingType?: string): string {
-  return billingType === 'MONTHLY' ? 'class-type-badge--monthly' : 'class-type-badge--session';
 }
 
 function packageStatusType(status: string) {
@@ -1195,94 +780,6 @@ function formatScheduleDate(value?: string): string {
   }).format(date);
 }
 
-async function loadGroupData() {
-  groupLoading.value = true;
-  try {
-    if (filters.onlyRenewalDue) {
-      const groups = await loadAllGroupClassPackages();
-      await preloadGroupStudents(groups);
-      const dueGroups = groups.filter((groupClass) =>
-        (expandedGroupStudents[String(groupClass.classId)] ?? []).some(isGroupStudentRenewalDue),
-      );
-      groupPagination.total = dueGroups.length;
-      groupTableData.value = dueGroups.slice((groupPagination.page - 1) * groupPagination.size, groupPagination.page * groupPagination.size);
-    } else {
-      const params: CoursePackageQuery = {
-        keyword: filters.keyword || undefined,
-        studentId: filters.studentId,
-        packageStatus: filters.packageStatus || undefined,
-        pageNum: groupPagination.page,
-        pageSize: groupPagination.size,
-      };
-      const res = await fetchGroupClassPackageProgress(params);
-      const data = res.data.data;
-      groupTableData.value = data.records;
-      groupPagination.total = data.total;
-    }
-  } catch {
-    ElMessage.error('Failed to load group class packages.');
-  } finally {
-    groupLoading.value = false;
-  }
-}
-
-async function loadGroupStudents(classId: EntityId) {
-  const key = String(classId);
-  expandedGroupLoading[key] = true;
-  try {
-    const res = await fetchGroupClassStudentProgress(classId);
-    expandedGroupStudents[key] = res.data.data;
-  } catch {
-    ElMessage.error('Failed to load student progress.');
-  } finally {
-    expandedGroupLoading[key] = false;
-  }
-}
-
-async function loadAllGroupClassPackages(): Promise<GroupClassPackageProgressItem[]> {
-  const pageSize = 200;
-  let pageNum = 1;
-  let total = 0;
-  const records: GroupClassPackageProgressItem[] = [];
-
-  do {
-    const params: CoursePackageQuery = {
-      keyword: filters.keyword || undefined,
-      studentId: filters.studentId,
-      packageStatus: filters.packageStatus || undefined,
-      pageNum,
-      pageSize,
-    };
-    const res = await fetchGroupClassPackageProgress(params);
-    const data = res.data.data;
-    records.push(...data.records);
-    total = data.total;
-    pageNum += 1;
-  } while (records.length < total);
-
-  return records;
-}
-
-async function preloadGroupStudents(groups: GroupClassPackageProgressItem[]) {
-  await Promise.all(groups.map(async (groupClass) => {
-    const key = String(groupClass.classId);
-    if (expandedGroupStudents[key]) {
-      return;
-    }
-    const res = await fetchGroupClassStudentProgress(groupClass.classId);
-    expandedGroupStudents[key] = res.data.data;
-  }));
-}
-
-function handleGroupExpandChange(row: GroupProductRow, expandedRows: GroupProductRow[]) {
-  const isExpanded = expandedRows.some((item) => item.productKey === row.productKey);
-  const classId = selectedGroupClassId(row);
-  const key = String(classId);
-  if (isExpanded && !expandedGroupStudents[key]) {
-    loadGroupStudents(classId);
-  }
-}
-
 async function loadStudents() {
   try {
     const res = await fetchAllStudents();
@@ -1307,19 +804,6 @@ function openOneOnOneRenewal(row: CoursePackageItem) {
     query: {
       renewPackageId: String(row.id),
       studentId: String(row.studentId),
-    },
-  });
-}
-
-function openGroupClassRenewal(student: GroupClassStudentProgressItem) {
-  const groupClass = groupTableData.value.find((item) => String(item.classId) === String(student.classId));
-  router.push({
-    name: 'registration',
-    query: {
-      renewClassEnrollmentId: String(student.enrollmentId),
-      studentId: String(student.studentId),
-      classId: String(student.classId),
-      ...(groupClass?.productId ? { productId: String(groupClass.productId) } : {}),
     },
   });
 }
@@ -1500,12 +984,6 @@ watch(detailTab, (tab) => {
   }
 });
 
-watch(activeTab, (tab) => {
-  if (tab === 'GROUP' && groupTableData.value.length === 0) {
-    loadGroupData();
-  }
-});
-
 // ─── Lesson Detail Dialog ─────────────────────────────
 async function openLessonDetailDialog(row: LessonRecordItem) {
   try {
@@ -1567,164 +1045,23 @@ loadTeachers();
 .filters__item { margin-right: 16px; margin-bottom: 0; }
 .filters__item :deep(.el-form-item__label) { color: #606266; font-size: 13px; }
 
-.package-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }
-
 .product-table {
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #ebeef5;
 }
 
-.nested-table {
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid #ebeef5;
-}
-
-.nested-table :deep(.el-table__header th) {
-  background: #f8fafc;
-}
-
-.product-table :deep(.renewal-due-row > td),
-.nested-table :deep(.renewal-due-row > td) {
+.product-table :deep(.renewal-due-row > td) {
   background: #fff1f2 !important;
 }
 
-.product-table :deep(.renewal-due-row:hover > td),
-.nested-table :deep(.renewal-due-row:hover > td) {
+.product-table :deep(.renewal-due-row:hover > td) {
   background: #ffe4e6 !important;
 }
 
 .renewal-due-text {
   color: #e11d48;
   font-weight: 700;
-}
-
-.nested-package-card {
-  margin: 8px 12px 12px 46px;
-  padding: 14px;
-  border: 1px solid #e8edf7;
-  border-radius: 10px;
-  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
-  box-shadow: 0 8px 22px rgba(31, 45, 61, 0.04);
-}
-
-.nested-package-card__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  color: #909399;
-  font-size: 12px;
-}
-
-.nested-package-card__header strong {
-  color: #303133;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.selected-class-label {
-  color: #606266;
-  font-size: 12px;
-}
-
-.product-table :deep(.el-table__expanded-cell) {
-  background: #f8fbff;
-}
-
-.nested-column-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  min-height: 30px;
-  width: 100%;
-}
-
-.progress-sort-header,
-.header-popover-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  min-height: 30px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  padding: 0 6px;
-  transition: border-color .16s ease, color .16s ease, background .16s ease, box-shadow .16s ease;
-}
-
-.progress-sort-header:hover,
-.header-popover-trigger:hover {
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-.progress-sort-header:focus-visible,
-.header-popover-trigger:focus-visible {
-  outline: 2px solid rgba(37, 99, 235, 0.22);
-  outline-offset: 2px;
-}
-
-.progress-sort-header__label {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-}
-
-.progress-sort-header--center {
-  justify-content: center;
-}
-
-.progress-sort-header__hint {
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.header-popover-trigger--center {
-  justify-content: center;
-}
-
-.header-popover-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.header-popover-menu button {
-  width: 100%;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #475569;
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  padding: 8px 10px;
-  text-align: left;
-  transition: background .16s ease, color .16s ease;
-}
-
-.header-popover-menu button:hover {
-  background: #eff6ff;
-  color: #2563eb;
-}
-
-:global(.package-header-popover) {
-  padding: 8px !important;
-  border: 1px solid #dce5f2 !important;
-  border-radius: 10px !important;
-  box-shadow: 0 12px 28px rgba(31, 45, 61, 0.12) !important;
 }
 
 .row-action-button {
@@ -1738,16 +1075,6 @@ loadTeachers();
   background: #eff6ff;
 }
 
-.expand-loading {
-  padding: 16px 0;
-  text-align: center;
-  color: #909399;
-  font-size: 13px;
-}
-
-.cell-stack { display: flex; flex-direction: column; gap: 2px; }
-.cell-stack strong { color: #303133; font-size: 13px; font-weight: 500; }
-.cell-stack span { color: #909399; font-size: 12px; }
 .package-name-cell {
   display: flex;
   min-width: 0;
@@ -1771,39 +1098,6 @@ loadTeachers();
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.class-title { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.class-type-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 1px 6px 1px 3px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 16px;
-}
-.class-type-badge__icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  color: #fff !important;
-  font-size: 10px !important;
-  font-weight: 600;
-}
-.class-type-badge--session {
-  color: #409eff;
-  background: #ecf5ff;
-}
-.class-type-badge--session .class-type-badge__icon { background: #409eff; }
-.class-type-badge--monthly {
-  color: #67c23a;
-  background: #f0f9eb;
-}
-.class-type-badge--monthly .class-type-badge__icon { background: #67c23a; }
-
 .table-footer {
   display: flex;
   align-items: center;

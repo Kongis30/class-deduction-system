@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.enrollment.service;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageOpeningUsedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
@@ -43,6 +44,9 @@ public interface CoursePackageService {
      * Adjust available package hours without changing order charges.
      */
     void adjustPackageHours(Long id, CoursePackageHoursAdjustmentRequest request, Long operatorId);
+
+    /** 更新报名前已用课时，并同步重算尚未确认的未来排课。 */
+    void updateOpeningUsedHours(Long id, CoursePackageOpeningUsedHoursRequest request, Long operatorId);
 
     /**
      * Pause a 1-on-1 package and stop future unrecorded lessons.

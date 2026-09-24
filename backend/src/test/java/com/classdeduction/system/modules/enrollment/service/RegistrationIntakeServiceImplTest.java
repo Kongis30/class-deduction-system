@@ -276,6 +276,50 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldAddRepeatedSameCourseHoursToExistingPackage() {
+        stubSuccessfulIntake(false);
+        StudentEntity student = buildExistingStudent();
+        when(studentMapper.selectById(101L)).thenReturn(student);
+
+        EnrollmentOrderItemEntity previousOrderItem = new EnrollmentOrderItemEntity();
+        previousOrderItem.setId(2100L);
+        when(enrollmentOrderItemMapper.selectById(2100L)).thenReturn(previousOrderItem);
+
+        CoursePackageEntity existingPackage = new CoursePackageEntity();
+        existingPackage.setId(3000L);
+        existingPackage.setPackageNo("PK-EXISTING");
+        existingPackage.setStudentId(101L);
+        existingPackage.setCourseProductId(202L);
+        existingPackage.setEnrollmentOrderItemId(2100L);
+        existingPackage.setTeachingMode("ONE_ON_ONE");
+        existingPackage.setPackageStatus("ACTIVE");
+        existingPackage.setTotalUnits(240);
+        existingPackage.setConsumedUnits(50);
+        existingPackage.setRemainingUnits(190);
+        existingPackage.setOriginalAmount(new BigDecimal("9600.00"));
+        existingPackage.setReceivedAmount(new BigDecimal("500.00"));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(existingPackage));
+
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.getStudent().setStudentId(101L);
+        request.getItems().get(0).setOneOnOneHours(new BigDecimal("10.0"));
+
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
+
+        verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+        verify(coursePackageMapper).updateById(coursePackageCaptor.capture());
+        CoursePackageEntity mergedPackage = coursePackageCaptor.getValue();
+        assertThat(mergedPackage.getId()).isEqualTo(3000L);
+        assertThat(mergedPackage.getTotalUnits()).isEqualTo(260);
+        assertThat(mergedPackage.getConsumedUnits()).isEqualTo(50);
+        assertThat(mergedPackage.getRemainingUnits()).isEqualTo(210);
+        assertThat(mergedPackage.getOriginalAmount()).isEqualByComparingTo("10400.00");
+        assertThat(result.courseArtifacts()).singleElement()
+                .extracting(RegistrationIntakeResultVO.CourseArtifactVO::packageId)
+                .isEqualTo(3000L);
+    }
+
+    @Test
     void shouldRenewExistingOneOnOnePackageWithPurchasedAndBonusHours() {
         StudentEntity student = buildExistingStudent();
         CoursePackageEntity existingPackage = new CoursePackageEntity();
@@ -336,7 +380,7 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldClampOpeningUsedHoursAgainstTotalIncludingBonus() {
+    void shouldKeepFullPackageBalanceForAlreadyUsedHoursEditedOnSchedulePage() {
         stubSuccessfulIntake(false);
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         request.getItems().get(0).setOneOnOneBonusHours(new BigDecimal("2.0"));
@@ -346,8 +390,8 @@ class RegistrationIntakeServiceImplTest {
 
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
         assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(24);
-        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(22);
-        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(2);
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isZero();
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(24);
     }
 
     @Test
@@ -379,7 +423,7 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldInitializeOneOnOneOpeningBalanceFromAlreadyUsedHours() {
+    void shouldNotApplyLegacyAlreadyUsedHoursDuringRegistration() {
         stubSuccessfulIntake(false);
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         request.getItems().get(0).setOpeningUsedHours(new BigDecimal("3.5"));
@@ -390,8 +434,8 @@ class RegistrationIntakeServiceImplTest {
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
         assertThat(orderItemCaptor.getValue().getOpeningUsedHours()).isEqualByComparingTo("3.5");
         assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(20);
-        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(7);
-        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(13);
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isZero();
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(20);
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
     }
 
@@ -404,38 +448,34 @@ class RegistrationIntakeServiceImplTest {
         registrationIntakeService.submitIntake(request);
 
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
-        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(20);
-        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isZero();
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isZero();
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(20);
     }
 
     @Test
-    void shouldRejectOpeningUsedHoursExceedingPurchasedHours() {
-        stubStudentCreationOnly();
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
-        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+    void shouldIgnoreLegacyAlreadyUsedValueAbovePurchasedHoursDuringRegistration() {
+        stubSuccessfulIntake(false);
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         request.getItems().get(0).setOpeningUsedHours(new BigDecimal("10.5"));
 
-        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo("OPENING_USED_HOURS_EXCEED_PACKAGE");
-        verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+        registrationIntakeService.submitIntake(request);
+
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isZero();
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(20);
     }
 
     @Test
-    void shouldRejectOpeningUsedHoursOutsideHalfHourIncrement() {
-        stubStudentCreationOnly();
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption("15:30-17:00"));
-        when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
+    void shouldIgnoreLegacyAlreadyUsedValueDuringRegistration() {
+        stubSuccessfulIntake(false);
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         request.getItems().get(0).setOpeningUsedHours(new BigDecimal("3.25"));
 
-        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo("OPENING_USED_HOURS_INVALID");
-        verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
+        registrationIntakeService.submitIntake(request);
+
+        verify(coursePackageMapper).insert(coursePackageCaptor.capture());
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isZero();
+        assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(20);
     }
 
     @Test
@@ -450,7 +490,7 @@ class RegistrationIntakeServiceImplTest {
 
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
         assertThat(coursePackageCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2025, 1, 15));
-        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isEqualTo(4);
+        assertThat(coursePackageCaptor.getValue().getConsumedUnits()).isZero();
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
     }
 
@@ -564,6 +604,26 @@ class RegistrationIntakeServiceImplTest {
         assertThat(enrollmentOrderCaptor.getValue().getPickupFeeAmount()).isEqualByComparingTo("0.00");
         assertThat(enrollmentOrderCaptor.getValue().getOriginalAmount()).isEqualByComparingTo("800.00");
         assertThat(enrollmentOrderCaptor.getValue().getAmountDue()).isEqualByComparingTo("800.00");
+    }
+
+    @Test
+    void shouldAllowPickupWithZeroFeeForCourseLine() {
+        stubSuccessfulIntake(false);
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setPickupRequired(true);
+        item.setPickupAddress("Main St");
+        item.setPickupFeeCharged(true);
+        item.setPickupFeeAmount(BigDecimal.ZERO);
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        verify(enrollmentOrderMapper).insert(enrollmentOrderCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPickupRequiredSnapshot()).isTrue();
+        assertThat(orderItemCaptor.getValue().getPickupFeeAmount()).isEqualByComparingTo("0.00");
+        assertThat(enrollmentOrderCaptor.getValue().getPickupFeeAmount()).isEqualByComparingTo("0.00");
+        assertThat(enrollmentOrderCaptor.getValue().getOriginalAmount()).isEqualByComparingTo("800.00");
     }
 
     @Test
@@ -998,8 +1058,8 @@ class RegistrationIntakeServiceImplTest {
     }
 
     private void stubSuccessfulIntake(boolean duplicateStudentUsername, String timeSlotLabel) {
-        when(studentNoGenerator.generate()).thenReturn("STU202609010001");
-        when(studentMapper.selectReusableStudent("Jin Tang", "9175550101")).thenReturn(null);
+        lenient().when(studentNoGenerator.generate()).thenReturn("STU202609010001");
+        lenient().when(studentMapper.selectReusableStudent("Jin Tang", "9175550101")).thenReturn(null);
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(buildOption(timeSlotLabel));
         when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
         when(campusMapper.selectById(1L)).thenReturn(buildCampus());
@@ -1010,7 +1070,7 @@ class RegistrationIntakeServiceImplTest {
         lenient().when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(userAccountMapper.selectCount(any())).thenReturn(duplicateStudentUsername ? 1L : 0L, 0L);
 
-        doAnswer(invocation -> {
+        lenient().doAnswer(invocation -> {
             StudentEntity student = invocation.getArgument(0);
             student.setId(101L);
             return 1;
@@ -1025,7 +1085,7 @@ class RegistrationIntakeServiceImplTest {
             item.setId(2101L);
             return 1;
         }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
-        doAnswer(invocation -> {
+        lenient().doAnswer(invocation -> {
             CoursePackageEntity coursePackage = invocation.getArgument(0);
             coursePackage.setId(3001L);
             return 1;

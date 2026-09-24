@@ -30,6 +30,7 @@ public record CoursePackageDetailVO(
         Double purchasedHours,
         Double totalUnits,
         Double consumedUnits,
+        Double openingUsedHours,
         Double remainingUnits,
         BigDecimal originalAmount,
         BigDecimal discountAmount,

@@ -24,7 +24,6 @@ public record RecurringScheduleRuleDetailVO(
         String ruleStatus,
         LocalDate startDate,
         LocalDate endDate,
-        Integer generationHorizonDays,
         String notes,
         Integer generatedOccurrenceCount,
         LocalDateTime nextLessonStartAt,

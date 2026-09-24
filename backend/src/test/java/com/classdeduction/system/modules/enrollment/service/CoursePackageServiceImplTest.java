@@ -10,6 +10,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageOpeningUsedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
@@ -33,6 +34,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -115,6 +117,9 @@ class CoursePackageServiceImplTest {
     @Mock
     private PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
 
+    @Mock
+    private RecurringScheduleRuleService recurringScheduleRuleService;
+
     private CoursePackageServiceImpl coursePackageService;
 
     @BeforeAll
@@ -145,7 +150,8 @@ class CoursePackageServiceImplTest {
                 recurringScheduleSlotMapper,
                 lessonRecordMapper,
                 hourLedgerMapper,
-                packageBalanceSnapshotMapper
+                packageBalanceSnapshotMapper,
+                recurringScheduleRuleService
         );
     }
 
@@ -195,6 +201,40 @@ class CoursePackageServiceImplTest {
         assertThat(ledgerCaptor.getValue().getReasonCode()).isEqualTo("BONUS_HOURS");
         assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(4);
         assertThat(ledgerCaptor.getValue().getBalanceAfterUnits()).isEqualTo(104);
+    }
+
+    @Test
+    void shouldRecalculatePackageBalanceAndRefreshScheduleWhenOpeningUsedHoursChange() {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setTotalUnits(80);
+        coursePackage.setOpeningUsedUnits(32);
+        coursePackage.setConsumedUnits(40);
+        coursePackage.setRemainingUnits(40);
+        coursePackage.setPackageStatus("ACTIVE");
+        when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
+        when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+        when(packageBalanceSnapshotMapper.selectById(101L)).thenReturn(null);
+        when(hourLedgerMapper.insert(any(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class))).thenAnswer(invocation -> {
+            ((com.classdeduction.system.modules.lesson.entity.HourLedgerEntity) invocation.getArgument(0)).setId(501L);
+            return 1;
+        });
+
+        CoursePackageOpeningUsedHoursRequest request = new CoursePackageOpeningUsedHoursRequest();
+        request.setOpeningUsedHours(BigDecimal.valueOf(14));
+
+        coursePackageService.updateOpeningUsedHours(101L, request, 9L);
+
+        assertThat(coursePackage.getOpeningUsedUnits()).isEqualTo(28);
+        assertThat(coursePackage.getConsumedUnits()).isEqualTo(36);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(44);
+        ArgumentCaptor<com.classdeduction.system.modules.lesson.entity.HourLedgerEntity> ledgerCaptor =
+                ArgumentCaptor.forClass(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class);
+        verify(hourLedgerMapper).insert(ledgerCaptor.capture());
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(4);
+        assertThat(ledgerCaptor.getValue().getReasonCode()).isEqualTo("OPENING_USED_HOURS");
+        verify(recurringScheduleRuleService).refreshPackageSchedule(101L);
     }
 
     @Test
@@ -326,9 +366,10 @@ class CoursePackageServiceImplTest {
 
     @Test
     void shouldResumeUsingRemainingPerSlotAllocationAndRestartDate() {
-        CoursePackageEntity coursePackage = buildOneOnOnePackage("PAUSED", 8);
+        CoursePackageEntity coursePackage = buildOneOnOnePackage("PAUSED", 424);
+        coursePackage.setTotalUnits(424);
         RecurringScheduleRuleEntity rule = buildRule("PAUSED");
-        RecurringScheduleSlotEntity slot = buildSlot(601L, 1, 4, 8);
+        RecurringScheduleSlotEntity slot = buildSlot(601L, 1, 4, 424);
         LocalDate restartDate = nextWeekday(DayOfWeek.MONDAY);
         LessonOccurrenceEntity preservedRecorded = buildFutureOccurrence(700L, 601L, 4, "SCHEDULED");
         preservedRecorded.setPlannedStartAt(LocalDateTime.of(restartDate.plusWeeks(1), LocalTime.of(18, 0)));
@@ -356,14 +397,16 @@ class CoursePackageServiceImplTest {
         assertThat(coursePackage.getStartDate()).isEqualTo(restartDate);
         assertThat(rule.getRuleStatus()).isEqualTo("ACTIVE");
         assertThat(rule.getStartDate()).isEqualTo(restartDate);
-        verify(lessonOccurrenceMapper, times(1)).insert(any(LessonOccurrenceEntity.class));
+        verify(lessonOccurrenceMapper, times(105)).insert(any(LessonOccurrenceEntity.class));
         ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
-        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
-        LessonOccurrenceEntity generated = occurrenceCaptor.getValue();
-        assertThat(generated.getScheduleSlotId()).isEqualTo(601L);
-        assertThat(generated.getPlannedUnits()).isEqualTo(4);
-        assertThat(generated.getPlannedStartAt().toLocalDate()).isEqualTo(restartDate);
-        assertThat(generated.getPlannedEndAt()).isEqualTo(generated.getPlannedStartAt().plusHours(2));
+        verify(lessonOccurrenceMapper, times(105)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues()).allSatisfy(generated -> {
+            assertThat(generated.getScheduleSlotId()).isEqualTo(601L);
+            assertThat(generated.getPlannedUnits()).isEqualTo(4);
+            assertThat(generated.getPlannedEndAt()).isEqualTo(generated.getPlannedStartAt().plusHours(2));
+        });
+        assertThat(occurrenceCaptor.getAllValues().get(104).getPlannedStartAt().toLocalDate())
+                .isAfter(restartDate.plusDays(180));
     }
 
     @Test
@@ -427,7 +470,6 @@ class CoursePackageServiceImplTest {
         rule.setPackageId(101L);
         rule.setRuleStatus(status);
         rule.setStartDate(nextWeekday(DayOfWeek.MONDAY));
-        rule.setGenerationHorizonDays(30);
         return rule;
     }
 

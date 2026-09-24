@@ -22,7 +22,6 @@ public record RecurringScheduleRuleListItemVO(
         String ruleStatus,
         LocalDate startDate,
         LocalDate endDate,
-        Integer generationHorizonDays,
         Integer slotCount,
         Integer generatedOccurrenceCount,
         LocalDateTime nextLessonStartAt,

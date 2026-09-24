@@ -2,8 +2,6 @@ package com.classdeduction.system.modules.schedule.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
@@ -34,11 +32,6 @@ public class RecurringScheduleRuleCreateRequest {
 
     @Schema(description = "Rule end date", example = "2026-08-31")
     private LocalDate endDate;
-
-    @Min(value = 1, message = "Generation horizon must be at least 1 day")
-    @Max(value = 180, message = "Generation horizon must be at most 180 days")
-    @Schema(description = "How many days of occurrences should be generated ahead", example = "90")
-    private Integer generationHorizonDays = 90;
 
     @Schema(description = "Rule notes")
     private String notes;

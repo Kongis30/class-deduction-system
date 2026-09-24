@@ -50,6 +50,9 @@ public class CoursePackageEntity extends BaseEntity {
 
     private Integer consumedUnits;
 
+    /** 报名前已消耗的半课时数，与系统内已核销课时分开记录，便于在排课页修正。 */
+    private Integer openingUsedUnits;
+
     private Integer remainingUnits;
 
     private BigDecimal originalAmount;

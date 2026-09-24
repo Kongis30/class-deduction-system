@@ -13,7 +13,7 @@ import lombok.ToString;
 import java.time.LocalDate;
 
 /**
- * 周期排课规则实体：定义课时包的默认老师、教室和生成窗口。
+ * 周期排课规则实体：定义课时包的默认老师、教室和重复时段。
  */
 @Getter
 @Setter
@@ -40,8 +40,6 @@ public class RecurringScheduleRuleEntity extends BaseEntity {
     private LocalDate startDate;
 
     private LocalDate endDate;
-
-    private Integer generationHorizonDays;
 
     private String notes;
 }

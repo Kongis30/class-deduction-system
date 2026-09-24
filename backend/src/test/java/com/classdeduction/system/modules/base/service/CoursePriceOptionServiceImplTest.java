@@ -154,6 +154,7 @@ class CoursePriceOptionServiceImplTest {
     @Test
     void shouldCreateGroupOptionWithFutureClassOccurrencesWithoutPayRateSnapshot() {
         CoursePriceOptionSaveRequest request = groupOption();
+        java.time.YearMonth startMonth = java.time.YearMonth.parse(request.getGroupStartMonth());
         when(courseProductMapper.selectById(301L)).thenReturn(groupProduct());
         when(coursePriceOptionMapper.selectCount(any())).thenReturn(0L);
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of());
@@ -178,7 +179,8 @@ class CoursePriceOptionServiceImplTest {
                 ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
         verify(coursePriceOptionMapper).insert(optionCaptor.capture());
         verify(classGroupScheduleSlotMapper).insert(slotCaptor.capture());
-        verify(lessonOccurrenceMapper, times(13)).insert(occurrenceCaptor.capture());
+        verify(lessonOccurrenceMapper, times(countSaturdays(startMonth, startMonth.plusMonths(2))))
+                .insert(occurrenceCaptor.capture());
         assertThat(optionCaptor.getValue().getGroupTotalPrice()).isEqualByComparingTo("1300.00");
         assertThat(optionCaptor.getValue().getGroupSessionPrice()).isEqualByComparingTo("433.33");
         assertThat(optionCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1300.00");
@@ -203,8 +205,11 @@ class CoursePriceOptionServiceImplTest {
         request.setGroupTotalSessions(2);
         request.setGroupStartMonth(null);
         request.setGroupEndMonth(null);
-        request.setGroupStartDate(java.time.LocalDate.of(2026, 9, 5));
-        request.setGroupEndDate(java.time.LocalDate.of(2026, 9, 30));
+        java.time.LocalDate firstSessionDate = com.classdeduction.system.common.time.AppTime.nowLocalDateTime()
+                .toLocalDate()
+                .with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.SATURDAY));
+        request.setGroupStartDate(firstSessionDate);
+        request.setGroupEndDate(firstSessionDate.plusWeeks(4));
         CoursePriceOptionSaveRequest.GroupScheduleSlotDTO afternoon =
                 new CoursePriceOptionSaveRequest.GroupScheduleSlotDTO();
         afternoon.setTeacherId(703L);
@@ -236,10 +241,10 @@ class CoursePriceOptionServiceImplTest {
         assertThat(occurrenceCaptor.getAllValues())
                 .extracting(occurrence -> occurrence.getPlannedStartAt().toLocalDate())
                 .containsExactly(
-                        java.time.LocalDate.of(2026, 9, 5),
-                        java.time.LocalDate.of(2026, 9, 5),
-                        java.time.LocalDate.of(2026, 9, 12),
-                        java.time.LocalDate.of(2026, 9, 12));
+                        firstSessionDate,
+                        firstSessionDate,
+                        firstSessionDate.plusWeeks(1),
+                        firstSessionDate.plusWeeks(1));
     }
 
     @Test
@@ -406,8 +411,10 @@ class CoursePriceOptionServiceImplTest {
         request.setTotalPrice(new BigDecimal("1300.00"));
         request.setGroupTotalSessions(13);
         request.setGroupTotalPrice(new BigDecimal("1300.00"));
-        request.setGroupStartMonth("2026-09");
-        request.setGroupEndMonth("2026-11");
+        java.time.YearMonth startMonth = java.time.YearMonth.now(
+                com.classdeduction.system.common.time.AppTime.APP_ZONE_ID).plusMonths(1);
+        request.setGroupStartMonth(startMonth.toString());
+        request.setGroupEndMonth(startMonth.plusMonths(2).toString());
         request.setGroupTeacherId(701L);
         request.setGroupClassroomId(801L);
         CoursePriceOptionSaveRequest.GroupScheduleSlotDTO slot =
@@ -420,6 +427,18 @@ class CoursePriceOptionServiceImplTest {
         request.setGroupScheduleSlots(List.of(slot));
         request.setStatus("ACTIVE");
         return request;
+    }
+
+    private int countSaturdays(java.time.YearMonth startMonth, java.time.YearMonth endMonth) {
+        java.time.LocalDate start = startMonth.atDay(1);
+        java.time.LocalDate end = endMonth.atEndOfMonth();
+        int count = 0;
+        for (java.time.LocalDate date = start; !date.isAfter(end); date = date.plusDays(1)) {
+            if (date.getDayOfWeek() == java.time.DayOfWeek.SATURDAY) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private CourseProductEntity oneOnOneProduct() {

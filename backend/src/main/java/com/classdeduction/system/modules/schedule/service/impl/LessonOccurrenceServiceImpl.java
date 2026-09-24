@@ -75,7 +75,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private static final int DEFAULT_OCCURRENCE_WINDOW_DAYS = 30;
     private static final int DEFAULT_OCCUPANCY_WINDOW_DAYS = 7;
     private static final int MAX_QUERY_WINDOW_DAYS = 180;
-    static final int MAX_OCCURRENCE_WINDOW_DAYS = 730; // 2年，用于按课包查询
 
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
@@ -100,8 +99,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     @Override
     public PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query, CurrentUserResponse currentUser) {
         applyScheduleScope(query, currentUser);
-        // 按课包查询时放宽时间窗口限制（课包本身有起止边界）
-        int maxDays = query.getPackageId() != null ? MAX_OCCURRENCE_WINDOW_DAYS : MAX_QUERY_WINDOW_DAYS;
+        // 按课包查询由调用方按课包周期指定范围；普通日历查询仍限制在 180 天内。
+        Integer maxDays = query.getPackageId() != null ? null : MAX_QUERY_WINDOW_DAYS;
         LocalDateTime[] window = normalizeWindow(query.getStartAt(), query.getEndAt(), DEFAULT_OCCURRENCE_WINDOW_DAYS, maxDays);
         Page<LessonOccurrenceEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
         List<Long> matchedPackageIds = findMatchedPackageIds(query.getKeyword());
@@ -840,14 +839,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         return normalizeWindow(startAt, endAt, defaultDays, MAX_QUERY_WINDOW_DAYS);
     }
 
-    private LocalDateTime[] normalizeWindow(LocalDateTime startAt, LocalDateTime endAt, int defaultDays, int maxDays) {
+    private LocalDateTime[] normalizeWindow(LocalDateTime startAt, LocalDateTime endAt, int defaultDays, Integer maxDays) {
         LocalDateTime resolvedStart = startAt != null ? startAt : AppTime.nowLocalDateTime().toLocalDate().atStartOfDay();
         LocalDateTime resolvedEnd = endAt != null ? endAt : resolvedStart.plusDays(defaultDays);
         if (!resolvedEnd.isAfter(resolvedStart)) {
             throw new BusinessException("INVALID_QUERY_WINDOW", "Query end time must be later than the start time.");
         }
         // 按日期比较（忽略时分秒），避免 endAt=23:59:59 时误判超限
-        if (resolvedStart.toLocalDate().plusDays(maxDays).isBefore(resolvedEnd.toLocalDate())) {
+        if (maxDays != null && resolvedStart.toLocalDate().plusDays(maxDays).isBefore(resolvedEnd.toLocalDate())) {
             throw new BusinessException("QUERY_WINDOW_TOO_LARGE", "Query window cannot exceed " + maxDays + " days.");
         }
         return new LocalDateTime[]{resolvedStart, resolvedEnd};

@@ -65,6 +65,24 @@ public class PrivateLessonSchemaCompatibilityInitializer {
         addColumnIfMissing("lesson_record", "class_enrollment_id",
                 "bigint DEFAULT NULL COMMENT 'Student class enrollment settled by this record'",
                 "class enrollment cascade support");
+        boolean openingUsedColumnMissing = !columnExists("course_package", "opening_used_units");
+        addColumnIfMissing("course_package", "opening_used_units",
+                "int NOT NULL DEFAULT 0 COMMENT 'Hours consumed before lesson tracking, in half-hour units' AFTER consumed_units",
+                "editable opening used hours on the schedule page");
+        if (openingUsedColumnMissing) {
+            // 一次性沿用旧收据的历史值；以后排课页修改的值以 course_package 为准。
+            jdbcTemplate.update("""
+                    UPDATE course_package cp
+                    INNER JOIN enrollment_order_item item ON item.id = cp.enrollment_order_item_id
+                    SET cp.opening_used_units = LEAST(
+                        GREATEST(ROUND(COALESCE(item.opening_used_hours, 0) * 2), 0),
+                        GREATEST(COALESCE(cp.consumed_units, 0), 0)
+                    )
+                    WHERE cp.teaching_mode = 'ONE_ON_ONE'
+                      AND item.opening_used_hours IS NOT NULL
+                      AND item.opening_used_hours > 0
+                    """);
+        }
         // 课程级付款分摊（见 doc/migrations/20260919_payment_allocation.sql）
         createPaymentAllocationTableIfMissing();
         addColumnIfMissing("enrollment_order_item", "discount_amount",
@@ -303,17 +321,21 @@ public class PrivateLessonSchemaCompatibilityInitializer {
     }
 
     private void addColumnIfMissing(String tableName, String columnName, String definition, String purpose) {
+        if (columnExists(tableName, columnName)) {
+            return;
+        }
+        jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN `" + columnName + "` " + definition);
+        log.info("Added {}.{} for {}.", tableName, columnName, purpose);
+    }
+
+    private boolean columnExists(String tableName, String columnName) {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                 FROM information_schema.COLUMNS
                 WHERE TABLE_SCHEMA = DATABASE()
                   AND TABLE_NAME = ?
-                  AND COLUMN_NAME = ?
+                AND COLUMN_NAME = ?
                 """, Integer.class, tableName, columnName);
-        if (count != null && count > 0) {
-            return;
-        }
-        jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN `" + columnName + "` " + definition);
-        log.info("Added {}.{} for {}.", tableName, columnName, purpose);
+        return count != null && count > 0;
     }
 }
