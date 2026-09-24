@@ -1,0 +1,1 @@
+import{h as e}from"./index-B9Kow7-x.js";function d(t){return e.get("/v1/student-credits",{params:t?{keyword:t}:void 0})}function u(t){return e.get(`/v1/student-credits/student/${t}/balance`)}function a(t,n){return e.post(`/v1/student-credits/student/${t}/adjust`,n)}export{d as a,a as b,u as f};

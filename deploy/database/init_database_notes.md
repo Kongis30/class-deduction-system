@@ -4,27 +4,29 @@ This folder contains the current clean database bootstrap files.
 
 ## Import Order
 
-Run from this `database` directory so the `SOURCE` path inside the seed file resolves correctly:
+Run from the repository root so the `SOURCE` path inside the seed file resolves correctly:
 
 ```bash
-cd deploy/database
-mysql -uroot -p < init_schema_current.sql
-mysql -uroot -p < init_seed_required.sql
-mysql -uroot -p class_deduction_system < migrations/20260919_payment_allocation.sql
+mysql -uroot -p < doc/init_schema_current.sql
+mysql -uroot -p < doc/init_seed_required.sql
+mysql -uroot -p class_deduction_system < doc/migrations/20260919_payment_allocation.sql
+mysql -uroot -p class_deduction_system < doc/migrations/20260924_sys_user_active_unique_keys.sql
 ```
 
 If the SQL client does not support MySQL `SOURCE`, run the course matrix seed separately after `init_seed_required.sql`:
 
 ```bash
-mysql -uroot -p class_deduction_system < 20260727_seed_ppt_course_matrix.sql
+mysql -uroot -p class_deduction_system < doc/migrations/20260727_seed_ppt_course_matrix.sql
 ```
 
 ## Files
 
-- `init_schema_current.sql`: current schema-only dump, including `CREATE DATABASE`, `USE`, tables, indexes, foreign keys, checks, triggers/routines/events if present.
-- `init_seed_required.sql`: required baseline data only. It intentionally avoids demo students, demo teachers, orders, payments, and E2E records.
-- `20260727_seed_ppt_course_matrix.sql`: customer course matrix seed loaded by `init_seed_required.sql`.
-- `migrations/20260919_payment_allocation.sql`: adds course-level discount/payment snapshots and their allocation ledger; run after initializing the base schema.
+- `doc/init_schema_current.sql`: current schema-only dump, including `CREATE DATABASE`, `USE`, tables, indexes, foreign keys, checks, triggers/routines/events if present.
+- `doc/init_seed_required.sql`: required baseline data only. It intentionally avoids demo students, demo teachers, orders, payments, and E2E records.
+- `doc/migrations/20260727_seed_ppt_course_matrix.sql`: customer course matrix seed loaded by `init_seed_required.sql`.
+- `doc/migrations/20260919_payment_allocation.sql`: adds course-level discount/payment snapshots and their allocation ledger; run after initializing the base schema.
+- `doc/migrations/20260924_sys_user_active_unique_keys.sql`: limits account uniqueness to active users and allows repeated soft deletion while preserving account history.
+- `doc/migrations/20260924_recurring_schedule_two_year_horizon.sql`: historical migration retained for existing installs; current scheduler ignores this legacy column.
 
 ## Required Seed Data
 
