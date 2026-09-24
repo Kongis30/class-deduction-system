@@ -90,6 +90,7 @@ Shared conventions:
 
 ### Scheduling
 
+- `GET /api/v1/schedule/students/one-on-one` returns active students with at least one active one-on-one course package for the Schedule student picker.
 - `GET /api/v1/schedule/rules`
 - `GET /api/v1/schedule/rules/{id}`
 - `POST /api/v1/schedule/rules`

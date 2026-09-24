@@ -9,6 +9,15 @@ import type {
   RecurringScheduleRuleItem,
 } from '@/types/domain';
 
+export interface ScheduleStudentOption {
+  id: EntityId;
+  studentName: string;
+}
+
+export function fetchOneOnOneScheduleStudents() {
+  return http.get<ApiResponse<ScheduleStudentOption[]>>('/v1/schedule/students/one-on-one');
+}
+
 // ─── Recurring Schedule Rules ─────────────────────────
 export interface RecurringScheduleRuleQuery {
   keyword?: string;

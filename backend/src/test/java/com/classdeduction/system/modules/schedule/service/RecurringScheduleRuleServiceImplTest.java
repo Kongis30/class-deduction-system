@@ -26,6 +26,7 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMa
 import com.classdeduction.system.modules.schedule.service.impl.RecurringScheduleRuleServiceImpl;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleUpdateResultVO;
+import com.classdeduction.system.modules.schedule.vo.ScheduleStudentOptionVO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -138,6 +139,19 @@ class RecurringScheduleRuleServiceImplTest {
         assertThat(result.ruleId()).isEqualTo(5001L);
         assertThat(result.generatedOccurrenceCount()).isEqualTo(2);
         assertThat(result.firstGeneratedStartAt()).isBefore(result.lastGeneratedEndAt());
+    }
+
+    @Test
+    void shouldReturnActiveOneOnOneStudentsFromSingleLookup() {
+        StudentEntity student = new StudentEntity();
+        student.setId(2001L);
+        student.setStudentName("Alina Chen");
+        when(coursePackageMapper.selectActiveOneOnOneStudents()).thenReturn(List.of(student));
+
+        List<ScheduleStudentOptionVO> result = recurringScheduleRuleService.listStudentsWithActiveOneOnOnePackages();
+
+        assertThat(result).containsExactly(new ScheduleStudentOptionVO(2001L, "Alina Chen"));
+        verify(coursePackageMapper).selectActiveOneOnOneStudents();
     }
 
     @Test

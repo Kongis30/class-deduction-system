@@ -36,6 +36,7 @@ import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleDetail
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleListItemVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleSlotVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
+import com.classdeduction.system.modules.schedule.vo.ScheduleStudentOptionVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleUpdateResultVO;
 import lombok.RequiredArgsConstructor;
@@ -81,6 +82,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+
+    @Override
+    public List<ScheduleStudentOptionVO> listStudentsWithActiveOneOnOnePackages() {
+        return coursePackageMapper.selectActiveOneOnOneStudents().stream()
+                .map(student -> new ScheduleStudentOptionVO(student.getId(), student.getStudentName()))
+                .toList();
+    }
 
     @Override
     public PageResponse<RecurringScheduleRuleListItemVO> pageRules(RecurringScheduleRulePageQuery query) {

@@ -697,13 +697,14 @@ import dayjs from 'dayjs';
 import { useRoute } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
-import { fetchAllClassrooms, fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
+import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
 import { fetchCoursePackages } from '@/api/enrollment';
 import {
   createRecurringScheduleRule,
   updateRecurringScheduleRule,
   fetchRecurringScheduleRule,
   fetchRecurringScheduleRules,
+  fetchOneOnOneScheduleStudents,
   fetchLessonOccurrences,
   fetchEnrolledClassGroups,
   adjustWeeklySchedule,
@@ -1802,33 +1803,12 @@ function slotLessonPlan(slot: SlotDef & { allocatedHours?: number }) {
 async function init() {
   try {
     const [sRes, tRes, cRes] = await Promise.all([
-      fetchAllStudents(),
+      fetchOneOnOneScheduleStudents(),
       fetchAllTeachers(),
       fetchAllClassrooms(),
     ]);
-    // 只保留拥有 ≥1 个 ACTIVE 1-on-1 课时包的学生。
-    // 班课学生只写 class_enrollment、不写 course_package，选中也只能看到 "No active packages"，不应出现在 1-on-1 排课学生列表里。
-    const allStudents = sRes.data.data;
-    const packageCheck = await Promise.all(
-      allStudents.map(async (s) => {
-        try {
-          const res = await fetchCoursePackages({
-            studentId: s.id,
-            packageStatus: 'ACTIVE',
-            teachingMode: 'ONE_ON_ONE',
-            pageSize: 1,
-          });
-          const hasOneOnOne = (res.data.data.total ?? res.data.data.records.length) > 0;
-          return { id: s.id, studentName: s.studentName, hasOneOnOne };
-        } catch {
-          // 查询失败时保守保留该学生，避免误隐藏正常学生
-          return { id: s.id, studentName: s.studentName, hasOneOnOne: true };
-        }
-      })
-    );
-    students.value = packageCheck
-      .filter(x => x.hasOneOnOne)
-      .map(x => ({ id: x.id, studentName: x.studentName }));
+    // 后端按有效 1 对 1 课时包一次去重查询，避免每个学生各发一次请求。
+    students.value = sRes.data.data;
     teachers.value = tRes.data.data;
     classrooms.value = cRes.data.data;
     await applyRouteScheduleContext();
