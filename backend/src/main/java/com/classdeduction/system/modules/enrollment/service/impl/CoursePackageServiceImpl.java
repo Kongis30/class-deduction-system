@@ -17,7 +17,7 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
-import com.classdeduction.system.modules.enrollment.dto.CoursePackageOpeningUsedHoursRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -79,6 +79,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class CoursePackageServiceImpl implements CoursePackageService {
+
+    private static final String CONFIRM_STAGE_PENDING_ADMIN = "PENDING_ADMIN";
 
     private final CoursePackageMapper coursePackageMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
@@ -144,10 +146,22 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .map(CoursePackageEntity::getCourseProductId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet()));
+        Set<Long> orderItemIds = result.getRecords().stream()
+                .map(CoursePackageEntity::getEnrollmentOrderItemId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, EnrollmentOrderItemEntity> orderItemMap = orderItemIds.isEmpty()
+                ? Collections.emptyMap()
+                : enrollmentOrderItemMapper.selectBatchIds(orderItemIds).stream()
+                        .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, item -> item));
         Map<Long, String> primaryTeacherNameMap = buildPrimaryTeacherNameMap(result.getRecords().stream().map(CoursePackageEntity::getId).toList());
 
+        Map<Long, Integer> pendingDeductionByPackage = loadPendingDeductionUnits(
+                result.getRecords().stream().map(CoursePackageEntity::getId).toList());
         List<CoursePackageListItemVO> records = result.getRecords().stream()
-                .map(item -> toListItem(item, studentMap.get(item.getStudentId()), productMap.get(item.getCourseProductId()), primaryTeacherNameMap.get(item.getId())))
+                .map(item -> toListItem(item, studentMap.get(item.getStudentId()), productMap.get(item.getCourseProductId()),
+                        orderItemMap.get(item.getEnrollmentOrderItemId()), primaryTeacherNameMap.get(item.getId()),
+                        pendingDeductionByPackage.getOrDefault(item.getId(), 0)))
                 .toList();
         return PageResponse.of(records, result.getTotal(), result.getCurrent(), result.getSize());
     }
@@ -646,7 +660,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         return result;
     }
 
-    private CoursePackageListItemVO toListItem(CoursePackageEntity item, StudentEntity student, CourseProductEntity product, String primaryTeacherName) {
+    private CoursePackageListItemVO toListItem(CoursePackageEntity item, StudentEntity student, CourseProductEntity product,
+                                               EnrollmentOrderItemEntity orderItem, String primaryTeacherName,
+                                               int pendingDeductionUnits) {
         return CoursePackageListItemVO.builder()
                 .id(item.getId())
                 .packageNo(item.getPackageNo())
@@ -655,12 +671,14 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .studentName(student == null ? null : student.getStudentName())
                 .courseProductId(item.getCourseProductId())
                 .courseProductName(product == null ? null : product.getProductName())
+                .gradeBand(orderItem == null ? null : orderItem.getGradeBand())
                 .packageName(item.getPackageName())
                 .subjectName(item.getSubjectName())
                 .teachingMode(item.getTeachingMode())
                 .totalUnits(UnitConverter.toHoursDecimal(item.getTotalUnits()))
                 .consumedUnits(UnitConverter.toHoursDecimal(item.getConsumedUnits()))
                 .openingUsedHours(UnitConverter.toHoursDecimal(item.getOpeningUsedUnits()))
+                .pendingDeductionUnits(UnitConverter.toHoursDecimal(pendingDeductionUnits))
                 .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
                 .receivedAmount(item.getReceivedAmount())
                 .packageStatus(item.getPackageStatus())
@@ -669,6 +687,23 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .primaryTeacherName(primaryTeacherName)
                 .createdAt(item.getCreatedAt())
                 .build();
+    }
+
+    /** 批量统计等待管理员确认、且最终需要扣课的记录，供课包余额拆分展示使用。 */
+    private Map<Long, Integer> loadPendingDeductionUnits(List<Long> packageIds) {
+        if (packageIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .select(LessonRecordEntity::getPackageId, LessonRecordEntity::getDeductedUnits)
+                        .in(LessonRecordEntity::getPackageId, packageIds)
+                        .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_PENDING_ADMIN)
+                        .eq(LessonRecordEntity::getShouldDeduct, 1)
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .filter(record -> record.getPackageId() != null)
+                .collect(Collectors.groupingBy(LessonRecordEntity::getPackageId,
+                        Collectors.summingInt(record -> safeUnits(record.getDeductedUnits()))));
     }
 
     private Map<Long, Integer> loadConsumedUnitsByTeacher(Long packageId) {
@@ -788,22 +823,35 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void updateOpeningUsedHours(Long id, CoursePackageOpeningUsedHoursRequest request, Long operatorId) {
+    public void updateDeductedHours(Long id, CoursePackageDeductedHoursRequest request, Long operatorId) {
         CoursePackageEntity coursePackage = requireOneOnOnePackage(id);
-        int nextOpeningUsedUnits = UnitConverter.toHalfHourUnits(request.getOpeningUsedHours());
+        int requestedConsumedUnits = UnitConverter.toHalfHourUnits(request.getDeductedHours());
         int currentOpeningUsedUnits = safeUnits(coursePackage.getOpeningUsedUnits());
-        if (nextOpeningUsedUnits == currentOpeningUsedUnits) {
-            return;
-        }
-
         int totalUnits = safeUnits(coursePackage.getTotalUnits());
         int currentConsumedUnits = safeUnits(coursePackage.getConsumedUnits());
         int trackedLessonConsumedUnits = Math.max(0, currentConsumedUnits - currentOpeningUsedUnits);
-        int nextConsumedUnits = trackedLessonConsumedUnits + nextOpeningUsedUnits;
-        if (nextConsumedUnits > totalUnits) {
-            throw new BusinessException("OPENING_USED_HOURS_EXCEED_PACKAGE",
-                    "Already used hours plus confirmed lesson hours cannot exceed the package total.");
+        if (requestedConsumedUnits == currentConsumedUnits) {
+            return;
         }
+        List<LessonRecordEntity> pendingRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                .eq(LessonRecordEntity::getPackageId, id)
+                .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_PENDING_ADMIN)
+                .eq(LessonRecordEntity::getShouldDeduct, 1)
+                .eq(LessonRecordEntity::getIsDeleted, 0));
+        int pendingDeductionUnits = pendingRecords.stream()
+                .mapToInt(record -> safeUnits(record.getDeductedUnits()))
+                .sum();
+        if (requestedConsumedUnits < trackedLessonConsumedUnits) {
+            throw new BusinessException("DEDUCTED_HOURS_BELOW_CONFIRMED",
+                    "Already deducted hours cannot be lower than confirmed lesson hours.");
+        }
+        if (requestedConsumedUnits + pendingDeductionUnits > totalUnits) {
+            throw new BusinessException("DEDUCTED_HOURS_EXCEED_PACKAGE",
+                    "Already deducted and pending deduction hours cannot exceed the package total.");
+        }
+
+        int nextOpeningUsedUnits = requestedConsumedUnits - trackedLessonConsumedUnits;
+        int nextConsumedUnits = requestedConsumedUnits;
 
         int currentRemainingUnits = coursePackage.getRemainingUnits() == null
                 ? Math.max(totalUnits - currentConsumedUnits, 0)
@@ -832,7 +880,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         ledger.setBalanceAfterUnits(nextRemainingUnits);
         ledger.setBusinessDate(AppTime.nowLocalDateTime().toLocalDate());
         ledger.setReasonCode("OPENING_USED_HOURS");
-        ledger.setReasonDesc("Updated already used hours on the schedule page.");
+        ledger.setReasonDesc("Updated already deducted hours on the schedule page.");
         ledger.setOperatedBy(operatorId);
         ledger.setOperatedAt(AppTime.nowLocalDateTime());
         hourLedgerMapper.insert(ledger);

@@ -74,4 +74,43 @@ class StudentCreditServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Credit student");
     }
+
+    @Test
+    void paymentConsumesCreditWhenBalanceCoversTheAmount() {
+        when(ledgerMapper.lockStudent(8L)).thenReturn(8L);
+        when(ledgerMapper.selectBalance(8L)).thenReturn(new BigDecimal("195.00"));
+
+        service.consumeForPayment(8L, new BigDecimal("195.00"), 21L, 34L, 3L, "Admin", "Registration payment");
+
+        ArgumentCaptor<StudentCreditLedgerEntity> captor = ArgumentCaptor.forClass(StudentCreditLedgerEntity.class);
+        verify(ledgerMapper).insert(captor.capture());
+        StudentCreditLedgerEntity entry = captor.getValue();
+        assertThat(entry.getEntryType()).isEqualTo("CREDIT_USED");
+        assertThat(entry.getAmount()).isEqualByComparingTo("-195.00");
+        assertThat(entry.getSourceEnrollmentOrderId()).isEqualTo(21L);
+        assertThat(entry.getSourcePaymentRecordId()).isEqualTo(34L);
+    }
+
+    @Test
+    void paymentRejectsCreditWhenBalanceIsInsufficient() {
+        when(ledgerMapper.lockStudent(8L)).thenReturn(8L);
+        when(ledgerMapper.selectBalance(8L)).thenReturn(new BigDecimal("194.99"));
+
+        assertThatThrownBy(() -> service.consumeForPayment(8L, new BigDecimal("195.00"), 21L, 34L, 3L, "Admin", null))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("not enough");
+
+        verify(ledgerMapper, never()).insert(org.mockito.ArgumentMatchers.any(StudentCreditLedgerEntity.class));
+    }
+
+    @Test
+    void topUpStoresCreditAsPositiveLedgerDelta() {
+        service.creditFromTopUp(8L, new BigDecimal("20.00"), 21L, 34L, 3L, "Admin", "Top-up");
+
+        ArgumentCaptor<StudentCreditLedgerEntity> captor = ArgumentCaptor.forClass(StudentCreditLedgerEntity.class);
+        verify(ledgerMapper).insert(captor.capture());
+        StudentCreditLedgerEntity entry = captor.getValue();
+        assertThat(entry.getEntryType()).isEqualTo("TOP_UP_CREDIT");
+        assertThat(entry.getAmount()).isEqualByComparingTo("20.00");
+    }
 }

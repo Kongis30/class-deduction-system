@@ -10,9 +10,10 @@ import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
-import com.classdeduction.system.modules.enrollment.dto.CoursePackageOpeningUsedHoursRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
@@ -171,6 +172,43 @@ class CoursePackageServiceImplTest {
     }
 
     @Test
+    void shouldIncludePendingDeductionHoursInPackageList() {
+        CoursePackagePageQuery query = new CoursePackagePageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+        query.setTeachingMode("ONE_ON_ONE");
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setStudentId(201L);
+        coursePackage.setCourseProductId(301L);
+        coursePackage.setEnrollmentOrderItemId(401L);
+        coursePackage.setTotalUnits(80);
+        coursePackage.setConsumedUnits(20);
+        coursePackage.setOpeningUsedUnits(8);
+        coursePackage.setRemainingUnits(60);
+        Page<CoursePackageEntity> page = new Page<>(1, 10);
+        page.setRecords(List.of(coursePackage));
+        page.setTotal(1);
+        when(coursePackageMapper.selectPage(any(Page.class), any())).thenReturn(page);
+        EnrollmentOrderItemEntity orderItem = new EnrollmentOrderItemEntity();
+        orderItem.setId(401L);
+        orderItem.setGradeBand("G6-G8");
+        when(enrollmentOrderItemMapper.selectBatchIds(any())).thenReturn(List.of(orderItem));
+
+        LessonRecordEntity pending = new LessonRecordEntity();
+        pending.setPackageId(101L);
+        pending.setDeductedUnits(6);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(pending));
+
+        PageResponse<CoursePackageListItemVO> result = coursePackageService.pagePackages(query);
+
+        assertThat(result.records()).hasSize(1);
+        assertThat(result.records().get(0).pendingDeductionUnits()).isEqualTo(3.0);
+        assertThat(result.records().get(0).gradeBand()).isEqualTo("G6-G8");
+    }
+
+    @Test
     void shouldAddBonusHoursWithoutChangingConsumedHours() {
         CoursePackageEntity coursePackage = new CoursePackageEntity();
         coursePackage.setId(101L);
@@ -204,7 +242,7 @@ class CoursePackageServiceImplTest {
     }
 
     @Test
-    void shouldRecalculatePackageBalanceAndRefreshScheduleWhenOpeningUsedHoursChange() {
+    void shouldRecalculatePackageBalanceAndRefreshScheduleWhenDeductedHoursChange() {
         CoursePackageEntity coursePackage = new CoursePackageEntity();
         coursePackage.setId(101L);
         coursePackage.setTeachingMode("ONE_ON_ONE");
@@ -221,20 +259,45 @@ class CoursePackageServiceImplTest {
             return 1;
         });
 
-        CoursePackageOpeningUsedHoursRequest request = new CoursePackageOpeningUsedHoursRequest();
-        request.setOpeningUsedHours(BigDecimal.valueOf(14));
+        CoursePackageDeductedHoursRequest request = new CoursePackageDeductedHoursRequest();
+        request.setDeductedHours(BigDecimal.valueOf(14));
 
-        coursePackageService.updateOpeningUsedHours(101L, request, 9L);
+        coursePackageService.updateDeductedHours(101L, request, 9L);
 
-        assertThat(coursePackage.getOpeningUsedUnits()).isEqualTo(28);
-        assertThat(coursePackage.getConsumedUnits()).isEqualTo(36);
-        assertThat(coursePackage.getRemainingUnits()).isEqualTo(44);
+        assertThat(coursePackage.getOpeningUsedUnits()).isEqualTo(20);
+        assertThat(coursePackage.getConsumedUnits()).isEqualTo(28);
+        assertThat(coursePackage.getRemainingUnits()).isEqualTo(52);
         ArgumentCaptor<com.classdeduction.system.modules.lesson.entity.HourLedgerEntity> ledgerCaptor =
                 ArgumentCaptor.forClass(com.classdeduction.system.modules.lesson.entity.HourLedgerEntity.class);
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
-        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(4);
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(12);
         assertThat(ledgerCaptor.getValue().getReasonCode()).isEqualTo("OPENING_USED_HOURS");
         verify(recurringScheduleRuleService).refreshPackageSchedule(101L);
+    }
+
+    @Test
+    void shouldRejectDeductedHoursThatLeaveNoRoomForPendingDeductions() {
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setTotalUnits(160);
+        coursePackage.setOpeningUsedUnits(40);
+        coursePackage.setConsumedUnits(120);
+        coursePackage.setRemainingUnits(40);
+        coursePackage.setPackageStatus("ACTIVE");
+        when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
+
+        LessonRecordEntity pending = new LessonRecordEntity();
+        pending.setPackageId(101L);
+        pending.setDeductedUnits(12);
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(pending));
+
+        CoursePackageDeductedHoursRequest request = new CoursePackageDeductedHoursRequest();
+        request.setDeductedHours(BigDecimal.valueOf(78));
+
+        assertThatThrownBy(() -> coursePackageService.updateDeductedHours(101L, request, 9L))
+                .hasMessageContaining("pending deduction hours cannot exceed");
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
     }
 
     @Test

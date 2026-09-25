@@ -159,6 +159,48 @@ class TeacherPaymentServiceImplTest {
     }
 
     @Test
+    void unpaidLessonsShowClassTimeInsteadOfConfirmationTime() {
+        LessonRecordEntity actualLesson = payableRecord();
+        actualLesson.setActualUnits(4);
+        actualLesson.setPlannedStartAt(LocalDateTime.of(2026, 9, 23, 17, 0));
+        actualLesson.setPlannedEndAt(LocalDateTime.of(2026, 9, 23, 19, 0));
+        actualLesson.setActualStartAt(LocalDateTime.of(2026, 9, 23, 18, 0));
+        actualLesson.setActualEndAt(LocalDateTime.of(2026, 9, 23, 20, 0));
+
+        LessonRecordEntity plannedLesson = payableRecord();
+        plannedLesson.setId(1002L);
+        plannedLesson.setActualUnits(4);
+        plannedLesson.setPlannedStartAt(LocalDateTime.of(2026, 9, 24, 14, 0));
+        plannedLesson.setPlannedEndAt(LocalDateTime.of(2026, 9, 24, 16, 0));
+
+        LessonRecordEntity legacyLesson = payableRecord();
+        legacyLesson.setId(1003L);
+        legacyLesson.setOccurrenceId(4001L);
+        legacyLesson.setActualUnits(4);
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(4001L);
+        occurrence.setPlannedStartAt(LocalDateTime.of(2026, 9, 25, 9, 0));
+        occurrence.setPlannedEndAt(LocalDateTime.of(2026, 9, 25, 11, 0));
+
+        UnpaidLessonQuery query = new UnpaidLessonQuery();
+        query.setTeacherId(701L);
+        when(paymentItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(actualLesson, plannedLesson, legacyLesson));
+        when(lessonOccurrenceMapper.selectBatchIds(any())).thenReturn(List.of(occurrence));
+        when(payRateMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        var lessons = teacherPaymentService.queryUnpaidLessons(query);
+
+        assertThat(lessons).hasSize(3);
+        assertThat(lessons.get(0).lessonStartAt()).isEqualTo(LocalDateTime.of(2026, 9, 23, 18, 0));
+        assertThat(lessons.get(0).lessonEndAt()).isEqualTo(LocalDateTime.of(2026, 9, 23, 20, 0));
+        assertThat(lessons.get(1).lessonStartAt()).isEqualTo(plannedLesson.getPlannedStartAt());
+        assertThat(lessons.get(1).lessonEndAt()).isEqualTo(plannedLesson.getPlannedEndAt());
+        assertThat(lessons.get(2).lessonStartAt()).isEqualTo(occurrence.getPlannedStartAt());
+        assertThat(lessons.get(2).lessonEndAt()).isEqualTo(occurrence.getPlannedEndAt());
+    }
+
+    @Test
     void shouldRejectNoShowLessonWhenCreatingPayment() {
         LessonRecordEntity record = payableRecord();
         record.setResultStatus("NO_SHOW");

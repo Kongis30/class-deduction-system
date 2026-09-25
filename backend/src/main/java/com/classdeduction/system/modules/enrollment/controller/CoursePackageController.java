@@ -8,7 +8,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
-import com.classdeduction.system.modules.enrollment.dto.CoursePackageOpeningUsedHoursRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
@@ -97,14 +97,14 @@ public class CoursePackageController {
         return ApiResponse.success("Package hours adjusted successfully.", null);
     }
 
-    @PutMapping("/{id}/opening-used-hours")
-    @Operation(summary = "Update already-used 1-on-1 hours and refresh future scheduled lessons")
-    public ApiResponse<Void> updateOpeningUsedHours(
+    @PutMapping("/{id}/deducted-hours")
+    @Operation(summary = "Update already-deducted 1-on-1 hours and refresh future scheduled lessons")
+    public ApiResponse<Void> updateDeductedHours(
             @PathVariable Long id,
-            @Valid @RequestBody CoursePackageOpeningUsedHoursRequest request,
+            @Valid @RequestBody CoursePackageDeductedHoursRequest request,
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
-        coursePackageService.updateOpeningUsedHours(id, request, currentUser.userId());
-        return ApiResponse.success("Already used hours updated successfully.", null);
+        coursePackageService.updateDeductedHours(id, request, currentUser.userId());
+        return ApiResponse.success("Already deducted hours updated successfully.", null);
     }
 
     @PostMapping("/{id}/pause")

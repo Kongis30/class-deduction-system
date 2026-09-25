@@ -18,6 +18,7 @@ import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMem
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
+import com.classdeduction.system.modules.enrollment.vo.ActiveOneOnOneStudentCourseGradeRow;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -61,7 +62,7 @@ import java.util.stream.Collectors;
  *   <li>每个排课时段（slot）自带老师、课程名和本段分配课时 allocatedUnits。</li>
  *   <li>各时段相互独立按周排满：每次课时长取 min(plannedUnits, 剩余分配)，
  *       除不尽时最后一次课只排余数（结束时间随之缩短）。</li>
- *   <li>校验：各时段 allocatedUnits 之和 ≤ 课时包总课时；生成前再按当前包余额
+ *   <li>校验：各时段 allocatedUnits 之和 ≤ 当前可分配余额；生成前再按当前包余额
  *       进行安全校验，确保不会覆盖已保留课次。</li>
  * </ul>
  */
@@ -83,9 +84,38 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
     @Override
     public List<ScheduleStudentOptionVO> listStudentsWithActiveOneOnOnePackages() {
-        return coursePackageMapper.selectActiveOneOnOneStudents().stream()
-                .map(student -> new ScheduleStudentOptionVO(student.getId(), student.getStudentName()))
+        // 先用单条关联查询取出每个学生的课程年级，再在内存合并重复课包，供左侧栏分组。
+        Map<Long, ScheduleStudentOptionBuilder> students = new LinkedHashMap<>();
+        for (ActiveOneOnOneStudentCourseGradeRow row : coursePackageMapper.selectActiveOneOnOneStudentCourseGrades()) {
+            ScheduleStudentOptionBuilder student = students.computeIfAbsent(
+                    row.studentId(), id -> new ScheduleStudentOptionBuilder(id, row.studentName()));
+            student.addCourseGrade(row.courseName(), row.gradeBand());
+        }
+        return students.values().stream()
+                .map(ScheduleStudentOptionBuilder::build)
                 .toList();
+    }
+
+    private static final class ScheduleStudentOptionBuilder {
+        private final Long id;
+        private final String studentName;
+        private final Map<String, ScheduleStudentOptionVO.CourseGradeOption> courseGrades = new LinkedHashMap<>();
+
+        private ScheduleStudentOptionBuilder(Long id, String studentName) {
+            this.id = id;
+            this.studentName = studentName;
+        }
+
+        private void addCourseGrade(String courseName, String gradeBand) {
+            String normalizedCourse = courseName == null ? "" : courseName.trim().toLowerCase(Locale.ROOT);
+            String normalizedGrade = gradeBand == null ? "" : gradeBand.trim().toLowerCase(Locale.ROOT);
+            courseGrades.putIfAbsent(normalizedCourse + "::" + normalizedGrade,
+                    new ScheduleStudentOptionVO.CourseGradeOption(courseName, gradeBand));
+        }
+
+        private ScheduleStudentOptionVO build() {
+            return new ScheduleStudentOptionVO(id, studentName, List.copyOf(courseGrades.values()));
+        }
     }
 
     @Override
@@ -300,6 +330,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     @Override
     @Transactional(rollbackFor = Exception.class)
     public ScheduleRuleUpdateResultVO updateRule(Long id, RecurringScheduleRuleUpdateRequest request) {
+        return updateRuleInternal(id, request, true);
+    }
+
+    // 余额变动触发的内部刷新保留原分配值，直到管理员在编辑弹窗中重新分配剩余课时。
+    private ScheduleRuleUpdateResultVO updateRuleInternal(Long id, RecurringScheduleRuleUpdateRequest request,
+                                                          boolean validateRemainingAllocation) {
         // a) Load and validate existing rule
         RecurringScheduleRuleEntity existingRule = requireRule(id);
         if ("ENDED".equalsIgnoreCase(existingRule.getRuleStatus())) {
@@ -324,7 +360,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         validateUpdateRuleDates(request);
         validateSlots(request.getSlots());
         validateSlotTeachers(request.getSlots());
-        validateSlotAllocations(request.getSlots(), coursePackage);
+        if (validateRemainingAllocation) {
+            validateSlotAllocations(request.getSlots(), coursePackage);
+        }
 
         // e) Update rule entity
         String newStatus = request.getRuleStatus() != null ? request.getRuleStatus() : existingRule.getRuleStatus();
@@ -452,7 +490,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             request.setEndDate(rule.getEndDate());
             request.setNotes(rule.getNotes());
             request.setSlots(slots.stream().map(this::toSlotRequest).toList());
-            updateRule(rule.getId(), request);
+            updateRuleInternal(rule.getId(), request, false);
         }
     }
 
@@ -692,7 +730,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .forEach(this::resolveTeacherById);
     }
 
-    /** 排课时段代表课包的周计划，按课包总课时分配；生成的未来课次再按实时余额截断。 */
+    /** 新建或手动编辑时，只允许给各时段分配尚未消课、也未等待确认的课时。 */
     private void validateSlotAllocations(List<RecurringScheduleSlotRequest> slots, CoursePackageEntity coursePackage) {
         int allocatedSum = 0;
         for (RecurringScheduleSlotRequest slot : slots) {
@@ -703,11 +741,24 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
             allocatedSum += slot.getAllocatedUnits();
         }
-        int packageUnits = coursePackage.getTotalUnits() == null ? 0 : Math.max(0, coursePackage.getTotalUnits());
-        if (allocatedSum > packageUnits) {
+        int availableUnits = Math.max(0, allocatableUnits(coursePackage) - pendingDeductionUnits(coursePackage.getId()));
+        if (allocatedSum > availableUnits) {
             throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
-                    "Total allocated hours across slots cannot exceed the package total hours.");
+                    "Total allocated hours across slots cannot exceed the remaining package hours.");
         }
+    }
+
+    /** 待管理员确认且将扣除的课时先占用余额，避免被新的时段重复分配。 */
+    private int pendingDeductionUnits(Long packageId) {
+        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .select(LessonRecordEntity::getDeductedUnits)
+                        .eq(LessonRecordEntity::getPackageId, packageId)
+                        .eq(LessonRecordEntity::getConfirmStage, "PENDING_ADMIN")
+                        .eq(LessonRecordEntity::getShouldDeduct, 1)
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .mapToInt(record -> record.getDeductedUnits() == null ? 0 : Math.max(0, record.getDeductedUnits()))
+                .sum();
     }
 
     /** 课时包当前可用于新生成课次的余额，单位为半小时。 */

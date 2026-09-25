@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.schedule.service;
 
+import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
@@ -12,6 +13,7 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
+import com.classdeduction.system.modules.enrollment.vo.ActiveOneOnOneStudentCourseGradeRow;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleCreateRequest;
@@ -27,6 +29,9 @@ import com.classdeduction.system.modules.schedule.service.impl.RecurringSchedule
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleUpdateResultVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleStudentOptionVO;
+import org.apache.ibatis.builder.MapperBuilderAssistant;
+import org.apache.ibatis.session.Configuration;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -98,6 +103,12 @@ class RecurringScheduleRuleServiceImplTest {
 
     private RecurringScheduleRuleServiceImpl recurringScheduleRuleService;
 
+    @BeforeAll
+    static void initMybatisPlusLambdaCache() {
+        // 单元测试不启动 MyBatis，上课记录的新查询需要先注册字段映射。
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), LessonRecordEntity.class);
+    }
+
     @BeforeEach
     void setUp() {
         recurringScheduleRuleService = new RecurringScheduleRuleServiceImpl(
@@ -142,16 +153,27 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
-    void shouldReturnActiveOneOnOneStudentsFromSingleLookup() {
-        StudentEntity student = new StudentEntity();
-        student.setId(2001L);
-        student.setStudentName("Alina Chen");
-        when(coursePackageMapper.selectActiveOneOnOneStudents()).thenReturn(List.of(student));
+    void shouldGroupActiveOneOnOneStudentCoursesByCourseAndGrade() {
+        when(coursePackageMapper.selectActiveOneOnOneStudentCourseGrades()).thenReturn(List.of(
+                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6"),
+                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6"),
+                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "English", "G7"),
+                new ActiveOneOnOneStudentCourseGradeRow(2002L, "Ben Li", "Math", "G6")
+        ));
 
         List<ScheduleStudentOptionVO> result = recurringScheduleRuleService.listStudentsWithActiveOneOnOnePackages();
 
-        assertThat(result).containsExactly(new ScheduleStudentOptionVO(2001L, "Alina Chen"));
-        verify(coursePackageMapper).selectActiveOneOnOneStudents();
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).id()).isEqualTo(2001L);
+        assertThat(result.get(0).courseGrades()).containsExactly(
+                new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6"),
+                new ScheduleStudentOptionVO.CourseGradeOption("English", "G7")
+        );
+        assertThat(result.get(1).id()).isEqualTo(2002L);
+        assertThat(result.get(1).courseGrades()).containsExactly(
+                new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6")
+        );
+        verify(coursePackageMapper).selectActiveOneOnOneStudentCourseGrades();
     }
 
     @Test
@@ -253,7 +275,7 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
-    void shouldRejectWhenSlotAllocationsExceedPackageTotal() {
+    void shouldRejectWhenSlotAllocationsExceedAvailableHours() {
         RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 10);
         RecurringScheduleSlotRequest tuesday = buildSlot(2, LocalTime.of(18, 0), 2, 10);
         RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday, tuesday));
@@ -270,8 +292,27 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
-    void shouldAllowScheduleTargetAtPackageTotalButGenerateOnlyCurrentRemainingBalance() {
+    void shouldRejectScheduleAllocationAboveRemainingHoursAfterAlreadyUsed() {
         RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 80);
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday));
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(80);
+        coursePackage.setConsumedUnits(32);
+        coursePackage.setRemainingUnits(48);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("remaining package hours");
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleRuleEntity.class));
+    }
+
+    @Test
+    void shouldAllowScheduleAllocationEqualToRemainingHours() {
+        RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 48);
         RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday));
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(80);
@@ -289,6 +330,25 @@ class RecurringScheduleRuleServiceImplTest {
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).insert(occurrenceCaptor.capture());
         assertThat(occurrenceCaptor.getAllValues().stream().mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum())
                 .isEqualTo(48);
+    }
+
+    @Test
+    void shouldExcludePendingDeductionsFromScheduleAllocation() {
+        RecurringScheduleSlotRequest monday = buildSlot(1, LocalTime.of(18, 0), 4, 44);
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(monday));
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(80);
+        coursePackage.setConsumedUnits(32);
+        coursePackage.setRemainingUnits(48);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(buildRecord(9001L, 8)));
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("remaining package hours");
     }
 
     @Test
@@ -346,6 +406,62 @@ class RecurringScheduleRuleServiceImplTest {
         assertThat(pausedRule.getRuleStatus()).isEqualTo("PAUSED");
         assertThat(result.generatedOccurrenceCount()).isZero();
         verify(lessonOccurrenceMapper, times(0)).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldRejectManualScheduleEditAboveRemainingHours() {
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        request.getSlots().get(0).setAllocatedUnits(80);
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(80);
+        coursePackage.setConsumedUnits(32);
+        coursePackage.setRemainingUnits(48);
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(buildExistingRule());
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.updateRule(5001L, request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("remaining package hours");
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).updateById(any(RecurringScheduleRuleEntity.class));
+    }
+
+    @Test
+    void balanceRefreshKeepsExistingTargetsAndCapsFutureLessons() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(80);
+        coursePackage.setConsumedUnits(32);
+        coursePackage.setRemainingUnits(48);
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setRuleId(5001L);
+        slot.setTeacherId(3001L);
+        slot.setSubjectName("Math");
+        slot.setWeekday(1);
+        slot.setStartTime(LocalTime.of(18, 0));
+        slot.setEndTime(LocalTime.of(20, 0));
+        slot.setPlannedUnits(4);
+        slot.setAllocatedUnits(80);
+        slot.setSlotStatus("ACTIVE");
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        recurringScheduleRuleService.refreshPackageSchedule(1001L);
+
+        verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
+        assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(80);
+        verify(lessonOccurrenceMapper, times(12)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues().stream().mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum())
+                .isEqualTo(48);
     }
 
     @Test

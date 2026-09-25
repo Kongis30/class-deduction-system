@@ -43,7 +43,7 @@
         </el-table-column>
         <el-table-column label="Student" min-width="160" align="center" header-align="center">
           <template #default="{ row }">
-            {{ row.studentName || 'Group lesson' }}
+            {{ row.participantNames?.length ? row.participantNames.join(' / ') : row.studentName || 'Group lesson' }}
           </template>
         </el-table-column>
         <el-table-column label="Time" min-width="180" align="center" header-align="center">

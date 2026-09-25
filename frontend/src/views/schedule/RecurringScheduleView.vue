@@ -17,19 +17,42 @@
             />
           </div>
           <div class="col-panel__body">
-            <div v-if="filteredStudents.length === 0" class="col-panel__empty">
+            <div v-if="filteredCourseGradeGroups.length === 0" class="col-panel__empty">
               {{ students.length === 0 ? 'Loading...' : 'No students found' }}
             </div>
-            <div
-              v-for="s in filteredStudents"
-              :key="s.id"
-              class="col-item"
-              :class="{ 'col-item--active': selectedStudentId === s.id }"
-              @click="onStudentSelect(s.id)"
+            <section
+              v-for="group in filteredCourseGradeGroups"
+              :key="group.key"
+              class="schedule-student-group"
             >
-              <span class="col-item__name">{{ s.studentName }}</span>
-              <el-icon v-if="selectedStudentId === s.id" color="#409eff"><ArrowRight /></el-icon>
-            </div>
+              <button
+                type="button"
+                class="schedule-student-group__toggle"
+                :class="{ 'schedule-student-group__toggle--collapsed': collapsedCourseGradeKeys.has(group.key) }"
+                :aria-expanded="!collapsedCourseGradeKeys.has(group.key)"
+                @click="toggleCourseGradeGroup(group.key)"
+              >
+                <span class="schedule-student-group__title">
+                  <strong>{{ group.courseName }}</strong>
+                  <span>{{ group.gradeBand }}</span>
+                </span>
+                <small>{{ group.students.length }}</small>
+                <el-icon><ArrowRight /></el-icon>
+              </button>
+              <div v-if="!collapsedCourseGradeKeys.has(group.key)" class="schedule-student-group__students">
+                <button
+                  v-for="student in group.students"
+                  :key="student.id"
+                  type="button"
+                  class="col-item"
+                  :class="{ 'col-item--active': String(selectedStudentId) === String(student.id) }"
+                  @click="onStudentSelect(student.id)"
+                >
+                  <span class="col-item__name">{{ student.studentName }}</span>
+                  <el-icon v-if="String(selectedStudentId) === String(student.id)" color="#409eff"><ArrowRight /></el-icon>
+                </button>
+              </div>
+            </section>
           </div>
         </aside>
 
@@ -56,7 +79,7 @@
             >
               <div class="col-item__stack">
                 <span class="col-item__name">{{ pkg.packageName }}</span>
-                <span class="col-item__sub">{{ pkg.packageStatus }} · {{ pkg.remainingUnits ?? pkg.totalUnits }}h</span>
+                <span class="col-item__sub">{{ pkg.packageStatus }} · {{ projectedRemainingForPackage(pkg) }}h remaining</span>
               </div>
               <el-icon v-if="selectedPackageId === pkg.id" color="#409eff"><ArrowRight /></el-icon>
             </div>
@@ -78,27 +101,36 @@
                 <div class="package-hours-card__heading">
                   <div>
                     <div class="package-hours-card__eyebrow">PACKAGE HOURS</div>
-                    <strong>Already used</strong>
+                    <strong>Package hours</strong>
                   </div>
-                  <el-button type="primary" size="small" :loading="savingOpeningUsedHours" @click="saveOpeningUsedHours">
+                  <el-button type="primary" size="small" :loading="savingDeductedHours" @click="saveDeductedHours">
                     Save hours
                   </el-button>
                 </div>
                 <div class="package-hours-card__fields">
-                  <div><span>Package total</span><strong>{{ packageHours(selectedPackage.totalUnits) }}h</strong></div>
+                  <div><span>Total hours</span><strong>{{ packageHours(selectedPackage.totalUnits) }}h</strong></div>
                   <label class="package-hours-card__input">
-                    <span>Already used</span>
-                    <el-input-number v-model="openingUsedHoursDraft" :min="0" :max="openingUsedHoursMax" :step="0.5" :precision="1" controls-position="right" />
+                    <span>Already deducted</span>
+                    <el-input-number v-model="deductedHoursDraft" :min="confirmedDeductionHours" :max="deductedHoursMax" :step="0.5" :precision="1" controls-position="right" />
                   </label>
-                  <div><span>Already used (confirmed lessons)</span><strong>{{ trackedConsumedHours }}h</strong></div>
+                  <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
                   <div><span>Remaining</span><strong>{{ projectedRemainingHours }}h</strong></div>
                 </div>
-                <p class="package-hours-card__hint">Changing this value recalculates future unconfirmed lessons. Confirmed lessons stay unchanged.</p>
+                <p class="package-hours-card__hint">Already deducted includes confirmed lessons. Pending deduction includes teacher-submitted lessons awaiting admin review. Remaining excludes both.</p>
               </section>
               <div class="schedule-info">
                 <div class="schedule-info__header">
                   <span class="schedule-info__title">{{ selectedPackageName }}</span>
                   <div class="schedule-info__actions">
+                    <el-dropdown trigger="click" :disabled="!selectedStudentId || !selectedPackageId" @command="openPrintSheet">
+                      <el-button size="small">Print Sheet</el-button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item command="parent">Student sheet</el-dropdown-item>
+                          <el-dropdown-item command="teacher">Teacher sheets</el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
                     <el-button
                       v-if="currentRule"
                       type="primary"
@@ -322,10 +354,10 @@
           {{ editForm.slots.length }} slot(s) · {{ (totalSlotUnits * 0.5).toFixed(1) }}h scheduled each week
           <span
             class="edit-schedule__allocation"
-            :class="{ 'edit-schedule__allocation--over': allocationExceedsPackage }"
+            :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
-            · Allocated {{ allocatedTotalHours.toFixed(1) }}h / {{ packageTotalHours.toFixed(1) }}h
-            ({{ remainingAllocationHours >= 0 ? 'remaining' : 'over by' }}
+            · Available {{ allocatablePackageHours.toFixed(1) }}h · Allocated {{ allocatedTotalHours.toFixed(1) }}h
+            ({{ remainingAllocationHours >= 0 ? 'unallocated' : 'over by' }}
             {{ Math.abs(remainingAllocationHours).toFixed(1) }}h)
           </span>
         </div>
@@ -715,11 +747,11 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
-import { fetchCoursePackages, updateCoursePackageOpeningUsedHours } from '@/api/enrollment';
+import { fetchCoursePackages, updateCoursePackageDeductedHours } from '@/api/enrollment';
 import {
   createRecurringScheduleRule,
   updateRecurringScheduleRule,
@@ -730,10 +762,12 @@ import {
   fetchEnrolledClassGroups,
   adjustWeeklySchedule,
 } from '@/api/schedule';
-import type { WeeklyScheduleAdjustmentItemPayload } from '@/api/schedule';
+import type { ScheduleStudentOption, WeeklyScheduleAdjustmentItemPayload } from '@/api/schedule';
 import type { ClassroomItem, CoursePackageItem, EntityId, LessonOccurrenceItem, RecurringScheduleRuleItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
+import { APP_TIMEZONE } from '@/config/app-config';
+import { calendarWeekRange } from '@/utils/calendar-week';
 
 interface WeeklyAdjustmentRow {
 
@@ -756,6 +790,7 @@ interface WeeklyAdjustmentRow {
 
 const loadingPackages = ref(false);
 const route = useRoute();
+const router = useRouter();
 const editDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
 const weeklyDialogVisible = ref(false);
@@ -766,7 +801,14 @@ const editingRuleId = ref<EntityId | null>(null);
 const editFormRef = ref<FormInstance>();
 
 const detailData = ref<any>(null);
-const students = ref<{ id: EntityId; studentName: string }[]>([]);
+const students = ref<ScheduleStudentOption[]>([]);
+interface ScheduleCourseGradeGroup {
+  key: string;
+  courseName: string;
+  gradeBand: string;
+  students: ScheduleStudentOption[];
+}
+const collapsedCourseGradeKeys = ref(new Set<string>());
 const studentPackages = ref<CoursePackageItem[]>([]);
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const classrooms = ref<ClassroomItem[]>([]);
@@ -832,23 +874,27 @@ const currentWeekOccurrences = ref<LessonOccurrenceItem[]>([]);
 const studentSearch = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
-const openingUsedHoursDraft = ref(0);
-const savingOpeningUsedHours = ref(false);
+const deductedHoursDraft = ref(0);
+const savingDeductedHours = ref(false);
 const selectedPackage = computed(() => studentPackages.value.find(p => String(p.id) === String(selectedPackageId.value)) ?? null);
 const packageHours = (hours?: number) => Number((hours ?? 0).toFixed(1));
-const trackedConsumedHours = computed(() => {
+const confirmedDeductionHours = computed(() => {
   const pkg = selectedPackage.value;
   return packageHours(Math.max(0, (pkg?.consumedUnits ?? 0) - (pkg?.openingUsedHours ?? 0)));
 });
-const openingUsedHoursMax = computed(() => Math.max(0,
-  packageHours(selectedPackage.value?.totalUnits) - trackedConsumedHours.value,
+const pendingDeductionHours = computed(() => packageHours(selectedPackage.value?.pendingDeductionUnits));
+const deductedHoursMax = computed(() => Math.max(0,
+  packageHours(selectedPackage.value?.totalUnits) - pendingDeductionHours.value,
 ));
 const projectedRemainingHours = computed(() => Number(Math.max(0,
-  packageHours(selectedPackage.value?.totalUnits) - trackedConsumedHours.value - openingUsedHoursDraft.value,
+  packageHours(selectedPackage.value?.totalUnits) - deductedHoursDraft.value - pendingDeductionHours.value,
 ).toFixed(1)));
 watch(selectedPackage, pkg => {
-  openingUsedHoursDraft.value = pkg?.openingUsedHours ?? 0;
+  deductedHoursDraft.value = pkg?.consumedUnits ?? 0;
 }, { immediate: true });
+function projectedRemainingForPackage(pkg: CoursePackageItem): number {
+  return packageHours(Math.max(0, pkg.totalUnits - pkg.consumedUnits - (pkg.pendingDeductionUnits ?? 0)));
+}
 const emptySlots = ref<SlotDef[]>([]);
 const weeklyRows = ref<WeeklyAdjustmentRow[]>([]);
 const weeklyReason = ref('');
@@ -1063,13 +1109,45 @@ function onCalMouseUp() {
 onMounted(() => document.addEventListener('mouseup', onCalMouseUp));
 onUnmounted(() => document.removeEventListener('mouseup', onCalMouseUp));
 
-const displayMonday = computed(() => dayjs().startOf('day').day(1).format('YYYY-MM-DD'));
+const displayMonday = ref(currentCalendarWeekRange().startDate);
 
-const filteredStudents = computed(() => {
+function currentCalendarWeekRange() {
+  return calendarWeekRange(new Date(), APP_TIMEZONE);
+}
+
+const filteredCourseGradeGroups = computed<ScheduleCourseGradeGroup[]>(() => {
   const q = studentSearch.value.trim().toLowerCase();
-  if (!q) return students.value;
-  return students.value.filter(s => s.studentName.toLowerCase().includes(q));
+  const groups = new Map<string, ScheduleCourseGradeGroup & { studentMap: Map<string, ScheduleStudentOption> }>();
+  students.value.forEach((student) => {
+    if (q && !student.studentName.toLowerCase().includes(q)) return;
+    student.courseGrades.forEach(({ courseName, gradeBand }) => {
+      const normalizedCourse = courseName.trim().toLowerCase();
+      const normalizedGrade = gradeBand.trim().toLowerCase();
+      const key = JSON.stringify([normalizedCourse, normalizedGrade]);
+      let group = groups.get(key);
+      if (!group) {
+        group = { key, courseName, gradeBand, students: [], studentMap: new Map() };
+        groups.set(key, group);
+      }
+      group.studentMap.set(String(student.id), student);
+    });
+  });
+  return Array.from(groups.values())
+    .map(({ studentMap, ...group }) => ({
+      ...group,
+      students: Array.from(studentMap.values()).sort((left, right) =>
+        left.studentName.localeCompare(right.studentName)),
+    }))
+    .sort((left, right) => left.courseName.localeCompare(right.courseName)
+      || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
 });
+
+function toggleCourseGradeGroup(groupKey: string) {
+  const next = new Set(collapsedCourseGradeKeys.value);
+  if (next.has(groupKey)) next.delete(groupKey);
+  else next.add(groupKey);
+  collapsedCourseGradeKeys.value = next;
+}
 
 const selectedPackageName = computed(() => {
   const pkg = studentPackages.value.find(p => p.id === selectedPackageId.value);
@@ -1255,12 +1333,13 @@ async function onStudentSelect(id: EntityId) {
 // ─── Load this week's actual occurrences (main calendar) ─
 
 async function loadCurrentWeekOccurrences(studentId: EntityId) {
-  const { start, end } = currentNaturalWeekRange();
+  const { startDate, endExclusiveDate } = currentCalendarWeekRange();
+  displayMonday.value = startDate;
   try {
     const res = await fetchLessonOccurrences({
       studentId,
-      startAt: start.format('YYYY-MM-DDT00:00:00'),
-      endAt: end.format('YYYY-MM-DDT23:59:59'),
+      startAt: `${startDate}T00:00:00`,
+      endAt: `${endExclusiveDate}T00:00:00`,
       pageSize: 200,
     });
     currentWeekOccurrences.value = res.data.data.records;
@@ -1274,16 +1353,33 @@ function onPackageSelect(pkg: CoursePackageItem) {
   selectedPackageId.value = pkg.id;
 }
 
-async function saveOpeningUsedHours() {
+/** 复用消课页的签字表与打印样式，在新标签页打开当前学生的课包。 */
+function openPrintSheet(command: string | number | object) {
+  if (!selectedStudentId.value || !selectedPackageId.value) return;
+  const mode = command === 'teacher' ? 'teacher' : 'parent';
+  const target = router.resolve({
+    name: 'one-on-one-deduction',
+    query: {
+      studentId: String(selectedStudentId.value),
+      packageId: String(selectedPackageId.value),
+      printSheet: mode,
+    },
+  });
+  window.open(target.href, '_blank', 'noopener');
+}
+
+async function saveDeductedHours() {
   const pkg = selectedPackage.value;
-  if (!pkg || !selectedStudentId.value || savingOpeningUsedHours.value) return;
-  if (!Number.isInteger(openingUsedHoursDraft.value * 2) || openingUsedHoursDraft.value > openingUsedHoursMax.value) {
-    ElMessage.warning('Already used hours must be in 0.5-hour increments and cannot exceed the package total after confirmed lesson hours.');
+  if (!pkg || !selectedStudentId.value || savingDeductedHours.value) return;
+  if (!Number.isInteger(deductedHoursDraft.value * 2)
+    || deductedHoursDraft.value < confirmedDeductionHours.value
+    || deductedHoursDraft.value > deductedHoursMax.value) {
+    ElMessage.warning('Already deducted hours must use 0.5-hour increments and fit within the package total after pending deduction.');
     return;
   }
-  savingOpeningUsedHours.value = true;
+  savingDeductedHours.value = true;
   try {
-    await updateCoursePackageOpeningUsedHours(pkg.id, openingUsedHoursDraft.value);
+    await updateCoursePackageDeductedHours(pkg.id, deductedHoursDraft.value);
     const res = await fetchCoursePackages({
       studentId: selectedStudentId.value,
       packageStatus: 'ACTIVE',
@@ -1296,7 +1392,7 @@ async function saveOpeningUsedHours() {
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
   } finally {
-    savingOpeningUsedHours.value = false;
+    savingDeductedHours.value = false;
   }
 }
 
@@ -1347,10 +1443,9 @@ async function loadEnrolledClassGroups(studentId: EntityId) {
 }
 
 async function loadClassGroupSlots() {
-  const monday = dayjs().startOf('week').add(1, 'day');
-  const sunday = monday.add(6, 'day').endOf('day');
-  const weekStart = monday.format('YYYY-MM-DDTHH:mm:ss');
-  const weekEnd = sunday.format('YYYY-MM-DDTHH:mm:ss');
+  const { startDate, endExclusiveDate } = currentCalendarWeekRange();
+  const weekStart = `${startDate}T00:00:00`;
+  const weekEnd = `${endExclusiveDate}T00:00:00`;
 
   const allSlots: OccupiedSlotDef[] = [];
   for (const cls of enrolledClassGroups.value) {
@@ -1400,12 +1495,9 @@ const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
 );
 
-// 排课时段是课包级周计划，分配上限按购买加赠送的总课时；未来课次生成按实时余额截断。
-const packageTotalHours = computed(() => {
-  const pkg = studentPackages.value.find(p => p.id === selectedPackageId.value);
-  if (!pkg) return 0;
-  return pkg.totalUnits ?? 0;
-});
+// 编辑分配只使用课包当前剩余课时，与上方课包余额卡片保持一致。
+const allocatablePackageHours = computed(() => selectedPackage.value
+  ? projectedRemainingForPackage(selectedPackage.value) : 0);
 
 // 已在各时段分配的课时合计（小时）。
 const allocatedTotalHours = computed(() =>
@@ -1413,10 +1505,10 @@ const allocatedTotalHours = computed(() =>
 );
 
 const remainingAllocationHours = computed(() =>
-  Number((packageTotalHours.value - allocatedTotalHours.value).toFixed(1))
+  Number((allocatablePackageHours.value - allocatedTotalHours.value).toFixed(1))
 );
 
-const allocationExceedsPackage = computed(() => remainingAllocationHours.value < 0);
+const allocationExceedsRemaining = computed(() => remainingAllocationHours.value < 0);
 
 async function openCreateDialog() {
   isEditing.value = false;
@@ -1481,8 +1573,8 @@ async function submitCreateForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
-    if (allocationExceedsPackage.value) {
-      ElMessage.warning('Allocated hours exceed the package total. Please reduce the allocation.');
+    if (allocationExceedsRemaining.value) {
+      ElMessage.warning('Allocated hours exceed the remaining package hours. Please reduce the allocation.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -1523,8 +1615,8 @@ async function submitEditForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
-    if (allocationExceedsPackage.value) {
-      ElMessage.warning('Allocated hours exceed the package total. Please reduce the allocation.');
+    if (allocationExceedsRemaining.value) {
+      ElMessage.warning('Allocated hours exceed the remaining package hours. Please reduce the allocation.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2031,11 +2123,17 @@ function disabledPastDate(date: Date) {
 /* ── List items ───────────────────────────────── */
 .col-item {
   display: flex;
+  width: 100%;
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px;
   cursor: pointer;
+  border: 0;
   border-bottom: 1px solid #f5f7fa;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   transition: background 0.15s;
 }
 
@@ -2068,6 +2166,74 @@ function disabledPastDate(date: Date) {
   color: #909399;
 }
 
+.schedule-student-group {
+  border-bottom: 1px solid #e7edf4;
+}
+
+.schedule-student-group__toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  background: #f5f8fc;
+  color: #34465b;
+  cursor: pointer;
+  text-align: left;
+}
+
+.schedule-student-group__toggle:hover {
+  background: #eaf1f8;
+}
+
+.schedule-student-group__title {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+}
+
+.schedule-student-group__title strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.schedule-student-group__title > span {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.schedule-student-group__toggle small {
+  color: #718096;
+  font-size: 10px;
+}
+
+.schedule-student-group__toggle :deep(.el-icon) {
+  color: #718096;
+  transition: transform 0.15s ease;
+}
+
+.schedule-student-group__toggle:not(.schedule-student-group__toggle--collapsed) :deep(.el-icon) {
+  transform: rotate(90deg);
+}
+
+.schedule-student-group__students .col-item {
+  padding-left: 18px;
+}
+
+.schedule-student-group__students .col-item--active {
+  padding-left: 15px;
+}
+
 /* ── Schedule display ────────────────────────── */
 .package-hours-card {
   margin: 12px;
@@ -2076,14 +2242,14 @@ function disabledPastDate(date: Date) {
   border-radius: 8px;
   background: #f7fbff;
 }
-.package-hours-card__heading,
-.package-hours-card__fields { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.package-hours-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.package-hours-card__fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 14px; }
 .package-hours-card__eyebrow { margin-bottom: 3px; color: #7d8da1; font-size: 10px; letter-spacing: .08em; }
-.package-hours-card__fields { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
+.package-hours-card__fields { margin-top: 12px; }
 .package-hours-card__fields > div,
-.package-hours-card__input { display: flex; min-width: 110px; flex-direction: column; gap: 5px; color: #7d8da1; font-size: 11px; }
+.package-hours-card__input { display: flex; min-width: 0; flex-direction: column; gap: 5px; color: #7d8da1; font-size: 11px; }
 .package-hours-card__fields strong { color: #273b53; font-size: 14px; }
-.package-hours-card__input :deep(.el-input-number) { width: 140px; }
+.package-hours-card__input :deep(.el-input-number) { width: 100%; }
 .package-hours-card__hint { margin: 10px 0 0; color: #8795a5; font-size: 11px; }
 
 .schedule-info {

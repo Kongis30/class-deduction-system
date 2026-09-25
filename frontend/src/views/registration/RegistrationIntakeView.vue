@@ -559,18 +559,16 @@
               <td class="price-cell">
                 <strong v-if="!receiptEditingEnabled || isPrivateAllReceiptView" class="receipt-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 <template v-else-if="isSharedPrivateLesson">
-                  <el-input-number
+                  <MoneyAmountInput
                     :model-value="privateParticipantLineSharePrice(line, Math.max(0, (activePrivateParticipantIndex ?? 1) - 1))"
                     :min="0"
-                    :precision="2"
-                    :controls="false"
                     class="table-price"
                     disabled
                   />
                   <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
                 <template v-else>
-                  <el-input-number v-model="line.priceAmount" :min="0" :precision="2" :controls="false" class="table-price" @change="() => handlePriceChange(line)" />
+                  <MoneyAmountInput v-model="line.priceAmount" :min="0" class="table-price" @change="() => handlePriceChange(line)" />
                   <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
               </td>
@@ -644,7 +642,7 @@
                     </div>
                     <label class="course-service-field course-service-field--amount">
                       <span>Fee</span>
-                      <el-input-number v-model="line.pickupFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!line.pickupRequired" />
+                      <MoneyAmountInput v-model="line.pickupFeeAmount" :min="0" :disabled="!line.pickupRequired" />
                     </label>
                   </div>
                 </div>
@@ -659,7 +657,7 @@
                     </div>
                     <label class="course-service-field course-service-field--amount">
                       <span>Fee</span>
-                      <el-input-number v-model="line.dropoffFeeAmount" :min="0" :precision="2" :controls="false" :disabled="!line.dropoffRequired" />
+                      <MoneyAmountInput v-model="line.dropoffFeeAmount" :min="0" :disabled="!line.dropoffRequired" />
                     </label>
                   </div>
                 </div>
@@ -667,7 +665,7 @@
               <div v-if="line.serviceFees.length" class="course-service-other-title">Other fees</div>
               <div v-for="(fee, feeIndex) in line.serviceFees" :key="fee.rowKey" class="adjustment-row">
                 <el-input v-model="fee.label" placeholder="Other fee label" />
-                <el-input-number v-model="fee.amount" :min="0" :precision="2" :controls="false" />
+                <MoneyAmountInput v-model="fee.amount" :min="0" />
                 <el-button v-if="line.serviceFees.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove fee" @click="removeCourseServiceFee(line, feeIndex)">×</el-button>
               </div>
               <footer class="course-adjustment-card__footer">
@@ -720,11 +718,9 @@
                     class="discount-name-input"
                     placeholder="Discount name"
                   />
-                  <el-input-number
+                  <MoneyAmountInput
                     v-model="discount.amount"
                     :min="0"
-                    :precision="2"
-                    :controls="false"
                     :disabled="!isCustomDiscount(discount)"
                   />
                 </div>
@@ -778,12 +774,10 @@
                         {{ displayPaymentMethod(payment.paymentMethod) }} · {{ formatDateValue(payment.paidAt) }}
                       </span>
                       <div class="payment-amount-field">
-                        <el-input-number
+                        <MoneyAmountInput
                           :model-value="coursePaymentAmount(payment, line.rowKey)"
                           :min="0"
                           :max="maxCoursePaymentAmount(payment, line.rowKey)"
-                          :precision="2"
-                          :controls="false"
                           @input="handlePaymentInput(payment, line.rowKey, $event)"
                           @update:model-value="setCoursePaymentAmount(payment, line.rowKey, $event)"
                         />
@@ -853,7 +847,7 @@
                     <el-select v-model="creditTopUpPayment.paymentMethod" placeholder="Method" filterable :disabled="isReadOnly">
                       <el-option v-for="method in realPaymentMethods" :key="method.id" :label="method.methodName" :value="method.methodCode" />
                     </el-select>
-                    <el-input-number :model-value="creditTopUpAmount" :min="0" :precision="2" :controls="false" disabled />
+                    <MoneyAmountInput :model-value="creditTopUpAmount" :min="0" disabled />
                     <el-date-picker v-model="creditTopUpPayment.paidAt" type="date" value-format="YYYY-MM-DD" placeholder="Date" :disabled="isReadOnly" />
                     <el-input
                       v-if="isOtherPaymentMethod(creditTopUpPayment.paymentMethod)"
@@ -983,11 +977,9 @@
             <p>Deposit money now and use it on a future registration.</p>
             <label class="credit-top-up-compact__input">
               <span>Top-up amount</span>
-              <el-input-number
+              <MoneyAmountInput
                 v-model="creditTopUpAmount"
                 :min="0"
-                :precision="2"
-                :controls="false"
                 :disabled="isReadOnly"
               />
             </label>
@@ -1046,6 +1038,8 @@ import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionIt
 import { getStoredAuthUser } from '@/utils/auth-storage';
 import { isAdminUser } from '@/types/auth';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
+import { exceedsMoney, formatExactUsd, formatRoundedUsd } from '@/utils/money-display';
+import MoneyAmountInput from '@/components/MoneyAmountInput.vue';
 
 type ReuseStatus = 'idle' | 'loading' | 'existing' | 'new';
 
@@ -3230,7 +3224,7 @@ function clearPaymentLimitHint(payment: PaymentLine) {
 
 function showPaymentLimitHint(payment: PaymentLine, maxAmount: number) {
   const rowKey = payment.rowKey;
-  paymentLimitHints[rowKey] = `Max payable: ${formatMoney(maxAmount)}`;
+  paymentLimitHints[rowKey] = `Max payable: ${formatExactUsd(maxAmount)}`;
   const previousTimer = paymentLimitHintTimers.get(rowKey);
   if (previousTimer !== undefined) {
     window.clearTimeout(previousTimer);
@@ -4229,8 +4223,8 @@ function validateForm() {
       errors.push('Student Credit balance is still loading. Please wait and try again.');
     } else if (!selectedStudentCreditId.value) {
       errors.push('Student Credit can only be used for an existing student with a Credit balance.');
-    } else if (creditPaymentAmount.value > studentCreditBalance.value + 0.01) {
-      errors.push(`Student Credit payment ${formatMoney(creditPaymentAmount.value)} exceeds the available balance of ${formatMoney(studentCreditBalance.value)}.`);
+    } else if (exceedsMoney(creditPaymentAmount.value, studentCreditBalance.value)) {
+      errors.push(`Student Credit payment ${formatExactUsd(creditPaymentAmount.value)} exceeds the available balance of ${formatExactUsd(studentCreditBalance.value)}.`);
     }
   }
   if (isCreditTopUpOnly.value) {
@@ -4277,10 +4271,10 @@ function validateForm() {
   if (!form.handledByName.trim()) {
     errors.push('Handled by is required.');
   }
-  if (discountTotal.value > courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value) {
+  if (exceedsMoney(discountTotal.value, courseSubtotal.value + serviceFeeTotal.value + extraFeeTotal.value)) {
     errors.push('Discount cannot exceed tuition plus fees.');
   }
-  if (paidAmount.value > amountDue.value) {
+  if (exceedsMoney(paidAmount.value, amountDue.value)) {
     errors.push('Paid amount cannot exceed amount due.');
   }
   courseLines.value.forEach((line, index) => {
@@ -4348,13 +4342,13 @@ function validateForm() {
         const discount = billing.discounts
           .filter((item) => item.courseRowKey === line.rowKey)
           .reduce((total, item) => total + numeric(item.amount), 0);
-        if (discount > participantCourseAmountDue(line, lineIndex, billing, false)) {
+        if (exceedsMoney(discount, participantCourseAmountDue(line, lineIndex, billing, false))) {
           errors.push(`${privateWorkspaceTabLabel(billing.participantIndex)}: discount cannot exceed ${courseLineOptionLabel(line, lineIndex)} tuition.`);
         }
         const allocated = billing.payments.reduce((total, payment) => total + numeric(
           courseLines.value.length === 1 ? payment.amount : payment.courseAllocations?.[line.rowKey],
         ), 0);
-        if (roundMoney(allocated) > participantCourseAmountDue(line, lineIndex, billing, true)) {
+        if (exceedsMoney(allocated, participantCourseAmountDue(line, lineIndex, billing, true))) {
           errors.push(`${privateWorkspaceTabLabel(billing.participantIndex)}: payments exceed ${courseLineOptionLabel(line, lineIndex)} amount due.`);
         }
       });
@@ -4381,7 +4375,7 @@ function validateForm() {
       courseLines.value.forEach((line, lineIndex) => {
         const allocated = payments.value.reduce((sum, payment) =>
           sum + numeric(payment.courseAllocations?.[line.rowKey]), 0);
-        if (roundMoney(allocated) > courseAmountDue(line, lineIndex)) {
+        if (exceedsMoney(allocated, courseAmountDue(line, lineIndex))) {
           errors.push(`Course row ${lineIndex + 1}: allocated payments exceed this course's amount due.`);
         }
       });
@@ -5096,7 +5090,7 @@ function splitShareAmount(total: number, count: number, index: number) {
 }
 
 function formatMoney(value: number | undefined) {
-  return `$${roundMoney(value ?? 0).toFixed(2)}`;
+  return formatRoundedUsd(numeric(value ?? 0));
 }
 
 function formatHours(value: number) {
@@ -6621,6 +6615,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   width: 100%;
 }
 
+.paper-form :deep(.money-amount-input) {
+  width: 100%;
+  min-width: 0;
+}
+
 .course-service-other-title {
   padding: 8px 0 2px;
   color: #64748b;
@@ -7566,6 +7565,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
   .course-table .el-select,
   .course-table .el-input-number,
+  .course-table .money-amount-input,
   .course-table .el-date-editor,
   .course-table .course-detail-hint,
   .course-table .manual-price-line {

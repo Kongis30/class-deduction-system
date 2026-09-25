@@ -242,8 +242,8 @@
             <div class="oo-student-context__metrics">
               <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
               <span v-if="(activePackage.bonusUnits ?? 0) > 0"><small>Bonus</small>{{ formatHours(activePackage.bonusUnits ?? 0) }}h</span>
-              <span><small>Allocated</small>{{ formatHours(signatureAllocatedHours) }}h</span>
               <span><small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h</span>
+              <span><small>Allocated</small>{{ formatHours(signatureAllocatedHours) }}h</span>
             </div>
           </div>
 
@@ -252,13 +252,13 @@
               <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
               <div class="oo-signature-hours">
                 <div class="oo-signature-hours__group">
-                  <p><strong>Total Hours:</strong> {{ formatHours(activePackage.totalUnits) }}</p>
+                  <p><strong>Total hours:</strong> {{ formatHours(activePackage.totalUnits) }}</p>
                   <p><strong>Purchased Hours:</strong> {{ formatHours(activePackage.purchasedUnits ?? activePackage.totalUnits) }}</p>
                   <p><strong>Bonus Hours:</strong> {{ formatHours(activePackage.bonusUnits ?? 0) }}</p>
                 </div>
                 <div class="oo-signature-hours__group oo-signature-hours__group--balance">
-                  <p><strong>Consumed Hours:</strong> {{ formatHours(activePackage.consumedUnits) }}</p>
-                  <p><strong>Remaining Hours:</strong> {{ formatHours(activePackage.remainingUnits) }}</p>
+                  <p><strong>Already deducted:</strong> {{ formatHours(activePackage.consumedUnits) }}</p>
+                  <p><strong>Remaining:</strong> {{ formatHours(activePackage.remainingUnits) }}</p>
                 </div>
               </div>
             </div>
@@ -599,6 +599,7 @@ import dayjs from 'dayjs';
 import { WarningFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import { fetchAllClassrooms, fetchAllTeachers, fetchStudents } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { adminConfirmLessonRecord, confirmLesson } from '@/api/lesson';
@@ -650,6 +651,7 @@ interface SignatureSubjectSummary {
 }
 
 const authStore = useAuthStore();
+const route = useRoute();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
 const isAdmin = computed(() => isAdminOrStaffUser(authStore.currentUser));
@@ -1044,7 +1046,10 @@ async function loadClassrooms() {
 async function loadData() {
   loading.value = true;
   try {
-    const res = await fetchOneOnOneDeductions();
+    const printTarget = routePrintTarget();
+    const res = await fetchOneOnOneDeductions(printTarget
+      ? { studentId: printTarget.studentId, packageId: printTarget.packageId }
+      : {});
     teachers.value = res.data.data;
     resetPackagePage();
     keepOrSelectFirstPackage();
@@ -1055,6 +1060,31 @@ async function loadData() {
   } finally {
     loading.value = false;
   }
+}
+
+function routePrintTarget() {
+  const { studentId, packageId, printSheet } = route.query;
+  if (typeof studentId !== 'string' || typeof packageId !== 'string'
+    || (printSheet !== 'parent' && printSheet !== 'teacher')) return null;
+  return { studentId, packageId, mode: printSheet };
+}
+
+/** 排课页打开打印标签后，等目标课包加载并选中，再调用现有签字表打印流程。 */
+async function printRoutePackage() {
+  const target = routePrintTarget();
+  if (!target) return;
+  const candidate = allPackageCandidates.value.find(({ student, pkg }) =>
+    String(student.studentId) === target.studentId && String(pkg.packageId) === target.packageId);
+  if (!candidate) {
+    ElMessage.warning('The selected student sheet is unavailable.');
+    return;
+  }
+  selectCandidatePackage(candidate);
+  if (target.mode === 'teacher' && teacherSignatureSheets.value.length === 0) {
+    ElMessage.warning('No teacher sheet is available for this package yet.');
+    return;
+  }
+  await printCurrentPackage(target.mode);
 }
 
 async function searchStudents() {
@@ -1572,6 +1602,7 @@ function displayResourceName(name?: string) {
 onMounted(async () => {
   await Promise.all([loadTeachers(), loadClassrooms()]);
   await loadData();
+  await printRoutePackage();
 });
 </script>
 

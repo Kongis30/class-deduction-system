@@ -123,6 +123,7 @@ import { fetchStudents } from '@/api/base-data';
 import { fetchReceipts } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
 import type { ReceiptRecordItem, StudentItem } from '@/types/domain';
+import { formatRoundedUsd } from '@/utils/money-display';
 
 const router = useRouter();
 
@@ -290,7 +291,7 @@ function formatDateTime(value?: string) {
 }
 
 function formatMoney(value?: number) {
-  return `$${Number(value ?? 0).toFixed(2)}`;
+  return formatRoundedUsd(value);
 }
 
 </script>

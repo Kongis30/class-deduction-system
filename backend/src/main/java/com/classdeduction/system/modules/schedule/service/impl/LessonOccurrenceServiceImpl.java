@@ -762,7 +762,20 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private List<LessonOccurrenceVO> toOccurrenceVOs(List<LessonOccurrenceEntity> occurrences) {
         Set<Long> occurrenceIds = occurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
         Map<Long, CoursePackageEntity> packageMap = listPackagesByIds(occurrences.stream().map(LessonOccurrenceEntity::getPackageId).filter(Objects::nonNull).collect(Collectors.toSet()));
-        Map<Long, StudentEntity> studentMap = listStudentsByIds(occurrences.stream().map(LessonOccurrenceEntity::getStudentId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        Set<Long> privateGroupIds = occurrences.stream().map(LessonOccurrenceEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByGroup = loadPrivateGroupMembersByIds(privateGroupIds);
+        Set<Long> studentIds = occurrences.stream().map(LessonOccurrenceEntity::getStudentId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        groupMembersByGroup.values().stream().flatMap(List::stream)
+                .map(PrivateLessonGroupMemberEntity::getStudentId)
+                .filter(Objects::nonNull).forEach(studentIds::add);
+        Map<Long, StudentEntity> studentMap = listStudentsByIds(studentIds);
+        Map<Long, List<String>> participantNamesByGroup = new HashMap<>();
+        groupMembersByGroup.forEach((groupId, members) -> participantNamesByGroup.put(groupId,
+                members.stream().map(member -> studentMap.get(member.getStudentId()))
+                        .filter(Objects::nonNull).map(StudentEntity::getStudentName)
+                        .filter(StringUtils::hasText).toList()));
         Map<Long, TeacherEntity> teacherMap = listTeachersByIds(occurrences.stream().map(LessonOccurrenceEntity::getPlannedTeacherId).filter(Objects::nonNull).collect(Collectors.toSet()));
         Map<Long, ClassroomEntity> classroomMap = listClassroomsByIds(occurrences.stream().map(LessonOccurrenceEntity::getPlannedClassroomId).filter(Objects::nonNull).collect(Collectors.toSet()));
         // 班课名称
@@ -796,6 +809,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .subjectName(resolveOccurrenceSubjectName(item, recurringSlotMap, classSlotMap))
                             .studentId(item.getStudentId())
                             .studentName(student == null ? null : student.getStudentName())
+                            .participantNames(participantNamesByGroup.getOrDefault(
+                                    item.getPrivateLessonGroupId(), Collections.emptyList()))
                             .scheduleRuleId(item.getScheduleRuleId())
                             .scheduleSlotId(item.getScheduleSlotId())
                             .occurrenceType(item.getOccurrenceType())
@@ -1177,12 +1192,18 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
+        return loadPrivateGroupMembersByIds(groupIds);
+    }
+
+    /** 按课组批量加载当前参与学生，供课次列表和课包视图共用。 */
+    private Map<Long, List<PrivateLessonGroupMemberEntity>> loadPrivateGroupMembersByIds(Set<Long> groupIds) {
         if (groupIds.isEmpty()) {
             return Collections.emptyMap();
         }
         return privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
                         .in(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupIds)
                         .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
                         .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex))
                 .stream().collect(Collectors.groupingBy(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId,
                         LinkedHashMap::new, Collectors.toList()));

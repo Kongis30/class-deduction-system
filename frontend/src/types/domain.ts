@@ -374,6 +374,7 @@ export interface CoursePackageItem {
   totalUnits: number;
   consumedUnits: number;
   openingUsedHours?: number;
+  pendingDeductionUnits?: number;
   remainingUnits: number;
   receivedAmount: number;
   packageStatus: string;
@@ -535,6 +536,7 @@ export interface LessonOccurrenceItem {
   subjectName?: string;
   studentId: EntityId;
   studentName: string;
+  participantNames?: string[];
   scheduleRuleId?: EntityId;
   scheduleSlotId?: EntityId;
   occurrenceType: string;
@@ -840,7 +842,8 @@ export interface TeacherPayRateItem {
 
 export interface UnpaidLessonItem {
   lessonRecordId: EntityId;
-  lessonDate: string;
+  lessonStartAt: string | null;
+  lessonEndAt: string | null;
   studentId: EntityId;
   studentName: string;
   packageId: EntityId;

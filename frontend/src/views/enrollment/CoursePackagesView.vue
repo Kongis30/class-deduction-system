@@ -52,67 +52,78 @@
         </el-form-item>
       </el-form>
 
-      <el-table
-        v-loading="loading"
-        :data="tableData"
-        row-key="id"
-        class="product-table"
-        :show-empty="true"
-        :row-class-name="oneOnOneRowClassName"
-      >
-        <el-table-column label="Student" min-width="150" prop="studentName" />
-        <el-table-column label="Product / Package" min-width="230">
-          <template #default="{ row }">
-            <div class="package-name-cell">
-              <strong class="package-name-cell__title">
-                {{ row.packageName || row.courseProductName || 'Unnamed package' }}
-              </strong>
-              <span v-if="shouldShowProductName(row)" class="package-name-cell__context">
-                Product · {{ row.courseProductName }}
-              </span>
+      <div v-loading="loading" class="package-group-list">
+        <section v-for="group in groupedTableData" :key="group.key" class="package-group">
+          <header class="package-group__header">
+            <div class="package-group__title">
+              <strong>{{ group.courseName }}</strong>
+              <span>{{ group.gradeBand }}</span>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="Available" min-width="145" align="center">
-          <template #default="{ row }">
-            <strong>{{ formatHours(row.remainingUnits) }} / {{ formatHours(row.totalUnits) }}</strong>
-            <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
-          </template>
-        </el-table-column>
-        <el-table-column label="Schedule setup" min-width="150" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="scheduleStatusType(row.scheduleStatus)">
-              {{ row.scheduleStatus }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Next lesson" min-width="180">
-          <template #default="{ row }">
-            <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
-            <span v-else class="muted-text">—</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Period" min-width="170">
-          <template #default="{ row }">
-            <span :class="{ 'renewal-due-text': isOneOnOneRenewalDue(row) }">
-              {{ row.startDate ?? '—' }} ~ {{ row.estimatedEndDate ?? '—' }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="Package status" min-width="110" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" :type="packageStatusType(row.packageStatus)">
-              {{ packageStatusLabel(row.packageStatus) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="Actions" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
-            <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+            <small>{{ group.packages.length }} packages</small>
+          </header>
+          <el-table
+            :data="group.packages"
+            row-key="id"
+            class="product-table"
+            :show-empty="false"
+            :row-class-name="oneOnOneRowClassName"
+          >
+            <el-table-column label="Student" min-width="150" prop="studentName" />
+            <el-table-column label="Product / Package" min-width="230">
+              <template #default="{ row }">
+                <div class="package-name-cell">
+                  <strong class="package-name-cell__title">
+                    {{ row.packageName || row.courseProductName || 'Unnamed package' }}
+                  </strong>
+                  <span v-if="shouldShowProductName(row)" class="package-name-cell__context">
+                    Product · {{ row.courseProductName }}
+                  </span>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="Available" min-width="145" align="center">
+              <template #default="{ row }">
+                <strong>{{ formatHours(row.remainingUnits) }} / {{ formatHours(row.totalUnits) }}</strong>
+                <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
+              </template>
+            </el-table-column>
+            <el-table-column label="Schedule setup" min-width="150" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="scheduleStatusType(row.scheduleStatus)">
+                  {{ row.scheduleStatus }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Next lesson" min-width="180">
+              <template #default="{ row }">
+                <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
+                <span v-else class="muted-text">—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Period" min-width="170">
+              <template #default="{ row }">
+                <span :class="{ 'renewal-due-text': isOneOnOneRenewalDue(row) }">
+                  {{ row.startDate ?? '—' }} ~ {{ row.estimatedEndDate ?? '—' }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="Package status" min-width="110" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="packageStatusType(row.packageStatus)">
+                  {{ packageStatusLabel(row.packageStatus) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="Actions" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
+                <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </section>
+        <el-empty v-if="!loading && groupedTableData.length === 0" description="No course packages found." />
+      </div>
 
       <div class="table-footer">
         <span>Showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }}</span>
@@ -179,15 +190,15 @@
                   <span>{{ formatHours(additionalPackageHours) }}</span>
                 </div>
                 <div class="detail-field">
-                  <label>Package Total</label>
+                  <label>Total hours</label>
                   <span>{{ formatHours(detailData.totalUnits) }}</span>
                 </div>
                 <div class="detail-field">
-                  <label>Consumed</label>
+                  <label>Already deducted</label>
                   <span>{{ formatHours(detailData.consumedUnits) }}</span>
                 </div>
                 <div class="detail-field">
-                  <label>Available</label>
+                  <label>Remaining</label>
                   <strong class="remaining-badge">{{ formatHours(detailData.remainingUnits) }}</strong>
                 </div>
                 <div class="detail-field">
@@ -603,6 +614,38 @@ interface OneOnOnePackageRow extends CoursePackageItem {
 }
 
 const tableData = ref<OneOnOnePackageRow[]>([]);
+// 当前分页结果按课程和年级合并成组，课包仍保留原有分页、筛选及行操作。
+const groupedTableData = computed(() => {
+  const groups = new Map<string, {
+    key: string;
+    courseName: string;
+    gradeBand: string;
+    packages: OneOnOnePackageRow[];
+  }>();
+
+  for (const pkg of tableData.value) {
+    const courseName = pkg.courseProductName?.trim() || pkg.packageName?.trim() || 'Unassigned course';
+    const gradeBand = pkg.gradeBand?.trim() || 'General';
+    const key = JSON.stringify([normalizeLabel(courseName), normalizeLabel(gradeBand)]);
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, courseName, gradeBand, packages: [] };
+      groups.set(key, group);
+    }
+    group.packages.push(pkg);
+  }
+
+  return Array.from(groups.values())
+    .map(group => ({
+      ...group,
+      packages: [...group.packages].sort((left, right) =>
+        left.studentName.localeCompare(right.studentName)
+        || left.packageName.localeCompare(right.packageName)),
+    }))
+    .sort((left, right) => left.courseName.localeCompare(right.courseName)
+      || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
+});
+
 function handleFilterChange() {
   pagination.page = 1;
   loadData();
@@ -1045,10 +1088,65 @@ loadTeachers();
 .filters__item { margin-right: 16px; margin-bottom: 0; }
 .filters__item :deep(.el-form-item__label) { color: #606266; font-size: 13px; }
 
+.package-group-list {
+  display: grid;
+  gap: 14px;
+  min-height: 160px;
+}
+
+.package-group {
+  overflow: hidden;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.package-group__header {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  border-bottom: 1px solid #d9e2ec;
+  background: #f3f7fb;
+}
+
+.package-group__title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.package-group__title strong {
+  overflow: hidden;
+  color: #26384c;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.package-group__title span {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.package-group__header small {
+  flex: 0 0 auto;
+  color: #718096;
+  font-size: 11px;
+}
+
 .product-table {
   border-radius: 6px;
   overflow: hidden;
-  border: 1px solid #ebeef5;
+  border: 0;
 }
 
 .product-table :deep(.renewal-due-row > td) {

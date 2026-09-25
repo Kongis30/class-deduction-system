@@ -12,6 +12,10 @@ import type {
 export interface ScheduleStudentOption {
   id: EntityId;
   studentName: string;
+  courseGrades: Array<{
+    courseName: string;
+    gradeBand: string;
+  }>;
 }
 
 export function fetchOneOnOneScheduleStudents() {

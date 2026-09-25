@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 计划课次响应。
@@ -22,6 +23,7 @@ public record LessonOccurrenceVO(
         String subjectName,
         Long studentId,
         String studentName,
+        List<String> participantNames,
         Long scheduleRuleId,
         Long scheduleSlotId,
         String occurrenceType,

@@ -94,7 +94,7 @@ public class EnrollmentOrderItemDTO {
     private BigDecimal oneOnOneBonusHours;
 
     @DecimalMin(value = "0.00", message = "Opening used hours cannot be negative")
-    @Schema(description = "Already used one-on-one hours before this system starts tracking lessons", example = "12")
+    @Schema(description = "Already deducted one-on-one hours before this system starts tracking lessons", example = "12")
     private BigDecimal openingUsedHours;
 
     @Min(value = 0, message = "One-on-one units cannot be negative")

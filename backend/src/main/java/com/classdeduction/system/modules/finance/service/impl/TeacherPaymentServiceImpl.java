@@ -200,6 +200,17 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
 
         for (LessonRecordEntity rec : records) {
             LessonOccurrenceEntity occurrence = occurrenceMap.get(rec.getOccurrenceId());
+            // 优先显示实际授课时段；旧记录缺少实际时间时使用课次上的排课时段。
+            LocalDateTime lessonStartAt = rec.getActualStartAt();
+            LocalDateTime lessonEndAt = rec.getActualEndAt();
+            if (lessonStartAt == null || lessonEndAt == null) {
+                lessonStartAt = rec.getPlannedStartAt();
+                lessonEndAt = rec.getPlannedEndAt();
+            }
+            if ((lessonStartAt == null || lessonEndAt == null) && occurrence != null) {
+                lessonStartAt = occurrence.getPlannedStartAt();
+                lessonEndAt = occurrence.getPlannedEndAt();
+            }
 
             // 共享课次固定使用最小 lesson_record_id，确保列表和结算使用同一代表记录。
             if (isSharedOccurrence(occurrence)) {
@@ -230,7 +241,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
                 CourseProductEntity product = productId != null ? productMap.get(productId) : null;
                 result.add(UnpaidLessonVO.builder()
                         .lessonRecordId(rec.getId())
-                        .lessonDate(rec.getConfirmedAt())
+                        .lessonStartAt(lessonStartAt)
+                        .lessonEndAt(lessonEndAt)
                         .studentId(rec.getStudentId())
                         .studentName(sharedStudent == null ? null : sharedStudent.getStudentName())
                         .packageId(privatePackage == null ? null : privatePackage.getId())
@@ -269,7 +281,8 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
 
             result.add(UnpaidLessonVO.builder()
                     .lessonRecordId(rec.getId())
-                    .lessonDate(rec.getConfirmedAt())
+                    .lessonStartAt(lessonStartAt)
+                    .lessonEndAt(lessonEndAt)
                     .studentId(rec.getStudentId())
                     .studentName(student != null ? student.getStudentName() : null)
                     .packageId(rec.getPackageId())

@@ -12,6 +12,7 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
@@ -168,6 +169,42 @@ class LessonOccurrenceServiceImplTest {
         lessonOccurrenceService.pageOccurrences(query, teacherUser());
 
         assertThat(query.getTeacherId()).isEqualTo(301L);
+    }
+
+    @Test
+    void shouldShowAllPrivateGroupStudentsInTeacherLessonList() {
+        LessonOccurrenceEntity sharedLesson = buildOneOnOneOccurrence();
+        sharedLesson.setPrivateLessonGroupId(7001L);
+        LessonOccurrenceEntity soloLesson = buildOneOnOneOccurrence();
+        soloLesson.setId(4002L);
+        soloLesson.setLessonNo("O2O202609010002");
+        Page<LessonOccurrenceEntity> page = new Page<>(1, 10);
+        page.setRecords(List.of(sharedLesson, soloLesson));
+        when(lessonOccurrenceMapper.selectPage(any(), any())).thenReturn(page);
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(
+                buildPrivateGroupMember(1, 101L),
+                buildPrivateGroupMember(2, 102L),
+                buildPrivateGroupMember(3, 103L)));
+        when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(buildOneOnOnePackage()));
+        StudentEntity secondStudent = buildStudent();
+        secondStudent.setId(102L);
+        secondStudent.setStudentName("Chenxi Lin");
+        StudentEntity thirdStudent = buildStudent();
+        thirdStudent.setId(103L);
+        thirdStudent.setStudentName("Gloria Deng");
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent(), secondStudent, thirdStudent));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        LessonOccurrencePageQuery query = new LessonOccurrencePageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+        List<LessonOccurrenceVO> records = lessonOccurrenceService.pageOccurrences(query, teacherUser()).records();
+
+        assertThat(records).hasSize(2);
+        assertThat(records.get(0).participantNames()).containsExactly("Jin Tang", "Chenxi Lin", "Gloria Deng");
+        assertThat(records.get(0).studentName()).isEqualTo("Jin Tang");
+        assertThat(records.get(1).participantNames()).isEmpty();
+        assertThat(records.get(1).studentName()).isEqualTo("Jin Tang");
     }
 
     @Test
@@ -508,6 +545,15 @@ class LessonOccurrenceServiceImplTest {
         coursePackage.setStartDate(LocalDate.of(2026, 9, 1));
         coursePackage.setEstimatedEndDate(LocalDate.of(2026, 12, 31));
         return coursePackage;
+    }
+
+    private PrivateLessonGroupMemberEntity buildPrivateGroupMember(int index, long studentId) {
+        PrivateLessonGroupMemberEntity member = new PrivateLessonGroupMemberEntity();
+        member.setPrivateLessonGroupId(7001L);
+        member.setStudentId(studentId);
+        member.setParticipantIndex(index);
+        member.setMemberStatus("ACTIVE");
+        return member;
     }
 
     private LessonOccurrenceEntity buildOneOnOneOccurrence() {

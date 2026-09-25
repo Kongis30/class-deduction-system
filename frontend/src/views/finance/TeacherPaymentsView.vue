@@ -103,10 +103,10 @@
             @selection-change="individualSelections = $event; updateMergedSelection()"
           >
             <el-table-column type="selection" width="36" :selectable="canSelectLesson" />
-            <el-table-column label="Date" min-width="105">
-              <template #default="{ row }">{{ row.lessonDate }}</template>
+            <el-table-column label="Date" min-width="200" class-name="tp-table__nowrap">
+              <template #default="{ row }">{{ formatLessonSchedule(row) }}</template>
             </el-table-column>
-            <el-table-column label="Type" width="58" align="center">
+            <el-table-column label="Type" width="80" align="center" header-class-name="tp-table__nowrap">
               <template #default="{ row }">
                 <el-tag size="small" type="primary">1:1</el-tag>
               </template>
@@ -117,7 +117,7 @@
               </template>
             </el-table-column>
             <el-table-column label="Product" min-width="120" prop="productName" show-overflow-tooltip />
-            <el-table-column label="Hours" width="65" align="center" prop="hours" />
+            <el-table-column label="Hours" width="80" align="center" prop="hours" header-class-name="tp-table__nowrap" />
             <el-table-column label="Rate" width="90" align="right">
               <template #default="{ row }">
                 <span v-if="hasPayRate(row)">${{ row.hourlyRate.toFixed(2) }}</span>
@@ -149,17 +149,17 @@
             @selection-change="groupSelections = $event; updateMergedSelection()"
           >
             <el-table-column type="selection" width="36" :selectable="canSelectLesson" />
-            <el-table-column label="Date" min-width="105">
-              <template #default="{ row }">{{ row.lessonDate }}</template>
+            <el-table-column label="Date" min-width="200" class-name="tp-table__nowrap">
+              <template #default="{ row }">{{ formatLessonSchedule(row) }}</template>
             </el-table-column>
-            <el-table-column label="Type" width="58" align="center">
+            <el-table-column label="Type" width="80" align="center" header-class-name="tp-table__nowrap">
               <template #default="{ row }">
                 <el-tag size="small" type="warning">G</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="Class" min-width="120" prop="className" show-overflow-tooltip />
             <el-table-column label="Product" min-width="120" prop="productName" show-overflow-tooltip />
-            <el-table-column label="Hours" width="65" align="center" prop="hours" />
+            <el-table-column label="Hours" width="80" align="center" prop="hours" header-class-name="tp-table__nowrap" />
             <el-table-column label="Rate" width="90" align="right">
               <template #default="{ row }">
                 <span v-if="hasPayRate(row)">${{ row.hourlyRate.toFixed(2) }}</span>
@@ -231,7 +231,7 @@
                 {{ row.periodStart }} – {{ row.periodEnd }}
               </template>
             </el-table-column>
-            <el-table-column label="Hours" width="65" align="center" prop="totalHours" />
+            <el-table-column label="Hours" width="80" align="center" prop="totalHours" header-class-name="tp-table__nowrap" />
             <el-table-column label="Amount" width="110" align="right">
               <template #default="{ row }">${{ row.totalAmount?.toFixed(2) }}</template>
             </el-table-column>
@@ -605,6 +605,38 @@ function formatDateTime(dateStr: string) {
   return dateStr.substring(0, 19).replace('T', ' ');
 }
 
+type LessonTime = { year: number; month: number; day: number; hour: number; minute: number };
+
+// 后端返回无时区的课次本地时间，按字段解析可避免浏览器时区改变上课时段。
+function parseLessonTime(value: string | null): LessonTime | null {
+  const parts = value?.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!parts) return null;
+  return {
+    year: Number(parts[1]), month: Number(parts[2]), day: Number(parts[3]),
+    hour: Number(parts[4]), minute: Number(parts[5]),
+  };
+}
+
+function formatLessonClock(time: LessonTime, showPeriod: boolean) {
+  const hour = time.hour % 12 || 12;
+  const minute = time.minute ? `:${String(time.minute).padStart(2, '0')}` : '';
+  return `${hour}${minute}${showPeriod ? (time.hour < 12 ? 'am' : 'pm') : ''}`;
+}
+
+function formatLessonSchedule(row: UnpaidLessonItem) {
+  const start = parseLessonTime(row.lessonStartAt);
+  if (!start) return '—';
+
+  const date = `${start.year}/${start.month}/${start.day}`;
+  const end = parseLessonTime(row.lessonEndAt);
+  if (!end) return `${date} ${formatLessonClock(start, true)}`;
+
+  const samePeriod = (start.hour < 12) === (end.hour < 12);
+  const endDate = start.year === end.year && start.month === end.month && start.day === end.day
+    ? '' : `${end.month}/${end.day} `;
+  return `${date} ${formatLessonClock(start, !samePeriod)}–${endDate}${formatLessonClock(end, true)}`;
+}
+
 
 
 onMounted(async () => {
@@ -626,9 +658,8 @@ onMounted(async () => {
 
 .tp-page {
   display: flex;
+  align-items: flex-start;
   gap: 16px;
-  height: 100%;
-  min-height: 500px;
 }
 
 /* ─── Sidebar ────────────────────────────────────────── */
@@ -636,6 +667,9 @@ onMounted(async () => {
 .tp-sidebar {
   flex-shrink: 0;
   width: 220px;
+  height: calc(100vh - 180px);
+  min-height: 320px;
+  max-height: 720px;
   border: 1px solid #e8edf2;
   border-radius: 8px;
   background: #fff;
@@ -651,7 +685,9 @@ onMounted(async () => {
 
 .tp-sidebar__list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior-y: contain;
   padding: 4px 0;
 }
 
@@ -694,6 +730,7 @@ onMounted(async () => {
 
 .tp-content {
   flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -809,6 +846,10 @@ onMounted(async () => {
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+}
+
+.tp-table :deep(.tp-table__nowrap .cell) {
+  white-space: nowrap;
 }
 
 /* ─── Summary bar ─────────────────────────────────────── */

@@ -333,6 +333,7 @@ import { isAdminUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
 import { useRouter } from 'vue-router';
 import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
+import { formatRoundedUsd } from '@/utils/money-display';
 
 type ColumnKey =
   | 'campus'
@@ -1290,12 +1291,7 @@ function remainingBusinessDays(endDateValue: string) {
 }
 
 function formatMoney(value?: number) {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  }).format(Number(value ?? 0));
+  return formatRoundedUsd(value);
 }
 
 // ─── Excel 导出 ─────────────────────────────────
@@ -1320,6 +1316,14 @@ function exportExcel() {
     aoa.push(columns.map((column) => exportCell(row, column.key)));
   });
   const sheet = XLSX.utils.aoa_to_sheet(aoa);
+  // Excel 保留原始分值用于计算，仅将金额单元格的显示格式设为整数。
+  columns.forEach((column, columnIndex) => {
+    if (!EXPORT_NUMERIC_COLUMNS.has(column.key)) return;
+    dataRows.forEach((_, rowIndex) => {
+      const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex })];
+      if (cell) cell.z = '$#,##0;-$#,##0';
+    });
+  });
   sheet['!cols'] = columns.map((column) => ({
     wch: Math.max(8, Math.round(column.width / 6.6)),
   }));

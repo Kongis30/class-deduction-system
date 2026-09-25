@@ -23,6 +23,7 @@ import java.util.List;
 public class StudentCreditServiceImpl implements StudentCreditService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
+    private static final String CREDIT_USED = "CREDIT_USED";
 
     private final StudentCreditLedgerMapper ledgerMapper;
 
@@ -86,7 +87,7 @@ public class StudentCreditServiceImpl implements StudentCreditService {
             throw new BusinessException("INSUFFICIENT_STUDENT_CREDIT",
                     "Student Credit balance is not enough for this payment.");
         }
-        append(studentId, normalized.negate(), "CREDIT_USED", orderId, paymentRecordId,
+        append(studentId, normalized.negate(), CREDIT_USED, orderId, paymentRecordId,
                 handledByUserId, handledByName, remark);
     }
 
@@ -96,13 +97,19 @@ public class StudentCreditServiceImpl implements StudentCreditService {
             throw new BusinessException("CREDIT_STUDENT_REQUIRED", "A student is required for Credit transactions.");
         }
         BigDecimal normalized = defaultAmount(amount);
-        if (normalized.compareTo(ZERO) <= 0) {
-            throw new BusinessException("INVALID_CREDIT_AMOUNT", "Credit amount must be greater than zero.");
+        // append 接收已经带方向的账本变动：使用抵扣为负数，退款和充值入账为正数。
+        boolean isCreditUsed = CREDIT_USED.equals(entryType);
+        if ((isCreditUsed && normalized.compareTo(ZERO) >= 0)
+                || (!isCreditUsed && normalized.compareTo(ZERO) <= 0)) {
+            String message = isCreditUsed
+                    ? "Credit usage amount must be less than zero."
+                    : "Credit amount must be greater than zero.";
+            throw new BusinessException("INVALID_CREDIT_AMOUNT", message);
         }
         StudentCreditLedgerEntity entry = new StudentCreditLedgerEntity();
         entry.setStudentId(studentId);
         entry.setEntryType(entryType);
-        entry.setAmount("CREDIT_USED".equals(entryType) ? normalized.negate() : normalized);
+        entry.setAmount(normalized);
         entry.setSourceEnrollmentOrderId(orderId);
         entry.setSourcePaymentRecordId(paymentRecordId);
         entry.setReferenceNo(orderId == null ? null : String.valueOf(orderId));
