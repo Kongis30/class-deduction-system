@@ -29,7 +29,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/transport")
 @Tag(name = "Transport")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class TransportDriverController {
 
     private final TransportDriverService transportDriverService;

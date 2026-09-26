@@ -34,14 +34,14 @@ public class LessonRecordController {
     private final LessonRecordService lessonRecordService;
 
     @GetMapping
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Page lesson records")
     public ApiResponse<PageResponse<LessonRecordListItemVO>> pageRecords(@ParameterObject LessonRecordPageQuery query) {
         return ApiResponse.success(lessonRecordService.pageRecords(query));
     }
 
     @GetMapping("/{id}")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Get lesson record detail")
     public ApiResponse<LessonRecordDetailVO> getRecord(@PathVariable Long id) {
         return ApiResponse.success(lessonRecordService.getRecord(id));
@@ -58,7 +58,7 @@ public class LessonRecordController {
     }
 
     @PostMapping("/{id}/admin-confirm")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Admin finally confirms a pending lesson record")
     public ApiResponse<LessonRecordConfirmResultVO> adminConfirmLesson(
             @PathVariable Long id,

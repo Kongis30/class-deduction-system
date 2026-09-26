@@ -45,6 +45,10 @@ export function isStaffUser(user: AuthUser | null): boolean {
   return user.userType === 'STAFF' || (user.roleCodes ?? []).includes('STAFF');
 }
 
+export function isManagerUser(user: AuthUser | null): boolean {
+  return Boolean(user && (user.roleCodes ?? []).includes('MANAGER'));
+}
+
 export function isAdminOrStaffUser(user: AuthUser | null): boolean {
   return isAdminUser(user) || isStaffUser(user);
 }

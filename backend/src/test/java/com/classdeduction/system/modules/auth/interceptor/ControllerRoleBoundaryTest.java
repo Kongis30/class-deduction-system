@@ -19,12 +19,12 @@ class ControllerRoleBoundaryTest {
 
     @Test
     void managementControllersShouldNotExposeGlobalDataToSelfServiceRoles() {
-        assertClassRoles(StudentController.class, "ADMIN", "STAFF");
-        assertClassRoles(TeacherController.class, "ADMIN", "STAFF");
-        assertClassRoles(ClassroomController.class, "ADMIN", "STAFF");
-        assertClassRoles(CoursePackageController.class, "ADMIN", "STAFF");
-        assertClassRoles(ScheduleAdjustmentController.class, "ADMIN", "STAFF");
-        assertClassRoles(ClassGroupController.class, "ADMIN", "STAFF");
+        assertClassRoles(StudentController.class, "ADMIN", "STAFF", "MANAGER");
+        assertClassRoles(TeacherController.class, "ADMIN", "STAFF", "MANAGER");
+        assertClassRoles(ClassroomController.class, "ADMIN", "STAFF", "MANAGER");
+        assertClassRoles(CoursePackageController.class, "ADMIN", "STAFF", "MANAGER");
+        assertClassRoles(ScheduleAdjustmentController.class, "ADMIN", "STAFF", "MANAGER");
+        assertClassRoles(ClassGroupController.class, "ADMIN", "STAFF", "MANAGER");
     }
 
     @Test

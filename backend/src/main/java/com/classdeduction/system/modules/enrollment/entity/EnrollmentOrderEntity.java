@@ -44,6 +44,10 @@ public class EnrollmentOrderEntity extends BaseEntity {
 
     private String handledByName;
 
+    private Long registrationOperatorUserId;
+
+    private String registrationOperatorName;
+
     private LocalDate signupDate;
 
     private LocalDate periodStartDate;

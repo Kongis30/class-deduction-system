@@ -3,7 +3,7 @@ import { createRouter, createWebHistory, createWebHashHistory, type RouteRecordR
 import AppLayout from '@/components/layout/AppLayout.vue';
 import { APP_SYSTEM_NAME } from '@/config/app-config';
 import { getStoredAuthToken, getStoredAuthUser } from '@/utils/auth-storage';
-import { getDefaultLandingPath, getUserWorkspace, isAdminOrStaffUser, type AuthUser } from '@/types/auth';
+import { getDefaultLandingPath, getUserWorkspace, isAdminOrStaffUser, isAdminUser, isManagerUser, type AuthUser } from '@/types/auth';
 
 // Route-level lazy loading keeps the initial admin bundle smaller.
 const LoginView = () => import('@/views/LoginView.vue');
@@ -35,6 +35,8 @@ const UserGuideView = () => import('@/views/system/UserGuideView.vue');
 const TeacherPayRatesView = () => import('@/views/finance/TeacherPayRatesView.vue');
 const TeacherPaymentsView = () => import('@/views/finance/TeacherPaymentsView.vue');
 const MyPayrollView = () => import('@/views/finance/MyPayrollView.vue');
+const DailyRegistrationsView = () => import('@/views/enrollment/DailyRegistrationsView.vue');
+const ManagerAccountsView = () => import('@/views/system/ManagerAccountsView.vue');
 
 const routes: RouteRecordRaw[] = [
   {
@@ -86,6 +88,16 @@ const routes: RouteRecordRaw[] = [
           title: 'Registration',
           section: 'Registration',
           description: 'Submit student, course, payment, and receipt intake in one workflow.',
+        },
+      },
+      {
+        path: 'daily-registrations',
+        name: 'daily-registrations',
+        component: DailyRegistrationsView,
+        meta: {
+          title: 'Daily Registrations',
+          section: 'Daily Registrations',
+          description: 'Review registrations by the time they were saved and trace their history.',
         },
       },
       {
@@ -228,6 +240,16 @@ const routes: RouteRecordRaw[] = [
           title: 'Students & teachers',
           section: 'People',
           description: 'Manage student and teacher records with login access in one place.',
+        },
+      },
+      {
+        path: 'admin/config/managers',
+        name: 'admin-config-managers',
+        component: ManagerAccountsView,
+        meta: {
+          title: 'Manager accounts',
+          section: 'People',
+          description: 'Create and manage registration manager accounts.',
         },
       },
       {
@@ -500,6 +522,7 @@ const teacherSelfServicePaths = new Set(['/my-lessons', '/my-payroll', '/calenda
 const studentSelfServicePaths = new Set(['/calendar']);
 const adminConfigurationPaths = new Set([
   '/admin/config/people',
+  '/admin/config/managers',
   '/admin/config/students',
   '/admin/config/teachers',
   '/admin/config/course-prices',
@@ -558,6 +581,12 @@ router.beforeEach((to) => {
   }
   if (adminConfigurationPaths.has(to.path) && !isAdminOrStaffUser(storedUser)) {
     return getDefaultLandingPath(storedUser);
+  }
+  if (to.path === '/admin/config/managers' && !isAdminUser(storedUser)) {
+    return getDefaultLandingPath(storedUser);
+  }
+  if (to.name === 'registration' && to.query.orderId && isManagerUser(storedUser)) {
+    return { name: 'receipt-records' };
   }
   return true;
 });

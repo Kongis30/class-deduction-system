@@ -7,6 +7,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.common.time.AppTime;
@@ -504,6 +505,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public EnrollmentCreateResultVO createOrder(EnrollmentCreateRequest request) {
+        return createOrder(request, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public EnrollmentCreateResultVO createOrder(EnrollmentCreateRequest request, CurrentUserResponse operator) {
         validateAmounts(request);
         StudentEntity student = requireStudent(request.getStudentId());
         CourseProductEntity product = requireCourseProduct(request.getCourseProductId());
@@ -515,6 +522,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         order.setOrderStatus("CONFIRMED");
         order.setCashierUserId(request.getCashierUserId());
         order.setHandledByName(request.getHandledByName());
+        if (operator != null) {
+            order.setRegistrationOperatorUserId(operator.userId());
+            order.setRegistrationOperatorName(operator.displayName());
+        }
         order.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
         order.setOriginalAmount(request.getOriginalAmount());
         order.setDiscountAmount(request.getDiscountAmount());

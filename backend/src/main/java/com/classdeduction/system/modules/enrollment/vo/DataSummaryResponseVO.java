@@ -1,12 +1,14 @@
 package com.classdeduction.system.modules.enrollment.vo;
 
 import io.swagger.v3.oas.annotations.media.Schema;
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
 @Schema(description = "Data summary response")
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record DataSummaryResponseVO(
         Long totalRegistrationCount,
         BigDecimal totalIncomeAmount,
@@ -19,7 +21,17 @@ public record DataSummaryResponseVO(
         List<RowVO> rows
 ) {
 
+    public DataSummaryResponseVO withoutFinancialAmounts() {
+        return new DataSummaryResponseVO(totalRegistrationCount, null, null,
+                campusSummaries.stream().map(SummaryGroupVO::withoutFinancialAmounts).toList(),
+                courseTypeSummaries.stream().map(SummaryGroupVO::withoutFinancialAmounts).toList(),
+                classCourseSummaries.stream().map(SummaryGroupVO::withoutFinancialAmounts).toList(),
+                paymentStatusSummaries.stream().map(SummaryGroupVO::withoutFinancialAmounts).toList(),
+                rows.stream().map(RowVO::withoutFinancialAmounts).toList());
+    }
+
     @Schema(description = "Data summary group")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record SummaryGroupVO(
             String groupKey,
             String groupName,
@@ -29,9 +41,13 @@ public record DataSummaryResponseVO(
             @Schema(description = "Unpaid balance. Negative values represent money still owed.")
             BigDecimal outstandingAmount
     ) {
+        private SummaryGroupVO withoutFinancialAmounts() {
+            return new SummaryGroupVO(groupKey, groupName, recordCount, studentCount, null, null);
+        }
     }
 
     @Schema(description = "Data summary table row")
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record RowVO(
             Long orderId,
             String enrollmentNo,
@@ -94,7 +110,23 @@ public record DataSummaryResponseVO(
             Integer privateLessonParticipantCount,
             String itemStatus,
             BigDecimal stoppedConsumedAmount,
-            Integer stoppedSessionCount
+            Integer stoppedSessionCount,
+            java.time.LocalDateTime registrationSavedAt,
+            Long registrationOperatorUserId,
+            String registrationOperatorName
     ) {
+        private RowVO withoutFinancialAmounts() {
+            return new RowVO(orderId, enrollmentNo, orderItemId, studentId, participantIndex,
+                    studentName, studentClass, school, grade, gradeBand, signupDate, periodStartDate,
+                    periodEndDate, periodLabel, attendanceOption, timeSlotLabel, campusId, campusName,
+                    classId, className, courseProductId, courseProductName, registerClass, courseType,
+                    detail, phone, phone2, pickupRequired, pickupAddress, dropoffRequired, dropoffAddress,
+                    pickupDropoffLabel, paymentMethod, paymentStatus, null, null, null, null, null,
+                    null, null, null, totalHours, usedHours, remainingHours, teacherId, teacherName,
+                    expiryDate, overdue, expiringSoon, lowOneOnOneHours, alertTypes, orderStatus,
+                    reviewIssueCodes, privateLessonGroupId, privateLessonParticipantCount, itemStatus,
+                    null, stoppedSessionCount, registrationSavedAt, registrationOperatorUserId,
+                    registrationOperatorName);
+        }
     }
 }

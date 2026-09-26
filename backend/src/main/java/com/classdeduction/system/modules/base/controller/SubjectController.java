@@ -22,7 +22,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/subjects")
 @Tag(name = "Base Data - Subjects")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class SubjectController {
 
     private final SubjectService subjectService;

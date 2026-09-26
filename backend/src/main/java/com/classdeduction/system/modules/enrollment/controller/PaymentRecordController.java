@@ -34,7 +34,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/payments")
 @Tag(name = "Enrollment - Payments")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class PaymentRecordController {
 
     private final PaymentRecordService paymentRecordService;
@@ -59,6 +59,10 @@ public class PaymentRecordController {
             @Valid @RequestBody PaymentRecordSaveRequest request,
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         request.setHandledByUserId(currentUser.userId());
+        if (currentUser.roleCodes().contains("MANAGER")) {
+            request.setHandledByName(currentUser.displayName());
+            request.getSplits().forEach(split -> split.setHandledByName(currentUser.displayName()));
+        }
         return ApiResponse.success("Payment recorded successfully.", paymentRecordService.createPaymentRecord(request));
     }
 

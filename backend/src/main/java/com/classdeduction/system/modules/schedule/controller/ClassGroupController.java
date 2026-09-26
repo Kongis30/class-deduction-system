@@ -20,7 +20,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 @RequestMapping("/v1/classes")
 @Tag(name = "Schedule - Class Groups")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class ClassGroupController {
 
     private final ClassGroupService classGroupService;
@@ -88,7 +88,7 @@ public class ClassGroupController {
     }
 
     @PutMapping("/{classId}/schedule")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Update class weekly schedule and rebuild future planned lessons")
     public ApiResponse<Map<String, Object>> updateClassSchedule(
             @PathVariable Long classId,
@@ -97,14 +97,14 @@ public class ClassGroupController {
     }
 
     @PostMapping("/actual-classes")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Create an actual class under a product grade")
     public ApiResponse<Map<String, Object>> createActualClass(@RequestBody Map<String, Object> body) {
         return ApiResponse.success("Actual class created.", classGroupService.createActualClass(body == null ? Map.of() : body));
     }
 
     @PutMapping("/{classId}/info")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Update actual class name information")
     public ApiResponse<Map<String, Object>> updateClassInfo(
             @PathVariable Long classId,
@@ -113,7 +113,7 @@ public class ClassGroupController {
     }
 
     @PostMapping("/{classId}/enroll")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Enroll a student in a class")
     public ApiResponse<Map<String, Object>> enrollStudent(
             @PathVariable Long classId,
@@ -132,21 +132,21 @@ public class ClassGroupController {
     }
 
     @PostMapping("/{classId}/send-expiry-reminders")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Send expiry reminders for expiring students in a class")
     public ApiResponse<Map<String, Object>> sendExpiryReminders(@PathVariable Long classId) {
         return ApiResponse.success("Reminders sent.", classGroupService.sendExpiryReminders(classId));
     }
 
     @GetMapping("/enrolled/{studentId}")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "List class groups enrolled by a student")
     public ApiResponse<List<Map<String, Object>>> listEnrolledByStudent(@PathVariable Long studentId) {
         return ApiResponse.success(classGroupService.listEnrolledByStudent(studentId));
     }
 
     @GetMapping("/teacher/{teacherId}")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "List active class groups taught by a teacher")
     public ApiResponse<List<Map<String, Object>>> listByTeacher(@PathVariable Long teacherId) {
         return ApiResponse.success(classGroupService.listByTeacher(teacherId));
@@ -154,14 +154,14 @@ public class ClassGroupController {
 
     @DeleteMapping("/{classId}")
     @Operation(summary = "Delete a class group (cancel future occurrences, remove enrollments, soft-delete)")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<String> deleteClassGroup(@PathVariable Long classId) {
         classGroupService.deleteClassGroup(classId);
         return ApiResponse.success("Class group deleted.");
     }
 
     @GetMapping("/classroom/{classroomId}")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "List active class groups using a classroom")
     public ApiResponse<List<Map<String, Object>>> listByClassroom(@PathVariable Long classroomId) {
         return ApiResponse.success(classGroupService.listByClassroom(classroomId));

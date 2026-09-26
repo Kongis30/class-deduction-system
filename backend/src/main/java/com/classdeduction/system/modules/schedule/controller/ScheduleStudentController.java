@@ -18,7 +18,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/schedule/students")
 @Tag(name = "Schedule - Student Lookups")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class ScheduleStudentController {
 
     private final RecurringScheduleRuleService recurringScheduleRuleService;

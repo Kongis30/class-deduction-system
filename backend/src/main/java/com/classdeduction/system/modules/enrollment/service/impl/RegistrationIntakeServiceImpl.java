@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.enrollment.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.common.util.StudentNoGenerator;
@@ -127,13 +128,19 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public RegistrationIntakeResultVO submitIntake(RegistrationIntakeRequest request) {
+        return submitIntake(request, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public RegistrationIntakeResultVO submitIntake(RegistrationIntakeRequest request, CurrentUserResponse operator) {
         validateRegistrationPeriod(request);
         validateCampusSelection(request);
         validateRenewalRequestShape(request);
         List<StudentResolution> participantResolutions = resolveParticipantStudents(request);
         StudentResolution studentResolution = participantResolutions.get(0);
         if (isCreditTopUpRequest(request)) {
-            return submitCreditTopUp(request, studentResolution);
+            return submitCreditTopUp(request, studentResolution, operator);
         }
         if (request.getItems() == null || request.getItems().isEmpty()) {
             throw new BusinessException("COURSE_ITEM_REQUIRED",
@@ -146,7 +153,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         MoneySnapshot money = calculateMoney(request, lines, participantResolutions.size());
         prepareCourseBilling(request, lines, money, participantResolutions.size());
 
-        EnrollmentOrderEntity order = createOrder(request, studentResolution.student(), lines, money);
+        EnrollmentOrderEntity order = createOrder(request, studentResolution.student(), lines, money, operator);
         createOrderParticipants(order, participantResolutions, lines, request, money);
 
         List<RegistrationIntakeResultVO.CourseArtifactVO> artifacts = new ArrayList<>();
@@ -189,7 +196,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         List<RegistrationIntakeResultVO.PaymentResultVO> payments = createPayments(
                 order, request, money, participantResolutions.size(), lines);
         CreditTopUpTransaction creditTopUp = defaultAmount(request.getCreditTopUpAmount()).compareTo(ZERO_AMOUNT) > 0
-                ? createCreditTopUpTransaction(request, studentResolution, creditTopUpPayments(request))
+                ? createCreditTopUpTransaction(request, studentResolution, creditTopUpPayments(request), operator)
                 : null;
         // 课程级付款分摊：优先保留请求中的逐课金额，旧请求才回退到历史分配规则。
         if (participantResolutions.size() <= 1 || request.getParticipantBillings() == null
@@ -232,7 +239,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
      * 这样充值仍然有可追溯的收据和操作人，但不会被课程应收或课程分摊逻辑误处理。
      */
     private RegistrationIntakeResultVO submitCreditTopUp(RegistrationIntakeRequest request,
-                                                         StudentResolution studentResolution) {
+                                                         StudentResolution studentResolution,
+                                                         CurrentUserResponse operator) {
         if (request.getRenewPackageId() != null || request.getRenewClassEnrollmentId() != null) {
             throw new BusinessException("CREDIT_TOP_UP_RENEWAL_CONFLICT",
                     "A Credit top-up cannot be combined with a course renewal.");
@@ -246,7 +254,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     "Credit top-up does not accept course fees or discounts.");
         }
         List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads = creditTopUpPayments(request);
-        CreditTopUpTransaction transaction = createCreditTopUpTransaction(request, studentResolution, paymentPayloads);
+        CreditTopUpTransaction transaction = createCreditTopUpTransaction(request, studentResolution, paymentPayloads, operator);
         return RegistrationIntakeResultVO.builder()
                 .enrollmentOrderId(transaction.order().getId())
                 .enrollmentNo(transaction.order().getEnrollmentNo())
@@ -275,7 +283,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private CreditTopUpTransaction createCreditTopUpTransaction(
             RegistrationIntakeRequest request,
             StudentResolution studentResolution,
-            List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads) {
+            List<RegistrationIntakeRequest.PaymentPayload> paymentPayloads,
+            CurrentUserResponse operator) {
         BigDecimal topUpAmount = defaultAmount(request.getCreditTopUpAmount());
         if (topUpAmount.compareTo(ZERO_AMOUNT) <= 0) {
             throw new BusinessException("CREDIT_TOP_UP_AMOUNT_REQUIRED",
@@ -312,7 +321,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 topUpAmount.subtract(paidAmount).setScale(2, RoundingMode.HALF_UP),
                 resolvePaymentStatus(topUpAmount, paidAmount));
         RegistrationIntakeRequest topUpRequest = copyCreditTopUpRequest(request, paymentPayloads);
-        EnrollmentOrderEntity order = createOrder(topUpRequest, studentResolution.student(), Collections.emptyList(), money);
+        EnrollmentOrderEntity order = createOrder(topUpRequest, studentResolution.student(), Collections.emptyList(), money, operator);
         order.setRemark(firstText(request.getRemark(), "Student Credit top-up"));
         enrollmentOrderMapper.updateById(order);
         createOrderParticipants(order, List.of(studentResolution), Collections.emptyList(), topUpRequest, money);
@@ -1383,7 +1392,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private EnrollmentOrderEntity createOrder(RegistrationIntakeRequest request,
                                               StudentEntity student,
                                               List<ResolvedCourseLine> lines,
-                                              MoneySnapshot money) {
+                                              MoneySnapshot money,
+                                              CurrentUserResponse operator) {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setEnrollmentNo(BusinessNoGenerator.generateEnrollmentNo());
         order.setStudentId(student.getId());
@@ -1398,6 +1408,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         order.setOrderStatus("CONFIRMED");
         order.setCashierUserId(request.getCashierUserId());
         order.setHandledByName(request.getHandledByName());
+        if (operator != null) {
+            order.setRegistrationOperatorUserId(operator.userId());
+            order.setRegistrationOperatorName(operator.displayName());
+        }
         order.setSignupDate(request.getSignupDate() == null ? LocalDate.now(AppTime.APP_ZONE_ID) : request.getSignupDate());
         order.setPeriodStartDate(request.getPeriodStartDate());
         order.setPeriodEndDate(request.getPeriodEndDate());

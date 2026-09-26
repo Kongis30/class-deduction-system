@@ -30,7 +30,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/schedule/classrooms")
 @Tag(name = "Schedule - Classroom Occupancy")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class ClassroomOccupancyController {
 
     private final LessonOccurrenceService lessonOccurrenceService;

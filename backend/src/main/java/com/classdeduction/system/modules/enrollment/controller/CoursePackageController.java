@@ -35,7 +35,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/packages")
 @Tag(name = "Enrollment - Course Packages")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class CoursePackageController {
 
     private final CoursePackageService coursePackageService;

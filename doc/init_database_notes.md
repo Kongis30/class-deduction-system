@@ -11,6 +11,7 @@ mysql -uroot -p < doc/init_schema_current.sql
 mysql -uroot -p < doc/init_seed_required.sql
 mysql -uroot -p class_deduction_system < doc/migrations/20260919_payment_allocation.sql
 mysql -uroot -p class_deduction_system < doc/migrations/20260924_sys_user_active_unique_keys.sql
+mysql -uroot -p class_deduction_system < doc/migrations/20260926_registration_managers_and_daily_log.sql
 ```
 
 If the SQL client does not support MySQL `SOURCE`, run the course matrix seed separately after `init_seed_required.sql`:
@@ -26,11 +27,12 @@ mysql -uroot -p class_deduction_system < doc/migrations/20260727_seed_ppt_course
 - `doc/migrations/20260727_seed_ppt_course_matrix.sql`: customer course matrix seed loaded by `init_seed_required.sql`.
 - `doc/migrations/20260919_payment_allocation.sql`: adds course-level discount/payment snapshots and their allocation ledger; run after initializing the base schema.
 - `doc/migrations/20260924_sys_user_active_unique_keys.sql`: limits account uniqueness to active users and allows repeated soft deletion while preserving account history.
+- `doc/migrations/20260926_registration_managers_and_daily_log.sql`: adds immutable registration operator snapshots and the `MANAGER` role for daily registration reporting.
 - `doc/migrations/20260924_recurring_schedule_two_year_horizon.sql`: historical migration retained for existing installs; current scheduler ignores this legacy column.
 
 ## Required Seed Data
 
-- Roles: `ADMIN`, `STAFF`, `TEACHER`, `STUDENT`.
+- Roles: `ADMIN`, `STAFF`, `MANAGER`, `TEACHER`, `STUDENT`.
 - Permissions and role-permission mappings for the admin/staff/teacher surfaces.
 - Admin account: `admin`; default local password: `Jin2025`.
 - System dictionaries for user status, student status, teacher status, classroom status, package status, payment status, lesson statuses, ledger types, and teaching modes.

@@ -33,7 +33,7 @@ public class ProductGradeConfigController {
 
     @GetMapping
     @Operation(summary = "List grade configs of a course product (auto-discovered from price rows)")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<List<ProductGradeConfigVO>> listGradeConfigs(@PathVariable Long productId) {
         return ApiResponse.success(productGradeConfigService.listGradeConfigs(productId));
     }

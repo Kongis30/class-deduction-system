@@ -24,12 +24,16 @@
           <strong>{{ monthStats.count }}</strong>
         </span>
         <span class="workbook-toolbar__stat">
+          <template v-if="!isManager">
           <em>Paid</em>
           <strong>{{ formatMoney(monthStats.paid) }}</strong>
+          </template>
         </span>
         <span class="workbook-toolbar__stat">
+          <template v-if="!isManager">
           <em>Balance</em>
           <strong>{{ formatMoney(monthStats.balance) }}</strong>
+          </template>
         </span>
       </div>
       <div class="workbook-toolbar__export">
@@ -247,12 +251,13 @@
                 <td class="workbook-cell--center" :class="{ 'workbook-cell--renewal-due': isPeriodRenewalDue(row) }">
                   {{ formatPeriod(row) }}
                 </td>
-                <td class="workbook-cell--money">{{ formatMoney(row.linePriceAmount) }}</td>
-                <td class="workbook-cell--money">{{ formatMoney(row.pickupFeeAmount) }}</td>
-                <td class="workbook-cell--money">{{ formatMoney(row.dropoffFeeAmount) }}</td>
-                <td class="workbook-cell--money">{{ formatMoney(row.discountAmount) }}</td>
-                <td class="workbook-cell--money">{{ formatMoney(row.paidAmount) }}</td>
+                <td v-if="!isManager" class="workbook-cell--money">{{ formatMoney(row.linePriceAmount) }}</td>
+                <td v-if="!isManager" class="workbook-cell--money">{{ formatMoney(row.pickupFeeAmount) }}</td>
+                <td v-if="!isManager" class="workbook-cell--money">{{ formatMoney(row.dropoffFeeAmount) }}</td>
+                <td v-if="!isManager" class="workbook-cell--money">{{ formatMoney(row.discountAmount) }}</td>
+                <td v-if="!isManager" class="workbook-cell--money">{{ formatMoney(row.paidAmount) }}</td>
                 <td
+                  v-if="!isManager"
                   class="workbook-cell--money"
                   :class="{ 'workbook-cell--balance-due': Number(row.balanceAmount ?? 0) < 0 }"
                 >
@@ -330,7 +335,7 @@
         Pay
       </button>
       <button
-        v-if="canRefundFromDataSummary(studentContextMenu.row)"
+        v-if="!isManager && canRefundFromDataSummary(studentContextMenu.row)"
         type="button"
         role="menuitem"
         @click="openOrderAction('refund')"
@@ -385,7 +390,7 @@ import { fetchDataSummary, type DataSummaryRow } from '@/api/data-summary';
 import { fetchAllCourseProducts, saveCourseProductTabOrder } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { useAuthStore } from '@/stores/auth';
-import { isAdminUser } from '@/types/auth';
+import { isAdminUser, isManagerUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
 import { useRouter } from 'vue-router';
 import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
@@ -471,6 +476,9 @@ interface ProductTab {
 type SaturdayRosterView = 'FALL' | 'SPRING' | 'ALL';
 type DataSummaryDisplayRow = DataSummaryRow;
 
+const authStore = useAuthStore();
+const isManager = isManagerUser(authStore.currentUser);
+
 const saturdayRosterOptions: Array<{ value: SaturdayRosterView; label: string }> = [
   { value: 'FALL', label: 'Fall roster' },
   { value: 'SPRING', label: 'Spring roster' },
@@ -484,7 +492,7 @@ const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
 const ORDER_SAVE_DEBOUNCE_MS = 300;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
 
-const columns: WorkbookColumn[] = [
+const allColumns: WorkbookColumn[] = [
   { key: 'campus', label: 'Campus', width: 112, filterType: 'select' },
   { key: 'studentClass', label: 'Class', width: 82, filterType: 'select' },
   { key: 'studentName', label: 'Student Name', width: 150, filterType: 'text' },
@@ -506,7 +514,10 @@ const columns: WorkbookColumn[] = [
   { key: 'balance', label: 'Balance', width: 104, filterType: 'number' },
 ];
 
-const authStore = useAuthStore();
+const columns: WorkbookColumn[] = isManager
+  ? allColumns.filter((column) => !['tuition', 'pickupFee', 'dropoffFee', 'discount', 'paid', 'balance'].includes(column.key))
+  : allColumns;
+
 const router = useRouter();
 const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);

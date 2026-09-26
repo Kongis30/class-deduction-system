@@ -29,7 +29,7 @@ public class CourseCategoryController {
 
     @GetMapping
     @Operation(summary = "List all course categories")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<List<CourseCategoryVO>> listCategories() {
         return ApiResponse.success(courseCategoryService.listAll());
     }

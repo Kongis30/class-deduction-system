@@ -83,7 +83,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
     @Override
     public DataSummaryResponseVO getSummary(DataSummaryQuery query) {
-        List<EnrollmentOrderEntity> orders = listOrders(query);
+        Set<Long> transportOrderIds = Boolean.TRUE.equals(query.getTransportOnly())
+                ? new LinkedHashSet<>(enrollmentOrderMapper.selectTransportOrderIds())
+                : null;
+        if (transportOrderIds != null && transportOrderIds.isEmpty()) {
+            return emptyResponse();
+        }
+        List<EnrollmentOrderEntity> orders = listOrders(query, transportOrderIds);
         if (orders.isEmpty()) {
             return emptyResponse();
         }
@@ -267,14 +273,19 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         );
     }
 
-    private List<EnrollmentOrderEntity> listOrders(DataSummaryQuery query) {
+    private List<EnrollmentOrderEntity> listOrders(DataSummaryQuery query, Set<Long> transportOrderIds) {
         return enrollmentOrderMapper.selectList(new LambdaQueryWrapper<EnrollmentOrderEntity>()
+                .in(transportOrderIds != null, EnrollmentOrderEntity::getId, transportOrderIds)
+                .ge(query.getSavedAtFrom() != null, EnrollmentOrderEntity::getCreatedAt, query.getSavedAtFrom())
+                .lt(query.getSavedAtBefore() != null, EnrollmentOrderEntity::getCreatedAt, query.getSavedAtBefore())
+                .eq(query.getRegistrationOperatorUserId() != null,
+                        EnrollmentOrderEntity::getRegistrationOperatorUserId, query.getRegistrationOperatorUserId())
                 .eq(query.getCampusId() != null, EnrollmentOrderEntity::getCampusId, query.getCampusId())
                 .eq(StringUtils.hasText(query.getPaymentStatus()), EnrollmentOrderEntity::getPaymentStatus, query.getPaymentStatus())
                 .ge(query.getPeriodStartDate() != null, EnrollmentOrderEntity::getPeriodStartDate, query.getPeriodStartDate())
                 .le(query.getPeriodEndDate() != null, EnrollmentOrderEntity::getPeriodEndDate, query.getPeriodEndDate())
-                .ne(EnrollmentOrderEntity::getOrderStatus, "CANCELLED")
-                .ne(EnrollmentOrderEntity::getPaymentStatus, "REFUNDED")
+                .ne(!Boolean.TRUE.equals(query.getIncludeInactiveOrders()), EnrollmentOrderEntity::getOrderStatus, "CANCELLED")
+                .ne(!Boolean.TRUE.equals(query.getIncludeInactiveOrders()), EnrollmentOrderEntity::getPaymentStatus, "REFUNDED")
                 .orderByDesc(EnrollmentOrderEntity::getSignupDate)
                 .orderByDesc(EnrollmentOrderEntity::getCreatedAt));
     }
@@ -849,7 +860,11 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 oneOnOne ? privateLessonParticipantCount : null,
                 resolveDisplayItemStatus(item, classEnrollment),
                 item == null ? null : item.getStoppedConsumedAmount(),
-                item == null ? null : item.getStoppedSessionCount()
+                item == null ? null : item.getStoppedSessionCount(),
+                order.getCreatedAt(),
+                order.getRegistrationOperatorUserId() != null ? order.getRegistrationOperatorUserId()
+                        : (order.getCashierUserId() != null ? order.getCashierUserId() : order.getCreatedBy()),
+                order.getRegistrationOperatorName() != null ? order.getRegistrationOperatorName() : order.getHandledByName()
         );
     }
 

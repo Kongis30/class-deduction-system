@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @RequestMapping("/v1/system/lesson-status-rules")
 @Tag(name = "System - Lesson Status Rules")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class LessonStatusRuleController {
 
     private final LessonStatusRuleService lessonStatusRuleService;

@@ -31,7 +31,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @RequestMapping("/v1/system/notification-templates")
 @Tag(name = "System - Notification Templates")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class NotificationTemplateController {
 
     private final SystemNotificationService systemNotificationService;

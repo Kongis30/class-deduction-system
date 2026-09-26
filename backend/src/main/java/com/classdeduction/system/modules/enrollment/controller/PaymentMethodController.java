@@ -23,7 +23,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/payment-methods")
 @Tag(name = "Enrollment - Payment Methods")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class PaymentMethodController {
 
     private final PaymentMethodService paymentMethodService;

@@ -22,7 +22,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/campuses")
 @Tag(name = "Base Data - Campuses")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class CampusController {
 
     private final CampusService campusService;

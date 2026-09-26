@@ -140,6 +140,8 @@ This separation is required so the system can safely support leave, reschedules,
 
 `enrollment_order` stores registration-level snapshots such as campus, signup date, period dates, student profile fields, pickup/dropoff information, fee details, and balance. This keeps historical registration records stable when the current student profile changes.
 
+`registration_operator_user_id` and `registration_operator_name` preserve who saved an order, separately from the cashier identity. Daily registration history uses `created_at` as the saved date and these snapshots for operator attribution.
+
 `enrollment_order_item` stores the line-level snapshot from the registration form, including Register Class, Detail, final price, original configured price, manual price override flag, one-on-one hours, and teacher. This supports the new requirement that one registration form can contain multiple course rows.
 
 ### Structured Course Price Options

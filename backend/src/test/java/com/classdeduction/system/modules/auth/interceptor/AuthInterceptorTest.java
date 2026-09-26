@@ -63,6 +63,34 @@ class AuthInterceptorTest {
     }
 
     @Test
+    void shouldAllowManagerOnRegularStaffOperations() throws Exception {
+        AuthInterceptor interceptor = new AuthInterceptor(new AuthProperties(), authService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer manager-token");
+        when(authService.requireCurrentUser("Bearer manager-token"))
+                .thenReturn(new CurrentUserResponse(1003L, "manager", "Registration Manager", "STAFF", null, null, List.of("MANAGER")));
+
+        boolean allowed = interceptor.preHandle(request, new MockHttpServletResponse(),
+                new HandlerMethod(new DummyController(), DummyController.class.getMethod("regularStaffOperation")));
+
+        assertThat(allowed).isTrue();
+    }
+
+    @Test
+    void shouldRejectManagerFromRefundOrReceiptCorrectionOperations() throws Exception {
+        AuthInterceptor interceptor = new AuthInterceptor(new AuthProperties(), authService);
+        MockHttpServletRequest request = new MockHttpServletRequest();
+        request.addHeader(HttpHeaders.AUTHORIZATION, "Bearer manager-token");
+        when(authService.requireCurrentUser("Bearer manager-token"))
+                .thenReturn(new CurrentUserResponse(1003L, "manager", "Registration Manager", "STAFF", null, null, List.of("MANAGER")));
+
+        assertThatThrownBy(() -> interceptor.preHandle(request, new MockHttpServletResponse(),
+                new HandlerMethod(new DummyController(), DummyController.class.getMethod("refundOrCorrectReceipt"))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("You do not have permission to access this resource.");
+    }
+
+    @Test
     void shouldBypassRoleCheckWhenInterceptorDisabled() throws Exception {
         AuthProperties authProperties = new AuthProperties();
         authProperties.setInterceptorEnabled(false);
@@ -74,10 +102,18 @@ class AuthInterceptorTest {
         assertThat(allowed).isTrue();
     }
 
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     static class DummyController {
 
-        @RequireRoles({"ADMIN", "STAFF"})
+        @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
         public void staffOnly() {
+        }
+
+        public void regularStaffOperation() {
+        }
+
+        @RequireRoles({"ADMIN", "STAFF"})
+        public void refundOrCorrectReceipt() {
         }
     }
 }

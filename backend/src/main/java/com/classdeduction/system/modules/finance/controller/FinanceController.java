@@ -36,7 +36,7 @@ public class FinanceController {
 
     @GetMapping("/pay-rates")
     @Operation(summary = "List teacher pay rates")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<List<TeacherPayRateVO>> listPayRates(
             @RequestParam(required = false) Long teacherId,
             @RequestParam(required = false) Long courseProductId) {
@@ -45,14 +45,14 @@ public class FinanceController {
 
     @PostMapping("/pay-rates")
     @Operation(summary = "Create or update a pay rate")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<Long> savePayRate(@Valid @RequestBody TeacherPayRateSaveRequest request) {
         return ApiResponse.success("Pay rate saved.", payRateService.savePayRate(request));
     }
 
     @DeleteMapping("/pay-rates/{id}")
     @Operation(summary = "Delete a pay rate")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<String> deletePayRate(@PathVariable Long id) {
         payRateService.deletePayRate(id);
         return ApiResponse.success("Pay rate deleted.");
@@ -62,7 +62,7 @@ public class FinanceController {
 
     @GetMapping("/payments/unpaid-lessons")
     @Operation(summary = "Query unpaid lessons for a teacher in a period")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<List<UnpaidLessonVO>> queryUnpaidLessons(@Valid UnpaidLessonQuery query) {
         return ApiResponse.success(paymentService.queryUnpaidLessons(query));
     }
@@ -79,7 +79,7 @@ public class FinanceController {
 
     @GetMapping("/payments")
     @Operation(summary = "List payment history")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<PageResponse<TeacherPaymentVO>> pagePayments(
             @RequestParam(required = false) Long teacherId,
             @RequestParam(required = false) String status,
@@ -90,7 +90,7 @@ public class FinanceController {
 
     @GetMapping("/payments/{id}")
     @Operation(summary = "Get payment detail with items")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     public ApiResponse<TeacherPaymentVO> getPaymentDetail(@PathVariable Long id) {
         return ApiResponse.success(paymentService.getPaymentDetail(id));
     }

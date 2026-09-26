@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @RequestMapping("/v1/schedule/rules")
 @Tag(name = "Schedule - Recurring Rules")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class RecurringScheduleRuleController {
 
     private final RecurringScheduleRuleService recurringScheduleRuleService;

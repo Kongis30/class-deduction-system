@@ -28,7 +28,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/course-products")
 @Tag(name = "Base Data - Course Products")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class CourseProductController {
 
     private final CourseProductService courseProductService;

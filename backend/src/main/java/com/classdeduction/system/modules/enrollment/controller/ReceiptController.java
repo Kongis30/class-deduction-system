@@ -24,7 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/receipts")
 @Tag(name = "Enrollment - Receipts")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class ReceiptController {
 
     private final ReceiptService receiptService;

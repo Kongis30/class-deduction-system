@@ -11,6 +11,7 @@ import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.RefundCoursePreviewVO;
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 
 public interface EnrollmentOrderService {
 
@@ -28,6 +29,8 @@ public interface EnrollmentOrderService {
      * 创建报名订单并生成课时包。
      */
     EnrollmentCreateResultVO createOrder(EnrollmentCreateRequest request);
+
+    EnrollmentCreateResultVO createOrder(EnrollmentCreateRequest request, CurrentUserResponse operator);
 
     /**
      * 更新报名订单。

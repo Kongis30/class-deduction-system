@@ -35,7 +35,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/orders")
 @Tag(name = "Enrollment - Orders")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class EnrollmentOrderController {
 
     private final EnrollmentOrderService enrollmentOrderService;
@@ -54,12 +54,19 @@ public class EnrollmentOrderController {
 
     @PostMapping
     @Operation(summary = "创建报名单并生成课时包")
-    public ApiResponse<EnrollmentCreateResultVO> createOrder(@Valid @RequestBody EnrollmentCreateRequest request) {
-        return ApiResponse.success("Created successfully.", enrollmentOrderService.createOrder(request));
+    public ApiResponse<EnrollmentCreateResultVO> createOrder(
+            @Valid @RequestBody EnrollmentCreateRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        if (currentUser.roleCodes().contains("MANAGER")) {
+            request.setHandledByName(currentUser.displayName());
+            request.setCashierUserId(currentUser.userId());
+        }
+        return ApiResponse.success("Created successfully.", enrollmentOrderService.createOrder(request, currentUser));
     }
 
     @PutMapping("/{id}")
     @Operation(summary = "更新报名单")
+    @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<Void> updateOrder(
             @Parameter(description = "报名单ID") @PathVariable Long id,
             @Valid @RequestBody EnrollmentOrderUpdateRequest request) {
@@ -69,6 +76,7 @@ public class EnrollmentOrderController {
 
     @PutMapping("/{id}/correction")
     @Operation(summary = "编辑已保存收据并同步报名下游数据")
+    @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<Void> correctOrder(
             @Parameter(description = "报名单ID") @PathVariable Long id,
             @Valid @RequestBody EnrollmentOrderCorrectionRequest request) {
@@ -85,6 +93,7 @@ public class EnrollmentOrderController {
 
     @PostMapping("/{id}/refund")
     @Operation(summary = "报名单退款（部分退款仅更新财务，全额退款同时退课）")
+    @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<ReceiptRecordVO> refundOrder(
             @Parameter(description = "报名单ID") @PathVariable Long id,
             @Valid @RequestBody RefundRequest request,

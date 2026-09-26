@@ -27,7 +27,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/student-credits")
 @Tag(name = "Finance - Student Credit")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class StudentCreditController {
 
     private final StudentCreditService studentCreditService;
@@ -46,6 +46,7 @@ public class StudentCreditController {
 
     @PostMapping("/student/{studentId}/adjust")
     @Operation(summary = "Adjust one student's Credit balance")
+    @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<Void> adjust(
             @PathVariable Long studentId,
             @Valid @RequestBody StudentCreditAdjustmentRequest request,

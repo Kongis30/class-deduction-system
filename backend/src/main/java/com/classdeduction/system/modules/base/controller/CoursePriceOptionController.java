@@ -34,7 +34,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/course-price-options")
 @Tag(name = "Base Data - Course Price Options")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class CoursePriceOptionController {
 
     private final CoursePriceOptionService coursePriceOptionService;

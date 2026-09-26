@@ -34,6 +34,8 @@ public class AuthBootstrapInitializer implements ApplicationRunner {
                 "System administrator with full permissions");
         RoleEntity staffRole = ensureDefaultRole(110L, "STAFF", "Staff",
                 "Internal staff responsible for day-to-day operations");
+        ensureDefaultRole(null, "MANAGER", "Registration manager",
+                "Back-office role that can collect payments but cannot refund or pay out");
         ensureDefaultRole(120L, "TEACHER", "Teacher",
                 "Teacher role for personal timetable and lesson confirmation");
         ensureDefaultRole(130L, "STUDENT", "Student",

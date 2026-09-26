@@ -65,7 +65,7 @@ public class LessonOccurrenceController {
     }
 
     @GetMapping("/student/{studentId}/active")
-    @RequireRoles({"ADMIN", "STAFF"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Get student's active future schedule slots for calendar display")
     public ApiResponse<List<StudentScheduleSlotVO>> getActiveStudentSchedule(@PathVariable Long studentId) {
         return ApiResponse.success(lessonOccurrenceService.getActiveStudentSchedule(studentId));

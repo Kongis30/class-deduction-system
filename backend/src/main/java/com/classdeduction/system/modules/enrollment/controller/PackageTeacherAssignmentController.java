@@ -21,7 +21,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/enrollment/package-teachers")
 @Tag(name = "Enrollment - Package Teachers")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class PackageTeacherAssignmentController {
 
     private final PackageTeacherAssignmentService packageTeacherAssignmentService;

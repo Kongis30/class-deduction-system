@@ -1,5 +1,5 @@
 import type { AppMenuItem } from '@/types/menu';
-import { getUserWorkspace, isAdminOrStaffUser, type AuthUser } from '@/types/auth';
+import { getUserWorkspace, isAdminOrStaffUser, isAdminUser, type AuthUser } from '@/types/auth';
 
 export const dailyMenus: AppMenuItem[] = [
   {
@@ -37,6 +37,12 @@ export const dailyMenus: AppMenuItem[] = [
     title: 'Student Credit',
     icon: 'Money',
     path: '/student-credit',
+  },
+  {
+    key: 'daily-registrations',
+    title: 'Daily Registrations',
+    icon: 'DataAnalysis',
+    path: '/daily-registrations',
   },
 ];
 
@@ -148,9 +154,16 @@ export function getStudentMenus(): AppMenuItem[] {
  * Returns low-frequency navigation separated from daily work entries.
  */
 export function getSecondaryMenusForUser(user: AuthUser | null): AppMenuItem[] {
-  return isAdminOrStaffUser(user)
-    ? [adminGuideMenu, adminPeopleMenu, adminEnrollmentMenu, adminCoursesMenu, adminFinanceMenu, adminSystemMenu]
-    : [];
+  if (!isAdminOrStaffUser(user)) return [];
+  const peopleMenu = isAdminUser(user)
+    ? { ...adminPeopleMenu, children: [...(adminPeopleMenu.children ?? []), {
+      key: 'manager-accounts',
+      title: 'Manager accounts',
+      description: 'Create and manage registration managers',
+      path: '/admin/config/managers',
+    }] }
+    : adminPeopleMenu;
+  return [adminGuideMenu, peopleMenu, adminEnrollmentMenu, adminCoursesMenu, adminFinanceMenu, adminSystemMenu];
 }
 
 /**

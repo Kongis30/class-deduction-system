@@ -22,7 +22,7 @@ import java.util.List;
 @RequiredArgsConstructor
 @RequestMapping("/v1/base/discount-presets")
 @Tag(name = "Base Data - Discount Presets")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class DiscountPresetController {
 
     private final DiscountPresetService discountPresetService;

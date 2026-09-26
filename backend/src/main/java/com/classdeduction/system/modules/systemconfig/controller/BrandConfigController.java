@@ -27,7 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @RequestMapping("/v1/system/brand-config/current")
 @Tag(name = "System - Brand Config")
-@RequireRoles({"ADMIN", "STAFF"})
+@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class BrandConfigController {
 
     private final SystemNotificationService systemNotificationService;
@@ -39,6 +39,7 @@ public class BrandConfigController {
     }
 
     @PutMapping
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Create or update current brand config")
     public ApiResponse<BrandConfigVO> updateCurrentBrandConfig(
             @Valid @RequestBody BrandConfigUpdateRequest request,

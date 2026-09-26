@@ -13,6 +13,11 @@ export interface DataSummaryQuery {
   paymentStatus?: string;
   onlyAlerts?: boolean;
   onlyNeedsReview?: boolean;
+  transportOnly?: boolean;
+  includeInactiveOrders?: boolean;
+  savedAtFrom?: string;
+  savedAtBefore?: string;
+  registrationOperatorUserId?: EntityId;
 }
 
 export interface DataSummaryGroup {
@@ -66,15 +71,18 @@ export interface DataSummaryRow {
   itemStatus?: string;
   stoppedConsumedAmount?: number;
   stoppedSessionCount?: number;
+  registrationSavedAt?: string;
+  registrationOperatorUserId?: EntityId;
+  registrationOperatorName?: string;
   paymentStatus: string;
   linePriceAmount?: number;
-  pickupFeeAmount: number;
-  dropoffFeeAmount: number;
-  extraFeeAmount: number;
-  discountAmount: number;
-  amountDue: number;
-  paidAmount: number;
-  balanceAmount: number;
+  pickupFeeAmount?: number;
+  dropoffFeeAmount?: number;
+  extraFeeAmount?: number;
+  discountAmount?: number;
+  amountDue?: number;
+  paidAmount?: number;
+  balanceAmount?: number;
   totalHours?: number;
   usedHours?: number;
   remainingHours?: number;

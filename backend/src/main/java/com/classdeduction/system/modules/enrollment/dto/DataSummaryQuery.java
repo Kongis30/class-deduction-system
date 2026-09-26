@@ -6,6 +6,7 @@ import lombok.Setter;
 import org.springframework.format.annotation.DateTimeFormat;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Getter
 @Setter
@@ -43,4 +44,19 @@ public class DataSummaryQuery {
 
     @Schema(description = "Only return rows with data consistency issues")
     private Boolean onlyNeedsReview;
+
+    @Schema(description = "Limit source orders to registrations with pickup or drop-off requirements")
+    private Boolean transportOnly;
+
+    @Schema(description = "Include cancelled and refunded orders (used by the historical registration log)")
+    private Boolean includeInactiveOrders;
+
+    @Schema(description = "Registration saved at or after this timestamp")
+    private LocalDateTime savedAtFrom;
+
+    @Schema(description = "Registration saved before this timestamp")
+    private LocalDateTime savedAtBefore;
+
+    @Schema(description = "Registration operator user ID")
+    private Long registrationOperatorUserId;
 }

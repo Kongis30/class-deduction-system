@@ -35,6 +35,7 @@ import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,6 +52,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -158,6 +160,35 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldSkipSummaryJoinsWhenTransportRosterHasNoMatchingOrders() {
+        DataSummaryQuery query = new DataSummaryQuery();
+        query.setTransportOnly(true);
+        when(enrollmentOrderMapper.selectTransportOrderIds()).thenReturn(Collections.emptyList());
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(query);
+
+        assertThat(response.rows()).isEmpty();
+        verify(enrollmentOrderMapper).selectTransportOrderIds();
+        verify(enrollmentOrderMapper, never()).selectList(any());
+    }
+
+    @Test
+    void shouldLimitTransportRosterSummaryToOrdersWithTransportData() {
+        DataSummaryQuery query = new DataSummaryQuery();
+        query.setTransportOnly(true);
+        when(enrollmentOrderMapper.selectTransportOrderIds()).thenReturn(List.of(42L));
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        dataSummaryService.getSummary(query);
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        ArgumentCaptor<LambdaQueryWrapper<EnrollmentOrderEntity>> wrapperCaptor =
+                ArgumentCaptor.forClass((Class) LambdaQueryWrapper.class);
+        verify(enrollmentOrderMapper).selectList(wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().getSqlSegment()).contains("id IN");
+    }
+
+    @Test
     void shouldReturnPaymentReviewCodesWhenPaymentNetDiffersFromOrderSnapshot() {
         EnrollmentOrderEntity order = order(1L, "100.00", "60.00", "40.00");
         when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
@@ -186,6 +217,32 @@ class DataSummaryServiceImplTest {
         assertThat(response.campusSummaries()).singleElement()
                 .extracting(DataSummaryResponseVO.SummaryGroupVO::outstandingAmount)
                 .isEqualTo(new BigDecimal("-40.00"));
+    }
+
+    @Test
+    void shouldRemoveEveryMoneyAmountFromManagerDataSummaryProjection() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "60.00", "40.00");
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "60.00")));
+
+        DataSummaryResponseVO managerView = dataSummaryService.getSummary(new DataSummaryQuery())
+                .withoutFinancialAmounts();
+
+        assertThat(managerView.totalIncomeAmount()).isNull();
+        assertThat(managerView.totalOutstandingAmount()).isNull();
+        assertThat(managerView.campusSummaries()).allSatisfy(summary -> {
+            assertThat(summary.incomeAmount()).isNull();
+            assertThat(summary.outstandingAmount()).isNull();
+        });
+        assertThat(managerView.rows()).singleElement().satisfies(row -> {
+            assertThat(row.linePriceAmount()).isNull();
+            assertThat(row.amountDue()).isNull();
+            assertThat(row.paidAmount()).isNull();
+            assertThat(row.balanceAmount()).isNull();
+            assertThat(row.orderId()).isEqualTo(1L);
+        });
+        String json = new ObjectMapper().registerModule(new JavaTimeModule()).valueToTree(managerView).toString();
+        assertThat(json).doesNotContain("totalIncomeAmount", "linePriceAmount", "amountDue", "paidAmount", "balanceAmount");
     }
 
     @Test
