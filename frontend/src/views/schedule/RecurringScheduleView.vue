@@ -70,19 +70,21 @@
             <div v-else-if="studentPackages.length === 0" class="col-panel__hint">
               No active packages for this student.
             </div>
-            <div
-              v-for="pkg in studentPackages"
-              :key="pkg.id"
-              class="col-item"
-              :class="{ 'col-item--active': selectedPackageId === pkg.id }"
-              @click="onPackageSelect(pkg)"
-            >
-              <div class="col-item__stack">
-                <span class="col-item__name">{{ pkg.packageName }}</span>
-                <span class="col-item__sub">{{ pkg.packageStatus }} · {{ projectedRemainingForPackage(pkg) }}h remaining</span>
+            <template v-else>
+              <div
+                v-for="pkg in studentPackages"
+                :key="pkg.id"
+                class="col-item"
+                :class="{ 'col-item--active': selectedPackageId === pkg.id }"
+                @click="onPackageSelect(pkg)"
+              >
+                <div class="col-item__stack">
+                  <span class="col-item__name">{{ pkg.packageName }}</span>
+                  <span class="col-item__sub">{{ pkg.packageStatus }} · {{ projectedRemainingForPackage(pkg) }}h remaining</span>
+                </div>
+                <el-icon v-if="selectedPackageId === pkg.id" color="#409eff"><ArrowRight /></el-icon>
               </div>
-              <el-icon v-if="selectedPackageId === pkg.id" color="#409eff"><ArrowRight /></el-icon>
-            </div>
+            </template>
           </div>
         </aside>
 
@@ -791,6 +793,7 @@ interface WeeklyAdjustmentRow {
 }
 
 const loadingPackages = ref(false);
+let packageLoadSequence = 0;
 const route = useRoute();
 const editDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
@@ -1307,8 +1310,11 @@ const editWeekMonday = computed(() => {
 
 // ─── Student selection ─────────────────────────
 async function onStudentSelect(id: EntityId) {
+  // 快速切换学生时丢弃较晚返回的旧请求，避免覆盖当前选择。
+  const requestSequence = ++packageLoadSequence;
   selectedStudentId.value = id;
   selectedPackageId.value = null;
+  studentPackages.value = [];
   allPackageRules.value = {};
   classGroupOccupiedSlots.value = [];
   currentWeekOccurrences.value = [];
@@ -1320,12 +1326,15 @@ async function onStudentSelect(id: EntityId) {
       teachingMode: 'ONE_ON_ONE',
       pageSize: 50,
     });
+    if (requestSequence !== packageLoadSequence) return;
     studentPackages.value = res.data.data.records;
-    await loadAllPackageRules();
-  } catch {
-    studentPackages.value = [];
-  } finally {
     loadingPackages.value = false;
+    // 排课规则用于冲突检查，后台加载即可，不阻塞已取得的课包列表。
+    void loadAllPackageRules(studentPackages.value, requestSequence);
+  } catch {
+    if (requestSequence === packageLoadSequence) studentPackages.value = [];
+  } finally {
+    if (requestSequence === packageLoadSequence) loadingPackages.value = false;
   }
   loadEnrolledClassGroups(id);
   loadCurrentWeekOccurrences(id);
@@ -1420,8 +1429,10 @@ async function saveDeductedHours() {
 }
 
 // ─── Load rules for ALL packages ────────────────
-async function loadAllPackageRules() {
-  const packages = studentPackages.value;
+async function loadAllPackageRules(
+  packages: CoursePackageItem[] = studentPackages.value,
+  requestSequence?: number,
+) {
   if (packages.length === 0) {
     allPackageRules.value = {};
     return;
@@ -1445,7 +1456,9 @@ async function loadAllPackageRules() {
         map[String(r.value.packageId)] = r.value.rule;
     }
   }
-  allPackageRules.value = map;
+  if (requestSequence == null || requestSequence === packageLoadSequence) {
+    allPackageRules.value = map;
+  }
 }
 
 // ─── Load enrolled class group slots ────────────
