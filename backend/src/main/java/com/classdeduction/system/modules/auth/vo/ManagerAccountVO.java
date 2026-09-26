@@ -10,6 +10,8 @@ public record ManagerAccountVO(
         String email,
         String status,
         LocalDateTime lastLoginAt,
-        String remark
+        String remark,
+        Long registrationCount,
+        Long uniqueStudentCount
 ) {
 }

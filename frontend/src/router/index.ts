@@ -36,7 +36,6 @@ const TeacherPayRatesView = () => import('@/views/finance/TeacherPayRatesView.vu
 const TeacherPaymentsView = () => import('@/views/finance/TeacherPaymentsView.vue');
 const MyPayrollView = () => import('@/views/finance/MyPayrollView.vue');
 const DailyRegistrationsView = () => import('@/views/enrollment/DailyRegistrationsView.vue');
-const ManagerAccountsView = () => import('@/views/system/ManagerAccountsView.vue');
 
 const routes: RouteRecordRaw[] = [
   {
@@ -245,12 +244,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'admin/config/managers',
         name: 'admin-config-managers',
-        component: ManagerAccountsView,
-        meta: {
-          title: 'Manager accounts',
-          section: 'People',
-          description: 'Create and manage registration manager accounts.',
-        },
+        redirect: { name: 'admin-config-people', query: { tab: 'managers' } },
       },
       {
         path: 'admin/config/students',

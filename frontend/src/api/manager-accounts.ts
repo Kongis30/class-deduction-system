@@ -11,6 +11,8 @@ export interface ManagerAccount {
   status: string;
   lastLoginAt?: string;
   remark?: string;
+  registrationCount: number;
+  uniqueStudentCount: number;
 }
 
 export interface ManagerAccountPayload {

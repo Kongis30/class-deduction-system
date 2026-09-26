@@ -2,14 +2,19 @@
   <div class="page-stack people-page">
     <section class="people-header">
       <div>
-        <span class="people-header__title">People</span>
+        <span class="people-header__title">People & accounts</span>
         <p class="people-header__hint">
-          Manage students and teachers here. Login access is handled inside each row, so staff do not need a separate Accounts page.
+          {{ headerHint }}
         </p>
       </div>
       <div class="people-header__actions">
-        <el-button type="primary" @click="openStudentCreate">Add student</el-button>
-        <el-button type="primary" plain @click="openTeacherCreate">Add teacher</el-button>
+        <template v-if="activeTab === 'students'">
+          <el-button type="primary" @click="openStudentCreate">Add student</el-button>
+        </template>
+        <template v-else-if="activeTab === 'teachers'">
+          <el-button type="primary" plain @click="openTeacherCreate">Add teacher</el-button>
+        </template>
+        <el-button v-else-if="activeTab === 'managers'" type="primary" @click="openManagerCreate">Add manager</el-button>
       </div>
     </section>
 
@@ -20,34 +25,46 @@
       <el-tab-pane label="Teachers" name="teachers">
         <TeachersView ref="teachersViewRef" />
       </el-tab-pane>
+      <el-tab-pane v-if="canManageManagers" label="Managers" name="managers">
+        <ManagerAccountsView ref="managerAccountsRef" />
+      </el-tab-pane>
     </el-tabs>
   </div>
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { isAdminUser } from '@/types/auth';
 
 import StudentsView from './StudentsView.vue';
 import TeachersView from './TeachersView.vue';
+import ManagerAccountsView from '../system/ManagerAccountsView.vue';
 
-type PeopleTab = 'students' | 'teachers';
+type PeopleTab = 'students' | 'teachers' | 'managers';
 
 const route = useRoute();
 const router = useRouter();
-const activeTab = ref<PeopleTab>(route.query.tab === 'teachers' ? 'teachers' : 'students');
+const authStore = useAuthStore();
+const canManageManagers = computed(() => isAdminUser(authStore.currentUser));
+const activeTab = ref<PeopleTab>(initialTab(route.query.tab, canManageManagers.value));
+const headerHint = computed(() => activeTab.value === 'managers'
+  ? 'Manage manager accounts and review each account’s registration history totals.'
+  : 'Manage student and teacher profiles. Login access is handled inside each row.');
 const studentsViewRef = ref<InstanceType<typeof StudentsView>>();
 const teachersViewRef = ref<InstanceType<typeof TeachersView>>();
+const managerAccountsRef = ref<InstanceType<typeof ManagerAccountsView>>();
 
 watch(
   () => route.query.tab,
   (tab) => {
-    activeTab.value = tab === 'teachers' ? 'teachers' : 'students';
+    activeTab.value = initialTab(tab, canManageManagers.value);
   },
 );
 
 function syncRouteTab(tab: string | number) {
-  const nextTab: PeopleTab = tab === 'teachers' ? 'teachers' : 'students';
+  const nextTab = initialTab(tab, canManageManagers.value);
   router.replace({
     name: 'admin-config-people',
     query: {
@@ -55,6 +72,12 @@ function syncRouteTab(tab: string | number) {
       tab: nextTab,
     },
   });
+}
+
+function initialTab(value: unknown, allowManagers: boolean): PeopleTab {
+  if (value === 'teachers') return 'teachers';
+  if (value === 'managers' && allowManagers) return 'managers';
+  return 'students';
 }
 
 async function openStudentCreate() {
@@ -67,6 +90,12 @@ async function openTeacherCreate() {
   activeTab.value = 'teachers';
   await syncTabAndRender('teachers');
   teachersViewRef.value?.openCreateDialog();
+}
+
+async function openManagerCreate() {
+  activeTab.value = 'managers';
+  await syncTabAndRender('managers');
+  managerAccountsRef.value?.openCreateDialog();
 }
 
 async function syncTabAndRender(tab: PeopleTab) {

@@ -84,7 +84,7 @@ Shared conventions:
 
 - `POST /api/v1/registration/intake` accepts `items[].discountAmount` and `discounts[].orderItemLineNo` so each discount can be tied to a course line. Each initial `payments[]` entry can include `allocations[]` with `orderItemLineNo` and `amount`; allocations must total that payment amount.
 - `GET /api/v1/daily-registrations?fromDate=YYYY-MM-DD&toDate=YYYY-MM-DD` returns student/course entries grouped by the order's saved timestamp in `America/New_York`, with collection totals and counts grouped by the saved operator.
-- `GET|POST /api/v1/auth/manager-accounts` and `PUT /api/v1/auth/manager-accounts/{id}` are administrator-only manager-account operations.
+- `GET|POST /api/v1/auth/manager-accounts` and `PUT /api/v1/auth/manager-accounts/{id}` are administrator-only manager-account operations. The account list includes all-time registration order totals and distinct student totals per manager.
 - `MANAGER` may save registrations and positive incoming payments. Refund, saved-receipt correction, student-credit balance adjustment, teacher-payment creation, and teacher-payment confirmation remain restricted to `ADMIN`/`STAFF`.
 - The `MANAGER` Data Summary response omits all monetary numeric fields; page rendering and workbook exports follow the same restriction.
 - `PUT /api/v1/enrollment/orders/{id}/correction` uses the same course line and initial-payment allocation fields when correcting a registration.

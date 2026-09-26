@@ -1,18 +1,12 @@
 <template>
   <div class="manager-accounts-page" v-loading="loading">
-    <header class="page-heading">
-      <div>
-        <h2>Manager Accounts</h2>
-        <p>Managers can register students and collect payments, but cannot issue refunds or payouts.</p>
-      </div>
-      <el-button type="primary" @click="openCreate">Add manager</el-button>
-    </header>
-
     <el-table :data="accounts" row-key="userId" empty-text="No manager accounts">
       <el-table-column prop="displayName" label="Name" min-width="180" />
       <el-table-column prop="username" label="Username" min-width="170" />
       <el-table-column prop="mobile" label="Phone" min-width="140" />
       <el-table-column prop="email" label="Email" min-width="190" />
+      <el-table-column prop="uniqueStudentCount" label="Students registered" width="160" align="right" />
+      <el-table-column prop="registrationCount" label="Registration orders" width="160" align="right" />
       <el-table-column label="Status" width="120">
         <template #default="{ row }">
           <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status }}</el-tag>
@@ -170,12 +164,10 @@ function dateTime(value?: string) {
   if (!value) return '—';
   return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
 }
+
+defineExpose({ openCreateDialog: openCreate });
 </script>
 
 <style scoped>
-.manager-accounts-page { display: grid; gap: 18px; padding: 20px; }
-.page-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-.page-heading h2 { margin: 0; color: #17324d; }
-.page-heading p { margin: 6px 0 0; color: #718096; font-size: 13px; }
-@media (max-width: 700px) { .page-heading { align-items: flex-start; flex-direction: column; } }
+.manager-accounts-page { display: grid; gap: 18px; }
 </style>

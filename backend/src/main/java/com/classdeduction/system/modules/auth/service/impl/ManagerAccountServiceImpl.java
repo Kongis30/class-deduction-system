@@ -11,16 +11,22 @@ import com.classdeduction.system.modules.auth.dto.ManagerAccountUpdateRequest;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
 import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
+import com.classdeduction.system.modules.auth.mapper.ManagerRegistrationStatsMapper;
 import com.classdeduction.system.modules.auth.mapper.RoleMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.auth.service.ManagerAccountService;
 import com.classdeduction.system.modules.auth.vo.ManagerAccountVO;
+import com.classdeduction.system.modules.auth.vo.ManagerRegistrationStatsVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -29,6 +35,7 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
     private final UserAccountMapper userAccountMapper;
     private final UserRoleMapper userRoleMapper;
     private final RoleMapper roleMapper;
+    private final ManagerRegistrationStatsMapper registrationStatsMapper;
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -37,7 +44,15 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
                 new Page<>(query.getPageNum(), query.getPageSize()),
                 managerAccountQuery(query)
                         .orderByDesc(UserAccountEntity::getCreatedAt));
-        return PageResponse.of(page.getRecords().stream().map(this::toVO).toList(),
+        var managers = page.getRecords();
+        Map<Long, ManagerRegistrationStatsVO> statsByUserId = managers.isEmpty()
+                ? Map.of()
+                : registrationStatsMapper.selectStatsByOperatorUserIds(
+                        managers.stream().map(UserAccountEntity::getId).toList()).stream()
+                .collect(Collectors.toMap(ManagerRegistrationStatsVO::getUserId, Function.identity()));
+        return PageResponse.of(managers.stream()
+                        .map(user -> toVO(user, statsByUserId.get(user.getId())))
+                        .toList(),
                 page.getTotal(), page.getCurrent(), page.getSize());
     }
 
@@ -129,8 +144,10 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
         }
     }
 
-    private ManagerAccountVO toVO(UserAccountEntity user) {
+    private ManagerAccountVO toVO(UserAccountEntity user, ManagerRegistrationStatsVO stats) {
         return new ManagerAccountVO(user.getId(), user.getUsername(), user.getDisplayName(),
-                user.getMobile(), user.getEmail(), user.getStatus(), user.getLastLoginAt(), user.getRemark());
+                user.getMobile(), user.getEmail(), user.getStatus(), user.getLastLoginAt(), user.getRemark(),
+                stats == null ? 0L : stats.getRegistrationCount(),
+                stats == null ? 0L : stats.getUniqueStudentCount());
     }
 }
