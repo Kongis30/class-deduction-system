@@ -170,6 +170,66 @@
   border-left: 4px solid transparent;
 }
 
+/* Workbook 表格筛选弹层共用 Data Summary 的紧凑布局。 */
+.workbook-filter-popper {
+  padding: 12px !important;
+}
+
+.workbook-filter {
+  display: grid;
+  gap: 12px;
+}
+
+.workbook-filter > strong {
+  color: #303133;
+  font-size: 13px;
+}
+
+.workbook-filter .el-select,
+.workbook-filter .el-date-editor {
+  width: 100%;
+}
+
+.workbook-filter-section {
+  display: grid;
+  gap: 6px;
+}
+
+.workbook-filter-label {
+  color: #606266;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workbook-sort-buttons {
+  display: flex;
+  width: 100%;
+}
+
+.workbook-sort-buttons .el-button {
+  flex: 1;
+}
+
+.workbook-number-filter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: #909399;
+  font-size: 12px;
+}
+
+.workbook-number-filter .el-input-number {
+  width: 100%;
+}
+
+.workbook-filter-actions {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid #ebeef5;
+  padding-top: 6px;
+}
+
 .workbook-data-row td {
   background: #dcebf8;
 }

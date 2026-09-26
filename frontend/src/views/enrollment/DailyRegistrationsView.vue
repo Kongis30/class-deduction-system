@@ -1,8 +1,8 @@
 <template>
-  <div class="daily-workbook-page" v-loading="loading">
-    <div class="daily-workbook-toolbar">
-      <div class="daily-workbook-toolbar__filters">
-        <span class="daily-workbook-toolbar__label">Saved date</span>
+  <div class="data-summary-page daily-workbook-page" v-loading="loading">
+    <div class="workbook-toolbar">
+      <div class="workbook-toolbar__month daily-workbook-toolbar__filters">
+        <span class="workbook-toolbar__label">Saved date</span>
         <el-date-picker
           v-model="dateRange"
           type="daterange"
@@ -24,17 +24,17 @@
         <el-button size="small" type="primary" @click="loadReport">Search</el-button>
       </div>
 
-      <div class="daily-workbook-toolbar__stats">
-        <span><em>Course records</em><strong>{{ filteredStats.courses }}</strong></span>
-        <span><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
-        <span><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
-        <span><em>Due</em><strong>{{ money(filteredStats.due) }}</strong></span>
-        <span><em>Collected</em><strong>{{ money(filteredStats.collected) }}</strong></span>
-        <span><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
+      <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
+        <span class="workbook-toolbar__stat"><em>Course records</em><strong>{{ filteredStats.courses }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Due</em><strong>{{ money(filteredStats.due) }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Collected</em><strong>{{ money(filteredStats.collected) }}</strong></span>
+        <span class="workbook-toolbar__stat"><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
       </div>
 
-      <div class="daily-workbook-toolbar__actions">
-        <el-button size="small" :disabled="filteredRows.length === 0" @click="clearAllFilters">Clear filters</el-button>
+      <div class="workbook-toolbar__export daily-workbook-toolbar__actions">
+        <el-button size="small" :disabled="!hasAnyColumnFilter" @click="clearAllFilters">Clear filters</el-button>
         <el-button size="small" type="primary" :disabled="filteredRows.length === 0" @click="exportExcel">Export Excel</el-button>
       </div>
     </div>
@@ -45,8 +45,8 @@
           <strong>Operator totals</strong>
           <span>Counts summarize registrations saved during the selected date range.</span>
         </div>
-        <div class="daily-sheet__scroll daily-sheet__scroll--compact">
-          <table class="daily-workbook-table operator-table">
+        <div class="workbook-scroll daily-sheet__scroll daily-sheet__scroll--compact">
+          <table class="workbook-table operator-table">
             <colgroup>
               <col style="width: 220px">
               <col style="width: 125px">
@@ -58,23 +58,23 @@
             <thead>
               <tr>
                 <th>Handled by</th>
-                <th class="number-cell">Students</th>
-                <th class="number-cell">Orders</th>
-                <th class="number-cell">Course records</th>
-                <th class="money-cell">Amount due</th>
-                <th class="money-cell">Collected</th>
+                <th>Students</th>
+                <th>Orders</th>
+                <th>Course records</th>
+                <th>Amount due</th>
+                <th>Collected</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="operator in visibleOperators" :key="String(operator.operatorUserId ?? operator.operatorName)">
                 <td>{{ operator.operatorName || 'Operator not recorded' }}</td>
-                <td class="number-cell">{{ operator.uniqueStudentCount }}</td>
-                <td class="number-cell">{{ operator.orderCount }}</td>
-                <td class="number-cell">{{ operator.courseRegistrationCount }}</td>
-                <td class="money-cell">{{ money(operator.amountDue) }}</td>
-                <td class="money-cell">{{ money(operator.amountCollected) }}</td>
+                <td class="workbook-cell--center">{{ operator.uniqueStudentCount }}</td>
+                <td class="workbook-cell--center">{{ operator.orderCount }}</td>
+                <td class="workbook-cell--center">{{ operator.courseRegistrationCount }}</td>
+                <td class="workbook-cell--money">{{ money(operator.amountDue) }}</td>
+                <td class="workbook-cell--money">{{ money(operator.amountCollected) }}</td>
               </tr>
-              <tr v-if="visibleOperators.length === 0" class="daily-workbook-table__empty">
+              <tr v-if="visibleOperators.length === 0" class="workbook-empty-row">
                 <td colspan="6">No operator totals for this date range.</td>
               </tr>
             </tbody>
@@ -87,8 +87,8 @@
           <strong>Registration history</strong>
           <span>{{ filteredRows.length }} course record(s), ordered by saved time</span>
         </div>
-        <div class="daily-sheet__scroll history-sheet__scroll" data-testid="daily-registration-workbook">
-          <table class="daily-workbook-table history-table">
+        <div class="workbook-scroll daily-sheet__scroll history-sheet__scroll" data-testid="daily-registration-workbook">
+          <table class="workbook-table history-table">
             <colgroup>
               <col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }">
             </colgroup>
@@ -97,25 +97,25 @@
                 <th
                   v-for="column in columns"
                   :key="column.key"
-                  :class="{ 'daily-workbook-table__header--active': hasColumnFilter(column.key) }"
+                  :class="{ 'workbook-header--active': hasColumnFilter(column.key) }"
                 >
                   <el-popover
                     placement="bottom-start"
                     trigger="click"
                     :width="column.filterType === 'number' ? 300 : column.filterType === 'date' ? 330 : 260"
-                    popper-class="daily-workbook-filter-popper"
+                    popper-class="workbook-filter-popper"
                   >
                     <template #reference>
-                      <button type="button" class="daily-workbook-table__header-button">
+                      <button type="button" class="workbook-header-button">
                         <span>{{ column.label }}</span>
-                        <span class="daily-workbook-table__header-icons">
-                          <span v-if="sortState.key === column.key">{{ sortState.direction === 'asc' ? '↑' : '↓' }}</span>
-                          <span class="daily-workbook-table__filter-arrow" />
+                        <span class="workbook-header-icons">
+                          <span v-if="sortState.key === column.key" class="workbook-sort-indicator">{{ sortState.direction === 'asc' ? '↑' : '↓' }}</span>
+                          <span class="workbook-filter-arrow" />
                         </span>
                       </button>
                     </template>
 
-                    <div class="daily-workbook-filter">
+                    <div class="workbook-filter">
                       <strong>Filter {{ column.label }}</strong>
                       <el-input
                         v-if="column.filterType === 'text'"
@@ -144,21 +144,21 @@
                         value-format="YYYY-MM-DD"
                         unlink-panels
                       />
-                      <div v-else class="daily-workbook-filter__number-range">
+                      <div v-else class="workbook-number-filter">
                         <el-input-number v-model="columnFilters[column.key].min" :controls="false" placeholder="Min" />
                         <span>to</span>
                         <el-input-number v-model="columnFilters[column.key].max" :controls="false" placeholder="Max" />
                       </div>
 
-                      <div class="daily-workbook-filter__sort">
-                        <span>Sort</span>
-                        <el-button-group>
+                      <div class="workbook-filter-section">
+                        <span class="workbook-filter-label">Sort</span>
+                        <el-button-group class="workbook-sort-buttons">
                           <el-button size="small" :type="isSorted(column.key, 'asc') ? 'primary' : 'default'" @click="setSort(column.key, 'asc')">Asc</el-button>
                           <el-button size="small" :type="isSorted(column.key, 'desc') ? 'primary' : 'default'" @click="setSort(column.key, 'desc')">Desc</el-button>
                           <el-button size="small" @click="clearSort(column.key)">Clear</el-button>
                         </el-button-group>
                       </div>
-                      <div class="daily-workbook-filter__actions">
+                      <div class="workbook-filter-actions">
                         <el-button text size="small" @click="clearColumnFilter(column.key)">Clear column</el-button>
                         <el-button text size="small" @click="clearAllFilters">Clear all</el-button>
                       </div>
@@ -169,35 +169,35 @@
             </thead>
             <tbody v-if="groupedRows.length">
               <template v-for="group in groupedRows" :key="group.key">
-                <tr class="daily-workbook-table__date-group">
-                  <td :colspan="columns.length">
+                <tr class="workbook-group-spacer daily-date-group">
+                  <td :colspan="columns.length" class="daily-date-group__cell">
                     {{ group.label }}
                     <span>{{ group.rows.length }} course record(s)</span>
                   </td>
                 </tr>
-                <tr v-for="row in group.rows" :key="rowKey(row)" class="daily-workbook-table__data-row">
+                <tr v-for="row in group.rows" :key="rowKey(row)" class="workbook-data-row">
                   <td>{{ dateTime(row.savedAt) }}</td>
                   <td>{{ display(row.studentName) }}</td>
                   <td>{{ display(row.courseName) }}</td>
                   <td>{{ display(row.className) }}</td>
-                  <td class="daily-workbook-table__center">{{ display(row.grade) }}</td>
+                  <td class="workbook-cell--center">{{ display(row.grade) }}</td>
                   <td>{{ display(row.operatorName, 'Operator not recorded') }}</td>
-                  <td class="daily-workbook-table__center">
-                    <span :class="['daily-pill', paymentMethodClass(row.paymentMethod)]">{{ display(row.paymentMethod) }}</span>
+                  <td class="workbook-cell--center">
+                    <span :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">{{ display(row.paymentMethod) }}</span>
                   </td>
-                  <td class="daily-workbook-table__center">
-                    <span :class="['daily-pill', paymentStatusClass(row.paymentStatus)]">{{ display(row.paymentStatus) }}</span>
+                  <td class="workbook-cell--center">
+                    <span :class="['workbook-pill', paymentStatusClass(row.paymentStatus)]">{{ display(row.paymentStatus) }}</span>
                   </td>
-                  <td class="money-cell">{{ money(row.amountDue) }}</td>
-                  <td class="money-cell">{{ money(row.amountCollected) }}</td>
-                  <td class="money-cell" :class="{ 'daily-workbook-table__outstanding': Number(row.outstandingAmount ?? 0) > 0 }">
+                  <td class="workbook-cell--money">{{ money(row.amountDue) }}</td>
+                  <td class="workbook-cell--money">{{ money(row.amountCollected) }}</td>
+                  <td class="workbook-cell--money" :class="{ 'daily-registration-outstanding': Number(row.outstandingAmount ?? 0) > 0 }">
                     {{ money(row.outstandingAmount) }}
                   </td>
                 </tr>
               </template>
             </tbody>
             <tbody v-else-if="!loading">
-              <tr class="daily-workbook-table__empty">
+              <tr class="workbook-empty-row">
                 <td :colspan="columns.length">No registrations match the current filters.</td>
               </tr>
             </tbody>
@@ -248,6 +248,7 @@ const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>({
 });
 
 const sourceRows = computed(() => report.value?.rows ?? []);
+const hasAnyColumnFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
 const selectOptions = computed(() => Object.fromEntries(
   columns.filter((column) => column.filterType === 'select').map((column) => [
     column.key,
@@ -434,18 +435,18 @@ function display(value?: string, fallback = '—') {
 
 function paymentMethodClass(value?: string) {
   const method = value?.trim().toLowerCase() ?? '';
-  if (method.includes('cash')) return 'daily-pill--cash';
-  if (method.includes('zelle')) return 'daily-pill--zelle';
-  if (method.includes('check')) return 'daily-pill--check';
-  return method ? 'daily-pill--method' : '';
+  if (method.includes('cash')) return 'workbook-pill--cash';
+  if (method.includes('zelle')) return 'workbook-pill--zelle';
+  if (method.includes('check')) return 'workbook-pill--check';
+  return method ? 'workbook-pill--method' : '';
 }
 
 function paymentStatusClass(value?: string) {
   const status = value?.trim().toUpperCase() ?? '';
-  if (status === 'PAID') return 'daily-pill--paid';
-  if (status === 'REFUNDED') return 'daily-pill--refunded';
-  if (status === 'PARTIAL') return 'daily-pill--partial';
-  return 'daily-pill--pending';
+  if (status === 'PAID') return 'workbook-pill--cash';
+  if (status === 'REFUNDED') return 'daily-registration-pill--refunded';
+  if (status === 'PARTIAL' || status === 'PARTIALLY_PAID') return 'workbook-pill--check';
+  return 'workbook-pill--zelle';
 }
 
 function naturalCompare(left: string, right: string) {
@@ -458,42 +459,14 @@ function rowKey(row: DailyRegistrationRow) {
 </script>
 
 <style scoped>
-.daily-workbook-page {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  height: calc(100vh - 88px);
-  background: #fff;
-}
-
-.daily-workbook-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 14px 22px;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  border: 1px solid #9eafa7;
-  border-bottom: 0;
-  background: #f4f8f5;
-}
-
-.daily-workbook-toolbar__filters,
-.daily-workbook-toolbar__stats,
-.daily-workbook-toolbar__actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
+.daily-workbook-page { min-width: 0; }
+.daily-workbook-toolbar__filters { flex-wrap: wrap; }
 .daily-workbook-toolbar__filters :deep(.el-date-editor) { width: 280px; }
-.daily-workbook-toolbar__label { color: #376451; font-size: 12px; font-weight: 700; }
-.operator-filter { width: 165px; }
-.daily-workbook-toolbar__stats { gap: 14px; }
-.daily-workbook-toolbar__stats span { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
-.daily-workbook-toolbar__stats em { color: #6b7684; font-size: 11px; font-style: normal; }
-.daily-workbook-toolbar__stats strong { color: #263b44; font-size: 13px; font-variant-numeric: tabular-nums; }
+.daily-workbook-toolbar__stats { flex-wrap: wrap; gap: 14px 20px; }
+.daily-workbook-toolbar__stat,
+.daily-workbook-toolbar__stat em { white-space: nowrap; }
 .daily-workbook-toolbar__actions { margin-left: auto; }
+.operator-filter { width: 165px; }
 
 .daily-workbook-layout { display: flex; flex: 1; min-height: 0; flex-direction: column; }
 .daily-sheet { min-width: 0; border: 1px solid #9eafa7; border-top: 0; background: #fff; }
@@ -502,82 +475,19 @@ function rowKey(row: DailyRegistrationRow) {
 .daily-sheet__caption span { color: #6b7684; font-size: 11px; }
 .daily-sheet__scroll { min-width: 0; overflow: auto; }
 .daily-sheet__scroll--compact { max-height: 180px; }
-.operator-table { width: max-content; min-width: 100%; }
+.operator-table { min-width: 100%; }
 .history-sheet { display: flex; min-height: 0; flex: 1; flex-direction: column; }
 .history-sheet__scroll { flex: 1; min-height: 0; }
-
-.daily-workbook-table {
-  width: max-content;
-  min-width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
-  color: #263b44;
-  font-size: 12px;
-}
-
-.daily-workbook-table th,
-.daily-workbook-table td {
-  height: 30px;
-  padding: 5px 8px;
-  overflow: hidden;
-  border-right: 1px solid #c3d3df;
-  border-bottom: 1px solid #c3d3df;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.daily-workbook-table th {
-  position: sticky;
-  z-index: 4;
-  top: 0;
-  height: 36px;
-  padding: 0;
-  border-color: #517768;
-  background: #376451;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.daily-workbook-table th:last-child,
-.daily-workbook-table td:last-child { border-right: 0; }
-.daily-workbook-table__header--active { background: #284f40 !important; }
-.daily-workbook-table__header-button { display: flex; width: 100%; height: 100%; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.daily-workbook-table__header-icons { display: inline-flex; align-items: center; gap: 6px; }
-.daily-workbook-table__filter-arrow { width: 0; height: 0; border-top: 4px solid currentColor; border-right: 4px solid transparent; border-left: 4px solid transparent; opacity: .7; }
-.daily-workbook-table__data-row td { background: #dcebf8; }
-.daily-workbook-table__data-row:hover td { background: #d1e5f6; }
-.daily-workbook-table__date-group td { height: 25px; background: #edf4f1; color: #315b49; font-weight: 700; }
-.daily-workbook-table__date-group span { margin-left: 10px; color: #76857f; font-size: 11px; font-weight: 500; }
-.daily-workbook-table__center { text-align: center; }
-.number-cell { text-align: center; font-variant-numeric: tabular-nums; }
-.money-cell { text-align: right !important; font-variant-numeric: tabular-nums; }
-.daily-workbook-table__outstanding { color: #bd2431; font-weight: 700; }
-.daily-workbook-table__empty td { height: 140px; background: #f7fbfe; color: #687b86; text-align: center; }
-
-.daily-pill { display: inline-flex; min-width: 34px; height: 18px; align-items: center; justify-content: center; padding: 0 7px; border-radius: 9px; background: #e9eef2; color: #50636f; font-size: 10px; font-weight: 700; line-height: 18px; }
-.daily-pill--cash, .daily-pill--paid { background: #2d78ca; color: #fff; }
-.daily-pill--zelle, .daily-pill--pending { background: #e41f2b; color: #fff; }
-.daily-pill--check, .daily-pill--partial { background: #f8d155; color: #775600; }
-.daily-pill--method { background: #528f79; color: #fff; }
-.daily-pill--refunded { background: #6b7280; color: #fff; }
-
-:global(.daily-workbook-filter-popper) { padding: 12px !important; }
-.daily-workbook-filter { display: grid; gap: 12px; }
-.daily-workbook-filter > strong { color: #303133; font-size: 13px; }
-.daily-workbook-filter :deep(.el-select),
-.daily-workbook-filter :deep(.el-date-editor) { width: 100%; }
-.daily-workbook-filter__number-range { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 6px; color: #909399; font-size: 12px; }
-.daily-workbook-filter__number-range :deep(.el-input-number) { width: 100%; }
-.daily-workbook-filter__sort { display: grid; gap: 6px; color: #606266; font-size: 12px; font-weight: 600; }
-.daily-workbook-filter__sort :deep(.el-button-group) { display: flex; }
-.daily-workbook-filter__sort :deep(.el-button) { flex: 1; }
-.daily-workbook-filter__actions { display: flex; justify-content: space-between; border-top: 1px solid #ebeef5; padding-top: 6px; }
+.daily-date-group td.daily-date-group__cell { height: 28px; padding: 5px 8px; border-right: 0; background: #edf4f1; color: #315b49; font-weight: 700; }
+.daily-date-group span { margin-left: 10px; color: #76857f; font-size: 11px; font-weight: 500; }
+.daily-registration-outstanding { color: #bd2431; font-weight: 700; }
+.daily-registration-pill--refunded { background: #6b7280; color: #fff; }
 
 @media (max-width: 900px) {
   .daily-workbook-page { height: auto; min-height: calc(100vh - 88px); }
   .daily-workbook-layout { min-height: 60vh; }
+  .daily-workbook-toolbar__filters { width: 100%; }
+  .daily-workbook-toolbar__stats { margin-left: 0; }
   .daily-workbook-toolbar__actions { margin-left: 0; }
   .daily-sheet__scroll--compact { max-height: 220px; }
 }
