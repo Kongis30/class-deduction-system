@@ -10,6 +10,7 @@ import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.classdeduction.system.modules.enrollment.vo.RefundCoursePreviewVO;
 
 public interface EnrollmentOrderService {
 
@@ -45,6 +46,9 @@ public interface EnrollmentOrderService {
      * 退款：记录负数退款流水并回写原报名收据；全额退款会同时取消报名产物。
      */
     ReceiptRecordVO refundOrder(Long id, RefundRequest request);
+
+    /** 查询退款窗口中每个课程项的已消耗课时与金额。 */
+    RefundCoursePreviewVO previewRefund(Long id, Integer participantIndex);
 
     /**
      * 删除误创建且未付款、未上课的报名订单（软删除）。

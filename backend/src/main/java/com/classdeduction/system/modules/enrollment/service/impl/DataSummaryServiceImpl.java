@@ -651,6 +651,11 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         // Data Summary 展示班课本身的教学周期；session 数量只负责课时扣减，不应缩短班课 Period。
         LocalDate periodStartDate = resolvePeriodStartDate(classGroup, coursePackage, classEnrollment, order);
         LocalDate periodEndDate = resolvePeriodEndDate(classGroup, coursePackage, classEnrollment, order);
+        boolean stoppedRecord = "STOPPED".equals(resolveDisplayItemStatus(item, classEnrollment));
+        if (stoppedRecord && item != null) {
+            periodStartDate = firstNonNull(item.getStoppedPeriodStartDate(), periodStartDate);
+            periodEndDate = firstNonNull(item.getStoppedPeriodEndDate(), periodEndDate);
+        }
         LocalDate expiryDate = periodEndDate;
         boolean expiringSoon = expiryDate != null && !expiryDate.isBefore(today) && !expiryDate.isAfter(soonLimit);
         boolean oneOnOne = "ONE_ON_ONE".equals(courseType) || isOneOnOne(product, coursePackage);
@@ -743,6 +748,16 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             rowPickupAddress = item.getPickupAddressSnapshot();
             rowDropoffAddress = item.getDropoffAddressSnapshot();
         }
+        if (stoppedRecord && item != null && item.getStoppedConsumedAmount() != null) {
+            // 停课行按已消耗课时金额展示；接送费和原优惠不属于已消耗课时费用。
+            rowLinePriceAmount = amount(item.getStoppedConsumedAmount());
+            rowPickupFeeAmount = ZERO_AMOUNT;
+            rowDropoffFeeAmount = ZERO_AMOUNT;
+            rowExtraFeeAmount = ZERO_AMOUNT;
+            rowDiscountAmount = ZERO_AMOUNT;
+            rowAmountDue = amount(item.getStoppedConsumedAmount());
+            rowBalanceAmount = rowAmountDue.subtract(rowPaidAmount).setScale(2, RoundingMode.HALF_UP);
+        }
         boolean overdue = positive(rowBalanceAmount);
         boolean lowOneOnOneHours = oneOnOne && coursePackage != null
                 && safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage);
@@ -785,6 +800,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 studentClass,
                 school,
                 grade,
+                item == null ? null : item.getGradeBand(),
                 order.getSignupDate(),
                 periodStartDate,
                 periodEndDate,
@@ -830,8 +846,18 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 order.getOrderStatus(),
                 reviewIssueCodes,
                 oneOnOne ? privateLessonGroupId : null,
-                oneOnOne ? privateLessonParticipantCount : null
+                oneOnOne ? privateLessonParticipantCount : null,
+                resolveDisplayItemStatus(item, classEnrollment),
+                item == null ? null : item.getStoppedConsumedAmount(),
+                item == null ? null : item.getStoppedSessionCount()
         );
+    }
+
+    private String resolveDisplayItemStatus(EnrollmentOrderItemEntity item, ClassEnrollmentEntity classEnrollment) {
+        if (classEnrollment != null && "WITHDRAWN".equalsIgnoreCase(classEnrollment.getStatus())) {
+            return "STOPPED";
+        }
+        return item == null ? null : item.getItemStatus();
     }
 
     private BigDecimal resolveParticipantGrossAmount(EnrollmentOrderParticipantEntity participant,
@@ -1013,6 +1039,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                              CoursePackageEntity coursePackage,
                                              ClassEnrollmentEntity classEnrollment,
                                              EnrollmentOrderEntity order) {
+        if (classEnrollment != null && "WITHDRAWN".equalsIgnoreCase(classEnrollment.getStatus())) {
+            return firstNonNull(classEnrollment.getEnrollmentDate(), order.getSignupDate());
+        }
         return firstNonNull(classGroup == null ? null : classGroup.getStartDate(),
                 coursePackage == null ? null : coursePackage.getStartDate(),
                 classEnrollment == null ? null : classEnrollment.getEnrollmentDate(),
@@ -1026,6 +1055,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                            CoursePackageEntity coursePackage,
                                            ClassEnrollmentEntity classEnrollment,
                                            EnrollmentOrderEntity order) {
+        if (classEnrollment != null && "WITHDRAWN".equalsIgnoreCase(classEnrollment.getStatus())) {
+            return firstNonNull(classEnrollment.getExpiryDate(), order.getSignupDate());
+        }
         return firstNonNull(classGroup == null ? null : classGroup.getEndDate(),
                 coursePackage == null ? null : coursePackage.getEstimatedEndDate(),
                 classEnrollment == null ? null : classEnrollment.getExpiryDate(),

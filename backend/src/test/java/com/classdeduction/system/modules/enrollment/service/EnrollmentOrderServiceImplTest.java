@@ -18,6 +18,7 @@ import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
+import com.classdeduction.system.modules.enrollment.entity.PaymentAllocationEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
@@ -748,6 +749,86 @@ class EnrollmentOrderServiceImplTest {
         assertThat(selectedPackage.getReceivedAmount()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(selectedPackage.getPackageStatus()).isEqualTo("CLOSED");
         verify(lessonOccurrenceMapper, never()).update(any());
+    }
+
+    @Test
+    void courseRefundAtConsumedValueStopsOnlyThatClassEnrollment() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("2299.00"));
+        order.setAmountDue(new BigDecimal("2299.00"));
+        order.setStudentId(101L);
+        order.setSignupDate(LocalDate.of(2026, 9, 1));
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(4501L);
+        item.setEnrollmentOrderId(order.getId());
+        item.setClassId(401L);
+        item.setCourseType("GROUP");
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("16"));
+        item.setPriceAmount(new BigDecimal("2299.00"));
+        item.setDiscountAmount(BigDecimal.ZERO);
+        item.setAmountDue(new BigDecimal("2299.00"));
+        item.setPaidAmount(new BigDecimal("2299.00"));
+        item.setItemStatus("ACTIVE");
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(5001L);
+        enrollment.setEnrollmentOrderItemId(item.getId());
+        enrollment.setClassId(401L);
+        enrollment.setStudentId(101L);
+        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 1));
+        enrollment.setExpiryDate(LocalDate.of(2026, 12, 1));
+        enrollment.setBillingType("PER_SESSION");
+        enrollment.setPurchasedQuantity(16);
+        enrollment.setStatus("ACTIVE");
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setId(6001L);
+        occurrence.setClassGroupId(401L);
+        occurrence.setPlannedStartAt(LocalDateTime.of(2026, 9, 12, 10, 0));
+        LessonRecordEntity usedLesson = new LessonRecordEntity();
+        usedLesson.setOccurrenceId(6001L);
+        usedLesson.setStudentId(101L);
+        usedLesson.setResultStatus("COMPLETED");
+        usedLesson.setConfirmStage("CONFIRMED");
+        PaymentAllocationEntity originalAllocation = new PaymentAllocationEntity();
+        originalAllocation.setEnrollmentOrderItemId(item.getId());
+        originalAllocation.setAmount(new BigDecimal("2299.00"));
+
+        when(enrollmentOrderMapper.selectById(order.getId())).thenReturn(order);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(enrollmentOrderItemMapper.selectById(item.getId())).thenReturn(item);
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(originalAllocation));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(usedLesson));
+        when(receiptRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setOrderItemId(item.getId());
+        request.setRefundAmount(new BigDecimal("2155.31"));
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+
+        enrollmentOrderService.refundOrder(order.getId(), request);
+
+        verify(classEnrollmentMapper).updateById(classEnrollmentCaptor.capture());
+        assertThat(classEnrollmentCaptor.getValue().getStatus()).isEqualTo("WITHDRAWN");
+        verify(enrollmentOrderItemMapper).updateById(item);
+        assertThat(item.getItemStatus()).isEqualTo("STOPPED");
+        assertThat(item.getStoppedSessionCount()).isEqualTo(1);
+        assertThat(item.getStoppedConsumedAmount()).isEqualByComparingTo("143.69");
+        assertThat(item.getStoppedPeriodStartDate()).isEqualTo(LocalDate.of(2026, 9, 12));
+        assertThat(item.getStoppedPeriodEndDate()).isEqualTo(LocalDate.of(2026, 9, 12));
+        assertThat(item.getAmountDue()).isEqualByComparingTo("143.69");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("143.69");
+        verify(lessonOccurrenceMapper, never()).update(any());
+        verify(paymentAllocationService).recordRefundAllocation(any(PaymentRecordEntity.class),
+                org.mockito.ArgumentMatchers.eq(order.getId()), org.mockito.ArgumentMatchers.eq(item.getId()),
+                org.mockito.ArgumentMatchers.eq(new BigDecimal("2155.31")));
     }
 
     @Test

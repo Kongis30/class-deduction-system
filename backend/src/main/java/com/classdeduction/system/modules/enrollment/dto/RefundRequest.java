@@ -15,6 +15,9 @@ import java.math.BigDecimal;
 @Schema(description = "报名订单退款请求")
 public class RefundRequest {
 
+    @Schema(description = "退款所对应的课程项；同一收据有多个课程时必填")
+    private Long orderItemId;
+
     @Schema(description = "多人私教订单中的参与学生序号；普通订单为空", example = "2")
     private Integer participantIndex;
 

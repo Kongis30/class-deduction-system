@@ -149,6 +149,24 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldHideWithdrawnStudentsFromScheduleEnrollmentList() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        ClassEnrollmentEntity withdrawn = activeEnrollment(601L,
+                LocalDate.of(2026, 4, 1),
+                LocalDate.of(2026, 4, 30));
+        withdrawn.setStatus("WITHDRAWN");
+
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(withdrawn));
+
+        List<Map<String, Object>> result = classGroupService.listEnrolledStudents(501L, adminUser());
+
+        assertThat(result).isEmpty();
+        verify(studentMapper, never()).selectBatchIds(any());
+    }
+
+    @Test
     void shouldRetireClassWithoutDeletingStudentOrHistoricalData() {
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);

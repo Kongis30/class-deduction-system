@@ -359,6 +359,51 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldDisplayStoppedClassPeriodAndConsumedAmounts() {
+        EnrollmentOrderEntity order = order(1L, "60.00", "60.00", "0.00");
+        EnrollmentOrderItemEntity item = item(21L, 1, "120.00");
+        item.setClassId(31L);
+        item.setItemStatus("STOPPED");
+        item.setPickupFeeAmount(new BigDecimal("5.00"));
+        item.setDropoffFeeAmount(new BigDecimal("5.00"));
+        item.setDiscountAmount(new BigDecimal("10.00"));
+        item.setStoppedConsumedAmount(new BigDecimal("60.00"));
+        item.setStoppedPeriodStartDate(LocalDate.of(2026, 9, 12));
+        item.setStoppedPeriodEndDate(LocalDate.of(2026, 9, 19));
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(41L);
+        enrollment.setEnrollmentOrderItemId(21L);
+        enrollment.setClassId(31L);
+        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 1));
+        enrollment.setExpiryDate(LocalDate.of(2026, 9, 19));
+        enrollment.setStatus("WITHDRAWN");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(31L);
+        classGroup.setClassName("G8 SHSAT Crash");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
+        classGroup.setEndDate(LocalDate.of(2026, 12, 20));
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "60.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.itemStatus()).isEqualTo("STOPPED");
+            assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 12));
+            assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 9, 19));
+            assertThat(row.linePriceAmount()).isEqualByComparingTo("60.00");
+            assertThat(row.pickupFeeAmount()).isEqualByComparingTo("0.00");
+            assertThat(row.dropoffFeeAmount()).isEqualByComparingTo("0.00");
+            assertThat(row.discountAmount()).isEqualByComparingTo("0.00");
+            assertThat(row.amountDue()).isEqualByComparingTo("60.00");
+        });
+    }
+
+    @Test
     void shouldDisplayLegacyOneOnOnePackagePeriodWhenOrderItemLinkIsMissing() {
         EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();

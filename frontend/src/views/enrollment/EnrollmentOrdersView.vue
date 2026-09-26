@@ -863,15 +863,39 @@
             <span class="product-info-card__value">${{ refundReceivedAmount.toFixed(2) }}</span>
           </div>
         </div>
+        <el-form-item v-if="!isSharedParticipantRefund && refundCourseOptions.length > 1" label="Course to refund" prop="orderItemId">
+          <el-select v-model="refundForm.orderItemId" placeholder="Select a course" style="width: 100%" :loading="refundPreviewLoading" @change="handleRefundCourseChange">
+            <el-option label="Entire receipt · allocate across all courses" value="ALL" />
+            <el-option
+              v-for="item in refundCourseOptions"
+              :key="item.orderItemId"
+              :label="`${item.detail || `Course ${item.lineNo}`} · Paid $${item.paidAmount.toFixed(2)}`"
+              :value="item.orderItemId"
+              :disabled="item.paidAmount <= 0"
+            />
+          </el-select>
+        </el-form-item>
+        <div v-if="selectedRefundCourse?.automaticStopSupported" class="refund-consumption">
+          <strong>Already consumed: ${{ selectedRefundCourse.consumedAmount.toFixed(2) }}</strong>
+          <span>{{ selectedRefundCourse.consumedLessonCount }} confirmed chargeable session(s)</span>
+          <small>If the remaining paid amount is at or below this amount after the refund, the student will be withdrawn from this course and future schedule entries will be removed.</small>
+        </div>
+        <div v-else-if="refundForm.orderItemId === 'ALL' && refundableGroupCourses.length" class="refund-consumption">
+          <strong>Confirmed consumed amount by course</strong>
+          <span v-for="item in refundableGroupCourses" :key="item.orderItemId">
+            {{ item.detail || `Course ${item.lineNo}` }}: ${{ item.consumedAmount.toFixed(2) }} ({{ item.consumedLessonCount }} session(s))
+          </span>
+          <small>Each course whose paid amount reaches its consumed amount after allocation will be stopped and removed from future schedule.</small>
+        </div>
         <p class="refund-hint">
-          A partial refund keeps the enrollment and schedule active. A refund from a student row applies only to that student's payments; the shared receipt and order totals are updated together.
+          {{ refundHint }}
         </p>
 
         <el-form-item label="Refund amount" prop="refundAmount">
           <el-input-number
             v-model="refundForm.refundAmount"
             :min="0.01"
-            :max="refundReceivedAmount"
+            :max="refundCourseReceivedAmount"
             :precision="2"
             :controls="false"
             style="width: 100%;"
@@ -1130,7 +1154,7 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
-import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery } from '@/api/enrollment';
+import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, fetchRefundPreview, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery, type RefundCoursePreviewItem } from '@/api/enrollment';
 import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
@@ -2337,7 +2361,7 @@ async function openRequestedOrderAction() {
     } else if (!canRefundOrder(order, participant)) {
       ElMessage.warning('This order has no refundable payment.');
     } else {
-      openRefundDialog(order, participant);
+      await openRefundDialog(order, participant, orderItemId || undefined);
     }
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to load the selected order.');
@@ -2448,8 +2472,11 @@ const refunding = ref(false);
 const refundFormRef = ref();
 const refundOrder = ref<EnrollmentOrderItem | null>(null);
 const refundParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
+const refundCourseOptions = ref<RefundCoursePreviewItem[]>([]);
+const refundPreviewLoading = ref(false);
 const refundForm = reactive({
   refundAmount: 0,
+  orderItemId: '' as string | number,
   paymentMethod: 'CASH',
   handledByName: '',
   remark: '',
@@ -2468,29 +2495,93 @@ const refundReceivedAmount = computed(() => Math.max(
   0,
   refundParticipant.value?.paidAmount ?? refundOrder.value?.receivedAmount ?? 0,
 ));
+const isSharedParticipantRefund = computed(() => Boolean(
+  refundParticipant.value && (refundOrder.value?.participants?.length ?? 0) > 1,
+));
+const selectedRefundCourse = computed(() => refundCourseOptions.value.find(
+  (item) => refundForm.orderItemId !== 'ALL' && String(item.orderItemId) === String(refundForm.orderItemId),
+) ?? null);
+const refundableGroupCourses = computed(() => refundCourseOptions.value.filter((item) => item.automaticStopSupported));
+const refundCourseReceivedAmount = computed(() => refundForm.orderItemId === 'ALL'
+  ? refundReceivedAmount.value
+  : selectedRefundCourse.value?.paidAmount ?? refundReceivedAmount.value);
+const refundHint = computed(() => {
+  if (isSharedParticipantRefund.value) {
+    return 'This refund applies to the selected student’s received payments on the shared receipt.';
+  }
+  if (refundForm.orderItemId === 'ALL') {
+    return 'This refund is allocated across the courses on this receipt; each course is evaluated independently.';
+  }
+  return 'Refunds apply to the selected course on this receipt. Other courses keep their own payment and schedule status.';
+});
 const refundStudentName = computed(() => refundParticipant.value?.studentName ?? refundOrder.value?.studentName ?? '—');
 
-function openRefundDialog(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
+async function openRefundDialog(
+  row: EnrollmentOrderItem,
+  participant: EnrollmentOrderParticipantItem | null = null,
+  requestedOrderItemId?: string | number,
+) {
   refundOrder.value = row;
   refundParticipant.value = participant;
+  refundCourseOptions.value = [];
   refundFormRef.value?.resetFields();
   Object.assign(refundForm, {
     refundAmount: participant?.paidAmount ?? row.receivedAmount ?? 0,
+    orderItemId: '',
     paymentMethod: 'CASH',
     handledByName: '',
     remark: '',
     disposition: 'CREDIT',
   });
   refundDialogVisible.value = true;
+  refundPreviewLoading.value = true;
+  try {
+    const response = await fetchRefundPreview(row.id, participant?.participantIndex);
+    refundCourseOptions.value = response.data.data.items ?? [];
+    if (!(participant && (row.participants?.length ?? 0) > 1)) {
+      const selected = refundCourseOptions.value.find((item) =>
+        requestedOrderItemId != null && String(item.orderItemId) === String(requestedOrderItemId));
+      const refundableCourses = refundCourseOptions.value.filter((item) => item.paidAmount > 0);
+      const initial = selected ?? (refundableCourses.length === 1 ? refundableCourses[0] : null);
+      if (initial) {
+        refundForm.orderItemId = initial.orderItemId;
+        refundForm.refundAmount = initial.paidAmount;
+      } else if (refundCourseOptions.value.length > 1) {
+        refundForm.orderItemId = 'ALL';
+        refundForm.refundAmount = refundReceivedAmount.value;
+      }
+    }
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Failed to load course refund details.');
+    refundDialogVisible.value = false;
+  } finally {
+    refundPreviewLoading.value = false;
+  }
+}
+
+function handleRefundCourseChange() {
+  refundForm.refundAmount = refundForm.orderItemId === 'ALL'
+    ? refundReceivedAmount.value
+    : selectedRefundCourse.value?.paidAmount ?? 0;
 }
 
 async function handleRefundSubmit() {
   const valid = await refundFormRef.value?.validate().catch(() => false);
   if (!valid || !refundOrder.value) return;
+  if (!isSharedParticipantRefund.value && refundCourseOptions.value.length > 0 && !refundForm.orderItemId) {
+    ElMessage.warning('Select the course to refund.');
+    return;
+  }
+  if (refundForm.refundAmount > refundCourseReceivedAmount.value) {
+    ElMessage.warning('Refund amount cannot exceed the selected course payment.');
+    return;
+  }
   refunding.value = true;
   try {
     await refundEnrollmentOrder(refundOrder.value.id, {
       refundAmount: refundForm.refundAmount,
+      orderItemId: !isSharedParticipantRefund.value && refundForm.orderItemId && refundForm.orderItemId !== 'ALL'
+        ? refundForm.orderItemId : undefined,
       participantIndex: refundParticipant.value?.participantIndex,
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName,
@@ -3102,6 +3193,23 @@ void initializePage();
   font-size: 12px;
   color: #909399;
   line-height: 1.5;
+}
+
+.refund-consumption {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #e8c98d;
+  border-radius: 6px;
+  background: #fff9ed;
+  color: #75531e;
+  font-size: 13px;
+}
+
+.refund-consumption small {
+  color: #846d49;
+  line-height: 1.45;
 }
 
 .delete-warning {

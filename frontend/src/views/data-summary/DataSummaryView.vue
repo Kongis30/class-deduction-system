@@ -33,6 +33,27 @@
         </span>
       </div>
       <div class="workbook-toolbar__export">
+        <div v-if="isSaturdayProductTab" class="saturday-roster-control">
+          <el-button-group aria-label="Saturday class roster">
+            <el-button
+              v-for="option in saturdayRosterOptions"
+              :key="option.value"
+              size="small"
+              :type="saturdayRosterView === option.value ? 'primary' : 'default'"
+              :aria-pressed="saturdayRosterView === option.value"
+              @click="setSaturdayRosterView(option.value)"
+            >
+              {{ option.label }}
+            </el-button>
+          </el-button-group>
+          <el-tooltip
+            v-if="saturdayRosterView === 'ALL' && unclassifiedSaturdayRowCount > 0"
+            content="Records without an identifiable season appear only in All roster."
+            placement="top"
+          >
+            <span class="saturday-roster-control__hint">{{ unclassifiedSaturdayRowCount }} unclassified</span>
+          </el-tooltip>
+        </div>
         <el-button
           size="small"
           type="primary"
@@ -254,6 +275,41 @@
         </tbody>
       </table>
     </div>
+    <section v-if="visibleStoppedRows.length" class="stopped-records">
+      <div class="stopped-records__heading">
+        <h3>Stopped Records</h3>
+        <span>{{ visibleStoppedRows.length }} record(s)</span>
+      </div>
+      <div class="stopped-records__scroll">
+        <table class="stopped-records__table workbook-table">
+          <thead>
+            <tr>
+              <th v-for="column in columns" :key="column.key" :style="{ minWidth: `${column.width}px` }">
+                {{ column.label }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in visibleStoppedRows" :key="rowKey(row)">
+              <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
+                <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+                <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
+                <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
+                <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
+                <span v-else-if="column.key === 'pickup' || column.key === 'dropoff'" :class="['workbook-pill', stoppedColumnValue(row, column.key) === 'Yes' ? 'workbook-pill--yes' : 'workbook-pill--no']">
+                  {{ stoppedColumnValue(row, column.key) }}
+                </span>
+                <span v-else-if="column.key === 'paymentMethod'" :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
+                  {{ displayText(row.paymentMethod) }}
+                </span>
+                <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(stoppedColumnValue(row, column.key)) }}</span>
+                <span v-else>{{ displayText(stoppedColumnValue(row, column.key)) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
     <div
       v-if="studentContextMenu.visible"
@@ -334,6 +390,7 @@ import type { CourseProductItem } from '@/types/domain';
 import { useRouter } from 'vue-router';
 import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
 import { formatRoundedUsd } from '@/utils/money-display';
+import { countUnclassifiedSaturdayRows, filterSaturdayRosterRows } from '@/utils/saturday-roster';
 
 type ColumnKey =
   | 'campus'
@@ -397,6 +454,7 @@ interface WorkbookCampusGroup {
 /** 每个 Product Tab 独立保留的视图状态（月份、筛选、排序）。 */
 interface ProductViewState {
   selectedMonth: string;
+  saturdayRosterView: SaturdayRosterView;
   columnFilters: Record<ColumnKey, ColumnFilter>;
   sortKey: ColumnKey | null;
   sortDirection: SortDirection;
@@ -410,13 +468,14 @@ interface ProductTab {
   privateLesson?: boolean;
 }
 
-type SaturdayRosterSeason = 'FALL' | 'SPRING';
+type SaturdayRosterView = 'FALL' | 'SPRING' | 'ALL';
+type DataSummaryDisplayRow = DataSummaryRow;
 
-interface DataSummaryDisplayRow extends DataSummaryRow {
-  /** Data Summary 专用展示分组，不写回报名记录。 */
-  displayStudentClass?: string;
-  displaySourceKey?: string;
-}
+const saturdayRosterOptions: Array<{ value: SaturdayRosterView; label: string }> = [
+  { value: 'FALL', label: 'Fall roster' },
+  { value: 'SPRING', label: 'Spring roster' },
+  { value: 'ALL', label: 'All roster' },
+];
 
 /** 全局工作表页签固定在最左，展示全部报名数据。 */
 const ALL_TAB_ID = '__ALL__';
@@ -458,6 +517,7 @@ const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
 const activeTabId = ref<string>('');
 const selectedMonth = ref<string>('ALL');
+const saturdayRosterView = ref<SaturdayRosterView>('ALL');
 const sortState = reactive<SortState>({
   key: null,
   direction: 'asc',
@@ -526,6 +586,15 @@ const productRows = computed(() => {
   return rows.value.filter((row) => String(row.courseProductId ?? '') === activeTabId.value);
 });
 
+const stoppedProductRows = computed(() => productRows.value.filter((row) => row.itemStatus === 'STOPPED'));
+const activeProductRows = computed(() => productRows.value.filter((row) => row.itemStatus !== 'STOPPED'));
+const displayStoppedRows = computed(() => isSaturdayProductTab.value
+  ? filterSaturdayRosterRows(stoppedProductRows.value, saturdayRosterView.value)
+  : stoppedProductRows.value);
+const visibleStoppedRows = computed(() => displayStoppedRows.value.filter((row) =>
+  selectedMonth.value === 'ALL' || monthKey(row) === selectedMonth.value,
+));
+
 /** 周六班特殊显示的名称回退识别：产品/班级名里出现「周六」或「Saturday」即视为周六班。 */
 const SATURDAY_NAME_PATTERN = /saturday|周六/i;
 
@@ -551,10 +620,14 @@ const isSaturdayProductTab = computed(() => {
 
 const displayProductRows = computed<DataSummaryDisplayRow[]>(() => {
   if (!isSaturdayProductTab.value) {
-    return productRows.value;
+    return activeProductRows.value;
   }
-  return expandSaturdayRosterRows(productRows.value);
+  return filterSaturdayRosterRows(activeProductRows.value, saturdayRosterView.value);
 });
+
+const unclassifiedSaturdayRowCount = computed(() => isSaturdayProductTab.value
+  ? countUnclassifiedSaturdayRows([...activeProductRows.value, ...stoppedProductRows.value])
+  : 0);
 
 const selectOptions = computed<Record<ColumnKey, string[]>>(() => {
   return Object.fromEntries(columns.map((column) => {
@@ -573,7 +646,7 @@ function monthKey(row: DataSummaryRow) {
 
 const availableMonths = computed(() => {
   const keys = new Set<string>();
-  displayProductRows.value.forEach((row) => {
+  [...displayProductRows.value, ...displayStoppedRows.value].forEach((row) => {
     const key = monthKey(row);
     if (key) {
       keys.add(key);
@@ -634,7 +707,7 @@ const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
   const groups = new Map<string, WorkbookCampusGroup>();
   pagedRows.value.forEach((row) => {
     const campusName = displayText(row.campusName);
-    const className = displayText(row.displayStudentClass ?? displayClassName(row));
+    const className = displayText(displayClassName(row));
     const campusKey = campusName;
     let campusGroup = groups.get(campusKey);
     if (!campusGroup) {
@@ -699,6 +772,7 @@ function copyFilter(filter: ColumnFilter): ColumnFilter {
 function snapshotCurrentState(): ProductViewState {
   return {
     selectedMonth: selectedMonth.value,
+    saturdayRosterView: saturdayRosterView.value,
     columnFilters: Object.fromEntries(
       columns.map((column) => [column.key, copyFilter(columnFilters[column.key])]),
     ) as Record<ColumnKey, ColumnFilter>,
@@ -710,6 +784,7 @@ function snapshotCurrentState(): ProductViewState {
 function createDefaultState(): ProductViewState {
   return {
     selectedMonth: 'ALL',
+    saturdayRosterView: 'ALL',
     columnFilters: Object.fromEntries(
       columns.map((column) => [column.key, createEmptyFilter()]),
     ) as Record<ColumnKey, ColumnFilter>,
@@ -720,6 +795,7 @@ function createDefaultState(): ProductViewState {
 
 function restoreState(state: ProductViewState) {
   selectedMonth.value = state.selectedMonth;
+  saturdayRosterView.value = state.saturdayRosterView ?? 'ALL';
   columns.forEach((column) => {
     Object.assign(columnFilters[column.key], copyFilter(state.columnFilters[column.key]));
   });
@@ -776,6 +852,10 @@ function selectTab(tabId: string) {
   restoreState(tabStates.get(tabId) ?? createDefaultState());
 }
 
+function setSaturdayRosterView(view: SaturdayRosterView) {
+  saturdayRosterView.value = view;
+}
+
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
   const menuWidth = 150;
   const menuHeight = 140;
@@ -828,7 +908,7 @@ function openOrderAction(action: 'pay' | 'refund') {
       orderId: String(row.orderId),
       action,
       productName: row.courseProductName || undefined,
-      orderItemId: action === 'pay' && row.orderItemId != null
+      orderItemId: row.orderItemId != null
         ? String(row.orderItemId)
         : undefined,
       courseBalance: action === 'pay' && row.balanceAmount != null
@@ -985,7 +1065,7 @@ function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | numbe
     case 'campus':
       return row.campusName;
     case 'studentClass':
-      return row.displayStudentClass ?? displayClassName(row);
+      return displayClassName(row);
     case 'studentName':
       return row.studentName;
     case 'school':
@@ -1024,6 +1104,33 @@ function columnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | numbe
     case 'balance':
       return Number(row.balanceAmount ?? 0);
   }
+}
+
+function stoppedColumnValue(row: DataSummaryDisplayRow, key: ColumnKey): string | number | undefined {
+  switch (key) {
+    case 'period':
+      return formatPeriod(row);
+    case 'tuition':
+      return row.stoppedConsumedAmount ?? row.linePriceAmount;
+    case 'pickupFee':
+    case 'dropoffFee':
+    case 'discount':
+      return 0;
+    default:
+      return columnValue(row, key);
+  }
+}
+
+function isMoneyColumn(key: ColumnKey) {
+  return key === 'tuition' || key === 'pickupFee' || key === 'dropoffFee'
+    || key === 'discount' || key === 'paid' || key === 'balance';
+}
+
+function stoppedCellClass(key: ColumnKey) {
+  return {
+    'workbook-cell--money': isMoneyColumn(key),
+    'workbook-cell--center': ['grade', 'signupDate', 'pickup', 'dropoff', 'paymentMethod', 'attendance', 'period'].includes(key),
+  };
 }
 
 function selectValue(row: DataSummaryDisplayRow, key: ColumnKey) {
@@ -1076,7 +1183,7 @@ function sortValue(row: DataSummaryRow, key: ColumnKey) {
 
 function compareRowsByBusinessGroup(left: DataSummaryDisplayRow, right: DataSummaryDisplayRow) {
   return compareCampus(displayText(left.campusName), displayText(right.campusName))
-    || compareClassName(displayText(left.displayStudentClass ?? displayClassName(left)), displayText(right.displayStudentClass ?? displayClassName(right)))
+    || compareClassName(displayText(displayClassName(left)), displayText(displayClassName(right)))
     || comparePrivateLessonGroup(left, right)
     || naturalCompare(displayText(left.studentName), displayText(right.studentName))
     || compareClassName(displayText(left.grade), displayText(right.grade))
@@ -1141,78 +1248,16 @@ function classSortRank(value: string) {
 function rowKey(row: DataSummaryDisplayRow) {
   return [
     row.orderId,
-    row.orderItemId ?? row.classId ?? row.courseProductId ?? row.enrollmentNo,
+    row.orderItemId ?? [row.classId ?? '', row.courseProductId ?? '', row.enrollmentNo ?? ''].join(':'),
     row.studentId ?? row.studentName,
-    row.displayStudentClass ?? displayClassName(row),
+    row.participantIndex ?? '',
   ].join('-');
-}
-
-function sourceRowKey(row: DataSummaryDisplayRow) {
-  return row.displaySourceKey ?? rowKey(row);
 }
 
 function uniqueSourceRows(sourceRows: DataSummaryDisplayRow[]) {
   const rowsBySource = new Map<string, DataSummaryDisplayRow>();
-  sourceRows.forEach((row) => rowsBySource.set(sourceRowKey(row), row));
+  sourceRows.forEach((row) => rowsBySource.set(rowKey(row), row));
   return [...rowsBySource.values()];
-}
-
-function expandSaturdayRosterRows(sourceRows: DataSummaryRow[]): DataSummaryDisplayRow[] {
-  return sourceRows.flatMap((row) => {
-    const baseClass = saturdayBaseClass(row);
-    const sourceKey = rowKey(row);
-    const season = saturdayRosterSeason(row);
-    if (season === 'FULL_YEAR') {
-      return (['FALL', 'SPRING'] as const).map((targetSeason) => ({
-        ...row,
-        displayStudentClass: `${baseClass} · ${targetSeason === 'FALL' ? 'Fall' : 'Spring'}`,
-        displaySourceKey: sourceKey,
-      }));
-    }
-    if (season === 'FALL' || season === 'SPRING') {
-      return [{
-        ...row,
-        displayStudentClass: `${baseClass} · ${season === 'FALL' ? 'Fall' : 'Spring'}`,
-        displaySourceKey: sourceKey,
-      }];
-    }
-    return [{
-      ...row,
-      displayStudentClass: baseClass,
-      displaySourceKey: sourceKey,
-    }];
-  });
-}
-
-function saturdayRosterSeason(row: DataSummaryRow): 'FULL_YEAR' | SaturdayRosterSeason | undefined {
-  const labels = [row.periodLabel, row.className, row.registerClass, row.detail]
-    .filter(Boolean)
-    .join(' ')
-    .toLowerCase();
-  if (/全年|full[\s-]*year|annual/.test(labels)) {
-    return 'FULL_YEAR';
-  }
-  if (/秋季|fall|autumn/.test(labels)) {
-    return 'FALL';
-  }
-  if (/春季|spring/.test(labels)) {
-    return 'SPRING';
-  }
-  return undefined;
-}
-
-function saturdayBaseClass(row: DataSummaryRow) {
-  const className = displayClassName(row);
-  if (className && !/(全年班|秋季班|春季班|full[\s-]*year|fall|spring)/i.test(className)) {
-    return className;
-  }
-
-  const classSuffix = className.match(/(?:全年班|秋季班|春季班|full[\s-]*year|fall|spring)\s*[-·:]?\s*(.+)$/i)?.[1]?.trim();
-  if (classSuffix) {
-    return classSuffix;
-  }
-
-  return className || row.grade?.trim() || 'Class';
 }
 
 /** 汇总页 Class 只展示报名关联的 actual class，不读取学生档案中的旧 Class 字段。 */
@@ -1443,6 +1488,23 @@ onMounted(() => {
 .workbook-toolbar__export {
   margin-left: auto;
   align-self: center;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.saturday-roster-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.saturday-roster-control__hint {
+  color: #7b8794;
+  font-size: 11px;
 }
 
 .workbook-toolbar__stat {
@@ -1470,6 +1532,59 @@ onMounted(() => {
   overflow: auto;
   border: 1px solid #9eafa7;
   background: #fff;
+}
+
+.stopped-records {
+  flex: 0 0 auto;
+  max-height: 260px;
+  border: 1px solid #d8a36a;
+  border-top: 0;
+  background: #fffaf3;
+}
+
+.stopped-records__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px 6px;
+}
+
+.stopped-records__heading h3 {
+  margin: 0;
+  color: #8f541b;
+  font-size: 13px;
+}
+
+.stopped-records__heading span {
+  color: #8b8176;
+  font-size: 11px;
+}
+
+.stopped-records__scroll {
+  max-height: 215px;
+  overflow: auto;
+}
+
+.stopped-records__table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #4b463f;
+  font-size: 12px;
+}
+
+.stopped-records__table th,
+.stopped-records__table td {
+  padding: 7px 10px;
+  border-top: 1px solid #eadbc9;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.stopped-records__table th {
+  position: sticky;
+  top: 0;
+  background: #fff2df;
+  font-weight: 700;
 }
 
 .workbook-table {

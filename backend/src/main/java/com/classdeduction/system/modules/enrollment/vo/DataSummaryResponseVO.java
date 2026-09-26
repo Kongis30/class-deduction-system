@@ -42,6 +42,8 @@ public record DataSummaryResponseVO(
             String studentClass,
             String school,
             String grade,
+            @Schema(description = "Course price option grade-band snapshot; legacy Saturday rows may store their season label here.")
+            String gradeBand,
             LocalDate signupDate,
             LocalDate periodStartDate,
             LocalDate periodEndDate,
@@ -89,7 +91,10 @@ public record DataSummaryResponseVO(
             String orderStatus,
             List<String> reviewIssueCodes,
             Long privateLessonGroupId,
-            Integer privateLessonParticipantCount
+            Integer privateLessonParticipantCount,
+            String itemStatus,
+            BigDecimal stoppedConsumedAmount,
+            Integer stoppedSessionCount
     ) {
     }
 }

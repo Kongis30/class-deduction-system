@@ -15,6 +15,7 @@ import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.classdeduction.system.modules.enrollment.vo.RefundCoursePreviewVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -90,6 +91,14 @@ public class EnrollmentOrderController {
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         request.setHandledByUserId(currentUser.userId());
         return ApiResponse.success("Refunded successfully.", enrollmentOrderService.refundOrder(id, request));
+    }
+
+    @GetMapping("/{id}/refund-preview")
+    @Operation(summary = "查询退款涉及课程的已消耗课时")
+    public ResponseEntity<ApiResponse<RefundCoursePreviewVO>> previewRefund(
+            @Parameter(description = "报名单ID") @PathVariable Long id,
+            @RequestParam(required = false) Integer participantIndex) {
+        return noStore(ApiResponse.success(enrollmentOrderService.previewRefund(id, participantIndex)));
     }
 
     @DeleteMapping("/{id}")

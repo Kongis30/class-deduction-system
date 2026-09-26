@@ -175,7 +175,7 @@
         </main>
       </div>
 
-      <details class="pending-panel">
+      <details class="pending-panel" @toggle="onPendingPanelToggle">
         <summary class="pending-panel__summary">
           <div class="pending-panel__heading">
             <strong>Room assignment queue</strong>
@@ -183,7 +183,7 @@
           </div>
           <div class="pending-panel__summary-actions">
             <el-tag class="pending-count-tag" size="large" :type="pendingAssignmentRows.length ? 'warning' : 'info'">
-              {{ pendingAssignmentRows.length }} pending
+              {{ pendingLoaded ? `${pendingAssignmentRows.length} pending` : 'Open to load' }}
             </el-tag>
             <el-button size="small" :loading="pendingLoading" @click.stop="loadPendingAssignments">
               Refresh
@@ -415,6 +415,7 @@ function campusLabel(classroom: Pick<ClassroomItem, 'campus'>) {
 
 // ─── Pending classroom assignments ────────────
 const pendingLoading = ref(false);
+const pendingLoaded = ref(false);
 const pendingError = ref('');
 const pendingAssignments = ref<PendingClassroomAssignmentItem[]>([]);
 const pendingClassroomSelections = ref<Record<string, EntityId>>({});
@@ -632,6 +633,7 @@ async function loadPendingAssignments() {
   try {
     const res = await fetchPendingClassroomAssignments();
     pendingAssignments.value = res.data.data ?? [];
+    pendingLoaded.value = true;
     const nextSelections: Record<string, EntityId> = {};
     for (const item of pendingAssignments.value) {
       const key = pendingRowKey(item);
@@ -645,6 +647,13 @@ async function loadPendingAssignments() {
     ElMessage.error(pendingError.value);
   } finally {
     pendingLoading.value = false;
+  }
+}
+
+function onPendingPanelToggle(event: Event) {
+  const panel = event.currentTarget;
+  if (panel instanceof HTMLDetailsElement && panel.open && !pendingLoaded.value && !pendingLoading.value) {
+    void loadPendingAssignments();
   }
 }
 
@@ -944,7 +953,6 @@ onMounted(async () => {
       campusId: c.campusId,
     }));
     selectInitialClassroom();
-    await loadPendingAssignments();
   } catch (error) {
     classroomLoadError.value = `Failed to load classrooms: ${extractErrorMessage(error)}`;
     ElMessage.error(classroomLoadError.value);

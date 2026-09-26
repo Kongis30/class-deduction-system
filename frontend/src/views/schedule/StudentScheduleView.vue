@@ -17,8 +17,11 @@
             />
           </div>
           <div class="student-list-panel__body">
-            <div v-if="filteredStudents.length === 0" class="student-list-panel__empty">
-              {{ students.length === 0 ? 'Loading...' : 'No students found' }}
+            <div v-if="studentsLoading" class="student-list-panel__empty">
+              Loading students...
+            </div>
+            <div v-else-if="filteredStudents.length === 0" class="student-list-panel__empty">
+              {{ students.length === 0 ? 'No active 1-on-1 students' : 'No students found' }}
             </div>
             <div
               v-for="s in filteredStudents"
@@ -251,11 +254,11 @@ import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@elemen
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import dayjs from 'dayjs';
-import { fetchAllStudents } from '@/api/base-data';
 import { fetchCoursePackages, fetchMyCoursePackages } from '@/api/enrollment';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
+  fetchOneOnOneScheduleStudents,
 } from '@/api/schedule';
 import type { CoursePackageItem, EntityId, LessonOccurrenceItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
@@ -268,6 +271,7 @@ const authStore = useAuthStore();
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
 
 const loading = ref(false);
+const studentsLoading = ref(false);
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const searchText = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
@@ -540,32 +544,16 @@ onMounted(async () => {
     }
     return;
   }
-  // Admin/staff/teacher: show student list
+  // 后端单次 JOIN 查询有有效 1-on-1 课包的学生，避免按学生逐个请求课包。
+  studentsLoading.value = true;
   try {
-    const res = await fetchAllStudents();
-    // 只保留拥有 ≥1 个 ACTIVE 1-on-1 课时包的学生。
-    // 班课学生只写 class_enrollment、不写 course_package，不应出现在 1-on-1 学生日历列表里。
-    const packageCheck = await Promise.all(
-      res.data.data.map(async (s) => {
-        try {
-          const pkgRes = await fetchCoursePackages({
-            studentId: s.id,
-            packageStatus: 'ACTIVE',
-            teachingMode: 'ONE_ON_ONE',
-            pageSize: 1,
-          });
-          const hasOneOnOne = (pkgRes.data.data.total ?? pkgRes.data.data.records.length) > 0;
-          return { id: s.id, studentName: s.studentName, hasOneOnOne };
-        } catch {
-          // 查询失败时保守保留该学生，避免误隐藏正常学生
-          return { id: s.id, studentName: s.studentName, hasOneOnOne: true };
-        }
-      })
-    );
-    students.value = packageCheck
-      .filter(x => x.hasOneOnOne)
-      .map(x => ({ id: x.id, studentName: x.studentName }));
-  } catch { /* silent */ }
+    const res = await fetchOneOnOneScheduleStudents();
+    students.value = res.data.data.map(({ id, studentName }) => ({ id, studentName }));
+  } catch {
+    ElMessage.error('Failed to load student list.');
+  } finally {
+    studentsLoading.value = false;
+  }
 });
 </script>
 

@@ -352,6 +352,9 @@ export interface EnrollmentOrderLineItem {
   extraFeeAmount?: number;
   extraFeeDetail?: string;
   itemStatus?: string;
+  stoppedConsumedAmount?: number;
+  stoppedSessionCount?: number;
+  stoppedAt?: string;
   remark?: string;
   createdAt?: string;
   updatedAt?: string;

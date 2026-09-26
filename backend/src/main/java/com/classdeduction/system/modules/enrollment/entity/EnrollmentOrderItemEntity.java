@@ -110,5 +110,16 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
 
     private String itemStatus;
 
+    /** 停课判定时已确认消耗金额快照，供收据和停课记录追溯。 */
+    private BigDecimal stoppedConsumedAmount;
+
+    private Integer stoppedSessionCount;
+
+    private LocalDate stoppedPeriodStartDate;
+
+    private LocalDate stoppedPeriodEndDate;
+
+    private LocalDateTime stoppedAt;
+
     private String remark;
 }

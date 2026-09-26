@@ -44,6 +44,9 @@ public record EnrollmentOrderItemVO(
         BigDecimal extraFeeAmount,
         String extraFeeDetail,
         String itemStatus,
+        BigDecimal stoppedConsumedAmount,
+        Integer stoppedSessionCount,
+        LocalDateTime stoppedAt,
         String remark,
         LocalDateTime createdAt,
         LocalDateTime updatedAt

@@ -158,8 +158,15 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
         );
+        if (enrollments.isEmpty()) {
+            return Collections.emptyList();
+        }
+        enrollments = enrollments.stream()
+                .filter(enrollment -> "ACTIVE".equalsIgnoreCase(enrollment.getStatus()))
+                .toList();
         if (enrollments.isEmpty()) {
             return Collections.emptyList();
         }

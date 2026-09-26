@@ -103,12 +103,32 @@ export function correctEnrollmentOrder(id: string | number, data: EnrollmentOrde
 
 export interface RefundPayload {
   refundAmount: number;
+  orderItemId?: EntityId;
   participantIndex?: number;
   paymentMethod: string;
   handledByName: string;
   handledByUserId?: string | number;
   remark?: string;
   disposition?: 'REFUND' | 'CREDIT';
+}
+
+export interface RefundCoursePreviewItem {
+  orderItemId: EntityId;
+  lineNo: number;
+  detail?: string;
+  courseType?: string;
+  classId?: EntityId;
+  paidAmount: number;
+  consumedLessonCount: number;
+  consumedAmount: number;
+  automaticStopSupported: boolean;
+}
+
+export function fetchRefundPreview(id: string | number, participantIndex?: number) {
+  return http.get<ApiResponse<{ items: RefundCoursePreviewItem[] }>>(
+    `/v1/enrollment/orders/${id}/refund-preview`,
+    { params: participantIndex == null ? undefined : { participantIndex } },
+  );
 }
 
 export function refundEnrollmentOrder(id: string | number, data: RefundPayload) {

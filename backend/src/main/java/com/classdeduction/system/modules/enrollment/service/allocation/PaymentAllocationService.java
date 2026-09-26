@@ -129,6 +129,22 @@ public class PaymentAllocationService {
         }
     }
 
+    /** 退款窗口明确选择课程时，将负数退款流水只分摊到该课程。 */
+    @Transactional(rollbackFor = Exception.class, propagation = Propagation.MANDATORY)
+    public void recordRefundAllocation(PaymentRecordEntity refund,
+                                       Long orderId,
+                                       Long itemId,
+                                       BigDecimal amount) {
+        BigDecimal refundAmount = defaultAmount(amount);
+        boolean itemExists = listActiveItems(orderId).stream()
+                .anyMatch(item -> Objects.equals(item.getId(), itemId));
+        if (!itemExists || refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("REFUND_ALLOCATION_INVALID",
+                    "The refund must reference an active course and a positive amount.");
+        }
+        insertAllocation(refund, orderId, itemId, refundAmount.negate());
+    }
+
     /** 更正报名收款时替换该流水的课程分配，避免旧分配与新金额不一致。 */
     @Transactional(rollbackFor = Exception.class, propagation = Propagation.MANDATORY)
     public void replaceExplicitAllocations(PaymentRecordEntity payment,
@@ -259,9 +275,13 @@ public class PaymentAllocationService {
                 throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
                         "Saved course allocation cannot be zero.");
             }
-            if (amount.signum() > 0 && amount.compareTo(available) > 0) {
+            BigDecimal paymentCapacity = "STOPPED".equalsIgnoreCase(
+                    items.stream().filter(item -> Objects.equals(item.getId(), itemId)).findFirst()
+                            .map(EnrollmentOrderItemEntity::getItemStatus).orElse(null))
+                    ? historicalAmountDue(items, itemId).subtract(paid).max(BigDecimal.ZERO) : available;
+            if (amount.signum() > 0 && amount.compareTo(paymentCapacity) > 0) {
                 throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
-                        "Saved course payment allocation exceeds the current course balance.");
+                        "Saved course payment allocation exceeds the course's valid payment amount.");
             }
             if (amount.signum() < 0 && amount.negate().compareTo(paid) > 0) {
                 throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
@@ -304,6 +324,19 @@ public class PaymentAllocationService {
                 .filter(item -> Objects.equals(item.getId(), itemId))
                 .findFirst()
                 .map(item -> defaultAmount(item.getAmountDue()))
+                .orElse(BigDecimal.ZERO.setScale(2));
+    }
+
+    private BigDecimal historicalAmountDue(List<EnrollmentOrderItemEntity> items, Long itemId) {
+        return items.stream()
+                .filter(item -> Objects.equals(item.getId(), itemId))
+                .findFirst()
+                .map(item -> defaultAmount(item.getPriceAmount())
+                        .add(defaultAmount(item.getPickupFeeAmount()))
+                        .add(defaultAmount(item.getDropoffFeeAmount()))
+                        .add(defaultAmount(item.getExtraFeeAmount()))
+                        .subtract(defaultAmount(item.getDiscountAmount()))
+                        .max(defaultAmount(item.getAmountDue())))
                 .orElse(BigDecimal.ZERO.setScale(2));
     }
 

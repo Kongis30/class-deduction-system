@@ -34,6 +34,8 @@ export interface DataSummaryRow {
   studentClass?: string;
   school?: string;
   grade?: string;
+  /** Price-option grade/season label snapshot (legacy Saturday rows store the season here). */
+  gradeBand?: string;
   signupDate?: string;
   periodStartDate?: string;
   periodEndDate?: string;
@@ -61,6 +63,9 @@ export interface DataSummaryRow {
   pickupDropoffLabel?: string;
   paymentMethod?: string;
   orderStatus?: string;
+  itemStatus?: string;
+  stoppedConsumedAmount?: number;
+  stoppedSessionCount?: number;
   paymentStatus: string;
   linePriceAmount?: number;
   pickupFeeAmount: number;
