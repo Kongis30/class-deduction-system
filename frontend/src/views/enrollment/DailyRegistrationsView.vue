@@ -3,17 +3,22 @@
     <div class="workbook-toolbar">
       <div class="workbook-toolbar__month daily-workbook-toolbar__filters">
         <span class="workbook-toolbar__label">Saved date</span>
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          range-separator="to"
-          start-placeholder="Start date"
-          end-placeholder="End date"
-          unlink-panels
-          size="small"
-        />
-        <el-select v-model="operatorUserId" clearable placeholder="All operators" class="operator-filter" size="small">
+        <el-button-group class="daily-date-navigation">
+          <el-button size="small" aria-label="Previous day" title="Previous day" @click="shiftSelectedDate(-1)">‹</el-button>
+          <el-date-picker
+            v-model="selectedDate"
+            type="date"
+            value-format="YYYY-MM-DD"
+            :clearable="false"
+            :editable="false"
+            size="small"
+            aria-label="Registration date"
+            @change="loadReport"
+          />
+          <el-button size="small" :disabled="selectedDate === todayInNewYork()" @click="selectToday">Today</el-button>
+          <el-button size="small" aria-label="Next day" title="Next day" @click="shiftSelectedDate(1)">›</el-button>
+        </el-button-group>
+        <el-select v-model="operatorUserId" clearable placeholder="All operators" class="operator-filter" size="small" @change="loadReport">
           <el-option
             v-for="operator in operatorOptions"
             :key="String(operator.operatorUserId ?? operator.operatorName)"
@@ -21,7 +26,6 @@
             :value="String(operator.operatorUserId ?? '')"
           />
         </el-select>
-        <el-button size="small" type="primary" @click="loadReport">Search</el-button>
       </div>
 
       <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
@@ -43,7 +47,7 @@
       <section class="daily-sheet operator-sheet">
         <div class="daily-sheet__caption">
           <strong>Operator totals</strong>
-          <span>Counts summarize registrations saved during the selected date range.</span>
+          <span>Registrations saved on {{ formatDay(selectedDate) }}.</span>
         </div>
         <div class="workbook-scroll daily-sheet__scroll daily-sheet__scroll--compact">
           <table class="workbook-table operator-table">
@@ -75,7 +79,7 @@
                 <td class="workbook-cell--money">{{ money(operator.amountCollected) }}</td>
               </tr>
               <tr v-if="visibleOperators.length === 0" class="workbook-empty-row">
-                <td colspan="6">No operator totals for this date range.</td>
+                <td colspan="6">No operator totals for this date.</td>
               </tr>
             </tbody>
           </table>
@@ -85,7 +89,7 @@
       <section class="daily-sheet history-sheet">
         <div class="daily-sheet__caption">
           <strong>Registration history</strong>
-          <span>{{ filteredRows.length }} course record(s), ordered by saved time</span>
+          <span>{{ filteredRows.length }} course record(s) saved on {{ formatDay(selectedDate) }}, ordered by saved time</span>
         </div>
         <div class="workbook-scroll daily-sheet__scroll history-sheet__scroll" data-testid="daily-registration-workbook">
           <table class="workbook-table history-table">
@@ -235,11 +239,12 @@ const columns: Column[] = [
   { key: 'outstandingAmount', label: 'Outstanding', width: 125, filterType: 'number' },
 ];
 
-const dateRange = ref<[string, string]>([todayInNewYork(), todayInNewYork()]);
+const selectedDate = ref(todayInNewYork());
 const operatorUserId = ref('');
 const report = ref<DailyRegistrationReport>();
 const operatorOptions = ref<DailyRegistrationOperatorSummary[]>([]);
 const loading = ref(false);
+let latestRequestId = 0;
 const sortState = ref<{ key: ColumnKey; direction: 'asc' | 'desc' }>({ key: 'savedAt', direction: 'desc' });
 const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>({
   savedAt: emptyFilter(), studentName: emptyFilter(), courseName: emptyFilter(), className: emptyFilter(),
@@ -290,24 +295,38 @@ const filteredStats = computed(() => {
 onMounted(loadReport);
 
 async function loadReport() {
-  if (!dateRange.value?.[0] || !dateRange.value?.[1]) {
-    ElMessage.warning('Choose a date range.');
+  if (!selectedDate.value) {
+    ElMessage.warning('Choose a date.');
     return;
   }
+  const requestId = ++latestRequestId;
   loading.value = true;
   try {
     const response = await fetchDailyRegistrations({
-      fromDate: dateRange.value[0],
-      toDate: dateRange.value[1],
+      fromDate: selectedDate.value,
+      toDate: selectedDate.value,
       ...(operatorUserId.value ? { operatorUserId: operatorUserId.value } : {}),
     });
+    if (requestId !== latestRequestId) return;
     report.value = response.data.data;
     if (!operatorUserId.value) operatorOptions.value = response.data.data.operators;
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error, 'Failed to load registration history.'));
+    if (requestId === latestRequestId) ElMessage.error(extractErrorMessage(error, 'Failed to load registration history.'));
   } finally {
-    loading.value = false;
+    if (requestId === latestRequestId) loading.value = false;
   }
+}
+
+function selectToday() {
+  selectedDate.value = todayInNewYork();
+  loadReport();
+}
+
+function shiftSelectedDate(offset: number) {
+  const [year, month, day] = selectedDate.value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + offset));
+  selectedDate.value = date.toISOString().slice(0, 10);
+  loadReport();
 }
 
 function matchesColumnFilters(row: DailyRegistrationRow) {
@@ -396,7 +415,7 @@ function exportExcel() {
   sheet['!cols'] = columns.map((column) => ({ wch: Math.max(10, Math.round(column.width / 7)) }));
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, 'Daily Registrations');
-  XLSX.writeFile(workbook, `Daily_Registrations_${dateRange.value[0]}_${dateRange.value[1]}.xlsx`);
+  XLSX.writeFile(workbook, `Daily_Registrations_${selectedDate.value}.xlsx`);
 }
 
 function todayInNewYork() {
@@ -461,7 +480,10 @@ function rowKey(row: DailyRegistrationRow) {
 <style scoped>
 .daily-workbook-page { min-width: 0; }
 .daily-workbook-toolbar__filters { flex-wrap: wrap; }
-.daily-workbook-toolbar__filters :deep(.el-date-editor) { width: 280px; }
+.daily-date-navigation :deep(.el-date-editor) { width: 150px; }
+.daily-date-navigation :deep(.el-button + .el-button),
+.daily-date-navigation :deep(.el-button + .el-date-editor),
+.daily-date-navigation :deep(.el-date-editor + .el-button) { margin-left: 0; }
 .daily-workbook-toolbar__stats { flex-wrap: wrap; gap: 14px 20px; }
 .daily-workbook-toolbar__stat,
 .daily-workbook-toolbar__stat em { white-space: nowrap; }
