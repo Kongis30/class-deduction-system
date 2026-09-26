@@ -747,11 +747,12 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
 import { fetchCoursePackages, updateCoursePackageDeductedHours } from '@/api/enrollment';
+import { fetchOneOnOneDeductions } from '@/api/one-on-one';
 import {
   createRecurringScheduleRule,
   updateRecurringScheduleRule,
@@ -768,6 +769,7 @@ import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { APP_TIMEZONE } from '@/config/app-config';
 import { calendarWeekRange } from '@/utils/calendar-week';
+import { renderSignatureSheetDocument } from '@/utils/signature-sheet-print';
 
 interface WeeklyAdjustmentRow {
 
@@ -790,7 +792,6 @@ interface WeeklyAdjustmentRow {
 
 const loadingPackages = ref(false);
 const route = useRoute();
-const router = useRouter();
 const editDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
 const weeklyDialogVisible = ref(false);
@@ -1353,19 +1354,41 @@ function onPackageSelect(pkg: CoursePackageItem) {
   selectedPackageId.value = pkg.id;
 }
 
-/** 复用消课页的签字表与打印样式，在新标签页打开当前学生的课包。 */
-function openPrintSheet(command: string | number | object) {
+/** 从消课数据接口读取完整课次，在独立签字表预览中展示，不离开排课页面。 */
+async function openPrintSheet(command: string | number | object) {
   if (!selectedStudentId.value || !selectedPackageId.value) return;
   const mode = command === 'teacher' ? 'teacher' : 'parent';
-  const target = router.resolve({
-    name: 'one-on-one-deduction',
-    query: {
-      studentId: String(selectedStudentId.value),
-      packageId: String(selectedPackageId.value),
-      printSheet: mode,
-    },
-  });
-  window.open(target.href, '_blank', 'noopener');
+  const preview = window.open('', '_blank');
+  if (!preview) {
+    ElMessage.warning('Allow pop-ups to open the signature sheet preview.');
+    return;
+  }
+  preview.opener = null;
+  preview.document.write('<!doctype html><html><head><title>Loading signature sheet</title></head><body style="font:16px Arial;padding:32px">Loading signature sheet…</body></html>');
+  preview.document.close();
+
+  try {
+    const response = await fetchOneOnOneDeductions({
+      studentId: selectedStudentId.value,
+      packageId: selectedPackageId.value,
+    });
+    const match = response.data.data
+      .flatMap(teacher => teacher.students)
+      .flatMap(student => student.packages.map(coursePackage => ({ student, coursePackage })))
+      .find(({ student, coursePackage }) =>
+        String(student.studentId) === String(selectedStudentId.value)
+        && String(coursePackage.packageId) === String(selectedPackageId.value));
+
+    if (!match) throw new Error('No signature sheet is available for the selected course.');
+    if (preview.closed) return;
+    preview.document.open();
+    preview.document.write(renderSignatureSheetDocument(match.student, match.coursePackage, mode));
+    preview.document.close();
+    preview.focus();
+  } catch (err) {
+    if (preview.closed) return;
+    preview.document.body.textContent = extractErrorMessage(err);
+  }
 }
 
 async function saveDeductedHours() {

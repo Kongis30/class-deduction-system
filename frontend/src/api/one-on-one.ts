@@ -56,6 +56,7 @@ export interface OneOnOnePackage {
   packageNo: string;
   courseProductId?: EntityId;
   courseProductName?: string;
+  subjectName?: string;
   gradeBand?: string;
   packageName: string;
   totalUnits: number;
