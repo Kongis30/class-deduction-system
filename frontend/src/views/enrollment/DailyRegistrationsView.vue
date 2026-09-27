@@ -181,11 +181,11 @@
                 </tr>
                 <tr v-for="row in group.rows" :key="rowKey(row)" class="workbook-data-row">
                   <td>{{ dateTime(row.savedAt) }}</td>
+                  <td>{{ display(row.operatorName, 'Operator not recorded') }}</td>
                   <td>{{ display(row.studentName) }}</td>
                   <td>{{ display(row.courseName) }}</td>
-                  <td>{{ display(row.className) }}</td>
                   <td class="workbook-cell--center">{{ display(row.grade) }}</td>
-                  <td>{{ display(row.operatorName, 'Operator not recorded') }}</td>
+                  <td>{{ display(row.className) }}</td>
                   <td class="workbook-cell--center">
                     <span :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">{{ display(row.paymentMethod) }}</span>
                   </td>
@@ -226,12 +226,12 @@ type Column = { key: ColumnKey; label: string; width: number; filterType: Filter
 type ColumnFilter = { text: string; selected: string[]; dateRange: [string, string] | null; min: number | undefined; max: number | undefined };
 
 const columns: Column[] = [
-  { key: 'savedAt', label: 'Saved at (ET)', width: 165, filterType: 'date' },
+  { key: 'savedAt', label: 'Time (ET)', width: 165, filterType: 'date' },
+  { key: 'operatorName', label: 'Handled by', width: 155, filterType: 'select' },
   { key: 'studentName', label: 'Student', width: 155, filterType: 'text' },
   { key: 'courseName', label: 'Course', width: 200, filterType: 'text' },
-  { key: 'className', label: 'Class', width: 180, filterType: 'text' },
   { key: 'grade', label: 'Grade', width: 90, filterType: 'select' },
-  { key: 'operatorName', label: 'Handled by', width: 155, filterType: 'select' },
+  { key: 'className', label: 'Class', width: 180, filterType: 'text' },
   { key: 'paymentMethod', label: 'Pay method', width: 125, filterType: 'select' },
   { key: 'paymentStatus', label: 'Payment status', width: 135, filterType: 'select' },
   { key: 'amountDue', label: 'Amount due', width: 120, filterType: 'number' },
