@@ -25,7 +25,7 @@
             </template>
           </el-input>
 
-          <el-scrollbar v-loading="studentLoading" class="student-scroll">
+          <el-scrollbar v-loading="studentLoading" always class="student-scroll">
             <el-menu
               v-if="students.length > 0"
               class="receipt-student-menu"
@@ -41,15 +41,6 @@
             <el-empty v-else-if="!studentLoading" description="No students found" :image-size="72" />
           </el-scrollbar>
 
-          <el-pagination
-            class="student-pagination"
-            small
-            layout="prev, pager, next"
-            :total="studentTotal"
-            :page-size="studentQuery.pageSize"
-            :current-page="studentQuery.pageNum"
-            @current-change="handleStudentPageChange"
-          />
         </section>
       </el-col>
 
@@ -130,7 +121,6 @@ const router = useRouter();
 const studentLoading = ref(false);
 const receiptLoading = ref(false);
 const students = ref<StudentItem[]>([]);
-const studentTotal = ref(0);
 const selectedStudent = ref<StudentItem | null>(null);
 const receiptType = ref<'registration' | 'payment' | 'refund'>('registration');
 const receipts = ref<ReceiptRecordItem[]>([]);
@@ -139,48 +129,89 @@ const recordTotal = computed(() => receiptTotal.value);
 
 const studentQuery = reactive({
   keyword: '',
-  pageNum: 1,
-  pageSize: 20,
 });
+
+const STUDENT_PAGE_SIZE = 200;
+let studentLoadSequence = 0;
 
 const orderQuery = reactive({
   pageNum: 1,
   pageSize: 10,
 });
 
+let receiptLoadSequence = 0;
+
 onMounted(loadStudents);
 
 async function loadStudents() {
+  const requestSequence = ++studentLoadSequence;
+  const selectedStudentIdAtStart = selectedStudent.value?.id;
   studentLoading.value = true;
   try {
-    const res = await fetchStudents({
+    const query = {
       keyword: studentQuery.keyword.trim() || undefined,
       hasEnrollmentOrder: true,
-      pageNum: studentQuery.pageNum,
-      pageSize: studentQuery.pageSize,
-    });
-    const page = res.data.data;
-    students.value = page.records ?? [];
-    studentTotal.value = page.total ?? 0;
+      sortByName: true,
+      pageSize: STUDENT_PAGE_SIZE,
+    };
+    const firstPageResponse = await fetchStudents({ ...query, pageNum: 1 });
+    const firstPage = firstPageResponse.data.data;
+    const total = firstPage.total ?? 0;
+    const pageCount = Math.ceil(total / STUDENT_PAGE_SIZE);
+
+    if (requestSequence !== studentLoadSequence) return;
+
+    // 首屏學生到達後立即開啟其收據查詢，不等待左側完整名單全部載入。
+    const firstPageStudents = firstPage.records ?? [];
+    if (!selectedStudentIdAtStart) {
+      students.value = firstPageStudents;
+      if (firstPageStudents.length > 0) {
+        void selectStudent(firstPageStudents[0]);
+      }
+    }
+
+    const remainingPages = await Promise.all(
+      Array.from({ length: Math.max(0, pageCount - 1) }, (_, index) =>
+        fetchStudents({ ...query, pageNum: index + 2 }),
+      ),
+    );
+
+    if (requestSequence !== studentLoadSequence) return;
+
+    const allStudents = [
+      ...firstPageStudents,
+      ...remainingPages.flatMap((response) => response.data.data.records ?? []),
+    ];
+    students.value = allStudents;
+
+    const currentSelectedStudentId = selectedStudent.value?.id;
+    const previouslySelectedStudent = currentSelectedStudentId
+      ? allStudents.find((student) => student.id === currentSelectedStudentId)
+      : undefined;
+    if (previouslySelectedStudent) {
+      selectedStudent.value = previouslySelectedStudent;
+    } else if (currentSelectedStudentId) {
+      clearSelection();
+    }
 
     if (!selectedStudent.value && students.value.length > 0) {
       await selectStudent(students.value[0]);
-      return;
-    }
-
-    if (selectedStudent.value && !students.value.some((student) => student.id === selectedStudent.value?.id)) {
-      clearSelection();
     }
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
+    if (requestSequence === studentLoadSequence) {
+      ElMessage.error(extractErrorMessage(error));
+    }
   } finally {
-    studentLoading.value = false;
+    if (requestSequence === studentLoadSequence) {
+      studentLoading.value = false;
+    }
   }
 }
 
 async function selectStudent(student: StudentItem) {
   selectedStudent.value = student;
   orderQuery.pageNum = 1;
+  clearOrders();
   await loadSelectedStudentRecords();
 }
 
@@ -203,20 +234,29 @@ async function loadSelectedStudentReceipts() {
     receiptTotal.value = 0;
     return;
   }
+  const requestSequence = ++receiptLoadSequence;
+  const studentId = selectedStudent.value.id;
+  const templateCode = receiptTemplateCodes[receiptType.value];
+  const pageNum = orderQuery.pageNum;
   receiptLoading.value = true;
   try {
     const res = await fetchReceipts({
-      studentId: selectedStudent.value.id,
-      templateCode: receiptTemplateCodes[receiptType.value],
-      pageNum: orderQuery.pageNum,
+      studentId,
+      templateCode,
+      pageNum,
       pageSize: orderQuery.pageSize,
     });
+    if (requestSequence !== receiptLoadSequence) return;
     receipts.value = res.data.data.records ?? [];
     receiptTotal.value = res.data.data.total ?? 0;
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
+    if (requestSequence === receiptLoadSequence) {
+      ElMessage.error(extractErrorMessage(error));
+    }
   } finally {
-    receiptLoading.value = false;
+    if (requestSequence === receiptLoadSequence) {
+      receiptLoading.value = false;
+    }
   }
 }
 
@@ -230,13 +270,6 @@ function handleReceiptTypeChange() {
 }
 
 function handleStudentSearch() {
-  studentQuery.pageNum = 1;
-  clearSelection();
-  loadStudents();
-}
-
-function handleStudentPageChange(page: number) {
-  studentQuery.pageNum = page;
   clearSelection();
   loadStudents();
 }
@@ -252,6 +285,8 @@ function clearSelection() {
 }
 
 function clearOrders() {
+  receiptLoadSequence += 1;
+  receiptLoading.value = false;
   receipts.value = [];
   receiptTotal.value = 0;
 }
@@ -334,7 +369,6 @@ function formatMoney(value?: number) {
   white-space: nowrap;
 }
 
-.student-pagination,
 .records-pagination {
   display: flex;
   justify-content: flex-end;

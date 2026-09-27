@@ -154,7 +154,7 @@
                   <strong>{{ group.courseName }}</strong>
                   <span>{{ group.gradeBand }}</span>
                 </span>
-                <small>{{ group.studentGroups.length }} students</small>
+                <small>{{ group.studentGroups.length }} groups</small>
                 <span aria-hidden="true">›</span>
               </button>
               <div v-if="!collapsedCourseGradeKeys.has(group.key)" class="oo-course-grade-students">
@@ -225,7 +225,7 @@
           <div class="oo-student-context">
             <div>
               <strong>
-                {{ activeStudent.studentName }}
+                {{ activePackageStudentNames || activeStudent.studentName }}
                 <el-tag
                   v-if="(activePackage.participantCount ?? 1) > 1"
                   size="small"
@@ -234,9 +234,6 @@
                 >1-on-{{ activePackage.participantCount }}</el-tag>
               </strong>
               <span>{{ activePackage.packageName }}</span>
-              <span v-if="activePackage.participants?.length" class="oo-private-group-students">
-                {{ activePackage.participants.map(participant => participant.studentName).filter(Boolean).join(' / ') }}
-              </span>
             </div>
             <div class="oo-student-context__metrics">
               <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
@@ -248,7 +245,7 @@
 
           <section class="oo-signature-sheet oo-parent-signature-sheet print-only">
             <div class="oo-signature-sheet__meta">
-              <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
+              <p><strong>Student:</strong> {{ activePackageStudentNames || activeStudent.studentName }}</p>
               <div class="oo-signature-hours">
                 <div class="oo-signature-hours__group">
                   <p><strong>Total hours:</strong> {{ formatHours(activePackage.totalUnits) }}</p>
@@ -298,7 +295,7 @@
 
           <section class="oo-signature-sheet oo-teacher-signature-sheet print-only">
             <div class="oo-teacher-sheet__meta">
-              <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
+              <p><strong>Student:</strong> {{ activePackageStudentNames || activeStudent.studentName }}</p>
               <p><strong>Course:</strong> {{ activePackage.packageName }}</p>
               <p><strong>Teacher(s):</strong> {{ teacherPrintTeacherNames.join(', ') || '—' }}</p>
               <p><strong>Classtime:</strong> {{ subjectClassTime(teacherPrintRows) }}</p>
@@ -675,6 +672,7 @@ const studentSearchKeyword = ref('');
 const studentSearchLoading = ref(false);
 const appliedStudentSearch = ref('');
 const studentSearchResults = ref<StudentEntry[]>([]);
+const matchedSearchStudentIds = ref<Set<string>>(new Set());
 const packagePage = ref(1);
 const packagePageSize = 10;
 const packagePanelCollapsed = ref(false);
@@ -707,8 +705,12 @@ const allPackageCandidates = computed<PackageCandidate[]>(() => {
 });
 const activeStudentSearch = computed(() => appliedStudentSearch.value.trim());
 const searchedStudentKeys = computed(() => new Set(
-  studentSearchResults.value.map(entry => entityKey(entry.student.studentId)),
+  matchedSearchStudentIds.value,
 ));
+const activePackageStudentNames = computed(() => (activePackage.value?.participants ?? [])
+  .map(participant => participant.studentName?.trim())
+  .filter((name): name is string => Boolean(name))
+  .join(' / '));
 const selectedTeacherKey = computed(() => entityKey(selectedTeacherId.value));
 const courseTypeOptions = computed(() => {
   const options = new Set<string>();
@@ -752,18 +754,27 @@ const courseGradeGroups = computed<CourseGradeGroup[]>(() => {
       groups.set(group.key, group);
     }
 
-    const studentGroupKey = `${candidate.courseGradeKey}::${candidate.studentKey}`;
-    let studentGroup = group.students.get(candidate.studentKey);
+    const privateGroupId = candidate.pkg.privateLessonGroupId;
+    const studentGroupKey = privateGroupId == null
+      ? `${candidate.courseGradeKey}::student:${candidate.studentKey}`
+      : `${candidate.courseGradeKey}::private-group:${entityKey(privateGroupId)}`;
+    const studentGroupId = privateGroupId == null ? candidate.studentKey : entityKey(privateGroupId);
+    let studentGroup = group.students.get(studentGroupId);
     if (!studentGroup) {
       studentGroup = {
         key: studentGroupKey,
-        studentKey: candidate.studentKey,
-        studentName: candidate.student.studentName,
+        studentKey: studentGroupId,
+        studentName: candidate.pkg.participantCount && candidate.pkg.participantCount > 1
+          ? (candidate.pkg.participants ?? []).map(participant => participant.studentName?.trim()).filter(Boolean).join(' / ')
+            || candidate.student.studentName
+          : candidate.student.studentName,
         candidates: [],
       };
-      group.students.set(candidate.studentKey, studentGroup);
+      group.students.set(studentGroupId, studentGroup);
     }
-    studentGroup.candidates.push(candidate);
+    if (!studentGroup.candidates.some(existing => String(existing.pkg.packageId) === String(candidate.pkg.packageId))) {
+      studentGroup.candidates.push(candidate);
+    }
   }
   return Array.from(groups.values())
     .map(group => ({
@@ -1087,12 +1098,25 @@ async function searchStudents() {
   try {
     const response = await fetchStudents({ keyword, pageNum: 1, pageSize: 20 });
     const profiles = response.data.data.records;
-    const entriesByStudentId = new Map(studentEntries.value.map(entry => [String(entry.student.studentId), entry]));
-    studentSearchResults.value = profiles
-      .map(profile => entriesByStudentId.get(String(profile.id)))
-      .filter((entry): entry is StudentEntry => Boolean(entry));
+    matchedSearchStudentIds.value = new Set(profiles.map(profile => String(profile.id)));
+    const entriesByStudentId = new Map<string, StudentEntry>();
+    studentEntries.value.forEach((entry) => {
+      entriesByStudentId.set(String(entry.student.studentId), entry);
+      entry.student.packages.forEach((coursePackage) => {
+        coursePackage.participants?.forEach((participant) => {
+          if (participant.studentId != null) entriesByStudentId.set(String(participant.studentId), entry);
+        });
+      });
+    });
+    const matchedEntries = new Map<string, StudentEntry>();
+    profiles.forEach((profile) => {
+      const entry = entriesByStudentId.get(String(profile.id));
+      if (entry) matchedEntries.set(entityKey(entry.student.studentId), entry);
+    });
+    studentSearchResults.value = [...matchedEntries.values()];
   } catch (err) {
     studentSearchResults.value = [];
+    matchedSearchStudentIds.value = new Set();
     ElMessage.error(extractErrorMessage(err));
   } finally {
     studentSearchLoading.value = false;
@@ -1159,7 +1183,9 @@ function candidatePackageLabel(pkg: OneOnOnePackage) {
 }
 
 function matchesCandidateFilters(candidate: PackageCandidate) {
-  if (activeStudentSearch.value && !searchedStudentKeys.value.has(candidate.studentKey)) return false;
+  if (activeStudentSearch.value
+    && !searchedStudentKeys.value.has(candidate.studentKey)
+    && !(candidate.pkg.participants ?? []).some(participant => searchedStudentKeys.value.has(entityKey(participant.studentId)))) return false;
   if (selectedTeacherKey.value && candidate.teacherKey !== selectedTeacherKey.value) return false;
   if (selectedCourseType.value && candidate.courseProductKey !== optionKey(selectedCourseType.value)) return false;
   if (selectedGradeBand.value && candidate.gradeKey !== optionKey(selectedGradeBand.value)) return false;
@@ -1179,6 +1205,7 @@ function clearFilters() {
 function clearStudentSearch() {
   appliedStudentSearch.value = '';
   studentSearchResults.value = [];
+  matchedSearchStudentIds.value = new Set();
 }
 
 function onScopeFilterChanged() {
@@ -1227,10 +1254,10 @@ function selectPackage(teacher: OneOnOneTeacher, student: OneOnOneStudent, pkg: 
   const collapsed = new Set(collapsedCourseGradeKeys.value);
   collapsed.delete(key);
   collapsedCourseGradeKeys.value = collapsed;
-  expandedStudentGroupKeys.value = new Set([
-    ...expandedStudentGroupKeys.value,
-    `${key}::${entityKey(student.studentId)}`,
-  ]);
+  const groupKey = pkg.privateLessonGroupId == null
+    ? `${key}::student:${entityKey(student.studentId)}`
+    : `${key}::private-group:${entityKey(pkg.privateLessonGroupId)}`;
+  expandedStudentGroupKeys.value = new Set([...expandedStudentGroupKeys.value, groupKey]);
 }
 
 function clearSelection() {

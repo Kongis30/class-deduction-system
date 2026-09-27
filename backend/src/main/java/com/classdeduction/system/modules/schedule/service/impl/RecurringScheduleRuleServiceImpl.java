@@ -27,9 +27,13 @@ import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRulePageQ
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleUpdateRequest;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleSlotRequest;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
@@ -74,6 +78,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PrivateLessonGroupMapper privateLessonGroupMapper;
@@ -84,12 +90,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
     @Override
     public List<ScheduleStudentOptionVO> listStudentsWithActiveOneOnOnePackages() {
-        // 先用单条关联查询取出每个学生的课程年级，再在内存合并重复课包，供左侧栏分组。
+        // 普通课按学生、课程、年级合并；1 对 2 则按共享组 ID 保留为单独的排课单位。
         Map<Long, ScheduleStudentOptionBuilder> students = new LinkedHashMap<>();
         for (ActiveOneOnOneStudentCourseGradeRow row : coursePackageMapper.selectActiveOneOnOneStudentCourseGrades()) {
             ScheduleStudentOptionBuilder student = students.computeIfAbsent(
                     row.studentId(), id -> new ScheduleStudentOptionBuilder(id, row.studentName()));
-            student.addCourseGrade(row.courseName(), row.gradeBand(), row.hasSchedule());
+            student.addCourseGrade(row);
         }
         return students.values().stream()
                 .map(ScheduleStudentOptionBuilder::build)
@@ -106,15 +112,21 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             this.studentName = studentName;
         }
 
-        private void addCourseGrade(String courseName, String gradeBand, boolean hasSchedule) {
-            String normalizedCourse = courseName == null ? "" : courseName.trim().toLowerCase(Locale.ROOT);
-            String normalizedGrade = gradeBand == null ? "" : gradeBand.trim().toLowerCase(Locale.ROOT);
-            String key = normalizedCourse + "::" + normalizedGrade;
-            // 同一课程年级可能含多个课包；全部课包都有有效排课，该组才算排完。
-            courseGrades.merge(key,
-                    new ScheduleStudentOptionVO.CourseGradeOption(courseName, gradeBand, hasSchedule),
-                    (existing, incoming) -> new ScheduleStudentOptionVO.CourseGradeOption(
-                            existing.courseName(), existing.gradeBand(), existing.hasSchedule() && incoming.hasSchedule()));
+        private void addCourseGrade(ActiveOneOnOneStudentCourseGradeRow row) {
+            String courseKey = (row.courseName() == null ? "" : row.courseName().trim().toLowerCase(Locale.ROOT))
+                    + "::" + (row.gradeBand() == null ? "" : row.gradeBand().trim().toLowerCase(Locale.ROOT));
+            boolean sharedGroup = row.privateLessonGroupId() != null;
+            String key = sharedGroup ? "private-group::" + row.privateLessonGroupId() : courseKey;
+            ScheduleStudentOptionVO.CourseGradeOption incoming = new ScheduleStudentOptionVO.CourseGradeOption(
+                    row.courseName(), row.gradeBand(), row.hasSchedule(),
+                    sharedGroup ? row.packageId() : null,
+                    row.privateLessonGroupId(), row.participantCount(),
+                    sharedGroup ? row.participantNames() : null,
+                    sharedGroup ? row.participantStudentIds() : null);
+            courseGrades.merge(key, incoming, (existing, next) -> new ScheduleStudentOptionVO.CourseGradeOption(
+                    existing.courseName(), existing.gradeBand(), existing.hasSchedule() && next.hasSchedule(),
+                    existing.packageId(), existing.privateLessonGroupId(), existing.participantCount(),
+                    existing.participantNames(), existing.participantStudentIds()));
         }
 
         private ScheduleStudentOptionVO build() {
@@ -524,6 +536,88 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return teacher;
     }
 
+    /** 排课冲突按学生实际参加的课次查找，覆盖本人课包、其他共享私教组和有效班课。 */
+    private List<LessonOccurrenceEntity> listStudentOccupiedOccurrences(Long studentId,
+                                                                         LocalDateTime windowStart,
+                                                                         LocalDateTime windowEnd,
+                                                                         Long excludeRuleId) {
+        List<Long> privateGroupIds = privateLessonGroupMemberMapper.selectList(
+                        new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                                .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
+                                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull).distinct().toList();
+        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+        List<Long> classIds = enrollments.stream().map(ClassEnrollmentEntity::getClassId)
+                .filter(Objects::nonNull).distinct().toList();
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .and(nested -> nested.eq(LessonOccurrenceEntity::getStudentId, studentId)
+                                .or(!privateGroupIds.isEmpty(), group -> group.in(
+                                        LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds))
+                                .or(!classIds.isEmpty(), group -> group.in(
+                                        LessonOccurrenceEntity::getClassGroupId, classIds)))
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ne(excludeRuleId != null, LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
+                        .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
+                        .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+        Set<Long> slotIds = occurrences.stream()
+                .filter(occurrence -> occurrence.getClassGroupId() != null)
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, ClassGroupScheduleSlotEntity> slots = slotIds.isEmpty() ? Map.of()
+                : classGroupScheduleSlotMapper.selectBatchIds(slotIds).stream()
+                        .collect(Collectors.toMap(ClassGroupScheduleSlotEntity::getId, slot -> slot));
+        Map<Long, List<ClassEnrollmentEntity>> enrollmentsByClass = enrollments.stream()
+                .filter(enrollment -> enrollment.getClassId() != null)
+                .collect(Collectors.groupingBy(ClassEnrollmentEntity::getClassId));
+        return occurrences.stream()
+                .filter(occurrence -> occurrence.getClassGroupId() == null
+                        || classOccurrenceVisibleToStudent(occurrence,
+                                enrollmentsByClass.get(occurrence.getClassGroupId()), slots))
+                .toList();
+    }
+
+    /** 班课占用须符合学生报名日期和 AM/PM 选项，避免因同班其他时段产生误报。 */
+    private boolean classOccurrenceVisibleToStudent(LessonOccurrenceEntity occurrence,
+                                                    List<ClassEnrollmentEntity> enrollments,
+                                                    Map<Long, ClassGroupScheduleSlotEntity> slots) {
+        if (enrollments == null || occurrence.getPlannedStartAt() == null) {
+            return false;
+        }
+        LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
+        ClassGroupScheduleSlotEntity slot = occurrence.getScheduleSlotId() == null
+                ? null : slots.get(occurrence.getScheduleSlotId());
+        return enrollments.stream().anyMatch(enrollment ->
+                (enrollment.getCreatedAt() == null || !lessonDate.isBefore(enrollment.getCreatedAt().toLocalDate()))
+                        && (enrollment.getEnrollmentDate() == null || !lessonDate.isBefore(enrollment.getEnrollmentDate()))
+                        && (enrollment.getExpiryDate() == null || !lessonDate.isAfter(enrollment.getExpiryDate()))
+                        && attendanceMatches(enrollment.getAttendanceOption(), slot));
+    }
+
+    private boolean attendanceMatches(String attendanceOption, ClassGroupScheduleSlotEntity slot) {
+        String raw = slot == null ? null : slot.getAttendanceOptions();
+        if (!StringUtils.hasText(raw)) {
+            return true;
+        }
+        Set<String> segments = Arrays.stream(raw.toUpperCase(Locale.ROOT).split(","))
+                .map(String::trim).filter(StringUtils::hasText).collect(Collectors.toSet());
+        if (segments.isEmpty() || segments.contains("ALL")) {
+            return true;
+        }
+        String attendance = StringUtils.hasText(attendanceOption)
+                ? attendanceOption.trim().toUpperCase(Locale.ROOT) : "FULL_DAY";
+        if ("FULL_DAY".equals(attendance)) {
+            return segments.contains("FULL_DAY") || segments.contains("MORNING") || segments.contains("AFTERNOON");
+        }
+        return segments.contains(attendance);
+    }
+
     private void ensureNoConflictsExcludingRule(List<LessonOccurrenceEntity> candidates,
                                                 Long studentId, Long classroomId, Long excludeRuleId) {
         if (candidates.isEmpty()) {
@@ -532,12 +626,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         LocalDateTime windowStart = candidates.stream().map(LessonOccurrenceEntity::getPlannedStartAt).min(LocalDateTime::compareTo).orElseThrow();
         LocalDateTime windowEnd = candidates.stream().map(LessonOccurrenceEntity::getPlannedEndAt).max(LocalDateTime::compareTo).orElseThrow();
 
-        List<LessonOccurrenceEntity> studentOccurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getStudentId, studentId)
-                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .ne(LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
-                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
-                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+        List<LessonOccurrenceEntity> studentOccurrences = listStudentOccupiedOccurrences(
+                studentId, windowStart, windowEnd, excludeRuleId);
         Set<Long> teacherIds = candidates.stream()
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
                 .filter(Objects::nonNull)
@@ -560,7 +650,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         for (LessonOccurrenceEntity candidate : candidates) {
             LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
             if (studentConflict != null) {
-                conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
+                conflicts.add(resolveStudentName(studentId) + " has another lesson at " + candidate.getPlannedStartAt());
                 details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), studentConflict));
             }
             Long candidateTeacherId = candidate.getPlannedTeacherId();
@@ -965,11 +1055,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         LocalDateTime windowStart = generatedOccurrences.stream().map(LessonOccurrenceEntity::getPlannedStartAt).min(LocalDateTime::compareTo).orElseThrow();
         LocalDateTime windowEnd = generatedOccurrences.stream().map(LessonOccurrenceEntity::getPlannedEndAt).max(LocalDateTime::compareTo).orElseThrow();
 
-        List<LessonOccurrenceEntity> studentOccurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getStudentId, studentId)
-                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
-                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+        List<LessonOccurrenceEntity> studentOccurrences = listStudentOccupiedOccurrences(
+                studentId, windowStart, windowEnd, null);
         Set<Long> teacherIds = generatedOccurrences.stream()
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
                 .filter(Objects::nonNull)
@@ -990,7 +1077,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         for (LessonOccurrenceEntity candidate : generatedOccurrences) {
             LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
             if (studentConflict != null) {
-                conflicts.add("Student conflict at " + candidate.getPlannedStartAt());
+                conflicts.add(resolveStudentName(studentId) + " has another lesson at " + candidate.getPlannedStartAt());
                 details.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), studentConflict));
             }
             Long candidateTeacherId = candidate.getPlannedTeacherId();

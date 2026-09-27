@@ -15,6 +15,11 @@ export interface ScheduleStudentOption {
   courseGrades: Array<{
     courseName: string;
     gradeBand: string;
+    packageId?: EntityId;
+    privateLessonGroupId?: EntityId;
+    participantCount?: number;
+    participantNames?: string;
+    participantStudentIds?: string;
     // 旧版接口尚未返回排课状态时，该课程暂列为待排课，避免误放入已排课名单。
     hasSchedule?: boolean;
   }>;

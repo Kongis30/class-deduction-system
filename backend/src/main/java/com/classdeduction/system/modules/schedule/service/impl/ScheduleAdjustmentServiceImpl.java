@@ -220,7 +220,9 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         // 忽略本批次涉及的原课次（UPDATE/DELETE），避免旧时间占用造成误报。
         Set<Long> ignoredOccurrenceIds = new HashSet<>(sourceIds);
         // 冲突检查前先锁定本批次涉及的学生/老师/教室，串行化并发调课，避免检查后写入被穿透。
-        lockAdjustmentResources(setOf(studentId),
+        Set<Long> affectedStudentIds = new LinkedHashSet<>(setOf(studentId));
+        effectiveOccurrences.forEach(occurrence -> affectedStudentIds.addAll(studentIdsForOccurrence(occurrence)));
+        lockAdjustmentResources(affectedStudentIds,
                 collectResourceIds(effectiveOccurrences, LessonOccurrenceEntity::getPlannedTeacherId),
                 collectResourceIds(effectiveOccurrences, LessonOccurrenceEntity::getPlannedClassroomId));
         ensureNoConflicts(effectiveOccurrences, ignoredOccurrenceIds);

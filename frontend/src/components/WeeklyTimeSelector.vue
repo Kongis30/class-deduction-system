@@ -160,14 +160,15 @@ const dayLabelsWithDates = computed(() => {
 });
 
 // ─── Grid config ─────────────────────────────
-const GRID_START_HOUR = 8;
-const GRID_LAST_VISIBLE_HOUR = 22;
+const GRID_START_MINUTES = 7 * 60 + 30;
+const GRID_LAST_VISIBLE_MINUTES = 22 * 60 + 30;
 
 const timeSlots = computed(() => {
   const rows: { label: string; hour: number; minute: number }[] = [];
-  for (let h = GRID_START_HOUR; h <= GRID_LAST_VISIBLE_HOUR; h++) {
-    rows.push({ label: `${String(h).padStart(2, '0')}:00`, hour: h, minute: 0 });
-    rows.push({ label: `${String(h).padStart(2, '0')}:30`, hour: h, minute: 30 });
+  for (let minutes = GRID_START_MINUTES; minutes <= GRID_LAST_VISIBLE_MINUTES; minutes += 30) {
+    const hour = Math.floor(minutes / 60);
+    const minute = minutes % 60;
+    rows.push({ label: formatTime(minutes), hour, minute });
   }
   return rows;
 });

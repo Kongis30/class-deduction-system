@@ -644,6 +644,21 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             return Collections.emptyList();
         }
         List<Long> matchedStudentIds = findMatchedStudentIds(safeQuery.getKeyword());
+        List<Long> matchedGroupIds = matchedStudentIds.isEmpty() ? Collections.emptyList()
+                : privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getStudentId, matchedStudentIds)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull).distinct().toList();
+        List<Long> matchedPrimaryPackageIds = matchedGroupIds.isEmpty() ? Collections.emptyList()
+                : privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, matchedGroupIds)
+                        .eq(PrivateLessonGroupMemberEntity::getParticipantIndex, 1)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream().map(PrivateLessonGroupMemberEntity::getPackageId)
+                .filter(Objects::nonNull).distinct().toList();
 
         LambdaQueryWrapper<CoursePackageEntity> wrapper = new LambdaQueryWrapper<CoursePackageEntity>()
                 .and(teachingMode -> teachingMode
@@ -658,7 +673,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         .like(CoursePackageEntity::getPackageNo, safeQuery.getKeyword())
                         .or()
                         .like(CoursePackageEntity::getPackageName, safeQuery.getKeyword())
-                        .or(!matchedStudentIds.isEmpty(), nested -> nested.in(CoursePackageEntity::getStudentId, matchedStudentIds)))
+                        .or(!matchedStudentIds.isEmpty(), nested -> nested.in(CoursePackageEntity::getStudentId, matchedStudentIds))
+                        .or(!matchedPrimaryPackageIds.isEmpty(), nested -> nested.in(CoursePackageEntity::getId, matchedPrimaryPackageIds)))
                 .orderByDesc(CoursePackageEntity::getCreatedAt);
         List<CoursePackageEntity> packages = coursePackageMapper.selectList(wrapper);
         if (packages.isEmpty()) {

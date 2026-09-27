@@ -11,7 +11,19 @@ public record ScheduleStudentOptionVO(
         String studentName,
         List<CourseGradeOption> courseGrades
 ) {
-    /** 左侧栏展示学生所属的有效课程与年级组合。 */
-    public record CourseGradeOption(String courseName, String gradeBand, boolean hasSchedule) {
+    /** 左侧栏的一条可排课单位；共享课组以主课包为入口并携带全部成员。 */
+    public record CourseGradeOption(
+            String courseName,
+            String gradeBand,
+            boolean hasSchedule,
+            Long packageId,
+            Long privateLessonGroupId,
+            Integer participantCount,
+            String participantNames,
+            String participantStudentIds
+    ) {
+        public CourseGradeOption(String courseName, String gradeBand, boolean hasSchedule) {
+            this(courseName, gradeBand, hasSchedule, null, null, 1, null, null);
+        }
     }
 }

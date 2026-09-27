@@ -25,7 +25,7 @@
       <div class="registration-desk__actions">
         <el-button type="primary" @click="startNewRegistration">New Registration</el-button>
         <el-button class="action-secondary" @click="openCurrentStudentHistory">Find student &amp; history</el-button>
-        <el-button v-if="isReadOnly && !editingCorrection && canCorrectReceipt" type="primary" @click="startCorrection">Edit Receipt</el-button>
+        <el-button v-if="isReadOnly && !editingCorrection && canCorrectReceipt" type="primary" :loading="correctionSetupLoading" @click="startCorrection">Edit Receipt</el-button>
         <template v-if="isReadOnly && editingCorrection">
           <el-button @click="cancelCorrection">Cancel</el-button>
           <el-button type="primary" :loading="savingCorrection" @click="saveCorrection">Save changes</el-button>
@@ -1305,6 +1305,8 @@ const renewClassEnrollmentId = computed(() => getQueryValue(route.query.renewCla
 const isRenewalMode = computed(() => Boolean(renewPackageId.value || renewClassEnrollmentId.value));
 const editingCorrection = ref(false);
 const savingCorrection = ref(false);
+const correctionSetupLoading = ref(false);
+const historicalOrder = ref<EnrollmentOrderDetailItem | null>(null);
 // Contact fields are editable when creating a new registration or when correcting a saved one.
 const contactLocked = computed(() => isReadOnly.value && !editingCorrection.value);
 // 收据更正态复用报名表控件，但保存时更新原订单，不创建新的报名单。
@@ -1866,12 +1868,14 @@ watch([privateParticipantCount, hasOneOnOneLine], () => {
 });
 
 onMounted(async () => {
-  await loadInitialData();
   if (isReadOnly.value) {
     await loadHistoricalOrder();
+    void loadCourseCategoryLabels();
   } else if (isRenewalMode.value) {
+    await loadInitialData();
     await loadRenewalRegistration();
   } else {
+    await loadInitialData();
     await loadExistingStudent();
   }
 });
@@ -1983,17 +1987,35 @@ async function loadHistoricalOrder() {
     return;
   }
   try {
-    const res = await fetchEnrollmentOrder(orderId);
-    applyHistoricalOrder(res.data.data);
+    // 只读收据依赖订单快照与校区信息；和大批量下拉数据并行加载，避免等待报名表选项。
+    const [orderResponse, campusResponse] = await Promise.all([
+      fetchEnrollmentOrder(orderId),
+      campuses.value.length > 0 ? Promise.resolve(null) : fetchCampuses(),
+    ]);
+    if (campusResponse) {
+      campuses.value = campusResponse.data.data ?? [];
+    }
+    historicalOrder.value = orderResponse.data.data;
+    applyHistoricalOrder(historicalOrder.value);
     await printHistoricalFormIfRequested(String(orderId));
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
   }
 }
 
-function startCorrection() {
+async function startCorrection() {
   if (!canCorrectReceipt.value) return;
-  editingCorrection.value = true;
+  correctionSetupLoading.value = true;
+  try {
+    await loadInitialData();
+    if (historicalOrder.value) {
+      // 基础选项加载完成后重建一次编辑模型，把已停用课程与价格映射到可编辑表单。
+      applyHistoricalOrder(historicalOrder.value);
+    }
+    editingCorrection.value = true;
+  } finally {
+    correctionSetupLoading.value = false;
+  }
 }
 
 function cancelCorrection() {

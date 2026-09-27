@@ -29,7 +29,7 @@ export function renderSignatureSheetDocument(
 
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)} - ${escapeHtml(student.studentName)}</title>
+<title>${escapeHtml(title)} - ${escapeHtml(studentDisplayName(student, coursePackage))}</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; padding: 24px; color: #111; font-family: Arial, Helvetica, sans-serif; background: #f4f6f8; }
@@ -67,9 +67,9 @@ ${content}
 
 function renderParentSheet(student: OneOnOneStudent, coursePackage: OneOnOnePackage, lessons: OneOnOneLesson[]) {
   const subjectGroups = groupBySubjectAndTeacher(lessons);
-  const participants = coursePackage.participants?.map(item => item.studentName).filter(Boolean).join(' / ');
+  const participants = studentDisplayName(student, coursePackage);
   const groupTag = (coursePackage.participantCount ?? 1) > 1
-    ? `<p><strong>Group:</strong> 1-on-${escapeHtml(String(coursePackage.participantCount))}${participants ? ` · ${escapeHtml(participants)}` : ''}</p>`
+    ? `<p><strong>Lesson format:</strong> 1-on-${escapeHtml(String(coursePackage.participantCount))} shared course</p>`
     : '';
   const subjectLines = subjectGroups.map(group => `<div class="subject-line">
     <span><strong>Lesson name:</strong> ${escapeHtml(group.subject)}</span>
@@ -86,7 +86,7 @@ function renderParentSheet(student: OneOnOneStudent, coursePackage: OneOnOnePack
 
   return `<main class="sheet">
     <h1>Student Signature Sheet</h1>
-    <div class="meta"><p><strong>Student:</strong> ${escapeHtml(student.studentName)}</p>${groupTag}
+    <div class="meta"><p><strong>Student:</strong> ${escapeHtml(participants)}</p>${groupTag}
       <div class="hours"><section>
         <p><strong>Total hours:</strong> ${formatHours(coursePackage.totalUnits)}</p>
         <p><strong>Purchased Hours:</strong> ${formatHours(coursePackage.purchasedUnits ?? coursePackage.totalUnits)}</p>
@@ -107,7 +107,7 @@ function renderTeacherSheets(student: OneOnOneStudent, coursePackage: OneOnOnePa
   return groups.map((group, index) => `<main class="sheet">
     <h1>Teacher Signature Sheet${groups.length > 1 ? ` ${index + 1}` : ''}</h1>
     <div class="teacher-meta">
-      <p><strong>Student:</strong> ${escapeHtml(student.studentName)}</p>
+      <p><strong>Student:</strong> ${escapeHtml(studentDisplayName(student, coursePackage))}</p>
       <p><strong>Lesson name:</strong> ${escapeHtml(group.subject)}</p>
       <p><strong>Teacher:</strong> ${escapeHtml(group.teacher)}</p>
       <p><strong>Classtime:</strong> ${escapeHtml(group.classTime)}</p>
@@ -118,6 +118,13 @@ function renderTeacherSheets(student: OneOnOneStudent, coursePackage: OneOnOnePa
       ${group.rows.map(row => `<tr><td>${escapeHtml(group.subject)}</td><td>${escapeHtml(group.teacher)}</td><td>${escapeHtml(formatDate(row.plannedStartAt))}</td><td></td></tr>`).join('')}
     </tbody></table>
   </main>`).join('');
+}
+
+function studentDisplayName(student: OneOnOneStudent, coursePackage: OneOnOnePackage): string {
+  const participants = (coursePackage.participants ?? [])
+    .map(item => item.studentName?.trim())
+    .filter((name): name is string => Boolean(name));
+  return participants.length > 1 ? participants.join(' / ') : student.studentName;
 }
 
 function groupBySubjectAndTeacher(lessons: OneOnOneLesson[]): SheetGroup[] {

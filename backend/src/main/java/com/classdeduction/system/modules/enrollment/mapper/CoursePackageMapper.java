@@ -13,7 +13,7 @@ import java.util.Map;
 @Mapper
 public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
 
-    /** 查询排课侧栏分组所需的课程与年级信息，一次读取所有有效 1 对 1 课包。 */
+    /** 查询排课侧栏的有效课包；1 对 2 只返回主课包，并附带完整成员信息。 */
     @Select("""
             SELECT s.id AS studentId,
                    s.student_name AS studentName,
@@ -25,17 +25,36 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
                        WHERE r.package_id = pkg.id
                          AND r.rule_status = 'ACTIVE'
                          AND r.is_deleted = 0
-                   ) AS hasSchedule
+                   ) AS hasSchedule,
+                   pkg.id AS packageId,
+                   primary_member.private_lesson_group_id AS privateLessonGroupId,
+                   CASE WHEN primary_member.id IS NULL THEN 1
+                        ELSE COUNT(DISTINCT group_member.student_id)
+                   END AS participantCount,
+                   COALESCE(GROUP_CONCAT(participant.student_name ORDER BY group_member.participant_index SEPARATOR ' / '), s.student_name) AS participantNames,
+                   COALESCE(GROUP_CONCAT(DISTINCT CAST(group_member.student_id AS CHAR) ORDER BY group_member.participant_index SEPARATOR ','), CAST(s.id AS CHAR)) AS participantStudentIds
             FROM course_package pkg
             JOIN student s ON s.id = pkg.student_id
             LEFT JOIN course_product cp ON cp.id = pkg.course_product_id
             LEFT JOIN enrollment_order_item oi ON oi.id = pkg.enrollment_order_item_id AND oi.is_deleted = 0
+            LEFT JOIN private_lesson_group_member primary_member
+                   ON primary_member.package_id = pkg.id
+                  AND primary_member.member_status = 'ACTIVE'
+                  AND primary_member.is_deleted = 0
+            LEFT JOIN private_lesson_group_member group_member
+                   ON group_member.private_lesson_group_id = primary_member.private_lesson_group_id
+                  AND group_member.member_status = 'ACTIVE'
+                  AND group_member.is_deleted = 0
+            LEFT JOIN student participant
+                   ON participant.id = group_member.student_id
             WHERE s.status = 'ACTIVE'
               AND s.is_deleted = 0
               AND pkg.teaching_mode = 'ONE_ON_ONE'
               AND pkg.package_status = 'ACTIVE'
               AND pkg.is_deleted = 0
-            ORDER BY s.student_no, s.id, courseName, gradeBand
+              AND (primary_member.id IS NULL OR primary_member.participant_index = 1)
+            GROUP BY s.id, s.student_name, courseName, gradeBand, pkg.id, primary_member.id, primary_member.private_lesson_group_id
+            ORDER BY s.student_no, s.id, courseName, gradeBand, pkg.id
             """)
     List<ActiveOneOnOneStudentCourseGradeRow> selectActiveOneOnOneStudentCourseGrades();
 

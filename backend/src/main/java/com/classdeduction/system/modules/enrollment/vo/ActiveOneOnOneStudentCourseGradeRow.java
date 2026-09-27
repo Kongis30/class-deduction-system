@@ -6,6 +6,15 @@ public record ActiveOneOnOneStudentCourseGradeRow(
         String studentName,
         String courseName,
         String gradeBand,
-        boolean hasSchedule
+        boolean hasSchedule,
+        Long packageId,
+        Long privateLessonGroupId,
+        Integer participantCount,
+        String participantNames,
+        String participantStudentIds
 ) {
+    public ActiveOneOnOneStudentCourseGradeRow(Long studentId, String studentName, String courseName,
+                                               String gradeBand, boolean hasSchedule) {
+        this(studentId, studentName, courseName, gradeBand, hasSchedule, null, null, 1, null, null);
+    }
 }

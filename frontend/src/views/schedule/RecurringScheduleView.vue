@@ -2,7 +2,7 @@
   <div class="page-stack schedule-page">
     <section class="schedule-panel">
       <div class="schedule-panel__header">
-        <span class="schedule-panel__title">Schedule 1-on-1 Lessons</span>
+        <span class="schedule-panel__title">Schedule Private Lessons</span>
       </div>
 
       <div class="schedule-panel__body">
@@ -44,15 +44,20 @@
                   </button>
                   <div v-if="!collapsedCourseGradeKeys.has(`${section.key}:${group.key}`)" class="schedule-student-group__students">
                     <button
-                      v-for="student in group.students"
-                      :key="student.id"
+                      v-for="entry in group.students"
+                      :key="`${entry.student.id}-${entry.course.packageId ?? entry.course.privateLessonGroupId ?? entry.course.courseName}`"
                       type="button"
                       class="col-item"
-                      :class="{ 'col-item--active': String(selectedStudentId) === String(student.id) }"
-                      @click="onStudentSelect(student.id)"
+                      :class="{ 'col-item--active': entry.course.privateLessonGroupId != null
+                        ? String(selectedPackageId) === String(entry.course.packageId)
+                        : !isPrivateGroupCourseSelected && String(selectedStudentId) === String(entry.student.id) }"
+                      :title="entry.course.participantNames || entry.student.studentName"
+                      @click="onScheduleCourseSelect(entry)"
                     >
-                      <span class="col-item__name">{{ student.studentName }}</span>
-                      <el-icon v-if="String(selectedStudentId) === String(student.id)" color="#409eff"><ArrowRight /></el-icon>
+                      <span class="col-item__name">{{ entry.course.participantNames || entry.student.studentName }}</span>
+                      <el-icon v-if="entry.course.privateLessonGroupId != null
+                        ? String(selectedPackageId) === String(entry.course.packageId)
+                        : !isPrivateGroupCourseSelected && String(selectedStudentId) === String(entry.student.id)" color="#409eff"><ArrowRight /></el-icon>
                     </button>
                   </div>
                 </template>
@@ -166,6 +171,9 @@
                     </el-button>
                   </div>
                 </div>
+                <div v-if="isPrivateGroupCourseSelected" class="schedule-info__participants">
+                  Students: {{ selectedStudentName }} · One shared schedule
+                </div>
 
                 <!-- Schedule summary -->
                 <div v-if="currentRule" class="schedule-summary">
@@ -205,13 +213,13 @@
               </div>
 
               <!-- Weekly calendar -->
-              <div v-if="allStudentOccupiedSlots.length > 0 || currentRule" class="schedule-calendar">
+              <div v-if="currentPackageOccupiedSlots.length > 0 || currentRule" class="schedule-calendar">
                 <div class="schedule-calendar__label">Weekly Schedule</div>
                 <WeeklyTimeSelector
                   v-model="emptySlots"
-                  :occupied-slots="allStudentOccupiedSlots"
+                  :occupied-slots="currentPackageOccupiedSlots"
                   :week-start-date="displayMonday"
-                  :readonly="false"
+                  :readonly="true"
                   :hide-hint="true"
                 />
               </div>
@@ -279,7 +287,7 @@
               <span class="edit-info-value">{{ selectedPackageName }}</span>
             </div>
             <div class="edit-info-field">
-              <label>Student</label>
+              <label>{{ isPrivateGroupCourseSelected ? 'Students' : 'Student' }}</label>
               <span class="edit-info-value">{{ selectedStudentName }}</span>
             </div>
           </div>
@@ -347,7 +355,10 @@
           Click and drag on the calendar to select class time slots. For each slot, assign a teacher,
           lesson name, and the total hours allocated to it. Each slot is scheduled independently until
           its allocated hours run out (the last class takes the remainder if it does not divide evenly).
+          Other lessons for every student are shown for the week of the start date. Saving checks the full schedule.
         </p>
+        <el-alert v-if="editBusyError" :title="editBusyError" type="error" :closable="false" show-icon />
+        <div v-if="editBusyLoading" class="edit-schedule__hint">Loading student availability...</div>
         <WeeklyTimeSelector
           v-model="editForm.slots"
           :week-start-date="editWeekMonday"
@@ -403,7 +414,7 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="editDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submitting" @click="submitForm">
+          <el-button type="primary" :loading="submitting || editBusyLoading" :disabled="Boolean(editBusyError)" @click="submitForm">
             {{ isEditing ? 'Save Changes' : 'Create Schedule' }}
           </el-button>
         </div>
@@ -425,6 +436,7 @@
           show-icon
           :closable="false"
         />
+        <div v-if="isPrivateGroupCourseSelected" class="edit-schedule__hint">Students: {{ selectedStudentName }} · Changes apply to their shared lesson.</div>
 
         <div class="weekly-summary">
           <div class="weekly-summary__item">
@@ -478,8 +490,16 @@
         </div>
 
         <div class="weekly-cal__hint">
-          Drag on an empty area to add a lesson. Click a lesson block to edit, move, or remove it. Striped grey blocks are the student's other lessons this week.
+          Drag on an empty area to add a lesson. Click a lesson block to edit, move, or remove it. Striped grey blocks are other lessons for any student in this course.
         </div>
+        <details v-if="weeklyBusyOccurrences.length" class="weekly-busy-list">
+          <summary>Other student lessons this week ({{ weeklyBusyOccurrences.length }})</summary>
+          <div class="weekly-busy-list__items">
+            <div v-for="busy in weeklyBusyOccurrences" :key="busy.id">
+              {{ busy.busyStudentNames.join(' / ') }} · {{ dayjs(busy.plannedStartAt).format('ddd M/D HH:mm') }}–{{ dayjs(busy.plannedEndAt).format('HH:mm') }} · {{ busy.packageName || busy.className || 'Lesson' }}
+            </div>
+          </div>
+        </details>
 
 
         <div class="weekly-cal">
@@ -521,6 +541,7 @@
                 :key="`busy-${busy.id}`"
                 class="weekly-cal__busy"
                 :style="busyStyle(busy)"
+                :title="busyLabel(busy)"
               >
                 <span class="weekly-cal__busy-label">{{ busyLabel(busy) }}</span>
               </div>
@@ -597,7 +618,7 @@
               <label>Start</label>
               <el-time-select
                 :model-value="rowStartTime(selectedRow)"
-                start="08:00"
+                start="07:30"
                 end="22:30"
                 step="00:30"
                 :disabled="selectedRow.markedForDelete"
@@ -685,7 +706,7 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="weeklyDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submitting" :disabled="!hasWeeklyChanges" @click="submitWeeklyAdjustment">
+          <el-button type="primary" :loading="submitting || weeklyLoading" :disabled="!hasWeeklyChanges || Boolean(weeklyBusyError)" @click="submitWeeklyAdjustment">
             Save This Week
           </el-button>
         </div>
@@ -715,8 +736,8 @@
               </el-tag>
             </div>
             <div class="detail-field">
-              <label>Student</label>
-              <span>{{ detailData.studentName }}</span>
+              <label>{{ isPrivateGroupCourseSelected ? 'Students' : 'Student' }}</label>
+              <span>{{ selectedStudentName || detailData.studentName }}</span>
             </div>
             <div class="detail-field">
               <label>Slot Teachers</label>
@@ -788,7 +809,7 @@ import { useRoute } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
-import { fetchCoursePackages, pauseCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
+import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
 import { fetchOneOnOneDeductions } from '@/api/one-on-one';
 import {
   createRecurringScheduleRule,
@@ -797,10 +818,9 @@ import {
   fetchRecurringScheduleRules,
   fetchOneOnOneScheduleStudents,
   fetchLessonOccurrences,
-  fetchEnrolledClassGroups,
   adjustWeeklySchedule,
 } from '@/api/schedule';
-import type { ScheduleStudentOption, WeeklyScheduleAdjustmentItemPayload } from '@/api/schedule';
+import type { LessonOccurrenceQuery, ScheduleStudentOption, WeeklyScheduleAdjustmentItemPayload } from '@/api/schedule';
 import type { ClassroomItem, CoursePackageItem, EntityId, LessonOccurrenceItem, RecurringScheduleRuleItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
@@ -847,15 +867,27 @@ interface ScheduleCourseGradeGroup {
   key: string;
   courseName: string;
   gradeBand: string;
-  students: ScheduleStudentOption[];
+  students: ScheduleSidebarEntry[];
+}
+interface ScheduleSidebarEntry {
+  student: ScheduleStudentOption;
+  course: ScheduleStudentOption['courseGrades'][number];
+}
+interface ScheduleParticipant {
+  id: EntityId;
+  name: string;
+}
+interface BusyOccurrence extends LessonOccurrenceItem {
+  busyStudentNames: string[];
 }
 const collapsedCourseGradeKeys = ref(new Set<string>());
 const studentPackages = ref<CoursePackageItem[]>([]);
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
 const classrooms = ref<ClassroomItem[]>([]);
-const enrolledClassGroups = ref<any[]>([]);
-const classGroupLoading = ref(false);
-const classGroupOccupiedSlots = ref<OccupiedSlotDef[]>([]);
+const editBusyOccurrences = ref<BusyOccurrence[]>([]);
+const editBusyLoading = ref(false);
+const editBusyError = ref('');
+let editBusyLoadSequence = 0;
 
 interface ClassroomOptionGroup {
   campusKey: string;
@@ -944,15 +976,16 @@ const weeklyReason = ref('');
 
 // ─── Weekly adjustment calendar (Sat→Fri) ──────────────────
 
-const CAL_START_HOUR = 8;
-const CAL_END_HOUR = 23;
+const CAL_START_MINUTES = 7 * 60 + 30;
+const CAL_END_MINUTES = 23 * 60;
 const CAL_SLOT_MINUTES = 30;
 const CAL_SLOT_HEIGHT = 28;
 
 const selectedRowKey = ref<string | null>(null);
 
 
-const weeklyBusyOccurrences = ref<LessonOccurrenceItem[]>([]);
+const weeklyBusyOccurrences = ref<BusyOccurrence[]>([]);
+const weeklyBusyError = ref('');
 
 
 const weekDays = computed(() => {
@@ -972,9 +1005,13 @@ const weekDays = computed(() => {
 
 const calendarRows = computed(() => {
   const rows: { label: string; minutes: number }[] = [];
-  for (let h = CAL_START_HOUR; h < CAL_END_HOUR; h++) {
-    rows.push({ label: `${String(h).padStart(2, '0')}:00`, minutes: h * 60 });
-    rows.push({ label: `${String(h).padStart(2, '0')}:30`, minutes: h * 60 + 30 });
+  for (let minutes = CAL_START_MINUTES; minutes < CAL_END_MINUTES; minutes += CAL_SLOT_MINUTES) {
+    const hour = Math.floor(minutes / 60);
+    const minute = minutes % 60;
+    rows.push({
+      label: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+      minutes,
+    });
   }
   return rows;
 });
@@ -992,7 +1029,7 @@ function rowsForDay(dayIndex: number): WeeklyAdjustmentRow[] {
 }
 
 
-function busyForDay(dayIndex: number): LessonOccurrenceItem[] {
+function busyForDay(dayIndex: number): BusyOccurrence[] {
   const date = weekDays.value[dayIndex]?.date;
   if (!date) return [];
   return weeklyBusyOccurrences.value.filter(o => dayjs(o.plannedStartAt).format('YYYY-MM-DD') === date);
@@ -1004,13 +1041,13 @@ function busyStyle(occ: LessonOccurrenceItem) {
   const end = dayjs(occ.plannedEndAt);
   const startMin = start.hour() * 60 + start.minute();
   const endMin = end.hour() * 60 + end.minute();
-  const top = ((startMin - CAL_START_HOUR * 60) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
+  const top = ((startMin - CAL_START_MINUTES) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
   const height = Math.max(((endMin - startMin) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
   return { top: `${top}px`, height: `${height - 2}px` };
 }
 
-function busyLabel(occ: LessonOccurrenceItem): string {
-  return occ.packageName || occ.className || 'Busy';
+function busyLabel(occ: BusyOccurrence): string {
+  return `${occ.busyStudentNames.join(' / ')} · ${occ.packageName || occ.className || 'Busy'}`;
 }
 
 
@@ -1019,7 +1056,7 @@ function eventStyle(row: WeeklyAdjustmentRow) {
   const end = dayjs(row.plannedEndAt);
   const startMin = start.hour() * 60 + start.minute();
   const endMin = end.hour() * 60 + end.minute();
-  const top = ((startMin - CAL_START_HOUR * 60) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
+  const top = ((startMin - CAL_START_MINUTES) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
   const height = Math.max(((endMin - startMin) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
   return { top: `${top}px`, height: `${height - 2}px` };
 }
@@ -1160,29 +1197,30 @@ function currentCalendarWeekRange() {
 
 type ScheduleStudentSectionKey = 'pending' | 'scheduled';
 
-// 先按学生判断是否还有未排课课包，再按课程年级分组，避免同一学生同时出现在上下两栏。
+// 每个课包作为一个排课单位，再按课程年级及排课状态分组；共享课包只由主成员返回一次。
 const studentSections = computed(() => {
   const q = studentSearch.value.trim().toLowerCase();
   const sections = {
-    pending: new Map<string, ScheduleCourseGradeGroup & { studentMap: Map<string, ScheduleStudentOption> }>(),
-    scheduled: new Map<string, ScheduleCourseGradeGroup & { studentMap: Map<string, ScheduleStudentOption> }>(),
+    pending: new Map<string, ScheduleCourseGradeGroup & { entryMap: Map<string, ScheduleSidebarEntry> }>(),
+    scheduled: new Map<string, ScheduleCourseGradeGroup & { entryMap: Map<string, ScheduleSidebarEntry> }>(),
   };
   students.value.forEach((student) => {
-    if (q && !student.studentName.toLowerCase().includes(q)) return;
-    const pendingCourses = student.courseGrades.filter(({ hasSchedule }) => hasSchedule !== true);
-    const section: ScheduleStudentSectionKey = pendingCourses.length > 0 ? 'pending' : 'scheduled';
-    const displayedCourses = section === 'pending' ? pendingCourses : student.courseGrades;
-    displayedCourses.forEach(({ courseName, gradeBand }) => {
+    student.courseGrades.forEach((course) => {
+      const displayNames = course.participantNames || student.studentName;
+      if (q && !displayNames.toLowerCase().includes(q)) return;
+      const section: ScheduleStudentSectionKey = course.hasSchedule === true ? 'scheduled' : 'pending';
+      const { courseName, gradeBand } = course;
       const groups = sections[section];
       const normalizedCourse = courseName.trim().toLowerCase();
       const normalizedGrade = gradeBand.trim().toLowerCase();
       const key = JSON.stringify([normalizedCourse, normalizedGrade]);
       let group = groups.get(key);
       if (!group) {
-        group = { key, courseName, gradeBand, students: [], studentMap: new Map() };
+        group = { key, courseName, gradeBand, students: [], entryMap: new Map() };
         groups.set(key, group);
       }
-      group.studentMap.set(String(student.id), student);
+      const entryKey = String(course.packageId ?? course.privateLessonGroupId ?? `${student.id}:${courseName}:${gradeBand}`);
+      group.entryMap.set(entryKey, { student, course });
     });
   });
   return (['pending', 'scheduled'] as const)
@@ -1190,10 +1228,13 @@ const studentSections = computed(() => {
       key,
       title: key === 'pending' ? '待排课' : '已排课',
       groups: Array.from(sections[key].values())
-        .map(({ studentMap, ...group }) => ({
+        .map(({ entryMap, ...group }) => ({
           ...group,
-          students: Array.from(studentMap.values()).sort((left, right) =>
-            left.studentName.localeCompare(right.studentName, 'en', { sensitivity: 'base', numeric: true })),
+          students: Array.from(entryMap.values()).sort((left, right) =>
+            (left.course.participantNames || left.student.studentName).localeCompare(
+              right.course.participantNames || right.student.studentName,
+              'en', { sensitivity: 'base', numeric: true },
+            )),
         }))
         .sort((left, right) => left.courseName.localeCompare(right.courseName)
           || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true })),
@@ -1212,9 +1253,35 @@ const selectedPackageName = computed(() => {
   return pkg?.packageName ?? '';
 });
 
+const selectedScheduleEntry = computed(() => selectedPackageId.value == null ? undefined : students.value
+    .flatMap(student => student.courseGrades.map(course => ({ student, course })))
+    .find(({ course }) => String(course.packageId) === String(selectedPackageId.value)));
+const isPrivateGroupCourseSelected = computed(() => selectedScheduleEntry.value?.course.privateLessonGroupId != null);
 const selectedStudentName = computed(() => {
-  const s = students.value.find(s => s.id === selectedStudentId.value);
-  return s?.studentName ?? '';
+  if (selectedScheduleEntry.value) {
+    return selectedScheduleEntry.value.course.participantNames || selectedScheduleEntry.value.student.studentName;
+  }
+  return students.value.find(student => String(student.id) === String(selectedStudentId.value))?.studentName ?? '';
+});
+
+// 共享课以课包成员为准；侧栏数据为轻量列表，课包尚未带成员时用其聚合字段回退。
+const selectedParticipants = computed<ScheduleParticipant[]>(() => {
+  const packageParticipants = selectedPackage.value?.privateLessonParticipants;
+  if (packageParticipants?.length) {
+    return packageParticipants
+      .filter(participant => participant.memberStatus !== 'INACTIVE')
+      .map(participant => ({ id: participant.studentId, name: participant.studentName || `Student #${participant.studentId}` }));
+  }
+  const course = selectedScheduleEntry.value?.course;
+  const ids = course?.participantStudentIds?.split(',').map(id => id.trim()).filter(Boolean) ?? [];
+  const names = course?.participantNames?.split(' / ').map(name => name.trim()) ?? [];
+  if (ids.length) {
+    return ids.map((id, index) => ({ id, name: names[index] || `Student #${id}` }));
+  }
+  return selectedStudentId.value == null ? [] : [{
+    id: selectedStudentId.value,
+    name: students.value.find(student => String(student.id) === String(selectedStudentId.value))?.studentName || 'Student',
+  }];
 });
 
 
@@ -1255,15 +1322,6 @@ const hasWeeklyChanges = computed(
   () => addedCount.value > 0 || modifiedCount.value > 0 || removedCount.value > 0
 );
 
-// ─── Package name lookup ──────────────────────
-const packageNameMap = computed(() => {
-  const map: Record<string, string> = {};
-  for (const pkg of studentPackages.value) {
-    map[String(pkg.id)] = pkg.packageName;
-  }
-  return map;
-});
-
 // ─── Current rule/slots (derived from preloaded map) ─
 const currentRule = computed(() => {
   if (!selectedPackageId.value) return null;
@@ -1281,16 +1339,8 @@ const currentRuleSlots = computed(() => {
   }));
 });
 
-// ─── Helper: get package name for display ──────
-function getPackageName(pkgId: EntityId): string {
-  const packageKey = String(pkgId);
-  return packageNameMap.value[packageKey] || studentPackages.value.find(p => String(p.id) === packageKey)?.packageName || `#${packageKey}`;
-}
-
-// ─── All-student occupied slots (main calendar) ─
-
-
-const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
+// 主周历只展示当前排课单位；共享私教课在数据库中只有一条课次。
+const currentPackageOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
   const result: OccupiedSlotDef[] = [];
 
   for (const occ of currentWeekOccurrences.value) {
@@ -1300,9 +1350,6 @@ const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
     const start = dayjs(occ.plannedStartAt);
 
     const weekday = start.day() === 0 ? 7 : start.day();
-    const isCurrent = String(occ.packageId) === String(selectedPackageId.value);
-
-
     const baseName = occ.packageName || occ.className || 'Lesson';
     const hours = ((occ.plannedUnits ?? 0) * 0.5).toFixed(1);
     let courseLabel = `${baseName} ${hours}h`;
@@ -1319,59 +1366,72 @@ const allStudentOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
       courseLabel,
       teacherName: occ.plannedTeacherName,
       classroomName: occ.plannedClassroomName,
-      isCurrent,
+      studentName: selectedStudentName.value,
+      isCurrent: true,
     });
   }
 
   return result;
 });
 
-// ─── Helper: time string to minutes ───────────────
-function parseTimeToMin(time: string): number {
-  const [h, m] = time.split(':').map(Number);
-  return h * 60 + m;
-}
-
-// ─── Other-package occupied slots (edit dialog) ─
+// 编辑窗口用选定周的真实课次，含全部组员的班课和其他私教课；后端保存仍校验完整排课周期。
 const otherPackageOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
-  const result: OccupiedSlotDef[] = [];
-  for (const [pkgIdStr, rule] of Object.entries(allPackageRules.value)) {
-    if (pkgIdStr === String(selectedPackageId.value)) continue;
-    const pkgName = rule.packageName || getPackageName(pkgIdStr);
-    for (const slot of (rule.slots || [])) {
-      result.push({
-        weekday: slot.weekday,
-        startTime: slot.startTime,
-        endTime: slot.endTime,
-        courseLabel: `${pkgName} ${(slot.plannedUnits * 0.5).toFixed(1)}h`,
-      });
-    }
-  }
-
-  for (const slot of classGroupOccupiedSlots.value) {
-    result.push(slot);
-  }
-  return result;
+  return editBusyOccurrences.value.map(occ => {
+    const start = dayjs(occ.plannedStartAt);
+    return {
+      weekday: start.day() === 0 ? 7 : start.day(),
+      startTime: start.format('HH:mm'),
+      endTime: dayjs(occ.plannedEndAt).format('HH:mm'),
+      courseLabel: occ.packageName || occ.className || 'Lesson',
+      studentName: occ.busyStudentNames.join(' / '),
+      teacherName: occ.plannedTeacherName,
+      classroomName: occ.plannedClassroomName,
+    };
+  });
 });
 
 // ─── Edit dialog week Monday ────────────────────
 const editWeekMonday = computed(() => {
-  if (editForm.startDate) {
-    return dayjs(editForm.startDate).day(1).format('YYYY-MM-DD');
-  }
-  return dayjs().startOf('day').day(1).format('YYYY-MM-DD');
+  const start = editForm.startDate ? dayjs(editForm.startDate) : dayjs();
+  return start.subtract((start.day() + 6) % 7, 'day').format('YYYY-MM-DD');
 });
 
+// 弹窗与开课日期变化时刷新所有成员的占用；旧请求不得覆盖新日期的预览。
+watch(
+  [editDialogVisible, editWeekMonday, selectedPackageId, () => selectedParticipants.value.map(item => item.id).join(',')],
+  async () => {
+    const sequence = ++editBusyLoadSequence;
+    editBusyOccurrences.value = [];
+    editBusyError.value = '';
+    if (!editDialogVisible.value || selectedPackageId.value == null) {
+      editBusyLoading.value = false;
+      return;
+    }
+    editBusyLoading.value = true;
+    try {
+      const weekEnd = dayjs(editWeekMonday.value).add(7, 'day').format('YYYY-MM-DD');
+      const occurrences = await fetchParticipantBusyOccurrences(
+        `${editWeekMonday.value}T00:00:00`, `${weekEnd}T00:00:00`,
+      );
+      if (sequence === editBusyLoadSequence) editBusyOccurrences.value = occurrences;
+    } catch (error) {
+      if (sequence === editBusyLoadSequence) editBusyError.value = `Could not load student availability: ${extractErrorMessage(error)}`;
+    } finally {
+      if (sequence === editBusyLoadSequence) editBusyLoading.value = false;
+    }
+  },
+);
+
 // ─── Student selection ─────────────────────────
-async function onStudentSelect(id: EntityId) {
+async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
   // 快速切换学生时丢弃较晚返回的旧请求，避免覆盖当前选择。
   const requestSequence = ++packageLoadSequence;
   selectedStudentId.value = id;
   selectedPackageId.value = null;
   studentPackages.value = [];
   allPackageRules.value = {};
-  classGroupOccupiedSlots.value = [];
   currentWeekOccurrences.value = [];
+  editBusyOccurrences.value = [];
   loadingPackages.value = true;
   try {
     const res = await fetchCoursePackages({
@@ -1382,6 +1442,9 @@ async function onStudentSelect(id: EntityId) {
     });
     if (requestSequence !== packageLoadSequence) return;
     studentPackages.value = res.data.data.records;
+    selectedPackageId.value = preferredPackageId == null
+      ? null
+      : studentPackages.value.find(pkg => String(pkg.id) === String(preferredPackageId))?.id ?? null;
     loadingPackages.value = false;
     // 排课规则用于冲突检查，后台加载即可，不阻塞已取得的课包列表。
     void loadAllPackageRules(studentPackages.value, requestSequence);
@@ -1390,27 +1453,73 @@ async function onStudentSelect(id: EntityId) {
   } finally {
     if (requestSequence === packageLoadSequence) loadingPackages.value = false;
   }
-  loadEnrolledClassGroups(id);
-  loadCurrentWeekOccurrences(id);
 }
 
-// ─── Load this week's actual occurrences (main calendar) ─
+/** 选择侧栏的单个排课单位；1 对 2 传入主课包和成员姓名，排课规则仍只创建一份。 */
+function onScheduleCourseSelect(entry: ScheduleSidebarEntry) {
+  void onStudentSelect(entry.student.id, entry.course.packageId);
+}
 
-async function loadCurrentWeekOccurrences(studentId: EntityId) {
+// 分页取全一周的课次，避免 200 条上限截断成员冲突预览。
+async function fetchAllOccurrences(query: LessonOccurrenceQuery): Promise<LessonOccurrenceItem[]> {
+  const first = await fetchLessonOccurrences({ ...query, pageNum: 1, pageSize: 200 });
+  const { records, total } = first.data.data;
+  if (total <= records.length) return records;
+  const pages = Array.from({ length: Math.ceil(total / 200) - 1 }, (_, index) => index + 2);
+  const remaining = await Promise.all(pages.map(pageNum =>
+    fetchLessonOccurrences({ ...query, pageNum, pageSize: 200 })));
+  return records.concat(...remaining.map(response => response.data.data.records));
+}
+
+// 同一共享课次可能被多个成员查询到，按课次 ID 合并并保留相关成员姓名。
+async function fetchParticipantBusyOccurrences(startAt: string, endAt: string): Promise<BusyOccurrence[]> {
+  if (selectedParticipants.value.length === 0) throw new Error('No active students found for this course.');
+  const participantResults = await Promise.all(selectedParticipants.value.map(async participant => ({
+    participant,
+    occurrences: await fetchAllOccurrences({ studentId: participant.id, startAt, endAt }),
+  })));
+  const selectedGroupId = selectedPackage.value?.privateLessonGroupId
+    ?? selectedScheduleEntry.value?.course.privateLessonGroupId;
+  const byOccurrenceId = new Map<string, BusyOccurrence>();
+  for (const { participant, occurrences } of participantResults) {
+    for (const occurrence of occurrences) {
+      if (occurrence.planningStatus === 'CANCELLED') continue;
+      if (selectedGroupId != null && String(occurrence.privateLessonGroupId) === String(selectedGroupId)) continue;
+      if (String(occurrence.packageId) === String(selectedPackageId.value)) continue;
+      const key = String(occurrence.id);
+      const existing = byOccurrenceId.get(key);
+      if (existing) {
+        if (!existing.busyStudentNames.includes(participant.name)) existing.busyStudentNames.push(participant.name);
+      } else {
+        byOccurrenceId.set(key, { ...occurrence, busyStudentNames: [participant.name] });
+      }
+    }
+  }
+  return [...byOccurrenceId.values()];
+}
+
+// 主日历按课包查询，防止把主学生其他课程误显示为当前共享课程。
+let currentWeekLoadSequence = 0;
+async function loadCurrentWeekOccurrences() {
+  const packageId = selectedPackageId.value;
+  const sequence = ++currentWeekLoadSequence;
+  currentWeekOccurrences.value = [];
+  if (packageId == null) return;
   const { startDate, endExclusiveDate } = currentCalendarWeekRange();
   displayMonday.value = startDate;
   try {
-    const res = await fetchLessonOccurrences({
-      studentId,
+    const records = await fetchAllOccurrences({
+      packageId,
       startAt: `${startDate}T00:00:00`,
       endAt: `${endExclusiveDate}T00:00:00`,
-      pageSize: 200,
     });
-    currentWeekOccurrences.value = res.data.data.records;
+    if (sequence === currentWeekLoadSequence) currentWeekOccurrences.value = records;
   } catch {
-    currentWeekOccurrences.value = [];
+    if (sequence === currentWeekLoadSequence) currentWeekOccurrences.value = [];
   }
 }
+
+watch(selectedPackageId, () => { void loadCurrentWeekOccurrences(); });
 
 // ─── Package selection ─────────────────────────
 function onPackageSelect(pkg: CoursePackageItem) {
@@ -1508,7 +1617,7 @@ async function saveDeductedHours() {
       pageSize: 50,
     });
     studentPackages.value = res.data.data.records;
-    await Promise.all([loadAllPackageRules(), loadCurrentWeekOccurrences(selectedStudentId.value)]);
+    await Promise.all([loadAllPackageRules(), loadCurrentWeekOccurrences()]);
     ElMessage.success('Package hours and future schedule updated.');
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
@@ -1548,59 +1657,6 @@ async function loadAllPackageRules(
   if (requestSequence == null || requestSequence === packageLoadSequence) {
     allPackageRules.value = map;
   }
-}
-
-// ─── Load enrolled class group slots ────────────
-const classGroupSlotCache = new Map<string, OccupiedSlotDef[]>();
-
-async function loadEnrolledClassGroups(studentId: EntityId) {
-  classGroupLoading.value = true;
-  try {
-    const res = await fetchEnrolledClassGroups(studentId);
-    enrolledClassGroups.value = res.data.data;
-    await loadClassGroupSlots();
-  } catch {
-    enrolledClassGroups.value = [];
-    classGroupOccupiedSlots.value = [];
-  } finally {
-    classGroupLoading.value = false;
-  }
-}
-
-async function loadClassGroupSlots() {
-  const { startDate, endExclusiveDate } = currentCalendarWeekRange();
-  const weekStart = `${startDate}T00:00:00`;
-  const weekEnd = `${endExclusiveDate}T00:00:00`;
-
-  const allSlots: OccupiedSlotDef[] = [];
-  for (const cls of enrolledClassGroups.value) {
-    try {
-      const res = await fetchLessonOccurrences({
-        classGroupId: cls.id,
-        startAt: weekStart,
-        endAt: weekEnd,
-        pageSize: 50,
-      });
-      for (const occ of res.data.data.records) {
-        if (occ.planningStatus === 'CANCELLED') continue;
-        const start = dayjs(occ.plannedStartAt);
-        const weekday = start.day() === 0 ? 7 : start.day();
-        allSlots.push({
-          weekday,
-          startTime: start.format('HH:mm'),
-          endTime: dayjs(occ.plannedEndAt).format('HH:mm'),
-          courseLabel: classGroupDisplayName(cls),
-          teacherName: occ.plannedTeacherName,
-          classroomName: occ.plannedClassroomName,
-        });
-      }
-    } catch { /* skip failed class group */ }
-  }
-  classGroupOccupiedSlots.value = allSlots;
-}
-
-function classGroupDisplayName(cls: { actualClass?: string; gradeBand?: string; className?: string }) {
-  return cls.actualClass || cls.gradeBand || cls.className || 'Class';
 }
 
 // ─── Edit Form ──────────────────────────────────
@@ -1674,6 +1730,10 @@ async function openEditDialog() {
 }
 
 function submitForm() {
+  if (editBusyLoading.value || editBusyError.value) {
+    ElMessage.warning('Wait for student availability to load before saving.');
+    return;
+  }
   if (isEditing.value) {
     submitEditForm();
   } else {
@@ -1723,7 +1783,7 @@ async function submitCreateForm() {
       ElMessage.success('Schedule created and lessons generated.');
       editDialogVisible.value = false;
       await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
-      if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
+      await loadCurrentWeekOccurrences();
     } catch (err) {
       ElMessage.error(extractErrorMessage(err));
     } finally {
@@ -1769,7 +1829,7 @@ async function submitEditForm() {
       );
       editDialogVisible.value = false;
       await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
-      if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
+      await loadCurrentWeekOccurrences();
     } catch (err) {
       ElMessage.error(extractErrorMessage(err));
     } finally {
@@ -1795,6 +1855,7 @@ async function openWeeklyAdjustmentDialog() {
   weeklyReason.value = '';
   weeklyRows.value = [];
   weeklyBusyOccurrences.value = [];
+  weeklyBusyError.value = '';
   weeklyDialogVisible.value = true;
   weeklyLoading.value = true;
   try {
@@ -1802,21 +1863,19 @@ async function openWeeklyAdjustmentDialog() {
     const startAt = start.format('YYYY-MM-DDT00:00:00');
     const endAt = end.format('YYYY-MM-DDT23:59:59');
 
-    const [pkgRes, studentRes] = await Promise.all([
-      fetchLessonOccurrences({ packageId: selectedPackageId.value, startAt, endAt, pageSize: 100 }),
-      selectedStudentId.value
-        ? fetchLessonOccurrences({ studentId: selectedStudentId.value, startAt, endAt, pageSize: 200 })
-        : Promise.resolve(null),
+    const [packageOccurrences, participantBusy] = await Promise.all([
+      fetchAllOccurrences({ packageId: selectedPackageId.value, startAt, endAt }),
+      fetchParticipantBusyOccurrences(startAt, endAt),
     ]);
-    weeklyRows.value = pkgRes.data.data.records
+    weeklyRows.value = packageOccurrences
       .filter(canEditWeeklyOccurrence)
       .map(toWeeklyAdjustmentRow);
 
-    weeklyBusyOccurrences.value = (studentRes?.data.data.records ?? [])
-      .filter(o => String(o.packageId) !== String(selectedPackageId.value) && o.planningStatus !== 'CANCELLED');
+    weeklyBusyOccurrences.value = participantBusy;
   } catch (err) {
     weeklyRows.value = [];
     weeklyBusyOccurrences.value = [];
+    weeklyBusyError.value = extractErrorMessage(err);
     ElMessage.error(extractErrorMessage(err));
   } finally {
     weeklyLoading.value = false;
@@ -1825,6 +1884,7 @@ async function openWeeklyAdjustmentDialog() {
 
 async function submitWeeklyAdjustment() {
   if (!selectedPackageId.value) return;
+  if (weeklyLoading.value || weeklyBusyError.value) return;
   const validationMessage = validateWeeklyRows();
   if (validationMessage) {
     ElMessage.error(validationMessage);
@@ -1864,7 +1924,7 @@ async function submitWeeklyAdjustment() {
     weeklyDialogVisible.value = false;
     await loadAllPackageRules();
 
-    if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
+    await loadCurrentWeekOccurrences();
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
   } finally {
@@ -2011,6 +2071,12 @@ function validateWeeklyRows(): string {
     if (minutes !== Math.round(row.plannedHours * 2) * 30) {
       return 'Lesson duration must match the selected hours.';
     }
+    const busy = weeklyBusyOccurrences.value.find(occurrence =>
+      startAt.isBefore(dayjs(occurrence.plannedEndAt))
+      && endAt.isAfter(dayjs(occurrence.plannedStartAt)));
+    if (busy) {
+      return `${busy.busyStudentNames.join(' / ')} already has ${busy.packageName || busy.className || 'a lesson'} at this time.`;
+    }
   }
   return '';
 }
@@ -2117,18 +2183,35 @@ async function applyRouteScheduleContext() {
   if (typeof studentId !== 'string' || typeof packageId !== 'string') {
     return;
   }
-  const student = students.value.find((item) => String(item.id) === studentId);
+  let targetStudentId = studentId;
+  let targetPackageId = packageId;
+  const sidebarHasPackage = students.value.some(student =>
+    student.courseGrades.some(course => String(course.packageId) === packageId));
+  if (!sidebarHasPackage) {
+    try {
+      const response = await fetchCoursePackage(packageId);
+      const primary = response.data.data.privateLessonParticipants
+        ?.find(participant => participant.participantIndex === 1 && participant.memberStatus !== 'INACTIVE');
+      if (primary) {
+        targetStudentId = String(primary.studentId);
+        targetPackageId = String(primary.packageId);
+      }
+    } catch {
+      ElMessage.warning('The course package could not be loaded for scheduling.');
+      return;
+    }
+  }
+  const student = students.value.find((item) => String(item.id) === targetStudentId);
   if (!student) {
     ElMessage.warning('The new student record could not be found for scheduling.');
     return;
   }
-  await onStudentSelect(student.id);
-  const selectedPackage = studentPackages.value.find((item) => String(item.id) === packageId);
+  await onStudentSelect(student.id, targetPackageId);
+  const selectedPackage = studentPackages.value.find((item) => String(item.id) === targetPackageId);
   if (!selectedPackage) {
     ElMessage.warning('The new course package could not be found for scheduling.');
     return;
   }
-  onPackageSelect(selectedPackage);
   if (route.query.startSchedule === '1' && !currentRule.value) {
     await openCreateDialog();
   }
@@ -2431,6 +2514,12 @@ function disabledPastDate(date: Date) {
   color: #303133;
 }
 
+.schedule-info__participants {
+  margin: -2px 0 12px;
+  color: #52657a;
+  font-size: 12px;
+}
+
 .schedule-info__actions {
   display: flex;
   flex-wrap: wrap;
@@ -2633,6 +2722,25 @@ function disabledPastDate(date: Date) {
 .weekly-cal__hint {
   font-size: 12px;
   color: #909399;
+}
+
+.weekly-busy-list {
+  border: 1px solid #dce6ef;
+  border-radius: 6px;
+  color: #52657a;
+  font-size: 12px;
+}
+
+.weekly-busy-list summary {
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.weekly-busy-list__items {
+  max-height: 140px;
+  overflow: auto;
+  padding: 0 10px 8px;
+  line-height: 1.8;
 }
 
 .weekly-cal {

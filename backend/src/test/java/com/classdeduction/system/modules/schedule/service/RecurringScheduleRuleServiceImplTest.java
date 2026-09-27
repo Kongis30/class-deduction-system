@@ -13,6 +13,7 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.vo.ActiveOneOnOneStudentCourseGradeRow;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -20,9 +21,13 @@ import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleCreat
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleUpdateRequest;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleSlotRequest;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.impl.RecurringScheduleRuleServiceImpl;
@@ -72,6 +77,12 @@ class RecurringScheduleRuleServiceImplTest {
     private LessonOccurrenceMapper lessonOccurrenceMapper;
 
     @Mock
+    private ClassEnrollmentMapper classEnrollmentMapper;
+
+    @Mock
+    private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+
+    @Mock
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
@@ -107,6 +118,10 @@ class RecurringScheduleRuleServiceImplTest {
     static void initMybatisPlusLambdaCache() {
         // 单元测试不启动 MyBatis，上课记录的新查询需要先注册字段映射。
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), LessonRecordEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), LessonOccurrenceEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), PrivateLessonGroupMemberEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), ClassEnrollmentEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new Configuration(), ""), ClassGroupScheduleSlotEntity.class);
     }
 
     @BeforeEach
@@ -115,6 +130,8 @@ class RecurringScheduleRuleServiceImplTest {
                 recurringScheduleRuleMapper,
                 recurringScheduleSlotMapper,
                 lessonOccurrenceMapper,
+                classEnrollmentMapper,
+                classGroupScheduleSlotMapper,
                 lessonRecordMapper,
                 coursePackageMapper,
                 privateLessonGroupMapper,
@@ -387,6 +404,103 @@ class RecurringScheduleRuleServiceImplTest {
         assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Teacher conflict");
+    }
+
+    @Test
+    void shouldRejectWhenStudentHasAnotherSharedPrivateLesson() {
+        RecurringScheduleRuleCreateRequest request = buildCreateRequest();
+        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        PrivateLessonGroupMemberEntity otherGroup = new PrivateLessonGroupMemberEntity();
+        otherGroup.setStudentId(2001L);
+        otherGroup.setPrivateLessonGroupId(7001L);
+        otherGroup.setMemberStatus("ACTIVE");
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(otherGroup));
+        LessonOccurrenceEntity otherSharedLesson = buildTeacherConflict();
+        otherSharedLesson.setPlannedTeacherId(null);
+        otherSharedLesson.setStudentId(2002L);
+        otherSharedLesson.setPrivateLessonGroupId(7001L);
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(List.of(otherSharedLesson))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList());
+        stubGeneratedIds(false);
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("another lesson");
+    }
+
+    @Test
+    void shouldCreateOneSharedScheduleForThreeParticipants() {
+        RecurringScheduleRuleCreateRequest request = buildCreateRequest();
+        PrivateLessonGroupMemberEntity primary = new PrivateLessonGroupMemberEntity();
+        primary.setPrivateLessonGroupId(7001L);
+        primary.setPackageId(1001L);
+        primary.setStudentId(2001L);
+        primary.setParticipantIndex(1);
+        primary.setMemberStatus("ACTIVE");
+        PrivateLessonGroupMemberEntity second = new PrivateLessonGroupMemberEntity();
+        second.setPrivateLessonGroupId(7001L);
+        second.setPackageId(1002L);
+        second.setStudentId(2002L);
+        second.setParticipantIndex(2);
+        second.setMemberStatus("ACTIVE");
+        PrivateLessonGroupMemberEntity third = new PrivateLessonGroupMemberEntity();
+        third.setPrivateLessonGroupId(7001L);
+        third.setPackageId(1003L);
+        third.setStudentId(2003L);
+        third.setParticipantIndex(3);
+        third.setMemberStatus("ACTIVE");
+        when(privateLessonGroupMemberMapper.selectOne(any())).thenReturn(primary);
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(primary, second, third));
+        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        stubGeneratedIds(true);
+
+        ScheduleRuleCreateResultVO result = recurringScheduleRuleService.createRule(request);
+
+        verify(lessonOccurrenceMapper, times(2)).insert(occurrenceCaptor.capture());
+        assertThat(result.generatedOccurrenceCount()).isEqualTo(2);
+        assertThat(occurrenceCaptor.getAllValues()).allSatisfy(occurrence -> {
+            assertThat(occurrence.getPrivateLessonGroupId()).isEqualTo(7001L);
+            assertThat(occurrence.getStudentId()).isEqualTo(2001L);
+        });
+    }
+
+    @Test
+    void shouldIgnoreClassLessonBeforeStudentEnrollmentDate() {
+        RecurringScheduleRuleCreateRequest request = buildCreateRequest();
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setStudentId(2001L);
+        enrollment.setClassId(8001L);
+        enrollment.setStatus("ACTIVE");
+        enrollment.setEnrollmentDate(request.getStartDate().plusWeeks(1));
+        LessonOccurrenceEntity classLesson = buildTeacherConflict();
+        classLesson.setPlannedTeacherId(null);
+        classLesson.setClassGroupId(8001L);
+        classLesson.setStudentId(null);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(List.of(classLesson))
+                .thenReturn(Collections.emptyList())
+                .thenReturn(Collections.emptyList());
+        stubGeneratedIds(true);
+
+        ScheduleRuleCreateResultVO result = recurringScheduleRuleService.createRule(request);
+
+        assertThat(result.generatedOccurrenceCount()).isEqualTo(2);
     }
 
     @Test
