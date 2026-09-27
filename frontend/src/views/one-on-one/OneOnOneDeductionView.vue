@@ -1868,7 +1868,8 @@ onMounted(async () => {
 }
 
 .oo-package-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   max-height: 560px;
   overflow-y: scroll;
@@ -1903,6 +1904,7 @@ onMounted(async () => {
 }
 
 .oo-course-grade-group {
+  flex-shrink: 0;
   overflow: hidden;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
