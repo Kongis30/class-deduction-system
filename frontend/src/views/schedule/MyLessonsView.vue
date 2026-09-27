@@ -69,6 +69,13 @@
         <el-table-column label="Action" width="220" fixed="right" align="center" header-align="center">
           <template #default="{ row }">
             <el-button
+              v-if="canAdjustTime(row)"
+              size="small"
+              @click="openAdjustDialog(row)"
+            >
+              Adjust
+            </el-button>
+            <el-button
               v-if="canSubmitAttendance(row)"
               type="primary"
               size="small"
@@ -131,6 +138,42 @@
         <el-button type="primary" :loading="submitting" @click="submitAttendance">Confirm</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="adjustDialogVisible"
+      title="Adjust Lesson Time"
+      width="520px"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="This changes the scheduled time for this lesson. Lesson duration stays the same."
+        class="my-lessons-confirm-alert"
+      />
+      <el-form label-width="130px">
+        <el-form-item label="New start time">
+          <el-date-picker
+            v-model="adjustForm.plannedStartAt"
+            type="datetime"
+            value-format="YYYY-MM-DDTHH:mm:ss"
+            format="YYYY-MM-DD HH:mm"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="New end time">
+          <span>{{ adjustedEndAt ? dayjs(adjustedEndAt).format('YYYY-MM-DD HH:mm') : '—' }}</span>
+        </el-form-item>
+        <el-form-item label="Reason">
+          <el-input v-model="adjustForm.reason" type="textarea" :rows="2" placeholder="Optional" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="adjustDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="adjusting" @click="submitTimeAdjustment">Save time</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -141,7 +184,7 @@ import dayjs from 'dayjs';
 
 import { extractErrorMessage } from '@/api/http';
 import { confirmLesson } from '@/api/lesson';
-import { confirmClassLesson, fetchLessonOccurrences } from '@/api/schedule';
+import { confirmClassLesson, createScheduleAdjustment, fetchLessonOccurrences } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import type { LessonOccurrenceItem } from '@/types/domain';
 
@@ -154,9 +197,12 @@ const lessonType = ref<LessonType>('one-on-one');
 const period = ref<LessonPeriod>('future');
 const loading = ref(false);
 const submitting = ref(false);
+const adjusting = ref(false);
 const lessons = ref<LessonOccurrenceItem[]>([]);
 const selectedLesson = ref<LessonOccurrenceItem | null>(null);
 const confirmDialogVisible = ref(false);
+const adjustDialogVisible = ref(false);
+const adjustForm = reactive({ plannedStartAt: '', reason: '' });
 
 const confirmForm = reactive({
   resultStatus: 'COMPLETED',
@@ -178,6 +224,12 @@ const visibleLessons = computed(() => lessons.value.filter(lesson =>
 const emptyText = computed(() =>
   `No ${lessonType.value === 'group' ? 'group class' : '1-on-1'} lessons found for this period.`
 );
+
+const adjustedEndAt = computed(() => {
+  if (!selectedLesson.value || !adjustForm.plannedStartAt) return '';
+  const durationMinutes = dayjs(selectedLesson.value.plannedEndAt).diff(dayjs(selectedLesson.value.plannedStartAt), 'minute');
+  return dayjs(adjustForm.plannedStartAt).add(durationMinutes, 'minute').format('YYYY-MM-DDTHH:mm:ss');
+});
 
 onMounted(loadLessons);
 
@@ -231,6 +283,53 @@ function openConfirmDialog(lesson: LessonOccurrenceItem) {
     notes: lesson.notes || '',
   });
   confirmDialogVisible.value = true;
+}
+
+function canAdjustTime(lesson: LessonOccurrenceItem) {
+  return Boolean(teacherId.value)
+    && String(lesson.plannedTeacherId) === String(teacherId.value)
+    && lesson.planningStatus !== 'CANCELLED'
+    && lesson.confirmStage !== 'PENDING_ADMIN'
+    && lesson.confirmStage !== 'CONFIRMED'
+    && !lesson.resultStatus
+    && dayjs(lesson.plannedStartAt).isAfter(dayjs());
+}
+
+function openAdjustDialog(lesson: LessonOccurrenceItem) {
+  selectedLesson.value = lesson;
+  Object.assign(adjustForm, { plannedStartAt: lesson.plannedStartAt, reason: '' });
+  adjustDialogVisible.value = true;
+}
+
+async function submitTimeAdjustment() {
+  const lesson = selectedLesson.value;
+  if (!lesson || !adjustForm.plannedStartAt || !adjustedEndAt.value) {
+    ElMessage.error('Choose a new lesson start time.');
+    return;
+  }
+  if (!dayjs(adjustForm.plannedStartAt).isAfter(dayjs())) {
+    ElMessage.error('The new lesson time must be in the future.');
+    return;
+  }
+
+  adjusting.value = true;
+  try {
+    await createScheduleAdjustment({
+      occurrenceId: lesson.id,
+      adjustmentType: 'RESCHEDULE',
+      plannedStartAt: adjustForm.plannedStartAt,
+      plannedEndAt: adjustedEndAt.value,
+      plannedUnits: lesson.plannedUnits,
+      reason: adjustForm.reason.trim() || 'Adjusted by teacher from My Lessons',
+    });
+    ElMessage.success('Lesson time adjusted.');
+    adjustDialogVisible.value = false;
+    await loadLessons();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    adjusting.value = false;
+  }
 }
 
 async function submitAttendance() {

@@ -35,6 +35,20 @@ class ControllerRoleBoundaryTest {
     }
 
     @Test
+    void teacherMayOnlyReachTheSingleLessonAdjustmentEndpoint() throws NoSuchMethodException {
+        RequireRoles adjust = ScheduleAdjustmentController.class
+                .getMethod("adjust", com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest.class,
+                        com.classdeduction.system.common.dto.CurrentUserResponse.class)
+                .getAnnotation(RequireRoles.class);
+        RequireRoles adjustWeekly = ScheduleAdjustmentController.class
+                .getMethod("adjustWeekly", com.classdeduction.system.modules.schedule.dto.WeeklyScheduleAdjustmentRequest.class)
+                .getAnnotation(RequireRoles.class);
+
+        assertThat(Set.of(adjust.value())).contains("TEACHER");
+        assertThat(Set.of(adjustWeekly.value())).containsExactlyInAnyOrder("ADMIN", "STAFF", "MANAGER");
+    }
+
+    @Test
     void notificationConfigShouldBeAdminOnly() {
         // SMTP 配置含授权码等敏感信息，任意登录用户不得读写或触发测试邮件。
         assertClassRoles(NotificationConfigController.class, "ADMIN");

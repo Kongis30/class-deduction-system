@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.schedule.service;
 
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
@@ -199,6 +200,48 @@ class ScheduleAdjustmentServiceImplTest {
         assertThat(occurrenceCaptor.getValue().getPlannedTeacherId()).isEqualTo(3001L);
         assertThat(occurrenceCaptor.getValue().getPlannedClassroomId()).isNull();
         assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("ADJUSTED");
+    }
+
+    @Test
+    void teacherCanRescheduleOwnUpcomingLessonAndIsRecordedAsOperator() {
+        LocalDateTime originalStartAt = AppTime.nowLocalDateTime().plusDays(2).withSecond(0).withNano(0);
+        LessonOccurrenceEntity source = buildSourceOccurrence();
+        source.setPlannedStartAt(originalStartAt);
+        source.setPlannedEndAt(originalStartAt.plusHours(2));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
+        when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
+
+        ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();
+        request.setOccurrenceId(1001L);
+        request.setAdjustmentType("RESCHEDULE");
+        request.setPlannedStartAt(originalStartAt.plusDays(1));
+        request.setPlannedEndAt(originalStartAt.plusDays(1).plusHours(2));
+        request.setPlannedUnits(4);
+        request.setAdjustedBy(999L);
+        CurrentUserResponse teacher = new CurrentUserResponse(123L, "teacher", "Teacher", "TEACHER", 3001L, null, List.of("TEACHER"));
+
+        scheduleAdjustmentService.adjustByTeacher(request, teacher);
+
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
+        verify(lessonAdjustmentLogMapper).insert(logCaptor.capture());
+        assertThat(occurrenceCaptor.getValue().getPlannedStartAt()).isEqualTo(request.getPlannedStartAt());
+        assertThat(logCaptor.getValue().getAdjustedBy()).isEqualTo(123L);
+    }
+
+    @Test
+    void teacherCannotRescheduleAnotherTeachersLesson() {
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildSourceOccurrence());
+        ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();
+        request.setOccurrenceId(1001L);
+        request.setAdjustmentType("RESCHEDULE");
+        CurrentUserResponse teacher = new CurrentUserResponse(123L, "teacher", "Teacher", "TEACHER", 3999L, null, List.of("TEACHER"));
+
+        assertThatThrownBy(() -> scheduleAdjustmentService.adjustByTeacher(request, teacher))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("assigned to you");
     }
 
     @Test
