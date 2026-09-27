@@ -40,12 +40,14 @@ public class CampusController {
     }
 
     @PostMapping
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Create a campus")
     public ApiResponse<Long> createCampus(@Valid @RequestBody CampusSaveRequest request) {
         return ApiResponse.success("Created successfully.", campusService.createCampus(request));
     }
 
     @PutMapping("/{id}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Update a campus")
     public ApiResponse<Void> updateCampus(@PathVariable Long id,
                                            @Valid @RequestBody CampusSaveRequest request) {
@@ -54,6 +56,7 @@ public class CampusController {
     }
 
     @DeleteMapping("/{id}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Delete a campus")
     public ApiResponse<Void> deleteCampus(@PathVariable Long id) {
         campusService.deleteCampus(id);

@@ -111,10 +111,17 @@ public class EnrollmentOrderController {
     }
 
     @DeleteMapping("/{id}")
-    @Operation(summary = "删除误创建且未付款的报名单（软删除）")
+    @Operation(summary = "整单删除（须先退款至净收款为零）")
     public ApiResponse<Void> deleteOrder(@Parameter(description = "报名单ID") @PathVariable Long id) {
         enrollmentOrderService.deleteOrder(id);
         return ApiResponse.success("Deleted successfully.", null);
+    }
+
+    @DeleteMapping("/{id}/items/{itemId}")
+    @Operation(summary = "删除单门报名课程并清理其个人排课，保留同单其他课程")
+    public ApiResponse<Void> deleteOrderItem(@PathVariable Long id, @PathVariable Long itemId) {
+        enrollmentOrderService.deleteOrderItem(id, itemId);
+        return ApiResponse.success("Course deleted successfully.", null);
     }
 
     @PostMapping("/{id}/force-void")

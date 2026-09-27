@@ -1,5 +1,5 @@
 import type { AppMenuItem } from '@/types/menu';
-import { getUserWorkspace, isAdminOrStaffUser, type AuthUser } from '@/types/auth';
+import { getUserWorkspace, isAdminOrStaffUser, isAdminUser, isManagerUser, type AuthUser } from '@/types/auth';
 
 export const dailyMenus: AppMenuItem[] = [
   {
@@ -155,7 +155,18 @@ export function getStudentMenus(): AppMenuItem[] {
  */
 export function getSecondaryMenusForUser(user: AuthUser | null): AppMenuItem[] {
   if (!isAdminOrStaffUser(user)) return [];
-  return [adminGuideMenu, adminPeopleMenu, adminEnrollmentMenu, adminCoursesMenu, adminFinanceMenu, adminSystemMenu];
+
+  const menus = [adminGuideMenu, adminPeopleMenu, adminEnrollmentMenu, adminCoursesMenu, adminFinanceMenu, adminSystemMenu];
+  if (!isManagerUser(user) || isAdminUser(user)) return menus;
+
+  return menus
+    .filter(menu => menu.key !== 'admin-finance' && menu.key !== 'admin-system')
+    .map(menu => menu.key === 'admin-courses'
+      ? {
+          ...menu,
+          children: menu.children?.filter(item => item.key !== 'course-products' && item.key !== 'course-prices'),
+        }
+      : menu);
 }
 
 /**
@@ -168,6 +179,8 @@ export function getMenusForUser(user: AuthUser | null): AppMenuItem[] {
     case 'STUDENT':
       return getStudentMenus();
     default:
-      return dailyMenus;
+      return dailyMenus.filter(menu =>
+        menu.key !== 'daily-registrations' || !isManagerUser(user) || isAdminUser(user)
+      );
   }
 }

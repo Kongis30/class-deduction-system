@@ -53,10 +53,11 @@ public interface EnrollmentOrderService {
     /** 查询退款窗口中每个课程项的已消耗课时与金额。 */
     RefundCoursePreviewVO previewRefund(Long id, Integer participantIndex);
 
-    /**
-     * 删除误创建且未付款、未上课的报名订单（软删除）。
-     */
+    /** 整单删除：须先退款至净收款为零，并级联清理所有课程产物。 */
     void deleteOrder(Long id);
+
+    /** 删除报名单中的一门课程及其个人排课，保留同单其他课程与收据。 */
+    void deleteOrderItem(Long orderId, Long itemId);
 
     /**
      * 管理员强制作废报名订单（软删除）：用于清理系统改造前遗留、已付款或已消课而无法走常规删除的历史脏数据。

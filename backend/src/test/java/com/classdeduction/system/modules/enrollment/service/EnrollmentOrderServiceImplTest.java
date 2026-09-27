@@ -66,7 +66,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -426,6 +428,8 @@ class EnrollmentOrderServiceImplTest {
         item.setPackageUnit("MONTH");
         item.setPackageQuantity(new BigDecimal("2"));
         item.setStartDate(LocalDate.of(2026, 9, 16));
+        item.setPickupRequiredSnapshot(true);
+        item.setPickupAddressSnapshot("123 Old Pickup Address");
 
         ClassEnrollmentEntity activeEnrollment = new ClassEnrollmentEntity();
         activeEnrollment.setId(9001L);
@@ -455,6 +459,9 @@ class EnrollmentOrderServiceImplTest {
         request.setItems(List.of(payload));
 
         enrollmentOrderService.correctOrder(2001L, request);
+
+        // 即使旧客户端把 false 省略为 null，课程项接送快照也必须明确清零并清除旧地址。
+        verify(enrollmentOrderItemMapper).updateTransportSnapshot(8001L, false, null, false, null);
 
         verify(classEnrollmentMapper).insert(classEnrollmentCaptor.capture());
         ClassEnrollmentEntity replacement = classEnrollmentCaptor.getValue();
@@ -528,21 +535,195 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldDeletePaidOrderWithFullCascade() {
-        // 全量级联：已付款订单同样可删（不再限制仅未付款）
+    void shouldRequireRefundBeforeDeletingWholePaidOrder() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setOrderStatus("CONFIRMED");
         order.setPaymentStatus("PAID");
         order.setReceivedAmount(new BigDecimal("1100.00"));
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        assertThatThrownBy(() -> enrollmentOrderService.deleteOrder(2001L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("COURSE_REFUND_REQUIRED");
+        verify(paymentRecordMapper, never()).delete(any());
+        verify(receiptRecordMapper, never()).delete(any());
+        verify(enrollmentOrderMapper, never()).deleteById(2001L);
+    }
+
+    @Test
+    void shouldWithdrawClassItemWhenMixedOrderHasNoOrderLevelClassId() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(1001L);
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(2101L);
+        item.setClassId(3101L);
+        ClassEnrollmentEntity seat = new ClassEnrollmentEntity();
+        seat.setId(4101L);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(seat));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
         when(coursePackageMapper.selectList(any())).thenReturn(List.of());
 
         enrollmentOrderService.deleteOrder(2001L);
 
-        verify(paymentRecordMapper).delete(any());
-        verify(receiptRecordMapper).delete(any());
+        verify(classEnrollmentMapper).update(any());
         verify(enrollmentOrderMapper).deleteById(2001L);
+    }
+
+    @Test
+    void shouldDeleteOnlySelectedUnpaidCourseFromMixedReceipt() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(1001L);
+        order.setTuitionSubtotalAmount(new BigDecimal("300.00"));
+        order.setOriginalAmount(new BigDecimal("300.00"));
+        order.setAmountDue(new BigDecimal("300.00"));
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        EnrollmentOrderItemEntity removed = new EnrollmentOrderItemEntity();
+        removed.setId(2101L);
+        removed.setEnrollmentOrderId(2001L);
+        removed.setPriceAmount(new BigDecimal("100.00"));
+        removed.setAmountDue(new BigDecimal("100.00"));
+        removed.setPaidAmount(BigDecimal.ZERO);
+        EnrollmentOrderItemEntity retained = new EnrollmentOrderItemEntity();
+        retained.setId(2102L);
+        retained.setEnrollmentOrderId(2001L);
+        retained.setPriceAmount(new BigDecimal("200.00"));
+        retained.setPaidAmount(new BigDecimal("100.00"));
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(removed, retained));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of());
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setReceiptPayload("saved receipt");
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of(receipt));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("items", List.of(Map.of("orderItemId", "2101", "lineNo", 1),
+                Map.of("orderItemId", "2102", "lineNo", 2)));
+        when(jsonHelper.fromJson(any(), any())).thenReturn(payload);
+
+        enrollmentOrderService.deleteOrderItem(2001L, 2101L);
+
+        assertThat(order.getAmountDue()).isEqualByComparingTo("200.00");
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo("100.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo("100.00");
+        verify(enrollmentOrderItemMapper).deleteById(2101L);
+        verify(enrollmentOrderItemMapper, never()).deleteById(2102L);
+        verify(receiptRecordMapper, never()).delete(any());
+        verify(receiptRecordMapper).updateById(receipt);
+        assertThat((List<?>) payload.get("items")).hasSize(1);
+        assertThat(((Map<?, ?>) ((List<?>) payload.get("items")).get(0)).get("orderItemId"))
+                .isEqualTo("2102");
+        verify(enrollmentOrderMapper, never()).deleteById(2001L);
+    }
+
+    @Test
+    void shouldRequireRefundBeforeDeletingPaidCourseItem() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(2101L);
+        item.setPaidAmount(new BigDecimal("50.00"));
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> enrollmentOrderService.deleteOrderItem(2001L, 2101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("COURSE_REFUND_REQUIRED");
+        verify(enrollmentOrderItemMapper, never()).deleteById(2101L);
+    }
+
+    @Test
+    void shouldRejectMixedReceiptWhenLegacyPaymentCannotBeAssignedToRemainingCourse() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        EnrollmentOrderItemEntity removed = new EnrollmentOrderItemEntity();
+        removed.setId(2101L);
+        EnrollmentOrderItemEntity retained = new EnrollmentOrderItemEntity();
+        retained.setId(2102L);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(removed, retained));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+
+        assertThatThrownBy(() -> enrollmentOrderService.deleteOrderItem(2001L, 2101L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("COURSE_PAYMENT_ALLOCATION_REQUIRED");
+        verify(enrollmentOrderItemMapper, never()).deleteById(2101L);
+    }
+
+    @Test
+    void shouldRemoveOnlySelectedOneOnOnePackageAndItsSchedule() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setAmountDue(new BigDecimal("300.00"));
+        order.setOriginalAmount(new BigDecimal("300.00"));
+        EnrollmentOrderItemEntity removed = new EnrollmentOrderItemEntity();
+        removed.setId(2101L);
+        removed.setAmountDue(new BigDecimal("100.00"));
+        removed.setPriceAmount(new BigDecimal("100.00"));
+        removed.setCourseType("ONE_ON_ONE");
+        EnrollmentOrderItemEntity retained = new EnrollmentOrderItemEntity();
+        retained.setId(2102L);
+        retained.setClassId(3102L);
+        CoursePackageEntity packageToDelete = new CoursePackageEntity();
+        packageToDelete.setId(3201L);
+        packageToDelete.setEnrollmentOrderItemId(2101L);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(removed, retained));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(packageToDelete));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+
+        enrollmentOrderService.deleteOrderItem(2001L, 2101L);
+
+        verify(lessonOccurrenceMapper).delete(any());
+        verify(recurringScheduleRuleMapper).delete(any());
+        verify(coursePackageMapper).delete(any());
+        verify(classEnrollmentMapper, never()).update(any());
+        verify(enrollmentOrderItemMapper, never()).deleteById(2102L);
+    }
+
+    @Test
+    void shouldWithdrawOnlySelectedClassSeatAndKeepSharedClassSchedule() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(1001L);
+        order.setAmountDue(new BigDecimal("300.00"));
+        order.setOriginalAmount(new BigDecimal("300.00"));
+        EnrollmentOrderItemEntity removed = new EnrollmentOrderItemEntity();
+        removed.setId(2101L);
+        removed.setClassId(3101L);
+        removed.setAmountDue(new BigDecimal("100.00"));
+        removed.setPriceAmount(new BigDecimal("100.00"));
+        EnrollmentOrderItemEntity retained = new EnrollmentOrderItemEntity();
+        retained.setId(2102L);
+        retained.setClassId(3102L);
+        ClassEnrollmentEntity targetSeat = new ClassEnrollmentEntity();
+        targetSeat.setId(4101L);
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(removed, retained));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(targetSeat));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of());
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+
+        enrollmentOrderService.deleteOrderItem(2001L, 2101L);
+
+        verify(classEnrollmentMapper).update(any());
+        verify(lessonOccurrenceMapper, never()).delete(any());
+        verify(enrollmentOrderItemMapper, never()).deleteById(2102L);
     }
 
     @Test

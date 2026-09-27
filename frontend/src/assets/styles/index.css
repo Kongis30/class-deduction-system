@@ -266,6 +266,34 @@ a {
   gap: 20px;
 }
 
+/* Calendar roster panels use Element Plus' custom scrollbar so it stays visible on overlay-scrollbar systems. */
+.calendar-roster-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.calendar-roster-scroll .el-scrollbar__wrap {
+  overflow-x: hidden;
+}
+
+.calendar-roster-scroll .el-scrollbar__bar.is-vertical {
+  width: 8px;
+  right: 2px;
+  border-radius: 6px;
+  background: #f1f4f8;
+  opacity: 1;
+}
+
+.calendar-roster-scroll .el-scrollbar__thumb {
+  border-radius: 6px;
+  background: #aeb8c5;
+  opacity: 1;
+}
+
+.calendar-roster-scroll .el-scrollbar__thumb:hover {
+  background: #8795a5;
+}
+
 .hero-card,
 .panel-card,
 .stat-card {

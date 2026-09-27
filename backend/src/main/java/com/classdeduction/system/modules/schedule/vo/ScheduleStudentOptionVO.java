@@ -12,6 +12,6 @@ public record ScheduleStudentOptionVO(
         List<CourseGradeOption> courseGrades
 ) {
     /** 左侧栏展示学生所属的有效课程与年级组合。 */
-    public record CourseGradeOption(String courseName, String gradeBand) {
+    public record CourseGradeOption(String courseName, String gradeBand, boolean hasSchedule) {
     }
 }

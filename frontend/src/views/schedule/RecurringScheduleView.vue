@@ -17,42 +17,47 @@
             />
           </div>
           <div class="col-panel__body">
-            <div v-if="filteredCourseGradeGroups.length === 0" class="col-panel__empty">
-              {{ students.length === 0 ? 'Loading...' : 'No students found' }}
+            <div v-if="studentListLoading && students.length === 0" class="col-panel__empty">Loading...</div>
+            <div v-else-if="studentListError && students.length === 0" class="col-panel__empty">
+              Could not load students. <el-button link type="primary" @click="refreshScheduleStudentList">Retry</el-button>
             </div>
-            <section
-              v-for="group in filteredCourseGradeGroups"
-              :key="group.key"
-              class="schedule-student-group"
-            >
-              <button
-                type="button"
-                class="schedule-student-group__toggle"
-                :class="{ 'schedule-student-group__toggle--collapsed': collapsedCourseGradeKeys.has(group.key) }"
-                :aria-expanded="!collapsedCourseGradeKeys.has(group.key)"
-                @click="toggleCourseGradeGroup(group.key)"
-              >
-                <span class="schedule-student-group__title">
-                  <strong>{{ group.courseName }}</strong>
-                  <span>{{ group.gradeBand }}</span>
-                </span>
-                <small>{{ group.students.length }}</small>
-                <el-icon><ArrowRight /></el-icon>
-              </button>
-              <div v-if="!collapsedCourseGradeKeys.has(group.key)" class="schedule-student-group__students">
-                <button
-                  v-for="student in group.students"
-                  :key="student.id"
-                  type="button"
-                  class="col-item"
-                  :class="{ 'col-item--active': String(selectedStudentId) === String(student.id) }"
-                  @click="onStudentSelect(student.id)"
-                >
-                  <span class="col-item__name">{{ student.studentName }}</span>
-                  <el-icon v-if="String(selectedStudentId) === String(student.id)" color="#409eff"><ArrowRight /></el-icon>
-                </button>
-              </div>
-            </section>
+            <template v-else>
+              <section v-for="section in studentSections" :key="section.key" class="schedule-student-section">
+                <div class="schedule-student-section-title">{{ section.title }}</div>
+                <div v-if="section.groups.length === 0" class="schedule-student-section__empty">
+                  {{ section.key === 'pending' ? '暂无待排课课程' : '暂无已排课课程' }}
+                </div>
+                <template v-for="group in section.groups" :key="`${section.key}-${group.key}`">
+                  <button
+                    type="button"
+                    class="schedule-student-group__toggle"
+                    :class="{ 'schedule-student-group__toggle--collapsed': collapsedCourseGradeKeys.has(`${section.key}:${group.key}`) }"
+                    :aria-expanded="!collapsedCourseGradeKeys.has(`${section.key}:${group.key}`)"
+                    @click="toggleCourseGradeGroup(`${section.key}:${group.key}`)"
+                  >
+                    <span class="schedule-student-group__title">
+                      <strong>{{ group.courseName }}</strong>
+                      <span>{{ group.gradeBand }}</span>
+                    </span>
+                    <small>{{ group.students.length }}</small>
+                    <el-icon><ArrowRight /></el-icon>
+                  </button>
+                  <div v-if="!collapsedCourseGradeKeys.has(`${section.key}:${group.key}`)" class="schedule-student-group__students">
+                    <button
+                      v-for="student in group.students"
+                      :key="student.id"
+                      type="button"
+                      class="col-item"
+                      :class="{ 'col-item--active': String(selectedStudentId) === String(student.id) }"
+                      @click="onStudentSelect(student.id)"
+                    >
+                      <span class="col-item__name">{{ student.studentName }}</span>
+                      <el-icon v-if="String(selectedStudentId) === String(student.id)" color="#409eff"><ArrowRight /></el-icon>
+                    </button>
+                  </div>
+                </template>
+              </section>
+            </template>
           </div>
         </aside>
 
@@ -99,31 +104,13 @@
 
             <!-- Schedule content -->
             <template v-else>
-              <section v-if="selectedPackage" class="package-hours-card">
-                <div class="package-hours-card__heading">
-                  <div>
-                    <div class="package-hours-card__eyebrow">PACKAGE HOURS</div>
-                    <strong>Package hours</strong>
-                  </div>
-                  <el-button type="primary" size="small" :loading="savingDeductedHours" @click="saveDeductedHours">
-                    Save hours
-                  </el-button>
-                </div>
-                <div class="package-hours-card__fields">
-                  <div><span>Total hours</span><strong>{{ packageHours(selectedPackage.totalUnits) }}h</strong></div>
-                  <label class="package-hours-card__input">
-                    <span>Already deducted</span>
-                    <el-input-number v-model="deductedHoursDraft" :min="confirmedDeductionHours" :max="deductedHoursMax" :step="0.5" :precision="1" controls-position="right" />
-                  </label>
-                  <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
-                  <div><span>Remaining</span><strong>{{ projectedRemainingHours }}h</strong></div>
-                </div>
-                <p class="package-hours-card__hint">Already deducted includes confirmed lessons. Pending deduction includes teacher-submitted lessons awaiting admin review. Remaining excludes both.</p>
-              </section>
               <div class="schedule-info">
                 <div class="schedule-info__header">
                   <span class="schedule-info__title">{{ selectedPackageName }}</span>
                   <div class="schedule-info__actions">
+                    <el-button v-if="selectedPackage" size="small" @click="packageHoursDialogVisible = true">
+                      Package hours
+                    </el-button>
                     <el-dropdown trigger="click" :disabled="!selectedStudentId || !selectedPackageId" @command="openPrintSheet">
                       <el-button size="small">Print Sheet</el-button>
                       <template #dropdown>
@@ -165,6 +152,17 @@
                       @click="openDetailDialog(currentRule)"
                     >
                       Detail
+                    </el-button>
+                    <el-button
+                      v-if="selectedPackage?.packageStatus === 'ACTIVE'"
+                      type="danger"
+                      plain
+                      size="small"
+                      :loading="pausingPackageId === selectedPackageId"
+                      :disabled="pausingPackageId !== null"
+                      @click="pauseSelectedPackage"
+                    >
+                      Pause Course
                     </el-button>
                   </div>
                 </div>
@@ -226,6 +224,43 @@
         </main>
       </div>
     </section>
+
+    <!-- Package hours are available on demand so the schedule stays focused. -->
+    <el-dialog
+      v-model="packageHoursDialogVisible"
+      :title="`Package hours — ${selectedPackageName}`"
+      width="640px"
+      :close-on-click-modal="false"
+      class="schedule-dialog package-hours-dialog"
+    >
+      <section v-if="selectedPackage" class="package-hours-card">
+        <div class="package-hours-card__heading">
+          <div>
+            <div class="package-hours-card__eyebrow">PACKAGE HOURS</div>
+            <strong>Hours overview</strong>
+          </div>
+          <el-button type="primary" size="small" :loading="savingDeductedHours" @click="saveDeductedHours">
+            Save hours
+          </el-button>
+        </div>
+        <div class="package-hours-card__fields">
+          <div><span>Total hours</span><strong>{{ packageHours(selectedPackage.totalUnits) }}h</strong></div>
+          <label class="package-hours-card__input">
+            <span>Already deducted</span>
+            <el-input-number v-model="deductedHoursDraft" :min="confirmedDeductionHours" :max="deductedHoursMax" :step="0.5" :precision="1" controls-position="right" />
+          </label>
+          <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
+          <div><span>Remaining</span><strong>{{ projectedRemainingHours }}h</strong></div>
+        </div>
+        <p class="package-hours-card__hint">Already deducted includes confirmed lessons. Pending deduction includes teacher-submitted lessons awaiting admin review. Remaining excludes both.</p>
+      </section>
+
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="packageHoursDialogVisible = false">Close</el-button>
+        </div>
+      </template>
+    </el-dialog>
 
     <!-- Create / Edit Schedule dialog -->
     <el-dialog
@@ -753,7 +788,7 @@ import { useRoute } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
-import { fetchCoursePackages, updateCoursePackageDeductedHours } from '@/api/enrollment';
+import { fetchCoursePackages, pauseCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
 import { fetchOneOnOneDeductions } from '@/api/one-on-one';
 import {
   createRecurringScheduleRule,
@@ -806,6 +841,8 @@ const editFormRef = ref<FormInstance>();
 
 const detailData = ref<any>(null);
 const students = ref<ScheduleStudentOption[]>([]);
+const studentListLoading = ref(true);
+const studentListError = ref(false);
 interface ScheduleCourseGradeGroup {
   key: string;
   courseName: string;
@@ -878,6 +915,8 @@ const currentWeekOccurrences = ref<LessonOccurrenceItem[]>([]);
 const studentSearch = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
+const pausingPackageId = ref<EntityId | null>(null);
+const packageHoursDialogVisible = ref(false);
 const deductedHoursDraft = ref(0);
 const savingDeductedHours = ref(false);
 const selectedPackage = computed(() => studentPackages.value.find(p => String(p.id) === String(selectedPackageId.value)) ?? null);
@@ -1119,12 +1158,22 @@ function currentCalendarWeekRange() {
   return calendarWeekRange(new Date(), APP_TIMEZONE);
 }
 
-const filteredCourseGradeGroups = computed<ScheduleCourseGradeGroup[]>(() => {
+type ScheduleStudentSectionKey = 'pending' | 'scheduled';
+
+// 先按学生判断是否还有未排课课包，再按课程年级分组，避免同一学生同时出现在上下两栏。
+const studentSections = computed(() => {
   const q = studentSearch.value.trim().toLowerCase();
-  const groups = new Map<string, ScheduleCourseGradeGroup & { studentMap: Map<string, ScheduleStudentOption> }>();
+  const sections = {
+    pending: new Map<string, ScheduleCourseGradeGroup & { studentMap: Map<string, ScheduleStudentOption> }>(),
+    scheduled: new Map<string, ScheduleCourseGradeGroup & { studentMap: Map<string, ScheduleStudentOption> }>(),
+  };
   students.value.forEach((student) => {
     if (q && !student.studentName.toLowerCase().includes(q)) return;
-    student.courseGrades.forEach(({ courseName, gradeBand }) => {
+    const pendingCourses = student.courseGrades.filter(({ hasSchedule }) => hasSchedule !== true);
+    const section: ScheduleStudentSectionKey = pendingCourses.length > 0 ? 'pending' : 'scheduled';
+    const displayedCourses = section === 'pending' ? pendingCourses : student.courseGrades;
+    displayedCourses.forEach(({ courseName, gradeBand }) => {
+      const groups = sections[section];
       const normalizedCourse = courseName.trim().toLowerCase();
       const normalizedGrade = gradeBand.trim().toLowerCase();
       const key = JSON.stringify([normalizedCourse, normalizedGrade]);
@@ -1136,14 +1185,19 @@ const filteredCourseGradeGroups = computed<ScheduleCourseGradeGroup[]>(() => {
       group.studentMap.set(String(student.id), student);
     });
   });
-  return Array.from(groups.values())
-    .map(({ studentMap, ...group }) => ({
-      ...group,
-      students: Array.from(studentMap.values()).sort((left, right) =>
-        left.studentName.localeCompare(right.studentName)),
-    }))
-    .sort((left, right) => left.courseName.localeCompare(right.courseName)
-      || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
+  return (['pending', 'scheduled'] as const)
+    .map(key => ({
+      key,
+      title: key === 'pending' ? '待排课' : '已排课',
+      groups: Array.from(sections[key].values())
+        .map(({ studentMap, ...group }) => ({
+          ...group,
+          students: Array.from(studentMap.values()).sort((left, right) =>
+            left.studentName.localeCompare(right.studentName, 'en', { sensitivity: 'base', numeric: true })),
+        }))
+        .sort((left, right) => left.courseName.localeCompare(right.courseName)
+          || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true })),
+    }));
 });
 
 function toggleCourseGradeGroup(groupKey: string) {
@@ -1363,6 +1417,41 @@ function onPackageSelect(pkg: CoursePackageItem) {
   selectedPackageId.value = pkg.id;
 }
 
+// 暂停当前选中的课包；后端会保留已记录课次并取消未来未记录课次。
+async function pauseSelectedPackage() {
+  const packageToPause = selectedPackage.value;
+  const studentId = selectedStudentId.value;
+  if (!packageToPause || packageToPause.packageStatus !== 'ACTIVE' || !studentId) return;
+
+  try {
+    await ElMessageBox.confirm(
+      'Pausing this course cancels its future lessons that have not been recorded. After resuming, you must create a new schedule to continue lessons.',
+      'Pause Course',
+      {
+        confirmButtonText: 'Pause Course',
+        cancelButtonText: 'Keep Active',
+        type: 'warning',
+      },
+    );
+  } catch {
+    return;
+  }
+
+  pausingPackageId.value = packageToPause.id;
+  try {
+    await pauseCoursePackage(packageToPause.id);
+    ElMessage.success('Course paused.');
+    await Promise.all([
+      onStudentSelect(studentId),
+      refreshScheduleStudentList(),
+    ]);
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    pausingPackageId.value = null;
+  }
+}
+
 /** 从消课数据接口读取完整课次，在独立签字表预览中展示，不离开排课页面。 */
 async function openPrintSheet(command: string | number | object) {
   if (!selectedStudentId.value || !selectedPackageId.value) return;
@@ -1439,7 +1528,7 @@ async function loadAllPackageRules(
   }
   const results = await Promise.allSettled(
     packages.map(async (pkg) => {
-      const res = await fetchRecurringScheduleRules({ packageId: pkg.id, pageSize: 1 });
+      const res = await fetchRecurringScheduleRules({ packageId: pkg.id, ruleStatus: 'ACTIVE', pageSize: 1 });
       const rule = res.data.data.records[0];
       if (!rule) return { packageId: pkg.id, rule: null };
       try {
@@ -1633,7 +1722,7 @@ async function submitCreateForm() {
       });
       ElMessage.success('Schedule created and lessons generated.');
       editDialogVisible.value = false;
-      await loadAllPackageRules();
+      await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
       if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
     } catch (err) {
       ElMessage.error(extractErrorMessage(err));
@@ -1679,7 +1768,7 @@ async function submitEditForm() {
         `${data.preservedOccurrenceCount} preserved (${data.confirmedOccurrenceCount} confirmed).`
       );
       editDialogVisible.value = false;
-      await loadAllPackageRules();
+      await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
       if (selectedStudentId.value) await loadCurrentWeekOccurrences(selectedStudentId.value);
     } catch (err) {
       ElMessage.error(extractErrorMessage(err));
@@ -1992,19 +2081,30 @@ function slotLessonPlan(slot: SlotDef & { allocatedHours?: number }) {
 }
 
 // ─── Init ────────────────────────────────────────
-async function init() {
+// 单独加载学生名单，避免老师或教室接口失败时把已返回的学生名单一并丢弃。
+async function refreshScheduleStudentList() {
+  studentListLoading.value = true;
+  studentListError.value = false;
   try {
-    const [sRes, tRes, cRes] = await Promise.all([
-      fetchOneOnOneScheduleStudents(),
-      fetchAllTeachers(),
-      fetchAllClassrooms(),
-    ]);
-    // 后端按有效 1 对 1 课时包一次去重查询，避免每个学生各发一次请求。
-    students.value = sRes.data.data;
-    teachers.value = tRes.data.data;
-    classrooms.value = cRes.data.data;
-    await applyRouteScheduleContext();
-  } catch { /* silent */ }
+    const response = await fetchOneOnOneScheduleStudents();
+    students.value = response.data.data;
+  } catch {
+    studentListError.value = true;
+    if (students.value.length > 0) ElMessage.error('Could not refresh students. Please retry.');
+  } finally {
+    studentListLoading.value = false;
+  }
+}
+
+async function init() {
+  const [, teacherResult, classroomResult] = await Promise.allSettled([
+    refreshScheduleStudentList(),
+    fetchAllTeachers(),
+    fetchAllClassrooms(),
+  ]);
+  if (teacherResult.status === 'fulfilled') teachers.value = teacherResult.value.data.data;
+  if (classroomResult.status === 'fulfilled') classrooms.value = classroomResult.value.data.data;
+  if (!studentListError.value) await applyRouteScheduleContext();
 }
 
 async function applyRouteScheduleContext() {
@@ -2206,6 +2306,25 @@ function disabledPastDate(date: Date) {
   border-bottom: 1px solid #e7edf4;
 }
 
+.schedule-student-section-title {
+  padding: 10px;
+  border-bottom: 1px solid #e7edf4;
+  background: #eaf1f8;
+  color: #34465b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.schedule-student-section + .schedule-student-section {
+  border-top: 3px solid #e3eaf2;
+}
+
+.schedule-student-section__empty {
+  padding: 12px 10px;
+  color: #909399;
+  font-size: 12px;
+}
+
 .schedule-student-group__toggle {
   display: flex;
   width: 100%;
@@ -2278,6 +2397,7 @@ function disabledPastDate(date: Date) {
   border-radius: 8px;
   background: #f7fbff;
 }
+.package-hours-dialog .package-hours-card { margin: 0; }
 .package-hours-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .package-hours-card__fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: center; gap: 14px; }
 .package-hours-card__eyebrow { margin-bottom: 3px; color: #7d8da1; font-size: 10px; letter-spacing: .08em; }
@@ -2295,8 +2415,9 @@ function disabledPastDate(date: Date) {
 
 .schedule-info__header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
@@ -2308,6 +2429,8 @@ function disabledPastDate(date: Date) {
 
 .schedule-info__actions {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 6px;
   flex-shrink: 0;
 }

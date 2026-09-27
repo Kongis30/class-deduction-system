@@ -891,12 +891,14 @@ function viewStudentReceipt() {
 }
 
 function canPayFromDataSummary(row: DataSummaryDisplayRow | null) {
-  return Boolean(
-    row
-      && row.orderStatus === 'CONFIRMED'
-      // Data Summary 将待收余额按负数展示；订单页内部仍使用正数做支付计算。
-      && Number(row.balanceAmount ?? 0) < 0,
-  );
+  if (!row || row.orderStatus !== 'CONFIRMED') return false;
+
+  // 管理员的 Data Summary 金额字段会被后端脱敏，用未脱敏的余额判断会导致 Pay 入口消失。
+  const hasOutstandingBalance = isManager
+    ? row.paymentStatus === 'UNPAID' || row.paymentStatus === 'PARTIAL'
+    : Number(row.balanceAmount ?? 0) < 0;
+
+  return hasOutstandingBalance;
 }
 
 function canRefundFromDataSummary(row: DataSummaryDisplayRow | null) {

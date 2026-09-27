@@ -34,7 +34,7 @@
               :prefix-icon="Search"
             />
           </div>
-          <div class="classroom-list-panel__body">
+          <el-scrollbar always class="classroom-list-panel__body calendar-roster-scroll">
             <div v-if="filteredClassroomGroups.length === 0" class="classroom-list-panel__empty">
               {{ classroomListEmptyText }}
             </div>
@@ -58,7 +58,7 @@
                 <el-icon v-if="selectedClassroomId === c.id" color="#409eff"><Check /></el-icon>
               </div>
             </section>
-          </div>
+          </el-scrollbar>
         </aside>
 
         <!-- Right: Calendar -->
@@ -1344,12 +1344,6 @@ function resolveQueryId(value: unknown): EntityId | null {
 .classroom-list-panel__header :deep(.el-input__inner) {
   height: 34px;
   line-height: 34px;
-}
-
-.classroom-list-panel__body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .classroom-list-panel__empty {

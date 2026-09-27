@@ -1015,7 +1015,13 @@
         <em v-if="hasOutstandingBalance">Balance due. Record the remaining payment from student history later.</em>
         <em v-else-if="isPaidInFull && unallocatedPaymentAmount === 0">Paid in full.</em>
       </div>
-      <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.handledByName" placeholder="Handled by" class="handled-by" />
+      <el-input
+        v-if="receiptEditingEnabled && !isPrivateAllReceiptView"
+        v-model="form.handledByName"
+        placeholder="Handled by"
+        class="handled-by"
+        :disabled="isManager"
+      />
       <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
       <el-button v-if="!isReadOnly" class="action-primary" type="primary" size="large" :loading="submitting" @click="submitForm">Save</el-button>
       <el-button class="action-print" size="large" @click="printForm">Print</el-button>
@@ -1304,6 +1310,10 @@ const contactLocked = computed(() => isReadOnly.value && !editingCorrection.valu
 // 收据更正态复用报名表控件，但保存时更新原订单，不创建新的报名单。
 const receiptEditingEnabled = computed(() => !isReadOnly.value || editingCorrection.value);
 const isAdmin = computed(() => isAdminUser(currentUser));
+const isManager = computed(() => isManagerUser(currentUser));
+const handledByName = computed(() => isManager.value
+  ? currentUser?.displayName?.trim() ?? ''
+  : form.handledByName.trim());
 const canCorrectReceipt = computed(() => isAdmin.value || (isStaffUser(currentUser) && !isManagerUser(currentUser)));
 const currentCampusTaxId = computed(() => receiptTaxId.value || selectedCampus.value?.taxId || '');
 
@@ -4730,7 +4740,7 @@ function buildPayload(): RegistrationIntakePayload {
     signupDate: form.signupDate,
     renewPackageId: stringToEntityId(renewPackageId.value),
     renewClassEnrollmentId: stringToEntityId(renewClassEnrollmentId.value),
-    handledByName: form.handledByName.trim(),
+    handledByName: handledByName.value,
     currencyCode: 'USD',
     creditTopUpAmount: creditTopUpAmount.value > 0 ? roundMoney(creditTopUpAmount.value) : undefined,
     items: isCreditTopUpOnly.value ? [] : courseLines.value.map((line, index) => ({
@@ -4764,13 +4774,14 @@ function buildPayload(): RegistrationIntakePayload {
       startMonth: isOneOnOneLine(line) ? undefined : line.groupRegistrationStartMonth,
       endMonth: isOneOnOneLine(line) ? undefined : line.groupRegistrationEndMonth,
       teacherId: undefined,
-      pickupRequired: line.pickupRequired || undefined,
+      // Boolean false 必须随 edit receipt 一起提交，后端需要用它清除旧课程接送快照。
+      pickupRequired: line.pickupRequired,
       pickupAddress: effectiveCoursePickupAddress(line) || undefined,
-      dropoffRequired: line.dropoffRequired || undefined,
+      dropoffRequired: line.dropoffRequired,
       dropoffAddress: effectiveCourseDropoffAddress(line) || undefined,
-      pickupFeeCharged: line.pickupRequired || undefined,
+      pickupFeeCharged: line.pickupRequired,
       pickupFeeAmount: line.pickupRequired ? roundMoney(line.pickupFeeAmount) : undefined,
-      dropoffFeeCharged: line.dropoffRequired || undefined,
+      dropoffFeeCharged: line.dropoffRequired,
       dropoffFeeAmount: line.dropoffRequired ? roundMoney(line.dropoffFeeAmount) : undefined,
       serviceFees: line.serviceFees.filter((fee) => fee.amount > 0).map((fee) => ({
         label: fee.label.trim(),
@@ -4795,7 +4806,7 @@ function buildPayload(): RegistrationIntakePayload {
           paymentMethod: payment.paymentMethod,
           amount: roundMoney(payment.amount),
           paidAt: toLocalDateTime(payment.paidAt),
-          handledByName: form.handledByName.trim(),
+          handledByName: handledByName.value,
           remark: payment.remark?.trim() || undefined,
           allocations: buildCoursePaymentAllocations(payment),
         }))),
@@ -4803,7 +4814,7 @@ function buildPayload(): RegistrationIntakePayload {
         paymentMethod: creditTopUpPayment.value.paymentMethod,
         amount: roundMoney(creditTopUpAmount.value),
         paidAt: toLocalDateTime(creditTopUpPayment.value.paidAt),
-        handledByName: form.handledByName.trim(),
+        handledByName: handledByName.value,
         remark: creditTopUpPayment.value.remark?.trim() || form.remark.trim() || 'Student Credit top-up',
         creditTopUp: true,
       }] : []),
@@ -4834,7 +4845,7 @@ function toParticipantBillingPayload(billing: ParticipantBillingForm): Registrat
         amount: roundMoney(payment.amount),
         paidAt: toLocalDateTime(payment.paidAt),
         participantIndex: billing.participantIndex,
-        handledByName: form.handledByName.trim(),
+        handledByName: handledByName.value,
         remark: payment.remark?.trim() || undefined,
         allocations: buildCoursePaymentAllocations(payment),
       })),

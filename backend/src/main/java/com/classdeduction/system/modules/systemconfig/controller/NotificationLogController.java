@@ -32,7 +32,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 @RequestMapping("/v1/system/notification-logs")
 @Tag(name = "System - Notification Logs")
-@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
+@RequireRoles({"ADMIN", "STAFF"})
 public class NotificationLogController {
 
     private final SystemNotificationService systemNotificationService;

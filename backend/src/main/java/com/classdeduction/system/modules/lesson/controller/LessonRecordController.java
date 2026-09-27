@@ -48,7 +48,7 @@ public class LessonRecordController {
     }
 
     @PostMapping
-    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER", "TEACHER"})
     @Operation(summary = "Confirm a lesson by current role")
     public ApiResponse<LessonRecordConfirmResultVO> confirmLesson(
             @Valid @RequestBody LessonRecordConfirmRequest request,

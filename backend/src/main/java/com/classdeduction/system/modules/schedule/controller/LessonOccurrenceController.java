@@ -47,6 +47,7 @@ public class LessonOccurrenceController {
     }
 
     @GetMapping("/one-on-one-deductions")
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "List one-on-one deduction sheets grouped by teacher, student, and package")
     public ApiResponse<List<OneOnOneTeacherVO>> listOneOnOneDeductions(
             @ParameterObject OneOnOneDeductionQuery query,

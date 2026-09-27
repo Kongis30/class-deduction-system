@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/v1/daily-registrations")
-@RequireRoles({"ADMIN", "STAFF", "MANAGER"})
+@RequireRoles({"ADMIN", "STAFF"})
 public class DailyRegistrationController {
 
     private final DailyRegistrationService dailyRegistrationService;

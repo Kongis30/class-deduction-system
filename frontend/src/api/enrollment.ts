@@ -135,8 +135,8 @@ export function refundEnrollmentOrder(id: string | number, data: RefundPayload) 
   return http.post<ApiResponse<ReceiptRecordItem>>(`/v1/enrollment/orders/${id}/refund`, data);
 }
 
-export function deleteEnrollmentOrder(id: string | number) {
-  return http.delete(`/v1/enrollment/orders/${id}`);
+export function deleteEnrollmentOrderItem(orderId: string | number, itemId: string | number) {
+  return http.delete(`/v1/enrollment/orders/${orderId}/items/${itemId}`);
 }
 
 export function forceVoidEnrollmentOrder(id: string | number, reason?: string) {
@@ -383,20 +383,12 @@ export function fetchCoursePackage(id: string | number) {
   return http.get<ApiResponse<CoursePackageItem>>(`/v1/enrollment/packages/${id}`);
 }
 
-export function closeCoursePackage(id: string | number) {
-  return http.post(`/v1/enrollment/packages/${id}/close`);
-}
-
 export function pauseCoursePackage(id: string | number) {
   return http.post(`/v1/enrollment/packages/${id}/pause`);
 }
 
-export interface CoursePackageResumePayload {
-  startDate: string;
-}
-
-export function resumeCoursePackage(id: string | number, data: CoursePackageResumePayload) {
-  return http.post(`/v1/enrollment/packages/${id}/resume`, data);
+export function resumeCoursePackage(id: string | number) {
+  return http.post(`/v1/enrollment/packages/${id}/resume`);
 }
 
 export interface CoursePackageHoursAdjustmentPayload {

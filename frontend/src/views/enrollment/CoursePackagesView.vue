@@ -323,9 +323,6 @@
           <el-button v-if="detailData?.packageStatus === 'PAUSED'" type="primary" @click="openResumePackage">
             Resume Package
           </el-button>
-          <el-button v-if="detailData?.packageStatus === 'ACTIVE'" type="danger" @click="handleClosePackage">
-            Close Package
-          </el-button>
         </div>
       </template>
     </el-dialog>
@@ -380,16 +377,7 @@
       width="420px"
       :close-on-click-modal="false"
     >
-      <el-form label-width="120px">
-        <el-form-item label="Starting date">
-          <el-date-picker
-            v-model="resumePackageForm.startDate"
-            type="date"
-            value-format="YYYY-MM-DD"
-            style="width: 100%"
-          />
-        </el-form-item>
-      </el-form>
+      <p>Resuming does not restore the previous schedule. Create a new schedule from the Schedule page to continue lessons.</p>
       <template #footer>
         <el-button @click="resumePackageVisible = false">Cancel</el-button>
         <el-button type="primary" :loading="packageStatusSaving" @click="submitResumePackage">
@@ -503,13 +491,12 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import {
   adjustCoursePackageHours,
-  closeCoursePackage,
   fetchCoursePackage,
   fetchCoursePackages,
   pauseCoursePackage,
@@ -554,9 +541,6 @@ const hoursAdjustmentForm = reactive({
 });
 const resumePackageVisible = ref(false);
 const packageStatusSaving = ref(false);
-const resumePackageForm = reactive({
-  startDate: '',
-});
 const scheduleWeekStartDate = computed(() => {
   const date = new Date();
   const offset = (date.getDay() + 6) % 7;
@@ -950,20 +934,21 @@ async function submitHoursAdjustment() {
   }
 }
 
-async function handleClosePackage() {
-  if (!detailData.value) return;
-  try {
-    await closeCoursePackage(detailData.value.id);
-    ElMessage.success('Package closed.');
-    detailDialogVisible.value = false;
-    loadData();
-  } catch (err: any) {
-    ElMessage.error(err?.response?.data?.message ?? 'Operation failed.');
-  }
-}
-
 async function handlePausePackage() {
   if (!detailData.value) return;
+  try {
+    await ElMessageBox.confirm(
+      'Future lessons that have not been recorded will be canceled. After resuming, you must create a new schedule to continue lessons.',
+      'Pause Package',
+      {
+        confirmButtonText: 'Pause Package',
+        cancelButtonText: 'Keep Active',
+        type: 'warning',
+      },
+    );
+  } catch {
+    return;
+  }
   packageStatusSaving.value = true;
   try {
     await pauseCoursePackage(detailData.value.id);
@@ -978,23 +963,18 @@ async function handlePausePackage() {
 }
 
 function openResumePackage() {
-  resumePackageForm.startDate = new Date().toISOString().slice(0, 10);
   resumePackageVisible.value = true;
 }
 
 async function submitResumePackage() {
   if (!detailData.value) return;
-  if (!resumePackageForm.startDate) {
-    ElMessage.warning('Select a starting date.');
-    return;
-  }
   packageStatusSaving.value = true;
   try {
-    await resumeCoursePackage(detailData.value.id, { startDate: resumePackageForm.startDate });
+    await resumeCoursePackage(detailData.value.id);
     resumePackageVisible.value = false;
     await reloadPackageDetail();
     await loadData();
-    ElMessage.success('Package resumed.');
+    ElMessage.success('Package resumed. Create a new schedule to continue lessons.');
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to resume package.');
   } finally {

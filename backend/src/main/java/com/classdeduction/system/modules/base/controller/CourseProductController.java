@@ -52,12 +52,14 @@ public class CourseProductController {
     }
 
     @PostMapping
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Create a course product")
     public ApiResponse<Long> createCourseProduct(@Valid @RequestBody CourseProductSaveRequest request) {
         return ApiResponse.success("Created successfully.", courseProductService.createCourseProduct(request));
     }
 
     @PutMapping("/{id}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Update a course product")
     public ApiResponse<Void> updateCourseProduct(@PathVariable Long id,
                                                  @Valid @RequestBody CourseProductSaveRequest request) {
@@ -77,6 +79,7 @@ public class CourseProductController {
     }
 
     @DeleteMapping("/{id}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Delete a course product")
     public ApiResponse<Void> deleteCourseProduct(@PathVariable Long id) {
         courseProductService.deleteCourseProduct(id);

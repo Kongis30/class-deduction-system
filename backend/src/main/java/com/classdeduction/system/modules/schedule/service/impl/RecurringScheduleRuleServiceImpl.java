@@ -89,7 +89,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         for (ActiveOneOnOneStudentCourseGradeRow row : coursePackageMapper.selectActiveOneOnOneStudentCourseGrades()) {
             ScheduleStudentOptionBuilder student = students.computeIfAbsent(
                     row.studentId(), id -> new ScheduleStudentOptionBuilder(id, row.studentName()));
-            student.addCourseGrade(row.courseName(), row.gradeBand());
+            student.addCourseGrade(row.courseName(), row.gradeBand(), row.hasSchedule());
         }
         return students.values().stream()
                 .map(ScheduleStudentOptionBuilder::build)
@@ -106,11 +106,15 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             this.studentName = studentName;
         }
 
-        private void addCourseGrade(String courseName, String gradeBand) {
+        private void addCourseGrade(String courseName, String gradeBand, boolean hasSchedule) {
             String normalizedCourse = courseName == null ? "" : courseName.trim().toLowerCase(Locale.ROOT);
             String normalizedGrade = gradeBand == null ? "" : gradeBand.trim().toLowerCase(Locale.ROOT);
-            courseGrades.putIfAbsent(normalizedCourse + "::" + normalizedGrade,
-                    new ScheduleStudentOptionVO.CourseGradeOption(courseName, gradeBand));
+            String key = normalizedCourse + "::" + normalizedGrade;
+            // 同一课程年级可能含多个课包；全部课包都有有效排课，该组才算排完。
+            courseGrades.merge(key,
+                    new ScheduleStudentOptionVO.CourseGradeOption(courseName, gradeBand, hasSchedule),
+                    (existing, incoming) -> new ScheduleStudentOptionVO.CourseGradeOption(
+                            existing.courseName(), existing.gradeBand(), existing.hasSchedule() && incoming.hasSchedule()));
         }
 
         private ScheduleStudentOptionVO build() {

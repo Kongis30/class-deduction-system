@@ -1487,6 +1487,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             Long oldClassId = item.getClassId();
             copyCorrectionItem(item, payload);
             enrollmentOrderItemMapper.updateById(item);
+            persistCorrectedItemTransportSnapshot(item, payload);
             if (isGroupItem(item)) {
                 migrateCorrectedClassEnrollment(order, student, item, oldClassId);
             } else {
@@ -1523,10 +1524,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         item.setOneOnOneHours(payload.getOneOnOneHours());
         item.setOpeningUsedHours(payload.getOpeningUsedHours());
         item.setOneOnOneUnits(payload.getOneOnOneUnits());
-        item.setPickupRequiredSnapshot(payload.getPickupRequired());
-        item.setPickupAddressSnapshot(payload.getPickupAddress());
-        item.setDropoffRequiredSnapshot(payload.getDropoffRequired());
-        item.setDropoffAddressSnapshot(payload.getDropoffAddress());
+        item.setPickupRequiredSnapshot(Boolean.TRUE.equals(payload.getPickupRequired()));
+        item.setPickupAddressSnapshot(Boolean.TRUE.equals(payload.getPickupRequired())
+                ? normalizedAddress(payload.getPickupAddress()) : null);
+        item.setDropoffRequiredSnapshot(Boolean.TRUE.equals(payload.getDropoffRequired()));
+        item.setDropoffAddressSnapshot(Boolean.TRUE.equals(payload.getDropoffRequired())
+                ? normalizedAddress(payload.getDropoffAddress()) : null);
         item.setPickupFeeAmount(Boolean.TRUE.equals(payload.getPickupRequired())
                 ? defaultAmount(payload.getPickupFeeAmount()) : ZERO_AMOUNT);
         item.setDropoffFeeAmount(Boolean.TRUE.equals(payload.getDropoffRequired())
@@ -1534,6 +1537,23 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         item.setExtraFeeAmount(sumFeeLines(payload.getServiceFees()));
         item.setExtraFeeDetail(jsonHelper.toJson(payload.getServiceFees()));
         item.setRemark(payload.getRemark());
+    }
+
+    /** 由课程行更正流程调用，确保已取消的接送标记与地址能真正写入数据库。 */
+    private void persistCorrectedItemTransportSnapshot(EnrollmentOrderItemEntity item,
+                                                       RegistrationIntakeRequest.CourseItemPayload payload) {
+        boolean pickupRequired = Boolean.TRUE.equals(payload.getPickupRequired());
+        boolean dropoffRequired = Boolean.TRUE.equals(payload.getDropoffRequired());
+        enrollmentOrderItemMapper.updateTransportSnapshot(
+                item.getId(),
+                pickupRequired,
+                pickupRequired ? normalizedAddress(payload.getPickupAddress()) : null,
+                dropoffRequired,
+                dropoffRequired ? normalizedAddress(payload.getDropoffAddress()) : null);
+    }
+
+    private String normalizedAddress(String address) {
+        return StringUtils.hasText(address) ? address.trim() : null;
     }
 
     private boolean isGroupItem(EnrollmentOrderItemEntity item) {
@@ -2795,18 +2815,302 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteOrder(Long id) {
         EnrollmentOrderEntity order = requireOrder(id);
-        List<Long> itemIds = listOrderItemsByOrderId(id).stream()
+        if (defaultAmount(order.getReceivedAmount()).compareTo(ZERO_AMOUNT) != 0) {
+            throw new BusinessException("COURSE_REFUND_REQUIRED",
+                    "Refund the order's payments before deleting its receipt.");
+        }
+        List<EnrollmentOrderItemEntity> items = listOrderItemsByOrderId(id);
+        if (items.stream().anyMatch(item -> defaultAmount(item.getPaidAmount()).compareTo(ZERO_AMOUNT) != 0)) {
+            throw new BusinessException("COURSE_REFUND_REQUIRED",
+                    "Refund each course's allocated payments before deleting the receipt.");
+        }
+        List<Long> itemIds = items.stream()
                 .map(EnrollmentOrderItemEntity::getId)
                 .toList();
 
-        // 全量级联软删：任意状态订单均可删，子表数据一并软删，最后软删父表。
-        if (order.getClassId() != null) {
+        // 混合报名的班级保存在课程项上；不能仅看订单主表 class_id。
+        boolean hasClassCourse = order.getClassId() != null || items.stream()
+                .anyMatch(item -> item.getClassId() != null);
+        if (hasClassCourse) {
             deleteClassOrderCascade(order, itemIds);
         } else {
             deleteOneOnOneOrderCascade(order, itemIds);
         }
         renameEnrollmentNoBeforeSoftDelete(order.getId());
         enrollmentOrderMapper.deleteById(id);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteOrderItem(Long orderId, Long itemId) {
+        EnrollmentOrderEntity order = requireOrder(orderId);
+        List<EnrollmentOrderItemEntity> items = listOrderItemsByOrderId(orderId);
+        EnrollmentOrderItemEntity target = items.stream()
+                .filter(item -> Objects.equals(item.getId(), itemId))
+                .findFirst()
+                .orElseThrow(() -> new BusinessException("ORDER_ITEM_NOT_FOUND", "Course is not part of this receipt."));
+        List<PaymentAllocationEntity> allocations = paymentAllocationMapper.selectList(
+                new LambdaQueryWrapper<PaymentAllocationEntity>()
+                        .eq(PaymentAllocationEntity::getEnrollmentOrderItemId, itemId));
+        if (allocations == null) {
+            allocations = Collections.emptyList();
+        }
+        BigDecimal allocated = allocations.stream().map(PaymentAllocationEntity::getAmount)
+                .map(this::defaultAmount).reduce(ZERO_AMOUNT, BigDecimal::add);
+        // 删除课程不能隐式吞掉已收款；先退款至课程净收款为零，保留其他课程付款。
+        if (allocated.compareTo(ZERO_AMOUNT) != 0 || defaultAmount(target.getPaidAmount()).compareTo(ZERO_AMOUNT) != 0) {
+            throw new BusinessException("COURSE_REFUND_REQUIRED",
+                    "Refund this course's allocated payments before deleting it.");
+        }
+        if (items.size() == 1) {
+            if (defaultAmount(order.getReceivedAmount()).compareTo(ZERO_AMOUNT) != 0) {
+                throw new BusinessException("COURSE_REFUND_REQUIRED",
+                        "Refund the payment before deleting this receipt.");
+            }
+            deleteOrder(orderId);
+            return;
+        }
+        if (allocations.isEmpty() && defaultAmount(order.getReceivedAmount()).compareTo(ZERO_AMOUNT) > 0) {
+            BigDecimal otherCoursePaid = items.stream()
+                    .filter(item -> !Objects.equals(item.getId(), itemId))
+                    .map(EnrollmentOrderItemEntity::getPaidAmount)
+                    .map(this::defaultAmount).reduce(ZERO_AMOUNT, BigDecimal::add);
+            if (otherCoursePaid.compareTo(defaultAmount(order.getReceivedAmount())) != 0) {
+                throw new BusinessException("COURSE_PAYMENT_ALLOCATION_REQUIRED",
+                        "This receipt has payments without reliable course allocations. Review its payments before deleting this course.");
+            }
+        }
+        List<EnrollmentOrderParticipantEntity> participants = listOrderParticipants(orderId);
+        if (participants.size() > 1) {
+            throw new BusinessException("MULTI_STUDENT_COURSE_DELETE_UNSUPPORTED",
+                    "This receipt has multiple students. Edit the receipt to remove this course.");
+        }
+
+        BigDecimal removedDue = target.getAmountDue() == null
+                ? defaultAmount(target.getPriceAmount()).add(defaultAmount(target.getPickupFeeAmount()))
+                        .add(defaultAmount(target.getDropoffFeeAmount())).add(defaultAmount(target.getExtraFeeAmount()))
+                        .subtract(defaultAmount(target.getDiscountAmount()))
+                : target.getAmountDue();
+        BigDecimal newDue = defaultAmount(order.getAmountDue()).subtract(removedDue);
+        BigDecimal received = defaultAmount(order.getReceivedAmount());
+        if (newDue.compareTo(ZERO_AMOUNT) < 0 || received.compareTo(newDue) > 0) {
+            throw new BusinessException("COURSE_DELETE_BALANCE_CONFLICT",
+                    "The remaining receipt balance is inconsistent. Review its payments before deleting this course.");
+        }
+        requireSeparableOrderItemLines(order.getExtraFeeDetail(), target.getExtraFeeAmount(), target);
+        requireSeparableOrderItemLines(order.getDiscountDetail(), target.getDiscountAmount(), target);
+
+        deleteOrderItemPayments(orderId, itemId, allocations);
+        if (target.getClassId() != null) {
+            // 混合收据必须按课程项外键定位，不能按学生+班级回退，避免误退同班的另一张订单。
+            List<ClassEnrollmentEntity> seats = classEnrollmentMapper.selectList(
+                    new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                            .eq(ClassEnrollmentEntity::getEnrollmentOrderItemId, itemId)
+                            .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+            if (seats != null && !seats.isEmpty()) {
+                markClassEnrollmentsWithdrawn(seats);
+                deleteOrderItemClassRecords(order, target);
+            } else if (order.getStudentId() != null) {
+                Long ambiguousSeats = classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, target.getClassId())
+                        .eq(ClassEnrollmentEntity::getStudentId, order.getStudentId())
+                        .isNull(ClassEnrollmentEntity::getEnrollmentOrderItemId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+                if (ambiguousSeats != null && ambiguousSeats > 0) {
+                    throw new BusinessException("COURSE_SEAT_LINK_MISSING",
+                            "This course has an unlinked class seat. Review the enrollment before deleting it.");
+                }
+            }
+        }
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(new LambdaQueryWrapper<CoursePackageEntity>()
+                .eq(CoursePackageEntity::getEnrollmentOrderItemId, itemId));
+        if ("ONE_ON_ONE".equalsIgnoreCase(target.getCourseType()) && (packages == null || packages.isEmpty())) {
+            Long unlinkedPackages = coursePackageMapper.selectCount(new LambdaQueryWrapper<CoursePackageEntity>()
+                    .eq(CoursePackageEntity::getEnrollmentOrderId, orderId)
+                    .isNull(CoursePackageEntity::getEnrollmentOrderItemId));
+            if (unlinkedPackages != null && unlinkedPackages > 0) {
+                throw new BusinessException("COURSE_PACKAGE_LINK_MISSING",
+                        "This course has an unlinked package. Review its schedule before deleting it.");
+            }
+        }
+        deleteOneOnOnePackageCascade(packages == null ? Collections.emptyList() : packages);
+        enrollmentOrderItemMapper.deleteById(itemId);
+
+        order.setTuitionSubtotalAmount(defaultAmount(order.getTuitionSubtotalAmount())
+                .subtract(defaultAmount(target.getPriceAmount())));
+        order.setPickupFeeAmount(defaultAmount(order.getPickupFeeAmount())
+                .subtract(defaultAmount(target.getPickupFeeAmount())));
+        order.setDropoffFeeAmount(defaultAmount(order.getDropoffFeeAmount())
+                .subtract(defaultAmount(target.getDropoffFeeAmount())));
+        order.setExtraFeeAmount(defaultAmount(order.getExtraFeeAmount())
+                .subtract(defaultAmount(target.getExtraFeeAmount())));
+        order.setOriginalAmount(defaultAmount(order.getOriginalAmount())
+                .subtract(defaultAmount(target.getPriceAmount()))
+                .subtract(defaultAmount(target.getPickupFeeAmount()))
+                .subtract(defaultAmount(target.getDropoffFeeAmount()))
+                .subtract(defaultAmount(target.getExtraFeeAmount())));
+        order.setDiscountAmount(defaultAmount(order.getDiscountAmount())
+                .subtract(defaultAmount(target.getDiscountAmount())));
+        order.setAmountDue(newDue);
+        order.setBalanceAmount(newDue.subtract(received));
+        order.setPaymentStatus(resolvePaymentStatus(newDue, ZERO_AMOUNT, received));
+        order.setExtraFeeDetail(filterOrderItemLines(order.getExtraFeeDetail(), target));
+        order.setDiscountDetail(filterOrderItemLines(order.getDiscountDetail(), target));
+        List<EnrollmentOrderItemEntity> remainingItems = items.stream()
+                .filter(item -> !Objects.equals(item.getId(), itemId)).toList();
+        order.setPickupRequiredSnapshot(remainingItems.stream()
+                .anyMatch(item -> Boolean.TRUE.equals(item.getPickupRequiredSnapshot())));
+        order.setDropoffRequiredSnapshot(remainingItems.stream()
+                .anyMatch(item -> Boolean.TRUE.equals(item.getDropoffRequiredSnapshot())));
+        order.setPickupAddressSnapshot(remainingItems.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getPickupRequiredSnapshot()))
+                .map(EnrollmentOrderItemEntity::getPickupAddressSnapshot)
+                .filter(StringUtils::hasText).findFirst().orElse(null));
+        order.setDropoffAddressSnapshot(remainingItems.stream()
+                .filter(item -> Boolean.TRUE.equals(item.getDropoffRequiredSnapshot()))
+                .map(EnrollmentOrderItemEntity::getDropoffAddressSnapshot)
+                .filter(StringUtils::hasText).findFirst().orElse(null));
+        if (Objects.equals(order.getClassId(), target.getClassId())) {
+            order.setClassId(remainingItems.stream()
+                    .map(EnrollmentOrderItemEntity::getClassId).filter(Objects::nonNull).findFirst().orElse(null));
+        }
+        if (enrollmentOrderMapper.updateById(order) != 1) {
+            throw new BusinessException("ORDER_CONCURRENT_UPDATE", "The order was updated by another request. Please retry.");
+        }
+        if (!participants.isEmpty()) {
+            EnrollmentOrderParticipantEntity participant = participants.get(0);
+            participant.setGrossAmount(order.getOriginalAmount());
+            participant.setDiscountAmount(order.getDiscountAmount());
+            participant.setDiscountDetail(order.getDiscountDetail());
+            participant.setAmountDue(newDue);
+            participant.setPaidAmount(received);
+            participant.setBalanceAmount(order.getBalanceAmount());
+            enrollmentOrderParticipantMapper.updateById(participant);
+        }
+        syncReceiptAfterOrderItemDeletion(order, target);
+    }
+
+    /** 将目标课程的正向付款和退款分摊一同移除，保留同笔付款中其他课程的份额。 */
+    private void deleteOrderItemPayments(Long orderId, Long itemId, List<PaymentAllocationEntity> allocations) {
+        Map<Long, BigDecimal> removedByPayment = new LinkedHashMap<>();
+        for (PaymentAllocationEntity allocation : allocations) {
+            removedByPayment.merge(allocation.getPaymentRecordId(), defaultAmount(allocation.getAmount()), BigDecimal::add);
+        }
+        for (Map.Entry<Long, BigDecimal> entry : removedByPayment.entrySet()) {
+            PaymentRecordEntity payment = paymentRecordMapper.selectById(entry.getKey());
+            if (payment == null || !Objects.equals(payment.getEnrollmentOrderId(), orderId)) {
+                throw new BusinessException("COURSE_PAYMENT_MISSING", "A course payment record could not be found.");
+            }
+            BigDecimal remaining = defaultAmount(payment.getAmount()).subtract(entry.getValue());
+            if (remaining.compareTo(ZERO_AMOUNT) == 0) {
+                paymentRecordMapper.update(null, new LambdaUpdateWrapper<PaymentRecordEntity>()
+                        .eq(PaymentRecordEntity::getId, payment.getId())
+                        .setSql("payment_no = CONCAT(LEFT(payment_no, 8), '-DEL-', id)"));
+                paymentRecordMapper.deleteById(payment.getId());
+            } else {
+                payment.setAmount(remaining);
+                paymentRecordMapper.updateById(payment);
+            }
+        }
+        paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                .eq(PaymentAllocationEntity::getEnrollmentOrderItemId, itemId));
+    }
+
+    /** 班级排课是共享的，只清理该学生在目标班级的个人消课记录。 */
+    private void deleteOrderItemClassRecords(EnrollmentOrderEntity order, EnrollmentOrderItemEntity target) {
+        Long remainingSeats = classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                .eq(ClassEnrollmentEntity::getClassId, target.getClassId())
+                .eq(ClassEnrollmentEntity::getStudentId, order.getStudentId())
+                .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+        if (remainingSeats != null && remainingSeats > 0) {
+            return;
+        }
+        List<Long> recordIds = listClassOrderLessonRecordIds(order, List.of(target.getId()));
+        if (!recordIds.isEmpty()) {
+            lessonRecordMapper.delete(new LambdaQueryWrapper<LessonRecordEntity>()
+                    .in(LessonRecordEntity::getId, recordIds));
+            hourLedgerMapper.delete(new LambdaQueryWrapper<HourLedgerEntity>()
+                    .in(HourLedgerEntity::getLessonRecordId, recordIds));
+            notificationLogMapper.delete(new LambdaQueryWrapper<NotificationLogEntity>()
+                    .in(NotificationLogEntity::getLessonRecordId, recordIds));
+        }
+    }
+
+    private String filterOrderItemLines(String json, EnrollmentOrderItemEntity target) {
+        if (!StringUtils.hasText(json)) {
+            return json;
+        }
+        List<Map<String, Object>> lines = jsonHelper.fromJson(json,
+                new TypeReference<List<Map<String, Object>>>() {});
+        if (lines == null) {
+            return json;
+        }
+        return jsonHelper.toJson(lines.stream().filter(line -> !belongsToOrderItem(line, target)).toList());
+    }
+
+    private void requireSeparableOrderItemLines(String json, BigDecimal amount, EnrollmentOrderItemEntity target) {
+        if (!StringUtils.hasText(json) || defaultAmount(amount).compareTo(ZERO_AMOUNT) == 0) {
+            return;
+        }
+        List<Map<String, Object>> lines = jsonHelper.fromJson(json,
+                new TypeReference<List<Map<String, Object>>>() {});
+        if (lines != null && !lines.isEmpty() && lines.stream().noneMatch(line -> belongsToOrderItem(line, target))) {
+            throw new BusinessException("COURSE_DELETE_UNASSIGNED_CHARGE",
+                    "This course has a fee or discount without a course assignment. Edit the receipt first.");
+        }
+    }
+
+    private boolean belongsToOrderItem(Map<?, ?> line, EnrollmentOrderItemEntity target) {
+        return Objects.equals(String.valueOf(line.get("orderItemId")), String.valueOf(target.getId()))
+                || target.getLineNo() != null && Objects.equals(
+                        String.valueOf(line.get("orderItemLineNo")), String.valueOf(target.getLineNo()))
+                || target.getLineNo() != null && Objects.equals(
+                        String.valueOf(line.get("lineNo")), String.valueOf(target.getLineNo()));
+    }
+
+    private void syncReceiptAfterOrderItemDeletion(EnrollmentOrderEntity order, EnrollmentOrderItemEntity target) {
+        List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(
+                new LambdaQueryWrapper<ReceiptRecordEntity>()
+                        .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
+        if (receipts == null) {
+            return;
+        }
+        for (ReceiptRecordEntity receipt : receipts) {
+            if (!StringUtils.hasText(receipt.getReceiptPayload())) {
+                continue;
+            }
+            Map<String, Object> payload = jsonHelper.fromJson(receipt.getReceiptPayload(),
+                    new TypeReference<LinkedHashMap<String, Object>>() {});
+            if (payload == null) {
+                continue;
+            }
+            for (String key : List.of("items", "extraFees", "discounts", "artifacts")) {
+                if (payload.get(key) instanceof List<?> rawLines) {
+                    payload.put(key, rawLines.stream()
+                            .filter(raw -> !(raw instanceof Map<?, ?> map)
+                                    || !belongsToOrderItem(map, target))
+                            .toList());
+                }
+            }
+            BigDecimal topUp = receiptCreditTopUpAmount(payload);
+            payload.put("tuitionSubtotalAmount", order.getTuitionSubtotalAmount());
+            payload.put("pickupFeeAmount", order.getPickupFeeAmount());
+            payload.put("dropoffFeeAmount", order.getDropoffFeeAmount());
+            payload.put("extraFeeAmount", order.getExtraFeeAmount());
+            payload.put("originalAmount", defaultAmount(order.getOriginalAmount()).add(topUp));
+            payload.put("discountAmount", order.getDiscountAmount());
+            payload.put("amountDue", defaultAmount(order.getAmountDue()).add(topUp));
+            payload.put("receivedAmount", defaultAmount(order.getReceivedAmount()).add(topUp));
+            payload.put("paidAmount", defaultAmount(order.getReceivedAmount()).add(topUp));
+            payload.put("balanceAmount", order.getBalanceAmount());
+            payload.put("paymentStatus", order.getPaymentStatus());
+            payload.put("participants", receiptParticipantPayloads(order.getId()));
+            payload.put("payments", receiptPaymentPayloads(order.getId()));
+            receipt.setReceiptPayload(jsonHelper.toJson(payload));
+            receiptRecordMapper.updateById(receipt);
+        }
     }
 
     @Override
@@ -2861,7 +3165,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         markClassEnrollmentsWithdrawn(classEnrollments);
 
         // 2) 软删该学生个人的班课课时核销记录；共享排课 occurrence 不删
-        List<Long> classRecordIds = listClassOrderLessonRecordIds(order);
+        List<Long> classRecordIds = listClassOrderLessonRecordIds(order, itemIds);
         if (!classRecordIds.isEmpty()) {
             lessonRecordMapper.delete(new LambdaQueryWrapper<LessonRecordEntity>()
                     .in(LessonRecordEntity::getId, classRecordIds));
@@ -2995,11 +3299,33 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
     }
 
-    private List<Long> listClassOrderLessonRecordIds(EnrollmentOrderEntity order) {
+    private List<Long> listClassOrderLessonRecordIds(EnrollmentOrderEntity order, List<Long> itemIds) {
+        Set<Long> classIds = new java.util.LinkedHashSet<>();
+        List<EnrollmentOrderItemEntity> orderItems = listOrderItemsByOrderId(order.getId());
+        if (order.getClassId() != null && (orderItems.isEmpty() || orderItems.stream()
+                .anyMatch(item -> itemIds.contains(item.getId())
+                        && Objects.equals(item.getClassId(), order.getClassId())))) {
+            classIds.add(order.getClassId());
+        }
+        for (EnrollmentOrderItemEntity item : orderItems) {
+            if (itemIds.contains(item.getId()) && item.getClassId() != null) {
+                classIds.add(item.getClassId());
+            }
+        }
+        Set<Long> studentIds = listOrderParticipants(order.getId()).stream()
+                .map(EnrollmentOrderParticipantEntity::getStudentId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+        if (order.getStudentId() != null) {
+            studentIds.add(order.getStudentId());
+        }
+        if (classIds.isEmpty() || studentIds.isEmpty()) {
+            return Collections.emptyList();
+        }
         List<Long> occurrenceIds = lessonOccurrenceMapper.selectList(
                         new LambdaQueryWrapper<LessonOccurrenceEntity>()
                                 .select(LessonOccurrenceEntity::getId)
-                                .eq(LessonOccurrenceEntity::getClassGroupId, order.getClassId()))
+                                .in(LessonOccurrenceEntity::getClassGroupId, classIds))
                 .stream().map(LessonOccurrenceEntity::getId).toList();
         if (occurrenceIds.isEmpty()) {
             return Collections.emptyList();
@@ -3007,7 +3333,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return lessonRecordMapper.selectList(
                         new LambdaQueryWrapper<LessonRecordEntity>()
                                 .select(LessonRecordEntity::getId)
-                                .eq(LessonRecordEntity::getStudentId, order.getStudentId())
+                                .in(LessonRecordEntity::getStudentId, studentIds)
                                 .in(LessonRecordEntity::getOccurrenceId, occurrenceIds))
                 .stream().map(LessonRecordEntity::getId).toList();
     }

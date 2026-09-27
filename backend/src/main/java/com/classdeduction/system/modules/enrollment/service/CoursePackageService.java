@@ -4,7 +4,6 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
-import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
@@ -53,10 +52,8 @@ public interface CoursePackageService {
      */
     void pausePackage(Long id);
 
-    /**
-     * Resume a paused 1-on-1 package from a new start date.
-     */
-    void resumePackage(Long id, CoursePackageResumeRequest request);
+    /** 恢复 1 对 1 课包；旧排课保持暂停，由管理员重新创建排课。 */
+    void resumePackage(Long id);
 
     /**
      * 获取课时包余额。

@@ -371,6 +371,7 @@ const classOptions = computed(() => Array.from(new Set(transportRows.value.map(c
 const courseTabs = computed<TransportCourseTab[]>(() => {
   const search = keyword.value.trim().toLowerCase();
   const grouped = new Map<string, TransportCourseTab>();
+  const rowKeysByCourse = new Map<string, Set<string>>();
   for (const row of transportRows.value) {
     const course = courseLabel(row);
     const className = classLabel(row);
@@ -381,9 +382,12 @@ const courseTabs = computed<TransportCourseTab[]>(() => {
     if (search && !text.includes(search)) continue;
     const key = String(row.courseProductId ?? course);
     const tab = grouped.get(key) ?? { key, course, showClass: false, classNames: [], rows: [], pickupRows: [], dropoffRows: [] };
+    const seenRows = rowKeysByCourse.get(key) ?? new Set<string>();
     tab.showClass ||= !isOneOnOneRow(row);
     if (!tab.classNames.includes(className)) tab.classNames.push(className);
-    if (!tab.rows.some((item) => rowKey(item) === rowKey(row))) {
+    if (!seenRows.has(rowKey(row))) {
+      seenRows.add(rowKey(row));
+      rowKeysByCourse.set(key, seenRows);
       tab.rows.push(row);
       if (row.pickupRequired) tab.pickupRows.push(row);
       if (row.dropoffRequired) tab.dropoffRows.push(row);
@@ -424,7 +428,7 @@ async function loadRows() {
   loading.value = true;
   const [productsResult, rowsResult, driversResult, assignmentsResult] = await Promise.allSettled([
     fetchAllCourseProducts(),
-    fetchDataSummary(),
+    fetchDataSummary({ transportOnly: true }),
     fetchTransportDrivers(),
     fetchTransportDriverAssignments(),
   ]);

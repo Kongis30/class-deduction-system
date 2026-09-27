@@ -5,6 +5,7 @@ public record ActiveOneOnOneStudentCourseGradeRow(
         Long studentId,
         String studentName,
         String courseName,
-        String gradeBand
+        String gradeBand,
+        boolean hasSchedule
 ) {
 }

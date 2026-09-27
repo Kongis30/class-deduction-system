@@ -47,6 +47,7 @@ public class CoursePriceOptionController {
     }
 
     @GetMapping
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Page course price options")
     public ApiResponse<PageResponse<CoursePriceOptionVO>> pageOptions(
             @ParameterObject @Valid CoursePriceOptionPageQuery query) {
@@ -54,12 +55,14 @@ public class CoursePriceOptionController {
     }
 
     @PostMapping
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Create course price option")
     public ApiResponse<Long> createOption(@Valid @RequestBody CoursePriceOptionSaveRequest request) {
         return ApiResponse.success("Course price option created.", coursePriceOptionService.createOption(request));
     }
 
     @PutMapping("/{id}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Update course price option")
     public ApiResponse<Void> updateOption(
             @Parameter(description = "Course price option ID") @PathVariable Long id,
@@ -69,6 +72,7 @@ public class CoursePriceOptionController {
     }
 
     @DeleteMapping("/{id}")
+    @RequireRoles({"ADMIN", "STAFF"})
     @Operation(summary = "Delete course price option")
     public ApiResponse<Void> deleteOption(
             @Parameter(description = "Course price option ID") @PathVariable Long id) {

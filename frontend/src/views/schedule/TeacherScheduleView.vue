@@ -16,7 +16,7 @@
               :prefix-icon="Search"
             />
           </div>
-          <div class="teacher-list-panel__body">
+          <el-scrollbar always class="teacher-list-panel__body calendar-roster-scroll">
             <div v-if="filteredTeachers.length === 0" class="teacher-list-panel__empty">
               {{ teachers.length === 0 ? 'Loading...' : 'No teachers found' }}
             </div>
@@ -30,7 +30,7 @@
               <span class="teacher-item__name">{{ t.teacherName }}</span>
               <el-icon v-if="selectedTeacherId === t.id" color="#409eff"><Check /></el-icon>
             </div>
-          </div>
+          </el-scrollbar>
         </aside>
 
         <!-- Right: Calendar -->
@@ -450,11 +450,6 @@ onMounted(async () => {
   padding: 10px;
   border-bottom: 1px solid #ebeef5;
   flex-shrink: 0;
-}
-
-.teacher-list-panel__body {
-  flex: 1;
-  overflow-y: auto;
 }
 
 .teacher-list-panel__empty {

@@ -11,7 +11,6 @@ import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
-import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
@@ -34,7 +33,6 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
-import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -107,9 +105,6 @@ class CoursePackageServiceImplTest {
     private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
 
     @Mock
-    private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
-
-    @Mock
     private LessonRecordMapper lessonRecordMapper;
 
     @Mock
@@ -148,7 +143,6 @@ class CoursePackageServiceImplTest {
                 classEnrollmentMapper,
                 lessonOccurrenceMapper,
                 recurringScheduleRuleMapper,
-                recurringScheduleSlotMapper,
                 lessonRecordMapper,
                 hourLedgerMapper,
                 packageBalanceSnapshotMapper,
@@ -410,7 +404,6 @@ class CoursePackageServiceImplTest {
         activeRecord.setIsDeleted(0);
 
         when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
-        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(buildRule("ACTIVE")));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(unrecorded, recorded));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(activeRecord));
 
@@ -428,64 +421,17 @@ class CoursePackageServiceImplTest {
     }
 
     @Test
-    void shouldResumeUsingRemainingPerSlotAllocationAndRestartDate() {
+    void shouldResumePackageWithoutRestoringItsPreviousSchedule() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage("PAUSED", 424);
-        coursePackage.setTotalUnits(424);
-        RecurringScheduleRuleEntity rule = buildRule("PAUSED");
-        RecurringScheduleSlotEntity slot = buildSlot(601L, 1, 4, 424);
-        LocalDate restartDate = nextWeekday(DayOfWeek.MONDAY);
-        LessonOccurrenceEntity preservedRecorded = buildFutureOccurrence(700L, 601L, 4, "SCHEDULED");
-        preservedRecorded.setPlannedStartAt(LocalDateTime.of(restartDate.plusWeeks(1), LocalTime.of(18, 0)));
-        preservedRecorded.setPlannedEndAt(preservedRecorded.getPlannedStartAt().plusHours(2));
-        LessonRecordEntity activeRecord = new LessonRecordEntity();
-        activeRecord.setOccurrenceId(700L);
-        activeRecord.setConfirmStage("CONFIRMED");
-        activeRecord.setIsDeleted(0);
-
+        coursePackage.setEstimatedEndDate(LocalDate.now().plusDays(30));
         when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
-        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
-        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
-        when(lessonOccurrenceMapper.selectList(any()))
-                .thenReturn(Collections.emptyList())
-                .thenReturn(List.of(preservedRecorded))
-                .thenReturn(Collections.emptyList())
-                .thenReturn(Collections.emptyList())
-                .thenReturn(Collections.emptyList());
 
-        CoursePackageResumeRequest request = new CoursePackageResumeRequest();
-        request.setStartDate(restartDate);
-        coursePackageService.resumePackage(101L, request);
+        coursePackageService.resumePackage(101L);
 
         assertThat(coursePackage.getPackageStatus()).isEqualTo("ACTIVE");
-        assertThat(coursePackage.getStartDate()).isEqualTo(restartDate);
-        assertThat(rule.getRuleStatus()).isEqualTo("ACTIVE");
-        assertThat(rule.getStartDate()).isEqualTo(restartDate);
-        verify(lessonOccurrenceMapper, times(105)).insert(any(LessonOccurrenceEntity.class));
-        ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
-        verify(lessonOccurrenceMapper, times(105)).insert(occurrenceCaptor.capture());
-        assertThat(occurrenceCaptor.getAllValues()).allSatisfy(generated -> {
-            assertThat(generated.getScheduleSlotId()).isEqualTo(601L);
-            assertThat(generated.getPlannedUnits()).isEqualTo(4);
-            assertThat(generated.getPlannedEndAt()).isEqualTo(generated.getPlannedStartAt().plusHours(2));
-        });
-        assertThat(occurrenceCaptor.getAllValues().get(104).getPlannedStartAt().toLocalDate())
-                .isAfter(restartDate.plusDays(180));
-    }
-
-    @Test
-    void shouldRejectResumeWhenSlotAllocationIsIncomplete() {
-        CoursePackageEntity coursePackage = buildOneOnOnePackage("PAUSED", 8);
-        RecurringScheduleSlotEntity incompleteSlot = buildSlot(601L, 1, 4, null);
-        when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
-        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(buildRule("PAUSED")));
-        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(incompleteSlot));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
-
-        CoursePackageResumeRequest request = new CoursePackageResumeRequest();
-        request.setStartDate(nextWeekday(DayOfWeek.MONDAY));
-
-        assertThatThrownBy(() -> coursePackageService.resumePackage(101L, request))
-                .hasMessageContaining("Each schedule slot requires");
+        assertThat(coursePackage.getEstimatedEndDate()).isNull();
+        verify(coursePackageMapper).updateById(coursePackage);
+        verify(recurringScheduleRuleMapper, never()).updateById(any(RecurringScheduleRuleEntity.class));
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
     }
 
@@ -494,26 +440,9 @@ class CoursePackageServiceImplTest {
         CoursePackageEntity coursePackage = buildOneOnOnePackage("PAUSED", 0);
         when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
 
-        CoursePackageResumeRequest request = new CoursePackageResumeRequest();
-        request.setStartDate(nextWeekday(DayOfWeek.MONDAY));
-
-        assertThatThrownBy(() -> coursePackageService.resumePackage(101L, request))
+        assertThatThrownBy(() -> coursePackageService.resumePackage(101L))
                 .hasMessageContaining("no remaining hours");
-        verify(recurringScheduleRuleMapper, never()).selectList(any());
-    }
-
-    @Test
-    void shouldRejectResumeWhenNoScheduleExists() {
-        CoursePackageEntity coursePackage = buildOneOnOnePackage("PAUSED", 8);
-        when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
-        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(Collections.emptyList());
-
-        CoursePackageResumeRequest request = new CoursePackageResumeRequest();
-        request.setStartDate(nextWeekday(DayOfWeek.MONDAY));
-
-        assertThatThrownBy(() -> coursePackageService.resumePackage(101L, request))
-                .hasMessageContaining("No recurring schedule");
-        verify(recurringScheduleSlotMapper, never()).selectList(any());
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
     }
 
     private CoursePackageEntity buildOneOnOnePackage(String status, int remainingUnits) {

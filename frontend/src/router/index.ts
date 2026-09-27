@@ -3,7 +3,7 @@ import { createRouter, createWebHistory, createWebHashHistory, type RouteRecordR
 import AppLayout from '@/components/layout/AppLayout.vue';
 import { APP_SYSTEM_NAME } from '@/config/app-config';
 import { getStoredAuthToken, getStoredAuthUser } from '@/utils/auth-storage';
-import { getDefaultLandingPath, getUserWorkspace, isAdminOrStaffUser, isAdminUser, type AuthUser } from '@/types/auth';
+import { getDefaultLandingPath, getUserWorkspace, isAdminOrStaffUser, isAdminUser, isManagerUser, type AuthUser } from '@/types/auth';
 
 // Route-level lazy loading keeps the initial admin bundle smaller.
 const LoginView = () => import('@/views/LoginView.vue');
@@ -529,6 +529,22 @@ const adminConfigurationPaths = new Set([
   '/base-data/classrooms',
   '/schedule/recurring',
 ]);
+const managerRestrictedPaths = new Set([
+  '/finance',
+  '/finance/pay-rates',
+  '/finance/payments',
+  '/system',
+  '/system/notifications',
+  '/system/brand',
+  '/system/accounts',
+  '/admin/config/teacher-pay-rates',
+  '/admin/config/payment-methods',
+  '/admin/config/receipt',
+  '/admin/config/campuses',
+  '/admin/config/notifications',
+  '/admin/config/course-prices',
+  '/base-data/course-products',
+]);
 
 function getSelfServiceFallbackPath(user: AuthUser | null, path: string): string | null {
   switch (getUserWorkspace(user)) {
@@ -574,6 +590,12 @@ router.beforeEach((to) => {
     return selfServiceFallbackPath;
   }
   if (adminConfigurationPaths.has(to.path) && !isAdminOrStaffUser(storedUser)) {
+    return getDefaultLandingPath(storedUser);
+  }
+  if (isManagerUser(storedUser) && !isAdminUser(storedUser) && managerRestrictedPaths.has(to.path)) {
+    return getDefaultLandingPath(storedUser);
+  }
+  if (to.path === '/daily-registrations' && isManagerUser(storedUser) && !isAdminUser(storedUser)) {
     return getDefaultLandingPath(storedUser);
   }
   if (to.path === '/admin/config/managers' && !isAdminUser(storedUser)) {

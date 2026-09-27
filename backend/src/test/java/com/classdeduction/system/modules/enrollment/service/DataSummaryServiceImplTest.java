@@ -24,12 +24,11 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapp
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.DataSummaryServiceImpl;
+import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
-import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
-import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -51,6 +50,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -84,10 +84,10 @@ class DataSummaryServiceImplTest {
     private PaymentAllocationMapper paymentAllocationMapper;
 
     @Mock
-    private ClassEnrollmentMapper classEnrollmentMapper;
+    private ClassGroupMapper classGroupMapper;
 
     @Mock
-    private ClassGroupMapper classGroupMapper;
+    private ClassBillingService classBillingService;
 
     @Mock
     private CourseProductMapper courseProductMapper;
@@ -126,8 +126,8 @@ class DataSummaryServiceImplTest {
                 packageTeacherAssignmentMapper,
                 paymentRecordMapper,
                 paymentAllocationMapper,
-                classEnrollmentMapper,
                 classGroupMapper,
+                classBillingService,
                 courseProductMapper,
                 teacherMapper,
                 hourLedgerMapper,
@@ -140,7 +140,6 @@ class DataSummaryServiceImplTest {
         lenient().when(privateLessonGroupMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(paymentRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
-        lenient().when(classEnrollmentMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(studentMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
     }
 
@@ -378,7 +377,7 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
-    void shouldDisplayGroupClassEnrollmentPeriodBeforeOrderPeriod() {
+    void shouldDisplayStudentRegistrationPeriodBeforeGroupClassPeriod() {
         EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
         order.setPeriodStartDate(LocalDate.of(2026, 1, 1));
         order.setPeriodEndDate(LocalDate.of(2026, 1, 31));
@@ -388,21 +387,15 @@ class DataSummaryServiceImplTest {
         item.setLineNo(1);
         item.setClassId(31L);
         item.setCourseType("GROUP");
-        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
-        enrollment.setId(41L);
-        enrollment.setEnrollmentOrderItemId(21L);
-        enrollment.setClassId(31L);
-        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 10));
-        enrollment.setExpiryDate(LocalDate.of(2026, 11, 30));
+        item.setStartDate(LocalDate.of(2026, 9, 26));
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(31L);
         classGroup.setClassName("G1-G5");
-        classGroup.setStartDate(LocalDate.of(2026, 9, 1));
-        classGroup.setEndDate(LocalDate.of(2026, 12, 20));
+        classGroup.setStartDate(LocalDate.of(2026, 9, 12));
+        classGroup.setEndDate(LocalDate.of(2026, 11, 1));
 
         when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
-        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
         when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
 
@@ -410,9 +403,43 @@ class DataSummaryServiceImplTest {
 
         assertThat(response.rows()).singleElement()
                 .satisfies(row -> {
-                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 1));
-                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 20));
+                    assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 26));
+                    assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 11, 1));
                 });
+    }
+
+    @Test
+    void shouldCalculateRegistrationPeriodFromItsOwnPurchasedPackage() {
+        LocalDate signupDate = LocalDate.of(2026, 9, 19);
+        LocalDate expectedExpiry = LocalDate.of(2027, 5, 1);
+        EnrollmentOrderEntity order = order(1L, "2898.00", "2898.00", "0.00");
+        order.setSignupDate(signupDate);
+        EnrollmentOrderItemEntity item = item(21L, 1, "2898.00");
+        item.setClassId(31L);
+        item.setCourseType("GROUP");
+        item.setStartDate(signupDate);
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("33.00"));
+
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(item.getClassId());
+        classGroup.setClassName("G5");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 12));
+        classGroup.setEndDate(LocalDate.of(2027, 6, 12));
+        when(classBillingService.compute(eq(classGroup), eq(signupDate), eq(signupDate), eq("SESSION"),
+                eq(new BigDecimal("33.00"))))
+                .thenReturn(new ClassBillingService.ClassBilling(signupDate, expectedExpiry, 33));
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "2898.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement()
+                .extracting(DataSummaryResponseVO.RowVO::periodEndDate)
+                .isEqualTo(expectedExpiry);
     }
 
     @Test
@@ -427,13 +454,6 @@ class DataSummaryServiceImplTest {
         item.setStoppedConsumedAmount(new BigDecimal("60.00"));
         item.setStoppedPeriodStartDate(LocalDate.of(2026, 9, 12));
         item.setStoppedPeriodEndDate(LocalDate.of(2026, 9, 19));
-        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
-        enrollment.setId(41L);
-        enrollment.setEnrollmentOrderItemId(21L);
-        enrollment.setClassId(31L);
-        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 1));
-        enrollment.setExpiryDate(LocalDate.of(2026, 9, 19));
-        enrollment.setStatus("WITHDRAWN");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(31L);
         classGroup.setClassName("G8 SHSAT Crash");
@@ -442,7 +462,6 @@ class DataSummaryServiceImplTest {
 
         when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
-        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
         when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "60.00")));
 
@@ -532,7 +551,7 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
-    void shouldDisplayLegacyGroupClassEnrollmentPeriodWhenOrderItemLinkIsMissing() {
+    void shouldUseCoursePeriodForLegacyItemsWithoutRegistrationDates() {
         EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
         order.setSignupDate(LocalDate.of(2026, 9, 15));
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
@@ -541,12 +560,6 @@ class DataSummaryServiceImplTest {
         item.setLineNo(1);
         item.setClassId(31L);
         item.setCourseType("GROUP");
-        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
-        enrollment.setId(41L);
-        enrollment.setStudentId(1L);
-        enrollment.setClassId(31L);
-        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 10));
-        enrollment.setExpiryDate(LocalDate.of(2026, 11, 30));
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(31L);
         classGroup.setClassName("G1-G5");
@@ -555,7 +568,6 @@ class DataSummaryServiceImplTest {
 
         when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
-        when(classEnrollmentMapper.selectList(any())).thenReturn(Collections.emptyList(), List.of(enrollment));
         when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
 

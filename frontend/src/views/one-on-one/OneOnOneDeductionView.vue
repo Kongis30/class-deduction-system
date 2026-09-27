@@ -10,15 +10,15 @@
         <el-button class="action-print" :disabled="!activePackage" @click="printCurrentPackage('parent')">Print Parent Sheet</el-button>
         <el-dropdown
           trigger="click"
-          :disabled="!activePackage || teacherSignatureSheets.length === 0"
+          :disabled="!activePackage || teacherPrintOptions.length === 0"
           @command="printTeacherSheet"
         >
-          <el-button class="action-print" :disabled="!activePackage || teacherSignatureSheets.length === 0">
+          <el-button class="action-print" :disabled="!activePackage || teacherPrintOptions.length === 0">
             Print Teacher Sheet
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="__all__">All teacher sheets</el-dropdown-item>
+            <el-dropdown-item command="__all__">All teachers — one sheet</el-dropdown-item>
               <el-dropdown-item
                 v-for="option in teacherPrintOptions"
                 :key="option.key"
@@ -219,7 +219,6 @@
           class="oo-print-area oo-record-panel"
           :class="[
             printMode === 'teacher' ? 'oo-print-area--teacher' : 'oo-print-area--parent',
-            printMode === 'teacher' && selectedTeacherPrintKey !== '__all__' ? 'oo-print-area--single-teacher' : '',
           ]"
           ref="printAreaRef"
         >
@@ -297,19 +296,14 @@
             </table>
           </section>
 
-          <section
-            v-for="sheet in teacherSignatureSheets"
-            :key="sheet.key"
-            class="oo-signature-sheet oo-teacher-signature-sheet print-only"
-            :class="{ 'oo-teacher-signature-sheet--selected': isSelectedTeacherSheet(sheet) }"
-          >
+          <section class="oo-signature-sheet oo-teacher-signature-sheet print-only">
             <div class="oo-teacher-sheet__meta">
               <p><strong>Student:</strong> {{ activeStudent.studentName }}</p>
-              <p><strong>Lesson name:</strong> {{ sheet.subject }}</p>
-              <p><strong>Teacher:</strong> {{ sheet.teacher }}</p>
-              <p><strong>Classtime:</strong> {{ sheet.classTime }}</p>
-              <p><strong>Allocated Hours:</strong> {{ formatHours(sheet.hours) }}</p>
-              <p><strong>Starting Date:</strong>{{ sheet.startDate }}</p>
+              <p><strong>Course:</strong> {{ activePackage.packageName }}</p>
+              <p><strong>Teacher(s):</strong> {{ teacherPrintTeacherNames.join(', ') || '—' }}</p>
+              <p><strong>Classtime:</strong> {{ subjectClassTime(teacherPrintRows) }}</p>
+              <p><strong>Allocated Hours:</strong> {{ formatHours(teacherPrintAllocatedHours) }}</p>
+              <p><strong>Starting Date:</strong> {{ teacherPrintStartDate }}</p>
             </div>
 
             <table class="oo-signature-table oo-signature-table--teacher">
@@ -318,14 +312,18 @@
                   <th>Lesson name</th>
                   <th>Teacher</th>
                   <th>Date</th>
+                  <th>Time</th>
+                  <th>Hours</th>
                   <th>Signature</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="row in sheet.rows" :key="`teacher-${row.occurrenceId}`">
-                  <td>{{ sheet.subject }}</td>
-                  <td>{{ sheet.teacher }}</td>
+                <tr v-for="row in teacherPrintRows" :key="`teacher-${row.occurrenceId}`">
+                  <td>{{ signatureSubjectLabel(row) }}</td>
+                  <td>{{ signatureLessonTeacher(row) }}</td>
                   <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
+                  <td>{{ signatureTimeOfDayKey(row) || '—' }}</td>
+                  <td>{{ formatHours(row.plannedUnits) }}</td>
                   <td></td>
                 </tr>
               </tbody>
@@ -606,7 +604,7 @@ import { adminConfirmLessonRecord, confirmLesson } from '@/api/lesson';
 import { fetchOneOnOneDeductions, type OneOnOneLesson, type OneOnOnePackage, type OneOnOneStudent, type OneOnOneTeacher } from '@/api/one-on-one';
 import { createScheduleAdjustment } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
-import { isAdminOrStaffUser, isStudentUser, isTeacherUser } from '@/types/auth';
+import { isAdminOrStaffUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
 import type { EntityId } from '@/types/domain';
 
 interface PackageCandidate {
@@ -654,7 +652,7 @@ const authStore = useAuthStore();
 const route = useRoute();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
-const isAdmin = computed(() => isAdminOrStaffUser(authStore.currentUser));
+const isAdmin = computed(() => isAdminOrStaffUser(authStore.currentUser) || isManagerUser(authStore.currentUser));
 const canConfirmLessons = computed(() => isTeacher.value || isAdmin.value);
 const canManageLessonResources = computed(() => !isTeacher.value && !isStudent.value);
 
@@ -811,6 +809,24 @@ const signatureSheetRows = computed(() =>
 const signatureAllocatedHours = computed(() =>
   signatureSheetRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
 );
+const teacherPrintRows = computed(() => {
+  const selectedKey = selectedTeacherPrintKey.value;
+  return signatureSheetRows.value
+    .filter((row) => selectedKey === '__all__'
+      || signatureTeacherKey(row, signatureLessonTeacher(row)) === selectedKey)
+    .sort((left, right) => dayjs(left.plannedStartAt).valueOf() - dayjs(right.plannedStartAt).valueOf()
+      || signatureSubjectLabel(left).localeCompare(signatureSubjectLabel(right))
+      || signatureLessonTeacher(left).localeCompare(signatureLessonTeacher(right)));
+});
+const teacherPrintTeacherNames = computed(() => Array.from(new Set(
+  teacherPrintRows.value.map(signatureLessonTeacher)
+)));
+const teacherPrintAllocatedHours = computed(() =>
+  teacherPrintRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
+);
+const teacherPrintStartDate = computed(() =>
+  formatSignatureDate(teacherPrintRows.value[0]?.plannedStartAt ?? '')
+);
 const signatureSubjectSummaries = computed<SignatureSubjectSummary[]>(() => {
   const groups = new Map<string, SignatureSubjectSummary>();
   signatureSheetRows.value.forEach((row) => {
@@ -843,49 +859,13 @@ const signatureSubjectSummaries = computed<SignatureSubjectSummary[]>(() => {
     startDate: formatSignatureDate(group.rows[0]?.plannedStartAt ?? ''),
   }));
 });
-const teacherSignatureSheets = computed<SignatureSubjectSummary[]>(() => {
-  const groups = new Map<string, SignatureSubjectSummary>();
-  signatureSheetRows.value.forEach((row) => {
-    const subject = signatureSubjectLabel(row);
-    const teacher = signatureLessonTeacher(row);
-    const teacherKey = signatureTeacherKey(row, teacher);
-    const timeKey = signatureTimeOfDayKey(row) || 'To be scheduled';
-    const key = `${subject}__${teacherKey}__${timeKey}`;
-    const existing = groups.get(key);
-    if (existing) {
-      existing.rows.push(row);
-      existing.hours += Number(row.plannedUnits ?? 0);
-      return;
-    }
-    groups.set(key, {
-      key,
-      subject,
-      teacher,
-      teacherKey,
-      classTime: '',
-      hours: Number(row.plannedUnits ?? 0),
-      startDate: formatSignatureDate(row.plannedStartAt),
-      rows: [row],
-    });
-  });
-  return Array.from(groups.values()).map((group) => {
-    const rows = [...group.rows].sort((left, right) =>
-      dayjs(left.plannedStartAt).valueOf() - dayjs(right.plannedStartAt).valueOf()
-    );
-    return {
-      ...group,
-      rows,
-      classTime: subjectClassTime(rows),
-      startDate: formatSignatureDate(rows[0]?.plannedStartAt ?? ''),
-    };
-  });
-});
 const teacherPrintOptions = computed(() => {
   const options = new Map<string, { key: string; teacher: string }>();
-  for (const sheet of teacherSignatureSheets.value) {
-    const key = sheet.teacherKey || optionKey(sheet.teacher);
+  for (const row of signatureSheetRows.value) {
+    const teacher = signatureLessonTeacher(row);
+    const key = signatureTeacherKey(row, teacher);
     if (!options.has(key)) {
-      options.set(key, { key, teacher: sheet.teacher });
+      options.set(key, { key, teacher });
     }
   }
   return Array.from(options.values()).sort((left, right) => left.teacher.localeCompare(right.teacher));
@@ -1080,7 +1060,7 @@ async function printRoutePackage() {
     return;
   }
   selectCandidatePackage(candidate);
-  if (target.mode === 'teacher' && teacherSignatureSheets.value.length === 0) {
+  if (target.mode === 'teacher' && teacherPrintOptions.value.length === 0) {
     ElMessage.warning('No teacher sheet is available for this package yet.');
     return;
   }
@@ -1495,11 +1475,6 @@ async function printTeacherSheet(command: string | number | object) {
   window.print();
 }
 
-function isSelectedTeacherSheet(sheet: SignatureSubjectSummary) {
-  return selectedTeacherPrintKey.value === '__all__'
-    || selectedTeacherPrintKey.value === (sheet.teacherKey || optionKey(sheet.teacher));
-}
-
 function signatureTeacherKey(row: OneOnOneLesson, teacherName: string) {
   return entityKey(row.plannedTeacherId || row.actualTeacherId) || optionKey(teacherName);
 }
@@ -1896,8 +1871,29 @@ onMounted(async () => {
   display: grid;
   gap: 6px;
   max-height: 560px;
-  overflow-y: auto;
+  overflow-y: scroll;
   padding: 8px;
+  scrollbar-gutter: stable;
+  scrollbar-color: #94a3b8 #edf2f7;
+  scrollbar-width: thin;
+}
+
+.oo-package-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.oo-package-list::-webkit-scrollbar-track {
+  background: #edf2f7;
+}
+
+.oo-package-list::-webkit-scrollbar-thumb {
+  border: 2px solid #edf2f7;
+  border-radius: 8px;
+  background: #94a3b8;
+}
+
+.oo-package-list::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
 }
 
 .oo-package-pagination {
@@ -2503,12 +2499,20 @@ onMounted(async () => {
     display: block !important;
   }
 
-  .oo-print-area--teacher.oo-print-area--single-teacher .oo-teacher-signature-sheet {
-    display: none !important;
+  .oo-teacher-signature-sheet {
+    break-inside: auto;
   }
 
-  .oo-print-area--teacher.oo-print-area--single-teacher .oo-teacher-signature-sheet--selected {
-    display: block !important;
+  .oo-signature-table--teacher {
+    break-inside: auto;
+  }
+
+  .oo-signature-table--teacher thead {
+    display: table-header-group;
+  }
+
+  .oo-signature-table--teacher tr {
+    break-inside: avoid;
   }
 
   .oo-print-area {

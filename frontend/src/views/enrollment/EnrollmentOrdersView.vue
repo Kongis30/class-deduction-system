@@ -745,7 +745,7 @@
                 placeholder="Date"
                 style="flex: 1;"
               />
-              <el-input v-model="split.handledByName" placeholder="Handler" style="flex: 1;" />
+              <el-input v-model="split.handledByName" placeholder="Handler" style="flex: 1;" :disabled="isManager" />
               <el-input v-model="split.remark" placeholder="Notes" style="flex: 1;" />
               <el-button
                 v-if="payForm.splits.length > 1"
@@ -823,14 +823,22 @@
       </el-form>
 
       <template #footer>
-        <div class="dialog-footer">
-          <el-button @click="payDialogVisible = false">Cancel</el-button>
-          <el-button
-            type="primary"
-            :loading="paying"
-            :disabled="paySplitTotal <= 0 || paySplitRemaining < 0"
-            @click="handlePaySubmit"
-          >Record Payment</el-button>
+        <div class="payment-dialog-footer">
+          <small class="payment-credit-balance">
+            Student Credit balance:
+            <span v-if="payCreditBalanceLoading">Loading…</span>
+            <strong v-else-if="payCreditBalance != null">${{ payCreditBalance.toFixed(2) }}</strong>
+            <span v-else>Unavailable</span>
+          </small>
+          <div class="dialog-footer">
+            <el-button @click="payDialogVisible = false">Cancel</el-button>
+            <el-button
+              type="primary"
+              :loading="paying"
+              :disabled="paySplitTotal <= 0 || paySplitRemaining < 0"
+              @click="handlePaySubmit"
+            >Record Payment</el-button>
+          </div>
         </div>
       </template>
     </el-dialog>
@@ -937,24 +945,23 @@
       @closed="resetDeleteDialog"
     >
       <template #header>
-        <h3>Delete enrollment order</h3>
+        <h3>Delete course enrollment</h3>
       </template>
 
       <div class="delete-warning">
         <p>
-          This removes the order from the list together with its course package, scheduled lessons,
-          confirmed lesson records, hour ledger, and payment/receipt records.
+          This withdraws the student from the selected course and removes that course's personal schedule.
+          Other courses on the same receipt remain available.
         </p>
-        <p v-if="deleteTarget?.classId">
-          For class orders the student's seat and personal lesson records are also removed;
-          the shared class schedule is untouched.
+        <p>
+          Payments allocated to this course must be fully refunded before deletion.
         </p>
         <p>
           Data is soft-deleted and retained for audit, but no longer displayed.
           This action cannot be recovered through the UI.
         </p>
         <p v-if="deleteTarget">
-          Order: <strong>{{ deleteTarget.enrollmentNo }}</strong>
+          Course: <strong>{{ deleteTarget.courseProductName || deleteTarget.className || deleteTarget.enrollmentNo }}</strong>
         </p>
         <p v-if="deleteConfirmRemaining > 0">
           Please wait {{ deleteConfirmRemaining }} second(s) before confirming.
@@ -1154,15 +1161,18 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
-import { cancelEnrollmentOrder, deleteEnrollmentOrder, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, fetchRefundPreview, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery, type RefundCoursePreviewItem } from '@/api/enrollment';
+import { cancelEnrollmentOrder, deleteEnrollmentOrderItem, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, fetchRefundPreview, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery, type RefundCoursePreviewItem } from '@/api/enrollment';
 import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
+import { fetchStudentCreditBalance } from '@/api/student-credit';
 import { useAuthStore } from '@/stores/auth';
-import { isAdminUser } from '@/types/auth';
+import { isAdminUser, isManagerUser } from '@/types/auth';
 import type { DiscountPresetItem, EntityId, EnrollmentOrderItem, EnrollmentOrderDetailItem, EnrollmentOrderLineItem, EnrollmentOrderParticipantItem, PaymentMethodItem, PaymentRecordItem } from '@/types/domain';
 
 const authStore = useAuthStore();
 const isAdmin = computed(() => isAdminUser(authStore.currentUser));
+const isManager = computed(() => isManagerUser(authStore.currentUser));
+const managerDisplayName = computed(() => authStore.currentUser?.displayName?.trim() ?? '');
 
 const orderStatusOptions = [
   { label: 'Draft', value: 'DRAFT' },
@@ -1363,11 +1373,17 @@ function campusOrderGroups(orders: EnrollmentOrderItem[]): CampusOrderGroup[] {
     group.orders.push(order);
     groups.set(key, group);
   }
-  return Array.from(groups.values()).sort((left, right) => {
-    if (left.campusName === 'Campus not set') return 1;
-    if (right.campusName === 'Campus not set') return -1;
-    return left.campusName.localeCompare(right.campusName);
-  });
+  return Array.from(groups.values())
+    .map((group) => ({
+      ...group,
+      orders: group.orders.slice().sort((left, right) =>
+        (left.studentName ?? '').localeCompare(right.studentName ?? '', 'en', { sensitivity: 'base', numeric: true })),
+    }))
+    .sort((left, right) => {
+      if (left.campusName === 'Campus not set') return 1;
+      if (right.campusName === 'Campus not set') return -1;
+      return left.campusName.localeCompare(right.campusName);
+    });
 }
 
 // 记录由顶部 Keyword 自动展开的班级，清空关键词时只收起这些班级，保留用户手动展开的状态。
@@ -1683,6 +1699,9 @@ const payParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
 const payCourseItems = ref<EnrollmentOrderLineItem[]>([]);
 const payTargetCourseId = ref<string | null>(null);
 const payTargetCourseBalance = ref<number | null>(null);
+const payCreditBalance = ref<number | null>(null);
+const payCreditBalanceLoading = ref(false);
+let payCreditBalanceRequestId = 0;
 
 interface PaySplit {
   paymentMethod: string;
@@ -1751,7 +1770,7 @@ function createPaySplit(amount = 0, allocations: Record<string, number> = {}): P
     paymentMethod: paymentMethods.value[0]?.methodCode ?? 'CASH',
     amount,
     paidAt: dayjs().format('YYYY-MM-DD'),
-    handledByName: '',
+    handledByName: isManager.value ? managerDisplayName.value : '',
     remark: '',
     allocations,
   };
@@ -2442,15 +2461,18 @@ async function confirmDeleteOrder() {
   deletingOrder.value = true;
   const order = deleteTarget.value;
   try {
-    await deleteEnrollmentOrder(order.id);
-    ElMessage.success('Order deleted.');
+    if (!order.orderItemId) {
+      ElMessage.error('This course has no item ID. Please contact support.');
+      return;
+    }
+    await deleteEnrollmentOrderItem(order.id, order.orderItemId);
+    ElMessage.success('Course enrollment deleted.');
     deleteDialogVisible.value = false;
     if (order.classId) {
       await loadExpandedClassOrders(order.classId);
       await loadClassEnrollments();
-    } else {
-      await loadData();
     }
+    await loadData();
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to delete order.');
   } finally {
@@ -2637,7 +2659,28 @@ async function openPayDialog(row: EnrollmentOrderItem,
   const amount = payAmountDue.value;
   const allocations = buildDefaultAllocations(amount);
   payForm.splits = [createPaySplit(amount, allocations)];
+  payCreditBalance.value = null;
+  const creditBalanceRequestId = ++payCreditBalanceRequestId;
+  payCreditBalanceLoading.value = true;
   payDialogVisible.value = true;
+  void loadPayStudentCreditBalance(participant?.studentId ?? row.studentId, creditBalanceRequestId);
+}
+
+async function loadPayStudentCreditBalance(studentId: EntityId, requestId: number) {
+  try {
+    const response = await fetchStudentCreditBalance(studentId);
+    if (requestId === payCreditBalanceRequestId) {
+      payCreditBalance.value = Number(response.data.data ?? 0);
+    }
+  } catch {
+    if (requestId === payCreditBalanceRequestId) {
+      payCreditBalance.value = null;
+    }
+  } finally {
+    if (requestId === payCreditBalanceRequestId) {
+      payCreditBalanceLoading.value = false;
+    }
+  }
 }
 
 function courseBalance(item: EnrollmentOrderLineItem) {
@@ -2700,7 +2743,7 @@ async function handlePaySubmit() {
   const rows = payForm.splits
     .map((row) => ({
       ...row,
-      handledByName: row.handledByName.trim(),
+      handledByName: isManager.value ? managerDisplayName.value : row.handledByName.trim(),
       remark: row.remark.trim(),
     }))
     .filter((row) => row.amount > 0);
@@ -3016,6 +3059,23 @@ void initializePage();
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.payment-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.payment-credit-balance {
+  color: #909399;
+  font-size: 12px;
+}
+
+.payment-credit-balance strong {
+  color: #606266;
+  font-weight: 600;
 }
 
 .discount-text {

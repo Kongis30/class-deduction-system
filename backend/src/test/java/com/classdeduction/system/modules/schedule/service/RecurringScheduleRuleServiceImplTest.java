@@ -155,23 +155,28 @@ class RecurringScheduleRuleServiceImplTest {
     @Test
     void shouldGroupActiveOneOnOneStudentCoursesByCourseAndGrade() {
         when(coursePackageMapper.selectActiveOneOnOneStudentCourseGrades()).thenReturn(List.of(
-                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6"),
-                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6"),
-                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "English", "G7"),
-                new ActiveOneOnOneStudentCourseGradeRow(2002L, "Ben Li", "Math", "G6")
+                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6", true),
+                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6", true),
+                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "English", "G7", false),
+                new ActiveOneOnOneStudentCourseGradeRow(2002L, "Ben Li", "Math", "G6", false),
+                new ActiveOneOnOneStudentCourseGradeRow(2003L, "Cara Wu", "Math", "G6", true),
+                new ActiveOneOnOneStudentCourseGradeRow(2003L, "Cara Wu", "Math", "G6", false)
         ));
 
         List<ScheduleStudentOptionVO> result = recurringScheduleRuleService.listStudentsWithActiveOneOnOnePackages();
 
-        assertThat(result).hasSize(2);
+        assertThat(result).hasSize(3);
         assertThat(result.get(0).id()).isEqualTo(2001L);
         assertThat(result.get(0).courseGrades()).containsExactly(
-                new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6"),
-                new ScheduleStudentOptionVO.CourseGradeOption("English", "G7")
+                new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6", true),
+                new ScheduleStudentOptionVO.CourseGradeOption("English", "G7", false)
         );
         assertThat(result.get(1).id()).isEqualTo(2002L);
         assertThat(result.get(1).courseGrades()).containsExactly(
-                new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6")
+                new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6", false)
+        );
+        assertThat(result.get(2).courseGrades()).containsExactly(
+                new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6", false)
         );
         verify(coursePackageMapper).selectActiveOneOnOneStudentCourseGrades();
     }

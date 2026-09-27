@@ -18,7 +18,14 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
             SELECT s.id AS studentId,
                    s.student_name AS studentName,
                    COALESCE(NULLIF(TRIM(cp.product_name), ''), NULLIF(TRIM(pkg.package_name), ''), 'Unassigned course') AS courseName,
-                   COALESCE(NULLIF(TRIM(oi.grade_band), ''), 'General') AS gradeBand
+                   COALESCE(NULLIF(TRIM(oi.grade_band), ''), 'General') AS gradeBand,
+                   EXISTS (
+                       SELECT 1
+                       FROM recurring_schedule_rule r
+                       WHERE r.package_id = pkg.id
+                         AND r.rule_status = 'ACTIVE'
+                         AND r.is_deleted = 0
+                   ) AS hasSchedule
             FROM course_package pkg
             JOIN student s ON s.id = pkg.student_id
             LEFT JOIN course_product cp ON cp.id = pkg.course_product_id

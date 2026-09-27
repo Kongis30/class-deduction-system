@@ -16,7 +16,7 @@
               :prefix-icon="Search"
             />
           </div>
-          <div class="student-list-panel__body">
+          <el-scrollbar always class="student-list-panel__body calendar-roster-scroll">
             <div v-if="studentsLoading" class="student-list-panel__empty">
               Loading students...
             </div>
@@ -33,7 +33,7 @@
               <span class="student-item__name">{{ s.studentName }}</span>
               <el-icon v-if="selectedStudentId === s.id" color="#409eff"><Check /></el-icon>
             </div>
-          </div>
+          </el-scrollbar>
         </aside>
 
         <!-- Right: Calendar -->
@@ -291,8 +291,10 @@ let packageRequestSeq = 0;
 // ─── Student list ──────────────────────────────
 const filteredStudents = computed(() => {
   const q = searchText.value.trim().toLowerCase();
-  if (!q) return students.value;
-  return students.value.filter(s => s.studentName.toLowerCase().includes(q));
+  return students.value
+    .filter(student => !q || student.studentName.toLowerCase().includes(q))
+    .slice()
+    .sort((left, right) => left.studentName.localeCompare(right.studentName, 'en', { sensitivity: 'base' }));
 });
 
 const selectedStudentName = computed(() => {
@@ -606,11 +608,6 @@ onMounted(async () => {
   padding: 10px;
   border-bottom: 1px solid #ebeef5;
   flex-shrink: 0;
-}
-
-.student-list-panel__body {
-  flex: 1;
-  overflow-y: auto;
 }
 
 .student-list-panel__empty {

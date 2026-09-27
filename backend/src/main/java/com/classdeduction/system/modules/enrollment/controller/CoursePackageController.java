@@ -9,7 +9,6 @@ import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
-import com.classdeduction.system.modules.enrollment.dto.CoursePackageResumeRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
@@ -115,11 +114,9 @@ public class CoursePackageController {
     }
 
     @PostMapping("/{id}/resume")
-    @Operation(summary = "Resume a paused 1-on-1 package from a new start date")
-    public ApiResponse<Void> resumePackage(
-            @PathVariable Long id,
-            @Valid @RequestBody CoursePackageResumeRequest request) {
-        coursePackageService.resumePackage(id, request);
+    @Operation(summary = "Resume a paused 1-on-1 package without restoring its previous schedule")
+    public ApiResponse<Void> resumePackage(@PathVariable Long id) {
+        coursePackageService.resumePackage(id);
         return ApiResponse.success("Package resumed successfully.", null);
     }
 
