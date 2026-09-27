@@ -31,9 +31,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 
@@ -734,6 +736,37 @@ class ClassGroupServiceImplTest {
         verify(lessonOccurrenceMapper, times(1)).insert(occurrenceCaptor.capture());
         assertThat(occurrenceCaptor.getValue().getPlannedStartAt()).isEqualTo(lessonDate.atTime(13, 0));
         assertThat(result.get("generatedOccurrences")).isEqualTo(1);
+    }
+
+    @Test
+    void shouldKeepOngoingClassLessonAndApplySplitSlotsNextWeek() {
+        LocalDate sunday = LocalDate.of(2026, 9, 27);
+        LocalDateTime rebuildFrom = sunday.atTime(13, 30);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStartDate(sunday);
+        classGroup.setEndDate(sunday.plusWeeks(1));
+
+        LessonOccurrenceEntity ongoing = scheduledOccurrence(sunday.atTime(13, 0));
+        ongoing.setPlannedEndAt(sunday.atTime(16, 0));
+        ClassGroupScheduleSlotEntity firstHalf = new ClassGroupScheduleSlotEntity();
+        firstHalf.setWeekday(7);
+        firstHalf.setStartTime(LocalTime.of(13, 0));
+        firstHalf.setEndTime(LocalTime.of(14, 30));
+        ClassGroupScheduleSlotEntity secondHalf = new ClassGroupScheduleSlotEntity();
+        secondHalf.setWeekday(7);
+        secondHalf.setStartTime(LocalTime.of(14, 30));
+        secondHalf.setEndTime(LocalTime.of(16, 0));
+
+        Integer generated = ReflectionTestUtils.invokeMethod(classGroupService,
+                "generateFutureClassOccurrences", classGroup, List.of(firstHalf, secondHalf),
+                List.of(ongoing), rebuildFrom);
+
+        verify(lessonOccurrenceMapper, times(2)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues())
+                .extracting(LessonOccurrenceEntity::getPlannedStartAt)
+                .containsExactly(sunday.plusWeeks(1).atTime(13, 0), sunday.plusWeeks(1).atTime(14, 30));
+        assertThat(generated).isEqualTo(2);
     }
 
     @Test

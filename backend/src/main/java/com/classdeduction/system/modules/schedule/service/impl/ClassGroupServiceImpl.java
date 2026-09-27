@@ -1399,9 +1399,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                                 && plannedEndAt.equals(existing.getPlannedEndAt()))) {
                     continue;
                 }
-                if (retainedOnDate.stream().anyMatch(existing ->
-                        plannedStartAt.isBefore(existing.getPlannedEndAt())
-                                && plannedEndAt.isAfter(existing.getPlannedStartAt()))) {
+                List<LessonOccurrenceEntity> overlappingRetained = retainedOnDate.stream()
+                        .filter(existing -> plannedStartAt.isBefore(existing.getPlannedEndAt())
+                                && plannedEndAt.isAfter(existing.getPlannedStartAt()))
+                        .toList();
+                if (!overlappingRetained.isEmpty()) {
+                    // 保留当天已开始的旧课；与它重叠的新时段从后续日期生效。
+                    if (overlappingRetained.stream().allMatch(existing ->
+                            existing.getPlannedStartAt().isBefore(rebuildFrom))) {
+                        continue;
+                    }
                     throw new BusinessException("SCHEDULE_CONFLICT", "A retained class lesson overlaps the new class schedule.");
                 }
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
