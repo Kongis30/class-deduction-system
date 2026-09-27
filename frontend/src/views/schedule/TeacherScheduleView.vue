@@ -205,8 +205,12 @@ let scheduleRequestSeq = 0;
 
 const filteredTeachers = computed(() => {
   const q = searchText.value.trim().toLowerCase();
-  if (!q) return teachers.value;
-  return teachers.value.filter(t => t.teacherName.toLowerCase().includes(q));
+  const sorted = [...teachers.value].sort((left, right) =>
+    left.teacherName.localeCompare(right.teacherName, undefined, { sensitivity: 'base' })
+      || String(left.id).localeCompare(String(right.id), undefined, { numeric: true }),
+  );
+  if (!q) return sorted;
+  return sorted.filter(t => t.teacherName.toLowerCase().includes(q));
 });
 
 const selectedTeacherName = computed(() => {

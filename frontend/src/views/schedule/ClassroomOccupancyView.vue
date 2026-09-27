@@ -473,9 +473,12 @@ function groupClassroomsByCampus(source: ClassroomOption[]) {
   return Array.from(groups.entries())
     .map(([campus, rooms]) => ({
       campus,
-      rooms: [...rooms].sort((left, right) => left.roomName.localeCompare(right.roomName)),
+      rooms: [...rooms].sort((left, right) =>
+        left.roomName.localeCompare(right.roomName, undefined, { sensitivity: 'base', numeric: true })
+          || String(left.id).localeCompare(String(right.id), undefined, { numeric: true }),
+      ),
     }))
-    .sort((left, right) => left.campus.localeCompare(right.campus));
+    .sort((left, right) => left.campus.localeCompare(right.campus, undefined, { sensitivity: 'base' }));
 }
 
 function buildPendingQueueTree(rows: PendingAssignmentRow[]): PendingQueueRow[] {
