@@ -17,13 +17,15 @@
       <div>
         <strong>{{ isReadOnly ? 'Saved receipt' : 'Registration desk' }}</strong>
         <p>{{ isReadOnly && !editingCorrection
-          ? 'This is the saved receipt. Click Edit Receipt to correct all fields and keep the original registration.'
+          ? (canCorrectReceipt
+            ? 'This is the saved receipt. Click Edit Receipt to correct all fields and keep the original registration.'
+            : 'This is the saved receipt. This account can view and print it.')
           : 'Fill the familiar paper form, save the record, then print the receipt when ready.' }}</p>
       </div>
       <div class="registration-desk__actions">
         <el-button type="primary" @click="startNewRegistration">New Registration</el-button>
         <el-button class="action-secondary" @click="openCurrentStudentHistory">Find student &amp; history</el-button>
-        <el-button v-if="isReadOnly && !editingCorrection" type="primary" @click="startCorrection">Edit Receipt</el-button>
+        <el-button v-if="isReadOnly && !editingCorrection && canCorrectReceipt" type="primary" @click="startCorrection">Edit Receipt</el-button>
         <template v-if="isReadOnly && editingCorrection">
           <el-button @click="cancelCorrection">Cancel</el-button>
           <el-button type="primary" :loading="savingCorrection" @click="saveCorrection">Save changes</el-button>
@@ -1036,7 +1038,7 @@ import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
 import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
 import { getStoredAuthUser } from '@/utils/auth-storage';
-import { isAdminUser } from '@/types/auth';
+import { isAdminUser, isManagerUser, isStaffUser } from '@/types/auth';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 import { exceedsMoney, formatExactUsd, formatRoundedUsd } from '@/utils/money-display';
 import MoneyAmountInput from '@/components/MoneyAmountInput.vue';
@@ -1302,6 +1304,7 @@ const contactLocked = computed(() => isReadOnly.value && !editingCorrection.valu
 // 收据更正态复用报名表控件，但保存时更新原订单，不创建新的报名单。
 const receiptEditingEnabled = computed(() => !isReadOnly.value || editingCorrection.value);
 const isAdmin = computed(() => isAdminUser(currentUser));
+const canCorrectReceipt = computed(() => isAdmin.value || (isStaffUser(currentUser) && !isManagerUser(currentUser)));
 const currentCampusTaxId = computed(() => receiptTaxId.value || selectedCampus.value?.taxId || '');
 
 const priceOptionsWithProduct = computed(() => {
@@ -1975,6 +1978,7 @@ async function loadHistoricalOrder() {
 }
 
 function startCorrection() {
+  if (!canCorrectReceipt.value) return;
   editingCorrection.value = true;
 }
 

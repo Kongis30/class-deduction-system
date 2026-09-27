@@ -3,7 +3,7 @@ import { createRouter, createWebHistory, createWebHashHistory, type RouteRecordR
 import AppLayout from '@/components/layout/AppLayout.vue';
 import { APP_SYSTEM_NAME } from '@/config/app-config';
 import { getStoredAuthToken, getStoredAuthUser } from '@/utils/auth-storage';
-import { getDefaultLandingPath, getUserWorkspace, isAdminOrStaffUser, isAdminUser, isManagerUser, type AuthUser } from '@/types/auth';
+import { getDefaultLandingPath, getUserWorkspace, isAdminOrStaffUser, isAdminUser, type AuthUser } from '@/types/auth';
 
 // Route-level lazy loading keeps the initial admin bundle smaller.
 const LoginView = () => import('@/views/LoginView.vue');
@@ -578,9 +578,6 @@ router.beforeEach((to) => {
   }
   if (to.path === '/admin/config/managers' && !isAdminUser(storedUser)) {
     return getDefaultLandingPath(storedUser);
-  }
-  if (to.name === 'registration' && to.query.orderId && isManagerUser(storedUser)) {
-    return { name: 'receipt-records' };
   }
   return true;
 });
