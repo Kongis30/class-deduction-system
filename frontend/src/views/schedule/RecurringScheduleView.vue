@@ -2102,7 +2102,11 @@ async function init() {
     fetchAllTeachers(),
     fetchAllClassrooms(),
   ]);
-  if (teacherResult.status === 'fulfilled') teachers.value = teacherResult.value.data.data;
+  if (teacherResult.status === 'fulfilled') {
+    teachers.value = [...teacherResult.value.data.data].sort((left, right) =>
+      left.teacherName.localeCompare(right.teacherName, 'en', { sensitivity: 'base', numeric: true }),
+    );
+  }
   if (classroomResult.status === 'fulfilled') classrooms.value = classroomResult.value.data.data;
   if (!studentListError.value) await applyRouteScheduleContext();
 }

@@ -1806,7 +1806,9 @@ onMounted(async () => {
       fetchClassGroups(),
     ]);
     students.value = sRes.data.data;
-    teachers.value = tRes.data.data;
+    teachers.value = [...tRes.data.data].sort((left, right) =>
+      left.teacherName.localeCompare(right.teacherName, 'en', { sensitivity: 'base', numeric: true }),
+    );
     classrooms.value = cRes.data.data;
     classes.value = clzRes.data.data;
   } catch {
