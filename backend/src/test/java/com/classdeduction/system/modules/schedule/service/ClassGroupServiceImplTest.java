@@ -4,12 +4,15 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
@@ -80,6 +83,9 @@ class ClassGroupServiceImplTest {
     @Mock
     private CourseProductMapper courseProductMapper;
 
+    @Mock
+    private CoursePackageMapper coursePackageMapper;
+
     @Captor
     private ArgumentCaptor<LessonRecordEntity> recordCaptor;
 
@@ -109,7 +115,8 @@ class ClassGroupServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
-                courseProductMapper
+                courseProductMapper,
+                coursePackageMapper
         );
     }
 
@@ -628,6 +635,78 @@ class ClassGroupServiceImplTest {
         assertThat(occurrenceCaptor.getValue().getPlannedTeacherId()).isEqualTo(702L);
         assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(3);
         assertThat(result.get("generatedOccurrences")).isEqualTo(1);
+    }
+
+    @Test
+    void shouldNameTeacherAndExistingGroupCourseWhenClassScheduleConflicts() {
+        LocalDate lessonDate = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        ClassGroupEntity editingClass = new ClassGroupEntity();
+        editingClass.setId(501L);
+        editingClass.setClassName("CRASH A");
+        editingClass.setStatus("ACTIVE");
+        editingClass.setStartDate(lessonDate);
+        editingClass.setEndDate(lessonDate);
+        ClassGroupEntity existingClass = new ClassGroupEntity();
+        existingClass.setId(900L);
+        existingClass.setProductId(300L);
+        existingClass.setGradeBand("G8 SHSAT CRASH");
+        existingClass.setActualClass("CRASH B");
+        CourseProductEntity product = new CourseProductEntity();
+        product.setProductName("2026 SHSAT");
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setId(702L);
+        teacher.setTeacherName("Derek Wong");
+        teacher.setStatus("ACTIVE");
+        LessonOccurrenceEntity conflict = scheduledOccurrence(lessonDate.atTime(10, 30));
+        conflict.setClassGroupId(900L);
+        conflict.setPlannedTeacherId(702L);
+
+        when(classGroupMapper.selectById(501L)).thenReturn(editingClass);
+        when(classGroupMapper.selectById(900L)).thenReturn(existingClass);
+        when(courseProductMapper.selectById(300L)).thenReturn(product);
+        when(teacherMapper.selectById(702L)).thenReturn(teacher);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of(), List.of(conflict));
+
+        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of("teacherId", 702L,
+                        "weekday", lessonDate.getDayOfWeek().getValue(),
+                        "startTime", "10:00", "endTime", "11:30")))))
+                .isInstanceOf(BusinessException.class)
+                .satisfies(error -> assertThat(error.getMessage())
+                        .contains("Derek Wong", "2026 SHSAT", "G8 SHSAT CRASH", "CRASH B", "CRASH A")
+                        .contains(lessonDate.toString(), "10:30–12:00", "10:00–11:30"));
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldNamePrivateLessonPackageWhenTeacherConflictsWithClassSchedule() {
+        LocalDate lessonDate = LocalDate.of(2026, 10, 3);
+        ClassGroupEntity editingClass = new ClassGroupEntity();
+        editingClass.setClassName("CRASH A");
+        LessonOccurrenceEntity candidate = scheduledOccurrence(lessonDate.atTime(10, 0));
+        candidate.setPlannedTeacherId(702L);
+        LessonOccurrenceEntity conflict = scheduledOccurrence(lessonDate.atTime(10, 30));
+        conflict.setClassGroupId(null);
+        conflict.setPackageId(800L);
+        conflict.setStudentId(601L);
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setTeacherName("Derek Wong");
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setPackageName("G1-G5 | 40 hours");
+        StudentEntity student = new StudentEntity();
+        student.setStudentName("Alice Chen");
+
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(conflict));
+        when(teacherMapper.selectById(702L)).thenReturn(teacher);
+        when(coursePackageMapper.selectById(800L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(601L)).thenReturn(student);
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(classGroupService,
+                "ensureNoGeneratedClassOccurrenceConflicts", candidate, editingClass))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Derek Wong")
+                .hasMessageContaining("G1-G5 | 40 hours")
+                .hasMessageContaining("Alice Chen");
     }
 
     @Test

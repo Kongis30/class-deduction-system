@@ -1691,7 +1691,7 @@ async function saveActualClassSchedule() {
     actualClassScheduleDialogVisible.value = false;
     await loadAll();
   } catch (err) {
-    ElMessage.error(extractErrorMessage(err));
+    ElMessage.error({ message: extractErrorMessage(err), duration: 10000, showClose: true });
   } finally {
     savingActualClassSchedule.value = false;
   }

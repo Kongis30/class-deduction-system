@@ -13,6 +13,8 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
+import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
@@ -34,6 +36,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -51,6 +54,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private static final Set<String> CHARGEABLE_CLASS_RESULT_STATUSES = Set.of(
             "COMPLETED", "CANCELLED");
     private static final int TEACHER_FUTURE_CONFIRM_WINDOW_DAYS = 14;
+    private static final DateTimeFormatter CONFLICT_DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final DateTimeFormatter CONFLICT_TIME = DateTimeFormatter.ofPattern("HH:mm");
 
     private final ClassGroupMapper classGroupMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
@@ -61,6 +66,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final CourseProductMapper courseProductMapper;
+    private final CoursePackageMapper coursePackageMapper;
 
     @Override
     public List<Map<String, Object>> listClasses(CurrentUserResponse currentUser) {
@@ -1424,7 +1430,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setPlannedEndAt(plannedEndAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
                 occurrence.setPlanningStatus("SCHEDULED");
-                ensureNoGeneratedClassOccurrenceConflicts(occurrence);
+                ensureNoGeneratedClassOccurrenceConflicts(occurrence, classGroup);
                 occurrence.setConflictChecked(1);
                 lessonOccurrenceMapper.insert(occurrence);
                 count++;
@@ -1433,12 +1439,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return count;
     }
 
-    private void ensureNoGeneratedClassOccurrenceConflicts(LessonOccurrenceEntity occurrence) {
+    private void ensureNoGeneratedClassOccurrenceConflicts(LessonOccurrenceEntity occurrence,
+                                                           ClassGroupEntity classGroup) {
         LocalDateTime startAt = occurrence.getPlannedStartAt();
         LocalDateTime endAt = occurrence.getPlannedEndAt();
-        if (occurrence.getPlannedTeacherId() != null && hasClassScheduleConflict(startAt, endAt,
-                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId()))) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected for the new class schedule.");
+        if (occurrence.getPlannedTeacherId() != null) {
+            LessonOccurrenceEntity conflict = findTeacherConflict(occurrence.getPlannedTeacherId(), startAt, endAt);
+            if (conflict != null) {
+                throw new BusinessException("SCHEDULE_CONFLICT",
+                        describeTeacherConflict(occurrence.getPlannedTeacherId(), classGroup, conflict, startAt, endAt));
+            }
         }
         if (occurrence.getPlannedClassroomId() != null && hasClassScheduleConflict(startAt, endAt,
                 wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId()))) {
@@ -1449,6 +1459,79 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the new class schedule.");
             }
         }
+    }
+
+    /** 找出首节重叠课次，供班课保存失败时显示老师和现有课程。 */
+    private LessonOccurrenceEntity findTeacherConflict(Long teacherId, LocalDateTime startAt, LocalDateTime endAt) {
+        List<LessonOccurrenceEntity> conflicts = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getPlannedTeacherId, teacherId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .lt(LessonOccurrenceEntity::getPlannedStartAt, endAt)
+                        .gt(LessonOccurrenceEntity::getPlannedEndAt, startAt)
+                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt)
+                        .last("LIMIT 1"));
+        return conflicts.isEmpty() ? null : conflicts.get(0);
+    }
+
+    /** 将新时段与已占用课次一起写入错误提示，便于管理员直接定位冲突。 */
+    private String describeTeacherConflict(Long teacherId, ClassGroupEntity classGroup,
+                                           LessonOccurrenceEntity conflict,
+                                           LocalDateTime startAt, LocalDateTime endAt) {
+        TeacherEntity teacher = teacherMapper.selectById(teacherId);
+        String teacherName = teacher != null && StringUtils.hasText(teacher.getTeacherName())
+                ? teacher.getTeacherName() : "#" + teacherId;
+        String newClass = StringUtils.hasText(classGroup.getClassName())
+                ? classGroup.getClassName() : "the new class";
+        String existingTime = conflict.getPlannedStartAt().format(CONFLICT_DATE_TIME)
+                + "–" + conflict.getPlannedEndAt().format(CONFLICT_TIME);
+        String newTime = startAt.format(CONFLICT_DATE_TIME) + "–" + endAt.format(CONFLICT_TIME);
+        return "Teacher " + teacherName + " is already assigned to " + describeConflictingCourse(conflict)
+                + " (" + existingTime + " ET); this overlaps " + newClass + " (" + newTime + " ET).";
+    }
+
+    /** 冲突课次既可能属于班课，也可能属于一对一课包。 */
+    private String describeConflictingCourse(LessonOccurrenceEntity conflict) {
+        if (conflict.getClassGroupId() != null) {
+            ClassGroupEntity existingClass = classGroupMapper.selectById(conflict.getClassGroupId());
+            if (existingClass == null) {
+                return "group class #" + conflict.getClassGroupId();
+            }
+            CourseProductEntity product = existingClass.getProductId() == null
+                    ? null : courseProductMapper.selectById(existingClass.getProductId());
+            List<String> courseParts = new ArrayList<>();
+            if (product != null && StringUtils.hasText(product.getProductName())) {
+                courseParts.add(product.getProductName());
+            }
+            if (StringUtils.hasText(existingClass.getGradeBand())) {
+                courseParts.add(existingClass.getGradeBand());
+            }
+            String className = StringUtils.hasText(existingClass.getActualClass())
+                    ? existingClass.getActualClass() : existingClass.getClassName();
+            if (StringUtils.hasText(className)) {
+                courseParts.add(className);
+            }
+            return courseParts.isEmpty() ? "group class #" + existingClass.getId()
+                    : String.join(" / ", courseParts);
+        }
+        CoursePackageEntity coursePackage = conflict.getPackageId() == null
+                ? null : coursePackageMapper.selectById(conflict.getPackageId());
+        CourseProductEntity product = coursePackage == null || coursePackage.getCourseProductId() == null
+                ? null : courseProductMapper.selectById(coursePackage.getCourseProductId());
+        Long studentId = conflict.getStudentId() != null ? conflict.getStudentId()
+                : coursePackage == null ? null : coursePackage.getStudentId();
+        StudentEntity student = studentId == null ? null : studentMapper.selectById(studentId);
+        List<String> courseParts = new ArrayList<>();
+        if (product != null && StringUtils.hasText(product.getProductName())) {
+            courseParts.add(product.getProductName());
+        }
+        if (coursePackage != null && StringUtils.hasText(coursePackage.getPackageName())
+                && !courseParts.contains(coursePackage.getPackageName())) {
+            courseParts.add(coursePackage.getPackageName());
+        }
+        String courseName = courseParts.isEmpty() ? "1-on-1 lesson" : String.join(" / ", courseParts);
+        return student != null && StringUtils.hasText(student.getStudentName())
+                ? courseName + " (" + student.getStudentName() + ")" : courseName;
     }
 
     private boolean hasStudentConflictForClassSchedule(Long studentId, LocalDateTime startAt, LocalDateTime endAt) {
