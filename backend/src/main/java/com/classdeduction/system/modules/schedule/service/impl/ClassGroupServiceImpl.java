@@ -1432,18 +1432,34 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     private boolean hasStudentConflictForClassSchedule(Long studentId, LocalDateTime startAt, LocalDateTime endAt) {
-        List<Long> classIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
-                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
-                .stream()
-                .map(ClassEnrollmentEntity::getClassId)
-                .filter(Objects::nonNull)
-                .toList();
+        LocalDate lessonDate = startAt.toLocalDate();
+        List<Long> classIds = activeClassIdsByStudentOnDate(studentId, lessonDate);
         return hasClassScheduleConflict(startAt, endAt, wrapper -> wrapper
                 .and(nested -> nested
                         .eq(LessonOccurrenceEntity::getStudentId, studentId)
                         .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds))));
+    }
+
+    /** 按课程日期筛选学生当日有效的班课，用于避免未来报名的学生提前触发冲突。 */
+    private List<Long> activeClassIdsByStudentOnDate(Long studentId, LocalDate lessonDate) {
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .and(lessonDate != null, wrapper -> wrapper
+                                .isNull(ClassEnrollmentEntity::getEnrollmentDate)
+                                .or()
+                                .le(ClassEnrollmentEntity::getEnrollmentDate, lessonDate))
+                        .and(lessonDate != null, wrapper -> wrapper
+                                .isNull(ClassEnrollmentEntity::getExpiryDate)
+                                .or()
+                                .ge(ClassEnrollmentEntity::getExpiryDate, lessonDate)))
+                .stream()
+                .filter(enrollment -> enrollmentIncludesLessonDate(enrollment, lessonDate))
+                .map(ClassEnrollmentEntity::getClassId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
     }
 
     private boolean hasClassScheduleConflict(LocalDateTime startAt,
@@ -1475,8 +1491,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .eq(ClassEnrollmentEntity::getClassId, classId)
                         .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
-                        .le(lessonDate != null, ClassEnrollmentEntity::getEnrollmentDate, lessonDate)
-                        .ge(lessonDate != null, ClassEnrollmentEntity::getExpiryDate, lessonDate))
+                        .and(lessonDate != null, wrapper -> wrapper
+                                .isNull(ClassEnrollmentEntity::getEnrollmentDate)
+                                .or()
+                                .le(ClassEnrollmentEntity::getEnrollmentDate, lessonDate))
+                        .and(lessonDate != null, wrapper -> wrapper
+                                .isNull(ClassEnrollmentEntity::getExpiryDate)
+                                .or()
+                                .ge(ClassEnrollmentEntity::getExpiryDate, lessonDate)))
                 .stream()
                 .filter(enrollment -> enrollmentIncludesLessonDate(enrollment, lessonDate))
                 .map(ClassEnrollmentEntity::getStudentId)
