@@ -1284,6 +1284,19 @@ const selectedParticipants = computed<ScheduleParticipant[]>(() => {
   }];
 });
 
+// 编辑弹窗的状态必须先于 editWeekMonday 计算属性声明；初始化 watch 会立即读取该计算属性。
+const editForm = reactive({
+  defaultClassroomId: undefined as EntityId | undefined,
+  ruleStatus: undefined as string | undefined,
+  startDate: '',
+  notes: '',
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; subjectName?: string; allocatedHours?: number }>,
+});
+
+const editFormRules: FormRules = {
+  startDate: [{ required: true, message: 'Start date is required', trigger: 'change' }],
+};
+
 
 const originalWeeklyUnits = computed(() =>
   weeklyRows.value
@@ -1658,19 +1671,6 @@ async function loadAllPackageRules(
     allPackageRules.value = map;
   }
 }
-
-// ─── Edit Form ──────────────────────────────────
-const editForm = reactive({
-  defaultClassroomId: undefined as EntityId | undefined,
-  ruleStatus: undefined as string | undefined,
-  startDate: '',
-  notes: '',
-  slots: [] as Array<SlotDef & { teacherId?: EntityId; subjectName?: string; allocatedHours?: number }>,
-});
-
-const editFormRules: FormRules = {
-  startDate: [{ required: true, message: 'Start date is required', trigger: 'change' }],
-};
 
 const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
