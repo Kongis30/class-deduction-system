@@ -161,22 +161,24 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" width="76" align="center" fixed="right">
+            <el-table-column label="Actions" width="144" align="center" fixed="right">
               <template #default="{ row }">
-                <el-dropdown trigger="hover" @command="handleOrderAction($event, row)">
-                  <el-button text type="primary" class="order-action-more">&hellip;</el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="detail">Detail</el-dropdown-item>
-                      <el-dropdown-item command="receipt">View receipt</el-dropdown-item>
-                      <el-dropdown-item v-if="canPayOrder(row, rowParticipant(row))" command="pay">Pay</el-dropdown-item>
-                      <el-dropdown-item v-if="canRefundOrder(row, rowParticipant(row))" command="refund">Refund</el-dropdown-item>
-                      <el-dropdown-item v-if="canCancelOrder(row)" command="cancel">Cancel</el-dropdown-item>
-                      <el-dropdown-item v-if="canDeleteOrder(row)" divided command="delete">Delete</el-dropdown-item>
-                      <el-dropdown-item v-if="canForceVoidOrder(row)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
+                <div class="enrollment-row-actions">
+                  <el-button text type="primary" size="small" @click.stop="openReceipt(row)">View receipt</el-button>
+                  <el-dropdown trigger="hover" @command="handleOrderAction($event, row)">
+                    <el-button text type="primary" class="order-action-more">&hellip;</el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="detail">Detail</el-dropdown-item>
+                        <el-dropdown-item v-if="canPayOrder(row, rowParticipant(row))" command="pay">Pay</el-dropdown-item>
+                        <el-dropdown-item v-if="canRefundOrder(row, rowParticipant(row))" command="refund">Refund</el-dropdown-item>
+                        <el-dropdown-item v-if="canCancelOrder(row)" command="cancel">Cancel</el-dropdown-item>
+                        <el-dropdown-item v-if="canDeleteOrder(row)" divided command="delete">Delete</el-dropdown-item>
+                        <el-dropdown-item v-if="canForceVoidOrder(row)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
+                </div>
               </template>
             </el-table-column>
           </el-table>
@@ -340,22 +342,24 @@
                                 </el-tag>
                               </template>
                             </el-table-column>
-                            <el-table-column label="Actions" width="76" align="center">
+                            <el-table-column label="Actions" width="144" align="center">
                               <template #default="{ row: order }">
-                                <el-dropdown trigger="hover" @command="handleOrderAction($event, order)">
-                                  <el-button text type="primary" size="small" class="order-action-more">&hellip;</el-button>
-                                  <template #dropdown>
-                                    <el-dropdown-menu>
-                                      <el-dropdown-item command="detail">Detail</el-dropdown-item>
-                                      <el-dropdown-item command="receipt">View receipt</el-dropdown-item>
-                                      <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
-                                      <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
-                                      <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
-                                      <el-dropdown-item v-if="canDeleteOrder(order)" divided command="delete">Delete</el-dropdown-item>
-                                      <el-dropdown-item v-if="canForceVoidOrder(order)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
-                                    </el-dropdown-menu>
-                                  </template>
-                                </el-dropdown>
+                                <div class="enrollment-row-actions">
+                                  <el-button text type="primary" size="small" @click.stop="openReceipt(order)">View receipt</el-button>
+                                  <el-dropdown trigger="hover" @command="handleOrderAction($event, order)">
+                                    <el-button text type="primary" size="small" class="order-action-more">&hellip;</el-button>
+                                    <template #dropdown>
+                                      <el-dropdown-menu>
+                                        <el-dropdown-item command="detail">Detail</el-dropdown-item>
+                                        <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
+                                        <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
+                                        <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
+                                        <el-dropdown-item v-if="canDeleteOrder(order)" divided command="delete">Delete</el-dropdown-item>
+                                        <el-dropdown-item v-if="canForceVoidOrder(order)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
+                                      </el-dropdown-menu>
+                                    </template>
+                                  </el-dropdown>
+                                </div>
                               </template>
                             </el-table-column>
                               </el-table>
@@ -2210,7 +2214,7 @@ async function handleCancel(row: EnrollmentOrderItem) {
 }
 
 // ─── Row Action Menu ────────────────────────────────
-type OrderAction = 'detail' | 'receipt' | 'pay' | 'refund' | 'cancel' | 'delete' | 'forceVoid';
+type OrderAction = 'detail' | 'pay' | 'refund' | 'cancel' | 'delete' | 'forceVoid';
 
 function canPayOrder(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
   const balanceAmount = participant?.balanceAmount ?? row.balanceAmount ?? 0;
@@ -2245,7 +2249,6 @@ function handleOrderAction(command: OrderAction, row: EnrollmentOrderItem) {
   const participant = rowParticipant(row);
   const actions: Record<OrderAction, () => void> = {
     detail: () => openDetailDialog(row),
-    receipt: () => openReceipt(row),
     pay: () => openPayDialog(row, participant, row.orderItemId),
     refund: () => openRefundDialog(row, participant),
     cancel: () => handleCancel(row),
@@ -3027,6 +3030,12 @@ void initializePage();
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+}
+
+.enrollment-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .cell-stack {
