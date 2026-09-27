@@ -18,14 +18,6 @@
         <el-tab-pane label="Group class" name="group" />
       </el-tabs>
 
-      <section class="my-lessons-toolbar">
-        <el-radio-group v-model="period" @change="loadLessons">
-          <el-radio-button label="future">Future</el-radio-button>
-          <el-radio-button label="history">History</el-radio-button>
-        </el-radio-group>
-        <span>{{ periodHint }}</span>
-      </section>
-
       <el-table
         v-loading="loading"
         :data="visibleLessons"
@@ -188,13 +180,11 @@ import { confirmClassLesson, createScheduleAdjustment, fetchLessonOccurrences } 
 import { useAuthStore } from '@/stores/auth';
 import type { LessonOccurrenceItem } from '@/types/domain';
 
-type LessonPeriod = 'future' | 'history';
 type LessonType = 'one-on-one' | 'group';
 
 const authStore = useAuthStore();
 const teacherId = computed(() => authStore.currentUser?.teacherId);
 const lessonType = ref<LessonType>('one-on-one');
-const period = ref<LessonPeriod>('future');
 const loading = ref(false);
 const submitting = ref(false);
 const adjusting = ref(false);
@@ -211,18 +201,12 @@ const confirmForm = reactive({
   notes: '',
 });
 
-const periodHint = computed(() =>
-  period.value === 'future'
-    ? 'Showing the next 30 days and lessons awaiting admin review. Confirmation is available 14 days before each lesson.'
-    : 'Showing the previous 30 days. Lesson confirmation does not expire.',
-);
-
 const visibleLessons = computed(() => lessons.value.filter(lesson =>
   lessonType.value === 'group' ? Boolean(lesson.classGroupId) : !lesson.classGroupId
 ));
 
 const emptyText = computed(() =>
-  `No ${lessonType.value === 'group' ? 'group class' : '1-on-1'} lessons found for this period.`
+  `No ${lessonType.value === 'group' ? 'group class' : '1-on-1'} lessons found in this date range.`
 );
 
 const adjustedEndAt = computed(() => {
@@ -239,33 +223,18 @@ async function loadLessons() {
     return;
   }
 
+  // 合并展示最近 30 天和未来 30 天课次，避免“今天”的记录在两个筛选页重复出现。
   const now = dayjs();
-  const startAt = period.value === 'future'
-    ? now.startOf('day')
-    : now.subtract(30, 'day').startOf('day');
-  const endAt = period.value === 'future'
-    ? now.add(30, 'day').endOf('day')
-    : now.endOf('day');
 
   loading.value = true;
   try {
-    const lessonRequest = fetchLessonOccurrences({
-      startAt: startAt.format('YYYY-MM-DDTHH:mm:ss'),
-      endAt: endAt.format('YYYY-MM-DDTHH:mm:ss'),
+    const response = await fetchLessonOccurrences({
+      startAt: now.subtract(30, 'day').startOf('day').format('YYYY-MM-DDTHH:mm:ss'),
+      endAt: now.add(30, 'day').endOf('day').format('YYYY-MM-DDTHH:mm:ss'),
       pageSize: 200,
     });
-    const pendingRequest = period.value === 'future'
-      ? fetchLessonOccurrences({
-        startAt: now.subtract(30, 'day').startOf('day').format('YYYY-MM-DDTHH:mm:ss'),
-        endAt: now.format('YYYY-MM-DDTHH:mm:ss'),
-        pageSize: 200,
-      })
-      : null;
-    const [response, pendingResponse] = await Promise.all([lessonRequest, pendingRequest]);
-    const pendingLessons = pendingResponse?.data.data.records
-      .filter(lesson => lesson.confirmStage === 'PENDING_ADMIN') || [];
-    lessons.value = [...response.data.data.records, ...pendingLessons]
-      .filter((lesson, index, list) => list.findIndex(item => item.id === lesson.id) === index);
+    lessons.value = [...response.data.data.records]
+      .sort((left, right) => left.plannedStartAt.localeCompare(right.plannedStartAt));
   } catch (error) {
     lessons.value = [];
     ElMessage.error(extractErrorMessage(error));
@@ -438,8 +407,7 @@ function formatTimeRange(startAt: string, endAt: string) {
   gap: 16px;
 }
 
-.my-lessons-page__header,
-.my-lessons-toolbar {
+.my-lessons-page__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -453,7 +421,6 @@ function formatTimeRange(startAt: string, endAt: string) {
 }
 
 .my-lessons-page__header p,
-.my-lessons-toolbar span,
 .my-lessons-form-hint,
 .my-lessons-no-action {
   color: var(--text-secondary);
@@ -474,13 +441,6 @@ function formatTimeRange(startAt: string, endAt: string) {
 
 .my-lessons-type-tabs :deep(.el-tabs__content) {
   display: none;
-}
-
-.my-lessons-toolbar {
-  border: 1px solid var(--surface-border);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 10px 12px;
 }
 
 .my-lessons-empty {
@@ -515,8 +475,7 @@ function formatTimeRange(startAt: string, endAt: string) {
 }
 
 @media (max-width: 720px) {
-  .my-lessons-page__header,
-  .my-lessons-toolbar {
+  .my-lessons-page__header {
     align-items: flex-start;
     flex-direction: column;
   }
