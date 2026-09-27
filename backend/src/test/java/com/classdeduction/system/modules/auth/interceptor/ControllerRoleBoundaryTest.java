@@ -57,6 +57,15 @@ class ControllerRoleBoundaryTest {
         assertThat(Set.of(revoke.value())).containsExactly("ADMIN");
     }
 
+    @Test
+    void registrationClassOptionsShouldBeAvailableToManagers() throws NoSuchMethodException {
+        RequireRoles listClasses = ClassGroupController.class
+                .getMethod("listClasses", com.classdeduction.system.common.dto.CurrentUserResponse.class)
+                .getAnnotation(RequireRoles.class);
+
+        assertThat(Set.of(listClasses.value())).containsExactlyInAnyOrder("ADMIN", "STAFF", "MANAGER", "TEACHER");
+    }
+
     private void assertClassRoles(Class<?> controller, String... expectedRoles) {
         assertThat(Set.of(controller.getAnnotation(RequireRoles.class).value()))
                 .containsExactlyInAnyOrder(expectedRoles);

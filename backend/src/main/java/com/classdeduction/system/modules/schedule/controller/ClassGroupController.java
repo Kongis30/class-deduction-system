@@ -26,7 +26,7 @@ public class ClassGroupController {
     private final ClassGroupService classGroupService;
 
     @GetMapping
-    @RequireRoles({"ADMIN", "STAFF", "TEACHER"})
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER", "TEACHER"})
     @Operation(summary = "List all active class groups")
     public ApiResponse<List<Map<String, Object>>> listClasses(
             @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
