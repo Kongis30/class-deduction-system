@@ -13,6 +13,9 @@ import java.time.LocalDateTime;
 @Schema(description = "Data summary filter")
 public class DataSummaryQuery {
 
+    @Schema(hidden = true)
+    private Long orderId;
+
     @Schema(description = "Keyword for student, phone, order, or course")
     private String keyword;
 

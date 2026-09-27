@@ -32,6 +32,20 @@ export function fetchEnrollmentOrder(id: string | number) {
   return http.get<ApiResponse<EnrollmentOrderDetailItem>>(`/v1/enrollment/orders/${id}`);
 }
 
+export interface ParticipantCourseAmountItem {
+  orderItemId: EntityId;
+  priceAmount: number;
+  amountDue: number;
+  paidAmount: number;
+  balanceAmount: number;
+}
+
+export function fetchParticipantCourseAmounts(orderId: EntityId, participantIndex: number) {
+  return http.get<ApiResponse<ParticipantCourseAmountItem[]>>(
+    `/v1/enrollment/orders/${orderId}/participants/${participantIndex}/course-amounts`,
+  );
+}
+
 export interface EnrollmentOrderSavePayload {
   studentId: string | number;
   courseProductId: string | number;

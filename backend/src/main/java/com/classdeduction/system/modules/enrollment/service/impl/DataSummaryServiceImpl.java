@@ -30,6 +30,7 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapp
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
+import com.classdeduction.system.modules.enrollment.vo.ParticipantCourseAmountVO;
 import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
@@ -79,6 +80,19 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final StudentMapper studentMapper;
     private final CampusMapper campusMapper;
     private final JsonHelper jsonHelper;
+
+    /** 复用 Data Summary 的逐学生、逐课程分摊口径，避免收款页另算一套金额。 */
+    @Override
+    public List<ParticipantCourseAmountVO> getParticipantCourseAmounts(Long orderId, Integer participantIndex) {
+        DataSummaryQuery query = new DataSummaryQuery();
+        query.setOrderId(orderId);
+        query.setIncludeInactiveOrders(true);
+        return getSummary(query).rows().stream()
+                .filter(row -> participantIndex.equals(row.participantIndex()) && row.orderItemId() != null)
+                .map(row -> new ParticipantCourseAmountVO(row.orderItemId(), row.linePriceAmount(),
+                        row.amountDue(), row.paidAmount(), row.balanceAmount().negate().max(ZERO_AMOUNT)))
+                .toList();
+    }
 
     @Override
     public DataSummaryResponseVO getSummary(DataSummaryQuery query) {
@@ -254,6 +268,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
     private List<EnrollmentOrderEntity> listOrders(DataSummaryQuery query, Set<Long> transportOrderIds) {
         return enrollmentOrderMapper.selectList(new LambdaQueryWrapper<EnrollmentOrderEntity>()
+                .eq(query.getOrderId() != null, EnrollmentOrderEntity::getId, query.getOrderId())
                 .in(transportOrderIds != null, EnrollmentOrderEntity::getId, transportOrderIds)
                 .ge(query.getSavedAtFrom() != null, EnrollmentOrderEntity::getCreatedAt, query.getSavedAtFrom())
                 .lt(query.getSavedAtBefore() != null, EnrollmentOrderEntity::getCreatedAt, query.getSavedAtBefore())

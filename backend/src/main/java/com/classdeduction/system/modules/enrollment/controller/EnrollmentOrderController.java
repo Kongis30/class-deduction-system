@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.enrollment.controller;
 
 import com.classdeduction.system.common.dto.CurrentUserResponse;
+import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.ApiResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.auth.annotation.RequireRoles;
@@ -10,10 +11,12 @@ import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderPageQuery
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderCorrectionRequest;
 import com.classdeduction.system.modules.enrollment.dto.EnrollmentOrderUpdateRequest;
 import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
+import com.classdeduction.system.modules.enrollment.service.DataSummaryService;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderListItemVO;
+import com.classdeduction.system.modules.enrollment.vo.ParticipantCourseAmountVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.RefundCoursePreviewVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -27,6 +30,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
+
 /**
  * 报名单控制器：负责报名开单与报名单查询。
  */
@@ -39,6 +44,7 @@ import org.springframework.web.bind.annotation.*;
 public class EnrollmentOrderController {
 
     private final EnrollmentOrderService enrollmentOrderService;
+    private final DataSummaryService dataSummaryService;
 
     @GetMapping
     @Operation(summary = "分页查询报名单")
@@ -50,6 +56,18 @@ public class EnrollmentOrderController {
     @Operation(summary = "查询报名单详情")
     public ResponseEntity<ApiResponse<EnrollmentOrderDetailVO>> getOrder(@PathVariable Long id) {
         return noStore(ApiResponse.success(enrollmentOrderService.getOrder(id)));
+    }
+
+    @GetMapping("/{id}/participants/{participantIndex}/course-amounts")
+    @Operation(summary = "查询报名单中单个学生的逐课程金额")
+    public ResponseEntity<ApiResponse<List<ParticipantCourseAmountVO>>> getParticipantCourseAmounts(
+            @PathVariable Long id, @PathVariable Integer participantIndex) {
+        EnrollmentOrderDetailVO order = enrollmentOrderService.getOrder(id);
+        if (order.participants() == null || order.participants().stream()
+                .noneMatch(participant -> participantIndex.equals(participant.participantIndex()))) {
+            throw new BusinessException("Student is not part of this enrollment order.");
+        }
+        return noStore(ApiResponse.success(dataSummaryService.getParticipantCourseAmounts(id, participantIndex)));
     }
 
     @PostMapping

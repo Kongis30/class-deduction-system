@@ -816,6 +816,47 @@ class DataSummaryServiceImplTest {
                 .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("775.00");
         assertThat(response.rows().stream().map(DataSummaryResponseVO.RowVO::paidAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("210.00");
+
+        // 收款窗口取第一位学生的两门课，不能把三人整单价格显示给她。
+        assertThat(dataSummaryService.getParticipantCourseAmounts(1L, 1))
+                .extracting(amount -> amount.priceAmount())
+                .containsExactly(new BigDecimal("66.66"), new BigDecimal("200.00"));
+        assertThat(dataSummaryService.getParticipantCourseAmounts(1L, 1))
+                .extracting(amount -> amount.amountDue())
+                .containsExactly(new BigDecimal("56.66"), new BigDecimal("195.00"));
+        assertThat(dataSummaryService.getParticipantCourseAmounts(1L, 1))
+                .extracting(amount -> amount.balanceAmount())
+                .containsExactly(new BigDecimal("24.16"), new BigDecimal("167.50"));
+    }
+
+    @Test
+    void shouldShowEachStudentHalfOfTheTwoStudentCoursePrice() {
+        EnrollmentOrderEntity order = order(1L, "150.00", "0.00", "150.00");
+        EnrollmentOrderItemEntity course = item(11L, 1, "150.00");
+        course.setCourseType("ONE_ON_ONE");
+        course.setAmountDue(new BigDecimal("150.00"));
+        PrivateLessonGroupEntity privateGroup = new PrivateLessonGroupEntity();
+        privateGroup.setId(91L);
+        privateGroup.setEnrollmentOrderId(1L);
+        privateGroup.setEnrollmentOrderItemId(11L);
+        privateGroup.setParticipantCount(2);
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(course));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(
+                billedParticipant(1L, 1, "Student 1", "75.00", "0.00", "75.00", "0.00", "[]"),
+                billedParticipant(2L, 2, "Student 2", "75.00", "0.00", "75.00", "0.00", "[]")));
+        when(privateLessonGroupMapper.selectList(any())).thenReturn(List.of(privateGroup));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(
+                student(1L, "Student 1"), student(2L, "Student 2")));
+
+        assertThat(dataSummaryService.getParticipantCourseAmounts(1L, 1))
+                .singleElement()
+                .satisfies(amount -> {
+                    assertThat(amount.priceAmount()).isEqualByComparingTo("75.00");
+                    assertThat(amount.amountDue()).isEqualByComparingTo("75.00");
+                    assertThat(amount.balanceAmount()).isEqualByComparingTo("75.00");
+                });
     }
 
     private EnrollmentOrderEntity order(Long id, String amountDue, String receivedAmount, String balanceAmount) {

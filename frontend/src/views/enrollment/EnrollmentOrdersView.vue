@@ -678,8 +678,10 @@
       </div>
 
       <div v-if="payCourseItems.length" class="payment-course-summary">
-        <div class="payment-course-summary__title">Courses in this order</div>
-        <el-table :data="payCourseItems" size="small" class="payment-course-summary__table">
+        <div class="payment-course-summary__title">
+          Courses in this order<span v-if="payParticipant"> · {{ payStudentName }}</span>
+        </div>
+        <el-table :data="payDisplayCourseItems" size="small" class="payment-course-summary__table">
           <el-table-column label="Course" min-width="220">
             <template #default="{ row }">
               <div class="payment-course-summary__course">
@@ -692,6 +694,9 @@
                 >Selected</el-tag>
               </div>
             </template>
+          </el-table-column>
+          <el-table-column label="Course price" width="125" align="right">
+            <template #default="{ row }">${{ Number(row.priceAmount ?? 0).toFixed(2) }}</template>
           </el-table-column>
           <el-table-column label="Amount due" width="120" align="right">
             <template #default="{ row }">${{ Number(row.amountDue ?? 0).toFixed(2) }}</template>
@@ -1165,7 +1170,7 @@ import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 
-import { cancelEnrollmentOrder, deleteEnrollmentOrderItem, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, fetchRefundPreview, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery, type RefundCoursePreviewItem } from '@/api/enrollment';
+import { cancelEnrollmentOrder, deleteEnrollmentOrderItem, forceVoidEnrollmentOrder, refundEnrollmentOrder, fetchEnrollmentOrders, fetchEnrollmentOrder, fetchParticipantCourseAmounts, fetchRefundPreview, createPaymentRecord, fetchActivePaymentMethods, fetchPaymentMethods, createPaymentMethod, updatePaymentMethod, deletePaymentMethod, type EnrollmentOrderQuery, type ParticipantCourseAmountItem, type RefundCoursePreviewItem } from '@/api/enrollment';
 import { fetchAllStudents, fetchDiscountPresets, createDiscountPreset, updateDiscountPreset, deleteDiscountPreset } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
 import { fetchStudentCreditBalance } from '@/api/student-credit';
@@ -1701,6 +1706,22 @@ const payFormRef = ref();
 const payOrder = ref<EnrollmentOrderItem | null>(null);
 const payParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
 const payCourseItems = ref<EnrollmentOrderLineItem[]>([]);
+const payParticipantCourseAmounts = ref<ParticipantCourseAmountItem[]>([]);
+// 支付分配仍按整单课程 ID 操作；表格金额仅展示当前学生的分摊结果。
+const payDisplayCourseItems = computed(() => {
+  if (!payParticipant.value) return payCourseItems.value;
+  const amountsByItemId = new Map(payParticipantCourseAmounts.value.map((amount) => [String(amount.orderItemId), amount]));
+  return payCourseItems.value.map((item) => {
+    const amount = amountsByItemId.get(String(item.id));
+    return amount ? {
+      ...item,
+      priceAmount: amount.priceAmount,
+      amountDue: amount.amountDue,
+      paidAmount: amount.paidAmount,
+      balanceAmount: amount.balanceAmount,
+    } : item;
+  });
+});
 const payTargetCourseId = ref<string | null>(null);
 const payTargetCourseBalance = ref<number | null>(null);
 const payCreditBalance = ref<number | null>(null);
@@ -2643,9 +2664,23 @@ async function openPayDialog(row: EnrollmentOrderItem,
       return;
     }
   }
+  let participantAmounts: ParticipantCourseAmountItem[] = [];
+  if (participant) {
+    try {
+      participantAmounts = (await fetchParticipantCourseAmounts(row.id, participant.participantIndex)).data.data;
+      const coveredItemIds = new Set(participantAmounts.map((amount) => String(amount.orderItemId)));
+      if (items.some((item) => !coveredItemIds.has(String(item.id)))) {
+        throw new Error('Student course amounts are incomplete.');
+      }
+    } catch (err: any) {
+      ElMessage.error(err?.response?.data?.message ?? err?.message ?? 'Failed to load student course amounts.');
+      return;
+    }
+  }
   payOrder.value = row;
   payParticipant.value = participant;
   payCourseItems.value = items;
+  payParticipantCourseAmounts.value = participantAmounts;
   payTargetCourseId.value = null;
   payTargetCourseBalance.value = null;
   const targetCourse = targetOrderItemId == null
