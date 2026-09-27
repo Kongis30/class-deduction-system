@@ -234,7 +234,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (occurrences.isEmpty()) {
             List<ClassGroupScheduleSlotEntity> slots = listClassScheduleSlots(classId);
             if (!slots.isEmpty()) {
-                generateFutureClassOccurrences(classGroup, slots, Collections.emptySet());
+                generateFutureClassOccurrences(classGroup, slots, Collections.emptyList(), AppTime.nowLocalDateTime());
                 occurrences = listClassOccurrenceEntities(classId);
             }
             if (occurrences.isEmpty()) {
@@ -695,9 +695,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             classGroupScheduleSlotMapper.insert(slot);
         }
 
-        int cancelledCount = removeFutureUnconfirmedOccurrences(classId);
-        Set<LocalDate> preservedDates = futurePreservedClassOccurrenceDates(classId);
-        int generatedCount = generateFutureClassOccurrences(classGroup, slots, preservedDates);
+        LocalDateTime rebuildFrom = AppTime.nowLocalDateTime();
+        int cancelledCount = removeFutureUnconfirmedOccurrences(classId, rebuildFrom);
+        List<LessonOccurrenceEntity> retainedOccurrences = retainedClassOccurrences(classId, rebuildFrom);
+        int generatedCount = generateFutureClassOccurrences(classGroup, slots, retainedOccurrences, rebuildFrom);
         return Map.of("classId", classId, "cancelledFutureOccurrences", cancelledCount, "generatedOccurrences", generatedCount);
     }
 
@@ -1326,13 +1327,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
     }
 
-    private int removeFutureUnconfirmedOccurrences(Long classId) {
-        LocalDateTime now = AppTime.nowLocalDateTime();
+    private int removeFutureUnconfirmedOccurrences(Long classId, LocalDateTime rebuildFrom) {
         List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
                         .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now));
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, rebuildFrom));
         if (futureOccurrences.isEmpty()) {
             return 0;
         }
@@ -1355,23 +1355,22 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .in(LessonOccurrenceEntity::getId, removableIds));
     }
 
-    private Set<LocalDate> futurePreservedClassOccurrenceDates(Long classId) {
-        LocalDateTime now = AppTime.nowLocalDateTime();
+    /** 重建时保留已开始或已有消课记录的课次，供新时段逐节比对。 */
+    private List<LessonOccurrenceEntity> retainedClassOccurrences(Long classId, LocalDateTime rebuildFrom) {
         return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
                         .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now))
-                .stream()
-                .map(LessonOccurrenceEntity::getPlannedStartAt)
-                .filter(Objects::nonNull)
-                .map(LocalDateTime::toLocalDate)
-                .collect(Collectors.toSet());
+                        .gt(LessonOccurrenceEntity::getPlannedEndAt, rebuildFrom));
     }
 
     private int generateFutureClassOccurrences(ClassGroupEntity classGroup,
                                                List<ClassGroupScheduleSlotEntity> slots,
-                                               Set<LocalDate> preservedDates) {
-        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
+                                               List<LessonOccurrenceEntity> retainedOccurrences,
+                                               LocalDateTime rebuildFrom) {
+        LocalDate today = rebuildFrom.toLocalDate();
+        Map<LocalDate, List<LessonOccurrenceEntity>> retainedByDate = retainedOccurrences.stream()
+                .filter(occurrence -> occurrence.getPlannedStartAt() != null && occurrence.getPlannedEndAt() != null)
+                .collect(Collectors.groupingBy(occurrence -> occurrence.getPlannedStartAt().toLocalDate()));
         LocalDate configuredStart = classGroup.getStartDate();
         LocalDate configuredEnd = classGroup.getEndDate();
         LocalDate startDate = configuredStart == null || configuredStart.isBefore(today) ? today : configuredStart;
@@ -1383,13 +1382,27 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
         int count = 0;
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
-            if (preservedDates.contains(date)) {
-                continue;
-            }
             int weekday = date.getDayOfWeek().getValue();
             for (ClassGroupScheduleSlotEntity slot : slots) {
                 if (!Objects.equals(slot.getWeekday(), weekday)) {
                     continue;
+                }
+                LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
+                // 已开始的课次由原记录保留；重建当天排课时不能再次生成并与原课次冲突。
+                if (plannedStartAt.isBefore(rebuildFrom)) {
+                    continue;
+                }
+                LocalDateTime plannedEndAt = LocalDateTime.of(date, slot.getEndTime());
+                List<LessonOccurrenceEntity> retainedOnDate = retainedByDate.getOrDefault(date, Collections.emptyList());
+                if (retainedOnDate.stream().anyMatch(existing ->
+                        plannedStartAt.equals(existing.getPlannedStartAt())
+                                && plannedEndAt.equals(existing.getPlannedEndAt()))) {
+                    continue;
+                }
+                if (retainedOnDate.stream().anyMatch(existing ->
+                        plannedStartAt.isBefore(existing.getPlannedEndAt())
+                                && plannedEndAt.isAfter(existing.getPlannedStartAt()))) {
+                    throw new BusinessException("SCHEDULE_CONFLICT", "A retained class lesson overlaps the new class schedule.");
                 }
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
                 occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
@@ -1400,8 +1413,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         ? classGroup.getTeacherId()
                         : slot.getTeacherId());
                 occurrence.setPlannedClassroomId(classGroup.getClassroomId());
-                occurrence.setPlannedStartAt(LocalDateTime.of(date, slot.getStartTime()));
-                occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
+                occurrence.setPlannedStartAt(plannedStartAt);
+                occurrence.setPlannedEndAt(plannedEndAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
                 occurrence.setPlanningStatus("SCHEDULED");
                 ensureNoGeneratedClassOccurrenceConflicts(occurrence);
