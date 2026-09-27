@@ -30,4 +30,7 @@ public class StudentPageQuery extends PageQuery {
 
     @Schema(description = "Whether the student has at least one enrollment order", example = "true")
     private Boolean hasEnrollmentOrder;
+
+    @Schema(description = "Sort students by name in ascending order", example = "true")
+    private Boolean sortByName;
 }

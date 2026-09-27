@@ -114,11 +114,18 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
             <if test="query.hasEnrollmentOrder != null and !query.hasEnrollmentOrder">
                 AND student_list.hasEnrollmentOrder = 0
             </if>
-            ORDER BY
-                CASE WHEN student_list.enrollmentBalanceAmount &gt; 0.00 THEN 0 ELSE 1 END,
-                CASE WHEN student_list.latestSignupDate IS NULL THEN 1 ELSE 0 END,
-                student_list.latestSignupDate DESC,
-                student_list.createdAt DESC
+            <choose>
+                <when test="query.sortByName != null and query.sortByName">
+                    ORDER BY LOWER(student_list.studentName), student_list.studentName, student_list.id
+                </when>
+                <otherwise>
+                    ORDER BY
+                        CASE WHEN student_list.enrollmentBalanceAmount &gt; 0.00 THEN 0 ELSE 1 END,
+                        CASE WHEN student_list.latestSignupDate IS NULL THEN 1 ELSE 0 END,
+                        student_list.latestSignupDate DESC,
+                        student_list.createdAt DESC
+                </otherwise>
+            </choose>
             </script>
             """)
     IPage<Map<String, Object>> selectStudentOperationPage(Page<Map<String, Object>> page,

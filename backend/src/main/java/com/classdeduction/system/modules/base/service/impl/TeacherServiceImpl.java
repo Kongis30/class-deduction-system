@@ -85,7 +85,8 @@ public class TeacherServiceImpl implements TeacherService {
                         .like(TeacherEntity::getTeacherName, query.getKeyword()))
                 .eq(StringUtils.hasText(query.getStatus()), TeacherEntity::getStatus, query.getStatus())
                 .eq(TeacherEntity::getIsDeleted, 0)
-                .orderByDesc(TeacherEntity::getCreatedAt);
+                .orderByAsc(TeacherEntity::getTeacherName)
+                .orderByAsc(TeacherEntity::getId);
         IPage<TeacherEntity> result = teacherMapper.selectPage(page, wrapper);
         return PageResponse.of(result.getRecords().stream().map(this::toVO).toList(),
                 result.getTotal(), result.getCurrent(), result.getSize());

@@ -1029,6 +1029,7 @@ async function loadData() {
       keyword: filters.keyword || undefined,
       campusId: filters.campusId || undefined,
       paymentStatus: filters.paymentStatus || undefined,
+      sortByName: true,
       pageNum: pagination.page,
       pageSize: pagination.size,
     };

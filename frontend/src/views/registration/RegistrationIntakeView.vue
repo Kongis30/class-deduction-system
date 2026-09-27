@@ -1383,11 +1383,15 @@ const activeStudentPickerOptions = computed(() => {
   const students = selectedStudent ? [selectedStudent, ...studentsForPicker.value] : studentsForPicker.value;
   const uniqueStudents = new Map<string, StudentItem>();
   students.forEach((student) => uniqueStudents.set(String(student.id), student));
+  const sortedStudents = Array.from(uniqueStudents.values()).sort((left, right) =>
+    left.studentName.localeCompare(right.studentName, undefined, { sensitivity: 'base' })
+      || String(left.id).localeCompare(String(right.id), undefined, { numeric: true }),
+  );
   const query = studentPickerQuery.value.trim().toLowerCase();
   if (!query) {
-    return Array.from(uniqueStudents.values());
+    return sortedStudents;
   }
-  return Array.from(uniqueStudents.values()).filter((student) => {
+  return sortedStudents.filter((student) => {
     if (selectedStudent && String(student.id) === String(selectedStudent.id)) {
       return true;
     }
