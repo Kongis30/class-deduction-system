@@ -243,6 +243,7 @@ export function fetchClassOccurrences(classId: string | number) {
 
 export interface ClassScheduleSlotPayload {
   teacherId?: string | number;
+  classroomId?: string | number;
   weekday: number;
   startTime: string;
   endTime: string;
@@ -250,6 +251,7 @@ export interface ClassScheduleSlotPayload {
 }
 
 export interface ClassScheduleUpdatePayload {
+  /** 兼容旧页面；新页面应在每个 slot 中提交资源。 */
   teacherId?: string | number;
   classroomId?: string | number;
   startDate?: string;

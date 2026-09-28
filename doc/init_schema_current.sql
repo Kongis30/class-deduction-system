@@ -203,6 +203,7 @@ CREATE TABLE `class_group_schedule_slot` (
   `id` bigint NOT NULL,
   `class_group_id` bigint NOT NULL,
   `teacher_id` bigint DEFAULT NULL COMMENT 'Optional teacher override for this weekly slot',
+  `classroom_id` bigint DEFAULT NULL COMMENT 'Classroom override for this weekly slot',
   `subject_name` varchar(128) DEFAULT NULL COMMENT 'Subject taught in this weekly class slot',
   `weekday` tinyint NOT NULL,
   `start_time` time NOT NULL,
@@ -222,8 +223,10 @@ CREATE TABLE `class_group_schedule_slot` (
   PRIMARY KEY (`id`),
   KEY `idx_class_group_schedule_slot` (`class_group_id`,`weekday`),
   KEY `idx_class_group_schedule_slot_teacher` (`teacher_id`,`weekday`,`start_time`),
+  KEY `idx_class_group_schedule_slot_classroom` (`classroom_id`,`weekday`,`start_time`),
   CONSTRAINT `fk_class_group_schedule_slot_group` FOREIGN KEY (`class_group_id`) REFERENCES `class_group` (`id`),
-  CONSTRAINT `fk_class_group_schedule_slot_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
+  CONSTRAINT `fk_class_group_schedule_slot_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`),
+  CONSTRAINT `fk_class_group_schedule_slot_classroom` FOREIGN KEY (`classroom_id`) REFERENCES `classroom` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 

@@ -641,7 +641,14 @@ export interface ClassGroupItem {
   startDate?: string;
   endDate?: string;
   activeStudentCount: number;
-  scheduleSlots?: Array<{ teacherId?: EntityId; weekday: number; startTime: string; endTime: string; plannedUnits?: number }>;
+  scheduleSlots?: Array<{
+    teacherId?: EntityId;
+    classroomId?: EntityId;
+    weekday: number;
+    startTime: string;
+    endTime: string;
+    plannedUnits?: number;
+  }>;
 }
 
 export interface ClassEnrolledStudentItem {
