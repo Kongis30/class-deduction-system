@@ -31,6 +31,10 @@ public class StudentPageQuery extends PageQuery {
     @Schema(description = "Whether the student has at least one enrollment order", example = "true")
     private Boolean hasEnrollmentOrder;
 
+    /** 收据页使用：同时纳入存在有效收据、但报名已取消或全额退款的学生。 */
+    @Schema(description = "Include students with saved receipts even without an active enrollment", example = "true")
+    private Boolean includeReceiptStudents;
+
     @Schema(description = "Sort students by name in ascending order", example = "true")
     private Boolean sortByName;
 }

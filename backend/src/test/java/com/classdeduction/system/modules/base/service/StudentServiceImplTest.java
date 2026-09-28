@@ -172,6 +172,21 @@ class StudentServiceImplTest {
     }
 
     @Test
+    void studentOperationPageCanIncludeStudentsWithActiveReceiptsWithoutChangingOtherQueries() throws NoSuchMethodException {
+        Select select = StudentMapper.class
+                .getMethod("selectStudentOperationPage", Page.class, StudentPageQuery.class)
+                .getAnnotation(Select.class);
+        String sql = String.join("\n", select.value());
+
+        assertThat(sql).contains("FROM receipt_record rr");
+        assertThat(sql).contains("rr.student_id = s.id");
+        assertThat(sql).contains("rr.is_deleted = 0");
+        assertThat(sql).contains("query.includeReceiptStudents != null and query.includeReceiptStudents");
+        assertThat(sql).contains("OR EXISTS (");
+        assertThat(sql).contains("student_list.hasEnrollmentOrder = 1 OR student_list.hasActiveReceipt = 1");
+    }
+
+    @Test
     void shouldCascadeDeleteLoginAndOperationalDataWhenDeletingStudent() {
         StudentEntity student = new StudentEntity();
         student.setId(1L);

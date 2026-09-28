@@ -57,6 +57,15 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
                         WHEN agg.enrollmentCount IS NULL THEN 0
                         ELSE 1
                     END AS hasEnrollmentOrder,
+                    CASE
+                        WHEN EXISTS (
+                            SELECT 1
+                            FROM receipt_record rr
+                            WHERE rr.student_id = s.id
+                              AND rr.is_deleted = 0
+                        ) THEN 1
+                        ELSE 0
+                    END AS hasActiveReceipt,
                     s.created_at AS createdAt,
                     s.updated_at AS updatedAt
                 FROM student s
@@ -82,7 +91,17 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
                         AND eo.payment_status &lt;&gt; 'REFUNDED'
                     GROUP BY eo.student_id
                 ) agg ON agg.studentId = s.id
-                WHERE s.is_deleted = 0
+                WHERE (
+                    s.is_deleted = 0
+                <if test="query.includeReceiptStudents != null and query.includeReceiptStudents">
+                    OR EXISTS (
+                        SELECT 1
+                        FROM receipt_record rr
+                        WHERE rr.student_id = s.id
+                          AND rr.is_deleted = 0
+                    )
+                </if>
+                )
                 <if test="query.keyword != null">
                     AND (s.student_name LIKE CONCAT('%', #{query.keyword}, '%')
                         OR REPLACE(REPLACE(LOWER(s.student_name), ' ', ''), '-', '')
@@ -113,6 +132,9 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
             </if>
             <if test="query.hasEnrollmentOrder != null and !query.hasEnrollmentOrder">
                 AND student_list.hasEnrollmentOrder = 0
+            </if>
+            <if test="query.includeReceiptStudents != null and query.includeReceiptStudents">
+                AND (student_list.hasEnrollmentOrder = 1 OR student_list.hasActiveReceipt = 1)
             </if>
             <choose>
                 <when test="query.sortByName != null and query.sortByName">

@@ -10,6 +10,7 @@ export interface StudentQuery {
   campusId?: EntityId;
   paymentStatus?: string;
   hasEnrollmentOrder?: boolean;
+  includeReceiptStudents?: boolean;
   sortByName?: boolean;
   pageNum?: number;
   pageSize?: number;
