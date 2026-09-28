@@ -2532,6 +2532,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (participant == null) {
             return;
         }
+        if (isParticipantCourseStopped(item, participant)) {
+            return;
+        }
+        reduceStoppedCourseDue(order, item, participant, usage, remainingPaidAmount);
         saveParticipantCourseRefundState(order, item, participant, usage);
         if (item.getClassId() != null) {
             for (ClassEnrollmentEntity enrollment : listClassEnrollments(item, order)) {
@@ -2553,12 +2557,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         .eq(CoursePackageEntity::getEnrollmentOrderItemId, item.getId())
                         .eq(CoursePackageEntity::getStudentId, participant.getStudentId())
                         .eq(CoursePackageEntity::getIsDeleted, 0));
+        boolean sharedOrder = listOrderParticipants(order.getId()).size() > 1;
         for (CoursePackageEntity coursePackage : packages) {
             int lineUnits = Math.max(0, item.getOneOnOneUnits() == null ? 0 : item.getOneOnOneUnits());
             int consumedUnits = Math.min(lineUnits, Math.max(0, usage.consumedLessonCount()));
-            int newTotalUnits = Math.max(0, safeInt(coursePackage.getTotalUnits()) - lineUnits);
+            int unconsumedUnits = Math.max(0, lineUnits - consumedUnits);
+            int newTotalUnits = Math.max(0, safeInt(coursePackage.getTotalUnits()) - unconsumedUnits);
             int newRemainingUnits = Math.min(newTotalUnits, Math.max(0,
-                    safeInt(coursePackage.getRemainingUnits()) - Math.max(0, lineUnits - consumedUnits)));
+                    safeInt(coursePackage.getRemainingUnits()) - unconsumedUnits));
             coursePackage.setTotalUnits(newTotalUnits);
             coursePackage.setRemainingUnits(newRemainingUnits);
             coursePackage.setConsumedUnits(Math.max(0, newTotalUnits - newRemainingUnits));
@@ -2578,7 +2584,105 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 member.setMemberStatus("INACTIVE");
                 privateLessonGroupMemberMapper.updateById(member);
             }
+            if (!packageStillHasHours && member != null
+                    && !hasActivePrivateLessonGroupMembers(member.getPrivateLessonGroupId())) {
+                cancelFutureOccurrencesForPrivateGroup(member.getPrivateLessonGroupId());
+                deactivateRecurringSchedulesForPrivateGroup(member.getPrivateLessonGroupId());
+            } else if (!packageStillHasHours && member == null && !sharedOrder) {
+                cancelFutureOccurrences(List.of(coursePackage.getId()));
+                deactivateRecurringSchedules(List.of(coursePackage.getId()));
+            }
+            // 旧共享包缺少成员映射时，无法证明课次只属于该学生，因此保留共享课表。
         }
+    }
+
+    /** 停课后只将目标学生该课程未消费的应收额从个人和订单汇总中扣除一次。 */
+    private void reduceStoppedCourseDue(EnrollmentOrderEntity order,
+                                        EnrollmentOrderItemEntity item,
+                                        EnrollmentOrderParticipantEntity participant,
+                                        ClassUsage usage,
+                                        BigDecimal remainingPaidAmount) {
+        List<EnrollmentOrderParticipantEntity> participants = listOrderParticipants(order.getId());
+        int participantCount = Math.max(1, participants.size());
+        BigDecimal originalCourseDue = participantCount <= 1
+                ? defaultAmount(item.getAmountDue())
+                : participantCourseGross(item, participant, participantCount)
+                        .add(participantCourseFee(item, participant))
+                        .subtract(participantCourseDiscount(item, participant, participantCount))
+                        .max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal stoppedCourseDue = usage.consumedAmount().min(originalCourseDue)
+                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal reduction = originalCourseDue.subtract(stoppedCourseDue).max(ZERO_AMOUNT);
+        if (reduction.compareTo(ZERO_AMOUNT) <= 0) {
+            return;
+        }
+
+        if (participantCount <= 1) {
+            item.setAmountDue(stoppedCourseDue);
+            item.setItemStatus("STOPPED");
+            item.setPaidAmount(defaultAmount(remainingPaidAmount));
+            item.setBalanceAmount(stoppedCourseDue.subtract(defaultAmount(remainingPaidAmount)));
+            enrollmentOrderItemMapper.updateById(item);
+        } else {
+            participant.setAmountDue(defaultAmount(participant.getAmountDue()).subtract(reduction).max(ZERO_AMOUNT));
+            participant.setBalanceAmount(defaultAmount(participant.getAmountDue())
+                    .subtract(defaultAmount(participant.getPaidAmount())));
+            enrollmentOrderParticipantMapper.updateById(participant);
+        }
+        order.setAmountDue(defaultAmount(order.getAmountDue()).subtract(reduction).max(ZERO_AMOUNT));
+        order.setBalanceAmount(defaultAmount(order.getAmountDue()).subtract(defaultAmount(order.getReceivedAmount())));
+        order.setPaymentStatus(resolvePaymentStatus(order.getAmountDue(), ZERO_AMOUNT, order.getReceivedAmount()));
+        enrollmentOrderMapper.updateById(order);
+    }
+
+    private BigDecimal participantCourseFee(EnrollmentOrderItemEntity item,
+                                            EnrollmentOrderParticipantEntity participant) {
+        if (participant.getParticipantIndex() == null || participant.getParticipantIndex() != 1) {
+            return ZERO_AMOUNT;
+        }
+        return defaultAmount(item.getAmountDue()).subtract(defaultAmount(item.getPriceAmount()))
+                .add(defaultAmount(item.getDiscountAmount())).max(ZERO_AMOUNT);
+    }
+
+    private boolean hasActivePrivateLessonGroupMembers(Long groupId) {
+        if (groupId == null) {
+            return false;
+        }
+        return privateLessonGroupMemberMapper.selectCount(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, groupId)
+                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)) > 0;
+    }
+
+    private void cancelFutureOccurrencesForPrivateGroup(Long groupId) {
+        if (groupId == null) {
+            return;
+        }
+        lessonOccurrenceMapper.update(new LambdaUpdateWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPrivateLessonGroupId, groupId)
+                .in(LessonOccurrenceEntity::getPlanningStatus, List.of("SCHEDULED", "ADJUSTED"))
+                .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
+                .set(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
+    }
+
+    private void deactivateRecurringSchedulesForPrivateGroup(Long groupId) {
+        if (groupId == null) {
+            return;
+        }
+        List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .eq(RecurringScheduleRuleEntity::getPrivateLessonGroupId, groupId)
+                        .ne(RecurringScheduleRuleEntity::getRuleStatus, "INACTIVE"));
+        if (rules.isEmpty()) {
+            return;
+        }
+        List<Long> ruleIds = rules.stream().map(RecurringScheduleRuleEntity::getId).toList();
+        recurringScheduleRuleMapper.update(new LambdaUpdateWrapper<RecurringScheduleRuleEntity>()
+                .in(RecurringScheduleRuleEntity::getId, ruleIds)
+                .set(RecurringScheduleRuleEntity::getRuleStatus, "INACTIVE"));
+        recurringScheduleSlotMapper.update(new LambdaUpdateWrapper<RecurringScheduleSlotEntity>()
+                .in(RecurringScheduleSlotEntity::getRuleId, ruleIds)
+                .set(RecurringScheduleSlotEntity::getSlotStatus, "INACTIVE"));
     }
 
     /** 停课状态按收据课程和参与学生精确存档，不使用共享订单项的全局状态。 */

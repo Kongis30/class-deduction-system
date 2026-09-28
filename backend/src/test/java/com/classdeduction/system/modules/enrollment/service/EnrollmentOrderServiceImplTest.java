@@ -197,6 +197,8 @@ class EnrollmentOrderServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassEnrollmentEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""),
+                com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderItemEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""),
                 com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity.class);
@@ -838,6 +840,100 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldStopOnlyTheRefundedPrivateCourseAndCancelItsFutureScheduleAtConsumedThreshold() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setStudentNameSnapshot("Student 1");
+        order.setCreatedAt(LocalDateTime.of(2026, 9, 1, 10, 0));
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        order.setAmountDue(new BigDecimal("100.00"));
+        order.setBalanceAmount(BigDecimal.ZERO);
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(4401L);
+        item.setEnrollmentOrderId(order.getId());
+        item.setLineNo(1);
+        item.setCourseType("ONE_ON_ONE");
+        item.setPriceAmount(new BigDecimal("100.00"));
+        item.setDiscountAmount(BigDecimal.ZERO);
+        item.setAmountDue(new BigDecimal("100.00"));
+        item.setOneOnOneUnits(10);
+        item.setItemStatus("ACTIVE");
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(3001L);
+        coursePackage.setEnrollmentOrderId(order.getId());
+        coursePackage.setEnrollmentOrderItemId(item.getId());
+        coursePackage.setStudentId(order.getStudentId());
+        coursePackage.setPackageStatus("ACTIVE");
+        coursePackage.setTotalUnits(10);
+        coursePackage.setConsumedUnits(2);
+        coursePackage.setRemainingUnits(8);
+        coursePackage.setReceivedAmount(new BigDecimal("100.00"));
+
+        PaymentRecordEntity originalPayment = buildPayment(7001L, new BigDecimal("100.00"), 1);
+        PaymentAllocationEntity originalAllocation = new PaymentAllocationEntity();
+        originalAllocation.setPaymentRecordId(originalPayment.getId());
+        originalAllocation.setEnrollmentOrderId(order.getId());
+        originalAllocation.setEnrollmentOrderItemId(item.getId());
+        originalAllocation.setAmount(new BigDecimal("100.00"));
+
+        LessonRecordEntity usedLesson = new LessonRecordEntity();
+        usedLesson.setPackageId(coursePackage.getId());
+        usedLesson.setConfirmStage("CONFIRMED");
+        usedLesson.setIsDeleted(0);
+        usedLesson.setDeductedUnits(2);
+        usedLesson.setPlannedStartAt(LocalDateTime.of(2026, 9, 10, 18, 0));
+
+        when(enrollmentOrderMapper.selectById(order.getId())).thenReturn(order);
+        when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
+        when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
+        when(enrollmentOrderItemMapper.selectById(item.getId())).thenReturn(item);
+        when(enrollmentOrderParticipantMapper.selectCount(any())).thenReturn(null);
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(originalAllocation));
+        when(paymentRecordMapper.selectBatchIds(any())).thenReturn(List.of(originalPayment));
+        when(paymentMethodMapper.selectCount(any())).thenReturn(1L);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(usedLesson));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
+        when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"REFUND\"}");
+        doAnswer(invocation -> {
+            PaymentRecordEntity entity = invocation.getArgument(0);
+            entity.setId(8001L);
+            return 1;
+        }).when(paymentRecordMapper).insert(any(PaymentRecordEntity.class));
+        doAnswer(invocation -> {
+            ReceiptRecordEntity entity = invocation.getArgument(0);
+            entity.setId(9002L);
+            return 1;
+        }).when(receiptRecordMapper).insert(any(ReceiptRecordEntity.class));
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setOrderItemId(item.getId());
+        request.setRefundAmount(new BigDecimal("80.00"));
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+
+        enrollmentOrderService.refundOrder(order.getId(), request);
+
+        assertThat(item.getItemStatus()).isEqualTo("STOPPED");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("20.00");
+        assertThat(item.getPaidAmount()).isEqualByComparingTo("20.00");
+        assertThat(item.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(order.getAmountDue()).isEqualByComparingTo("20.00");
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(coursePackage.getTotalUnits()).isEqualTo(2);
+        assertThat(coursePackage.getRemainingUnits()).isZero();
+        assertThat(coursePackage.getPackageStatus()).isEqualTo("CLOSED");
+        verify(lessonOccurrenceMapper).update(any());
+        verify(recurringScheduleRuleMapper).selectList(any());
+    }
+
+    @Test
     void shouldRejectRefundWithUnavailablePaymentMethodBeforeChangingArtifacts() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
@@ -984,8 +1080,10 @@ class EnrollmentOrderServiceImplTest {
         assertThat(paymentCaptor.getValue().getParticipantIndex()).isEqualTo(2);
         assertThat(paymentCaptor.getValue().getAmount()).isEqualByComparingTo(new BigDecimal("-125.00"));
         assertThat(order.getReceivedAmount()).isEqualByComparingTo(new BigDecimal("250.00"));
-        assertThat(order.getBalanceAmount()).isEqualByComparingTo(new BigDecimal("125.00"));
-        assertThat(order.getPaymentStatus()).isEqualTo("PARTIAL");
+        assertThat(order.getAmountDue()).isEqualByComparingTo(new BigDecimal("250.00"));
+        assertThat(order.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
+        assertThat(order.getPaymentStatus()).isEqualTo("PAID");
+        assertThat(selected.getAmountDue()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(order.getOrderStatus()).isEqualTo("CONFIRMED");
         assertThat(selected.getPaidAmount()).isEqualByComparingTo(BigDecimal.ZERO);
         assertThat(first.getPaidAmount()).isEqualByComparingTo(new BigDecimal("125.00"));
@@ -1068,8 +1166,11 @@ class EnrollmentOrderServiceImplTest {
 
         verify(classEnrollmentMapper).updateById(classEnrollmentCaptor.capture());
         assertThat(classEnrollmentCaptor.getValue().getStatus()).isEqualTo("WITHDRAWN");
-        verify(enrollmentOrderItemMapper, never()).updateById(item);
-        assertThat(item.getItemStatus()).isEqualTo("ACTIVE");
+        verify(enrollmentOrderItemMapper, atLeastOnce()).updateById(item);
+        assertThat(item.getItemStatus()).isEqualTo("STOPPED");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("143.69");
+        assertThat(item.getPaidAmount()).isEqualByComparingTo("143.69");
+        assertThat(item.getBalanceAmount()).isEqualByComparingTo(BigDecimal.ZERO);
         verify(enrollmentOrderCourseRefundStateMapper).insert(any(
                 com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity.class));
         verify(lessonOccurrenceMapper, never()).update(any());

@@ -179,6 +179,14 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         PrivateLessonGroupEntity::getId,
                         (left, right) -> left,
                         LinkedHashMap::new));
+        Map<Long, Long> unambiguousPrivateLessonGroupIdByOrderId = privateLessonGroups.stream()
+                .filter(group -> group.getEnrollmentOrderId() != null && group.getId() != null)
+                .collect(Collectors.groupingBy(PrivateLessonGroupEntity::getEnrollmentOrderId,
+                        LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .filter(entry -> entry.getValue().size() == 1)
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().get(0).getId(),
+                        (left, right) -> left, LinkedHashMap::new));
         Map<Long, Integer> privateLessonParticipantCountByOrderItemId = privateLessonGroups.stream()
                 .filter(group -> group.getEnrollmentOrderItemId() != null && group.getParticipantCount() != null)
                 .collect(Collectors.toMap(
@@ -253,7 +261,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         }
         List<DataSummaryResponseVO.RowVO> rows = buildRows(orderMap, itemsByOrderId, packagesByOrderId,
                         participantsByOrderId, privateLessonGroupIdByOrderItemId, privateLessonParticipantCountByOrderItemId,
-                        privateLessonParticipantCountByOrderId,
+                        unambiguousPrivateLessonGroupIdByOrderId, privateLessonParticipantCountByOrderId,
                         refundStateByParticipantCourse,
                         packageByOrderItemId,
                         reviewIssuesByOrderId,
@@ -409,6 +417,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, List<EnrollmentOrderParticipantEntity>> participantsByOrderId,
             Map<Long, Long> privateLessonGroupIdByOrderItemId,
             Map<Long, Integer> privateLessonParticipantCountByOrderItemId,
+            Map<Long, Long> unambiguousPrivateLessonGroupIdByOrderId,
             Map<Long, Integer> privateLessonParticipantCountByOrderId,
             Map<ParticipantCourseKey, EnrollmentOrderCourseRefundStateEntity> refundStateByParticipantCourse,
             Map<Long, CoursePackageEntity> packageByOrderItemId,
@@ -442,7 +451,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, null);
                     rows.add(toRow(order, null, Collections.emptyList(), coursePackage, participant,
                             null,
-                            null,
+                            unambiguousPrivateLessonGroupIdByOrderId.get(order.getId()),
                             sharedPrivateLesson ? privateLessonParticipantCount : null,
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
@@ -464,6 +473,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 }
                 boolean sharedPrivateLesson = isSharedPrivateLesson(privateLessonParticipantCount);
                 Long privateLessonGroupId = privateLessonGroupIdByOrderItemId.get(item.getId());
+                if (privateLessonGroupId == null && countOneOnOneItems(orderItems) == 1) {
+                    privateLessonGroupId = unambiguousPrivateLessonGroupIdByOrderId.get(order.getId());
+                }
                 CoursePackageEntity defaultPackage = firstNonNull(packageByOrderItemId.get(item.getId()),
                         findPackageForItem(packagesByOrderId.get(order.getId()), item));
                 for (EnrollmentOrderParticipantEntity participant : displayParticipants) {
@@ -487,6 +499,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             }
         }
         return rows;
+    }
+
+    private long countOneOnOneItems(List<EnrollmentOrderItemEntity> items) {
+        return items.stream().filter(item -> "ONE_ON_ONE".equalsIgnoreCase(item.getCourseType())).count();
     }
 
     private Integer resolvePrivateLessonParticipantCount(Long orderItemId,

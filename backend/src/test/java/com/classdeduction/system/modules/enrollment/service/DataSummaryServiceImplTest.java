@@ -860,6 +860,33 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldFallbackToLegacyPrivateGroupWhenReceiptHasOnePrivateCourse() {
+        EnrollmentOrderEntity order = order(1L, "150.00", "0.00", "150.00");
+        EnrollmentOrderItemEntity course = item(11L, 1, "150.00");
+        course.setCourseType("ONE_ON_ONE");
+        course.setAmountDue(new BigDecimal("150.00"));
+        PrivateLessonGroupEntity legacyGroup = new PrivateLessonGroupEntity();
+        legacyGroup.setId(91L);
+        legacyGroup.setEnrollmentOrderId(1L);
+        legacyGroup.setEnrollmentOrderItemId(null);
+        legacyGroup.setParticipantCount(2);
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(course));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(
+                billedParticipant(1L, 1, "Student 1", "75.00", "0.00", "75.00", "0.00", "[]"),
+                billedParticipant(2L, 2, "Student 2", "75.00", "0.00", "75.00", "0.00", "[]")));
+        when(privateLessonGroupMapper.selectList(any())).thenReturn(List.of(legacyGroup));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(
+                student(1L, "Student 1"), student(2L, "Student 2")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::privateLessonGroupId)
+                .containsExactly(91L, 91L);
+    }
+
+    @Test
     void shouldShowEachStudentHalfOfTheTwoStudentCoursePrice() {
         EnrollmentOrderEntity order = order(1L, "150.00", "0.00", "150.00");
         EnrollmentOrderItemEntity course = item(11L, 1, "150.00");
