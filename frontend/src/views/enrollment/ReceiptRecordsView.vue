@@ -4,7 +4,7 @@
       <div>
         <span class="hero-card__eyebrow table-page-header__eyebrow">Receipts</span>
         <h2>Student Receipts</h2>
-        <p>Review saved registration, payment, and refund receipts.</p>
+        <p>Review saved registration and refund receipts.</p>
       </div>
       <el-button class="action-primary" type="primary" :loading="studentLoading" @click="loadStudents">Refresh</el-button>
     </section>
@@ -48,7 +48,6 @@
         <section class="panel-card records-panel">
           <el-tabs v-model="receiptType" class="receipt-type-tabs" @tab-change="handleReceiptTypeChange">
             <el-tab-pane label="Registration receipts" name="registration" />
-            <el-tab-pane label="Payment receipts" name="payment" />
             <el-tab-pane label="Refund receipts" name="refund" />
           </el-tabs>
 
@@ -58,7 +57,7 @@
               <strong>{{ selectedStudent?.studentName || 'No student selected' }}</strong>
             </div>
             <p v-if="selectedStudent">
-              {{ recordTotal }} saved {{ receiptType }} receipt{{ recordTotal === 1 ? '' : 's' }}.
+              {{ recordTotal }} saved {{ receiptType === 'refund' ? 'refund' : 'registration' }} receipt{{ recordTotal === 1 ? '' : 's' }}.
             </p>
             <p v-else>Select a student to view receipts.</p>
           </div>
@@ -191,7 +190,7 @@ const studentLoading = ref(false);
 const receiptLoading = ref(false);
 const students = ref<StudentItem[]>([]);
 const selectedStudent = ref<StudentItem | null>(null);
-const receiptType = ref<'registration' | 'payment' | 'refund'>('registration');
+const receiptType = ref<'registration' | 'refund'>('registration');
 const receipts = ref<ReceiptRecordItem[]>([]);
 const receiptTotal = ref(0);
 const recordTotal = computed(() => receiptTotal.value);
@@ -227,7 +226,7 @@ async function loadStudents() {
   try {
     const query = {
       keyword: studentQuery.keyword.trim() || undefined,
-      hasEnrollmentOrder: true,
+      includeReceiptStudents: true,
       sortByName: true,
       pageSize: STUDENT_PAGE_SIZE,
     };
@@ -301,7 +300,6 @@ function selectStudentById(studentId: string) {
 
 const receiptTemplateCodes = {
   registration: 'DEFAULT_RECEIPT',
-  payment: 'PAYMENT_RECEIPT',
   refund: 'REFUND_RECEIPT',
 } as const;
 
