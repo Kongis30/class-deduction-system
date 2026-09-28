@@ -651,7 +651,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 && classGroup.getTotalSessions() != null
                 ? Math.max(classGroup.getTotalSessions() - existingSessionDates.size(), 0)
                 : Integer.MAX_VALUE;
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, endDate);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), startDate, endDate);
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
             if (classHolidayService.isHoliday(date, holidays)) {
                 continue;

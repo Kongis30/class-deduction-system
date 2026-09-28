@@ -3403,7 +3403,6 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         .eq(ClassGroupEntity::getBillingType, "MONTHLY")
                         .isNotNull(ClassGroupEntity::getStartMonth)
                         .isNotNull(ClassGroupEntity::getEndMonth));
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays();
         LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
         int inserted = 0;
         for (ClassGroupEntity group : activeGroups) {
@@ -3412,6 +3411,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 if (window == null) {
                     continue;
                 }
+                List<ClassHolidayVO> holidays = classHolidayService.listHolidays(group.getProductId());
                 inserted += ensureClassOccurrencesThrough(group, window[0], window[1], holidays);
             } catch (RuntimeException ex) {
                 log.warn("Failed to renew occurrences for class group id={}: {}", group.getId(), ex.getMessage());

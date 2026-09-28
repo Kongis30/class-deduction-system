@@ -28,26 +28,26 @@ export interface ClassHolidayPreview {
   conflicts: string[];
 }
 
-export function fetchClassHolidays() {
-  return http.get<ApiResponse<ClassHolidayItem[]>>('/v1/classes/holidays');
+export function fetchClassHolidays(courseProductId: EntityId) {
+  return http.get<ApiResponse<ClassHolidayItem[]>>(`/v1/base/course-products/${courseProductId}/holidays`);
 }
 
-export function previewClassHoliday(data: ClassHolidaySavePayload, holidayId?: EntityId) {
-  return http.post<ApiResponse<ClassHolidayPreview>>('/v1/classes/holidays/preview', data, {
+export function previewClassHoliday(courseProductId: EntityId, data: ClassHolidaySavePayload, holidayId?: EntityId) {
+  return http.post<ApiResponse<ClassHolidayPreview>>(`/v1/base/course-products/${courseProductId}/holidays/preview`, data, {
     params: holidayId ? { holidayId } : undefined,
   });
 }
 
-export function createClassHoliday(data: ClassHolidaySavePayload) {
-  return http.post<ApiResponse<ClassHolidayItem>>('/v1/classes/holidays', data);
+export function createClassHoliday(courseProductId: EntityId, data: ClassHolidaySavePayload) {
+  return http.post<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays`, data);
 }
 
-export function updateClassHoliday(id: EntityId, data: ClassHolidaySavePayload) {
-  return http.put<ApiResponse<ClassHolidayItem>>(`/v1/classes/holidays/${id}`, data);
+export function updateClassHoliday(courseProductId: EntityId, id: EntityId, data: ClassHolidaySavePayload) {
+  return http.put<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`, data);
 }
 
-export function deleteClassHoliday(id: EntityId) {
-  return http.delete<ApiResponse<void>>(`/v1/classes/holidays/${id}`);
+export function deleteClassHoliday(courseProductId: EntityId, id: EntityId) {
+  return http.delete<ApiResponse<void>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`);
 }
 
 export interface ScheduleStudentOption {

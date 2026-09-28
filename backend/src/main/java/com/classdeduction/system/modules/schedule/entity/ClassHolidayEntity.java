@@ -11,16 +11,18 @@ import lombok.ToString;
 
 import java.time.LocalDate;
 
-/** 全校区共用的班课假期区间。 */
+/** 单个班课 Course 下所有实际班级共用的假期区间。 */
 @Getter
 @Setter
 @ToString(callSuper = true)
 @EqualsAndHashCode(callSuper = true)
-@TableName("class_holiday")
+@TableName("course_holiday")
 public class ClassHolidayEntity extends BaseEntity {
 
     @TableId(type = IdType.ASSIGN_ID)
     private Long id;
+
+    private Long courseProductId;
 
     private String holidayName;
 

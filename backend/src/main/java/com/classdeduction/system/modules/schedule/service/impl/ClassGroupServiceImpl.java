@@ -324,7 +324,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
-                        .isNull(LessonOccurrenceEntity::getClassHolidayId)
+                        .isNull(LessonOccurrenceEntity::getCourseHolidayId)
                         .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
     }
 
@@ -344,7 +344,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (occ == null || !classId.equals(occ.getClassGroupId())) {
             throw new BusinessException("OCCURRENCE_NOT_FOUND", "Lesson occurrence not found for this class.");
         }
-        if (occ.getClassHolidayId() != null || "CANCELLED".equals(occ.getPlanningStatus())) {
+        if (occ.getCourseHolidayId() != null || "CANCELLED".equals(occ.getPlanningStatus())) {
             throw new BusinessException("CLASS_LESSON_CANCELLED", "This class lesson is cancelled for a school holiday.");
         }
         if (occ.getPlanningStatus().equals("CANCELLED")) {
@@ -1508,7 +1508,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         boolean hasSlotTeacher = slots.stream().anyMatch(item -> item.getTeacherId() != null);
         boolean hasSlotClassroom = slots.stream().anyMatch(item -> item.getClassroomId() != null);
         int count = 0;
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, endDate);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), startDate, endDate);
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
             if (classHolidayService.isHoliday(date, holidays)) {
                 continue;

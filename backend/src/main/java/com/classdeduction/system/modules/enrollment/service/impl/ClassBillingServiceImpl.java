@@ -83,7 +83,7 @@ public class ClassBillingServiceImpl implements ClassBillingService {
         } else if ("WEEK".equals(unit)) {
             expiryDate = enrollmentDate.plusWeeks(quantity).minusDays(1);
         } else if ("SESSION".equals(unit)) {
-            expiryDate = computeSessionExpiryDate(enrollmentDate, slots, quantity, configuredEnd);
+            expiryDate = computeSessionExpiryDate(classGroup.getProductId(), enrollmentDate, slots, quantity, configuredEnd);
         } else {
             throw new BusinessException("INVALID_PACKAGE_UNIT",
                     "Group class package unit must be MONTH, WEEK, or SESSION.");
@@ -102,14 +102,14 @@ public class ClassBillingServiceImpl implements ClassBillingService {
                         .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
     }
 
-    private LocalDate computeSessionExpiryDate(LocalDate startDate,
+    private LocalDate computeSessionExpiryDate(Long courseProductId, LocalDate startDate,
                                                List<ClassGroupScheduleSlotEntity> slots,
                                                int quantity,
                                                LocalDate configuredEnd) {
         if (!slots.isEmpty()) {
-            LocalDate expiryDate = computeNthSessionDate(startDate, slots, quantity);
+            LocalDate expiryDate = computeNthSessionDate(courseProductId, startDate, slots, quantity);
             if (configuredEnd != null && expiryDate.isAfter(configuredEnd)
-                    && holidayCausedSessionOverflow(startDate, configuredEnd, slots, quantity)) {
+                    && holidayCausedSessionOverflow(courseProductId, startDate, configuredEnd, slots, quantity)) {
                 throw new BusinessException("CLASS_HOLIDAY_EXCEEDS_CLASS_END",
                         "The selected SESSION package cannot fit before the class end date because of class holidays.");
             }
@@ -121,14 +121,14 @@ public class ClassBillingServiceImpl implements ClassBillingService {
         return startDate.plusDays(quantity - 1L);
     }
 
-    private LocalDate computeNthSessionDate(LocalDate startDate,
+    private LocalDate computeNthSessionDate(Long courseProductId, LocalDate startDate,
                                             List<ClassGroupScheduleSlotEntity> slots,
                                             int n) {
         Set<Integer> weekdays = slots.stream()
                 .map(ClassGroupScheduleSlotEntity::getWeekday)
                 .collect(Collectors.toCollection(java.util.TreeSet::new));
         LocalDate limit = startDate.plusYears(10);
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, limit);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(courseProductId, startDate, limit);
         int count = 0;
         for (LocalDate date = startDate; !date.isAfter(limit); date = date.plusDays(1)) {
             if (weekdays.contains(date.getDayOfWeek().getValue()) && !classHolidayService.isHoliday(date, holidays)) {
@@ -142,13 +142,13 @@ public class ClassBillingServiceImpl implements ClassBillingService {
     }
 
     /** 假期导致可上课日不足时拒绝新报名，避免收款后无法提供购买的节数。 */
-    private boolean holidayCausedSessionOverflow(LocalDate startDate,
+    private boolean holidayCausedSessionOverflow(Long courseProductId, LocalDate startDate,
                                                  LocalDate configuredEnd,
                                                  List<ClassGroupScheduleSlotEntity> slots,
                                                  int quantity) {
         Set<Integer> weekdays = slots.stream().map(ClassGroupScheduleSlotEntity::getWeekday)
                 .collect(Collectors.toSet());
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, configuredEnd);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(courseProductId, startDate, configuredEnd);
         int totalSessionDays = 0;
         int availableSessionDays = 0;
         for (LocalDate date = startDate; !date.isAfter(configuredEnd); date = date.plusDays(1)) {

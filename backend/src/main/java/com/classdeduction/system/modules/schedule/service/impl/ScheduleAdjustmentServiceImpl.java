@@ -21,9 +21,11 @@ import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.dto.WeeklyScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ScheduleAdjustmentService;
@@ -69,6 +71,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final ClassGroupMapper classGroupMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final StudentMapper studentMapper;
@@ -85,8 +88,10 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         Map<String, Object> beforeSnapshot = toSnapshot(source);
         validateAdjustmentType(request.getAdjustmentType());
         validateResourceAssignment(request);
-        if (source.getClassGroupId() != null && request.getPlannedStartAt() != null
-                && classHolidayService.isHoliday(request.getPlannedStartAt().toLocalDate())) {
+        ClassGroupEntity sourceClassGroup = source.getClassGroupId() == null
+                ? null : classGroupMapper.selectById(source.getClassGroupId());
+        if (sourceClassGroup != null && request.getPlannedStartAt() != null
+                && classHolidayService.isHoliday(sourceClassGroup.getProductId(), request.getPlannedStartAt().toLocalDate())) {
             throw new BusinessException("CLASS_LESSON_ON_HOLIDAY",
                     "A group-class lesson cannot be scheduled during a class holiday.");
         }
