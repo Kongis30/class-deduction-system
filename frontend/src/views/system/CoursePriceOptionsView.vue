@@ -636,12 +636,12 @@
           <label class="slot-field">
             <span>Classroom</span>
             <el-select
-              v-model="slot.classroomId"
+              v-model="slot.classroomSelection"
               popper-class="actual-classroom-picker"
-              clearable
               filterable
-              placeholder="No classroom for this slot"
+              placeholder="Select classroom or Online"
             >
+              <el-option label="Online" value="ONLINE" />
               <el-option-group
                 v-for="group in classroomGroups"
                 :key="group.key"
@@ -652,7 +652,7 @@
                   v-for="room in group.classrooms"
                   :key="room.id"
                   :label="room.roomName"
-                  :value="room.id"
+                  :value="`ROOM:${room.id}`"
                 />
               </el-option-group>
             </el-select>
@@ -969,7 +969,7 @@ const actualClassInfoDialogVisible = ref(false);
 const savingActualClassInfo = ref(false);
 const editingActualClassInfo = ref<ActualClassScheduleRow | null>(null);
 const actualClassScheduleForm = reactive({
-  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomId?: EntityId }>,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string }>,
 });
 const actualClassInfoForm = reactive({
   productId: undefined as EntityId | undefined,
@@ -1998,13 +1998,17 @@ function normalizeActualClassScheduleSlots(
   slots: ClassGroupItem['scheduleSlots'],
   defaultTeacherId?: EntityId,
   defaultClassroomId?: EntityId,
-): Array<SlotDef & { teacherId?: EntityId; classroomId?: EntityId }> {
+): Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string }> {
   const hasSlotTeacher = (slots ?? []).some(slot => slot.teacherId != null);
-  const hasSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null);
+  const hasConfiguredSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null || slot.deliveryMode === 'ONLINE');
   return (slots ?? []).map(slot => ({
     weekday: slot.weekday,
     teacherId: hasSlotTeacher ? slot.teacherId : defaultTeacherId,
-    classroomId: hasSlotClassroom ? slot.classroomId : defaultClassroomId,
+    classroomSelection: slot.deliveryMode === 'ONLINE'
+      ? 'ONLINE'
+      : (hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId) != null
+        ? `ROOM:${hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId}`
+        : '',
     startTime: slot.startTime.slice(0, 5),
     endTime: slot.endTime.slice(0, 5),
     plannedUnits: slot.plannedUnits ?? plannedUnitsForSlot(slot.startTime, slot.endTime),
@@ -2019,13 +2023,18 @@ async function saveActualClassSchedule() {
     ElMessage.warning('Add at least one weekly class time.');
     return;
   }
+  if (actualClassScheduleForm.slots.some(slot => !slot.classroomSelection)) {
+    ElMessage.warning('Choose a classroom or Online for every time slot.');
+    return;
+  }
   savingActualClassSchedule.value = true;
   try {
     await updateClassSchedule(editingActualClass.value.id, {
       preserveStartedLessons: preserveStartedLessons.value,
-      slots: actualClassScheduleForm.slots.map(({ teacherId, classroomId, weekday, startTime, endTime, plannedUnits }) => ({
+      slots: actualClassScheduleForm.slots.map(({ teacherId, classroomSelection, weekday, startTime, endTime, plannedUnits }) => ({
         teacherId,
-        classroomId,
+        deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
+        classroomId: classroomSelection?.startsWith('ROOM:') ? classroomSelection.slice(5) : undefined,
         weekday,
         startTime,
         endTime,

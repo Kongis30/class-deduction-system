@@ -398,7 +398,11 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     occurrence.setScheduleSlotId(slot.getId());
                     occurrence.setOccurrenceType("REGULAR");
                     occurrence.setPlannedTeacherId(slot.getTeacherId() == null ? group.getTeacherId() : slot.getTeacherId());
-                    occurrence.setPlannedClassroomId(slot.getClassroomId() == null ? group.getClassroomId() : slot.getClassroomId());
+                    Long classroomId = slot.getClassroomId() != null ? slot.getClassroomId()
+                            : ("ONLINE".equals(slot.getDeliveryMode()) ? null : group.getClassroomId());
+                    occurrence.setDeliveryMode(slot.getDeliveryMode() == null && classroomId != null
+                            ? "IN_PERSON" : slot.getDeliveryMode());
+                    occurrence.setPlannedClassroomId(classroomId);
                     occurrence.setPlannedStartAt(startAt);
                     occurrence.setPlannedEndAt(endAt);
                     occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));

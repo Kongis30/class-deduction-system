@@ -285,6 +285,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             boolean hasRecord = record != null && CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage());
             String teacherName = resolveTeacherName(occ.getPlannedTeacherId(), teacherMap);
             String classroomName = resolveClassroomName(occ.getPlannedClassroomId(), classroomMap);
+            if ("ONLINE".equals(occ.getDeliveryMode())) {
+                classroomName = "Online";
+            }
 
             Map<String, Object> item = new HashMap<>();
             item.put("id", occ.getId());
@@ -294,6 +297,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("plannedTeacherName", teacherName);
             item.put("plannedClassroomId", occ.getPlannedClassroomId());
             item.put("plannedClassroomName", classroomName);
+            item.put("deliveryMode", occ.getDeliveryMode());
             item.put("plannedStartAt", occ.getPlannedStartAt());
             item.put("plannedEndAt", occ.getPlannedEndAt());
             item.put("plannedUnits", occ.getPlannedUnits());
@@ -1372,8 +1376,24 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
             Long teacherId = parseLongValue(map.get("teacherId"));
             Long classroomId = parseLongValue(map.get("classroomId"));
+            String deliveryMode = map.get("deliveryMode") == null ? null : String.valueOf(map.get("deliveryMode"));
+            if ("ONLINE".equalsIgnoreCase(deliveryMode)) {
+                if (classroomId != null) {
+                    throw new BusinessException("INVALID_SLOT_CLASSROOM", "Online slots cannot have a classroom.");
+                }
+                slot.setDeliveryMode("ONLINE");
+            } else {
+                if (deliveryMode != null && !"IN_PERSON".equalsIgnoreCase(deliveryMode)) {
+                    throw new BusinessException("INVALID_DELIVERY_MODE", "Choose a classroom or Online for every slot.");
+                }
+                Long resolvedClassroomId = classroomId != null ? classroomId : defaultClassroomId;
+                if (resolvedClassroomId == null) {
+                    throw new BusinessException("SLOT_CLASSROOM_REQUIRED", "Choose a classroom or Online for every slot.");
+                }
+                slot.setDeliveryMode("IN_PERSON");
+                slot.setClassroomId(resolvedClassroomId);
+            }
             slot.setTeacherId(teacherId != null ? teacherId : defaultTeacherId);
-            slot.setClassroomId(classroomId != null ? classroomId : defaultClassroomId);
             slot.setWeekday(weekday);
             slot.setStartTime(start);
             slot.setEndTime(end);
@@ -1518,9 +1538,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (endDate.isBefore(startDate)) {
             return 0;
         }
-        // 旧数据的 slot 资源为空时继续使用班级默认值；只要任一 slot 已配置，就严格按 slot 独立取值。
+        // 旧数据的 slot 资源为空时继续使用班级默认值；新数据的授课方式始终逐时段生效。
         boolean hasSlotTeacher = slots.stream().anyMatch(item -> item.getTeacherId() != null);
-        boolean hasSlotClassroom = slots.stream().anyMatch(item -> item.getClassroomId() != null);
+        boolean hasSlotClassroom = slots.stream().anyMatch(item -> item.getClassroomId() != null
+                || "ONLINE".equals(item.getDeliveryMode()));
         int count = 0;
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
             if (classHolidayService.isHoliday(date, holidays)) {
@@ -1562,8 +1583,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(hasSlotTeacher
                         ? slot.getTeacherId() : classGroup.getTeacherId());
-                occurrence.setPlannedClassroomId(hasSlotClassroom
-                        ? slot.getClassroomId() : classGroup.getClassroomId());
+                Long classroomId = "ONLINE".equals(slot.getDeliveryMode()) ? null
+                        : hasSlotClassroom ? slot.getClassroomId() : classGroup.getClassroomId();
+                occurrence.setDeliveryMode(slot.getDeliveryMode() == null && classroomId != null
+                        ? "IN_PERSON" : slot.getDeliveryMode());
+                occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(plannedEndAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
@@ -2011,7 +2035,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 return classSlots.stream()
                         .map(slot -> {
                             int minutes = (int) ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
-                            return toSlotMap(slot.getTeacherId(), slot.getClassroomId(), slot.getWeekday(),
+                            return toSlotMap(slot.getTeacherId(), slot.getClassroomId(), slot.getDeliveryMode(), slot.getWeekday(),
                                     slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     minutes > 0 ? minutes / 30 : 0);
@@ -2022,17 +2046,18 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // Fallback: parse scheduleDesc text
         if (scheduleDesc != null) {
             return ScheduleDescParser.parse(scheduleDesc).stream()
-                    .map(slot -> toSlotMap(null, null, slot.weekday(), slot.startTime(), slot.endTime(), slot.plannedUnits()))
+                    .map(slot -> toSlotMap(null, null, null, slot.weekday(), slot.startTime(), slot.endTime(), slot.plannedUnits()))
                     .toList();
         }
         return Collections.emptyList();
     }
 
-    private Map<String, Object> toSlotMap(Long teacherId, Long classroomId, int weekday,
+    private Map<String, Object> toSlotMap(Long teacherId, Long classroomId, String deliveryMode, int weekday,
                                           String startTime, String endTime, int plannedUnits) {
         Map<String, Object> m = new HashMap<>();
         m.put("teacherId", teacherId);
         m.put("classroomId", classroomId);
+        m.put("deliveryMode", deliveryMode);
         m.put("weekday", weekday);
         m.put("startTime", startTime);
         m.put("endTime", endTime);

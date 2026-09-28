@@ -13,6 +13,8 @@ import java.time.LocalTime;
 public record RecurringScheduleSlotVO(
         Long id,
         Long teacherId,
+        String deliveryMode,
+        Long classroomId,
         String subjectName,
         Integer weekday,
         LocalTime startTime,

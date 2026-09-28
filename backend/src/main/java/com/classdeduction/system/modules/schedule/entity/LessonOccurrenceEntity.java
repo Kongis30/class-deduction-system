@@ -48,6 +48,8 @@ public class LessonOccurrenceEntity extends BaseEntity {
 
     private Long plannedTeacherId;
 
+    private String deliveryMode;
+
     private Long plannedClassroomId;
 
     private LocalDateTime plannedStartAt;

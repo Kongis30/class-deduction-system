@@ -32,6 +32,17 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "varchar(128) DEFAULT NULL COMMENT 'Course/subject name taught in this recurring weekly slot'");
         addSlotColumnIfMissing("allocated_units",
                 "int DEFAULT NULL COMMENT 'Units (1 unit = 0.5h) allocated to this slot; existing schedules must be completed before further generation'");
+        addScheduleColumnIfMissing("recurring_schedule_slot", "delivery_mode",
+                "varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE' AFTER teacher_id");
+        addScheduleColumnIfMissing("recurring_schedule_slot", "classroom_id",
+                "bigint DEFAULT NULL COMMENT 'Classroom assigned to this weekly slot' AFTER delivery_mode");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "delivery_mode",
+                "varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE' AFTER teacher_id");
+        addScheduleColumnIfMissing("lesson_occurrence", "delivery_mode",
+                "varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE' AFTER planned_teacher_id");
+        jdbcTemplate.update("UPDATE recurring_schedule_slot SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND classroom_id IS NOT NULL");
+        jdbcTemplate.update("UPDATE class_group_schedule_slot SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND classroom_id IS NOT NULL");
+        jdbcTemplate.update("UPDATE lesson_occurrence SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND planned_classroom_id IS NOT NULL");
         makeCoursePackageDefaultLessonUnitsOptional();
         addTeacherPayRateColumnIfMissing("grade_band",
                 "varchar(64) DEFAULT NULL COMMENT 'Optional grade/level scope for this teacher pay rate' AFTER student_id");
@@ -86,18 +97,22 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
     }
 
     private void addSlotColumnIfMissing(String columnName, String columnDefinition) {
+        addScheduleColumnIfMissing("recurring_schedule_slot", columnName, columnDefinition);
+    }
+
+    private void addScheduleColumnIfMissing(String tableName, String columnName, String columnDefinition) {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                 FROM information_schema.COLUMNS
                 WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'recurring_schedule_slot'
+                  AND TABLE_NAME = ?
                   AND COLUMN_NAME = ?
-                """, Integer.class, columnName);
+                """, Integer.class, tableName, columnName);
         if (count != null && count > 0) {
             return;
         }
-        jdbcTemplate.execute("ALTER TABLE recurring_schedule_slot ADD COLUMN `" + columnName + "` " + columnDefinition);
-        log.info("Added recurring_schedule_slot.{} column for per-slot allocation support.", columnName);
+        jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN `" + columnName + "` " + columnDefinition);
+        log.info("Added {}.{} for per-slot delivery mode and classroom support.", tableName, columnName);
     }
 
     private void addTeacherPayRateColumnIfMissing(String columnName, String columnDefinition) {

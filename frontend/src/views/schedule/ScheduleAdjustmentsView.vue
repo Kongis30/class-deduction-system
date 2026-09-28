@@ -456,11 +456,6 @@
               <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
             </el-select>
           </el-form-item>
-          <el-form-item label="Classroom">
-            <el-select v-model="classScheduleForm.classroomId" placeholder="No default classroom" clearable filterable style="width: 100%;">
-              <el-option v-for="c in classrooms" :key="c.id" :label="c.roomName" :value="c.id" />
-            </el-select>
-          </el-form-item>
         </div>
         <el-form-item label="Weekly Times" prop="slots">
           <WeeklyTimeSelector v-model="classScheduleForm.slots" hide-hint />
@@ -474,6 +469,17 @@
             <span>{{ classScheduleSlotLabel(slot) }}</span>
             <el-select v-model="slot.teacherId" clearable filterable placeholder="Use default teacher">
               <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+            </el-select>
+            <el-select v-model="slot.classroomSelection" filterable placeholder="Select classroom or Online">
+              <el-option label="Online" value="ONLINE" />
+              <el-option-group v-for="group in classScheduleClassroomGroups" :key="group.key" :label="group.label">
+                <el-option
+                  v-for="classroom in group.classrooms"
+                  :key="classroom.id"
+                  :label="classroom.roomName"
+                  :value="`ROOM:${classroom.id}`"
+                />
+              </el-option-group>
             </el-select>
           </div>
         </div>
@@ -695,7 +701,7 @@ import { fetchCoursePackages } from '@/api/enrollment';
 import { adminConfirmLessonRecord, confirmLesson, fetchLessonRecords, rejectLessonRecord, type LessonConfirmPayload } from '@/api/lesson';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminOrStaffUser, isTeacherUser } from '@/types/auth';
-import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem, LessonRecordItem } from '@/types/domain';
+import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem, ClassroomItem, LessonRecordItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { ElMessageBox } from 'element-plus';
@@ -753,7 +759,21 @@ const deleting = ref(false);
 
 
 const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
-const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
+const classrooms = ref<ClassroomItem[]>([]);
+const classScheduleClassroomGroups = computed(() => {
+  const groups = new Map<string, ClassroomItem[]>();
+  for (const classroom of classrooms.value) {
+    const campusName = classroom.campus?.trim() || 'Other';
+    groups.set(campusName, [...(groups.get(campusName) ?? []), classroom]);
+  }
+  return [...groups.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true }))
+    .map(([label, groupClassrooms]) => ({
+      key: label,
+      label,
+      classrooms: groupClassrooms.sort((left, right) => left.roomName.localeCompare(right.roomName, 'en', { sensitivity: 'base', numeric: true })),
+    }));
+});
 
 
 const authStore = useAuthStore();
@@ -1404,8 +1424,7 @@ const classAdjustForm = reactive({
 
 const classScheduleForm = reactive({
   teacherId: undefined as string | number | undefined,
-  classroomId: undefined as string | number | undefined,
-  slots: [] as Array<SlotDef & { teacherId?: EntityId }>,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string }>,
 });
 
 const classScheduleFormRules: FormRules = {
@@ -1451,13 +1470,20 @@ function canAdjustClassOccurrence(occ: ClassOccurrenceItem) {
 
 function normalizeClassScheduleSlots(
   slots: ClassGroupItem['scheduleSlots'],
-): Array<SlotDef & { teacherId?: EntityId }> {
+  defaultClassroomId?: EntityId,
+): Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string }> {
+  const hasConfiguredSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null || slot.deliveryMode === 'ONLINE');
   return (slots ?? []).map(slot => {
     const start = slot.startTime.slice(0, 5);
     const end = slot.endTime.slice(0, 5);
     return {
       weekday: slot.weekday,
       teacherId: slot.teacherId,
+      classroomSelection: slot.deliveryMode === 'ONLINE'
+        ? 'ONLINE'
+        : (hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId) != null
+          ? `ROOM:${hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId}`
+          : '',
       startTime: start,
       endTime: end,
       plannedUnits: slot.plannedUnits ?? Math.max(1, dayjs(`2026-01-01T${end}`).diff(dayjs(`2026-01-01T${start}`), 'minute') / 30),
@@ -1480,8 +1506,7 @@ async function openClassScheduleDialog() {
     classScheduleFormRef.value?.resetFields();
     Object.assign(classScheduleForm, {
       teacherId: selectedClass.value.teacherId,
-      classroomId: selectedClass.value.classroomId,
-      slots: normalizeClassScheduleSlots(selectedClass.value.scheduleSlots),
+      slots: normalizeClassScheduleSlots(selectedClass.value.scheduleSlots, selectedClass.value.classroomId),
     });
     classScheduleDialogVisible.value = true;
   } catch (err) {
@@ -1495,13 +1520,19 @@ async function submitClassSchedule() {
   if (!classScheduleFormRef.value || !selectedClassId.value) return;
   await classScheduleFormRef.value.validate(async (valid) => {
     if (!valid) return;
+    if (classScheduleForm.slots.some(slot => !slot.classroomSelection)) {
+      ElMessage.warning('Choose a classroom or Online for every time slot.');
+      return;
+    }
     submitting.value = true;
     try {
       await updateClassSchedule(selectedClassId.value!, {
         teacherId: classScheduleForm.teacherId,
-        classroomId: classScheduleForm.classroomId,
-        slots: classScheduleForm.slots.map(({ teacherId, weekday, startTime, endTime }) => ({
-          teacherId, weekday, startTime, endTime,
+        slots: classScheduleForm.slots.map(({ teacherId, classroomSelection, weekday, startTime, endTime }) => ({
+          teacherId,
+          deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
+          classroomId: classroomSelection?.startsWith('ROOM:') ? classroomSelection.slice(5) : undefined,
+          weekday, startTime, endTime,
         })),
       });
       ElMessage.success('Class schedule updated.');

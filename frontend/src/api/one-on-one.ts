@@ -19,6 +19,7 @@ export interface OneOnOneLesson {
   plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
   subjectName?: string;
+  deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
   plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
   plannedStartAt: string;

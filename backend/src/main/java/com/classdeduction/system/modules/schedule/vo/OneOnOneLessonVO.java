@@ -15,6 +15,7 @@ public record OneOnOneLessonVO(
         Long plannedTeacherId,
         String plannedTeacherName,
         String subjectName,
+        String deliveryMode,
         Long plannedClassroomId,
         String plannedClassroomName,
         LocalDateTime plannedStartAt,
