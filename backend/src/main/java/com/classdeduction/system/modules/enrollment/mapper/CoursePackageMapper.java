@@ -2,7 +2,7 @@ package com.classdeduction.system.modules.enrollment.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
-import com.classdeduction.system.modules.enrollment.vo.ActiveOneOnOneStudentCourseGradeRow;
+import com.classdeduction.system.modules.enrollment.vo.OneOnOneScheduleCourseRow;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -13,7 +13,7 @@ import java.util.Map;
 @Mapper
 public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
 
-    /** 查询排课侧栏的有效课包；1 对 2 只返回主课包，并附带完整成员信息。 */
+    /** 查询排课侧栏的在读及停课课包；共享课只返回主课包，并附带完整成员信息。 */
     @Select("""
             SELECT s.id AS studentId,
                    s.student_name AS studentName,
@@ -27,6 +27,7 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
                          AND r.is_deleted = 0
                    ) AS hasSchedule,
                    pkg.id AS packageId,
+                   pkg.package_status AS packageStatus,
                    primary_member.private_lesson_group_id AS privateLessonGroupId,
                    CASE WHEN primary_member.id IS NULL THEN 1
                         ELSE COUNT(DISTINCT group_member.student_id)
@@ -50,13 +51,13 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
             WHERE s.status = 'ACTIVE'
               AND s.is_deleted = 0
               AND pkg.teaching_mode = 'ONE_ON_ONE'
-              AND pkg.package_status = 'ACTIVE'
+              AND pkg.package_status IN ('ACTIVE', 'PAUSED')
               AND pkg.is_deleted = 0
               AND (primary_member.id IS NULL OR primary_member.participant_index = 1)
             GROUP BY s.id, s.student_name, courseName, gradeBand, pkg.id, primary_member.id, primary_member.private_lesson_group_id
             ORDER BY s.student_no, s.id, courseName, gradeBand, pkg.id
             """)
-    List<ActiveOneOnOneStudentCourseGradeRow> selectActiveOneOnOneStudentCourseGrades();
+    List<OneOnOneScheduleCourseRow> selectSchedulableOneOnOneStudentCourseGrades();
 
     /**
      * 按校区统计低余量课包数（通过 student JOIN 推算校区归属，批量GROUP BY，避免N+1）

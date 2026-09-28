@@ -270,6 +270,7 @@
                 type="primary"
                 size="small"
                 plain
+                :loading="checkingClassSchedule"
                 @click="openClassScheduleDialog"
               >
                 Edit Schedule
@@ -689,7 +690,7 @@ import dayjs from 'dayjs';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
-import { createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, rejectClassLesson, deleteClassGroup, updateClassSchedule } from '@/api/schedule';
+import { checkClassScheduleEditable, createScheduleAdjustment, fetchLessonOccurrences, fetchClassGroups, fetchClassStudents, fetchClassOccurrences, confirmClassLesson, rejectClassLesson, deleteClassGroup, updateClassSchedule } from '@/api/schedule';
 import { fetchCoursePackages } from '@/api/enrollment';
 import { adminConfirmLessonRecord, confirmLesson, fetchLessonRecords, rejectLessonRecord, type LessonConfirmPayload } from '@/api/lesson';
 import { useAuthStore } from '@/stores/auth';
@@ -765,6 +766,7 @@ const detailLoading = ref(false);
 const detailData = ref<LessonOccurrenceItem | null>(null);
 const rejectDialogVisible = ref(false);
 const classScheduleDialogVisible = ref(false);
+const checkingClassSchedule = ref(false);
 const classAdjustDialogVisible = ref(false);
 const confirmFormRef = ref<FormInstance>();
 const rejectFormRef = ref<FormInstance>();
@@ -1468,15 +1470,25 @@ function classScheduleSlotLabel(slot: SlotDef) {
   return `${weekday} ${slot.startTime}-${slot.endTime}`;
 }
 
-function openClassScheduleDialog() {
-  if (!selectedClass.value) return;
-  classScheduleFormRef.value?.resetFields();
-  Object.assign(classScheduleForm, {
-    teacherId: selectedClass.value.teacherId,
-    classroomId: selectedClass.value.classroomId,
-    slots: normalizeClassScheduleSlots(selectedClass.value.scheduleSlots),
-  });
-  classScheduleDialogVisible.value = true;
+async function openClassScheduleDialog() {
+  if (!selectedClass.value || checkingClassSchedule.value) return;
+  const classId = selectedClass.value.id;
+  checkingClassSchedule.value = true;
+  try {
+    await checkClassScheduleEditable(classId);
+    if (String(selectedClass.value?.id) !== String(classId)) return;
+    classScheduleFormRef.value?.resetFields();
+    Object.assign(classScheduleForm, {
+      teacherId: selectedClass.value.teacherId,
+      classroomId: selectedClass.value.classroomId,
+      slots: normalizeClassScheduleSlots(selectedClass.value.scheduleSlots),
+    });
+    classScheduleDialogVisible.value = true;
+  } catch (err) {
+    ElMessage.error(extractErrorMessage(err));
+  } finally {
+    checkingClassSchedule.value = false;
+  }
 }
 
 async function submitClassSchedule() {

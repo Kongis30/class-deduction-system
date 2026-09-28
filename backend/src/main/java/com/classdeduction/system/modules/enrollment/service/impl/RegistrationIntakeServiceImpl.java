@@ -746,6 +746,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.startDate = item.getStartDate();
             line.packageUnit = firstText(item.getPackageUnit(), resolveOptionPackageUnit(option));
             line.packageQuantity = firstNonNull(item.getPackageQuantity(), resolveOptionPackageQuantity(option));
+            if ("SESSION".equals(resolveOptionPackageUnit(option))) {
+                // Session packages are based on the configured full package; only the selected count varies per student.
+                line.packageUnit = "SESSION";
+                line.packageQuantity = resolveOptionPackageQuantity(option);
+            }
             line.packageTotalPrice = firstNonNull(item.getPackageTotalPrice(), resolveOptionTotalPrice(option));
             line.attendanceOption = normalizeAttendanceOption(item.getAttendanceOption());
             line.attendanceScheduleJson = item.getAttendanceScheduleJson();
@@ -771,7 +776,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.serviceFees = item.getServiceFees() == null ? Collections.emptyList() : item.getServiceFees();
             line.product = product;
             line.oneOnOne = isOneOnOneLine(line, product);
-            applyLinePricing(line, item, configuredUnitPrice, option.getOneOnOneHours());
+            applyLinePricing(line, item, configuredUnitPrice, option.getOneOnOneHours(), option);
 
             validateResolvedLine(line);
             lines.add(line);
@@ -782,11 +787,30 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private void applyLinePricing(ResolvedCourseLine line,
                                   RegistrationIntakeRequest.CourseItemPayload item,
                                   BigDecimal configuredUnitPrice,
-                                  BigDecimal configuredOneOnOneHours) {
+                                  BigDecimal configuredOneOnOneHours,
+                                  CoursePriceOptionEntity option) {
         boolean manualPriceOverride = Boolean.TRUE.equals(item.getManualPriceOverride());
-        BigDecimal configuredPrice = line.oneOnOne
-                ? calculateOneOnOnePrice(configuredUnitPrice, configuredOneOnOneHours, line.oneOnOneHours)
-                : configuredUnitPrice;
+        BigDecimal configuredPrice;
+        if (line.oneOnOne) {
+            configuredPrice = calculateOneOnOnePrice(configuredUnitPrice, configuredOneOnOneHours, line.oneOnOneHours);
+        } else if ("SESSION".equals(resolveOptionPackageUnit(option))) {
+            int configuredSessions = resolveOptionPackageQuantity(option)
+                    .setScale(0, RoundingMode.CEILING).intValue();
+            if (configuredSessions < 1) {
+                throw new BusinessException("REGISTRATION_SESSION_COUNT_INVALID",
+                        "Configured package must contain at least one session.");
+            }
+            int selectedSessions = line.sessions == null ? configuredSessions : line.sessions;
+            if (selectedSessions < 1 || selectedSessions > configuredSessions) {
+                throw new BusinessException("REGISTRATION_SESSION_COUNT_INVALID",
+                        "Selected sessions must be between 1 and the configured package session count.");
+            }
+            line.sessions = selectedSessions;
+            configuredPrice = configuredUnitPrice.multiply(BigDecimal.valueOf(selectedSessions))
+                    .divide(BigDecimal.valueOf(configuredSessions), 2, RoundingMode.HALF_UP);
+        } else {
+            configuredPrice = configuredUnitPrice;
+        }
         if (!manualPriceOverride && configuredPrice.compareTo(ZERO_AMOUNT) <= 0) {
             throw new BusinessException("COURSE_LINE_PRICE_REQUIRED",
                     "Manual course line price is required for a $0 course template.");
@@ -2680,11 +2704,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private ClassBillingResult computeClassBilling(ClassGroupEntity classGroup,
                                                     ResolvedCourseLine line,
                                                     LocalDate signupDate) {
-        int quantity = line.packageQuantity == null
+        BigDecimal billingQuantity = "SESSION".equals(line.packageUnit) && line.sessions != null
+                ? BigDecimal.valueOf(line.sessions)
+                : line.packageQuantity;
+        int quantity = billingQuantity == null
                 ? resolveGroupPurchasedQuantity(line)
-                : line.packageQuantity.setScale(0, RoundingMode.CEILING).intValue();
+                : billingQuantity.setScale(0, RoundingMode.CEILING).intValue();
         ClassBillingService.ClassBilling billing = classBillingService.compute(
-                classGroup, line.startDate, signupDate, line.packageUnit, line.packageQuantity);
+                classGroup, line.startDate, signupDate, line.packageUnit, billingQuantity);
         return new ClassBillingResult(billing.enrollmentDate(), billing.expiryDate(),
                 billing.enrollmentDate(), billing.expiryDate(), quantity);
     }

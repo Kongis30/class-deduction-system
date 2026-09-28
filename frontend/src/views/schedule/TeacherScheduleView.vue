@@ -28,6 +28,8 @@
               @click="onTeacherSelect(t.id)"
             >
               <span class="teacher-item__name">{{ t.teacherName }}</span>
+              <el-tag v-if="t.isDeleted" size="small" type="info" effect="plain">Deleted</el-tag>
+              <el-tag v-else-if="t.status !== 'ACTIVE'" size="small" type="warning" effect="plain">Inactive</el-tag>
               <el-icon v-if="selectedTeacherId === t.id" color="#409eff"><Check /></el-icon>
             </div>
           </el-scrollbar>
@@ -180,14 +182,14 @@ import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@elemen
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import dayjs from 'dayjs';
-import { fetchAllTeachers } from '@/api/base-data';
+import { fetchDeletedTeachers, fetchTeachers } from '@/api/base-data';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
 } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { isTeacherUser } from '@/types/auth';
-import type { EntityId, LessonOccurrenceItem } from '@/types/domain';
+import type { EntityId, LessonOccurrenceItem, TeacherItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
@@ -196,7 +198,7 @@ const authStore = useAuthStore();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 
 // ─── Teachers ───────────────────────────────────
-const teachers = ref<{ id: EntityId; teacherName: string }[]>([]);
+const teachers = ref<Array<Pick<TeacherItem, 'id' | 'teacherName' | 'status'> & { isDeleted?: boolean }>>([]);
 const searchText = ref('');
 const selectedTeacherId = ref<EntityId | null>(null);
 
@@ -399,8 +401,29 @@ onMounted(async () => {
     return;
   }
   try {
-    const res = await fetchAllTeachers();
-    teachers.value = res.data.data.map(t => ({ id: t.id, teacherName: t.teacherName }));
+    const [firstPage, deletedRes] = await Promise.all([
+      fetchTeachers({ pageNum: 1, pageSize: 200 }),
+      fetchDeletedTeachers(),
+    ]);
+    const activeAndInactive = [...firstPage.data.data.records];
+    const totalPages = Math.ceil(firstPage.data.data.total / 200);
+    for (let pageNum = 2; pageNum <= totalPages; pageNum += 1) {
+      const page = await fetchTeachers({ pageNum, pageSize: 200 });
+      activeAndInactive.push(...page.data.data.records);
+    }
+    const liveTeachers = activeAndInactive.map(teacher => ({
+      id: teacher.id,
+      teacherName: teacher.teacherName,
+      status: teacher.status,
+      isDeleted: false,
+    }));
+    const deletedTeachers = deletedRes.data.data.map(teacher => ({
+      id: teacher.id,
+      teacherName: teacher.teacherName,
+      status: teacher.status,
+      isDeleted: true,
+    }));
+    teachers.value = [...liveTeachers, ...deletedTeachers];
   } catch { /* silent */ }
 });
 </script>

@@ -17,6 +17,9 @@ public interface CourseProductService {
 
     Long createCourseProduct(CourseProductSaveRequest request);
 
+    /** 复制课程配置，生成独立的新产品及其价格、班级和每周课表。 */
+    Long copyCourseProduct(Long sourceId, String newProductName, int dateShiftYears);
+
     void updateCourseProduct(Long id, CourseProductSaveRequest request);
 
     /**

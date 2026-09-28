@@ -123,6 +123,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     private static final String DEFAULT_CURRENCY = "USD";
     private static final String DEFAULT_RECEIPT_TEMPLATE = "DEFAULT_RECEIPT";
+    private static final String REFUND_RECEIPT_TEMPLATE = "REFUND_RECEIPT";
     private static final BigDecimal ZERO_AMOUNT = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
     private final EnrollmentOrderMapper enrollmentOrderMapper;
@@ -1153,6 +1154,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .receiptNo(item.getReceiptNo())
                 .enrollmentOrderId(item.getEnrollmentOrderId())
                 .studentId(item.getStudentId())
+                .paymentRecordId(item.getPaymentRecordId())
                 .studentName(studentName)
                 .templateCode(item.getTemplateCode())
                 .receiptPayload(item.getReceiptPayload())
@@ -2255,8 +2257,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 coursePackageMapper.updateById(coursePackage);
             }
         }
-        // 退款也回写原报名收据，不再创建第二张退款收据；收据内保留负数退款流水。
-        return syncRegistrationReceiptAfterRefund(order);
+        // 原报名收据保持不变；本次退款单独生成凭证并关联负向流水。
+        return createRefundReceipt(order, request, refundRecord, targetItem, targetParticipant,
+                convertToCredit);
     }
 
     @Override
@@ -2606,41 +2609,87 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
     }
 
-    /** 退款后刷新报名收据的累计金额、参与学生余额和完整支付/退款流水。 */
-    private ReceiptRecordVO syncRegistrationReceiptAfterRefund(EnrollmentOrderEntity order) {
-        List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(
-                        new LambdaQueryWrapper<ReceiptRecordEntity>()
-                                .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId())
-                                .eq(ReceiptRecordEntity::getTemplateCode, DEFAULT_RECEIPT_TEMPLATE)
-                                .orderByDesc(ReceiptRecordEntity::getIssuedAt));
-        if (receipts == null || receipts.isEmpty()) {
-            return null;
+    /**
+     * 为每笔退款生成独立收据快照。
+     *
+     * <p>报名收据记录报名时点事实，退款收据记录本次负向流水；两者不能互相覆盖，
+     * 否则 Receipt 页面无法按凭证类型追溯退款。</p>
+     */
+    private ReceiptRecordVO createRefundReceipt(EnrollmentOrderEntity order,
+                                                RefundRequest request,
+                                                PaymentRecordEntity refundRecord,
+                                                EnrollmentOrderItemEntity targetItem,
+                                                EnrollmentOrderParticipantEntity targetParticipant,
+                                                boolean convertToCredit) {
+        Long receiptStudentId = targetParticipant == null ? order.getStudentId() : targetParticipant.getStudentId();
+        String receiptStudentName = targetParticipant == null
+                ? order.getStudentNameSnapshot()
+                : targetParticipant.getStudentNameSnapshot();
+        if (!StringUtils.hasText(receiptStudentName)) {
+            StudentEntity student = studentMapper.selectById(receiptStudentId);
+            receiptStudentName = student == null ? order.getStudentNameSnapshot() : student.getStudentName();
         }
-        ReceiptRecordEntity receipt = receipts
-                .stream()
-                .findFirst()
-                .orElse(null);
-        if (receipt == null) {
-            return null;
-        }
-        Map<String, Object> payload = jsonHelper.fromJson(
-                receipt.getReceiptPayload(), new TypeReference<LinkedHashMap<String, Object>>() {});
-        if (payload == null) {
-            payload = new LinkedHashMap<>();
-        }
-        BigDecimal receiptCreditTopUp = receiptCreditTopUpAmount(payload);
-        BigDecimal receiptAmountDue = defaultAmount(order.getAmountDue()).add(receiptCreditTopUp);
-        BigDecimal receiptPaidAmount = defaultAmount(order.getReceivedAmount()).add(receiptCreditTopUp);
-        payload.put("amountDue", receiptAmountDue);
-        payload.put("receivedAmount", receiptPaidAmount);
-        payload.put("paidAmount", receiptPaidAmount);
-        payload.put("balanceAmount", receiptAmountDue.subtract(receiptPaidAmount));
+
+        LocalDateTime issuedAt = AppTime.nowLocalDateTime();
+        String receiptNo = BusinessNoGenerator.generateReceiptNo();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("receiptType", "REFUND");
+        payload.put("receiptNo", receiptNo);
+        payload.put("enrollmentOrderId", order.getId());
+        payload.put("enrollmentNo", order.getEnrollmentNo());
+        payload.put("studentId", receiptStudentId);
+        payload.put("studentName", receiptStudentName);
+        payload.put("currencyCode", order.getCurrencyCode());
+        payload.put("issuedAt", issuedAt);
+        payload.put("paymentAmount", refundRecord.getAmount());
+        payload.put("amountDue", order.getAmountDue());
+        payload.put("receivedAmount", order.getReceivedAmount());
+        payload.put("paidAmount", refundRecord.getAmount());
+        payload.put("balanceAmount", order.getBalanceAmount());
         payload.put("paymentStatus", order.getPaymentStatus());
-        payload.put("participants", receiptParticipantPayloads(order.getId()));
-        payload.put("payments", receiptPaymentPayloads(order.getId()));
+        payload.put("paymentType", "REFUND");
+        payload.put("refundDisposition", convertToCredit ? "CREDIT" : "REFUND");
+        payload.put("participantIndex", refundRecord.getParticipantIndex());
+        payload.put("orderItemId", targetItem == null ? null : targetItem.getId());
+
+        Map<String, Object> payment = new LinkedHashMap<>();
+        payment.put("paymentId", refundRecord.getId());
+        payment.put("paymentNo", refundRecord.getPaymentNo());
+        payment.put("paymentMethod", refundRecord.getPaymentMethod());
+        payment.put("paymentType", refundRecord.getPaymentType());
+        payment.put("paymentStatus", refundRecord.getPaymentStatus());
+        payment.put("amount", refundRecord.getAmount());
+        payment.put("paidAt", refundRecord.getPaidAt());
+        payment.put("handledByUserId", refundRecord.getHandledByUserId());
+        payment.put("handledByName", refundRecord.getHandledByName());
+        payment.put("remark", refundRecord.getRemark());
+        payment.put("participantIndex", refundRecord.getParticipantIndex());
+        payment.put("orderItemId", targetItem == null ? null : targetItem.getId());
+        payload.put("payments", List.of(payment));
+
+        if (targetItem != null) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", targetItem.getId());
+            item.put("lineNo", targetItem.getLineNo());
+            item.put("detail", targetItem.getDetail());
+            item.put("courseType", targetItem.getCourseType());
+            item.put("amountDue", targetItem.getAmountDue());
+            item.put("paidAmount", targetItem.getPaidAmount());
+            item.put("balanceAmount", targetItem.getBalanceAmount());
+            payload.put("items", List.of(item));
+        }
+
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setReceiptNo(receiptNo);
+        receipt.setEnrollmentOrderId(order.getId());
+        receipt.setStudentId(receiptStudentId);
+        receipt.setPaymentRecordId(refundRecord.getId());
+        receipt.setTemplateCode(REFUND_RECEIPT_TEMPLATE);
         receipt.setReceiptPayload(jsonHelper.toJson(payload));
-        receiptRecordMapper.updateById(receipt);
-        return toReceiptVO(receipt, order.getStudentNameSnapshot());
+        receipt.setIssuedAt(issuedAt);
+        receipt.setIssuedBy(request.getHandledByUserId());
+        receiptRecordMapper.insert(receipt);
+        return toReceiptVO(receipt, receiptStudentName);
     }
 
     private void requireActivePaymentMethod(String methodCode) {

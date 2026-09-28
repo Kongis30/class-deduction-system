@@ -15,7 +15,7 @@ import java.util.List;
 public interface RecurringScheduleRuleService {
 
     /** 查询排课页应显示的在读 1 对 1 学生，避免前端逐个学生检查课时包。 */
-    List<ScheduleStudentOptionVO> listStudentsWithActiveOneOnOnePackages();
+    List<ScheduleStudentOptionVO> listOneOnOneScheduleStudents();
 
     PageResponse<RecurringScheduleRuleListItemVO> pageRules(RecurringScheduleRulePageQuery query);
 

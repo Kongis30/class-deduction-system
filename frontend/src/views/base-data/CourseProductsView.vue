@@ -83,10 +83,11 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" width="190">
+            <el-table-column label="Actions" width="240">
               <template #default="{ row }">
                 <div class="table-actions">
                   <el-button type="primary" link @click="openProductPrices(row)">Set packages & prices</el-button>
+                  <el-button text type="primary" @click="openCopyDialog(row)">Copy</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -129,10 +130,11 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" width="210">
+            <el-table-column label="Actions" width="260">
               <template #default="{ row }">
                 <div class="table-actions">
                   <el-button type="primary" link @click="openProductPrices(row)">Set grades & schedule</el-button>
+                  <el-button text type="primary" @click="openCopyDialog(row)">Copy</el-button>
                   <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
                   <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
                 </div>
@@ -235,6 +237,30 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="copyDialogVisible" title="Copy course product" width="520px" :close-on-click-modal="false">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="New course name" required>
+          <el-input v-model="copyProductName" maxlength="128" show-word-limit @keyup.enter="submitCopy" />
+        </el-form-item>
+        <el-form-item label="Shift course dates by years">
+          <el-input-number v-model="copyDateShiftYears" :min="0" :max="10" />
+          <span class="copy-date-hint">Weekly weekdays and times stay the same.</span>
+        </el-form-item>
+      </el-form>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="Prices, grade classes, and weekly time slots will be copied into independent records. The new course will stay inactive until you review and activate it. Student enrollments, receipts, and lesson records are not copied."
+      />
+      <template #footer>
+        <el-button @click="copyDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :loading="copySubmitting" :disabled="!copyProductName.trim()" @click="submitCopy">
+          Copy and review setup
+        </el-button>
+      </template>
+    </el-dialog>
+
   </div>
 </template>
 
@@ -246,6 +272,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import {
   createCourseProduct,
+  copyCourseProduct,
   deleteCourseProduct,
   forceDeleteCourseProduct,
   fetchCourseProducts,
@@ -266,6 +293,11 @@ const route = useRoute();
 const loading = ref(false);
 const submitting = ref(false);
 const dialogVisible = ref(false);
+const copyDialogVisible = ref(false);
+const copySubmitting = ref(false);
+const copyProductName = ref('');
+const copyDateShiftYears = ref(1);
+const copySource = ref<CourseProductItem | null>(null);
 const editingId = ref<EntityId | null>(null);
 const formRef = ref();
 
@@ -482,6 +514,42 @@ function openProductDialog(row?: CourseProductItem) {
     });
   }
   dialogVisible.value = true;
+}
+
+function openCopyDialog(row: CourseProductItem) {
+  copySource.value = row;
+  copyProductName.value = `${row.productName} Copy`;
+  copyDateShiftYears.value = 1;
+  copyDialogVisible.value = true;
+}
+
+async function submitCopy() {
+  const source = copySource.value;
+  const productName = copyProductName.value.trim();
+  if (!source || !productName || copySubmitting.value) return;
+  copySubmitting.value = true;
+  try {
+    const response = await copyCourseProduct(source.id, productName, copyDateShiftYears.value);
+    const productId = response.data.data;
+    copyDialogVisible.value = false;
+    filters.status = '';
+    pagination.page = 1;
+    ElMessage.success('Course copied. Review its prices and schedule before activating it.');
+    await loadData();
+    router.push({
+      name: 'admin-config-course-prices',
+      query: {
+        from: 'course-products',
+        create: '1',
+        ...(source.courseType ? { courseType: source.courseType } : {}),
+        courseProductId: productId,
+      },
+    });
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.message ?? 'Course copy failed.');
+  } finally {
+    copySubmitting.value = false;
+  }
 }
 
 async function handleSubmit() {
@@ -843,6 +911,12 @@ loadData();
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
+}
+
+.copy-date-hint {
+  margin-left: 10px;
+  color: #7b8494;
+  font-size: 12px;
 }
 
 .table-footer {

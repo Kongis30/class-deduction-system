@@ -16,6 +16,7 @@ export interface ScheduleStudentOption {
     courseName: string;
     gradeBand: string;
     packageId?: EntityId;
+    packageStatus?: string;
     privateLessonGroupId?: EntityId;
     participantCount?: number;
     participantNames?: string;
@@ -228,8 +229,8 @@ export interface ClassGroupConfirmPayload {
   notes?: string;
 }
 
-export function fetchClassGroups() {
-  return http.get<ApiResponse<import('@/types/domain').ClassGroupItem[]>>('/v1/classes');
+export function fetchClassGroups(params: { includeInactiveProducts?: boolean } = {}) {
+  return http.get<ApiResponse<import('@/types/domain').ClassGroupItem[]>>('/v1/classes', { params });
 }
 
 export function fetchClassStudents(classId: string | number) {
@@ -275,6 +276,10 @@ export function updateClassInfo(classId: string | number, data: ClassInfoPayload
 
 export function updateClassSchedule(classId: string | number, data: ClassScheduleUpdatePayload) {
   return http.put<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/schedule`, data);
+}
+
+export function checkClassScheduleEditable(classId: string | number) {
+  return http.get<ApiResponse<null>>(`/v1/classes/${classId}/schedule/edit-check`);
 }
 
 export function confirmClassLesson(classId: string | number, occurrenceId: string | number, data: ClassGroupConfirmPayload = {}) {

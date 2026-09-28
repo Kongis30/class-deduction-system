@@ -17,7 +17,9 @@ import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -28,6 +30,7 @@ import org.springframework.util.StringUtils;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.time.LocalDate;
 
 /**
  * Course product service for maintaining reusable course templates.
@@ -47,6 +50,7 @@ public class CourseProductServiceImpl implements CourseProductService {
     private final com.classdeduction.system.modules.schedule.service.ClassGroupService classGroupService;
     private final PlatformTransactionManager transactionManager;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
+    private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
     @Override
     public PageResponse<CourseProductVO> pageCourseProducts(CourseProductPageQuery query) {
@@ -132,6 +136,126 @@ public class CourseProductServiceImpl implements CourseProductService {
                 return entity.getId();
             });
         }
+    }
+
+    /**
+     * Product 列表的复制入口。新建独立 ID 的产品、班级、价格选项和固定周课表；
+     * 新产品先停用，避免配置尚未核对时进入报名，事务保证失败时整组回滚。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long copyCourseProduct(Long sourceId, String newProductName, int dateShiftYears) {
+        synchronized (createProductLock) {
+            CourseProductEntity source = requireCourseProduct(sourceId);
+            if (!StringUtils.hasText(newProductName)) {
+                throw new BusinessException("COURSE_PRODUCT_NAME_REQUIRED", "Course name is required.");
+            }
+            String normalizedName = newProductName.trim();
+            ensureProductNameUnique(null, normalizedName);
+
+            CourseProductEntity copy = new CourseProductEntity();
+            org.springframework.beans.BeanUtils.copyProperties(source, copy);
+            clearAuditFields(copy);
+            copy.setId(null);
+            copy.setProductCode(generateProductCode());
+            ensureProductCodeUnique(null, copy.getProductCode());
+            copy.setProductName(normalizedName);
+            copy.setRegisterClass(normalizedName);
+            copy.setStatus("INACTIVE");
+            copy.setStartDate(shiftDate(copy.getStartDate(), dateShiftYears));
+            copy.setStartMonth(shiftDate(copy.getStartMonth(), dateShiftYears));
+            copy.setEndMonth(shiftDate(copy.getEndMonth(), dateShiftYears));
+            courseProductMapper.insert(copy);
+
+            Map<Long, Long> classIdMap = copyProductClasses(sourceId, copy.getId(), dateShiftYears);
+            copyProductOptions(sourceId, copy.getId(), copy.getProductCode(), normalizedName, classIdMap);
+            return copy.getId();
+        }
+    }
+
+    /** 复制班级和固定周课表，不复制报名、已生成课次或消课记录。 */
+    private Map<Long, Long> copyProductClasses(Long sourceProductId, Long targetProductId, int dateShiftYears) {
+        List<ClassGroupEntity> sourceClasses = classGroupMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupEntity>()
+                        .eq(ClassGroupEntity::getProductId, sourceProductId)
+                        .eq(ClassGroupEntity::getIsDeleted, 0)
+                        .orderByAsc(ClassGroupEntity::getId));
+        Map<Long, Long> classIdMap = new HashMap<>();
+        for (ClassGroupEntity sourceClass : sourceClasses) {
+            ClassGroupEntity targetClass = new ClassGroupEntity();
+            org.springframework.beans.BeanUtils.copyProperties(sourceClass, targetClass);
+            clearAuditFields(targetClass);
+            targetClass.setId(null);
+            targetClass.setProductId(targetProductId);
+            targetClass.setStartDate(shiftDate(targetClass.getStartDate(), dateShiftYears));
+            targetClass.setEndDate(shiftDate(targetClass.getEndDate(), dateShiftYears));
+            targetClass.setStartMonth(shiftDate(targetClass.getStartMonth(), dateShiftYears));
+            targetClass.setEndMonth(shiftDate(targetClass.getEndMonth(), dateShiftYears));
+            classGroupMapper.insert(targetClass);
+            classIdMap.put(sourceClass.getId(), targetClass.getId());
+
+            List<ClassGroupScheduleSlotEntity> sourceSlots = classGroupScheduleSlotMapper.selectList(
+                    new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                            .eq(ClassGroupScheduleSlotEntity::getClassGroupId, sourceClass.getId())
+                            .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0)
+                            .orderByAsc(ClassGroupScheduleSlotEntity::getWeekday)
+                            .orderByAsc(ClassGroupScheduleSlotEntity::getStartTime));
+            for (ClassGroupScheduleSlotEntity sourceSlot : sourceSlots) {
+                ClassGroupScheduleSlotEntity targetSlot = new ClassGroupScheduleSlotEntity();
+                org.springframework.beans.BeanUtils.copyProperties(sourceSlot, targetSlot);
+                clearAuditFields(targetSlot);
+                targetSlot.setId(null);
+                targetSlot.setClassGroupId(targetClass.getId());
+                classGroupScheduleSlotMapper.insert(targetSlot);
+            }
+        }
+        return classIdMap;
+    }
+
+    private LocalDate shiftDate(LocalDate date, int years) {
+        return date == null || years == 0 ? date : date.plusYears(years);
+    }
+
+    /** 复制报名价格选项并重映射到新班级；不会复制任何学生订单或付款。 */
+    private void copyProductOptions(Long sourceProductId, Long targetProductId, String targetProductCode,
+                                    String targetProductName, Map<Long, Long> classIdMap) {
+        List<CoursePriceOptionEntity> sourceOptions = coursePriceOptionMapper.selectList(
+                new LambdaQueryWrapper<CoursePriceOptionEntity>()
+                        .eq(CoursePriceOptionEntity::getCourseProductId, sourceProductId)
+                        .eq(CoursePriceOptionEntity::getIsDeleted, 0)
+                        .orderByAsc(CoursePriceOptionEntity::getSortOrder)
+                        .orderByAsc(CoursePriceOptionEntity::getId));
+        int sequence = 1;
+        for (CoursePriceOptionEntity sourceOption : sourceOptions) {
+            CoursePriceOptionEntity targetOption = new CoursePriceOptionEntity();
+            org.springframework.beans.BeanUtils.copyProperties(sourceOption, targetOption);
+            clearAuditFields(targetOption);
+            targetOption.setId(null);
+            targetOption.setCourseProductId(targetProductId);
+            targetOption.setRegisterClass(targetProductName);
+            targetOption.setOptionCode(String.format(Locale.ROOT, "%s_OPT_%04d", targetProductCode, sequence++));
+            if (sourceOption.getClassId() != null) {
+                Long targetClassId = classIdMap.get(sourceOption.getClassId());
+                if (targetClassId == null) {
+                    throw new BusinessException("COURSE_PRODUCT_COPY_CLASS_MISSING",
+                            "A linked class is missing; the course was not copied.");
+                }
+                targetOption.setClassId(targetClassId);
+            }
+            coursePriceOptionMapper.insert(targetOption);
+        }
+    }
+
+    /** 复制对象重新生成审计信息，避免沿用源记录的创建和删除状态。 */
+    private void clearAuditFields(com.classdeduction.system.common.model.BaseEntity entity) {
+        entity.setCreatedAt(null);
+        entity.setCreatedBy(null);
+        entity.setUpdatedAt(null);
+        entity.setUpdatedBy(null);
+        entity.setIsDeleted(0);
+        entity.setDeletedAt(null);
+        entity.setDeletedBy(null);
+        entity.setVersion(null);
     }
 
     @Override

@@ -32,6 +32,9 @@ public class ReceiptRecordEntity extends BaseEntity {
 
     private Long studentId;
 
+    /** 退款收据对应的不可变退款流水；普通报名收据为空。 */
+    private Long paymentRecordId;
+
     private String templateCode;
 
     private String receiptPayload;

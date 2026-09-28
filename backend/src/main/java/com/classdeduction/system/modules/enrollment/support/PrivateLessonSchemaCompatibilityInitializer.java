@@ -27,6 +27,9 @@ public class PrivateLessonSchemaCompatibilityInitializer {
                 "bigint DEFAULT NULL COMMENT 'Shared private lesson group ID' AFTER package_id");
         addColumnIfMissing("payment_record", "participant_index",
                 "int DEFAULT NULL COMMENT 'Shared private lesson participant index' AFTER enrollment_order_id");
+        addColumnIfMissing("receipt_record", "payment_record_id",
+                "bigint DEFAULT NULL COMMENT 'Linked refund payment record ID' AFTER student_id",
+                "independent refund receipt linkage");
         addColumnIfMissing("enrollment_order_participant", "gross_amount",
                 "decimal(12,2) DEFAULT NULL COMMENT 'Participant gross amount'");
         addColumnIfMissing("enrollment_order_participant", "discount_amount",

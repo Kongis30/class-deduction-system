@@ -72,8 +72,19 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
 
     @Override
     public List<CoursePriceOptionVO> listActiveOptions(String courseType) {
+        List<CourseProductEntity> activeProducts = courseProductMapper.selectList(new LambdaQueryWrapper<CourseProductEntity>()
+                        .eq(CourseProductEntity::getStatus, "ACTIVE")
+                        .select(CourseProductEntity::getId));
+        List<Long> activeProductIds = (activeProducts == null ? List.<CourseProductEntity>of() : activeProducts)
+                .stream()
+                .map(CourseProductEntity::getId)
+                .toList();
         return coursePriceOptionMapper.selectList(baseWrapper()
                         .eq(CoursePriceOptionEntity::getStatus, "ACTIVE")
+                        // 停用 Product 的复制件可以在配置页编辑，但不能出现在报名表的价格选项中。
+                        .and(wrapper -> wrapper.isNull(CoursePriceOptionEntity::getCourseProductId)
+                                .or(!activeProductIds.isEmpty(), nested -> nested
+                                        .in(CoursePriceOptionEntity::getCourseProductId, activeProductIds)))
                         .eq(StringUtils.hasText(courseType), CoursePriceOptionEntity::getCourseType, courseType)
                         .orderByAsc(CoursePriceOptionEntity::getCourseType)
                         .orderByAsc(CoursePriceOptionEntity::getSortOrder)

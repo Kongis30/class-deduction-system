@@ -2,6 +2,7 @@ package com.classdeduction.system.modules.enrollment.service;
 
 import com.classdeduction.system.common.model.PageResponse;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
@@ -13,6 +14,7 @@ import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjust
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
@@ -126,6 +128,8 @@ class CoursePackageServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleRuleEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CourseProductEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PrivateLessonGroupMemberEntity.class);
     }
 
     @BeforeEach
@@ -163,6 +167,24 @@ class CoursePackageServiceImplTest {
         assertThat(result.records()).isEmpty();
         assertThat(result.total()).isZero();
         verify(coursePackageMapper, never()).selectPage(any(), any());
+    }
+
+    @Test
+    void shouldFilterActiveAndPausedPackagesForScheduleSelection() {
+        CoursePackagePageQuery query = new CoursePackagePageQuery();
+        query.setStudentId(201L);
+        query.setTeachingMode("ONE_ON_ONE");
+        query.setPackageStatuses("ACTIVE,PAUSED");
+        when(coursePackageMapper.selectPage(any(Page.class), any())).thenReturn(new Page<>(1, 10));
+
+        coursePackageService.pagePackages(query);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<QueryWrapper<CoursePackageEntity>> wrapperCaptor = ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(coursePackageMapper).selectPage(any(Page.class), wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().getSqlSegment()).contains("packageStatus IN");
+        assertThat(wrapperCaptor.getValue().getParamNameValuePairs().values())
+                .contains("ACTIVE", "PAUSED");
     }
 
     @Test
@@ -443,6 +465,58 @@ class CoursePackageServiceImplTest {
         assertThatThrownBy(() -> coursePackageService.resumePackage(101L))
                 .hasMessageContaining("no remaining hours");
         verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
+    }
+
+    @Test
+    void shouldPauseEveryMemberOfSharedPrivateLesson() {
+        CoursePackageEntity primary = buildOneOnOnePackage("ACTIVE", 20);
+        CoursePackageEntity partner = buildOneOnOnePackage("ACTIVE", 20);
+        partner.setId(102L);
+        when(coursePackageMapper.selectById(101L)).thenReturn(primary);
+        when(coursePackageMapper.selectById(102L)).thenReturn(partner);
+        when(privateLessonGroupMemberMapper.selectOne(any())).thenReturn(groupMember(101L, 1));
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(groupMember(101L, 1), groupMember(102L, 2)));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+
+        coursePackageService.pausePackage(101L);
+
+        assertThat(primary.getPackageStatus()).isEqualTo("PAUSED");
+        assertThat(partner.getPackageStatus()).isEqualTo("PAUSED");
+        verify(coursePackageMapper).updateById(primary);
+        verify(coursePackageMapper).updateById(partner);
+        verify(recurringScheduleRuleMapper, never()).updateById(any(RecurringScheduleRuleEntity.class));
+        verify(recurringScheduleRuleMapper, times(2)).update(any(), any());
+    }
+
+    @Test
+    void shouldResumeEverySharedMemberOnlyWhenAllHaveHours() {
+        CoursePackageEntity primary = buildOneOnOnePackage("PAUSED", 20);
+        CoursePackageEntity partner = buildOneOnOnePackage("PAUSED", 0);
+        partner.setId(102L);
+        when(coursePackageMapper.selectById(101L)).thenReturn(primary);
+        when(coursePackageMapper.selectById(102L)).thenReturn(partner);
+        when(privateLessonGroupMemberMapper.selectOne(any())).thenReturn(groupMember(101L, 1));
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(groupMember(101L, 1), groupMember(102L, 2)));
+
+        assertThatThrownBy(() -> coursePackageService.resumePackage(101L)).hasMessageContaining("no remaining hours");
+        verify(coursePackageMapper, never()).updateById(any(CoursePackageEntity.class));
+
+        partner.setRemainingUnits(10);
+        coursePackageService.resumePackage(101L);
+        assertThat(primary.getPackageStatus()).isEqualTo("ACTIVE");
+        assertThat(partner.getPackageStatus()).isEqualTo("ACTIVE");
+        verify(coursePackageMapper).updateById(primary);
+        verify(coursePackageMapper).updateById(partner);
+        verify(recurringScheduleRuleMapper, never()).updateById(any(RecurringScheduleRuleEntity.class));
+    }
+
+    private PrivateLessonGroupMemberEntity groupMember(Long packageId, int index) {
+        PrivateLessonGroupMemberEntity member = new PrivateLessonGroupMemberEntity();
+        member.setPrivateLessonGroupId(301L);
+        member.setPackageId(packageId);
+        member.setParticipantIndex(index);
+        member.setMemberStatus("ACTIVE");
+        return member;
     }
 
     private CoursePackageEntity buildOneOnOnePackage(String status, int remainingUnits) {

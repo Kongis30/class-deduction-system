@@ -755,13 +755,16 @@ class EnrollmentOrderServiceImplTest {
         request.setHandledByUserId(88L);
         request.setRemark("Student withdrew");
         when(jsonHelper.toJson(any())).thenReturn("{\"receiptType\":\"REFUND\"}");
-        ReceiptRecordEntity registrationReceipt = new ReceiptRecordEntity();
-        registrationReceipt.setId(9001L);
-        registrationReceipt.setReceiptNo("RCP202607150001");
-        registrationReceipt.setEnrollmentOrderId(2001L);
-        registrationReceipt.setTemplateCode("DEFAULT_RECEIPT");
-        registrationReceipt.setReceiptPayload("{}");
-        when(receiptRecordMapper.selectList(any())).thenReturn(List.of(registrationReceipt));
+        doAnswer(invocation -> {
+            PaymentRecordEntity entity = invocation.getArgument(0);
+            entity.setId(8001L);
+            return 1;
+        }).when(paymentRecordMapper).insert(any(PaymentRecordEntity.class));
+        doAnswer(invocation -> {
+            ReceiptRecordEntity entity = invocation.getArgument(0);
+            entity.setId(9002L);
+            return 1;
+        }).when(receiptRecordMapper).insert(any(ReceiptRecordEntity.class));
 
         ReceiptRecordVO receipt = enrollmentOrderService.refundOrder(2001L, request);
 
@@ -774,10 +777,12 @@ class EnrollmentOrderServiceImplTest {
         assertThat(paymentCaptor.getValue().getHandledByUserId()).isEqualTo(88L);
 
         ArgumentCaptor<ReceiptRecordEntity> receiptCaptor = ArgumentCaptor.forClass(ReceiptRecordEntity.class);
-        verify(receiptRecordMapper).updateById(receiptCaptor.capture());
-        assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("DEFAULT_RECEIPT");
-        assertThat(receipt.templateCode()).isEqualTo("DEFAULT_RECEIPT");
-        assertThat(receipt.id()).isEqualTo(9001L);
+        verify(receiptRecordMapper).insert(receiptCaptor.capture());
+        assertThat(receiptCaptor.getValue().getTemplateCode()).isEqualTo("REFUND_RECEIPT");
+        assertThat(receiptCaptor.getValue().getPaymentRecordId()).isEqualTo(8001L);
+        assertThat(receipt.templateCode()).isEqualTo("REFUND_RECEIPT");
+        assertThat(receipt.id()).isEqualTo(9002L);
+        verify(receiptRecordMapper, never()).updateById(any(ReceiptRecordEntity.class));
 
         // Order set to REFUNDED + CANCELLED, with no paid or collectible amount remaining.
         verify(enrollmentOrderMapper).updateById(orderCaptor.capture());
@@ -906,7 +911,6 @@ class EnrollmentOrderServiceImplTest {
             return 1;
         }).when(paymentRecordMapper).insert(any(PaymentRecordEntity.class));
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(selectedPackage));
-        when(receiptRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
                 new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
@@ -985,7 +989,6 @@ class EnrollmentOrderServiceImplTest {
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(usedLesson));
-        when(receiptRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
                 new com.classdeduction.system.modules.enrollment.dto.RefundRequest();

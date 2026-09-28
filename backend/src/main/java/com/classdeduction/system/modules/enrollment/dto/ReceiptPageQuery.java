@@ -19,6 +19,9 @@ public class ReceiptPageQuery extends PageQuery {
     @Schema(description = "学生ID", example = "1880000000000000001")
     private Long studentId;
 
+    @Schema(description = "报名订单ID", example = "1880000000000000001")
+    private Long enrollmentOrderId;
+
     @Schema(description = "模板编码", example = "DEFAULT_RECEIPT")
     private String templateCode;
 }

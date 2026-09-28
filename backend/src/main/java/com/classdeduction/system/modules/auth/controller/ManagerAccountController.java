@@ -38,4 +38,10 @@ public class ManagerAccountController {
         managerAccountService.updateManagerAccount(id, request);
         return ApiResponse.success("Manager account updated.", null);
     }
+
+    @DeleteMapping("/{id}")
+    public ApiResponse<Void> delete(@PathVariable Long id) {
+        managerAccountService.deleteManagerAccount(id);
+        return ApiResponse.success("Manager account deleted.", null);
+    }
 }

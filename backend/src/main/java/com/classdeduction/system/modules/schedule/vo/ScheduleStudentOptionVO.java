@@ -17,13 +17,14 @@ public record ScheduleStudentOptionVO(
             String gradeBand,
             boolean hasSchedule,
             Long packageId,
+            String packageStatus,
             Long privateLessonGroupId,
             Integer participantCount,
             String participantNames,
             String participantStudentIds
     ) {
         public CourseGradeOption(String courseName, String gradeBand, boolean hasSchedule) {
-            this(courseName, gradeBand, hasSchedule, null, null, 1, null, null);
+            this(courseName, gradeBand, hasSchedule, null, "ACTIVE", null, 1, null, null);
         }
     }
 }

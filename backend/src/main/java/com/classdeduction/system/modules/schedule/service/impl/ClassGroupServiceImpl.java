@@ -14,7 +14,9 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
@@ -67,9 +69,17 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final ClassroomMapper classroomMapper;
     private final CourseProductMapper courseProductMapper;
     private final CoursePackageMapper coursePackageMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
 
     @Override
     public List<Map<String, Object>> listClasses(CurrentUserResponse currentUser) {
+        return listClasses(currentUser, false);
+    }
+
+    @Override
+    public List<Map<String, Object>> listClasses(CurrentUserResponse currentUser, boolean includeInactiveProducts) {
+        // 非运营用途（Product 配置）才包含停用 Product；教师账号始终只能看到在用课程。
+        boolean canViewInactiveProducts = includeInactiveProducts && !isTeacherUser(currentUser);
         LambdaQueryWrapper<ClassGroupEntity> query = new LambdaQueryWrapper<ClassGroupEntity>()
                 .eq(ClassGroupEntity::getStatus, "ACTIVE")
                 .isNotNull(ClassGroupEntity::getProductId)
@@ -91,7 +101,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         classes = classes.stream()
                 .filter(classGroup -> {
                     CourseProductEntity product = productMap.get(classGroup.getProductId());
-                    return product != null && "ACTIVE".equals(product.getStatus());
+                    return product != null && (canViewInactiveProducts || "ACTIVE".equals(product.getStatus()));
                 })
                 .toList();
         if (classes.isEmpty()) {
@@ -240,7 +250,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (occurrences.isEmpty()) {
             List<ClassGroupScheduleSlotEntity> slots = listClassScheduleSlots(classId);
             if (!slots.isEmpty()) {
-                generateFutureClassOccurrences(classGroup, slots, Collections.emptyList(), AppTime.nowLocalDateTime());
+                generateFutureClassOccurrences(classGroup, slots, Collections.emptyList(),
+                        Collections.emptyList(), AppTime.nowLocalDateTime());
                 occurrences = listClassOccurrenceEntities(classId);
             }
             if (occurrences.isEmpty()) {
@@ -501,9 +512,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (occurrence.getPlannedStartAt() == null) {
             return attendanceMatches(enrollment.getAttendanceOption(), occurrence);
         }
-        if (!attendanceMatches(enrollment.getAttendanceOption(), occurrence)) {
-            return false;
-        }
         LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
         if (!enrollmentIncludesOccurrence(enrollment, occurrence)) {
             return false;
@@ -512,6 +520,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             return false;
         }
         if (enrollment.getExpiryDate() != null && lessonDate.isAfter(enrollment.getExpiryDate())) {
+            return false;
+        }
+        if (!attendanceMatches(enrollment.getAttendanceOption(), occurrence)) {
             return false;
         }
         if (!"PER_SESSION".equals(enrollment.getBillingType()) || enrollment.getPurchasedQuantity() == null) {
@@ -653,6 +664,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public void checkClassScheduleEditable(Long classId) {
+        ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
+        if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+        }
+        ensureStartedClassLessonsConfirmed(classId, AppTime.nowLocalDateTime());
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body) {
         ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
@@ -687,6 +708,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .distinct()
                 .forEach(teacherMapper::selectByIdForUpdate);
 
+        LocalDateTime rebuildFrom = AppTime.nowLocalDateTime();
+        ensureStartedClassLessonsConfirmed(classId, rebuildFrom);
+
         classGroup.setTeacherId(teacherId);
         classGroup.setClassroomId(classroomId);
         classGroup.setStartDate(startDate);
@@ -701,11 +725,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             classGroupScheduleSlotMapper.insert(slot);
         }
 
-        LocalDateTime rebuildFrom = AppTime.nowLocalDateTime();
-        int cancelledCount = removeFutureUnconfirmedOccurrences(classId, rebuildFrom);
+        FutureClassOccurrences previousOccurrences = removeFutureUnconfirmedOccurrences(classId, rebuildFrom);
         List<LessonOccurrenceEntity> retainedOccurrences = retainedClassOccurrences(classId, rebuildFrom);
-        int generatedCount = generateFutureClassOccurrences(classGroup, slots, retainedOccurrences, rebuildFrom);
-        return Map.of("classId", classId, "cancelledFutureOccurrences", cancelledCount, "generatedOccurrences", generatedCount);
+        int generatedCount = generateFutureClassOccurrences(classGroup, slots, retainedOccurrences,
+                previousOccurrences.occurrences(), rebuildFrom);
+        return Map.of("classId", classId, "cancelledFutureOccurrences", previousOccurrences.removedCount(),
+                "generatedOccurrences", generatedCount);
     }
 
     @Override
@@ -1233,20 +1258,54 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                                                LocalDateTime actualEndAt) {
         LocalDateTime targetStartAt = actualStartAt != null ? actualStartAt : source.getPlannedStartAt();
         LocalDateTime targetEndAt = actualEndAt != null ? actualEndAt : source.getPlannedEndAt();
-        if (actualTeacherId != null && hasOccurrenceConflict(source, targetStartAt, targetEndAt,
-                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedTeacherId, actualTeacherId))) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected for the adjusted class occurrence.");
-        }
-        if (actualClassroomId != null && hasOccurrenceConflict(source, targetStartAt, targetEndAt,
-                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId, actualClassroomId))) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the adjusted class occurrence.");
-        }
-
-        for (ClassEnrollmentEntity enrollment : enrollments) {
-            if (hasStudentConflict(source, enrollment.getStudentId(), targetStartAt, targetEndAt)) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted class occurrence.");
+        List<ClassTimeRange> addedTime = newlyOccupiedClassTime(source, targetStartAt, targetEndAt);
+        List<ClassTimeRange> teacherRanges = Objects.equals(actualTeacherId, source.getPlannedTeacherId())
+                ? addedTime : List.of(new ClassTimeRange(targetStartAt, targetEndAt));
+        List<ClassTimeRange> classroomRanges = Objects.equals(actualClassroomId, source.getPlannedClassroomId())
+                ? addedTime : List.of(new ClassTimeRange(targetStartAt, targetEndAt));
+        if (actualTeacherId != null) {
+            for (ClassTimeRange range : teacherRanges) {
+                if (hasOccurrenceConflict(source, range.startAt(), range.endAt(),
+                        wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedTeacherId, actualTeacherId))) {
+                    throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected for the adjusted class occurrence.");
+                }
             }
         }
+        if (actualClassroomId != null) {
+            for (ClassTimeRange range : classroomRanges) {
+                if (hasOccurrenceConflict(source, range.startAt(), range.endAt(),
+                        wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId, actualClassroomId))) {
+                    throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the adjusted class occurrence.");
+                }
+            }
+        }
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            for (ClassTimeRange range : addedTime) {
+                if (hasStudentConflict(source, enrollment.getStudentId(), range.startAt(), range.endAt())) {
+                    throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the adjusted class occurrence.");
+                }
+            }
+        }
+    }
+
+    /** 原计划已经占用的时段不重复拦截；只检查实际延长或挪动后新占用的部分。 */
+    private List<ClassTimeRange> newlyOccupiedClassTime(LessonOccurrenceEntity source,
+                                                         LocalDateTime targetStartAt, LocalDateTime targetEndAt) {
+        LocalDateTime originalStartAt = source.getPlannedStartAt();
+        LocalDateTime originalEndAt = source.getPlannedEndAt();
+        List<ClassTimeRange> ranges = new ArrayList<>(2);
+        if (targetStartAt.isBefore(originalStartAt)) {
+            ranges.add(new ClassTimeRange(targetStartAt,
+                    targetEndAt.isBefore(originalStartAt) ? targetEndAt : originalStartAt));
+        }
+        if (targetEndAt.isAfter(originalEndAt)) {
+            ranges.add(new ClassTimeRange(targetStartAt.isAfter(originalEndAt) ? targetStartAt : originalEndAt,
+                    targetEndAt));
+        }
+        return ranges;
+    }
+
+    private record ClassTimeRange(LocalDateTime startAt, LocalDateTime endAt) {
     }
 
     private boolean hasStudentConflict(LessonOccurrenceEntity source,
@@ -1333,14 +1392,49 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
     }
 
-    private int removeFutureUnconfirmedOccurrences(Long classId, LocalDateTime rebuildFrom) {
+    /** Edit Schedule 的保存门槛：已经开始且有学生参加的课次，必须完成管理员最终消课。 */
+    private void ensureStartedClassLessonsConfirmed(Long classId, LocalDateTime editingAt) {
+        List<LessonOccurrenceEntity> startedLessons = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "MERGED")
+                        .le(LessonOccurrenceEntity::getPlannedStartAt, editingAt)
+                        .orderByDesc(LessonOccurrenceEntity::getPlannedStartAt));
+        if (startedLessons.isEmpty()) {
+            return;
+        }
+        List<ClassEnrollmentEntity> activeEnrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+        if (activeEnrollments.isEmpty()) {
+            return;
+        }
+        Map<Long, List<LocalDate>> confirmedDates = activeEnrollments.stream()
+                .anyMatch(enrollment -> "PER_SESSION".equals(enrollment.getBillingType()))
+                ? loadConfirmedLessonDatesByStudent(classId) : Collections.emptyMap();
+        for (LessonOccurrenceEntity lesson : startedLessons) {
+            if (activeEnrollments.stream().anyMatch(enrollment ->
+                    isEnrollmentEligibleForOccurrence(enrollment, lesson, confirmedDates))) {
+                throw new BusinessException("CLASS_LESSONS_NOT_CONFIRMED",
+                        "Confirm all started class lessons before editing the schedule. An unconfirmed lesson starts on "
+                                + lesson.getPlannedStartAt().format(CONFLICT_DATE_TIME)
+                                + " ET. Lessons already in progress also require confirmation.");
+            }
+        }
+    }
+
+    /** 删除可重建课次，同时保留修改前的时段快照，用于区分既有冲突与本次新增冲突。 */
+    private FutureClassOccurrences removeFutureUnconfirmedOccurrences(Long classId, LocalDateTime rebuildFrom) {
         List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
                         .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                         .ge(LessonOccurrenceEntity::getPlannedStartAt, rebuildFrom));
         if (futureOccurrences.isEmpty()) {
-            return 0;
+            return new FutureClassOccurrences(0, List.of());
         }
         Set<Long> occurrenceIds = futureOccurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
         Set<Long> recordedOccurrenceIds = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
@@ -1355,10 +1449,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .filter(id -> !recordedOccurrenceIds.contains(id))
                 .toList();
         if (removableIds.isEmpty()) {
-            return 0;
+            return new FutureClassOccurrences(0, futureOccurrences);
         }
-        return lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+        int removedCount = lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .in(LessonOccurrenceEntity::getId, removableIds));
+        return new FutureClassOccurrences(removedCount, futureOccurrences);
+    }
+
+    private record FutureClassOccurrences(int removedCount, List<LessonOccurrenceEntity> occurrences) {
     }
 
     /** 重建时保留已开始或已有消课记录的课次，供新时段逐节比对。 */
@@ -1372,9 +1470,13 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private int generateFutureClassOccurrences(ClassGroupEntity classGroup,
                                                List<ClassGroupScheduleSlotEntity> slots,
                                                List<LessonOccurrenceEntity> retainedOccurrences,
+                                               List<LessonOccurrenceEntity> previousOccurrences,
                                                LocalDateTime rebuildFrom) {
         LocalDate today = rebuildFrom.toLocalDate();
         Map<LocalDate, List<LessonOccurrenceEntity>> retainedByDate = retainedOccurrences.stream()
+                .filter(occurrence -> occurrence.getPlannedStartAt() != null && occurrence.getPlannedEndAt() != null)
+                .collect(Collectors.groupingBy(occurrence -> occurrence.getPlannedStartAt().toLocalDate()));
+        Map<LocalDate, List<LessonOccurrenceEntity>> previousByDate = previousOccurrences.stream()
                 .filter(occurrence -> occurrence.getPlannedStartAt() != null && occurrence.getPlannedEndAt() != null)
                 .collect(Collectors.groupingBy(occurrence -> occurrence.getPlannedStartAt().toLocalDate()));
         LocalDate configuredStart = classGroup.getStartDate();
@@ -1430,7 +1532,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setPlannedEndAt(plannedEndAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
                 occurrence.setPlanningStatus("SCHEDULED");
-                ensureNoGeneratedClassOccurrenceConflicts(occurrence, classGroup);
+                ensureNoGeneratedClassOccurrenceConflicts(occurrence, classGroup,
+                        previousByDate.getOrDefault(date, Collections.emptyList()));
                 occurrence.setConflictChecked(1);
                 lessonOccurrenceMapper.insert(occurrence);
                 count++;
@@ -1440,7 +1543,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     private void ensureNoGeneratedClassOccurrenceConflicts(LessonOccurrenceEntity occurrence,
-                                                           ClassGroupEntity classGroup) {
+                                                           ClassGroupEntity classGroup,
+                                                           List<LessonOccurrenceEntity> previousOccurrences) {
         LocalDateTime startAt = occurrence.getPlannedStartAt();
         LocalDateTime endAt = occurrence.getPlannedEndAt();
         if (occurrence.getPlannedTeacherId() != null) {
@@ -1455,8 +1559,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the new class schedule.");
         }
         for (Long studentId : activeStudentIdsByClassOnDate(occurrence.getClassGroupId(), startAt.toLocalDate())) {
-            if (hasStudentConflictForClassSchedule(studentId, startAt, endAt)) {
-                throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the new class schedule.");
+            for (LessonOccurrenceEntity conflict : findStudentConflictsForClassSchedule(
+                    studentId, occurrence.getClassGroupId(), startAt, endAt)) {
+                if (!wasStudentOverlapAlreadyScheduled(previousOccurrences, conflict, startAt, endAt)) {
+                    StudentEntity student = studentMapper.selectById(studentId);
+                    String studentName = student == null ? "#" + studentId : student.getStudentName();
+                    throw new BusinessException("SCHEDULE_CONFLICT", "Student " + studentName
+                            + " already has " + describeConflictingCourse(conflict) + " ("
+                            + conflict.getPlannedStartAt().format(CONFLICT_DATE_TIME) + "–"
+                            + conflict.getPlannedEndAt().format(CONFLICT_TIME) + " ET). This overlaps the new class schedule.");
+                }
             }
         }
     }
@@ -1534,13 +1646,62 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 ? courseName + " (" + student.getStudentName() + ")" : courseName;
     }
 
-    private boolean hasStudentConflictForClassSchedule(Long studentId, LocalDateTime startAt, LocalDateTime endAt) {
+    /** 只查当前班以外的课次；当前班未重建的课次由 retainedOccurrences 单独检查。 */
+    private List<LessonOccurrenceEntity> findStudentConflictsForClassSchedule(Long studentId, Long classId,
+                                                                               LocalDateTime startAt, LocalDateTime endAt) {
         LocalDate lessonDate = startAt.toLocalDate();
-        List<Long> classIds = activeClassIdsByStudentOnDate(studentId, lessonDate);
-        return hasClassScheduleConflict(startAt, endAt, wrapper -> wrapper
+        List<Long> classIds = activeClassIdsByStudentOnDate(studentId, lessonDate).stream()
+                .filter(activeClassId -> !activeClassId.equals(classId))
+                .toList();
+        List<Long> privateGroupIds = privateLessonGroupMemberMapper.selectList(
+                        new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                                .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
+                                .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                                .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                .stream()
+                .map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, endAt)
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, startAt)
+                .and(otherClass -> otherClass.isNull(LessonOccurrenceEntity::getClassGroupId)
+                        .or().ne(LessonOccurrenceEntity::getClassGroupId, classId))
                 .and(nested -> nested
                         .eq(LessonOccurrenceEntity::getStudentId, studentId)
-                        .or(!classIds.isEmpty(), inner -> inner.in(LessonOccurrenceEntity::getClassGroupId, classIds))));
+                        .or(!privateGroupIds.isEmpty(), group -> group.in(
+                                LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds))
+                        .or(!classIds.isEmpty(), other -> other.in(LessonOccurrenceEntity::getClassGroupId, classIds))));
+    }
+
+    /** 原时段已经覆盖的重叠属于报名时接受的冲突；仅新增的重叠阻止修改排课。 */
+    private boolean wasStudentOverlapAlreadyScheduled(List<LessonOccurrenceEntity> previousOccurrences,
+                                                       LessonOccurrenceEntity conflict,
+                                                       LocalDateTime startAt, LocalDateTime endAt) {
+        LocalDateTime overlapStart = startAt.isAfter(conflict.getPlannedStartAt())
+                ? startAt : conflict.getPlannedStartAt();
+        LocalDateTime overlapEnd = endAt.isBefore(conflict.getPlannedEndAt())
+                ? endAt : conflict.getPlannedEndAt();
+        LocalDateTime coveredUntil = overlapStart;
+        for (LessonOccurrenceEntity previous : previousOccurrences.stream()
+                .filter(item -> item.getPlannedStartAt() != null && item.getPlannedEndAt() != null)
+                .filter(item -> item.getPlannedStartAt().isBefore(overlapEnd)
+                        && item.getPlannedEndAt().isAfter(overlapStart))
+                .sorted(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt))
+                .toList()) {
+            if (previous.getPlannedStartAt().isAfter(coveredUntil)) {
+                return false;
+            }
+            if (previous.getPlannedEndAt().isAfter(coveredUntil)) {
+                coveredUntil = previous.getPlannedEndAt();
+            }
+            if (!coveredUntil.isBefore(overlapEnd)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 按课程日期筛选学生当日有效的班课，用于避免未来报名的学生提前触发冲突。 */

@@ -746,6 +746,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 rowDropoffAddress,
                 pickupDropoffLabel(pickupRequired, dropoffRequired),
                 resolvedPaymentMethod,
+                item == null ? order.getPaymentStatus() : resolvePaymentStatus(rowAmountDue, rowPaidAmount),
                 order.getPaymentStatus(),
                 rowLinePriceAmount,
                 rowPickupFeeAmount,
@@ -1054,7 +1055,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 String name = firstText(row.className(), row.courseProductName(), row.registerClass(), row.detail(), "Unknown Course");
                 yield new GroupLabel(key, name);
             }
-            case PAYMENT_STATUS -> new GroupLabel(firstText(row.paymentStatus(), "UNKNOWN"), firstText(row.paymentStatus(), "Unknown"));
+            case PAYMENT_STATUS -> new GroupLabel(firstText(row.orderPaymentStatus(), "UNKNOWN"), firstText(row.orderPaymentStatus(), "Unknown"));
         };
     }
 
@@ -1259,7 +1260,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         }
     }
 
-    /** 优先采用课程明细快照；旧订单快照缺失或合计不一致时，兼容原订单级加权分配。 */
+    /**
+     * 课程行与 Enrollments 共用课程项金额快照；只有旧记录缺少快照时才按课程价格拆分。
+     * 不能因为快照合计与收据金额不符而再次分配，否则同一课程在两个页面会有不同已付金额。
+     */
     private List<BigDecimal> storedShares(List<EnrollmentOrderItemEntity> items,
                                           Function<EnrollmentOrderItemEntity, BigDecimal> valueOf,
                                           BigDecimal expectedTotal,
@@ -1268,11 +1272,18 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         if (!preferStoredCourseAmounts || items.stream().anyMatch(item -> valueOf.apply(item) == null)) {
             return allocateByWeights(expectedTotal, fallbackWeights);
         }
-        List<BigDecimal> shares = items.stream().map(item -> amount(valueOf.apply(item))).toList();
-        BigDecimal storedTotal = shares.stream().reduce(ZERO_AMOUNT, BigDecimal::add);
-        return storedTotal.subtract(expectedTotal).abs().compareTo(new BigDecimal("0.01")) <= 0
-                ? shares
-                : allocateByWeights(expectedTotal, fallbackWeights);
+        return items.stream().map(item -> amount(valueOf.apply(item))).toList();
+    }
+
+    /** 按课程项应收与净已付金额计算课程状态；收据状态单独保存在 orderPaymentStatus。 */
+    private String resolvePaymentStatus(BigDecimal amountDue, BigDecimal paidAmount) {
+        if (amountDue.compareTo(ZERO_AMOUNT) <= 0 || paidAmount.compareTo(amountDue) >= 0) {
+            return "PAID";
+        }
+        if (paidAmount.compareTo(ZERO_AMOUNT) <= 0) {
+            return "UNPAID";
+        }
+        return "PARTIAL";
     }
 
     /** 多参与人订单：先按参与人把整单金额切成桶，参与人快照缺失时回退等分。 */

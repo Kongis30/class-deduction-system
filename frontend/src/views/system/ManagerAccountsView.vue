@@ -1,5 +1,20 @@
 <template>
   <div class="manager-accounts-page" v-loading="loading">
+    <div class="manager-accounts-toolbar">
+      <el-input
+        v-model="filters.keyword"
+        clearable
+        placeholder="Search name or username"
+        style="max-width: 320px"
+        @keyup.enter="handleFilterChange"
+        @clear="handleFilterChange"
+      />
+      <el-select v-model="filters.status" clearable placeholder="All statuses" style="width: 160px" @change="handleFilterChange">
+        <el-option label="Active" value="ACTIVE" />
+        <el-option label="Inactive" value="INACTIVE" />
+      </el-select>
+      <el-button @click="handleFilterChange">Search</el-button>
+    </div>
     <el-table :data="accounts" row-key="userId" empty-text="No manager accounts">
       <el-table-column prop="displayName" label="Name" min-width="180" />
       <el-table-column prop="username" label="Username" min-width="170" />
@@ -15,10 +30,27 @@
       <el-table-column label="Last login" min-width="180">
         <template #default="{ row }">{{ dateTime(row.lastLoginAt) }}</template>
       </el-table-column>
-      <el-table-column label="Actions" width="110" fixed="right">
-        <template #default="{ row }"><el-button link type="primary" @click="openEdit(row)">Edit</el-button></template>
+      <el-table-column label="Actions" width="150" fixed="right">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="openEdit(row)">Edit</el-button>
+          <el-button link type="danger" @click="handleDelete(row)">Delete</el-button>
+        </template>
       </el-table-column>
     </el-table>
+
+    <div class="manager-accounts-footer">
+      <span>Showing {{ rangeStart }}–{{ rangeEnd }} of {{ pagination.total }}</span>
+      <el-pagination
+        v-model:current-page="pagination.pageNum"
+        v-model:page-size="pagination.pageSize"
+        background
+        layout="prev, pager, next, sizes"
+        :page-sizes="[10, 20, 50]"
+        :total="pagination.total"
+        @current-change="loadAccounts"
+        @size-change="handlePageSizeChange"
+      />
+    </div>
 
     <el-dialog v-model="dialogVisible" :title="editing ? 'Edit manager account' : 'Add manager account'" width="520px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
@@ -46,11 +78,12 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
-import { onMounted, reactive, ref } from 'vue';
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
+import { computed, onMounted, reactive, ref } from 'vue';
 
 import {
   createManagerAccount,
+  deleteManagerAccount,
   fetchManagerAccounts,
   updateManagerAccount,
   type ManagerAccount,
@@ -76,6 +109,10 @@ const dialogVisible = ref(false);
 const editing = ref(false);
 const editingId = ref<EntityId>();
 const form = reactive<AccountForm>(emptyForm());
+const filters = reactive({ keyword: '', status: '' });
+const pagination = reactive({ pageNum: 1, pageSize: 20, total: 0 });
+const rangeStart = computed(() => pagination.total === 0 ? 0 : (pagination.pageNum - 1) * pagination.pageSize + 1);
+const rangeEnd = computed(() => Math.min(pagination.pageNum * pagination.pageSize, pagination.total));
 const rules: FormRules<AccountForm> = {
   displayName: [{ required: true, message: 'Enter a display name.', trigger: 'blur' }],
   username: [{ required: true, message: 'Enter a username.', trigger: 'blur' }],
@@ -90,13 +127,30 @@ onMounted(loadAccounts);
 async function loadAccounts() {
   loading.value = true;
   try {
-    const response = await fetchManagerAccounts({ pageNum: 1, pageSize: 200 });
-    accounts.value = response.data.data.records;
+    const response = await fetchManagerAccounts({
+      keyword: filters.keyword.trim() || undefined,
+      status: filters.status || undefined,
+      pageNum: pagination.pageNum,
+      pageSize: pagination.pageSize,
+    });
+    const data = response.data.data;
+    accounts.value = data.records;
+    pagination.total = data.total;
   } catch (error) {
     ElMessage.error(extractErrorMessage(error, 'Failed to load manager accounts.'));
   } finally {
     loading.value = false;
   }
+}
+
+function handleFilterChange() {
+  pagination.pageNum = 1;
+  loadAccounts();
+}
+
+function handlePageSizeChange() {
+  pagination.pageNum = 1;
+  loadAccounts();
 }
 
 function openCreate() {
@@ -156,6 +210,23 @@ async function save() {
   }
 }
 
+async function handleDelete(account: ManagerAccount) {
+  try {
+    await ElMessageBox.confirm(
+      `Delete manager account “${account.displayName}” (${account.username})? The account will lose login access; registration records will be kept.`,
+      'Delete manager account',
+      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
+    );
+    await deleteManagerAccount(account.userId);
+    ElMessage.success('Manager account deleted.');
+    if (accounts.value.length === 1 && pagination.pageNum > 1) pagination.pageNum -= 1;
+    await loadAccounts();
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') return;
+    ElMessage.error(extractErrorMessage(error, 'Failed to delete manager account.'));
+  }
+}
+
 function emptyForm(): AccountForm {
   return { username: '', password: '', displayName: '', mobile: '', email: '', status: 'ACTIVE', remark: '' };
 }
@@ -169,5 +240,12 @@ defineExpose({ openCreateDialog: openCreate });
 </script>
 
 <style scoped>
-.manager-accounts-page { display: grid; gap: 18px; }
+.manager-accounts-page { display: grid; gap: 14px; }
+.manager-accounts-toolbar { display: flex; align-items: center; gap: 10px; }
+.manager-accounts-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #64748b; font-size: 13px; }
+@media (max-width: 720px) {
+  .manager-accounts-toolbar,
+  .manager-accounts-footer { flex-wrap: wrap; }
+  .manager-accounts-footer :deep(.el-pagination) { margin-left: auto; }
+}
 </style>

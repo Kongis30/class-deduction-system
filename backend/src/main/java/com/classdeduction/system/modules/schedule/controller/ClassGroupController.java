@@ -29,8 +29,9 @@ public class ClassGroupController {
     @RequireRoles({"ADMIN", "STAFF", "MANAGER", "TEACHER"})
     @Operation(summary = "List all active class groups")
     public ApiResponse<List<Map<String, Object>>> listClasses(
+            @RequestParam(defaultValue = "false") boolean includeInactiveProducts,
             @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
-        return ApiResponse.success(classGroupService.listClasses(currentUser));
+        return ApiResponse.success(classGroupService.listClasses(currentUser, includeInactiveProducts));
     }
 
     @GetMapping("/{classId}")
@@ -85,6 +86,14 @@ public class ClassGroupController {
         Object reason = body == null ? null : body.get("rejectReason");
         classGroupService.rejectLesson(classId, occurrenceId, reason == null ? null : String.valueOf(reason), currentUser);
         return ApiResponse.success("Rejected successfully.", null);
+    }
+
+    @GetMapping("/{classId}/schedule/edit-check")
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
+    @Operation(summary = "Check whether all started class lessons are confirmed before editing the schedule")
+    public ApiResponse<Void> checkClassScheduleEditable(@PathVariable Long classId) {
+        classGroupService.checkClassScheduleEditable(classId);
+        return ApiResponse.success(null);
     }
 
     @PutMapping("/{classId}/schedule")

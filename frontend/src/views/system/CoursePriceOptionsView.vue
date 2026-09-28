@@ -59,6 +59,14 @@
           </section>
 
           <template v-else>
+            <el-alert
+              v-if="selectedProduct?.status !== 'ACTIVE'"
+              class="inactive-product-notice"
+              type="warning"
+              :closable="false"
+              show-icon
+              title="This copied course is inactive. Finish reviewing its grades, prices, and schedule, then activate it in Courses before accepting registrations."
+            />
             <div class="matrix-toolbar">
               <el-button v-if="fromProductSetup" text type="primary" @click="handleContextBack">
                 <el-icon><ArrowLeft /></el-icon>
@@ -79,7 +87,7 @@
             >
               <header class="product-price-group__header">
                 <div>
-                  <strong>{{ group.gradeLabel }} grade pricing</strong>
+                  <strong>{{ group.gradeLabel }}</strong>
                   <small v-if="selectedMode === 'GROUP'">Actual classes: {{ groupActualClassSummary(group) }}</small>
                   <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }} for this grade</small>
                 </div>
@@ -266,7 +274,7 @@
                         <el-button size="small" plain @click="openActualClassInfoDialog(group, actualClass)">
                           Edit info
                         </el-button>
-                        <el-button size="small" plain type="primary" @click="openActualClassScheduleDialog(actualClass)">
+                        <el-button size="small" plain type="primary" :loading="checkingActualClassSchedule" @click="openActualClassScheduleDialog(actualClass)">
                           Edit schedule
                         </el-button>
                       </div>
@@ -313,7 +321,7 @@
           <div class="price-dialog-section__head">
             <span class="section-step">1</span>
             <div>
-              <strong>Choose grade pricing group</strong>
+              <strong>Choose grade group</strong>
               <small>Product + Grade defines shared registration options. Actual classes under this grade keep separate schedules.</small>
             </div>
           </div>
@@ -672,7 +680,7 @@ import {
   type CourseCategoryItem,
   type CoursePriceOptionSavePayload,
 } from '@/api/base-data';
-import { createActualClass, deleteClassGroup, fetchClassGroups, updateClassInfo, updateClassSchedule } from '@/api/schedule';
+import { checkClassScheduleEditable, createActualClass, deleteClassGroup, fetchClassGroups, updateClassInfo, updateClassSchedule } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import type { ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
@@ -794,6 +802,7 @@ const dialogVisible = ref(false);
 const editingId = ref<EntityId | null>(null);
 const formRef = ref();
 const actualClassScheduleDialogVisible = ref(false);
+const checkingActualClassSchedule = ref(false);
 const savingActualClassSchedule = ref(false);
 const editingActualClass = ref<ActualClassScheduleRow | null>(null);
 const actualClassInfoDialogVisible = ref(false);
@@ -1235,8 +1244,8 @@ async function loadProductsAndClasses() {
   loadingProducts.value = true;
   try {
     const [productsRes, classRes, teachersRes, classroomsRes] = await Promise.all([
-      fetchCourseProducts({ status: 'ACTIVE', pageNum: 1, pageSize: 200 }),
-      fetchClassGroups().catch(() => ({ data: { data: [] as ClassGroupItem[] } })),
+      fetchCourseProducts({ pageNum: 1, pageSize: 200 }),
+      fetchClassGroups({ includeInactiveProducts: true }).catch(() => ({ data: { data: [] as ClassGroupItem[] } })),
       fetchAllTeachers(),
       fetchAllClassrooms(),
     ]);
@@ -1563,13 +1572,22 @@ async function saveOption() {
   }
 }
 
-function openActualClassScheduleDialog(actualClass: ActualClassScheduleRow) {
-  const classDetail = classGroups.value.find(item => String(item.id) === String(actualClass.id)) ?? actualClass;
-  editingActualClass.value = actualClass;
-  actualClassScheduleForm.teacherId = classDetail.teacherId;
-  actualClassScheduleForm.classroomId = classDetail.classroomId;
-  actualClassScheduleForm.slots = normalizeActualClassScheduleSlots(classDetail.scheduleSlots);
-  actualClassScheduleDialogVisible.value = true;
+async function openActualClassScheduleDialog(actualClass: ActualClassScheduleRow) {
+  if (checkingActualClassSchedule.value) return;
+  checkingActualClassSchedule.value = true;
+  try {
+    await checkClassScheduleEditable(actualClass.id);
+    const classDetail = classGroups.value.find(item => String(item.id) === String(actualClass.id)) ?? actualClass;
+    editingActualClass.value = actualClass;
+    actualClassScheduleForm.teacherId = classDetail.teacherId;
+    actualClassScheduleForm.classroomId = classDetail.classroomId;
+    actualClassScheduleForm.slots = normalizeActualClassScheduleSlots(classDetail.scheduleSlots);
+    actualClassScheduleDialogVisible.value = true;
+  } catch (err) {
+    ElMessage.error(extractErrorMessage(err));
+  } finally {
+    checkingActualClassSchedule.value = false;
+  }
 }
 
 function openActualClassInfoDialog(group: ProductPriceGroup, actualClass?: ActualClassScheduleRow) {
@@ -1667,7 +1685,7 @@ function normalizeActualClassScheduleSlots(slots: ClassGroupItem['scheduleSlots'
 }
 
 async function saveActualClassSchedule() {
-  if (!editingActualClass.value) {
+  if (!editingActualClass.value || savingActualClassSchedule.value) {
     return;
   }
   if (actualClassScheduleForm.slots.length === 0) {

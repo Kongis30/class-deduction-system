@@ -369,6 +369,7 @@ export interface CoursePackageQuery {
   studentId?: string | number;
   courseProductId?: string | number;
   packageStatus?: string;
+  packageStatuses?: string;
   teacherId?: EntityId;
   teachingMode?: string;
   sortBy?: string;

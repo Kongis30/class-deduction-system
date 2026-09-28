@@ -74,6 +74,9 @@ export interface DataSummaryRow {
   registrationSavedAt?: string;
   registrationOperatorUserId?: EntityId;
   registrationOperatorName?: string;
+  /** 整张收据状态，用于收款/退款入口和整单汇总。 */
+  orderPaymentStatus: string;
+  /** 课程行状态，口径与 Enrollments 的课程项一致。 */
   paymentStatus: string;
   linePriceAmount?: number;
   pickupFeeAmount?: number;

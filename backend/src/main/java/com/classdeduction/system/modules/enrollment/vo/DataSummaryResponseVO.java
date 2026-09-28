@@ -85,6 +85,8 @@ public record DataSummaryResponseVO(
             String pickupDropoffLabel,
             String paymentMethod,
             String paymentStatus,
+            /** 整张收据的付款状态；汇总、收款和退款操作使用此状态。 */
+            String orderPaymentStatus,
             BigDecimal linePriceAmount,
             BigDecimal pickupFeeAmount,
             BigDecimal dropoffFeeAmount,
@@ -121,7 +123,7 @@ public record DataSummaryResponseVO(
                     periodEndDate, periodLabel, attendanceOption, timeSlotLabel, campusId, campusName,
                     classId, className, courseProductId, courseProductName, registerClass, courseType,
                     detail, phone, phone2, pickupRequired, pickupAddress, dropoffRequired, dropoffAddress,
-                    pickupDropoffLabel, paymentMethod, paymentStatus, null, null, null, null, null,
+                    pickupDropoffLabel, paymentMethod, paymentStatus, orderPaymentStatus, null, null, null, null, null,
                     null, null, null, totalHours, usedHours, remainingHours, teacherId, teacherName,
                     expiryDate, overdue, expiringSoon, lowOneOnOneHours, alertTypes, orderStatus,
                     reviewIssueCodes, privateLessonGroupId, privateLessonParticipantCount, itemStatus,

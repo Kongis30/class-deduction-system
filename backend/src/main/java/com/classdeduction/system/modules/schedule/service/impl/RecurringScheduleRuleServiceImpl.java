@@ -18,7 +18,7 @@ import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMem
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
-import com.classdeduction.system.modules.enrollment.vo.ActiveOneOnOneStudentCourseGradeRow;
+import com.classdeduction.system.modules.enrollment.vo.OneOnOneScheduleCourseRow;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -89,10 +89,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final ClassroomMapper classroomMapper;
 
     @Override
-    public List<ScheduleStudentOptionVO> listStudentsWithActiveOneOnOnePackages() {
-        // 普通课按学生、课程、年级合并；1 对 2 则按共享组 ID 保留为单独的排课单位。
+    public List<ScheduleStudentOptionVO> listOneOnOneScheduleStudents() {
+        // 每个课包独立展示；共享课仅用主课包作一个排课入口。
         Map<Long, ScheduleStudentOptionBuilder> students = new LinkedHashMap<>();
-        for (ActiveOneOnOneStudentCourseGradeRow row : coursePackageMapper.selectActiveOneOnOneStudentCourseGrades()) {
+        for (OneOnOneScheduleCourseRow row : coursePackageMapper.selectSchedulableOneOnOneStudentCourseGrades()) {
             ScheduleStudentOptionBuilder student = students.computeIfAbsent(
                     row.studentId(), id -> new ScheduleStudentOptionBuilder(id, row.studentName()));
             student.addCourseGrade(row);
@@ -112,20 +112,20 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             this.studentName = studentName;
         }
 
-        private void addCourseGrade(ActiveOneOnOneStudentCourseGradeRow row) {
+        private void addCourseGrade(OneOnOneScheduleCourseRow row) {
             String courseKey = (row.courseName() == null ? "" : row.courseName().trim().toLowerCase(Locale.ROOT))
                     + "::" + (row.gradeBand() == null ? "" : row.gradeBand().trim().toLowerCase(Locale.ROOT));
             boolean sharedGroup = row.privateLessonGroupId() != null;
-            String key = sharedGroup ? "private-group::" + row.privateLessonGroupId() : courseKey;
+            String key = row.packageId() == null ? courseKey : "package::" + row.packageId();
             ScheduleStudentOptionVO.CourseGradeOption incoming = new ScheduleStudentOptionVO.CourseGradeOption(
                     row.courseName(), row.gradeBand(), row.hasSchedule(),
-                    sharedGroup ? row.packageId() : null,
+                    row.packageId(), row.packageStatus(),
                     row.privateLessonGroupId(), row.participantCount(),
                     sharedGroup ? row.participantNames() : null,
                     sharedGroup ? row.participantStudentIds() : null);
             courseGrades.merge(key, incoming, (existing, next) -> new ScheduleStudentOptionVO.CourseGradeOption(
                     existing.courseName(), existing.gradeBand(), existing.hasSchedule() && next.hasSchedule(),
-                    existing.packageId(), existing.privateLessonGroupId(), existing.participantCount(),
+                    existing.packageId(), existing.packageStatus(), existing.privateLessonGroupId(), existing.participantCount(),
                     existing.participantNames(), existing.participantStudentIds()));
         }
 

@@ -479,6 +479,7 @@ export interface ReceiptRecordItem {
   receiptNo: string;
   enrollmentOrderId: EntityId;
   studentId: EntityId;
+  paymentRecordId?: EntityId;
   studentName: string;
   templateCode?: string;
   receiptPayload?: Record<string, unknown> | string | null;

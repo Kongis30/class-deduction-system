@@ -59,6 +59,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -116,6 +117,11 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .eq(query.getCourseProductId() != null, CoursePackageEntity::getCourseProductId, query.getCourseProductId())
                 .eq(StringUtils.hasText(query.getTeachingMode()), CoursePackageEntity::getTeachingMode, query.getTeachingMode())
                 .eq(StringUtils.hasText(query.getPackageStatus()), CoursePackageEntity::getPackageStatus, query.getPackageStatus());
+        if (StringUtils.hasText(query.getPackageStatuses())) {
+            List<String> statuses = Arrays.stream(query.getPackageStatuses().split(","))
+                    .map(String::trim).filter(StringUtils::hasText).distinct().toList();
+            if (!statuses.isEmpty()) lambda.in(CoursePackageEntity::getPackageStatus, statuses);
+        }
 
         // Apply user-specified sort before default createdAt sort
         if (StringUtils.hasText(query.getSortBy())) {
@@ -886,40 +892,76 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void pausePackage(Long id) {
-        CoursePackageEntity coursePackage = requireOneOnOnePackage(id);
-        if ("PAUSED".equals(coursePackage.getPackageStatus())) {
+        List<CoursePackageEntity> packages = loadPrivateLessonPackages(id);
+        if (packages.stream().allMatch(item -> "PAUSED".equals(item.getPackageStatus()))) {
             throw new BusinessException("PACKAGE_ALREADY_PAUSED", "Course package is already paused.");
         }
-        if (!List.of("ACTIVE", "COMPLETED").contains(coursePackage.getPackageStatus())) {
+        if (packages.stream().anyMatch(item -> !List.of("ACTIVE", "COMPLETED", "PAUSED").contains(item.getPackageStatus()))) {
             throw new BusinessException("PACKAGE_PAUSE_NOT_ALLOWED", "Only active or completed 1-on-1 packages can be paused.");
         }
 
-        coursePackage.setPackageStatus("PAUSED");
-        coursePackageMapper.updateById(coursePackage);
-
-        recurringScheduleRuleMapper.update(null, new LambdaUpdateWrapper<RecurringScheduleRuleEntity>()
-                .eq(RecurringScheduleRuleEntity::getPackageId, id)
-                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
-                .set(RecurringScheduleRuleEntity::getRuleStatus, "PAUSED"));
-        cancelFutureUnrecordedOccurrences(id);
+        // 共享课程的成员课包必须同进同退；课次可能挂在主课包，也可能来自历史成员课包。
+        for (CoursePackageEntity coursePackage : packages) {
+            if (!"PAUSED".equals(coursePackage.getPackageStatus())) {
+                coursePackage.setPackageStatus("PAUSED");
+                coursePackageMapper.updateById(coursePackage);
+            }
+            recurringScheduleRuleMapper.update(null, new LambdaUpdateWrapper<RecurringScheduleRuleEntity>()
+                    .eq(RecurringScheduleRuleEntity::getPackageId, coursePackage.getId())
+                    .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                    .set(RecurringScheduleRuleEntity::getRuleStatus, "PAUSED"));
+            cancelFutureUnrecordedOccurrences(coursePackage.getId());
+        }
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void resumePackage(Long id) {
-        CoursePackageEntity coursePackage = requireOneOnOnePackage(id);
-        if (!"PAUSED".equals(coursePackage.getPackageStatus())) {
+        List<CoursePackageEntity> packages = loadPrivateLessonPackages(id);
+        if (packages.stream().noneMatch(item -> "PAUSED".equals(item.getPackageStatus()))) {
             throw new BusinessException("PACKAGE_NOT_PAUSED", "Only paused 1-on-1 packages can be resumed.");
         }
-        if (coursePackage.getRemainingUnits() == null || coursePackage.getRemainingUnits() <= 0) {
+        if (packages.stream().anyMatch(item -> !List.of("PAUSED", "ACTIVE").contains(item.getPackageStatus()))) {
+            throw new BusinessException("PACKAGE_RESUME_NOT_ALLOWED", "Only paused or active 1-on-1 packages can be resumed.");
+        }
+        if (packages.stream().anyMatch(item -> item.getRemainingUnits() == null || item.getRemainingUnits() <= 0)) {
             throw new BusinessException("PACKAGE_NO_REMAINING_HOURS", "This package has no remaining hours to schedule.");
         }
 
-        // 恢复只重新开放课包；旧规则继续暂停，避免自动按过期时段生成课次。
-        coursePackage.setCompletedAt(null);
-        coursePackage.setEstimatedEndDate(null);
-        coursePackage.setPackageStatus("ACTIVE");
-        coursePackageMapper.updateById(coursePackage);
+        // 恢复只重新开放成员课包；旧规则继续暂停，避免自动按过期时段生成课次。
+        for (CoursePackageEntity coursePackage : packages) {
+            coursePackage.setCompletedAt(null);
+            coursePackage.setEstimatedEndDate(null);
+            coursePackage.setPackageStatus("ACTIVE");
+            coursePackageMapper.updateById(coursePackage);
+        }
+    }
+
+    /** 找出同一共享课程的所有有效成员课包；独立课程仅返回其自身。 */
+    private List<CoursePackageEntity> loadPrivateLessonPackages(Long packageId) {
+        CoursePackageEntity selected = requireOneOnOnePackage(packageId);
+        PrivateLessonGroupMemberEntity membership = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+        if (membership == null) return List.of(selected);
+        List<PrivateLessonGroupMemberEntity> members = privateLessonGroupMemberMapper.selectList(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, membership.getPrivateLessonGroupId())
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .orderByAsc(PrivateLessonGroupMemberEntity::getParticipantIndex));
+        if (members.isEmpty()) {
+            throw new BusinessException("PRIVATE_GROUP_EMPTY", "This private lesson group has no active members.");
+        }
+        List<CoursePackageEntity> packages = new ArrayList<>();
+        for (PrivateLessonGroupMemberEntity member : members) {
+            packages.add(member.getPackageId().equals(packageId)
+                    ? selected : requireOneOnOnePackage(member.getPackageId()));
+        }
+        return packages;
     }
 
     private void upsertBalanceSnapshot(CoursePackageEntity coursePackage, Long lastLedgerId) {

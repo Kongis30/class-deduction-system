@@ -305,6 +305,7 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
                 .receiptNo(receipt.getReceiptNo())
                 .enrollmentOrderId(order.getId())
                 .studentId(order.getStudentId())
+                .paymentRecordId(receipt.getPaymentRecordId())
                 .studentName(order.getStudentNameSnapshot())
                 .templateCode(DEFAULT_RECEIPT_TEMPLATE)
                 .receiptPayload(receipt.getReceiptPayload())

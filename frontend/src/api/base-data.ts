@@ -368,6 +368,10 @@ export function createCourseProduct(data: CourseProductSavePayload) {
   return http.post<ApiResponse<EntityId>>('/v1/base/course-products', data);
 }
 
+export function copyCourseProduct(id: EntityId, productName: string, dateShiftYears = 1) {
+  return http.post<ApiResponse<EntityId>>(`/v1/base/course-products/${id}/copy`, { productName, dateShiftYears });
+}
+
 export function updateCourseProduct(id: EntityId, data: CourseProductSavePayload) {
   return http.put(`/v1/base/course-products/${id}`, data);
 }

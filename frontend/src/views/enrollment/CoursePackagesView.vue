@@ -317,7 +317,7 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="detailDialogVisible = false">Close</el-button>
-          <el-button v-if="detailData?.packageStatus === 'ACTIVE'" :loading="packageStatusSaving" @click="handlePausePackage">
+          <el-button v-if="detailData?.packageStatus === 'ACTIVE'" :disabled="packageStatusSaving" @click="pauseConfirmationVisible = true">
             Pause Package
           </el-button>
           <el-button v-if="detailData?.packageStatus === 'PAUSED'" type="primary" @click="openResumePackage">
@@ -487,11 +487,20 @@
         <el-button @click="lessonDetailDialogVisible = false">Close</el-button>
       </template>
     </el-dialog>
+
+    <PauseConfirmationDialog
+      v-model="pauseConfirmationVisible"
+      title="Pause Package"
+      message="Future lessons that have not been recorded will be canceled. After resuming, you must create a new schedule to continue lessons."
+      confirm-text="Pause Package"
+      :loading="packageStatusSaving"
+      @confirm="handlePausePackage"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
@@ -510,6 +519,7 @@ import {
 } from '@/api/lesson';
 import { fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
 import { fetchRecurringScheduleRule, fetchRecurringScheduleRules } from '@/api/schedule';
+import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
 import type {
@@ -540,6 +550,7 @@ const hoursAdjustmentForm = reactive({
   reason: '',
 });
 const resumePackageVisible = ref(false);
+const pauseConfirmationVisible = ref(false);
 const packageStatusSaving = ref(false);
 const scheduleWeekStartDate = computed(() => {
   const date = new Date();
@@ -935,23 +946,11 @@ async function submitHoursAdjustment() {
 }
 
 async function handlePausePackage() {
-  if (!detailData.value) return;
-  try {
-    await ElMessageBox.confirm(
-      'Future lessons that have not been recorded will be canceled. After resuming, you must create a new schedule to continue lessons.',
-      'Pause Package',
-      {
-        confirmButtonText: 'Pause Package',
-        cancelButtonText: 'Keep Active',
-        type: 'warning',
-      },
-    );
-  } catch {
-    return;
-  }
+  if (!detailData.value || detailData.value.packageStatus !== 'ACTIVE' || packageStatusSaving.value) return;
   packageStatusSaving.value = true;
   try {
     await pauseCoursePackage(detailData.value.id);
+    pauseConfirmationVisible.value = false;
     await reloadPackageDetail();
     await loadData();
     ElMessage.success('Package paused.');

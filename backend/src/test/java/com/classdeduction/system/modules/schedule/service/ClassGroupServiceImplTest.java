@@ -1,5 +1,6 @@
 package com.classdeduction.system.modules.schedule.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
@@ -12,7 +13,9 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
@@ -86,6 +89,9 @@ class ClassGroupServiceImplTest {
     @Mock
     private CoursePackageMapper coursePackageMapper;
 
+    @Mock
+    private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+
     @Captor
     private ArgumentCaptor<LessonRecordEntity> recordCaptor;
 
@@ -116,7 +122,8 @@ class ClassGroupServiceImplTest {
                 teacherMapper,
                 classroomMapper,
                 courseProductMapper,
-                coursePackageMapper
+                coursePackageMapper,
+                privateLessonGroupMemberMapper
         );
     }
 
@@ -367,6 +374,43 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldAllowFinalConfirmationOfPreviouslyAcceptedStudentOverlap() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1), LocalDate.of(2026, 4, 30));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+
+        Map<String, Object> result = classGroupService.confirmLesson(501L, 1001L, Map.of(), adminUser());
+
+        assertThat(result.get("confirmStage")).isEqualTo("CONFIRMED");
+        verify(lessonOccurrenceMapper, never()).selectCount(any());
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("MERGED");
+    }
+
+    @Test
+    void shouldCheckStudentConflictOnlyInTheNewlyAddedActualTime() {
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L,
+                LocalDate.of(2026, 1, 1), LocalDate.of(2026, 4, 30));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonOccurrenceMapper.selectCount(any())).thenAnswer(invocation ->
+                invocation.<LambdaQueryWrapper<LessonOccurrenceEntity>>getArgument(0)
+                        .getSqlSegment().contains("studentId") ? 1L : 0L);
+
+        assertThatThrownBy(() -> classGroupService.confirmLesson(501L, 1001L, Map.of(
+                "actualStartAt", "2026-04-12T09:30:00",
+                "actualEndAt", "2026-04-12T11:30:00",
+                "actualUnits", 4), adminUser()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("SCHEDULE_CONFLICT");
+        verify(lessonOccurrenceMapper, never()).updateById(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
     void shouldSkipExpiredClassEnrollmentWhenConfirmingClassLesson() {
         LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
         ClassEnrollmentEntity expired = activeEnrollment(601L,
@@ -612,7 +656,6 @@ class ClassGroupServiceImplTest {
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, futureDate, futureDate)));
-        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
 
         int weekday = futureDate.getDayOfWeek().getValue();
         Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
@@ -665,7 +708,8 @@ class ClassGroupServiceImplTest {
         when(classGroupMapper.selectById(900L)).thenReturn(existingClass);
         when(courseProductMapper.selectById(300L)).thenReturn(product);
         when(teacherMapper.selectById(702L)).thenReturn(teacher);
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of(), List.of(conflict));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(
+                List.of(), List.of(), List.of(), List.of(conflict));
 
         assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
                 "slots", List.of(Map.of("teacherId", 702L,
@@ -702,7 +746,7 @@ class ClassGroupServiceImplTest {
         when(studentMapper.selectById(601L)).thenReturn(student);
 
         assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(classGroupService,
-                "ensureNoGeneratedClassOccurrenceConflicts", candidate, editingClass))
+                "ensureNoGeneratedClassOccurrenceConflicts", candidate, editingClass, List.of()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("Derek Wong")
                 .hasMessageContaining("G1-G5 | 40 hours")
@@ -758,6 +802,58 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldRequireFinalConfirmationBeforeEditingAnAlreadyStartedClassLesson() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
+                activeEnrollment(601L, now.toLocalDate().minusDays(1), now.toLocalDate().plusDays(1))));
+        LessonOccurrenceEntity inProgress = scheduledOccurrence(now.minusMinutes(1));
+        inProgress.setPlannedEndAt(now.plusHours(1));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(inProgress));
+
+        assertThatThrownBy(() -> classGroupService.checkClassScheduleEditable(501L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CLASS_LESSONS_NOT_CONFIRMED");
+        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of("weekday", now.getDayOfWeek().getValue(),
+                        "startTime", "15:00", "endTime", "18:00")))))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CLASS_LESSONS_NOT_CONFIRMED");
+        verify(classGroupMapper, never()).updateById(any(ClassGroupEntity.class));
+        verify(classGroupScheduleSlotMapper, never()).insert(any(ClassGroupScheduleSlotEntity.class));
+        verify(lessonOccurrenceMapper, never()).delete(any());
+    }
+
+    @Test
+    void shouldIgnoreGeneratedLessonsFromBeforeTheStudentJoined() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        LocalDate tomorrow = now.toLocalDate().plusDays(1);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setStartDate(tomorrow);
+        classGroup.setEndDate(tomorrow);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L, tomorrow, tomorrow);
+        enrollment.setCreatedAt(now);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        LessonOccurrenceEntity historical = scheduledOccurrence(now.minusDays(1));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(
+                List.of(historical), List.of(), List.of(), List.of());
+
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of("weekday", tomorrow.getDayOfWeek().getValue(),
+                        "startTime", "10:00", "endTime", "11:00"))));
+
+        assertThat(result.get("generatedOccurrences")).isEqualTo(1);
+    }
+
+    @Test
     void shouldPreserveRecordedFutureClassOccurrenceWithoutDuplicatingTheSameTime() {
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
@@ -773,7 +869,8 @@ class ClassGroupServiceImplTest {
         record.setOccurrenceId(2001L);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, preservedDate, preservedDate)));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(preserved), List.of(preserved));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(
+                List.of(), List.of(preserved), List.of(preserved));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
         Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
@@ -802,7 +899,8 @@ class ClassGroupServiceImplTest {
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, lessonDate, lessonDate)));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(recorded), List.of(recorded));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(
+                List.of(), List.of(recorded), List.of(recorded), List.of());
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
         Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
@@ -839,7 +937,7 @@ class ClassGroupServiceImplTest {
 
         Integer generated = ReflectionTestUtils.invokeMethod(classGroupService,
                 "generateFutureClassOccurrences", classGroup, List.of(firstHalf, secondHalf),
-                List.of(ongoing), rebuildFrom);
+                List.of(ongoing), List.of(ongoing), rebuildFrom);
 
         verify(lessonOccurrenceMapper, times(2)).insert(occurrenceCaptor.capture());
         assertThat(occurrenceCaptor.getAllValues())
@@ -862,7 +960,8 @@ class ClassGroupServiceImplTest {
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, lessonDate, lessonDate)));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(recorded), List.of(recorded));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(
+                List.of(), List.of(recorded), List.of(recorded));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
         assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
@@ -872,6 +971,102 @@ class ClassGroupServiceImplTest {
                 .extracting("code")
                 .isEqualTo("SCHEDULE_CONFLICT");
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldKeepAnExistingStudentOverlapWhenRebuildingTheSameClassTime() {
+        LocalDate date = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        stubPreviouslyOverlappingClassSchedule(date);
+
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of("weekday", date.getDayOfWeek().getValue(),
+                        "startTime", "15:00", "endTime", "18:00"))));
+
+        assertThat(result.get("generatedOccurrences")).isEqualTo(1);
+        verify(lessonOccurrenceMapper, times(1)).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldAllowScheduleChangeOutsideTheExistingStudentOverlap() {
+        LocalDate date = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        stubPreviouslyOverlappingClassSchedule(date);
+
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of("weekday", date.getDayOfWeek().getValue(),
+                        "startTime", "15:00", "endTime", "19:00"))));
+
+        assertThat(result.get("generatedOccurrences")).isEqualTo(1);
+        verify(lessonOccurrenceMapper, times(1)).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldRejectOnlyTheNewPartOfAStudentOverlap() {
+        LocalDate date = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        stubPreviouslyOverlappingClassSchedule(date);
+        StudentEntity student = new StudentEntity();
+        student.setStudentName("Osborn Wang");
+        when(studentMapper.selectById(601L)).thenReturn(student);
+
+        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(Map.of("weekday", date.getDayOfWeek().getValue(),
+                        "startTime", "14:00", "endTime", "18:00")))))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Osborn Wang")
+                .hasMessageContaining("13:00–16:00");
+        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldCheckSharedPrivateLessonsForEveryEnrolledStudent() {
+        LocalDate date = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        LessonOccurrenceEntity candidate = scheduledOccurrence(date.atTime(10, 30));
+        LessonOccurrenceEntity sharedLesson = scheduledOccurrence(date.atTime(10, 0));
+        sharedLesson.setId(2002L);
+        sharedLesson.setClassGroupId(null);
+        sharedLesson.setStudentId(700L);
+        sharedLesson.setPrivateLessonGroupId(900L);
+        PrivateLessonGroupMemberEntity member = new PrivateLessonGroupMemberEntity();
+        member.setStudentId(601L);
+        member.setPrivateLessonGroupId(900L);
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(member));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(activeEnrollment(601L, date, date)));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of(sharedLesson));
+        StudentEntity student = new StudentEntity();
+        student.setStudentName("Alice Chen");
+        when(studentMapper.selectById(601L)).thenReturn(student);
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(classGroupService,
+                "ensureNoGeneratedClassOccurrenceConflicts", candidate, new ClassGroupEntity(), List.of()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Alice Chen")
+                .hasMessageContaining("1-on-1 lesson");
+        ArgumentCaptor<LambdaQueryWrapper<LessonOccurrenceEntity>> queryCaptor = ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(lessonOccurrenceMapper, times(2)).selectList(queryCaptor.capture());
+        assertThat(queryCaptor.getAllValues().get(1).getSqlSegment()).contains("privateLessonGroupId");
+    }
+
+    /** 模拟线上学生在原 15–18 点班课之外，还报名了 13–16 点班课。 */
+    private void stubPreviouslyOverlappingClassSchedule(LocalDate date) {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setStartDate(date);
+        classGroup.setEndDate(date);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        ClassEnrollmentEntity currentEnrollment = activeEnrollment(601L, date, date);
+        ClassEnrollmentEntity otherEnrollment = activeEnrollment(601L, date, date);
+        otherEnrollment.setClassId(900L);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(currentEnrollment, otherEnrollment));
+
+        LessonOccurrenceEntity previous = scheduledOccurrence(date.atTime(15, 0));
+        previous.setPlannedEndAt(date.atTime(18, 0));
+        LessonOccurrenceEntity other = scheduledOccurrence(date.atTime(13, 0));
+        other.setId(2002L);
+        other.setClassGroupId(900L);
+        other.setPlannedEndAt(date.atTime(16, 0));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(
+                List.of(), List.of(previous), List.of(), List.of(other));
     }
 
     private LessonRecordEntity pendingClassRecord(Long id, Long studentId) {

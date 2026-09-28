@@ -13,4 +13,6 @@ public interface ManagerAccountService {
     Long createManagerAccount(ManagerAccountCreateRequest request);
 
     void updateManagerAccount(Long userId, ManagerAccountUpdateRequest request);
+
+    void deleteManagerAccount(Long userId);
 }

@@ -659,6 +659,32 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldKeepCoursePaymentStatusConsistentWithCourseSnapshotsAndReceiptStatusSeparate() {
+        EnrollmentOrderEntity order = order(1L, "200.00", "200.00", "0.00");
+        order.setPaymentStatus("PAID");
+        EnrollmentOrderItemEntity first = item(21L, 1, "100.00");
+        first.setAmountDue(new BigDecimal("100.00"));
+        first.setPaidAmount(new BigDecimal("50.00"));
+        EnrollmentOrderItemEntity second = item(22L, 2, "100.00");
+        second.setAmountDue(new BigDecimal("100.00"));
+        second.setPaidAmount(new BigDecimal("120.00"));
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "200.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::paidAmount)
+                .containsExactly(new BigDecimal("50.00"), new BigDecimal("120.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::paymentStatus)
+                .containsExactly("PARTIAL", "PAID");
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::orderPaymentStatus)
+                .containsOnly("PAID");
+        assertThat(response.totalIncomeAmount()).isEqualByComparingTo("200.00");
+    }
+
+    @Test
     void shouldSplitAmountsEquallyWhenItemPricesAreMissing() {
         EnrollmentOrderEntity order = order(1L, "200.00", "100.00", "100.00");
         EnrollmentOrderItemEntity first = item(21L, 1, null);

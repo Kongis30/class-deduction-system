@@ -26,6 +26,6 @@ public class ScheduleStudentController {
     @GetMapping("/one-on-one")
     @Operation(summary = "List active students with active one-on-one packages")
     public ApiResponse<List<ScheduleStudentOptionVO>> listOneOnOneStudents() {
-        return ApiResponse.success(recurringScheduleRuleService.listStudentsWithActiveOneOnOnePackages());
+        return ApiResponse.success(recurringScheduleRuleService.listOneOnOneScheduleStudents());
     }
 }

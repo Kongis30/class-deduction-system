@@ -25,6 +25,9 @@ public class CoursePackagePageQuery extends PageQuery {
     @Schema(description = "课时包状态", example = "ACTIVE")
     private String packageStatus;
 
+    @Schema(description = "Comma-separated package statuses, e.g. ACTIVE,PAUSED")
+    private String packageStatuses;
+
     @Schema(description = "主老师ID", example = "1880000000000000002")
     private Long teacherId;
 

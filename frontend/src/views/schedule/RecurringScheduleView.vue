@@ -25,7 +25,7 @@
               <section v-for="section in studentSections" :key="section.key" class="schedule-student-section">
                 <div class="schedule-student-section-title">{{ section.title }}</div>
                 <div v-if="section.groups.length === 0" class="schedule-student-section__empty">
-                  {{ section.key === 'pending' ? '暂无待排课课程' : '暂无已排课课程' }}
+                  {{ section.key === 'pending' ? '暂无待排课课程' : section.key === 'scheduled' ? '暂无已排课课程' : '暂无停课课程' }}
                 </div>
                 <template v-for="group in section.groups" :key="`${section.key}-${group.key}`">
                   <button
@@ -48,16 +48,12 @@
                       :key="`${entry.student.id}-${entry.course.packageId ?? entry.course.privateLessonGroupId ?? entry.course.courseName}`"
                       type="button"
                       class="col-item"
-                      :class="{ 'col-item--active': entry.course.privateLessonGroupId != null
-                        ? String(selectedPackageId) === String(entry.course.packageId)
-                        : !isPrivateGroupCourseSelected && String(selectedStudentId) === String(entry.student.id) }"
+                      :class="{ 'col-item--active': String(selectedPackageId) === String(entry.course.packageId) }"
                       :title="entry.course.participantNames || entry.student.studentName"
                       @click="onScheduleCourseSelect(entry)"
                     >
                       <span class="col-item__name">{{ entry.course.participantNames || entry.student.studentName }}</span>
-                      <el-icon v-if="entry.course.privateLessonGroupId != null
-                        ? String(selectedPackageId) === String(entry.course.packageId)
-                        : !isPrivateGroupCourseSelected && String(selectedStudentId) === String(entry.student.id)" color="#409eff"><ArrowRight /></el-icon>
+                      <el-icon v-if="String(selectedPackageId) === String(entry.course.packageId)" color="#409eff"><ArrowRight /></el-icon>
                     </button>
                   </div>
                 </template>
@@ -78,7 +74,7 @@
               <span>Loading packages...</span>
             </div>
             <div v-else-if="studentPackages.length === 0" class="col-panel__hint">
-              No active packages for this student.
+              No active or paused packages for this student.
             </div>
             <template v-else>
               <div
@@ -113,7 +109,7 @@
                 <div class="schedule-info__header">
                   <span class="schedule-info__title">{{ selectedPackageName }}</span>
                   <div class="schedule-info__actions">
-                    <el-button v-if="selectedPackage" size="small" @click="packageHoursDialogVisible = true">
+                    <el-button v-if="selectedPackage?.packageStatus === 'ACTIVE'" size="small" @click="packageHoursDialogVisible = true">
                       Package hours
                     </el-button>
                     <el-dropdown trigger="click" :disabled="!selectedStudentId || !selectedPackageId" @command="openPrintSheet">
@@ -126,7 +122,7 @@
                       </template>
                     </el-dropdown>
                     <el-button
-                      v-if="currentRule"
+                      v-if="selectedPackage?.packageStatus === 'ACTIVE' && currentRule"
                       type="primary"
                       size="small"
                       @click="openEditDialog"
@@ -134,7 +130,7 @@
                       Edit Schedule
                     </el-button>
                     <el-button
-                      v-if="currentRule"
+                      v-if="selectedPackage?.packageStatus === 'ACTIVE' && currentRule"
                       type="warning"
                       size="small"
                       plain
@@ -143,7 +139,7 @@
                       Adjust This Week
                     </el-button>
                     <el-button
-                      v-else
+                      v-else-if="selectedPackage?.packageStatus === 'ACTIVE'"
                       type="primary"
                       size="small"
                       @click="openCreateDialog"
@@ -168,6 +164,16 @@
                       @click="pauseSelectedPackage"
                     >
                       Pause Course
+                    </el-button>
+                    <el-button
+                      v-if="selectedPackage?.packageStatus === 'PAUSED'"
+                      type="success"
+                      size="small"
+                      :loading="resumingPackageId === selectedPackageId"
+                      :disabled="resumingPackageId !== null"
+                      @click="resumeSelectedPackage"
+                    >
+                      Resume Course
                     </el-button>
                   </div>
                 </div>
@@ -208,7 +214,9 @@
                 <!-- No schedule state -->
                 <div v-else class="schedule-none">
                   <el-icon :size="28" color="#c0c4cc"><Calendar /></el-icon>
-                  <span>No schedule yet for this package.</span>
+                  <span>{{ selectedPackage?.packageStatus === 'PAUSED'
+                    ? 'Course paused. Resume it to create a new schedule; completed lessons remain and cancelled future lessons stay cancelled.'
+                    : 'No schedule yet for this package.' }}</span>
                 </div>
               </div>
 
@@ -796,6 +804,15 @@
         </div>
       </template>
     </el-dialog>
+
+    <PauseConfirmationDialog
+      v-model="pauseConfirmationVisible"
+      title="Pause Course"
+      message="Pausing this course cancels its future lessons that have not been recorded. After resuming, you must create a new schedule to continue lessons."
+      confirm-text="Pause Course"
+      :loading="pausingPackageId !== null"
+      @confirm="confirmPauseSelectedPackage"
+    />
   </div>
 </template>
 
@@ -809,7 +826,8 @@ import { useRoute } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
-import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
+import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
+import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import { fetchOneOnOneDeductions } from '@/api/one-on-one';
 import {
   createRecurringScheduleRule,
@@ -948,6 +966,8 @@ const studentSearch = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
 const pausingPackageId = ref<EntityId | null>(null);
+const pauseConfirmationVisible = ref(false);
+const resumingPackageId = ref<EntityId | null>(null);
 const packageHoursDialogVisible = ref(false);
 const deductedHoursDraft = ref(0);
 const savingDeductedHours = ref(false);
@@ -1195,7 +1215,7 @@ function currentCalendarWeekRange() {
   return calendarWeekRange(new Date(), APP_TIMEZONE);
 }
 
-type ScheduleStudentSectionKey = 'pending' | 'scheduled';
+type ScheduleStudentSectionKey = 'pending' | 'scheduled' | 'paused';
 
 // 每个课包作为一个排课单位，再按课程年级及排课状态分组；共享课包只由主成员返回一次。
 const studentSections = computed(() => {
@@ -1203,12 +1223,14 @@ const studentSections = computed(() => {
   const sections = {
     pending: new Map<string, ScheduleCourseGradeGroup & { entryMap: Map<string, ScheduleSidebarEntry> }>(),
     scheduled: new Map<string, ScheduleCourseGradeGroup & { entryMap: Map<string, ScheduleSidebarEntry> }>(),
+    paused: new Map<string, ScheduleCourseGradeGroup & { entryMap: Map<string, ScheduleSidebarEntry> }>(),
   };
   students.value.forEach((student) => {
     student.courseGrades.forEach((course) => {
       const displayNames = course.participantNames || student.studentName;
       if (q && !displayNames.toLowerCase().includes(q)) return;
-      const section: ScheduleStudentSectionKey = course.hasSchedule === true ? 'scheduled' : 'pending';
+      const section: ScheduleStudentSectionKey = course.packageStatus === 'PAUSED'
+        ? 'paused' : course.hasSchedule === true ? 'scheduled' : 'pending';
       const { courseName, gradeBand } = course;
       const groups = sections[section];
       const normalizedCourse = courseName.trim().toLowerCase();
@@ -1223,10 +1245,10 @@ const studentSections = computed(() => {
       group.entryMap.set(entryKey, { student, course });
     });
   });
-  return (['pending', 'scheduled'] as const)
+  return (['pending', 'scheduled', 'paused'] as const)
     .map(key => ({
       key,
-      title: key === 'pending' ? '待排课' : '已排课',
+      title: key === 'pending' ? '待排课' : key === 'scheduled' ? '已排课' : '停课',
       groups: Array.from(sections[key].values())
         .map(({ entryMap, ...group }) => ({
           ...group,
@@ -1436,6 +1458,18 @@ watch(
 );
 
 // ─── Student selection ─────────────────────────
+// 一次取得当前学生的在读与停课课包；分页取全，避免课包多时漏掉停课入口。
+async function fetchSchedulePackages(studentId: EntityId): Promise<CoursePackageItem[]> {
+  const pageSize = 200;
+  const query = { studentId, packageStatuses: 'ACTIVE,PAUSED', teachingMode: 'ONE_ON_ONE', pageSize };
+  const first = await fetchCoursePackages({ ...query, pageNum: 1 });
+  const { records, total } = first.data.data;
+  if (total <= records.length) return records;
+  const pages = Array.from({ length: Math.ceil(total / pageSize) - 1 }, (_, index) => index + 2);
+  const remaining = await Promise.all(pages.map(pageNum => fetchCoursePackages({ ...query, pageNum })));
+  return records.concat(...remaining.map(response => response.data.data.records));
+}
+
 async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
   // 快速切换学生时丢弃较晚返回的旧请求，避免覆盖当前选择。
   const requestSequence = ++packageLoadSequence;
@@ -1447,14 +1481,9 @@ async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
   editBusyOccurrences.value = [];
   loadingPackages.value = true;
   try {
-    const res = await fetchCoursePackages({
-      studentId: id,
-      packageStatus: 'ACTIVE',
-      teachingMode: 'ONE_ON_ONE',
-      pageSize: 50,
-    });
+    const packages = await fetchSchedulePackages(id);
     if (requestSequence !== packageLoadSequence) return;
-    studentPackages.value = res.data.data.records;
+    studentPackages.value = packages;
     selectedPackageId.value = preferredPackageId == null
       ? null
       : studentPackages.value.find(pkg => String(pkg.id) === String(preferredPackageId))?.id ?? null;
@@ -1539,38 +1568,53 @@ function onPackageSelect(pkg: CoursePackageItem) {
   selectedPackageId.value = pkg.id;
 }
 
-// 暂停当前选中的课包；后端会保留已记录课次并取消未来未记录课次。
-async function pauseSelectedPackage() {
+// 打开停课确认窗；停课将保留已记录课次并取消未来未记录课次。
+function pauseSelectedPackage() {
   const packageToPause = selectedPackage.value;
   const studentId = selectedStudentId.value;
   if (!packageToPause || packageToPause.packageStatus !== 'ACTIVE' || !studentId) return;
+  pauseConfirmationVisible.value = true;
+}
 
-  try {
-    await ElMessageBox.confirm(
-      'Pausing this course cancels its future lessons that have not been recorded. After resuming, you must create a new schedule to continue lessons.',
-      'Pause Course',
-      {
-        confirmButtonText: 'Pause Course',
-        cancelButtonText: 'Keep Active',
-        type: 'warning',
-      },
-    );
-  } catch {
-    return;
-  }
-
+// 倒计时结束后才执行停课请求。
+async function confirmPauseSelectedPackage() {
+  const packageToPause = selectedPackage.value;
+  const studentId = selectedStudentId.value;
+  if (!packageToPause || packageToPause.packageStatus !== 'ACTIVE' || !studentId || pausingPackageId.value !== null) return;
   pausingPackageId.value = packageToPause.id;
   try {
     await pauseCoursePackage(packageToPause.id);
+    pauseConfirmationVisible.value = false;
     ElMessage.success('Course paused.');
     await Promise.all([
-      onStudentSelect(studentId),
+      onStudentSelect(studentId, packageToPause.id),
       refreshScheduleStudentList(),
     ]);
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
   } finally {
     pausingPackageId.value = null;
+  }
+}
+
+// 恢复课包后保留原选中项，并直接打开新排课；暂停的旧规则与课次不会重新启用。
+async function resumeSelectedPackage() {
+  const packageToResume = selectedPackage.value;
+  const studentId = selectedStudentId.value;
+  if (!packageToResume || packageToResume.packageStatus !== 'PAUSED' || !studentId) return;
+  resumingPackageId.value = packageToResume.id;
+  try {
+    await resumeCoursePackage(packageToResume.id);
+    await Promise.all([
+      onStudentSelect(studentId, packageToResume.id),
+      refreshScheduleStudentList(),
+    ]);
+    ElMessage.success('Course resumed. Create a new schedule to continue lessons.');
+    if (String(selectedPackageId.value) === String(packageToResume.id)) await openCreateDialog();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    resumingPackageId.value = null;
   }
 }
 
@@ -1623,13 +1667,7 @@ async function saveDeductedHours() {
   savingDeductedHours.value = true;
   try {
     await updateCoursePackageDeductedHours(pkg.id, deductedHoursDraft.value);
-    const res = await fetchCoursePackages({
-      studentId: selectedStudentId.value,
-      packageStatus: 'ACTIVE',
-      teachingMode: 'ONE_ON_ONE',
-      pageSize: 50,
-    });
-    studentPackages.value = res.data.data.records;
+    studentPackages.value = await fetchSchedulePackages(selectedStudentId.value);
     await Promise.all([loadAllPackageRules(), loadCurrentWeekOccurrences()]);
     ElMessage.success('Package hours and future schedule updated.');
   } catch (err) {
@@ -1649,7 +1687,7 @@ async function loadAllPackageRules(
     return;
   }
   const results = await Promise.allSettled(
-    packages.map(async (pkg) => {
+    packages.filter(pkg => pkg.packageStatus === 'ACTIVE').map(async (pkg) => {
       const res = await fetchRecurringScheduleRules({ packageId: pkg.id, ruleStatus: 'ACTIVE', pageSize: 1 });
       const rule = res.data.data.records[0];
       if (!rule) return { packageId: pkg.id, rule: null };
@@ -1692,6 +1730,7 @@ const remainingAllocationHours = computed(() =>
 const allocationExceedsRemaining = computed(() => remainingAllocationHours.value < 0);
 
 async function openCreateDialog() {
+  if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
   isEditing.value = false;
   editingRuleId.value = null;
   editFormRef.value?.resetFields();

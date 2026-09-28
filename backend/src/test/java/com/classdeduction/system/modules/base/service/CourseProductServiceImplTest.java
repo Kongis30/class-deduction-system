@@ -15,6 +15,7 @@ import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -50,6 +51,8 @@ class CourseProductServiceImplTest {
     private PlatformTransactionManager transactionManager;
     @Mock
     private CoursePriceOptionMapper coursePriceOptionMapper;
+    @Mock
+    private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
     private CourseProductServiceImpl courseProductService;
 
@@ -69,7 +72,8 @@ class CourseProductServiceImplTest {
                 classGroupMapper,
                 classGroupService,
                 transactionManager,
-                coursePriceOptionMapper
+                coursePriceOptionMapper,
+                classGroupScheduleSlotMapper
         );
     }
 

@@ -7,6 +7,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
 import com.classdeduction.system.modules.base.dto.CourseProductOrderRequest;
+import com.classdeduction.system.modules.base.dto.CourseProductCopyRequest;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.service.CourseProductService;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
@@ -56,6 +57,16 @@ public class CourseProductController {
     @Operation(summary = "Create a course product")
     public ApiResponse<Long> createCourseProduct(@Valid @RequestBody CourseProductSaveRequest request) {
         return ApiResponse.success("Created successfully.", courseProductService.createCourseProduct(request));
+    }
+
+    @PostMapping("/{id}/copy")
+    @RequireRoles({"ADMIN", "STAFF"})
+    @Operation(summary = "Copy a course product and its reusable setup")
+    public ApiResponse<Long> copyCourseProduct(@PathVariable Long id,
+                                               @Valid @RequestBody CourseProductCopyRequest request) {
+        return ApiResponse.success("Course copied successfully.",
+                courseProductService.copyCourseProduct(id, request.getProductName(),
+                        request.getDateShiftYears() == null ? 1 : request.getDateShiftYears()));
     }
 
     @PutMapping("/{id}")

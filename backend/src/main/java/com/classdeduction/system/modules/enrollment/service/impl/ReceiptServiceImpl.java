@@ -40,6 +40,8 @@ public class ReceiptServiceImpl implements ReceiptService {
                         .like(ReceiptRecordEntity::getReceiptNo, query.getKeyword())
                         .or(!matchedStudentIds.isEmpty(), nested -> nested.in(ReceiptRecordEntity::getStudentId, matchedStudentIds)))
                 .eq(query.getStudentId() != null, ReceiptRecordEntity::getStudentId, query.getStudentId())
+                .eq(query.getEnrollmentOrderId() != null,
+                        ReceiptRecordEntity::getEnrollmentOrderId, query.getEnrollmentOrderId())
                 .eq(StringUtils.hasText(query.getTemplateCode()), ReceiptRecordEntity::getTemplateCode, query.getTemplateCode())
                 .orderByDesc(ReceiptRecordEntity::getIssuedAt);
         IPage<ReceiptRecordEntity> result = receiptRecordMapper.selectPage(page, wrapper);
@@ -91,6 +93,7 @@ public class ReceiptServiceImpl implements ReceiptService {
                 .receiptNo(item.getReceiptNo())
                 .enrollmentOrderId(item.getEnrollmentOrderId())
                 .studentId(item.getStudentId())
+                .paymentRecordId(item.getPaymentRecordId())
                 .studentName(student == null ? null : student.getStudentName())
                 .templateCode(item.getTemplateCode())
                 .receiptPayload(item.getReceiptPayload())

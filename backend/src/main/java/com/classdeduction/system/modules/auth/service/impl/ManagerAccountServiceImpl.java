@@ -9,8 +9,10 @@ import com.classdeduction.system.modules.auth.dto.ManagerAccountCreateRequest;
 import com.classdeduction.system.modules.auth.dto.ManagerAccountPageQuery;
 import com.classdeduction.system.modules.auth.dto.ManagerAccountUpdateRequest;
 import com.classdeduction.system.modules.auth.entity.RoleEntity;
+import com.classdeduction.system.modules.auth.entity.AuthSessionEntity;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
 import com.classdeduction.system.modules.auth.entity.UserRoleEntity;
+import com.classdeduction.system.modules.auth.mapper.AuthSessionMapper;
 import com.classdeduction.system.modules.auth.mapper.ManagerRegistrationStatsMapper;
 import com.classdeduction.system.modules.auth.mapper.RoleMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
@@ -34,6 +36,7 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
 
     private final UserAccountMapper userAccountMapper;
     private final UserRoleMapper userRoleMapper;
+    private final AuthSessionMapper authSessionMapper;
     private final RoleMapper roleMapper;
     private final ManagerRegistrationStatsMapper registrationStatsMapper;
     private final PasswordEncoder passwordEncoder;
@@ -117,6 +120,23 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
             user.setRemark(request.getRemark());
         }
         userAccountMapper.updateById(user);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void deleteManagerAccount(Long userId) {
+        UserAccountEntity user = userAccountMapper.selectOne(managerAccountQuery(null)
+                .eq(UserAccountEntity::getId, userId));
+        if (user == null) {
+            throw new BusinessException("MANAGER_ACCOUNT_NOT_FOUND", "Manager account not found.");
+        }
+
+        // 管理员账号只软删除账号本身，不影响由该管理员创建的学生和报名记录。
+        userRoleMapper.delete(new LambdaQueryWrapper<UserRoleEntity>()
+                .eq(UserRoleEntity::getUserId, userId));
+        authSessionMapper.delete(new LambdaQueryWrapper<AuthSessionEntity>()
+                .eq(AuthSessionEntity::getUserId, userId));
+        userAccountMapper.deleteById(userId);
     }
 
     private LambdaQueryWrapper<UserAccountEntity> managerAccountQuery(ManagerAccountPageQuery query) {

@@ -14,7 +14,7 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
-import com.classdeduction.system.modules.enrollment.vo.ActiveOneOnOneStudentCourseGradeRow;
+import com.classdeduction.system.modules.enrollment.vo.OneOnOneScheduleCourseRow;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleCreateRequest;
@@ -171,16 +171,16 @@ class RecurringScheduleRuleServiceImplTest {
 
     @Test
     void shouldGroupActiveOneOnOneStudentCoursesByCourseAndGrade() {
-        when(coursePackageMapper.selectActiveOneOnOneStudentCourseGrades()).thenReturn(List.of(
-                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6", true),
-                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "Math", "G6", true),
-                new ActiveOneOnOneStudentCourseGradeRow(2001L, "Alina Chen", "English", "G7", false),
-                new ActiveOneOnOneStudentCourseGradeRow(2002L, "Ben Li", "Math", "G6", false),
-                new ActiveOneOnOneStudentCourseGradeRow(2003L, "Cara Wu", "Math", "G6", true),
-                new ActiveOneOnOneStudentCourseGradeRow(2003L, "Cara Wu", "Math", "G6", false)
+        when(coursePackageMapper.selectSchedulableOneOnOneStudentCourseGrades()).thenReturn(List.of(
+                new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", true),
+                new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", true),
+                new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "English", "G7", false),
+                new OneOnOneScheduleCourseRow(2002L, "Ben Li", "Math", "G6", false),
+                new OneOnOneScheduleCourseRow(2003L, "Cara Wu", "Math", "G6", true),
+                new OneOnOneScheduleCourseRow(2003L, "Cara Wu", "Math", "G6", false)
         ));
 
-        List<ScheduleStudentOptionVO> result = recurringScheduleRuleService.listStudentsWithActiveOneOnOnePackages();
+        List<ScheduleStudentOptionVO> result = recurringScheduleRuleService.listOneOnOneScheduleStudents();
 
         assertThat(result).hasSize(3);
         assertThat(result.get(0).id()).isEqualTo(2001L);
@@ -195,7 +195,26 @@ class RecurringScheduleRuleServiceImplTest {
         assertThat(result.get(2).courseGrades()).containsExactly(
                 new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6", false)
         );
-        verify(coursePackageMapper).selectActiveOneOnOneStudentCourseGrades();
+        verify(coursePackageMapper).selectSchedulableOneOnOneStudentCourseGrades();
+    }
+
+    @Test
+    void shouldKeepPausedAndActivePackagesAsSeparateSchedulingUnits() {
+        when(coursePackageMapper.selectSchedulableOneOnOneStudentCourseGrades()).thenReturn(List.of(
+                new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", true,
+                        101L, "ACTIVE", null, 1, null, null),
+                new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", false,
+                        102L, "PAUSED", null, 1, null, null)
+        ));
+
+        List<ScheduleStudentOptionVO> result = recurringScheduleRuleService.listOneOnOneScheduleStudents();
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).courseGrades()).extracting(
+                ScheduleStudentOptionVO.CourseGradeOption::packageId,
+                ScheduleStudentOptionVO.CourseGradeOption::packageStatus)
+                .containsExactly(org.assertj.core.groups.Tuple.tuple(101L, "ACTIVE"),
+                        org.assertj.core.groups.Tuple.tuple(102L, "PAUSED"));
     }
 
     @Test

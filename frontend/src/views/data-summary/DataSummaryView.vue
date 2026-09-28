@@ -895,7 +895,7 @@ function canPayFromDataSummary(row: DataSummaryDisplayRow | null) {
 
   // 管理员的 Data Summary 金额字段会被后端脱敏，用未脱敏的余额判断会导致 Pay 入口消失。
   const hasOutstandingBalance = isManager
-    ? row.paymentStatus === 'UNPAID' || row.paymentStatus === 'PARTIAL'
+    ? row.orderPaymentStatus === 'UNPAID' || row.orderPaymentStatus === 'PARTIAL'
     : Number(row.balanceAmount ?? 0) < 0;
 
   return hasOutstandingBalance;
@@ -904,7 +904,7 @@ function canPayFromDataSummary(row: DataSummaryDisplayRow | null) {
 function canRefundFromDataSummary(row: DataSummaryDisplayRow | null) {
   return Boolean(
     row
-      && row.paymentStatus !== 'REFUNDED'
+      && row.orderPaymentStatus !== 'REFUNDED'
       && Number(row.paidAmount ?? 0) > 0,
   );
 }

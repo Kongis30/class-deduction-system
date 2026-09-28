@@ -12,6 +12,9 @@ public interface ClassGroupService {
     /** 获取当前用户有权查看的班课列表 */
     List<Map<String, Object>> listClasses(CurrentUserResponse currentUser);
 
+    /** 管理课程模板时可包含停用 Product 下的配置班级；运营排课列表仍使用默认过滤。 */
+    List<Map<String, Object>> listClasses(CurrentUserResponse currentUser, boolean includeInactiveProducts);
+
     /** 获取班课详情 */
     Map<String, Object> getClassDetail(Long classId, CurrentUserResponse currentUser);
 
@@ -29,6 +32,9 @@ public interface ClassGroupService {
 
     /** 更新班课固定周课表，并重建未来未确认课次 */
     Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body);
+
+    /** 打开修改排课窗口前检查已开始的班课是否完成消课 */
+    void checkClassScheduleEditable(Long classId);
 
     /** 新增某个收费 grade 下的实际班级 */
     Map<String, Object> createActualClass(Map<String, Object> body);

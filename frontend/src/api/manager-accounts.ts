@@ -44,3 +44,7 @@ export function createManagerAccount(payload: ManagerAccountPayload) {
 export function updateManagerAccount(id: EntityId, payload: ManagerAccountUpdatePayload) {
   return http.put<ApiResponse<void>>(`/v1/auth/manager-accounts/${id}`, payload);
 }
+
+export function deleteManagerAccount(id: EntityId) {
+  return http.delete<ApiResponse<void>>(`/v1/auth/manager-accounts/${id}`);
+}

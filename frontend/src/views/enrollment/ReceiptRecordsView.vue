@@ -294,7 +294,10 @@ function clearOrders() {
 function openReceipt(row: ReceiptRecordItem) {
   // 统一收据查看样式：报名/付款/退款收据都跳转到报名页只读收据（与 Enrollments 页一致）。
   const orderId = receiptPayload(row).enrollmentOrderId || row.enrollmentOrderId;
-  router.push({ name: 'registration', query: { orderId: String(orderId) } });
+  router.push({
+    name: 'registration',
+    query: { orderId: String(orderId), receiptId: String(row.id) },
+  });
 }
 
 function receiptPayload(row: ReceiptRecordItem) {

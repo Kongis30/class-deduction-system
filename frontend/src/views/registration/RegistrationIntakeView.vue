@@ -42,7 +42,7 @@
       <article>
         <span>2</span>
         <strong>Course</strong>
-        <small>Course, grade, duration, teacher/class</small>
+        <small>Course, program, duration, teacher/class</small>
       </article>
       <article>
         <span>3</span>
@@ -331,7 +331,7 @@
           <thead>
             <tr>
               <th>1. Course</th>
-              <th>2. Grade & package details</th>
+              <th>2. Program & package details</th>
               <th>3. Price</th>
             </tr>
           </thead>
@@ -383,7 +383,7 @@
               <td>
                 <div v-if="isPrivateAllReceiptView || (isReadOnly && !editingCorrection)" class="receipt-course-detail">
                   <div>
-                    <span>Grade</span>
+                    <span>Program</span>
                     <strong>{{ line.gradeBand || '—' }}</strong>
                   </div>
                   <div>
@@ -404,13 +404,13 @@
                   <div class="course-detail-cell screen-only">
                     <div :class="['detail-row', { 'detail-row--group': !isOneOnOneLine(line) }]">
                     <label class="course-control">
-                      <span>Grade</span>
+                      <span>Program</span>
                       <el-select
                         v-model="line.gradeBand"
                         class="table-select"
-                        placeholder="Select grade"
+                        placeholder="Select program"
                         :disabled="!receiptEditingEnabled || !line.courseProductId"
-                        no-data-text="No grade options"
+                        no-data-text="No program options"
                         clearable
                         @change="() => handleGradeChange(line)"
                       >
@@ -445,7 +445,7 @@
                       <strong class="print-only print-course-value">{{ printCourseScheduleLabel(line) }}</strong>
                     </label>
                     <label v-if="showDurationInput(line)" class="course-control">
-                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : 'Selected length' }}</span>
+                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : isSessionPackage(line) ? 'Selected sessions' : 'Selected length' }}</span>
                       <el-input-number
                         v-if="isOneOnOneLine(line)"
                         v-model="line.oneOnOneHours"
@@ -458,6 +458,20 @@
                         :disabled="!receiptEditingEnabled"
                         @change="() => handleRegistrationDurationChange(line)"
                       />
+                      <el-select
+                        v-else-if="isSessionPackage(line)"
+                        v-model="line.groupSessionCount"
+                        class="table-select"
+                        :disabled="!receiptEditingEnabled"
+                        @change="() => handleGroupSessionCountChange(line)"
+                      >
+                        <el-option
+                          v-for="sessionCount in availableSessionCounts(line)"
+                          :key="sessionCount"
+                          :label="`${sessionCount} sessions`"
+                          :value="sessionCount"
+                        />
+                      </el-select>
                       <div v-else-if="line.packageUnit === 'MONTH'" class="class-schedule-summary">
                         {{ printRegistrationDurationLabel(line) }}
                       </div>
@@ -545,7 +559,7 @@
                     </div>
                   </div>
                   <div class="print-only print-course-summary">
-                    <div><span>Grade</span><strong>{{ line.gradeBand || '—' }}</strong></div>
+                    <div><span>Program</span><strong>{{ line.gradeBand || '—' }}</strong></div>
                     <div><span>Registration</span><strong>{{ printRegistrationDurationLabel(line) }}</strong></div>
                     <div>
                       <span>{{ isOneOnOneLine(line) ? 'Package' : 'Sessions' }}</span>
@@ -1048,6 +1062,7 @@ import { isAdminUser, isManagerUser, isStaffUser } from '@/types/auth';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 import { exceedsMoney, formatExactUsd, formatRoundedUsd } from '@/utils/money-display';
 import MoneyAmountInput from '@/components/MoneyAmountInput.vue';
+import { paymentDraftAmount, sumPaymentAllocations } from './payment-draft';
 
 type ReuseStatus = 'idle' | 'loading' | 'existing' | 'new';
 
@@ -1544,12 +1559,8 @@ function effectiveCourseDropoffAddress(line: RegistrationCourseLine) {
   return line.dropoffAddress.trim();
 }
 
-/**
- * 多课程报名的订单已付金额按课程分摊统计；付款流水原始金额只代表实际收款交易。
- * 这样历史上存在“收款总额大于课程分摊”的数据时，不会把未分配金额误算成 Credit。
- */
-// 底部 Paid 表示真实收款流水净额（正向付款减退款）；课程卡片的 Paid 则使用下面的分摊金额。
-// 一笔历史付款可能暂时没有 courseAllocations，但仍然是已收到的钱，不能从整单 Paid 中漏掉。
+// 底部 Paid 只累计当前表单的付款行；编辑收据时旧流水已预填为表单，不再单独叠加。
+// 退款以负数参与计算，多课程付款的行金额随课程分配同步。
 function isRefundPayment(payment: PaymentLine) {
   return payment.paymentType === 'REFUND' || numeric(payment.amount) < 0;
 }
@@ -1851,6 +1862,15 @@ watch(
   },
 );
 
+watch(
+  () => route.query.receiptId,
+  async (receiptId, previousReceiptId) => {
+    if (route.query.orderId && receiptId !== previousReceiptId) {
+      await loadHistoricalOrder();
+    }
+  },
+);
+
 watch(discountableAmount, () => {
   discounts.value.forEach(recalculatePresetDiscount);
 });
@@ -2011,11 +2031,21 @@ async function startCorrection() {
     if (historicalOrder.value) {
       // 基础选项加载完成后重建一次编辑模型，把已停用课程与价格映射到可编辑表单。
       applyHistoricalOrder(historicalOrder.value);
+      initializeCorrectionPayments();
     }
     editingCorrection.value = true;
   } finally {
     correctionSetupLoading.value = false;
   }
+}
+
+// 编辑收据以本次表单的课程付款为准，历史流水金额只用于填充没有课程分配的旧付款。
+function initializeCorrectionPayments() {
+  const useCourseAmounts = (payment: PaymentLine) => {
+    payment.amount = paymentDraftAmount(payment, courseLines.value.length);
+  };
+  payments.value.forEach(useCourseAmounts);
+  participantBillings.value.forEach((billing) => billing.payments.forEach(useCourseAmounts));
 }
 
 function cancelCorrection() {
@@ -2253,7 +2283,16 @@ async function loadGroupClassRenewal(enrollmentId: string) {
 }
 
 function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
-  const registrationReceipt = order.receipts.find(receipt => receipt.templateCode === 'DEFAULT_RECEIPT');
+  const requestedReceiptId = Array.isArray(route.query.receiptId)
+    ? route.query.receiptId[0]
+    : route.query.receiptId;
+  const selectedReceipt = requestedReceiptId
+    ? order.receipts.find(receipt => String(receipt.id) === String(requestedReceiptId))
+    : undefined;
+  const registrationReceipt = selectedReceipt
+    ?? order.receipts.find(receipt => receipt.templateCode === 'DEFAULT_RECEIPT');
+  const isStandaloneReceipt = registrationReceipt?.templateCode !== undefined
+    && registrationReceipt.templateCode !== 'DEFAULT_RECEIPT';
   const receiptPayload = parsePayload(registrationReceipt?.receiptPayload);
   const campusId = getString(receiptPayload, 'campusId') || String(order.campusId ?? '');
   const campusName = getString(receiptPayload, 'campusName') || order.campusNameSnapshot || '';
@@ -2432,11 +2471,12 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   // 会因为当时没有 rowKey 而丢失课程级折扣和付款分摊。
   mapHistoricalParticipantBillingCourseReferences();
 
-  // 订单支付流水是报名收据的实时账本；收据 payload 只保留报名信息，不能覆盖后续 Pay 记录。
+  // 报名收据使用订单实时账本；退款/付款收据必须展示被点击凭证自身的快照流水。
   const livePayments = (order.payments ?? [])
     .filter((payment) => numeric(payment.amount) !== 0 && payment.paymentStatus !== 'VOIDED')
     .slice()
-    .sort((left, right) => String(left.paidAt ?? '').localeCompare(String(right.paidAt ?? '')))
+    .sort((left, right) => String(left.paidAt ?? '').localeCompare(String(right.paidAt ?? ''))
+      || String(left.id).localeCompare(String(right.id), undefined, { numeric: true }))
     .map((payment) => {
       const courseAllocations = Object.fromEntries((payment.allocations ?? []).flatMap((allocation) => {
         const course = courseLines.value.find((line) => String(line.orderItemId) === String(allocation.enrollmentOrderItemId));
@@ -2459,9 +2499,11 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         paymentType: payment.paymentType,
         courseAllocations,
       };
-    });
+  });
   const savedPayments = getHistoricalPayments(receiptPayload);
-  payments.value = livePayments.length > 0 ? livePayments : savedPayments;
+  payments.value = isStandaloneReceipt
+    ? savedPayments
+    : livePayments.length > 0 ? livePayments : savedPayments;
   if (historicalTopUpOnly) {
     const topUpPayment = payments.value.find((payment) => payment.amount > 0);
     creditTopUpPayment.value = {
@@ -2671,7 +2713,11 @@ function toHistoricalCourseLine(
     openingUsedHours: optionalNumber(item, 'openingUsedHours') ?? optionalNumber(fallback, 'openingUsedHours') ?? 0,
     oneOnOneUnits: optionalNumber(item, 'oneOnOneUnits') ?? optionalNumber(fallback, 'oneOnOneUnits'),
     groupBillingType: getString(item, 'groupBillingType') || undefined,
-    groupSessionCount: optionalNumber(item, 'sessions'),
+    groupSessionCount: optionalNumber(item, 'sessions')
+      ?? optionalNumber(fallback, 'sessions')
+      ?? ((getString(item, 'packageUnit') || getString(fallback, 'packageUnit'))?.toUpperCase() === 'SESSION'
+        ? optionalNumber(item, 'packageQuantity') ?? optionalNumber(fallback, 'packageQuantity')
+        : undefined),
     groupPurchasedMonths: optionalNumber(item, 'purchasedMonths') ?? groupMonthCountFromSnapshot(item),
     groupDurationMode: durationModeForMonths(optionalNumber(item, 'purchasedMonths') ?? groupMonthCountFromSnapshot(item)),
     groupStartMonth: getString(item, 'groupStartMonth') || getString(item, 'startMonth') || undefined,
@@ -3275,10 +3321,8 @@ function showPaymentLimitHint(payment: PaymentLine, maxAmount: number) {
   }, 2400));
 }
 
-/** 新增付款按课程独立记账；历史跨课付款只更新该课程分配，保留原交易总额。 */
+/** 修改课程付款后同步当前付款行总额，使底部 Paid 与各课程输入框保持一致。 */
 function setCoursePaymentAmount(payment: PaymentLine, courseRowKey: string, value: number | undefined) {
-  const wasUnallocatedOrderPayment = isUnallocatedOrderPayment(payment)
-    && courseRowKey === courseLines.value[0]?.rowKey;
   const requestedAmount = roundMoney(Math.max(0, numeric(value)));
   const maxAmount = maxCoursePaymentAmount(payment, courseRowKey);
   if (maxAmount !== undefined && requestedAmount > maxAmount) {
@@ -3289,9 +3333,9 @@ function setCoursePaymentAmount(payment: PaymentLine, courseRowKey: string, valu
     : Math.min(requestedAmount, maxAmount);
   payment.courseAllocations ??= {};
   payment.courseAllocations[courseRowKey] = amount;
-  if (payment.courseRowKey === courseRowKey || courseLines.value.length === 1 || wasUnallocatedOrderPayment) {
-    payment.amount = amount;
-  }
+  payment.amount = courseLines.value.length === 1
+    ? amount
+    : sumPaymentAllocations(payment.courseAllocations);
 }
 
 function canEditCoursePaymentDetails(payment: PaymentLine, courseRowKey: string) {
@@ -3607,7 +3651,9 @@ function handleOptionChange(line: RegistrationCourseLine) {
     line.groupRegistrationStartMonth = undefined;
     line.groupRegistrationEndMonth = undefined;
   } else {
-    line.groupSessionCount = undefined;
+    line.groupSessionCount = line.packageUnit?.toUpperCase() === 'SESSION'
+      ? packageSessionCount(line) || undefined
+      : undefined;
     line.groupPurchasedMonths = resolveGroupPackageMonths(option);
     line.groupDurationMode = durationModeForMonths(line.groupPurchasedMonths);
     line.startDate = line.startDate || defaultGroupEnrollmentStartDate(line);
@@ -3651,6 +3697,12 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
   recalculateLinePrice(line);
 }
 
+function handleGroupSessionCountChange(line: RegistrationCourseLine) {
+  // Changing the chargeable session count should restore the configured per-session price calculation.
+  line.manualPriceOverride = false;
+  handleRegistrationDurationChange(line);
+}
+
 function selectedClassGroup(line: RegistrationCourseLine) {
   return classGroups.value.find((item) => String(item.id) === String(line.classId));
 }
@@ -3690,12 +3742,18 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
   const option = findOption(line.coursePriceOptionId);
   if (!option) return;
   const configuredHours = numeric(option.oneOnOneHours);
+  const fullPackagePrice = packageBasePrice(option, line.attendanceOption);
+  const sessionCount = isSessionPackage(line) ? selectedSessionCount(line) : 0;
+  const configuredSessionCount = isSessionPackage(line) ? packageSessionCount(line) : 0;
   const computedPrice = isOneOnOneLine(line)
     ? configuredHours > 0
-      ? roundMoney(numeric(packageBasePrice(option, line.attendanceOption)) / configuredHours * numeric(line.oneOnOneHours))
+      ? roundMoney(numeric(fullPackagePrice) / configuredHours * numeric(line.oneOnOneHours))
       : 0
-    : packageBasePrice(option, line.attendanceOption);
-  line.packageTotalPrice = computedPrice;
+    : isSessionPackage(line) && configuredSessionCount > 0
+      ? roundMoney(fullPackagePrice * sessionCount / configuredSessionCount)
+      : fullPackagePrice;
+  // Keep the configured full-package price as the proration basis for receipt edits and historical display.
+  line.packageTotalPrice = isSessionPackage(line) ? fullPackagePrice : computedPrice;
   line.originalPriceAmount = computedPrice;
   if (!line.manualPriceOverride) {
     line.priceAmount = computedPrice;
@@ -3857,7 +3915,7 @@ function detailSelectPlaceholder(line: RegistrationCourseLine) {
     return 'Select course first';
   }
   if (!line.gradeBand) {
-    return 'Select grade first';
+    return 'Select program first';
   }
   return optionChoicesForLine(line).length > 0
     ? 'Select package'
@@ -3878,7 +3936,7 @@ function courseLineHint(line: RegistrationCourseLine) {
   if (!line.coursePriceOptionId) {
     return optionChoicesForLine(line).length > 0
       ? isOneOnOneLine(line)
-        ? 'Select a grade and package.'
+        ? 'Select a program and package.'
         : 'Select a package.'
       : 'Course pricing is missing for this course.';
   }
@@ -3967,11 +4025,32 @@ function printRegistrationDurationLabel(line: RegistrationCourseLine) {
     const totalHours = totalOneOnOneHours(line);
     return totalHours > 0 ? `${formatHours(totalHours)} hours` : '—';
   }
+  if (isSessionPackage(line)) {
+    const selected = selectedSessionCount(line);
+    return selected > 0 ? `${selected} sessions` : '—';
+  }
   if (line.packageQuantity && line.packageUnit) {
     const unit = line.packageUnit.toLowerCase();
     return `${line.packageQuantity} ${Number(line.packageQuantity) === 1 ? unit : `${unit}s`}`;
   }
   return line.periodLabel || '—';
+}
+
+function isSessionPackage(line: RegistrationCourseLine) {
+  return !isOneOnOneLine(line) && line.packageUnit?.toUpperCase() === 'SESSION';
+}
+
+function packageSessionCount(line: RegistrationCourseLine) {
+  return Math.ceil(numeric(line.packageQuantity));
+}
+
+function selectedSessionCount(line: RegistrationCourseLine) {
+  return Math.floor(numeric(line.groupSessionCount));
+}
+
+function availableSessionCounts(line: RegistrationCourseLine) {
+  const total = packageSessionCount(line);
+  return Array.from({ length: Math.max(0, total) }, (_, index) => total - index);
 }
 
 function printTuitionOptionLabel(line: RegistrationCourseLine) {
@@ -4324,7 +4403,7 @@ function validateForm() {
     }
     if (!line.coursePriceOptionId) {
       errors.push(isOneOnOneLine(line)
-        ? `${label}: select a grade and package.`
+        ? `${label}: select a program and package.`
         : `${label}: select a package.`);
     }
     const durationInvalid = validateRegistrationDuration(line, label, errors);
@@ -4462,6 +4541,14 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
   const invalid = quantity <= 0;
   if (invalid) {
     errors.push(`${label}: select a package with a valid duration.`);
+  }
+  if (isSessionPackage(line)) {
+    const totalSessions = packageSessionCount(line);
+    const selectedSessions = numeric(line.groupSessionCount);
+    if (!Number.isInteger(selectedSessions) || selectedSessions < 1 || selectedSessions > totalSessions) {
+      errors.push(`${label}: selected sessions must be between 1 and ${totalSessions}.`);
+      return true;
+    }
   }
   return invalid;
 }

@@ -15,6 +15,7 @@ public record ReceiptRecordVO(
         String receiptNo,
         Long enrollmentOrderId,
         Long studentId,
+        Long paymentRecordId,
         String studentName,
         String templateCode,
         String receiptPayload,
