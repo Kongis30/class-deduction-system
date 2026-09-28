@@ -16,6 +16,7 @@ import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity;
 import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentAllocationEntity;
@@ -36,6 +37,7 @@ import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderCourseRefundStateMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -73,6 +75,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final PaymentRecordMapper paymentRecordMapper;
     private final PaymentAllocationMapper paymentAllocationMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final EnrollmentOrderCourseRefundStateMapper enrollmentOrderCourseRefundStateMapper;
     private final ClassBillingService classBillingService;
     private final CourseProductMapper courseProductMapper;
     private final TeacherMapper teacherMapper;
@@ -144,6 +147,17 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         .orderByAsc(EnrollmentOrderItemEntity::getId));
         Map<Long, List<EnrollmentOrderItemEntity>> itemsByOrderId = items.stream()
                 .collect(Collectors.groupingBy(EnrollmentOrderItemEntity::getEnrollmentOrderId, LinkedHashMap::new, Collectors.toList()));
+        Set<Long> itemIds = items.stream().map(EnrollmentOrderItemEntity::getId)
+                .filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<ParticipantCourseKey, EnrollmentOrderCourseRefundStateEntity> refundStateByParticipantCourse = itemIds.isEmpty()
+                ? Collections.emptyMap()
+                : enrollmentOrderCourseRefundStateMapper.selectList(new LambdaQueryWrapper<EnrollmentOrderCourseRefundStateEntity>()
+                        .in(EnrollmentOrderCourseRefundStateEntity::getEnrollmentOrderItemId, itemIds)
+                        .eq(EnrollmentOrderCourseRefundStateEntity::getIsDeleted, 0))
+                    .stream().filter(state -> state.getEnrollmentOrderItemId() != null && state.getStudentId() != null)
+                    .collect(Collectors.toMap(state -> new ParticipantCourseKey(
+                            state.getEnrollmentOrderItemId(), state.getStudentId()),
+                            Function.identity(), (left, right) -> left));
 
         List<EnrollmentOrderParticipantEntity> orderParticipants = enrollmentOrderParticipantMapper.selectList(
                 new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
@@ -158,12 +172,19 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         new LambdaQueryWrapper<PrivateLessonGroupEntity>()
                                 .in(PrivateLessonGroupEntity::getEnrollmentOrderId, orderIds)
                                 .eq(PrivateLessonGroupEntity::getIsDeleted, 0));
-        Map<Long, Long> privateLessonGroupIdByOrderId = privateLessonGroups.stream()
-                .filter(group -> group.getEnrollmentOrderId() != null && group.getId() != null)
+        Map<Long, Long> privateLessonGroupIdByOrderItemId = privateLessonGroups.stream()
+                .filter(group -> group.getEnrollmentOrderItemId() != null && group.getId() != null)
                 .collect(Collectors.toMap(
-                        PrivateLessonGroupEntity::getEnrollmentOrderId,
+                        PrivateLessonGroupEntity::getEnrollmentOrderItemId,
                         PrivateLessonGroupEntity::getId,
                         (left, right) -> left,
+                        LinkedHashMap::new));
+        Map<Long, Integer> privateLessonParticipantCountByOrderItemId = privateLessonGroups.stream()
+                .filter(group -> group.getEnrollmentOrderItemId() != null && group.getParticipantCount() != null)
+                .collect(Collectors.toMap(
+                        PrivateLessonGroupEntity::getEnrollmentOrderItemId,
+                        PrivateLessonGroupEntity::getParticipantCount,
+                        Math::max,
                         LinkedHashMap::new));
         Map<Long, Integer> privateLessonParticipantCountByOrderId = privateLessonGroups.stream()
                 .filter(group -> group.getEnrollmentOrderId() != null && group.getParticipantCount() != null)
@@ -184,7 +205,6 @@ public class DataSummaryServiceImpl implements DataSummaryService {
 
         Map<Long, List<String>> reviewIssuesByOrderId = buildReviewIssues(orders, packages, paymentRecords);
 
-        Set<Long> itemIds = items.stream().map(EnrollmentOrderItemEntity::getId).collect(Collectors.toCollection(LinkedHashSet::new));
         Map<Long, PaymentRecordEntity> paymentRecordsById = paymentRecords.stream()
                 .collect(Collectors.toMap(PaymentRecordEntity::getId, Function.identity(), (left, right) -> left));
         List<PaymentAllocationEntity> paymentAllocations = itemIds.isEmpty()
@@ -232,7 +252,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                     paidAmountByParticipant));
         }
         List<DataSummaryResponseVO.RowVO> rows = buildRows(orderMap, itemsByOrderId, packagesByOrderId,
-                        participantsByOrderId, privateLessonGroupIdByOrderId, privateLessonParticipantCountByOrderId,
+                        participantsByOrderId, privateLessonGroupIdByOrderItemId, privateLessonParticipantCountByOrderItemId,
+                        privateLessonParticipantCountByOrderId,
+                        refundStateByParticipantCourse,
                         packageByOrderItemId,
                         reviewIssuesByOrderId,
                         latestPaymentMethodByOrderId, latestPaymentMethodByParticipant, paidAmountByParticipant,
@@ -385,8 +407,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, List<EnrollmentOrderItemEntity>> itemsByOrderId,
             Map<Long, List<CoursePackageEntity>> packagesByOrderId,
             Map<Long, List<EnrollmentOrderParticipantEntity>> participantsByOrderId,
-            Map<Long, Long> privateLessonGroupIdByOrderId,
+            Map<Long, Long> privateLessonGroupIdByOrderItemId,
+            Map<Long, Integer> privateLessonParticipantCountByOrderItemId,
             Map<Long, Integer> privateLessonParticipantCountByOrderId,
+            Map<ParticipantCourseKey, EnrollmentOrderCourseRefundStateEntity> refundStateByParticipantCourse,
             Map<Long, CoursePackageEntity> packageByOrderItemId,
             Map<Long, List<String>> reviewIssuesByOrderId,
             Map<Long, String> latestPaymentMethodByOrderId,
@@ -407,18 +431,18 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             List<EnrollmentOrderParticipantEntity> displayParticipants = participants == null || participants.isEmpty()
                     ? Collections.singletonList(null)
                     : participants;
-            Integer privateLessonParticipantCount = resolvePrivateLessonParticipantCount(
-                    order.getId(), participants, privateLessonParticipantCountByOrderId);
-            Long privateLessonGroupId = privateLessonGroupIdByOrderId.get(order.getId());
-            boolean sharedPrivateLesson = isSharedPrivateLesson(privateLessonParticipantCount);
             List<EnrollmentOrderItemEntity> orderItems = itemsByOrderId.get(order.getId());
             if (orderItems == null || orderItems.isEmpty()) {
+                Integer privateLessonParticipantCount = resolvePrivateLessonParticipantCount(
+                        null, participants, privateLessonParticipantCountByOrderItemId);
+                boolean sharedPrivateLesson = isSharedPrivateLesson(privateLessonParticipantCount);
                 for (EnrollmentOrderParticipantEntity participant : displayParticipants) {
                     CoursePackageEntity coursePackage = participant == null
                             ? firstPackage(packagesByOrderId.get(order.getId()))
                             : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, null);
                     rows.add(toRow(order, null, Collections.emptyList(), coursePackage, participant,
-                            privateLessonGroupId,
+                            null,
+                            null,
                             sharedPrivateLesson ? privateLessonParticipantCount : null,
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
@@ -430,13 +454,27 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 continue;
             }
             for (EnrollmentOrderItemEntity item : orderItems) {
+                Integer privateLessonParticipantCount = privateLessonParticipantCountByOrderItemId.get(item.getId());
+                if (privateLessonParticipantCount == null) {
+                    privateLessonParticipantCount = privateLessonParticipantCountByOrderId.get(order.getId());
+                }
+                if (privateLessonParticipantCount == null && "ONE_ON_ONE".equalsIgnoreCase(item.getCourseType())) {
+                    privateLessonParticipantCount = resolvePrivateLessonParticipantCount(
+                            null, participants, Collections.emptyMap());
+                }
+                boolean sharedPrivateLesson = isSharedPrivateLesson(privateLessonParticipantCount);
+                Long privateLessonGroupId = privateLessonGroupIdByOrderItemId.get(item.getId());
                 CoursePackageEntity defaultPackage = firstNonNull(packageByOrderItemId.get(item.getId()),
                         findPackageForItem(packagesByOrderId.get(order.getId()), item));
                 for (EnrollmentOrderParticipantEntity participant : displayParticipants) {
                     CoursePackageEntity coursePackage = participant == null
                             ? defaultPackage
                             : findPackageForParticipant(packagesByOrderId.get(order.getId()), participant, item);
+                    Long displayStudentId = participant == null ? order.getStudentId() : participant.getStudentId();
+                    EnrollmentOrderCourseRefundStateEntity refundState = displayStudentId == null ? null
+                            : refundStateByParticipantCourse.get(new ParticipantCourseKey(item.getId(), displayStudentId));
                     rows.add(toRow(order, item, orderItems, coursePackage, participant,
+                            refundState,
                             privateLessonGroupId,
                             sharedPrivateLesson ? privateLessonParticipantCount : null,
                             reviewIssuesByOrderId.getOrDefault(order.getId(), Collections.emptyList()),
@@ -451,10 +489,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         return rows;
     }
 
-    private Integer resolvePrivateLessonParticipantCount(Long orderId,
+    private Integer resolvePrivateLessonParticipantCount(Long orderItemId,
                                                          List<EnrollmentOrderParticipantEntity> participants,
-                                                         Map<Long, Integer> privateLessonParticipantCountByOrderId) {
-        Integer groupCount = privateLessonParticipantCountByOrderId.get(orderId);
+                                                         Map<Long, Integer> privateLessonParticipantCountByOrderItemId) {
+        Integer groupCount = orderItemId == null ? null : privateLessonParticipantCountByOrderItemId.get(orderItemId);
         if (groupCount != null && groupCount > 0) {
             return groupCount;
         }
@@ -528,6 +566,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                               List<EnrollmentOrderItemEntity> orderItems,
                                               CoursePackageEntity coursePackage,
                                               EnrollmentOrderParticipantEntity participant,
+                                              EnrollmentOrderCourseRefundStateEntity refundState,
                                               Long privateLessonGroupId,
                                               Integer privateLessonParticipantCount,
                                               List<String> reviewIssueCodes,
@@ -573,16 +612,21 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         // Data Summary 展示该学生本次报名周期；课程统一周期只作为缺少学生报名日期时的兼容回退。
         LocalDate periodStartDate = resolvePeriodStartDate(item, classGroup, coursePackage, order);
         LocalDate periodEndDate = resolvePeriodEndDate(item, coursePackage, classGroup, order);
-        boolean stoppedRecord = "STOPPED".equals(resolveDisplayItemStatus(item));
+        BigDecimal rowStoppedConsumedAmount = resolveStoppedConsumedAmount(item, refundState);
+        Integer rowStoppedSessionCount = resolveStoppedSessionCount(item, refundState);
+        LocalDate stoppedStart = refundState != null && refundState.getStoppedAt() != null
+                ? refundState.getStoppedPeriodStartDate() : item == null ? null : item.getStoppedPeriodStartDate();
+        LocalDate stoppedEnd = refundState != null && refundState.getStoppedAt() != null
+                ? refundState.getStoppedPeriodEndDate() : item == null ? null : item.getStoppedPeriodEndDate();
+        boolean stoppedRecord = "STOPPED".equals(resolveDisplayItemStatus(item, refundState));
         if (stoppedRecord && item != null) {
-            periodStartDate = firstNonNull(item.getStoppedPeriodStartDate(), periodStartDate);
-            periodEndDate = firstNonNull(item.getStoppedPeriodEndDate(), periodEndDate);
+            periodStartDate = firstNonNull(stoppedStart, periodStartDate);
+            periodEndDate = firstNonNull(stoppedEnd, periodEndDate);
         }
         LocalDate expiryDate = periodEndDate;
         boolean expiringSoon = expiryDate != null && !expiryDate.isBefore(today) && !expiryDate.isAfter(soonLimit);
         boolean oneOnOne = "ONE_ON_ONE".equals(courseType) || isOneOnOne(product, coursePackage);
-        boolean sharedParticipantOrder = isSharedPrivateLesson(privateLessonParticipantCount)
-                && participant != null && (privateLessonGroupId != null || oneOnOne);
+        boolean sharedParticipantOrder = isSharedPrivateLesson(privateLessonParticipantCount) && participant != null;
         boolean primaryParticipant = participant == null
                 || Objects.equals(displayStudentId, order.getStudentId())
                 || Objects.equals(participant.getParticipantIndex(), 1);
@@ -670,14 +714,14 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             rowPickupAddress = item.getPickupAddressSnapshot();
             rowDropoffAddress = item.getDropoffAddressSnapshot();
         }
-        if (stoppedRecord && item != null && item.getStoppedConsumedAmount() != null) {
+        if (stoppedRecord && item != null && rowStoppedConsumedAmount != null) {
             // 停课行按已消耗课时金额展示；接送费和原优惠不属于已消耗课时费用。
-            rowLinePriceAmount = amount(item.getStoppedConsumedAmount());
+            rowLinePriceAmount = amount(rowStoppedConsumedAmount);
             rowPickupFeeAmount = ZERO_AMOUNT;
             rowDropoffFeeAmount = ZERO_AMOUNT;
             rowExtraFeeAmount = ZERO_AMOUNT;
             rowDiscountAmount = ZERO_AMOUNT;
-            rowAmountDue = amount(item.getStoppedConsumedAmount());
+            rowAmountDue = amount(rowStoppedConsumedAmount);
             rowBalanceAmount = rowAmountDue.subtract(rowPaidAmount).setScale(2, RoundingMode.HALF_UP);
         }
         boolean overdue = positive(rowBalanceAmount);
@@ -770,9 +814,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 reviewIssueCodes,
                 oneOnOne ? privateLessonGroupId : null,
                 oneOnOne ? privateLessonParticipantCount : null,
-                resolveDisplayItemStatus(item),
-                item == null ? null : item.getStoppedConsumedAmount(),
-                item == null ? null : item.getStoppedSessionCount(),
+                resolveDisplayItemStatus(item, refundState),
+                rowStoppedConsumedAmount,
+                rowStoppedSessionCount,
                 order.getCreatedAt(),
                 order.getRegistrationOperatorUserId() != null ? order.getRegistrationOperatorUserId()
                         : (order.getCashierUserId() != null ? order.getCashierUserId() : order.getCreatedBy()),
@@ -780,8 +824,31 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         );
     }
 
-    private String resolveDisplayItemStatus(EnrollmentOrderItemEntity item) {
+    private String resolveDisplayItemStatus(EnrollmentOrderItemEntity item,
+                                            EnrollmentOrderCourseRefundStateEntity refundState) {
+        if (item != null && "STOPPED".equalsIgnoreCase(item.getItemStatus())) {
+            return "STOPPED";
+        }
+        if (refundState != null && "STOPPED".equalsIgnoreCase(refundState.getItemStatus())) {
+            return "STOPPED";
+        }
         return item == null ? null : item.getItemStatus();
+    }
+
+    private BigDecimal resolveStoppedConsumedAmount(EnrollmentOrderItemEntity item,
+                                                    EnrollmentOrderCourseRefundStateEntity refundState) {
+        if (refundState != null && refundState.getStoppedAt() != null) {
+            return amount(refundState.getStoppedConsumedAmount());
+        }
+        return item == null ? null : item.getStoppedConsumedAmount();
+    }
+
+    private Integer resolveStoppedSessionCount(EnrollmentOrderItemEntity item,
+                                               EnrollmentOrderCourseRefundStateEntity refundState) {
+        if (refundState != null && refundState.getStoppedAt() != null) {
+            return refundState.getStoppedSessionCount();
+        }
+        return item == null ? null : item.getStoppedSessionCount();
     }
 
     private BigDecimal resolveParticipantGrossAmount(EnrollmentOrderParticipantEntity participant,
@@ -1188,6 +1255,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     }
 
     private record PaymentParticipantItemKey(PaymentParticipantKey participant, Long orderItemId) {
+    }
+
+    private record ParticipantCourseKey(Long orderItemId, Long studentId) {
     }
 
     /** 行级金额分摊的定位键：参与人索引（可为 null）+ 订单项 ID（可为 null）。 */

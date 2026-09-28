@@ -21,7 +21,8 @@ public record RefundCoursePreviewVO(
             BigDecimal paidAmount,
             Integer consumedLessonCount,
             BigDecimal consumedAmount,
-            boolean automaticStopSupported
+            boolean automaticStopSupported,
+            String studentName
     ) {
     }
 }

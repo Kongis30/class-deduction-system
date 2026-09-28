@@ -87,6 +87,9 @@ class DataSummaryServiceImplTest {
     private ClassGroupMapper classGroupMapper;
 
     @Mock
+    private com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderCourseRefundStateMapper enrollmentOrderCourseRefundStateMapper;
+
+    @Mock
     private ClassBillingService classBillingService;
 
     @Mock
@@ -127,6 +130,7 @@ class DataSummaryServiceImplTest {
                 paymentRecordMapper,
                 paymentAllocationMapper,
                 classGroupMapper,
+                enrollmentOrderCourseRefundStateMapper,
                 classBillingService,
                 courseProductMapper,
                 teacherMapper,

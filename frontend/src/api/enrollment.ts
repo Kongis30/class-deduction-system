@@ -118,8 +118,6 @@ export function correctEnrollmentOrder(id: string | number, data: EnrollmentOrde
 export interface RefundPayload {
   refundAmount: number;
   orderItemId?: EntityId;
-  /** Data Summary 入口要求退款必须归属某个课程，禁止回退到整单平摊。 */
-  courseOnly?: boolean;
   participantIndex?: number;
   paymentMethod: string;
   handledByName: string;
@@ -138,6 +136,7 @@ export interface RefundCoursePreviewItem {
   consumedLessonCount: number;
   consumedAmount: number;
   automaticStopSupported: boolean;
+  studentName?: string;
 }
 
 export function fetchRefundPreview(id: string | number, participantIndex?: number) {

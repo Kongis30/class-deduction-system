@@ -93,6 +93,9 @@ class ClassGroupServiceImplTest {
     @Mock
     private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
 
+    @Mock
+    private ClassHolidayService classHolidayService;
+
     @Captor
     private ArgumentCaptor<LessonRecordEntity> recordCaptor;
 
@@ -124,7 +127,8 @@ class ClassGroupServiceImplTest {
                 classroomMapper,
                 courseProductMapper,
                 coursePackageMapper,
-                privateLessonGroupMemberMapper
+                privateLessonGroupMemberMapper,
+                classHolidayService
         );
     }
 
