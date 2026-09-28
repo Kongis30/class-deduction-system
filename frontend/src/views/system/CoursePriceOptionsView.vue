@@ -902,6 +902,7 @@ const courseTypes = computed<CourseTypeDef[]>(() =>
       (categoryConfig.value[left.value]?.order ?? 99) - (categoryConfig.value[right.value]?.order ?? 99)));
 
 const courseModes: CourseModeDef[] = [
+  { value: 'ONE_ON_ONE', label: '1-on-1 Private' },
   { value: 'GROUP', label: 'Group Class' },
 ];
 
@@ -1248,21 +1249,24 @@ async function initializePage() {
   await loadCategoryConfig();
   const requestedType = queryValue(route.query.courseType);
   const requestedTypeDefinition = courseTypes.value.find(item => item.value === requestedType);
-  if (requestedTypeDefinition?.mode === 'GROUP') {
+  if (requestedTypeDefinition) {
     query.courseType = requestedType as CourseTypeValue;
+    selectedMode.value = requestedTypeDefinition.mode;
   } else {
     query.courseType = 'AFTER_SCHOOL';
+    selectedMode.value = 'GROUP';
   }
-  selectedMode.value = 'GROUP';
   await loadProductsAndClasses();
 
   const requestedProductId = queryValue(route.query.courseProductId);
   const requestedProduct = requestedProductId ? productMap.value.get(requestedProductId) : undefined;
-  if (requestedProduct?.teachingMode === 'GROUP') {
-    query.courseType = normalizeGroupCourseType(requestedProduct.courseType);
+  if (requestedProduct) {
+    selectedMode.value = requestedProduct.teachingMode;
+    query.courseType = requestedProduct.teachingMode === 'ONE_ON_ONE'
+      ? 'ONE_ON_ONE'
+      : normalizeGroupCourseType(requestedProduct.courseType);
     query.courseProductId = requestedProduct.id;
-  } else if (requestedProduct?.teachingMode === 'ONE_ON_ONE') {
-    // 1-on-1 已从本页面移除，避免旧链接把页面切回已隐藏的模式。
+  } else {
     query.courseProductId = '';
   }
   await loadOptions();
@@ -1562,11 +1566,11 @@ function reloadFirstPage() {
 }
 
 function switchCourseMode(mode: CourseMode) {
-  if (mode !== 'GROUP' || selectedMode.value === mode) {
+  if (selectedMode.value === mode) {
     return;
   }
   selectedMode.value = mode;
-  query.courseType = 'AFTER_SCHOOL';
+  query.courseType = mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL';
   query.courseProductId = '';
   reloadFirstPage();
 }
@@ -1578,7 +1582,7 @@ function chooseAnotherProduct() {
 function goToCourseProducts() {
   router.push({
     name: 'course-products',
-    query: { tab: 'group' },
+    query: { tab: selectedMode.value === 'ONE_ON_ONE' ? 'one-on-one' : 'group' },
   });
 }
 
@@ -1591,11 +1595,10 @@ function handleContextBack() {
 }
 
 function selectCourseProduct(product: CourseProductItem) {
-  if (product.teachingMode !== 'GROUP') {
-    return;
-  }
   query.courseProductId = product.id;
-  query.courseType = normalizeGroupCourseType(product.courseType);
+  query.courseType = product.teachingMode === 'ONE_ON_ONE'
+    ? 'ONE_ON_ONE'
+    : normalizeGroupCourseType(product.courseType);
   reloadFirstPage();
 }
 
