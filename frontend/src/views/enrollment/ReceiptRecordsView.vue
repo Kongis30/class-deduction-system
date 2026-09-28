@@ -367,7 +367,12 @@ function clearOrders() {
 }
 
 function openReceipt(row: ReceiptRecordItem) {
-  // 统一收据查看样式：报名/付款/退款收据都跳转到报名页只读收据（与 Enrollments 页一致）。
+  if (row.templateCode === 'REFUND_RECEIPT') {
+    void router.push({ name: 'refund-receipt', params: { receiptId: String(row.id) } });
+    return;
+  }
+
+  // 报名收据依赖订单快照；退款收据走独立快照页，避免关联订单删除后无法查看。
   const orderId = receiptPayload(row).enrollmentOrderId || row.enrollmentOrderId;
   router.push({
     name: 'registration',
