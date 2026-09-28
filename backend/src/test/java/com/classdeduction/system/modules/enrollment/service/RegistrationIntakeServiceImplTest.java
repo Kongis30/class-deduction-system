@@ -155,6 +155,9 @@ class RegistrationIntakeServiceImplTest {
     @Mock
     private StudentCreditService studentCreditService;
 
+    @Mock
+    private com.classdeduction.system.modules.schedule.service.ClassHolidayService classHolidayService;
+
     // 直接用真实实现，让测试负载与生产一致的到期日计算逻辑。
     private ClassBillingServiceImpl classBillingService;
 
@@ -174,7 +177,7 @@ class RegistrationIntakeServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper);
+        classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper, classHolidayService);
         registrationIntakeService = new RegistrationIntakeServiceImpl(
                 studentMapper,
                 studentNoGenerator,
@@ -202,7 +205,8 @@ class RegistrationIntakeServiceImplTest {
                 userRoleMapper,
                 passwordEncoder,
                 jsonHelper,
-                studentCreditService
+                studentCreditService,
+                classHolidayService
         );
     }
 

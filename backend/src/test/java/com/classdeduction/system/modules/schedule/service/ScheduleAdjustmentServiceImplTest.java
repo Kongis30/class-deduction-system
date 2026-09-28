@@ -19,6 +19,7 @@ import com.classdeduction.system.modules.schedule.dto.WeeklyScheduleAdjustmentRe
 import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.impl.ScheduleAdjustmentServiceImpl;
@@ -67,6 +68,9 @@ class ScheduleAdjustmentServiceImplTest {
     private ClassEnrollmentMapper classEnrollmentMapper;
 
     @Mock
+    private ClassGroupMapper classGroupMapper;
+
+    @Mock
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
@@ -84,6 +88,9 @@ class ScheduleAdjustmentServiceImplTest {
     @Mock
     private JsonHelper jsonHelper;
 
+    @Mock
+    private ClassHolidayService classHolidayService;
+
     @Captor
     private ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor;
 
@@ -99,12 +106,14 @@ class ScheduleAdjustmentServiceImplTest {
                 lessonAdjustmentLogMapper,
                 lessonRecordMapper,
                 classEnrollmentMapper,
+                classGroupMapper,
                 coursePackageMapper,
                 privateLessonGroupMemberMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
-                jsonHelper
+                jsonHelper,
+                classHolidayService
         );
         lenient().when(coursePackageMapper.selectById(501L)).thenReturn(activeOneOnOnePackage());
         // 调课写入现在会校验受影响行数，默认让 updateById 返回成功，避免误报并发冲突。

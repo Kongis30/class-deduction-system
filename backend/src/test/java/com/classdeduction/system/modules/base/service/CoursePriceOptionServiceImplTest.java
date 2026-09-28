@@ -71,6 +71,9 @@ class CoursePriceOptionServiceImplTest {
     @Mock
     private ClassroomMapper classroomMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.schedule.service.ClassHolidayService classHolidayService;
+
     private CoursePriceOptionServiceImpl coursePriceOptionService;
 
     @BeforeEach
@@ -84,7 +87,8 @@ class CoursePriceOptionServiceImplTest {
                 lessonOccurrenceMapper,
                 lessonRecordMapper,
                 teacherMapper,
-                classroomMapper
+                classroomMapper,
+                classHolidayService
         );
     }
 

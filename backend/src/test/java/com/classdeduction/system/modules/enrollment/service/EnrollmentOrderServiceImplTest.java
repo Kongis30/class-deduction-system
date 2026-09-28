@@ -97,6 +97,9 @@ class EnrollmentOrderServiceImplTest {
     private EnrollmentOrderParticipantMapper enrollmentOrderParticipantMapper;
 
     @Mock
+    private com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderCourseRefundStateMapper enrollmentOrderCourseRefundStateMapper;
+
+    @Mock
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
@@ -166,6 +169,9 @@ class EnrollmentOrderServiceImplTest {
     @Mock
     private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
+    @Mock
+    private com.classdeduction.system.modules.schedule.service.ClassHolidayService classHolidayService;
+
     @Captor
     private ArgumentCaptor<EnrollmentOrderEntity> orderCaptor;
 
@@ -192,6 +198,8 @@ class EnrollmentOrderServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderItemEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""),
+                com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonRecordEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), HourLedgerEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonAdjustmentLogEntity.class);
@@ -202,13 +210,14 @@ class EnrollmentOrderServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper);
+        classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper, classHolidayService);
         paymentAllocationService = org.mockito.Mockito.mock(com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService.class);
         paymentAllocationMapper = org.mockito.Mockito.mock(com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper.class);
         enrollmentOrderService = new EnrollmentOrderServiceImpl(
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
                 enrollmentOrderParticipantMapper,
+                enrollmentOrderCourseRefundStateMapper,
                 coursePackageMapper,
                 paymentRecordMapper,
                 paymentAllocationMapper,
@@ -232,7 +241,8 @@ class EnrollmentOrderServiceImplTest {
                 classGroupMapper,
                 classEnrollmentMapper,
                 classGroupScheduleSlotMapper,
-                paymentMethodMapper
+                paymentMethodMapper,
+                classHolidayService
         );
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());
@@ -727,17 +737,21 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldRejectDataSummaryRefundWithoutCourse() {
+    void shouldRequireCourseForPartialRefundOnMultiCourseReceipt() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setPaymentStatus("PAID");
         order.setReceivedAmount(new BigDecimal("100.00"));
+        EnrollmentOrderParticipantEntity first = buildParticipant(1, 101L, new BigDecimal("50.00"));
+        EnrollmentOrderParticipantEntity second = buildParticipant(2, 102L, new BigDecimal("50.00"));
 
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(enrollmentOrderParticipantMapper.selectCount(any())).thenReturn(2L);
+        when(enrollmentOrderItemMapper.selectCount(any())).thenReturn(2L);
 
         com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
                 new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
-        request.setCourseOnly(true);
         request.setRefundAmount(new BigDecimal("50.00"));
         request.setPaymentMethod("CASH");
         request.setHandledByName("Amy");
@@ -924,11 +938,31 @@ class EnrollmentOrderServiceImplTest {
                 buildPayment(2, new BigDecimal("125.00"), 2),
                 buildPayment(3, new BigDecimal("125.00"), 3)
         ));
+        EnrollmentOrderItemEntity sharedCourse = new EnrollmentOrderItemEntity();
+        sharedCourse.setId(4401L);
+        sharedCourse.setEnrollmentOrderId(order.getId());
+        sharedCourse.setLineNo(1);
+        sharedCourse.setCourseType("ONE_ON_ONE");
+        sharedCourse.setPriceAmount(new BigDecimal("375.00"));
+        sharedCourse.setAmountDue(new BigDecimal("375.00"));
+        sharedCourse.setOneOnOneUnits(20);
+        List<PaymentAllocationEntity> allocations = new ArrayList<>();
+        for (PaymentRecordEntity payment : payments) {
+            PaymentAllocationEntity allocation = new PaymentAllocationEntity();
+            allocation.setPaymentRecordId(payment.getId());
+            allocation.setEnrollmentOrderId(order.getId());
+            allocation.setEnrollmentOrderItemId(sharedCourse.getId());
+            allocation.setAmount(payment.getAmount());
+            allocations.add(allocation);
+        }
         when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
         when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
         when(enrollmentOrderParticipantMapper.selectOne(any())).thenReturn(selected);
         when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(participants);
         when(paymentRecordMapper.selectList(any())).thenAnswer(invocation -> payments);
+        when(paymentRecordMapper.selectBatchIds(any())).thenAnswer(invocation -> payments);
+        when(paymentAllocationMapper.selectList(any())).thenReturn(allocations);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(sharedCourse));
         doAnswer(invocation -> {
             PaymentRecordEntity record = invocation.getArgument(0);
             record.setId(9002L);
@@ -1003,14 +1037,22 @@ class EnrollmentOrderServiceImplTest {
         usedLesson.setResultStatus("COMPLETED");
         usedLesson.setConfirmStage("CONFIRMED");
         PaymentAllocationEntity originalAllocation = new PaymentAllocationEntity();
+        originalAllocation.setPaymentRecordId(7001L);
+        originalAllocation.setEnrollmentOrderId(order.getId());
         originalAllocation.setEnrollmentOrderItemId(item.getId());
         originalAllocation.setAmount(new BigDecimal("2299.00"));
+        PaymentRecordEntity originalPayment = new PaymentRecordEntity();
+        originalPayment.setId(7001L);
+        originalPayment.setEnrollmentOrderId(order.getId());
+        originalPayment.setAmount(new BigDecimal("2299.00"));
+        originalPayment.setPaymentStatus("PAID");
 
         when(enrollmentOrderMapper.selectById(order.getId())).thenReturn(order);
         when(enrollmentOrderMapper.updateById(any(EnrollmentOrderEntity.class))).thenReturn(1);
         when(enrollmentOrderItemMapper.selectOne(any())).thenReturn(item);
         when(enrollmentOrderItemMapper.selectById(item.getId())).thenReturn(item);
         when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(originalAllocation));
+        when(paymentRecordMapper.selectBatchIds(any())).thenReturn(List.of(originalPayment));
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(usedLesson));
@@ -1026,14 +1068,10 @@ class EnrollmentOrderServiceImplTest {
 
         verify(classEnrollmentMapper).updateById(classEnrollmentCaptor.capture());
         assertThat(classEnrollmentCaptor.getValue().getStatus()).isEqualTo("WITHDRAWN");
-        verify(enrollmentOrderItemMapper).updateById(item);
-        assertThat(item.getItemStatus()).isEqualTo("STOPPED");
-        assertThat(item.getStoppedSessionCount()).isEqualTo(1);
-        assertThat(item.getStoppedConsumedAmount()).isEqualByComparingTo("143.69");
-        assertThat(item.getStoppedPeriodStartDate()).isEqualTo(LocalDate.of(2026, 9, 12));
-        assertThat(item.getStoppedPeriodEndDate()).isEqualTo(LocalDate.of(2026, 9, 12));
-        assertThat(item.getAmountDue()).isEqualByComparingTo("143.69");
-        assertThat(order.getAmountDue()).isEqualByComparingTo("143.69");
+        verify(enrollmentOrderItemMapper, never()).updateById(item);
+        assertThat(item.getItemStatus()).isEqualTo("ACTIVE");
+        verify(enrollmentOrderCourseRefundStateMapper).insert(any(
+                com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity.class));
         verify(lessonOccurrenceMapper, never()).update(any());
         verify(paymentAllocationService).recordRefundAllocation(any(PaymentRecordEntity.class),
                 org.mockito.ArgumentMatchers.eq(order.getId()), org.mockito.ArgumentMatchers.eq(item.getId()),

@@ -875,14 +875,18 @@
             <span class="product-info-card__label">Student</span>
             <span class="product-info-card__value">{{ refundStudentName }}</span>
           </div>
+          <div v-if="selectedRefundCourse" class="product-info-card__item">
+            <span class="product-info-card__label">Course</span>
+            <span class="product-info-card__value">{{ selectedRefundCourse.detail || `Course ${selectedRefundCourse.lineNo}` }}</span>
+          </div>
           <div class="product-info-card__item">
-            <span class="product-info-card__label">{{ refundParticipant ? 'Currently received for this student' : 'Currently received for order' }}</span>
-            <span class="product-info-card__value">${{ refundReceivedAmount.toFixed(2) }}</span>
+            <span class="product-info-card__label">{{ selectedRefundCourse ? 'Currently received for this student and course' : refundParticipant ? 'Currently received for this student' : 'Currently received for order' }}</span>
+            <span class="product-info-card__value">${{ (selectedRefundCourse?.paidAmount ?? refundReceivedAmount).toFixed(2) }}</span>
           </div>
         </div>
-        <el-form-item v-if="!isSharedParticipantRefund && refundCourseOptions.length > 1" label="Course to refund" prop="orderItemId">
+        <el-form-item v-if="!refundCourseOnly && refundCourseOptions.length > 1" label="Course to refund" prop="orderItemId">
           <el-select v-model="refundForm.orderItemId" placeholder="Select a course" style="width: 100%" :loading="refundPreviewLoading" @change="handleRefundCourseChange">
-            <el-option v-if="!refundCourseOnly" label="Entire receipt · allocate across all courses" value="ALL" />
+            <el-option :label="isSharedParticipantRefund ? 'All courses · full student refund' : 'Entire receipt · allocate across all courses'" value="ALL" />
             <el-option
               v-for="item in refundCourseOptions"
               :key="item.orderItemId"
@@ -894,15 +898,20 @@
         </el-form-item>
         <div v-if="selectedRefundCourse?.automaticStopSupported" class="refund-consumption">
           <strong>Already consumed: ${{ selectedRefundCourse.consumedAmount.toFixed(2) }}</strong>
-          <span>{{ selectedRefundCourse.consumedLessonCount }} confirmed chargeable session(s)</span>
+          <span>
+            {{ selectedRefundCourse.courseType === 'ONE_ON_ONE'
+              ? `${(selectedRefundCourse.consumedLessonCount / 2).toFixed(1)} consumed hour(s)`
+              : `${selectedRefundCourse.consumedLessonCount} confirmed chargeable session(s)` }}
+          </span>
           <small>If the remaining paid amount is at or below this amount after the refund, the student will be withdrawn from this course and future schedule entries will be removed.</small>
         </div>
-        <div v-else-if="refundForm.orderItemId === 'ALL' && refundableGroupCourses.length" class="refund-consumption">
-          <strong>Confirmed consumed amount by course</strong>
-          <span v-for="item in refundableGroupCourses" :key="item.orderItemId">
-            {{ item.detail || `Course ${item.lineNo}` }}: ${{ item.consumedAmount.toFixed(2) }} ({{ item.consumedLessonCount }} session(s))
+        <div v-else-if="refundForm.orderItemId === 'ALL' && refundCourseOptions.length > 1" class="refund-consumption">
+          <strong>Per-course refund allocation</strong>
+          <span v-for="item in refundCourseOptions.filter((course) => course.paidAmount > 0)" :key="item.orderItemId">
+            {{ item.detail || `Course ${item.lineNo}` }}: refund up to ${{ item.paidAmount.toFixed(2) }}
+            <template v-if="item.automaticStopSupported"> · consumed ${{ item.consumedAmount.toFixed(2) }}</template>
           </span>
-          <small>Each course whose paid amount reaches its consumed amount after allocation will be stopped and removed from future schedule.</small>
+          <small>This option refunds the full amount shown above across all courses. To make a partial refund, select one course.</small>
         </div>
         <p class="refund-hint">
           {{ refundHint }}
@@ -2551,7 +2560,6 @@ const isSharedParticipantRefund = computed(() => Boolean(
 const selectedRefundCourse = computed(() => refundCourseOptions.value.find(
   (item) => refundForm.orderItemId !== 'ALL' && String(item.orderItemId) === String(refundForm.orderItemId),
 ) ?? null);
-const refundableGroupCourses = computed(() => refundCourseOptions.value.filter((item) => item.automaticStopSupported));
 const refundCourseReceivedAmount = computed(() => refundForm.orderItemId === 'ALL'
   ? refundReceivedAmount.value
   : selectedRefundCourse.value?.paidAmount ?? refundReceivedAmount.value);
@@ -2597,16 +2605,19 @@ async function openRefundDialog(
       refundDialogVisible.value = false;
       return;
     }
-    if (!(participant && (row.participants?.length ?? 0) > 1)) {
-      const refundableCourses = refundCourseOptions.value.filter((item) => item.paidAmount > 0);
-      const initial = selected ?? (refundableCourses.length === 1 ? refundableCourses[0] : null);
-      if (initial) {
-        refundForm.orderItemId = initial.orderItemId;
-        refundForm.refundAmount = initial.paidAmount;
-      } else if (!courseOnly && refundCourseOptions.value.length > 1) {
-        refundForm.orderItemId = 'ALL';
-        refundForm.refundAmount = refundReceivedAmount.value;
+    const refundableCourses = refundCourseOptions.value.filter((item) => item.paidAmount > 0);
+    const initial = selected ?? (refundableCourses.length === 1 ? refundableCourses[0] : null);
+    if (initial) {
+      refundForm.orderItemId = initial.orderItemId;
+      refundForm.refundAmount = initial.paidAmount;
+      if (initial.paidAmount <= 0) {
+        ElMessage.warning('This student has no received payment allocated to the selected course.');
+        refundDialogVisible.value = false;
+        return;
       }
+    } else if (!courseOnly && refundCourseOptions.value.length > 1) {
+      refundForm.orderItemId = 'ALL';
+      refundForm.refundAmount = refundReceivedAmount.value;
     }
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to load course refund details.');
@@ -2625,7 +2636,7 @@ function handleRefundCourseChange() {
 async function handleRefundSubmit() {
   const valid = await refundFormRef.value?.validate().catch(() => false);
   if (!valid || !refundOrder.value) return;
-  if (!isSharedParticipantRefund.value && refundCourseOptions.value.length > 0 && !refundForm.orderItemId) {
+  if (refundCourseOptions.value.length > 0 && !refundForm.orderItemId) {
     ElMessage.warning('Select the course to refund.');
     return;
   }
@@ -2637,13 +2648,17 @@ async function handleRefundSubmit() {
     ElMessage.warning('Refund amount cannot exceed the selected course payment.');
     return;
   }
+  if (refundCourseOptions.value.length > 1 && refundForm.orderItemId === 'ALL'
+      && refundForm.refundAmount < refundReceivedAmount.value) {
+    ElMessage.warning('For a partial refund on a multi-course receipt, select one course.');
+    return;
+  }
   refunding.value = true;
   try {
     await refundEnrollmentOrder(refundOrder.value.id, {
       refundAmount: refundForm.refundAmount,
-      orderItemId: !isSharedParticipantRefund.value && refundForm.orderItemId && refundForm.orderItemId !== 'ALL'
+      orderItemId: refundForm.orderItemId && refundForm.orderItemId !== 'ALL'
         ? refundForm.orderItemId : undefined,
-      courseOnly: refundCourseOnly.value,
       participantIndex: refundParticipant.value?.participantIndex,
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName,
