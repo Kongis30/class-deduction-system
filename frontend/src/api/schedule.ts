@@ -256,6 +256,8 @@ export interface ClassScheduleUpdatePayload {
   classroomId?: string | number;
   startDate?: string;
   endDate?: string;
+  /** 用户明确选择继续改后续排课时，保留已开始但尚未确认的课次。 */
+  preserveStartedLessons?: boolean;
   slots: ClassScheduleSlotPayload[];
 }
 

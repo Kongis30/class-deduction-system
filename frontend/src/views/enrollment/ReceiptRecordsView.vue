@@ -71,24 +71,93 @@
             :empty-text="`No ${receiptType} receipts for this student.`"
           >
             <el-table-column prop="receiptNo" label="Receipt no." min-width="170" />
-            <el-table-column label="Enrollment" min-width="170">
-              <template #default="{ row }">{{ receiptPayload(row).enrollmentNo || '—' }}</template>
+            <el-table-column prop="studentName" label="Student" min-width="150" />
+            <el-table-column v-if="receiptType === 'registration'" label="Course" min-width="230">
+              <template #default="{ row }">
+                <div class="receipt-course-list">
+                  <span v-for="course in receiptSummary(row).courses" :key="course.key">{{ course.label }}</span>
+                  <span v-if="receiptSummary(row).courses.length === 0" class="muted-value">Credit top-up</span>
+                </div>
+              </template>
             </el-table-column>
-            <el-table-column label="Issued at" min-width="150">
+            <el-table-column v-if="receiptType === 'registration'" label="Amount due" min-width="120" align="right">
+              <template #default="{ row }">{{ formatMoney(receiptSummary(row).amountDue) }}</template>
+            </el-table-column>
+            <el-table-column v-if="receiptType === 'registration'" label="Paid" min-width="110" align="right">
+              <template #default="{ row }">{{ formatMoney(receiptSummary(row).paidAmount) }}</template>
+            </el-table-column>
+            <el-table-column v-if="receiptType === 'registration'" label="Balance" min-width="110" align="right">
+              <template #default="{ row }">{{ formatMoney(receiptSummary(row).balanceAmount) }}</template>
+            </el-table-column>
+            <el-table-column v-if="receiptType !== 'registration'" label="Payment method" min-width="140">
+              <template #default="{ row }">{{ receiptSummary(row).paymentMethod || '—' }}</template>
+            </el-table-column>
+            <el-table-column v-if="receiptType !== 'registration'" :label="receiptType === 'refund' ? 'Refund amount' : 'Payment amount'" min-width="135" align="right">
+              <template #default="{ row }">{{ formatMoney(Math.abs(receiptSummary(row).paymentAmount)) }}</template>
+            </el-table-column>
+            <el-table-column v-if="receiptType !== 'registration'" label="Balance after" min-width="130" align="right">
+              <template #default="{ row }">{{ formatMoney(receiptSummary(row).balanceAmount) }}</template>
+            </el-table-column>
+            <el-table-column label="Date" min-width="150">
               <template #default="{ row }">{{ formatDateTime(row.issuedAt) }}</template>
             </el-table-column>
-            <el-table-column v-if="receiptType !== 'registration'" :label="receiptType === 'refund' ? 'This refund' : 'This payment'" min-width="120" align="right">
-              <template #default="{ row }">{{ formatMoney(Math.abs(receiptPayload(row).paymentAmount)) }}</template>
-            </el-table-column>
-            <el-table-column v-if="receiptType !== 'registration'" label="Balance after" min-width="120" align="right">
-              <template #default="{ row }">{{ formatMoney(receiptPayload(row).balanceAmount) }}</template>
-            </el-table-column>
-            <el-table-column label="Actions" width="110" fixed="right">
+            <el-table-column label="Actions" :width="receiptType === 'registration' ? 180 : 110" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openReceipt(row)">View receipt</el-button>
+                <div class="row-actions">
+                  <el-button link type="primary" @click="openReceipt(row)">View</el-button>
+                  <el-button
+                    v-if="receiptType === 'registration'"
+                    link
+                    type="danger"
+                    :disabled="receiptCourseOptions(row).length === 0"
+                    @click="openDeleteCourseDialog(row)"
+                  >
+                    Delete course
+                  </el-button>
+                </div>
               </template>
             </el-table-column>
           </el-table>
+
+          <el-dialog
+            v-model="deleteCourseDialogVisible"
+            title="Delete a course from this receipt"
+            width="520px"
+            :close-on-click-modal="!deletingCourse"
+            :close-on-press-escape="!deletingCourse"
+            @closed="resetDeleteCourseDialog"
+          >
+            <el-alert
+              type="warning"
+              :closable="false"
+              show-icon
+              title="Only the selected course will be removed. Its enrollment and personal schedule records will be cleaned up; other courses on this receipt remain."
+            />
+            <p class="delete-course-student">
+              {{ deleteTargetReceipt?.studentName }} · {{ deleteTargetReceipt?.receiptNo }}
+            </p>
+            <el-form label-position="top">
+              <el-form-item label="Course to delete">
+                <el-select v-model="deleteTargetItemId" class="delete-course-select" placeholder="Select a course">
+                  <el-option
+                    v-for="course in deleteCourseOptions"
+                    :key="course.key"
+                    :label="course.label"
+                    :value="course.key"
+                  />
+                </el-select>
+              </el-form-item>
+            </el-form>
+            <p class="delete-course-note">
+              Refund this course first. The system will block deletion while it still has net payments.
+            </p>
+            <template #footer>
+              <el-button :disabled="deletingCourse" @click="deleteCourseDialogVisible = false">Cancel</el-button>
+              <el-button type="danger" :loading="deletingCourse" :disabled="!deleteTargetItemId" @click="confirmDeleteCourse">
+                Delete course
+              </el-button>
+            </template>
+          </el-dialog>
 
           <el-pagination
             v-if="selectedStudent"
@@ -111,7 +180,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { fetchStudents } from '@/api/base-data';
-import { fetchReceipts } from '@/api/enrollment';
+import { deleteEnrollmentOrderItem, fetchReceipts } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
 import type { ReceiptRecordItem, StudentItem } from '@/types/domain';
 import { formatRoundedUsd } from '@/utils/money-display';
@@ -126,6 +195,14 @@ const receiptType = ref<'registration' | 'payment' | 'refund'>('registration');
 const receipts = ref<ReceiptRecordItem[]>([]);
 const receiptTotal = ref(0);
 const recordTotal = computed(() => receiptTotal.value);
+const deleteCourseDialogVisible = ref(false);
+const deletingCourse = ref(false);
+const deleteTargetReceipt = ref<ReceiptRecordItem | null>(null);
+const deleteTargetItemId = ref('');
+
+const deleteCourseOptions = computed(() => deleteTargetReceipt.value
+  ? receiptCourseOptions(deleteTargetReceipt.value)
+  : []);
 
 const studentQuery = reactive({
   keyword: '',
@@ -301,12 +378,80 @@ function openReceipt(row: ReceiptRecordItem) {
 }
 
 function receiptPayload(row: ReceiptRecordItem) {
-  const payload = parseReceiptPayload(row.receiptPayload);
+  return parseReceiptPayload(row.receiptPayload);
+}
+
+function receiptSummary(row: ReceiptRecordItem) {
+  const payload = receiptPayload(row);
+  const payments = Array.isArray(payload.payments) ? payload.payments : [];
+  const lastPayment = payments.length > 0 ? asRecord(payments[payments.length - 1]) : {};
   return {
-    enrollmentNo: String(payload.enrollmentNo ?? ''),
-    paymentAmount: Number(payload.paymentAmount ?? 0),
-    balanceAmount: Number(payload.balanceAmount ?? 0),
+    courses: receiptCourseOptions(row),
+    amountDue: numberValue(payload.amountDue),
+    paidAmount: numberValue(payload.paidAmount ?? payload.receivedAmount),
+    balanceAmount: numberValue(payload.balanceAmount),
+    paymentAmount: numberValue(payload.paymentAmount ?? lastPayment.amount),
+    paymentMethod: String(payload.paymentMethod ?? lastPayment.paymentMethod ?? '').trim(),
   };
+}
+
+function receiptCourseOptions(row: ReceiptRecordItem) {
+  const rawItems = receiptPayload(row).items;
+  if (!Array.isArray(rawItems)) return [];
+  return rawItems.flatMap((raw, index) => {
+    const item = asRecord(raw);
+    const itemId = item.orderItemId ?? item.id;
+    if (itemId == null || String(itemId).trim() === '') return [];
+    const label = [item.courseProductName, item.registerClass, item.detail, item.gradeBand, item.periodLabel]
+      .map((value) => String(value ?? '').trim())
+      .filter(Boolean)
+      .filter((value, valueIndex, values) => values.indexOf(value) === valueIndex)
+      .join(' · ') || 'Course';
+    return [{ key: String(itemId), label: `${label}${rawItems.length > 1 ? ` (Course ${index + 1})` : ''}` }];
+  });
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function numberValue(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function openDeleteCourseDialog(row: ReceiptRecordItem) {
+  deleteTargetReceipt.value = row;
+  deleteTargetItemId.value = receiptCourseOptions(row)[0]?.key ?? '';
+  deleteCourseDialogVisible.value = true;
+}
+
+function resetDeleteCourseDialog() {
+  if (deletingCourse.value) return;
+  deleteTargetReceipt.value = null;
+  deleteTargetItemId.value = '';
+}
+
+async function confirmDeleteCourse() {
+  const receipt = deleteTargetReceipt.value;
+  if (!receipt || !deleteTargetItemId.value) return;
+  deletingCourse.value = true;
+  try {
+    await deleteEnrollmentOrderItem(receipt.enrollmentOrderId, deleteTargetItemId.value);
+    ElMessage.success('Course enrollment deleted.');
+    deleteCourseDialogVisible.value = false;
+    await loadSelectedStudentRecords();
+    if (receipts.value.length === 0 && orderQuery.pageNum > 1) {
+      orderQuery.pageNum -= 1;
+      await loadSelectedStudentRecords();
+    }
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    deletingCourse.value = false;
+  }
 }
 
 function parseReceiptPayload(value: unknown): Record<string, unknown> {
@@ -408,7 +553,30 @@ function formatMoney(value?: number) {
 
 .row-actions {
   display: flex;
+  align-items: center;
   gap: 4px;
+  white-space: nowrap;
+}
+
+.receipt-course-list {
+  display: grid;
+  gap: 3px;
+  line-height: 1.35;
+}
+
+.muted-value,
+.delete-course-note {
+  color: var(--el-text-color-secondary);
+}
+
+.delete-course-student {
+  margin: 16px 0 12px;
+  color: var(--el-text-color-secondary);
+  font-weight: 600;
+}
+
+.delete-course-select {
+  width: 100%;
 }
 
 @media (max-width: 980px) {

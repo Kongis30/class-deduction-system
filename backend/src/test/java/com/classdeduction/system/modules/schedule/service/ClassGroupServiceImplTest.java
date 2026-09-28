@@ -878,6 +878,29 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldAllowExplicitlyPreservingStartedLessonsWhenUpdatingFutureSchedule() {
+        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setStartDate(today.minusDays(7));
+        classGroup.setEndDate(today.minusDays(1));
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
+                activeEnrollment(601L, today.minusDays(7), today.plusDays(7))));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "preserveStartedLessons", true,
+                "slots", List.of(Map.of("weekday", today.plusDays(1).getDayOfWeek().getValue(),
+                        "startTime", "15:00", "endTime", "17:00"))));
+
+        verify(classGroupMapper).updateById(classGroup);
+        verify(classGroupScheduleSlotMapper).insert(any(ClassGroupScheduleSlotEntity.class));
+        assertThat(result.get("classId")).isEqualTo(501L);
+    }
+
+    @Test
     void shouldIgnoreGeneratedLessonsFromBeforeTheStudentJoined() {
         LocalDateTime now = AppTime.nowLocalDateTime();
         LocalDate tomorrow = now.toLocalDate().plusDays(1);

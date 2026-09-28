@@ -83,13 +83,23 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" width="240">
+            <el-table-column label="Actions" width="250" align="right">
               <template #default="{ row }">
                 <div class="table-actions">
                   <el-button type="primary" link @click="openProductPrices(row)">Set packages & prices</el-button>
-                  <el-button text type="primary" @click="openCopyDialog(row)">Copy</el-button>
-                  <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
-                  <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
+                  <el-dropdown trigger="click" @command="command => handleProductRowAction(String(command), row)">
+                    <el-button text class="table-actions__more">
+                      More
+                      <el-icon><ArrowDown /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="copy">Copy</el-dropdown-item>
+                        <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                        <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
                 </div>
               </template>
             </el-table-column>
@@ -130,13 +140,23 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Actions" width="260">
+            <el-table-column label="Actions" width="250" align="right">
               <template #default="{ row }">
                 <div class="table-actions">
                   <el-button type="primary" link @click="openProductPrices(row)">Set grades & schedule</el-button>
-                  <el-button text type="primary" @click="openCopyDialog(row)">Copy</el-button>
-                  <el-button text type="primary" @click="openProductDialog(row)">Edit</el-button>
-                  <el-button text type="danger" @click="handleDelete(row)">Delete</el-button>
+                  <el-dropdown trigger="click" @command="command => handleProductRowAction(String(command), row)">
+                    <el-button text class="table-actions__more">
+                      More
+                      <el-icon><ArrowDown /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item command="copy">Copy</el-dropdown-item>
+                        <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                        <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
                 </div>
               </template>
             </el-table-column>
@@ -265,7 +285,7 @@
 </template>
 
 <script setup lang="ts">
-import { Plus, QuestionFilled } from '@element-plus/icons-vue';
+import { ArrowDown, Plus, QuestionFilled } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -521,6 +541,16 @@ function openCopyDialog(row: CourseProductItem) {
   copyProductName.value = `${row.productName} Copy`;
   copyDateShiftYears.value = 1;
   copyDialogVisible.value = true;
+}
+
+function handleProductRowAction(command: string, row: CourseProductItem) {
+  if (command === 'copy') {
+    openCopyDialog(row);
+  } else if (command === 'edit') {
+    openProductDialog(row);
+  } else if (command === 'delete') {
+    void handleDelete(row);
+  }
 }
 
 async function submitCopy() {
@@ -909,8 +939,30 @@ loadData();
 
 .table-actions {
   display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.table-actions :deep(.el-button) {
+  margin-left: 0;
+}
+
+.table-actions__more {
+  color: #606266;
+}
+
+.table-actions__more:hover {
+  color: var(--el-color-primary);
+}
+
+.table-actions__more :deep(.el-icon) {
+  margin-left: 3px;
+}
+
+:global(.el-dropdown-menu__item.table-actions__delete) {
+  color: var(--el-color-danger);
 }
 
 .copy-date-hint {

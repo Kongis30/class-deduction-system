@@ -714,7 +714,7 @@ const route = useRoute();
 const embedded = computed(() => props.embedded);
 const isGroupClassLessonsPage = computed(() => props.mode === 'class' || route.path === '/group-class-lessons');
 const activeTab = ref<'one-on-one' | 'class'>(
-  props.mode === 'class' || isGroupClassLessonsPage.value ? 'class' : 'one-on-one'
+  props.mode === 'class' || isGroupClassLessonsPage.value || route.query.tab === 'class' ? 'class' : 'one-on-one'
 );
 
 
@@ -1823,6 +1823,16 @@ onMounted(async () => {
     );
     classrooms.value = cRes.data.data;
     classes.value = clzRes.data.data;
+    const requestedClassId = route.query.classId;
+    if (activeTab.value === 'class' && typeof requestedClassId === 'string') {
+      const requestedClass = classes.value.find(item => String(item.id) === requestedClassId);
+      if (requestedClass) {
+        selectedClassCourseKey.value = classProductKey(requestedClass);
+        selectedClassGradeKey.value = classGradeKey(requestedClass);
+        classDrillLevel.value = 'class';
+        await selectClass(requestedClass.id);
+      }
+    }
   } catch {
     ElMessage.error('Failed to load initial data.');
   } finally {
