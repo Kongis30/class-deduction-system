@@ -680,8 +680,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
             throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
         }
-        Long teacherId = parseLongFromBody(body, "teacherId");
-        Long classroomId = parseLongFromBody(body, "classroomId");
+        // 保留旧客户端的班级默认值作为兼容回退；新页面按 slot 提交独立资源。
+        Long defaultTeacherId = parseLongFromBody(body, "teacherId");
+        Long defaultClassroomId = parseLongFromBody(body, "classroomId");
         LocalDate startDate = body != null && body.containsKey("startDate")
                 ? parseDateParam(body, "startDate") : classGroup.getStartDate();
         LocalDate endDate = body != null && body.containsKey("endDate")
@@ -689,30 +690,30 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
             throw new BusinessException("INVALID_CLASS_DATE_RANGE", "Class end date cannot be earlier than the start date.");
         }
-        List<ClassGroupScheduleSlotEntity> slots = parseClassScheduleSlots(body.get("slots"));
+        List<ClassGroupScheduleSlotEntity> slots = parseClassScheduleSlots(
+                body.get("slots"), defaultTeacherId, defaultClassroomId);
         if (slots.isEmpty()) {
             throw new BusinessException("CLASS_SCHEDULE_REQUIRED", "Add at least one weekly class time.");
         }
         validateClassScheduleSlots(slots);
-        validateTeacher(teacherId);
         slots.stream()
                 .map(ClassGroupScheduleSlotEntity::getTeacherId)
                 .filter(Objects::nonNull)
                 .distinct()
                 .forEach(this::validateTeacher);
-        validateClassroom(classroomId);
-        lockClassScheduleResources(classId, teacherId, classroomId);
         slots.stream()
-                .map(ClassGroupScheduleSlotEntity::getTeacherId)
+                .map(ClassGroupScheduleSlotEntity::getClassroomId)
                 .filter(Objects::nonNull)
                 .distinct()
-                .forEach(teacherMapper::selectByIdForUpdate);
+                .forEach(this::validateClassroom);
+        lockClassScheduleResources(classId, slots);
 
         LocalDateTime rebuildFrom = AppTime.nowLocalDateTime();
         ensureStartedClassLessonsConfirmed(classId, rebuildFrom);
 
-        classGroup.setTeacherId(teacherId);
-        classGroup.setClassroomId(classroomId);
+        // 班级字段仅保留首个已配置资源供旧列表兼容，课次生成以 slot 字段为准。
+        classGroup.setTeacherId(firstTeacherId(slots));
+        classGroup.setClassroomId(firstClassroomId(slots));
         classGroup.setStartDate(startDate);
         classGroup.setEndDate(endDate);
         classGroup.setScheduleDesc(buildScheduleDesc(slots));
@@ -1340,7 +1341,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return conflictCount != null && conflictCount > 0;
     }
 
-    private List<ClassGroupScheduleSlotEntity> parseClassScheduleSlots(Object value) {
+    private List<ClassGroupScheduleSlotEntity> parseClassScheduleSlots(
+            Object value, Long defaultTeacherId, Long defaultClassroomId) {
         if (!(value instanceof List<?> rawSlots)) {
             return Collections.emptyList();
         }
@@ -1356,7 +1358,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 continue;
             }
             ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
-            slot.setTeacherId(parseLongValue(map.get("teacherId")));
+            Long teacherId = parseLongValue(map.get("teacherId"));
+            Long classroomId = parseLongValue(map.get("classroomId"));
+            slot.setTeacherId(teacherId != null ? teacherId : defaultTeacherId);
+            slot.setClassroomId(classroomId != null ? classroomId : defaultClassroomId);
             slot.setWeekday(weekday);
             slot.setStartTime(start);
             slot.setEndTime(end);
@@ -1488,6 +1493,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (endDate.isBefore(startDate)) {
             return 0;
         }
+        // 旧数据的 slot 资源为空时继续使用班级默认值；只要任一 slot 已配置，就严格按 slot 独立取值。
+        boolean hasSlotTeacher = slots.stream().anyMatch(item -> item.getTeacherId() != null);
+        boolean hasSlotClassroom = slots.stream().anyMatch(item -> item.getClassroomId() != null);
         int count = 0;
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
             int weekday = date.getDayOfWeek().getValue();
@@ -1524,10 +1532,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(slot.getTeacherId() == null
-                        ? classGroup.getTeacherId()
-                        : slot.getTeacherId());
-                occurrence.setPlannedClassroomId(classGroup.getClassroomId());
+                occurrence.setPlannedTeacherId(hasSlotTeacher
+                        ? slot.getTeacherId() : classGroup.getTeacherId());
+                occurrence.setPlannedClassroomId(hasSlotClassroom
+                        ? slot.getClassroomId() : classGroup.getClassroomId());
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(plannedEndAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
@@ -1778,16 +1786,38 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return !lessonDate.isBefore(enrollment.getCreatedAt().toLocalDate());
     }
 
-    private void lockClassScheduleResources(Long classId, Long teacherId, Long classroomId) {
+    private void lockClassScheduleResources(Long classId, List<ClassGroupScheduleSlotEntity> slots) {
         activeStudentIdsByClass(classId).stream()
                 .sorted()
                 .forEach(studentMapper::selectByIdForUpdate);
-        if (teacherId != null) {
-            teacherMapper.selectByIdForUpdate(teacherId);
-        }
-        if (classroomId != null) {
-            classroomMapper.selectByIdForUpdate(classroomId);
-        }
+        slots.stream()
+                .map(ClassGroupScheduleSlotEntity::getTeacherId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .forEach(teacherMapper::selectByIdForUpdate);
+        slots.stream()
+                .map(ClassGroupScheduleSlotEntity::getClassroomId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .forEach(classroomMapper::selectByIdForUpdate);
+    }
+
+    private Long firstTeacherId(List<ClassGroupScheduleSlotEntity> slots) {
+        return slots.stream()
+                .map(ClassGroupScheduleSlotEntity::getTeacherId)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Long firstClassroomId(List<ClassGroupScheduleSlotEntity> slots) {
+        return slots.stream()
+                .map(ClassGroupScheduleSlotEntity::getClassroomId)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
     }
 
     private LocalDate resolveClassScheduleHorizon(Long classId, LocalDate fallbackStart) {
@@ -1949,7 +1979,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 return classSlots.stream()
                         .map(slot -> {
                             int minutes = (int) ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
-                            return toSlotMap(slot.getTeacherId(), slot.getWeekday(),
+                            return toSlotMap(slot.getTeacherId(), slot.getClassroomId(), slot.getWeekday(),
                                     slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     minutes > 0 ? minutes / 30 : 0);
@@ -1960,15 +1990,17 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // Fallback: parse scheduleDesc text
         if (scheduleDesc != null) {
             return ScheduleDescParser.parse(scheduleDesc).stream()
-                    .map(slot -> toSlotMap(null, slot.weekday(), slot.startTime(), slot.endTime(), slot.plannedUnits()))
+                    .map(slot -> toSlotMap(null, null, slot.weekday(), slot.startTime(), slot.endTime(), slot.plannedUnits()))
                     .toList();
         }
         return Collections.emptyList();
     }
 
-    private Map<String, Object> toSlotMap(Long teacherId, int weekday, String startTime, String endTime, int plannedUnits) {
+    private Map<String, Object> toSlotMap(Long teacherId, Long classroomId, int weekday,
+                                          String startTime, String endTime, int plannedUnits) {
         Map<String, Object> m = new HashMap<>();
         m.put("teacherId", teacherId);
+        m.put("classroomId", classroomId);
         m.put("weekday", weekday);
         m.put("startTime", startTime);
         m.put("endTime", endTime);

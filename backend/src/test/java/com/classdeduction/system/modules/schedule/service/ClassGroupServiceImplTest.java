@@ -6,6 +6,7 @@ import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
@@ -681,6 +682,53 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldPersistTeacherAndClassroomIndependentlyForEachWeeklySlot() {
+        LocalDate futureDate = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setStartDate(futureDate);
+        classGroup.setEndDate(futureDate);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        TeacherEntity firstTeacher = activeTeacher(702L);
+        TeacherEntity secondTeacher = activeTeacher(703L);
+        when(teacherMapper.selectById(702L)).thenReturn(firstTeacher);
+        when(teacherMapper.selectById(703L)).thenReturn(secondTeacher);
+        when(classroomMapper.selectById(801L)).thenReturn(activeClassroom(801L));
+        when(classroomMapper.selectById(802L)).thenReturn(activeClassroom(802L));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
+                activeEnrollment(601L, futureDate, futureDate)));
+
+        int weekday = futureDate.getDayOfWeek().getValue();
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+                "slots", List.of(
+                        Map.of("teacherId", 702L, "classroomId", 801L,
+                                "weekday", weekday, "startTime", "10:00", "endTime", "11:00"),
+                        Map.of("teacherId", 703L, "classroomId", 802L,
+                                "weekday", weekday, "startTime", "13:00", "endTime", "14:00"))
+        ));
+
+        ArgumentCaptor<ClassGroupScheduleSlotEntity> slotCaptor = ArgumentCaptor.forClass(ClassGroupScheduleSlotEntity.class);
+        verify(classGroupScheduleSlotMapper, times(2)).insert(slotCaptor.capture());
+        verify(lessonOccurrenceMapper, times(2)).insert(occurrenceCaptor.capture());
+        assertThat(slotCaptor.getAllValues())
+                .extracting(ClassGroupScheduleSlotEntity::getTeacherId)
+                .containsExactly(702L, 703L);
+        assertThat(slotCaptor.getAllValues())
+                .extracting(ClassGroupScheduleSlotEntity::getClassroomId)
+                .containsExactly(801L, 802L);
+        assertThat(occurrenceCaptor.getAllValues())
+                .extracting(LessonOccurrenceEntity::getPlannedTeacherId)
+                .containsExactly(702L, 703L);
+        assertThat(occurrenceCaptor.getAllValues())
+                .extracting(LessonOccurrenceEntity::getPlannedClassroomId)
+                .containsExactly(801L, 802L);
+        assertThat(result.get("generatedOccurrences")).isEqualTo(2);
+    }
+
+    @Test
     void shouldNameTeacherAndExistingGroupCourseWhenClassScheduleConflicts() {
         LocalDate lessonDate = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
         ClassGroupEntity editingClass = new ClassGroupEntity();
@@ -1095,6 +1143,20 @@ class ClassGroupServiceImplTest {
         record.setConfirmStage("CONFIRMED");
         record.setResultStatus("COMPLETED");
         return record;
+    }
+
+    private TeacherEntity activeTeacher(Long id) {
+        TeacherEntity teacher = new TeacherEntity();
+        teacher.setId(id);
+        teacher.setStatus("ACTIVE");
+        return teacher;
+    }
+
+    private ClassroomEntity activeClassroom(Long id) {
+        ClassroomEntity classroom = new ClassroomEntity();
+        classroom.setId(id);
+        classroom.setStatus("ACTIVE");
+        return classroom;
     }
 
     private LessonOccurrenceEntity scheduledOccurrence(LocalDateTime startAt) {

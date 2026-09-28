@@ -267,7 +267,7 @@
                         </div>
                         <div>
                           <dt>Room</dt>
-                          <dd>{{ actualClass.classroomName || 'Assign later' }}</dd>
+                          <dd>{{ actualClassClassroomLabel(actualClass) }}</dd>
                         </div>
                       </dl>
                       <div class="actual-class-card__actions">
@@ -577,29 +577,6 @@
         show-icon
         class="grade-class-settings__alert"
       />
-      <div class="form-grid form-grid--two actual-class-schedule-fields">
-        <el-form-item label="Default teacher">
-          <el-select v-model="actualClassScheduleForm.teacherId" clearable filterable placeholder="No default teacher" style="width: 100%;">
-            <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="Classroom">
-          <el-select v-model="actualClassScheduleForm.classroomId" clearable filterable placeholder="No default classroom" style="width: 100%;">
-            <el-option-group
-              v-for="group in classroomGroups"
-              :key="group.key"
-              :label="group.label"
-            >
-              <el-option
-                v-for="room in group.classrooms"
-                :key="room.id"
-                :label="room.roomName"
-                :value="room.id"
-              />
-            </el-option-group>
-          </el-select>
-        </el-form-item>
-      </div>
       <div class="weekly-schedule-panel">
         <WeeklyTimeSelector v-model="actualClassScheduleForm.slots" hide-hint />
       </div>
@@ -615,8 +592,25 @@
           </div>
           <label class="slot-field">
             <span>Teacher</span>
-            <el-select v-model="slot.teacherId" clearable filterable placeholder="Use default teacher">
-              <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+            <el-select v-model="slot.teacherId" clearable filterable placeholder="No teacher for this slot">
+              <el-option v-for="teacher in sortedTeachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+            </el-select>
+          </label>
+          <label class="slot-field">
+            <span>Classroom</span>
+            <el-select v-model="slot.classroomId" clearable filterable placeholder="No classroom for this slot">
+              <el-option-group
+                v-for="group in classroomGroups"
+                :key="group.key"
+                :label="group.label"
+              >
+                <el-option
+                  v-for="room in group.classrooms"
+                  :key="room.id"
+                  :label="room.roomName"
+                  :value="room.id"
+                />
+              </el-option-group>
             </el-select>
           </label>
         </div>
@@ -780,7 +774,6 @@ const courseTypes = computed<CourseTypeDef[]>(() =>
       (categoryConfig.value[left.value]?.order ?? 99) - (categoryConfig.value[right.value]?.order ?? 99)));
 
 const courseModes: CourseModeDef[] = [
-  { value: 'ONE_ON_ONE', label: '1-on-1 Private' },
   { value: 'GROUP', label: 'Group Class' },
 ];
 
@@ -807,6 +800,8 @@ const options = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
 const classGroups = ref<ClassGroupItem[]>([]);
 const teachers = ref<TeacherItem[]>([]);
+const sortedTeachers = computed(() => [...teachers.value].sort((left, right) =>
+  left.teacherName.localeCompare(right.teacherName, undefined, { sensitivity: 'base' })));
 const classrooms = ref<ClassroomItem[]>([]);
 const classroomGroups = computed(() => {
   const groups = new Map<string, { key: string; label: string; classrooms: ClassroomItem[] }>();
@@ -842,9 +837,7 @@ const actualClassInfoDialogVisible = ref(false);
 const savingActualClassInfo = ref(false);
 const editingActualClassInfo = ref<ActualClassScheduleRow | null>(null);
 const actualClassScheduleForm = reactive({
-  teacherId: undefined as EntityId | undefined,
-  classroomId: undefined as EntityId | undefined,
-  slots: [] as Array<SlotDef & { teacherId?: EntityId }>,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomId?: EntityId }>,
 });
 const actualClassInfoForm = reactive({
   productId: undefined as EntityId | undefined,
@@ -855,7 +848,7 @@ const actualClassInfoForm = reactive({
 });
 
 const query = reactive({
-  courseType: 'ONE_ON_ONE' as CourseTypeValue,
+  courseType: 'AFTER_SCHOOL' as CourseTypeValue,
   courseProductId: '' as EntityId | '',
   status: 'ACTIVE',
   pageNum: 1,
@@ -970,7 +963,7 @@ const registrationChoiceLabel = computed(() => {
     : `Choose a ${packageUnitText(form.packageUnit).toLowerCase()} count`;
 });
 
-const selectedMode = ref<CourseMode>('ONE_ON_ONE');
+const selectedMode = ref<CourseMode>('GROUP');
 const selectedModeLabel = computed(() =>
   courseModes.find(item => item.value === selectedMode.value)?.label ?? ''
 );
@@ -1116,20 +1109,23 @@ onMounted(initializePage);
 async function initializePage() {
   await loadCategoryConfig();
   const requestedType = queryValue(route.query.courseType);
-  if (courseTypes.value.some(item => item.value === requestedType)) {
+  const requestedTypeDefinition = courseTypes.value.find(item => item.value === requestedType);
+  if (requestedTypeDefinition?.mode === 'GROUP') {
     query.courseType = requestedType as CourseTypeValue;
-    selectedMode.value = modeForCourseType(query.courseType);
+  } else {
+    query.courseType = 'AFTER_SCHOOL';
   }
+  selectedMode.value = 'GROUP';
   await loadProductsAndClasses();
 
   const requestedProductId = queryValue(route.query.courseProductId);
   const requestedProduct = requestedProductId ? productMap.value.get(requestedProductId) : undefined;
-  if (requestedProduct) {
-    selectedMode.value = requestedProduct.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'GROUP';
-    query.courseType = requestedProduct.teachingMode === 'ONE_ON_ONE'
-      ? 'ONE_ON_ONE'
-      : normalizeGroupCourseType(requestedProduct.courseType);
+  if (requestedProduct?.teachingMode === 'GROUP') {
+    query.courseType = normalizeGroupCourseType(requestedProduct.courseType);
     query.courseProductId = requestedProduct.id;
+  } else if (requestedProduct?.teachingMode === 'ONE_ON_ONE') {
+    // 1-on-1 已从本页面移除，避免旧链接把页面切回已隐藏的模式。
+    query.courseProductId = '';
   }
   await loadOptions();
 }
@@ -1317,11 +1313,11 @@ function reloadFirstPage() {
 }
 
 function switchCourseMode(mode: CourseMode) {
-  if (selectedMode.value === mode) {
+  if (mode !== 'GROUP' || selectedMode.value === mode) {
     return;
   }
   selectedMode.value = mode;
-  query.courseType = mode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL';
+  query.courseType = 'AFTER_SCHOOL';
   query.courseProductId = '';
   reloadFirstPage();
 }
@@ -1333,7 +1329,7 @@ function chooseAnotherProduct() {
 function goToCourseProducts() {
   router.push({
     name: 'course-products',
-    query: { tab: selectedMode.value === 'ONE_ON_ONE' ? 'one-on-one' : 'group' },
+    query: { tab: 'group' },
   });
 }
 
@@ -1346,10 +1342,11 @@ function handleContextBack() {
 }
 
 function selectCourseProduct(product: CourseProductItem) {
+  if (product.teachingMode !== 'GROUP') {
+    return;
+  }
   query.courseProductId = product.id;
-  query.courseType = product.teachingMode === 'ONE_ON_ONE'
-    ? 'ONE_ON_ONE'
-    : normalizeGroupCourseType(product.courseType);
+  query.courseType = normalizeGroupCourseType(product.courseType);
   reloadFirstPage();
 }
 
@@ -1612,9 +1609,11 @@ async function openActualClassScheduleDialog(actualClass: ActualClassScheduleRow
     await checkClassScheduleEditable(actualClass.id);
     const classDetail = classGroups.value.find(item => String(item.id) === String(actualClass.id)) ?? actualClass;
     editingActualClass.value = actualClass;
-    actualClassScheduleForm.teacherId = classDetail.teacherId;
-    actualClassScheduleForm.classroomId = classDetail.classroomId;
-    actualClassScheduleForm.slots = normalizeActualClassScheduleSlots(classDetail.scheduleSlots);
+    actualClassScheduleForm.slots = normalizeActualClassScheduleSlots(
+      classDetail.scheduleSlots,
+      classDetail.teacherId,
+      classDetail.classroomId,
+    );
     actualClassScheduleDialogVisible.value = true;
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
@@ -1707,10 +1706,17 @@ function deleteActualClassById(group: ProductPriceGroup, classId: string | numbe
   }
 }
 
-function normalizeActualClassScheduleSlots(slots: ClassGroupItem['scheduleSlots']): Array<SlotDef & { teacherId?: EntityId }> {
+function normalizeActualClassScheduleSlots(
+  slots: ClassGroupItem['scheduleSlots'],
+  defaultTeacherId?: EntityId,
+  defaultClassroomId?: EntityId,
+): Array<SlotDef & { teacherId?: EntityId; classroomId?: EntityId }> {
+  const hasSlotTeacher = (slots ?? []).some(slot => slot.teacherId != null);
+  const hasSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null);
   return (slots ?? []).map(slot => ({
     weekday: slot.weekday,
-    teacherId: slot.teacherId,
+    teacherId: hasSlotTeacher ? slot.teacherId : defaultTeacherId,
+    classroomId: hasSlotClassroom ? slot.classroomId : defaultClassroomId,
     startTime: slot.startTime.slice(0, 5),
     endTime: slot.endTime.slice(0, 5),
     plannedUnits: slot.plannedUnits ?? plannedUnitsForSlot(slot.startTime, slot.endTime),
@@ -1728,10 +1734,9 @@ async function saveActualClassSchedule() {
   savingActualClassSchedule.value = true;
   try {
     await updateClassSchedule(editingActualClass.value.id, {
-      teacherId: actualClassScheduleForm.teacherId,
-      classroomId: actualClassScheduleForm.classroomId,
-      slots: actualClassScheduleForm.slots.map(({ teacherId, weekday, startTime, endTime, plannedUnits }) => ({
+      slots: actualClassScheduleForm.slots.map(({ teacherId, classroomId, weekday, startTime, endTime, plannedUnits }) => ({
         teacherId,
+        classroomId,
         weekday,
         startTime,
         endTime,
@@ -1862,6 +1867,24 @@ function actualClassTeacherNames(actualClass: ActualClassScheduleRow): string[] 
 
 function actualClassTeacherLabel(actualClass: ActualClassScheduleRow): string {
   return actualClassTeacherNames(actualClass).join(', ') || 'Assign later';
+}
+
+function actualClassClassroomNames(actualClass: ActualClassScheduleRow): string[] {
+  const names = (actualClass.scheduleSlots ?? [])
+    .map(slot => slot.classroomId)
+    .filter((classroomId): classroomId is EntityId => classroomId !== undefined && classroomId !== null)
+    .map(classroomId => classrooms.value.find(item => String(item.id) === String(classroomId))?.roomName?.trim())
+    .filter((name): name is string => Boolean(name));
+  const uniqueSlotClassroomNames = [...new Set(names)];
+  if (uniqueSlotClassroomNames.length > 0) {
+    return uniqueSlotClassroomNames;
+  }
+  const defaultClassroomName = actualClass.classroomName?.trim();
+  return defaultClassroomName ? [defaultClassroomName] : [];
+}
+
+function actualClassClassroomLabel(actualClass: ActualClassScheduleRow): string {
+  return actualClassClassroomNames(actualClass).join(', ') || 'Assign later';
 }
 
 function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[] {
@@ -2701,17 +2724,13 @@ function normalizeSlotAttendance(value?: string) {
   overflow: auto;
 }
 
-.actual-class-schedule-fields {
-  margin-top: 4px;
-}
-
 .actual-class-slot-list {
   margin-top: 2px;
 }
 
 .actual-class-slot-row {
   display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) minmax(220px, 1fr);
+  grid-template-columns: minmax(140px, 0.8fr) repeat(2, minmax(220px, 1fr));
   align-items: end;
   gap: 10px;
   padding: 10px;
@@ -2878,6 +2897,10 @@ function normalizeSlotAttendance(value?: string) {
 
   .slot-time-cell {
     grid-column: 1 / -1;
+  }
+
+  .actual-class-slot-row {
+    grid-template-columns: 1fr;
   }
 }
 

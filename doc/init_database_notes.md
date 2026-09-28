@@ -12,6 +12,7 @@ mysql -uroot -p < doc/init_seed_required.sql
 mysql -uroot -p class_deduction_system < doc/migrations/20260919_payment_allocation.sql
 mysql -uroot -p class_deduction_system < doc/migrations/20260924_sys_user_active_unique_keys.sql
 mysql -uroot -p class_deduction_system < doc/migrations/20260926_registration_managers_and_daily_log.sql
+mysql -uroot -p class_deduction_system < doc/migrations/20260928_class_group_slot_classroom.sql
 ```
 
 If the SQL client does not support MySQL `SOURCE`, run the course matrix seed separately after `init_seed_required.sql`:
@@ -28,6 +29,7 @@ mysql -uroot -p class_deduction_system < doc/migrations/20260727_seed_ppt_course
 - `doc/migrations/20260919_payment_allocation.sql`: adds course-level discount/payment snapshots and their allocation ledger; run after initializing the base schema.
 - `doc/migrations/20260924_sys_user_active_unique_keys.sql`: limits account uniqueness to active users and allows repeated soft deletion while preserving account history.
 - `doc/migrations/20260926_registration_managers_and_daily_log.sql`: adds immutable registration operator snapshots and the `MANAGER` role for daily registration reporting.
+- `doc/migrations/20260928_class_group_slot_classroom.sql`: adds independent classroom storage for each group-class weekly schedule slot.
 - `doc/migrations/20260924_recurring_schedule_two_year_horizon.sql`: historical migration retained for existing installs; current scheduler ignores this legacy column.
 
 ## Required Seed Data
