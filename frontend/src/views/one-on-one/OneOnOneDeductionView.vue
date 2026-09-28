@@ -826,8 +826,8 @@ const candidateScopeLabel = computed(() => {
   const filters = [
     activeStudentSearch.value && 'student',
     selectedTeacherKey.value && 'teacher',
-    selectedCourseType.value && 'course type',
-    selectedGradeBand.value && 'grade',
+    selectedCourseType.value && 'course product',
+    selectedGradeBand.value && 'grade level',
   ].filter(Boolean);
   return `Matching ${filters.join(' + ')}`;
 });
