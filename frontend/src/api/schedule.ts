@@ -9,6 +9,47 @@ import type {
   RecurringScheduleRuleItem,
 } from '@/types/domain';
 
+export interface ClassHolidayItem {
+  id: EntityId;
+  holidayName: string;
+  startDate: string;
+  endDate: string;
+}
+
+export interface ClassHolidaySavePayload {
+  holidayName: string;
+  startDate: string;
+  endDate: string;
+}
+
+export interface ClassHolidayPreview {
+  affectedOccurrenceCount: number;
+  affectedSessionEnrollmentCount: number;
+  conflicts: string[];
+}
+
+export function fetchClassHolidays() {
+  return http.get<ApiResponse<ClassHolidayItem[]>>('/v1/classes/holidays');
+}
+
+export function previewClassHoliday(data: ClassHolidaySavePayload, holidayId?: EntityId) {
+  return http.post<ApiResponse<ClassHolidayPreview>>('/v1/classes/holidays/preview', data, {
+    params: holidayId ? { holidayId } : undefined,
+  });
+}
+
+export function createClassHoliday(data: ClassHolidaySavePayload) {
+  return http.post<ApiResponse<ClassHolidayItem>>('/v1/classes/holidays', data);
+}
+
+export function updateClassHoliday(id: EntityId, data: ClassHolidaySavePayload) {
+  return http.put<ApiResponse<ClassHolidayItem>>(`/v1/classes/holidays/${id}`, data);
+}
+
+export function deleteClassHoliday(id: EntityId) {
+  return http.delete<ApiResponse<void>>(`/v1/classes/holidays/${id}`);
+}
+
 export interface ScheduleStudentOption {
   id: EntityId;
   studentName: string;

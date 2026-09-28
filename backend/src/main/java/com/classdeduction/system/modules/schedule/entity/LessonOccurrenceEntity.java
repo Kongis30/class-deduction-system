@@ -58,6 +58,12 @@ public class LessonOccurrenceEntity extends BaseEntity {
 
     private String planningStatus;
 
+    /** 命中的全局班课假期；非空时此课次因放假取消。 */
+    private Long classHolidayId;
+
+    /** 放假取消前的状态，撤销假期时用于恢复原课次。 */
+    private String holidayPreviousStatus;
+
     private Long sourceOccurrenceId;
 
     private Integer conflictChecked;

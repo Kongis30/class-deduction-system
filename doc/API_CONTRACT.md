@@ -94,6 +94,9 @@ Shared conventions:
 
 ### Scheduling
 
+- `GET /api/v1/classes/holidays` lists the global holiday ranges shared by all group classes and campuses.
+- `POST /api/v1/classes/holidays/preview` validates a proposed range and reports affected lessons, SESSION enrollments, and blocking conflicts.
+- `POST /api/v1/classes/holidays`, `PUT /api/v1/classes/holidays/{id}`, and `DELETE /api/v1/classes/holidays/{id}` maintain global class holidays. Changes rebuild future group-class occurrences and recalculate SESSION enrollment expiry dates transactionally; one-on-one schedules are unaffected.
 - `GET /api/v1/schedule/students/one-on-one` returns active students with at least one active one-on-one course package for the Schedule student picker.
 - `GET /api/v1/schedule/rules`
 - `GET /api/v1/schedule/rules/{id}`

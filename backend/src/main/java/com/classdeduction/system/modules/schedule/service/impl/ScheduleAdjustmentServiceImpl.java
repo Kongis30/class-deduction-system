@@ -27,6 +27,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ScheduleAdjustmentService;
+import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleAdjustmentResultVO;
@@ -74,6 +75,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final JsonHelper jsonHelper;
+    private final ClassHolidayService classHolidayService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -83,6 +85,11 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         Map<String, Object> beforeSnapshot = toSnapshot(source);
         validateAdjustmentType(request.getAdjustmentType());
         validateResourceAssignment(request);
+        if (source.getClassGroupId() != null && request.getPlannedStartAt() != null
+                && classHolidayService.isHoliday(request.getPlannedStartAt().toLocalDate())) {
+            throw new BusinessException("CLASS_LESSON_ON_HOLIDAY",
+                    "A group-class lesson cannot be scheduled during a class holiday.");
+        }
         // Lock the involved student/teacher/classroom before checking conflicts so that
         // concurrent adjustments touching the same resource are serialized (no check-then-write race).
         Long targetTeacherId = request.getPlannedTeacherId() != null ? request.getPlannedTeacherId() : source.getPlannedTeacherId();

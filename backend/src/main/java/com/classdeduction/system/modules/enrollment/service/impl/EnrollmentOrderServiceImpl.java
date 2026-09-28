@@ -45,6 +45,8 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapp
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
+import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
@@ -155,6 +157,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final PaymentMethodMapper paymentMethodMapper;
+    private final ClassHolidayService classHolidayService;
 
     /**
      * Initialize the business number sequence from the database to avoid
@@ -3400,6 +3403,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         .eq(ClassGroupEntity::getBillingType, "MONTHLY")
                         .isNotNull(ClassGroupEntity::getStartMonth)
                         .isNotNull(ClassGroupEntity::getEndMonth));
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays();
         LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
         int inserted = 0;
         for (ClassGroupEntity group : activeGroups) {
@@ -3408,7 +3412,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 if (window == null) {
                     continue;
                 }
-                inserted += ensureClassOccurrencesThrough(group, window[0], window[1]);
+                inserted += ensureClassOccurrencesThrough(group, window[0], window[1], holidays);
             } catch (RuntimeException ex) {
                 log.warn("Failed to renew occurrences for class group id={}: {}", group.getId(), ex.getMessage());
             }
@@ -3433,7 +3437,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     private int ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
                                                LocalDate windowStart,
-                                               LocalDate horizonEnd) {
+                                               LocalDate horizonEnd,
+                                               List<ClassHolidayVO> holidays) {
         List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup.getId());
         if (slots.isEmpty()) {
             return 0;
@@ -3454,6 +3459,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
         for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
+            if (classHolidayService.isHoliday(date, holidays)) {
+                continue;
+            }
             int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
             for (ClassGroupScheduleSlotEntity slot : slots) {
                 if (!Objects.equals(slot.getWeekday(), weekday) || !slot.getEndTime().isAfter(slot.getStartTime())) {
