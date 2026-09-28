@@ -132,8 +132,6 @@
               min-width="180"
               sortable
               :sort-method="compareNextLessonDates"
-              :filters="nextLessonFilters(group.packages)"
-              :filter-method="filterNextLesson"
             >
               <template #default="{ row }">
                 <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
@@ -805,15 +803,6 @@ const availableHourFilters: TableFilterOption[] = [
   { text: 'Over 20h', value: '20+' },
 ];
 
-function nextLessonFilters(rows: OneOnOnePackageRow[]): TableFilterOption[] {
-  const values = new Map<string, string>();
-  rows.forEach((row) => {
-    const value = row.nextLessonStartAt || '__NONE__';
-    values.set(value, row.nextLessonStartAt ? formatScheduleDate(row.nextLessonStartAt) : 'No upcoming lesson');
-  });
-  return [...values.entries()].map(([value, text]) => ({ text, value }));
-}
-
 function scheduleTimeFilters(rows: RecurringScheduleSlotItem[]): TableFilterOption[] {
   return rows.map(row => ({
     text: `${weekdayLabel(row.weekday)} · ${row.startTime}–${row.endTime}`,
@@ -856,10 +845,6 @@ function filterAvailableHours(value: string, row: OneOnOnePackageRow): boolean {
 
 function filterScheduleStatus(value: string, row: OneOnOnePackageRow): boolean {
   return normalizeLabel(row.scheduleStatus) === value;
-}
-
-function filterNextLesson(value: string, row: OneOnOnePackageRow): boolean {
-  return value === '__NONE__' ? !row.nextLessonStartAt : row.nextLessonStartAt === value;
 }
 
 function filterPackageStatus(value: string, row: OneOnOnePackageRow): boolean {
