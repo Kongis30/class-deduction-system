@@ -503,7 +503,7 @@
                         :placeholder="classStartDatePlaceholder(line)"
                         :disabled="!receiptEditingEnabled"
                         class="line-date"
-                        @change="() => handleRegistrationDurationChange(line)"
+                        @change="() => handleGroupStartDateChange(line)"
                       />
                     </label>
                     <label v-if="!isOneOnOneLine(line) && attendanceOptionsForLine(line).length > 0" class="course-control">
@@ -1061,6 +1061,7 @@ import { getStoredAuthUser } from '@/utils/auth-storage';
 import { isAdminUser, isManagerUser, isStaffUser } from '@/types/auth';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 import { exceedsMoney, formatExactUsd, formatRoundedUsd } from '@/utils/money-display';
+import { calculateProratedSessionPrice } from '@/utils/session-price';
 import MoneyAmountInput from '@/components/MoneyAmountInput.vue';
 import { paymentDraftAmount, sumPaymentAllocations } from './payment-draft';
 
@@ -3697,6 +3698,11 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
   recalculateLinePrice(line);
 }
 
+/** 开课日期只改变课程时段说明；编辑历史收据时不得因改日期重算已成交价格。 */
+function handleGroupStartDateChange(line: RegistrationCourseLine) {
+  line.durationLabel = printRegistrationDurationLabel(line);
+}
+
 function handleGroupSessionCountChange(line: RegistrationCourseLine) {
   // Changing the chargeable session count should restore the configured per-session price calculation.
   line.manualPriceOverride = false;
@@ -3750,7 +3756,7 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
       ? roundMoney(numeric(fullPackagePrice) / configuredHours * numeric(line.oneOnOneHours))
       : 0
     : isSessionPackage(line) && configuredSessionCount > 0
-      ? roundMoney(fullPackagePrice * sessionCount / configuredSessionCount)
+      ? calculateProratedSessionPrice(fullPackagePrice, sessionCount, configuredSessionCount)
       : fullPackagePrice;
   // Keep the configured full-package price as the proration basis for receipt edits and historical display.
   line.packageTotalPrice = isSessionPackage(line) ? fullPackagePrice : computedPrice;

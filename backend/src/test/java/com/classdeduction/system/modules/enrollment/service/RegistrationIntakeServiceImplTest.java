@@ -911,6 +911,65 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldSaveFlooredSessionPriceAndMarkExactWholeDollarPaymentAsPaid() {
+        stubUnscheduledGroupClassIntake(new BigDecimal("1399.00"), 13);
+        when(paymentMethodMapper.selectOne(any())).thenReturn(activePaymentMethod("CASH"));
+        when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(invocation -> {
+            PaymentRecordEntity record = invocation.getArgument(0);
+            record.setId(7101L);
+            return 1;
+        });
+
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.getItems().get(0).setSessions(12);
+        request.setPayments(List.of(payment("1291.00", 1, "1291.00")));
+
+        RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderMapper).insert(enrollmentOrderCaptor.capture());
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        EnrollmentOrderEntity order = enrollmentOrderCaptor.getValue();
+        EnrollmentOrderItemEntity item = orderItemCaptor.getValue();
+        assertThat(item.getOriginalPriceAmount()).isEqualByComparingTo("1291.00");
+        assertThat(item.getPriceAmount()).isEqualByComparingTo("1291.00");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("1291.00");
+        assertThat(item.getPaidAmount()).isEqualByComparingTo("1291.00");
+        assertThat(item.getBalanceAmount()).isEqualByComparingTo("0.00");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("1291.00");
+        assertThat(order.getPaymentStatus()).isEqualTo("PAID");
+        assertThat(result.paymentStatus()).isEqualTo("PAID");
+    }
+
+    @Test
+    void shouldKeepExplicitManualSessionPriceWithoutAutomaticFlooring() {
+        stubUnscheduledGroupClassIntake(new BigDecimal("1399.00"), 13);
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        RegistrationIntakeRequest.CourseItemPayload line = request.getItems().get(0);
+        line.setSessions(12);
+        line.setManualPriceOverride(true);
+        line.setPriceAmount(new BigDecimal("1291.38"));
+        line.setRemark("Approved manual price");
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getOriginalPriceAmount()).isEqualByComparingTo("1291.00");
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1291.38");
+    }
+
+    @Test
+    void shouldChargeAtLeastOneDollarForPositiveSessionPackage() {
+        stubUnscheduledGroupClassIntake(new BigDecimal("1.00"), 2);
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.getItems().get(0).setSessions(1);
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1.00");
+    }
+
+    @Test
     void shouldCreateCalendarMonthGroupEnrollmentFromSelectedPackage() {
         stubMonthlyGroupClassIntake();
         RegistrationIntakeRequest request = buildGroupClassRequest();
@@ -1159,12 +1218,17 @@ class RegistrationIntakeServiceImplTest {
     }
 
     private void stubUnscheduledGroupClassIntake() {
+        stubUnscheduledGroupClassIntake(new BigDecimal("800.00"), 8);
+    }
+
+    private void stubUnscheduledGroupClassIntake(BigDecimal packagePrice, int totalSessions) {
         stubStudentCreationOnly();
         CoursePriceOptionEntity option = buildOption("15:30-17:00");
         option.setCourseType("GROUP");
         option.setRegisterClass("Group class");
         option.setPackageUnit("SESSION");
-        option.setPackageQuantity(new BigDecimal("8"));
+        option.setPackageQuantity(BigDecimal.valueOf(totalSessions));
+        option.setPriceAmount(packagePrice);
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
         product.setBillingType("SESSION");
