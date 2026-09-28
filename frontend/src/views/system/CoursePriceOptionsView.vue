@@ -72,13 +72,15 @@
                 <el-icon><ArrowLeft /></el-icon>
                 Back to Courses
               </el-button>
-              <el-button @click="openGradeDialog">Manage grades</el-button>
-              <el-button v-if="selectedMode === 'GROUP' && query.courseProductId" @click="openClassHolidayDialog">
-                Manage course holidays
-              </el-button>
-              <el-button type="primary" @click="openDialog()">
-                {{ matrixPrimaryActionLabel }}
-              </el-button>
+              <div class="matrix-toolbar__actions">
+                <el-button @click="openGradeDialog">Manage grades</el-button>
+                <el-button v-if="selectedMode === 'GROUP' && query.courseProductId" @click="openClassHolidayDialog">
+                  Manage course holidays
+                </el-button>
+                <el-button type="primary" @click="openDialog()">
+                  {{ matrixPrimaryActionLabel }}
+                </el-button>
+              </div>
             </div>
 
             <el-empty v-if="!loading && groupedOptions.length === 0" description="No grade classes for this course yet." />
@@ -1335,11 +1337,15 @@ async function saveClassHoliday() {
       });
       return;
     }
-    const impactText = `For ${selectedProduct.value?.productName ?? 'this course'}, ${preview.affectedOccurrenceCount} scheduled lesson(s) and ${preview.affectedSessionEnrollmentCount} SESSION enrollment(s) will be recalculated.`;
-    await ElMessageBox.confirm(impactText, 'Apply class holiday', {
+    const courseName = selectedProduct.value?.productName ?? '当前课程';
+    const enrollmentImpact = preview.affectedSessionEnrollmentCount > 0
+      ? `将重新计算 ${preview.affectedSessionEnrollmentCount} 条按课次计费的报名记录有效期`
+      : '没有按课次计费的报名记录需要重算';
+    const impactText = `${courseName}：假期期间将跳过 ${preview.affectedOccurrenceCount} 节排课并顺延补排；${enrollmentImpact}。`;
+    await ElMessageBox.confirm(impactText, '确认设置假期', {
       type: 'warning',
-      confirmButtonText: editingHolidayId.value ? 'Save changes' : 'Add holiday',
-      cancelButtonText: 'Cancel',
+      confirmButtonText: editingHolidayId.value ? '保存更改' : '添加假期',
+      cancelButtonText: '取消',
     });
     if (editingHolidayId.value) {
       await updateClassHoliday(courseProductId, editingHolidayId.value, payload);
@@ -2512,7 +2518,21 @@ function normalizeSlotAttendance(value?: string) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
   margin: 0 0 10px;
+}
+
+.matrix-toolbar__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.matrix-toolbar__actions :deep(.el-button + .el-button) {
+  margin-left: 0;
 }
 
 .matrix-empty-guide {
