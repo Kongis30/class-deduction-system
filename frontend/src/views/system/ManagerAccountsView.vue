@@ -38,6 +38,31 @@
       </el-table-column>
     </el-table>
 
+    <el-dialog
+      v-model="deleteDialogVisible"
+      title="Delete manager account"
+      width="480px"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      @close="clearDeleteTimer"
+    >
+      <p v-if="deleteTarget">
+        Delete manager account “{{ deleteTarget.displayName }}” ({{ deleteTarget.username }})?
+        The account will lose login access; registration records will be kept.
+      </p>
+      <template #footer>
+        <el-button @click="closeDeleteDialog">Cancel</el-button>
+        <el-button
+          type="danger"
+          :disabled="deleteCountdown > 0"
+          :loading="deleting"
+          @click="confirmDelete"
+        >
+          {{ deleteCountdown > 0 ? `Delete (${deleteCountdown}s)` : 'Delete account' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
     <div class="manager-accounts-footer">
       <span>Showing {{ rangeStart }}–{{ rangeEnd }} of {{ pagination.total }}</span>
       <el-pagination
@@ -78,8 +103,8 @@
 </template>
 
 <script setup lang="ts">
-import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 
 import {
   createManagerAccount,
@@ -108,6 +133,11 @@ const saving = ref(false);
 const dialogVisible = ref(false);
 const editing = ref(false);
 const editingId = ref<EntityId>();
+const deleteDialogVisible = ref(false);
+const deleteTarget = ref<ManagerAccount | null>(null);
+const deleteCountdown = ref(0);
+const deleting = ref(false);
+let deleteTimer: ReturnType<typeof setInterval> | null = null;
 const form = reactive<AccountForm>(emptyForm());
 const filters = reactive({ keyword: '', status: '' });
 const pagination = reactive({ pageNum: 1, pageSize: 20, total: 0 });
@@ -123,6 +153,7 @@ const rules: FormRules<AccountForm> = {
 };
 
 onMounted(loadAccounts);
+onBeforeUnmount(clearDeleteTimer);
 
 async function loadAccounts() {
   loading.value = true;
@@ -211,19 +242,41 @@ async function save() {
 }
 
 async function handleDelete(account: ManagerAccount) {
+  clearDeleteTimer();
+  deleteTarget.value = account;
+  deleteCountdown.value = 10;
+  deleteDialogVisible.value = true;
+  deleteTimer = setInterval(() => {
+    deleteCountdown.value = Math.max(0, deleteCountdown.value - 1);
+    if (deleteCountdown.value === 0) clearDeleteTimer();
+  }, 1000);
+}
+
+function closeDeleteDialog() {
+  clearDeleteTimer();
+  deleteDialogVisible.value = false;
+  deleteTarget.value = null;
+}
+
+function clearDeleteTimer() {
+  if (!deleteTimer) return;
+  clearInterval(deleteTimer);
+  deleteTimer = null;
+}
+
+async function confirmDelete() {
+  if (!deleteTarget.value || deleteCountdown.value > 0 || deleting.value) return;
+  deleting.value = true;
   try {
-    await ElMessageBox.confirm(
-      `Delete manager account “${account.displayName}” (${account.username})? The account will lose login access; registration records will be kept.`,
-      'Delete manager account',
-      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
-    );
-    await deleteManagerAccount(account.userId);
+    await deleteManagerAccount(deleteTarget.value.userId);
     ElMessage.success('Manager account deleted.');
     if (accounts.value.length === 1 && pagination.pageNum > 1) pagination.pageNum -= 1;
+    closeDeleteDialog();
     await loadAccounts();
   } catch (error) {
-    if (error === 'cancel' || error === 'close') return;
     ElMessage.error(extractErrorMessage(error, 'Failed to delete manager account.'));
+  } finally {
+    deleting.value = false;
   }
 }
 
