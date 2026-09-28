@@ -6159,18 +6159,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 .payment-history {
   display: grid;
-  gap: 6px;
-  margin-top: 6px;
-  padding: 6px 0;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 0;
   border-bottom: 1px solid #222;
   font-size: 14px;
 }
 
 .payment-history > div {
   display: grid;
-  grid-template-columns: 92px 110px 90px 1fr;
-  gap: 8px;
-  align-items: center;
+  grid-template-columns: minmax(86px, 1fr) minmax(150px, 1.6fr) minmax(78px, .9fr) minmax(88px, 1fr);
+  gap: 4px 12px;
+  align-items: start;
+  padding: 2px 0;
+  line-height: 1.35;
 }
 
 .payment-history small {
@@ -7671,10 +7673,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 
   .payment-history {
-    gap: 2px;
-    margin-top: 2px;
-    padding: 3px 0;
-    font-size: 9px;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 6px 0;
+    font-size: 10px;
+  }
+
+  .payment-history > div {
+    grid-template-columns: minmax(86px, 1fr) minmax(150px, 1.6fr) minmax(78px, .9fr) minmax(88px, 1fr);
+    gap: 4px 12px;
+    padding: 2px 0;
   }
 
   .course-table-wrap {
