@@ -29,6 +29,8 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
+import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -70,6 +72,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final CourseProductMapper courseProductMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+    private final ClassHolidayService classHolidayService;
 
     @Override
     public List<Map<String, Object>> listClasses(CurrentUserResponse currentUser) {
@@ -321,6 +324,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classId)
+                        .isNull(LessonOccurrenceEntity::getClassHolidayId)
                         .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
     }
 
@@ -339,6 +343,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         LessonOccurrenceEntity occ = lessonOccurrenceMapper.selectById(occurrenceId);
         if (occ == null || !classId.equals(occ.getClassGroupId())) {
             throw new BusinessException("OCCURRENCE_NOT_FOUND", "Lesson occurrence not found for this class.");
+        }
+        if (occ.getClassHolidayId() != null || "CANCELLED".equals(occ.getPlanningStatus())) {
+            throw new BusinessException("CLASS_LESSON_CANCELLED", "This class lesson is cancelled for a school holiday.");
         }
         if (occ.getPlanningStatus().equals("CANCELLED")) {
             throw new BusinessException("OCCURRENCE_CANCELLED", "Cannot confirm a cancelled occurrence.");
@@ -1501,7 +1508,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         boolean hasSlotTeacher = slots.stream().anyMatch(item -> item.getTeacherId() != null);
         boolean hasSlotClassroom = slots.stream().anyMatch(item -> item.getClassroomId() != null);
         int count = 0;
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, endDate);
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            if (classHolidayService.isHoliday(date, holidays)) {
+                continue;
+            }
             int weekday = date.getDayOfWeek().getValue();
             for (ClassGroupScheduleSlotEntity slot : slots) {
                 if (!Objects.equals(slot.getWeekday(), weekday)) {

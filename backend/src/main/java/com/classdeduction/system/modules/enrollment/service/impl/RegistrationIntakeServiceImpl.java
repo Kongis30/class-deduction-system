@@ -42,6 +42,8 @@ import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMap
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
+import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService;
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
@@ -124,6 +126,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final PasswordEncoder passwordEncoder;
     private final JsonHelper jsonHelper;
     private final StudentCreditService studentCreditService;
+    private final ClassHolidayService classHolidayService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -2739,7 +2742,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .collect(Collectors.toSet());
 
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(windowStart, horizonEnd);
         for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
+            if (classHolidayService.isHoliday(date, holidays)) {
+                continue;
+            }
             int weekday = date.getDayOfWeek().getValue();
             for (ClassGroupScheduleSlotEntity slot : slots) {
                 if (!Objects.equals(slot.getWeekday(), weekday) || !slot.getEndTime().isAfter(slot.getStartTime())) {

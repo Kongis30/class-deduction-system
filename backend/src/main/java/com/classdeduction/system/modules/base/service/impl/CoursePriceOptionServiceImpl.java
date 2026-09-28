@@ -28,6 +28,8 @@ import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -69,6 +71,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     private final LessonRecordMapper lessonRecordMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final ClassHolidayService classHolidayService;
 
     @Override
     public List<CoursePriceOptionVO> listActiveOptions(String courseType) {
@@ -648,7 +651,11 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 && classGroup.getTotalSessions() != null
                 ? Math.max(classGroup.getTotalSessions() - existingSessionDates.size(), 0)
                 : Integer.MAX_VALUE;
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, endDate);
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            if (classHolidayService.isHoliday(date, holidays)) {
+                continue;
+            }
             boolean countsAsNewSessionDay = isSessionBilling(classGroup.getBillingType())
                     && !existingSessionDates.contains(date);
             if (countsAsNewSessionDay && remainingSessions <= 0) {

@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
+import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
@@ -30,6 +32,7 @@ import java.util.stream.Collectors;
 public class ClassBillingServiceImpl implements ClassBillingService {
 
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    private final ClassHolidayService classHolidayService;
 
     @Override
     public ClassBilling compute(ClassGroupEntity classGroup,
@@ -104,7 +107,13 @@ public class ClassBillingServiceImpl implements ClassBillingService {
                                                int quantity,
                                                LocalDate configuredEnd) {
         if (!slots.isEmpty()) {
-            return computeNthSessionDate(startDate, slots, quantity);
+            LocalDate expiryDate = computeNthSessionDate(startDate, slots, quantity);
+            if (configuredEnd != null && expiryDate.isAfter(configuredEnd)
+                    && holidayCausedSessionOverflow(startDate, configuredEnd, slots, quantity)) {
+                throw new BusinessException("CLASS_HOLIDAY_EXCEEDS_CLASS_END",
+                        "The selected SESSION package cannot fit before the class end date because of class holidays.");
+            }
+            return expiryDate;
         }
         if (configuredEnd != null && !configuredEnd.isBefore(startDate)) {
             return configuredEnd;
@@ -118,10 +127,11 @@ public class ClassBillingServiceImpl implements ClassBillingService {
         Set<Integer> weekdays = slots.stream()
                 .map(ClassGroupScheduleSlotEntity::getWeekday)
                 .collect(Collectors.toCollection(java.util.TreeSet::new));
-        int count = 0;
         LocalDate limit = startDate.plusYears(10);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, limit);
+        int count = 0;
         for (LocalDate date = startDate; !date.isAfter(limit); date = date.plusDays(1)) {
-            if (weekdays.contains(date.getDayOfWeek().getValue())) {
+            if (weekdays.contains(date.getDayOfWeek().getValue()) && !classHolidayService.isHoliday(date, holidays)) {
                 count++;
                 if (count >= n) {
                     return date;
@@ -129,5 +139,23 @@ public class ClassBillingServiceImpl implements ClassBillingService {
             }
         }
         throw new BusinessException("SESSION_DATE_UNRESOLVED", "Cannot resolve the date for the selected sessions.");
+    }
+
+    /** 假期导致可上课日不足时拒绝新报名，避免收款后无法提供购买的节数。 */
+    private boolean holidayCausedSessionOverflow(LocalDate startDate,
+                                                 LocalDate configuredEnd,
+                                                 List<ClassGroupScheduleSlotEntity> slots,
+                                                 int quantity) {
+        Set<Integer> weekdays = slots.stream().map(ClassGroupScheduleSlotEntity::getWeekday)
+                .collect(Collectors.toSet());
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(startDate, configuredEnd);
+        int totalSessionDays = 0;
+        int availableSessionDays = 0;
+        for (LocalDate date = startDate; !date.isAfter(configuredEnd); date = date.plusDays(1)) {
+            if (!weekdays.contains(date.getDayOfWeek().getValue())) continue;
+            totalSessionDays++;
+            if (!classHolidayService.isHoliday(date, holidays)) availableSessionDays++;
+        }
+        return totalSessionDays >= quantity && availableSessionDays < quantity;
     }
 }
