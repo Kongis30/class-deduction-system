@@ -68,7 +68,11 @@
             class="product-table"
             :show-empty="true"
           >
-            <el-table-column min-width="170">
+            <el-table-column
+              min-width="170"
+              sortable
+              :sort-method="compareCourseNames"
+            >
               <template #header>
                 <div class="table-header-filter">
                   <span>Course</span>
@@ -91,20 +95,20 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Student" min-width="140">
+            <el-table-column label="Student" min-width="140" sortable :sort-method="compareStudentNames">
               <template #default="{ row }">
                 <span>{{ row.studentName ?? '—' }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="Original price" min-width="110" align="right">
+            <el-table-column label="Original price" min-width="110" align="right" sortable :sort-method="compareOriginalPrices">
               <template #default="{ row }">${{ row.originalAmount?.toFixed(2) }}</template>
             </el-table-column>
-            <el-table-column label="Discount" min-width="90" align="right">
+            <el-table-column label="Discount" min-width="90" align="right" sortable :sort-method="compareDiscounts">
               <template #default="{ row }">
                 <span class="discount-text">-${{ row.discountAmount?.toFixed(2) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="Received" min-width="100" align="right">
+            <el-table-column label="Received" min-width="100" align="right" sortable :sort-method="compareReceivedAmounts">
               <template #default="{ row }">
                 <strong>${{ row.receivedAmount?.toFixed(2) }}</strong>
               </template>
@@ -2035,6 +2039,27 @@ function paymentStatusLabel(status: string) {
     REFUNDED: 'Refunded',
   };
   return map[status] ?? status;
+}
+
+// 1-on-1 列表在当前已加载页内排序；共享课包已先按学生拆成行，因此排序使用行上展示的学生金额。
+function compareCourseNames(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return (left.courseProductName ?? '').localeCompare(right.courseProductName ?? '', undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareStudentNames(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return (left.studentName ?? '').localeCompare(right.studentName ?? '', undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareOriginalPrices(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return Number(left.originalAmount ?? 0) - Number(right.originalAmount ?? 0);
+}
+
+function compareDiscounts(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return Number(right.discountAmount ?? 0) - Number(left.discountAmount ?? 0);
+}
+
+function compareReceivedAmounts(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return Number(left.receivedAmount ?? 0) - Number(right.receivedAmount ?? 0);
 }
 
 // ─── Load Data ──────────────────────────────────────
