@@ -585,7 +585,18 @@
         </el-form-item>
         <el-form-item label="Classroom">
           <el-select v-model="actualClassScheduleForm.classroomId" clearable filterable placeholder="No default classroom" style="width: 100%;">
-            <el-option v-for="room in classrooms" :key="room.id" :label="room.roomName" :value="room.id" />
+            <el-option-group
+              v-for="group in classroomGroups"
+              :key="group.key"
+              :label="group.label"
+            >
+              <el-option
+                v-for="room in group.classrooms"
+                :key="room.id"
+                :label="room.roomName"
+                :value="room.id"
+              />
+            </el-option-group>
           </el-select>
         </el-form-item>
       </div>
@@ -797,6 +808,28 @@ const courseProducts = ref<CourseProductItem[]>([]);
 const classGroups = ref<ClassGroupItem[]>([]);
 const teachers = ref<TeacherItem[]>([]);
 const classrooms = ref<ClassroomItem[]>([]);
+const classroomGroups = computed(() => {
+  const groups = new Map<string, { key: string; label: string; classrooms: ClassroomItem[] }>();
+
+  for (const classroom of classrooms.value) {
+    const label = classroom.campus?.trim() || 'Unassigned campus';
+    const key = classroom.campusId != null
+      ? `campus:${classroom.campusId}`
+      : `campus-name:${label.toLocaleLowerCase()}`;
+    const group = groups.get(key) ?? { key, label, classrooms: [] };
+    group.classrooms.push(classroom);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      classrooms: [...group.classrooms].sort((left, right) =>
+        left.roomName.localeCompare(right.roomName, undefined, { numeric: true, sensitivity: 'base' })),
+    }))
+    .sort((left, right) =>
+      left.label.localeCompare(right.label, undefined, { numeric: true, sensitivity: 'base' }));
+});
 const total = ref(0);
 const dialogVisible = ref(false);
 const editingId = ref<EntityId | null>(null);
