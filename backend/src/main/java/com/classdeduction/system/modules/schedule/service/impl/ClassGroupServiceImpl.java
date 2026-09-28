@@ -709,7 +709,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         lockClassScheduleResources(classId, slots);
 
         LocalDateTime rebuildFrom = AppTime.nowLocalDateTime();
-        ensureStartedClassLessonsConfirmed(classId, rebuildFrom);
+        // 默认阻止未确认的已开始课次被后续操作遗漏；仅用户在界面明确选择后续改课时允许跳过。
+        boolean preserveStartedLessons = body != null && Boolean.TRUE.equals(body.get("preserveStartedLessons"));
+        if (!preserveStartedLessons) {
+            ensureStartedClassLessonsConfirmed(classId, rebuildFrom);
+        }
 
         // 班级字段仅保留首个已配置资源供旧列表兼容，课次生成以 slot 字段为准。
         classGroup.setTeacherId(firstTeacherId(slots));
