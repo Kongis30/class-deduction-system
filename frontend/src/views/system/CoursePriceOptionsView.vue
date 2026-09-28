@@ -2633,7 +2633,7 @@ function normalizeSlotAttendance(value?: string) {
   background: #f8fafc;
 }
 
-.product-price-group__header div {
+.product-price-group__header > div:first-child {
   display: grid;
   gap: 2px;
 }
@@ -2656,7 +2656,9 @@ function normalizeSlotAttendance(value?: string) {
 .product-price-group__actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
   flex-shrink: 0;
 }
 
