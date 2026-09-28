@@ -77,12 +77,12 @@
       </label>
 
       <label class="oo-field oo-scope-select">
-        <span>Course type</span>
+        <span>Course product</span>
         <el-select
           v-model="selectedCourseType"
           filterable
           clearable
-          placeholder="Select course type"
+          placeholder="Select course product"
           @change="onCourseTypeChanged"
         >
           <el-option
@@ -95,12 +95,12 @@
       </label>
 
       <label class="oo-field oo-scope-select">
-        <span>Grade</span>
+        <span>Grade level</span>
         <el-select
           v-model="selectedGradeBand"
           filterable
           clearable
-          placeholder="Select grade"
+          placeholder="Select grade level"
           :disabled="!selectedCourseType"
           @change="onScopeFilterChanged"
         >
@@ -137,9 +137,9 @@
               </el-button>
             </div>
           </div>
-          <div v-if="teacherCourseGroups.length" class="oo-package-list">
+          <div v-if="teacherGradeGroups.length" class="oo-package-list">
             <section
-              v-for="teacherGroup in teacherCourseGroups"
+              v-for="teacherGroup in teacherGradeGroups"
               :key="teacherGroup.key"
               class="oo-teacher-group"
             >
@@ -153,29 +153,29 @@
                 <span class="oo-teacher-toggle__title">
                   <strong>{{ teacherGroup.teacherName }}</strong>
                 </span>
-                <small>{{ teacherGroup.courseGroups.length }} course types</small>
+                <small>{{ teacherGroup.gradeGroups.length }} grade levels</small>
                 <span aria-hidden="true">›</span>
               </button>
-              <div v-if="!collapsedTeacherKeys.has(teacherGroup.key)" class="oo-teacher-courses">
+              <div v-if="!collapsedTeacherKeys.has(teacherGroup.key)" class="oo-teacher-grades">
                 <section
-                  v-for="courseGroup in teacherGroup.courseGroups"
-                  :key="courseGroup.key"
-                  class="oo-course-type-group"
+                  v-for="gradeGroup in teacherGroup.gradeGroups"
+                  :key="gradeGroup.key"
+                  class="oo-grade-band-group"
                 >
                   <button
                     type="button"
-                    class="oo-course-type-toggle"
-                    :class="{ 'oo-course-type-toggle--collapsed': collapsedCourseTypeKeys.has(courseGroup.key) }"
-                    :aria-expanded="!collapsedCourseTypeKeys.has(courseGroup.key)"
-                    @click="toggleCourseTypeGroup(courseGroup.key)"
+                    class="oo-grade-band-toggle"
+                    :class="{ 'oo-grade-band-toggle--collapsed': collapsedGradeBandKeys.has(gradeGroup.key) }"
+                    :aria-expanded="!collapsedGradeBandKeys.has(gradeGroup.key)"
+                    @click="toggleGradeBandGroup(gradeGroup.key)"
                   >
-                    <span class="oo-course-type-toggle__title"><strong>{{ courseGroup.courseName }}</strong></span>
-                    <small>{{ courseGroup.studentGroups.length }} students</small>
+                    <span class="oo-grade-band-toggle__title"><strong>{{ gradeGroup.gradeBand }}</strong></span>
+                    <small>{{ gradeGroup.studentGroups.length }} students</small>
                     <span aria-hidden="true">›</span>
                   </button>
-                  <div v-if="!collapsedCourseTypeKeys.has(courseGroup.key)" class="oo-course-type-students">
+                  <div v-if="!collapsedGradeBandKeys.has(gradeGroup.key)" class="oo-grade-band-students">
                     <section
-                      v-for="studentGroup in courseGroup.studentGroups"
+                      v-for="studentGroup in gradeGroup.studentGroups"
                       :key="studentGroup.key"
                       class="oo-student-group"
                     >
@@ -635,16 +635,16 @@ interface StudentPackageGroup {
   candidates: PackageCandidate[];
 }
 
-interface CourseTypeGroup {
+interface GradeBandGroup {
   key: string;
-  courseName: string;
+  gradeBand: string;
   studentGroups: StudentPackageGroup[];
 }
 
-interface TeacherCourseGroup {
+interface TeacherGradeGroup {
   key: string;
   teacherName: string;
-  courseGroups: CourseTypeGroup[];
+  gradeGroups: GradeBandGroup[];
 }
 
 interface StudentEntry {
@@ -693,7 +693,7 @@ const studentSearchResults = ref<StudentEntry[]>([]);
 const matchedSearchStudentIds = ref<Set<string>>(new Set());
 const packagePanelCollapsed = ref(false);
 const collapsedTeacherKeys = ref(new Set<string>());
-const collapsedCourseTypeKeys = ref(new Set<string>());
+const collapsedGradeBandKeys = ref(new Set<string>());
 const expandedStudentGroupKeys = ref(new Set<string>());
 
 const studentEntries = computed<StudentEntry[]>(() => teachers.value.flatMap(teacher =>
@@ -751,13 +751,13 @@ const filteredPackageCandidates = computed(() =>
     ? allPackageCandidates.value.filter(matchesCandidateFilters)
     : allPackageCandidates.value,
 );
-const teacherCourseGroups = computed<TeacherCourseGroup[]>(() => {
+const teacherGradeGroups = computed<TeacherGradeGroup[]>(() => {
   const teacherGroups = new Map<string, {
     key: string;
     teacherName: string;
-    courses: Map<string, {
+    grades: Map<string, {
       key: string;
-      courseName: string;
+      gradeBand: string;
       students: Map<string, StudentPackageGroup>;
     }>;
   }>();
@@ -768,28 +768,28 @@ const teacherCourseGroups = computed<TeacherCourseGroup[]>(() => {
       teacherGroup = {
         key: teacherGroupKey,
         teacherName: candidate.teacher.teacherName?.trim() || 'Unassigned teacher',
-        courses: new Map(),
+        grades: new Map(),
       };
       teacherGroups.set(teacherGroup.key, teacherGroup);
     }
 
-    const courseGroupKey = `${teacherGroup.key}::course:${candidate.courseProductKey}`;
-    let courseGroup = teacherGroup.courses.get(courseGroupKey);
-    if (!courseGroup) {
-      courseGroup = {
-        key: courseGroupKey,
-        courseName: courseTypeLabel(candidate.pkg),
+    const gradeGroupKey = `${teacherGroup.key}::grade:${candidate.gradeKey}`;
+    let gradeGroup = teacherGroup.grades.get(gradeGroupKey);
+    if (!gradeGroup) {
+      gradeGroup = {
+        key: gradeGroupKey,
+        gradeBand: normalizedGradeBand(candidate.pkg.gradeBand),
         students: new Map(),
       };
-      teacherGroup.courses.set(courseGroup.key, courseGroup);
+      teacherGroup.grades.set(gradeGroup.key, gradeGroup);
     }
 
     const privateGroupId = candidate.pkg.privateLessonGroupId;
     const studentGroupKey = privateGroupId == null
-      ? `${courseGroup.key}::student:${candidate.studentKey}`
-      : `${courseGroup.key}::private-group:${entityKey(privateGroupId)}`;
+      ? `${gradeGroup.key}::student:${candidate.studentKey}`
+      : `${gradeGroup.key}::private-group:${entityKey(privateGroupId)}`;
     const studentGroupId = privateGroupId == null ? candidate.studentKey : entityKey(privateGroupId);
-    let studentGroup = courseGroup.students.get(studentGroupId);
+    let studentGroup = gradeGroup.students.get(studentGroupId);
     if (!studentGroup) {
       studentGroup = {
         key: studentGroupKey,
@@ -800,7 +800,7 @@ const teacherCourseGroups = computed<TeacherCourseGroup[]>(() => {
           : candidate.student.studentName,
         candidates: [],
       };
-      courseGroup.students.set(studentGroupId, studentGroup);
+      gradeGroup.students.set(studentGroupId, studentGroup);
     }
     if (!studentGroup.candidates.some(existing => String(existing.pkg.packageId) === String(candidate.pkg.packageId))) {
       studentGroup.candidates.push(candidate);
@@ -810,14 +810,14 @@ const teacherCourseGroups = computed<TeacherCourseGroup[]>(() => {
     .map(teacherGroup => ({
       key: teacherGroup.key,
       teacherName: teacherGroup.teacherName,
-      courseGroups: Array.from(teacherGroup.courses.values())
-        .map(courseGroup => ({
-          key: courseGroup.key,
-          courseName: courseGroup.courseName,
-          studentGroups: Array.from(courseGroup.students.values())
+      gradeGroups: Array.from(teacherGroup.grades.values())
+        .map(gradeGroup => ({
+          key: gradeGroup.key,
+          gradeBand: gradeGroup.gradeBand,
+          studentGroups: Array.from(gradeGroup.students.values())
             .sort((left, right) => left.studentName.localeCompare(right.studentName)),
         }))
-        .sort((left, right) => left.courseName.localeCompare(right.courseName)),
+        .sort((left, right) => left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true, sensitivity: 'base' })),
     }))
     .sort((left, right) => left.teacherName.localeCompare(right.teacherName));
 });
@@ -1253,14 +1253,14 @@ function toggleTeacherGroup(groupKey: string) {
   collapsedTeacherKeys.value = next;
 }
 
-function toggleCourseTypeGroup(groupKey: string) {
-  const next = new Set(collapsedCourseTypeKeys.value);
+function toggleGradeBandGroup(groupKey: string) {
+  const next = new Set(collapsedGradeBandKeys.value);
   if (next.has(groupKey)) {
     next.delete(groupKey);
   } else {
     next.add(groupKey);
   }
-  collapsedCourseTypeKeys.value = next;
+  collapsedGradeBandKeys.value = next;
 }
 
 function toggleStudentGroup(studentGroupKey: string) {
@@ -1279,16 +1279,16 @@ function selectPackage(teacher: OneOnOneTeacher, student: OneOnOneStudent, pkg: 
   activePackage.value = pkg;
   const teacherGroupKey = entityKey(teacher.teacherId)
     || `teacher-name:${optionKey(teacher.teacherName)}`;
-  const courseGroupKey = `${teacherGroupKey}::course:${optionKey(courseTypeLabel(pkg))}`;
+  const gradeGroupKey = `${teacherGroupKey}::grade:${optionKey(normalizedGradeBand(pkg.gradeBand))}`;
   const collapsedTeacher = new Set(collapsedTeacherKeys.value);
   collapsedTeacher.delete(teacherGroupKey);
   collapsedTeacherKeys.value = collapsedTeacher;
-  const collapsedCourseType = new Set(collapsedCourseTypeKeys.value);
-  collapsedCourseType.delete(courseGroupKey);
-  collapsedCourseTypeKeys.value = collapsedCourseType;
+  const collapsedGradeBands = new Set(collapsedGradeBandKeys.value);
+  collapsedGradeBands.delete(gradeGroupKey);
+  collapsedGradeBandKeys.value = collapsedGradeBands;
   const groupKey = pkg.privateLessonGroupId == null
-    ? `${courseGroupKey}::student:${entityKey(student.studentId)}`
-    : `${courseGroupKey}::private-group:${entityKey(pkg.privateLessonGroupId)}`;
+    ? `${gradeGroupKey}::student:${entityKey(student.studentId)}`
+    : `${gradeGroupKey}::private-group:${entityKey(pkg.privateLessonGroupId)}`;
   expandedStudentGroupKeys.value = new Set([...expandedStudentGroupKeys.value, groupKey]);
 }
 
@@ -1976,7 +1976,7 @@ onMounted(async () => {
 }
 
 .oo-teacher-toggle,
-.oo-course-type-toggle {
+.oo-grade-band-toggle {
   display: flex;
   width: 100%;
   align-items: center;
@@ -1995,12 +1995,12 @@ onMounted(async () => {
 }
 
 .oo-teacher-toggle:hover,
-.oo-course-type-toggle:hover {
+.oo-grade-band-toggle:hover {
   background: #eaf1f8;
 }
 
 .oo-teacher-toggle__title,
-.oo-course-type-toggle__title {
+.oo-grade-band-toggle__title {
   display: flex;
   min-width: 0;
   flex: 1;
@@ -2009,7 +2009,7 @@ onMounted(async () => {
 }
 
 .oo-teacher-toggle__title strong,
-.oo-course-type-toggle__title strong {
+.oo-grade-band-toggle__title strong {
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
@@ -2017,7 +2017,7 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
-.oo-course-type-toggle__title > span {
+.oo-grade-band-toggle__title > span {
   flex: 0 0 auto;
   padding: 2px 5px;
   border-radius: 4px;
@@ -2028,14 +2028,14 @@ onMounted(async () => {
 }
 
 .oo-teacher-toggle small,
-.oo-course-type-toggle small {
+.oo-grade-band-toggle small {
   flex: 0 0 auto;
   color: #64748b;
   font-size: 10px;
 }
 
 .oo-teacher-toggle > span:last-child,
-.oo-course-type-toggle > span:last-child {
+.oo-grade-band-toggle > span:last-child {
   flex: 0 0 auto;
   color: #64748b;
   font-size: 18px;
@@ -2044,36 +2044,36 @@ onMounted(async () => {
 }
 
 .oo-teacher-toggle--collapsed > span:last-child,
-.oo-course-type-toggle--collapsed > span:last-child {
+.oo-grade-band-toggle--collapsed > span:last-child {
   transform: rotate(0deg);
 }
 
 .oo-teacher-toggle:not(.oo-teacher-toggle--collapsed) > span:last-child,
-.oo-course-type-toggle:not(.oo-course-type-toggle--collapsed) > span:last-child {
+.oo-grade-band-toggle:not(.oo-grade-band-toggle--collapsed) > span:last-child {
   transform: rotate(90deg);
 }
 
-.oo-teacher-courses {
+.oo-teacher-grades {
   display: grid;
   gap: 5px;
   padding: 6px;
   border-top: 1px solid #e2e8f0;
 }
 
-.oo-course-type-group {
+.oo-grade-band-group {
   overflow: hidden;
   border: 1px solid #e2e8f0;
   border-radius: 5px;
   background: #fff;
 }
 
-.oo-course-type-toggle {
+.oo-grade-band-toggle {
   padding: 8px 9px;
   background: #f8fafc;
   color: #243b53;
 }
 
-.oo-course-type-students {
+.oo-grade-band-students {
   display: grid;
   gap: 5px;
   padding: 6px;
