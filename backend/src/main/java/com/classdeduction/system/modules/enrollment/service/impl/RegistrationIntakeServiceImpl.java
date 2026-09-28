@@ -809,8 +809,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         "Selected sessions must be between 1 and the configured package session count.");
             }
             line.sessions = selectedSessions;
+            // 与注册页一致：课次比例价先向下取整到整美元，再进入订单与课程金额快照。
             configuredPrice = configuredUnitPrice.multiply(BigDecimal.valueOf(selectedSessions))
-                    .divide(BigDecimal.valueOf(configuredSessions), 2, RoundingMode.HALF_UP);
+                    .divide(BigDecimal.valueOf(configuredSessions), 0, RoundingMode.FLOOR);
         } else {
             configuredPrice = configuredUnitPrice;
         }
