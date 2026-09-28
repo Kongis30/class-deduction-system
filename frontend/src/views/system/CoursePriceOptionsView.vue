@@ -630,11 +630,18 @@
           </label>
           <label class="slot-field">
             <span>Classroom</span>
-            <el-select v-model="slot.classroomId" clearable filterable placeholder="No classroom for this slot">
+            <el-select
+              v-model="slot.classroomId"
+              popper-class="actual-classroom-picker"
+              clearable
+              filterable
+              placeholder="No classroom for this slot"
+            >
               <el-option-group
                 v-for="group in classroomGroups"
                 :key="group.key"
                 :label="group.label"
+                class="actual-classroom-campus-group"
               >
                 <el-option
                   v-for="room in group.classrooms"
@@ -3017,5 +3024,51 @@ function normalizeSlotAttendance(value?: string) {
   .slot-teacher-row {
     grid-template-columns: 1fr;
   }
+}
+</style>
+
+<!-- 教室下拉会 teleport 到 body，校区卡片样式必须用全局选择器。 -->
+<style>
+.actual-classroom-picker .el-select-group__wrap {
+  margin: 7px 8px;
+  overflow: hidden;
+  border: 1px solid #9bb5d1 !important;
+  border-left: 4px solid #3974a8 !important;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(28 55 85 / 8%);
+}
+
+.actual-classroom-picker .el-select-group__wrap + .el-select-group__wrap {
+  margin-top: 10px;
+}
+
+.actual-classroom-picker .el-select-group__title {
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid #9bb5d1 !important;
+  background: #dceaf7 !important;
+  color: #173f65 !important;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 36px;
+  letter-spacing: 0.035em;
+}
+
+.actual-classroom-picker .el-select-group__wrap .el-select-dropdown__item {
+  min-height: 35px;
+  padding: 0 14px 0 24px;
+  color: #35475b;
+  line-height: 35px;
+}
+
+.actual-classroom-picker .el-select-group__wrap .el-select-dropdown__item.is-hovering {
+  background: #edf5fc;
+  color: #173f65;
+}
+
+.actual-classroom-picker .el-select-group__wrap .el-select-dropdown__item.is-selected {
+  background: #e2effb;
+  color: #15538a;
 }
 </style>
