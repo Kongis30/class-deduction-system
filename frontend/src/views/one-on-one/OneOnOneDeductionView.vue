@@ -137,9 +137,9 @@
               </el-button>
             </div>
           </div>
-          <div v-if="visibleTeacherGroups.length" class="oo-package-list">
+          <div v-if="teacherCourseGroups.length" class="oo-package-list">
             <section
-              v-for="teacherGroup in visibleTeacherGroups"
+              v-for="teacherGroup in teacherCourseGroups"
               :key="teacherGroup.key"
               class="oo-teacher-group"
             >
@@ -210,15 +210,6 @@
           <div v-else class="oo-empty empty-state">
             {{ candidateEmptyMessage }}
           </div>
-          <el-pagination
-            v-if="teacherCourseGroups.length > packagePageSize"
-            v-model:current-page="packagePage"
-            class="oo-package-pagination"
-            small
-            layout="prev, pager, next"
-            :page-size="packagePageSize"
-            :total="teacherCourseGroups.length"
-          />
         </aside>
 
         <el-button
@@ -695,8 +686,6 @@ const studentSearchLoading = ref(false);
 const appliedStudentSearch = ref('');
 const studentSearchResults = ref<StudentEntry[]>([]);
 const matchedSearchStudentIds = ref<Set<string>>(new Set());
-const packagePage = ref(1);
-const packagePageSize = 10;
 const packagePanelCollapsed = ref(false);
 const collapsedTeacherKeys = ref(new Set<string>());
 const collapsedCourseTypeKeys = ref(new Set<string>());
@@ -826,10 +815,6 @@ const teacherCourseGroups = computed<TeacherCourseGroup[]>(() => {
         .sort((left, right) => left.courseName.localeCompare(right.courseName)),
     }))
     .sort((left, right) => left.teacherName.localeCompare(right.teacherName));
-});
-const visibleTeacherGroups = computed(() => {
-  const start = (packagePage.value - 1) * packagePageSize;
-  return teacherCourseGroups.value.slice(start, start + packagePageSize);
 });
 const candidateScopeLabel = computed(() => {
   if (!hasActiveFilters.value) return 'All active 1-on-1 student courses';
@@ -1082,7 +1067,6 @@ async function loadData() {
       ? { studentId: printTarget.studentId, packageId: printTarget.packageId }
       : {});
     teachers.value = res.data.data;
-    resetPackagePage();
     keepOrSelectFirstPackage();
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
@@ -1122,7 +1106,6 @@ async function searchStudents() {
   const keyword = studentSearchKeyword.value.trim();
   if (!keyword) {
     clearStudentSearch();
-    resetPackagePage();
     clearSelection();
     return;
   }
@@ -1133,7 +1116,6 @@ async function searchStudents() {
 
   studentSearchLoading.value = true;
   appliedStudentSearch.value = keyword;
-  resetPackagePage();
   clearSelection();
   try {
     const response = await fetchStudents({ keyword, pageNum: 1, pageSize: 20 });
@@ -1234,7 +1216,6 @@ function clearFilters() {
   selectedGradeBand.value = undefined;
   studentSearchKeyword.value = '';
   clearStudentSearch();
-  resetPackagePage();
   clearSelection();
 }
 
@@ -1245,17 +1226,12 @@ function clearStudentSearch() {
 }
 
 function onScopeFilterChanged() {
-  resetPackagePage();
   clearSelection();
 }
 
 function onCourseTypeChanged() {
   selectedGradeBand.value = undefined;
   onScopeFilterChanged();
-}
-
-function resetPackagePage() {
-  packagePage.value = 1;
 }
 
 function selectCandidatePackage(candidate: PackageCandidate) {
@@ -1864,7 +1840,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
   gap: 12px;
-  min-height: 560px;
+  min-height: 620px;
 }
 
 .oo-split-workspace--collapsed {
@@ -1947,9 +1923,11 @@ onMounted(async () => {
 
 .oo-package-list {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 6px;
-  max-height: 560px;
+  min-height: 0;
+  max-height: 620px;
   overflow-y: scroll;
   padding: 8px;
   scrollbar-gutter: stable;
@@ -1973,12 +1951,6 @@ onMounted(async () => {
 
 .oo-package-list::-webkit-scrollbar-thumb:hover {
   background: #64748b;
-}
-
-.oo-package-pagination {
-  justify-content: center;
-  padding: 8px 6px 10px;
-  border-top: 1px solid #e2e8f0;
 }
 
 .oo-teacher-group {
