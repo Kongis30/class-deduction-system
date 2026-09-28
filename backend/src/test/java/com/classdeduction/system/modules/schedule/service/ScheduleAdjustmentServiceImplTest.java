@@ -232,6 +232,29 @@ class ScheduleAdjustmentServiceImplTest {
     }
 
     @Test
+    void teacherCanRescheduleOwnPastUnconfirmedLesson() {
+        LessonOccurrenceEntity source = buildSourceOccurrence();
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
+        when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
+
+        ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();
+        request.setOccurrenceId(1001L);
+        request.setAdjustmentType("RESCHEDULE");
+        request.setPlannedStartAt(LocalDateTime.of(2026, 4, 14, 18, 0));
+        request.setPlannedEndAt(LocalDateTime.of(2026, 4, 14, 20, 0));
+        request.setPlannedUnits(4);
+        CurrentUserResponse teacher = new CurrentUserResponse(123L, "teacher", "Teacher", "TEACHER", 3001L, null, List.of("TEACHER"));
+
+        scheduleAdjustmentService.adjustByTeacher(request, teacher);
+
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getValue().getPlannedStartAt()).isEqualTo(request.getPlannedStartAt());
+    }
+
+    @Test
     void teacherCannotRescheduleAnotherTeachersLesson() {
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildSourceOccurrence());
         ScheduleAdjustmentRequest request = new ScheduleAdjustmentRequest();

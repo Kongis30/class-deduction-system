@@ -512,7 +512,7 @@ declare global {
 
 const isElectron = typeof window !== 'undefined' && window.electronAPI?.platform !== undefined;
 
-const teacherSelfServicePaths = new Set(['/my-lessons', '/my-payroll', '/calendar']);
+const teacherSelfServicePaths = new Set(['/my-lessons', '/my-payroll', '/calendar', '/one-on-one-deduction']);
 const studentSelfServicePaths = new Set(['/calendar']);
 const adminConfigurationPaths = new Set([
   '/admin/config/people',

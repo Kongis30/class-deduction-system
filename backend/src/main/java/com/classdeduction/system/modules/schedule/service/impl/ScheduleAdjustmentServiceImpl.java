@@ -131,7 +131,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     }
 
     /**
-     * 教师调课入口：只允许调整本人负责、尚未开始且未核销的课次时间；最终仍复用管理员调课的冲突校验和日志流程。
+     * 教师调课入口：只允许调整本人负责且尚未产生消课记录的课次；已过期但未消课的课次仍可补处理。
+     * 最终仍复用管理员调课的冲突校验和日志流程，避免前端权限绕过后产生资源冲突。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -146,9 +147,6 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         }
         if (!"RESCHEDULE".equals(request.getAdjustmentType())) {
             throw new BusinessException("TEACHER_ADJUSTMENT_TYPE_NOT_ALLOWED", "Teachers can only adjust lesson time.");
-        }
-        if (source.getPlannedStartAt() == null || !source.getPlannedStartAt().isAfter(AppTime.nowLocalDateTime())) {
-            throw new BusinessException("LESSON_ALREADY_STARTED", "Only upcoming lessons can be rescheduled.");
         }
         if (request.getPlannedTeacherId() != null && !Objects.equals(request.getPlannedTeacherId(), source.getPlannedTeacherId())) {
             throw new BusinessException("TEACHER_CANNOT_REASSIGN_LESSON", "Teachers cannot reassign a lesson to another teacher.");

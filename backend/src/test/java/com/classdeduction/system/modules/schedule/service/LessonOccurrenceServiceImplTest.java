@@ -364,6 +364,27 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldKeepCompletedPackageLessonHistoryInDeductionQuery() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        coursePackage.setPackageStatus("COMPLETED");
+        LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).singleElement()
+                .satisfies(teacher -> assertThat(teacher.students()).singleElement()
+                        .satisfies(student -> assertThat(student.packages()).singleElement()
+                                .satisfies(pkg -> assertThat(pkg.lessons()).singleElement()
+                                        .satisfies(lesson -> assertThat(lesson.occurrenceId()).isEqualTo(4001L)))));
+    }
+
+    @Test
     void shouldExcludeLegacyGroupPackagesFromOneOnOneDeductionQuery() {
         CoursePackageEntity oneOnOnePackage = buildOneOnOnePackage();
         oneOnOnePackage.setCourseProductId(9001L);
