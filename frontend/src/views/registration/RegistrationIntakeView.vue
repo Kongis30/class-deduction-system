@@ -503,7 +503,7 @@
                         :placeholder="classStartDatePlaceholder(line)"
                         :disabled="!receiptEditingEnabled"
                         class="line-date"
-                        @change="() => handleRegistrationDurationChange(line)"
+                        @change="() => handleGroupStartDateChange(line)"
                       />
                     </label>
                     <label v-if="!isOneOnOneLine(line) && attendanceOptionsForLine(line).length > 0" class="course-control">
@@ -3696,6 +3696,11 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
     line.durationLabel = printRegistrationDurationLabel(line);
   }
   recalculateLinePrice(line);
+}
+
+/** 开课日期只改变课程时段说明；编辑历史收据时不得因改日期重算已成交价格。 */
+function handleGroupStartDateChange(line: RegistrationCourseLine) {
+  line.durationLabel = printRegistrationDurationLabel(line);
 }
 
 function handleGroupSessionCountChange(line: RegistrationCourseLine) {

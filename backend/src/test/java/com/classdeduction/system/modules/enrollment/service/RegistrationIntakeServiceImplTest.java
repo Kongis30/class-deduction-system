@@ -958,6 +958,18 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldChargeAtLeastOneDollarForPositiveSessionPackage() {
+        stubUnscheduledGroupClassIntake(new BigDecimal("1.00"), 2);
+        RegistrationIntakeRequest request = buildGroupClassRequest();
+        request.getItems().get(0).setSessions(1);
+
+        registrationIntakeService.submitIntake(request);
+
+        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
+        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1.00");
+    }
+
+    @Test
     void shouldCreateCalendarMonthGroupEnrollmentFromSelectedPackage() {
         stubMonthlyGroupClassIntake();
         RegistrationIntakeRequest request = buildGroupClassRequest();

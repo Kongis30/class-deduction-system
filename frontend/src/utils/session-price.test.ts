@@ -12,3 +12,8 @@ test('session price is floored before it is saved', () => {
 test('fractional configured prices are calculated from cents', () => {
   assert.equal(calculateProratedSessionPrice(100.50, 2, 3), 67);
 });
+
+test('positive packages never become free after flooring', () => {
+  assert.equal(calculateProratedSessionPrice(1, 1, 2), 1);
+  assert.equal(calculateProratedSessionPrice(0, 1, 2), 0);
+});
