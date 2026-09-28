@@ -5,8 +5,11 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
+import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.schedule.dto.ClassHolidaySaveRequest;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -19,6 +22,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayPreviewVO;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +32,7 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -46,6 +51,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
     private final CourseProductMapper courseProductMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
+    private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final ClassGroupMapper classGroupMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final LessonRecordMapper lessonRecordMapper;
@@ -127,7 +133,6 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
             }
         }
         int affectedEnrollments = countAffectedSessionEnrollments(courseProductId, from, through);
-        conflicts.addAll(validateSessionExpiryChanges(courseProductId, from, through, activeHolidays));
         return new ClassHolidayPreviewVO(affectedOccurrences, affectedEnrollments, List.copyOf(conflicts));
     }
 
@@ -143,6 +148,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         entity.setIsDeleted(0);
         classHolidayMapper.insert(entity);
         reconcileAffectedDates(courseProductId, request.getStartDate(), request.getEndDate());
+        synchronizeCourseClassSchedules(courseProductId);
         recalculateSessionEnrollments(courseProductId, request.getStartDate(), request.getEndDate());
         return toVO(entity);
     }
@@ -161,6 +167,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         existing.setEndDate(request.getEndDate());
         classHolidayMapper.updateById(existing);
         reconcileAffectedDates(courseProductId, from, through);
+        synchronizeCourseClassSchedules(courseProductId);
         recalculateSessionEnrollments(courseProductId, from, through);
         return toVO(existing);
     }
@@ -171,6 +178,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         ClassHolidayEntity existing = requireHoliday(courseProductId, id);
         classHolidayMapper.deleteById(id);
         reconcileAffectedDates(courseProductId, existing.getStartDate(), existing.getEndDate());
+        synchronizeCourseClassSchedules(courseProductId);
         recalculateSessionEnrollments(courseProductId, existing.getStartDate(), existing.getEndDate());
     }
 
@@ -259,7 +267,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
     private void ensureNoResourceConflict(LessonOccurrenceEntity occurrence) {
         if (occurrence.getPlannedTeacherId() == null && occurrence.getPlannedClassroomId() == null) return;
         LambdaQueryWrapper<LessonOccurrenceEntity> overlap = new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .ne(LessonOccurrenceEntity::getId, occurrence.getId())
+                .ne(occurrence.getId() != null, LessonOccurrenceEntity::getId, occurrence.getId())
                 .eq(LessonOccurrenceEntity::getIsDeleted, 0)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .isNull(LessonOccurrenceEntity::getCourseHolidayId)
@@ -276,7 +284,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         }
         if (lessonOccurrenceMapper.selectCount(overlap) > 0) {
             throw new BusinessException("CLASS_HOLIDAY_RESTORE_CONFLICT",
-                    "Removing this holiday would restore a class lesson that now conflicts with another lesson.");
+                    "Restoring or extending this class schedule would conflict with another lesson. Resolve the resource conflict first.");
         }
     }
 
@@ -330,30 +338,143 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                 .size();
     }
 
-    private List<String> validateSessionExpiryChanges(Long courseProductId, LocalDate from, LocalDate through,
-                                                       List<ClassHolidayEntity> holidays) {
-        List<String> conflicts = new ArrayList<>();
-        Set<Long> groupIds = courseGroupIds(courseProductId);
-        if (groupIds.isEmpty()) return conflicts;
-        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                .in(ClassEnrollmentEntity::getClassId, groupIds)
-                .eq(ClassEnrollmentEntity::getIsDeleted, 0)
-                .in(ClassEnrollmentEntity::getBillingType, "PER_SESSION", "SESSION")
-                .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                .le(ClassEnrollmentEntity::getEnrollmentDate, through)
-                .ge(ClassEnrollmentEntity::getExpiryDate, from));
-        for (ClassEnrollmentEntity enrollment : enrollments) {
-            ClassGroupEntity group = classGroupMapper.selectById(enrollment.getClassId());
-            if (group == null || group.getEndDate() == null || enrollment.getPurchasedQuantity() == null) continue;
+    /**
+     * 假期会减少班级原周期内可排的上课日，因此按 Course 假期重新计算课次终点，
+     * 并只补齐未来缺少的周课次。Prices 的假期新增、编辑、删除都在落库后调用本方法。
+     */
+    private void synchronizeCourseClassSchedules(Long courseProductId) {
+        List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
+                .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
+                .eq(ClassHolidayEntity::getIsDeleted, 0));
+        List<ClassGroupEntity> groups = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, courseProductId)
+                .eq(ClassGroupEntity::getIsDeleted, 0));
+        LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
+        LocalDateTime now = AppTime.nowLocalDateTime();
+
+        for (ClassGroupEntity group : groups) {
+            if (group.getStartDate() == null) {
+                continue;
+            }
             List<ClassGroupScheduleSlotEntity> slots = loadSlots(group.getId());
-            LocalDate projected = nthSessionDate(enrollment.getEnrollmentDate(), enrollment.getPurchasedQuantity(), slots, holidays);
-            if (projected != null && projected.isAfter(group.getEndDate())) {
-                conflicts.add("A SESSION enrollment in class " + group.getClassName()
-                        + " needs dates beyond the class end date " + group.getEndDate() + ".");
-                break;
+            LocalDate originalEnd = resolveScheduleEnd(group);
+            int requiredSessions = isSessionBilling(group.getBillingType())
+                    ? (group.getTotalSessions() == null ? 0 : group.getTotalSessions())
+                    : ClassScheduleDates.countScheduledDays(group.getStartDate(), originalEnd, slots);
+            if (requiredSessions < 1) continue;
+            LocalDate targetEnd = ClassScheduleDates.nthScheduledDay(group.getStartDate(), requiredSessions,
+                    slots, date -> holidayForDate(holidays, date) != null);
+            if (targetEnd == null) continue;
+            if (group.getEndDate() == null || targetEnd.isAfter(group.getEndDate())) {
+                group.setEndDate(targetEnd);
+                classGroupMapper.updateById(group);
+            }
+
+            LocalDate generationStart = group.getStartDate().isBefore(today) ? today : group.getStartDate();
+            if (targetEnd.isBefore(generationStart)) continue;
+            List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                    .eq(LessonOccurrenceEntity::getClassGroupId, group.getId())
+                    .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                    .ge(LessonOccurrenceEntity::getPlannedStartAt, generationStart.atStartOfDay())
+                    .lt(LessonOccurrenceEntity::getPlannedStartAt, targetEnd.plusDays(1).atStartOfDay()));
+            Set<String> existingKeys = occurrences.stream()
+                    .map(item -> occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt()))
+                    .collect(java.util.stream.Collectors.toSet());
+
+            for (LocalDate date = generationStart; !date.isAfter(targetEnd); date = date.plusDays(1)) {
+                if (holidayForDate(holidays, date) != null) continue;
+                int weekday = date.getDayOfWeek().getValue();
+                for (ClassGroupScheduleSlotEntity slot : slots) {
+                    if (!Objects.equals(slot.getWeekday(), weekday)) continue;
+                    LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
+                    if (startAt.isBefore(now)) continue;
+                    LocalDateTime endAt = LocalDateTime.of(date, slot.getEndTime());
+                    String key = occurrenceKey(startAt, endAt);
+                    if (existingKeys.contains(key)) continue;
+
+                    LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+                    occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
+                    occurrence.setClassGroupId(group.getId());
+                    occurrence.setScheduleSlotId(slot.getId());
+                    occurrence.setOccurrenceType("REGULAR");
+                    occurrence.setPlannedTeacherId(slot.getTeacherId() == null ? group.getTeacherId() : slot.getTeacherId());
+                    occurrence.setPlannedClassroomId(slot.getClassroomId() == null ? group.getClassroomId() : slot.getClassroomId());
+                    occurrence.setPlannedStartAt(startAt);
+                    occurrence.setPlannedEndAt(endAt);
+                    occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                    occurrence.setPlanningStatus("SCHEDULED");
+                    occurrence.setConflictChecked(1);
+                    occurrence.setIsDeleted(0);
+                    ensureNoResourceConflict(occurrence);
+                    ensureNoStudentConflict(occurrence);
+                    lessonOccurrenceMapper.insert(occurrence);
+                    existingKeys.add(key);
+                }
             }
         }
-        return conflicts;
+    }
+
+    private boolean isSessionBilling(String billingType) {
+        return "SESSION".equalsIgnoreCase(billingType) || "PER_SESSION".equalsIgnoreCase(billingType);
+    }
+
+    private LocalDate resolveScheduleEnd(ClassGroupEntity group) {
+        if (group.getEndDate() != null) return group.getEndDate();
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .select(ClassEnrollmentEntity::getExpiryDate)
+                        .eq(ClassEnrollmentEntity::getClassId, group.getId())
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream().map(ClassEnrollmentEntity::getExpiryDate).filter(Objects::nonNull)
+                .max(LocalDate::compareTo).orElse(group.getStartDate().plusDays(60));
+    }
+
+    private String occurrenceKey(LocalDateTime startAt, LocalDateTime endAt) {
+        return startAt + "|" + endAt;
+    }
+
+    private void ensureNoStudentConflict(LessonOccurrenceEntity occurrence) {
+        LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
+        List<Long> studentIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, occurrence.getClassGroupId())
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream().map(ClassEnrollmentEntity::getStudentId).filter(Objects::nonNull).distinct().toList();
+        for (Long studentId : studentIds) {
+            List<Long> otherClassIds = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                            .eq(ClassEnrollmentEntity::getStudentId, studentId)
+                            .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                            .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                            .ne(ClassEnrollmentEntity::getClassId, occurrence.getClassGroupId())
+                            .and(wrapper -> wrapper.isNull(ClassEnrollmentEntity::getEnrollmentDate)
+                                    .or().le(ClassEnrollmentEntity::getEnrollmentDate, lessonDate))
+                            .and(wrapper -> wrapper.isNull(ClassEnrollmentEntity::getExpiryDate)
+                                    .or().ge(ClassEnrollmentEntity::getExpiryDate, lessonDate)))
+                    .stream().map(ClassEnrollmentEntity::getClassId).filter(Objects::nonNull).distinct().toList();
+            List<Long> privateGroupIds = privateLessonGroupMemberMapper.selectList(new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                            .eq(PrivateLessonGroupMemberEntity::getStudentId, studentId)
+                            .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                            .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))
+                    .stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                    .filter(Objects::nonNull).distinct().toList();
+            LambdaQueryWrapper<LessonOccurrenceEntity> conflictQuery = new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                    .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                    .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                    .lt(LessonOccurrenceEntity::getPlannedStartAt, occurrence.getPlannedEndAt())
+                    .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt())
+                    .and(other -> other.isNull(LessonOccurrenceEntity::getClassGroupId)
+                            .or().ne(LessonOccurrenceEntity::getClassGroupId, occurrence.getClassGroupId()))
+                    .and(studentMatches -> studentMatches.eq(LessonOccurrenceEntity::getStudentId, studentId)
+                            .or(!privateGroupIds.isEmpty(), group -> group.in(
+                                    LessonOccurrenceEntity::getPrivateLessonGroupId, privateGroupIds))
+                            .or(!otherClassIds.isEmpty(), classes -> classes.in(
+                                    LessonOccurrenceEntity::getClassGroupId, otherClassIds)));
+            if (lessonOccurrenceMapper.selectCount(conflictQuery) > 0) {
+                throw new BusinessException("CLASS_HOLIDAY_SCHEDULE_CONFLICT",
+                        "Extending this course schedule would overlap another lesson for an enrolled student on "
+                                + lessonDate + ". Resolve the student schedule conflict first.");
+            }
+        }
     }
 
     private void recalculateSessionEnrollments(Long courseProductId, LocalDate from, LocalDate through) {

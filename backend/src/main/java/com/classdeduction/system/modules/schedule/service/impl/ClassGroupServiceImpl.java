@@ -30,6 +30,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
 import lombok.RequiredArgsConstructor;
@@ -1501,6 +1502,19 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         LocalDate endDate = configuredEnd != null
                 ? configuredEnd
                 : resolveClassScheduleHorizon(classGroup.getId(), startDate);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId());
+        if (configuredStart != null) {
+            int requiredSessions = isSessionBilling(classGroup.getBillingType())
+                    ? (classGroup.getTotalSessions() == null ? 0 : classGroup.getTotalSessions())
+                    : ClassScheduleDates.countScheduledDays(configuredStart, endDate, slots);
+            LocalDate requiredEnd = ClassScheduleDates.nthScheduledDay(configuredStart, requiredSessions,
+                    slots, date -> classHolidayService.isHoliday(date, holidays));
+            if (requiredEnd != null && requiredEnd.isAfter(endDate)) {
+                endDate = requiredEnd;
+                classGroup.setEndDate(requiredEnd);
+                classGroupMapper.updateById(classGroup);
+            }
+        }
         if (endDate.isBefore(startDate)) {
             return 0;
         }
@@ -1508,7 +1522,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         boolean hasSlotTeacher = slots.stream().anyMatch(item -> item.getTeacherId() != null);
         boolean hasSlotClassroom = slots.stream().anyMatch(item -> item.getClassroomId() != null);
         int count = 0;
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), startDate, endDate);
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
             if (classHolidayService.isHoliday(date, holidays)) {
                 continue;
@@ -1563,6 +1576,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             }
         }
         return count;
+    }
+
+    private boolean isSessionBilling(String billingType) {
+        return "SESSION".equalsIgnoreCase(billingType) || "PER_SESSION".equalsIgnoreCase(billingType);
     }
 
     private void ensureNoGeneratedClassOccurrenceConflicts(LessonOccurrenceEntity occurrence,

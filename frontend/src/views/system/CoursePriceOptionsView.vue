@@ -716,6 +716,13 @@
         :closable="false"
         show-icon
       />
+      <el-alert
+        class="class-holiday-schedule-note"
+        title="Lessons that fall during the holiday are skipped. The same weekly schedule continues afterward so the course keeps its planned number of class days."
+        type="success"
+        :closable="false"
+        show-icon
+      />
       <el-form label-position="top" class="class-holiday-form">
         <el-form-item label="Holiday name">
           <el-input v-model="classHolidayForm.holidayName" maxlength="100" placeholder="e.g. Thanksgiving break" />

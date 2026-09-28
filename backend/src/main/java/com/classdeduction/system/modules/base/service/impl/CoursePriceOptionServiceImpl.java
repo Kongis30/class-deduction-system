@@ -29,6 +29,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -644,6 +645,19 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 .collect(java.util.stream.Collectors.toSet());
         LocalDate startDate = resolveOccurrenceStartDate(classGroup);
         LocalDate endDate = resolveOccurrenceEndDate(classGroup, startDate);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId());
+        if (classGroup.getStartDate() != null) {
+            int requiredSessions = isSessionBilling(classGroup.getBillingType())
+                    ? (classGroup.getTotalSessions() == null ? 0 : classGroup.getTotalSessions())
+                    : ClassScheduleDates.countScheduledDays(classGroup.getStartDate(), endDate, slots);
+            LocalDate scheduleEnd = ClassScheduleDates.nthScheduledDay(classGroup.getStartDate(), requiredSessions,
+                    slots, date -> classHolidayService.isHoliday(date, holidays));
+            if (scheduleEnd != null && scheduleEnd.isAfter(endDate)) {
+                endDate = scheduleEnd;
+                classGroup.setEndDate(scheduleEnd);
+                classGroupMapper.updateById(classGroup);
+            }
+        }
         if (endDate.isBefore(startDate)) {
             return;
         }
@@ -651,7 +665,6 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 && classGroup.getTotalSessions() != null
                 ? Math.max(classGroup.getTotalSessions() - existingSessionDates.size(), 0)
                 : Integer.MAX_VALUE;
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), startDate, endDate);
         for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
             if (classHolidayService.isHoliday(date, holidays)) {
                 continue;
