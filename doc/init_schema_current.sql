@@ -170,6 +170,7 @@ CREATE TABLE `class_group` (
   `billing_type` varchar(32) DEFAULT NULL COMMENT 'PER_SESSION or MONTHLY',
   `start_date` date DEFAULT NULL COMMENT 'First date for a per-session grade class',
   `end_date` date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class',
+  `schedule_base_end_date` date DEFAULT NULL COMMENT 'User-configured schedule end before holiday extensions',
   `total_sessions` int DEFAULT NULL COMMENT 'Total sessions for a per-session grade class',
   `start_month` date DEFAULT NULL COMMENT 'First month for a monthly grade class',
   `end_month` date DEFAULT NULL COMMENT 'Last month for a monthly grade class',

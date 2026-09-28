@@ -15,6 +15,10 @@ mysql -uroot -p class_deduction_system < doc/migrations/20260928_class_group_slo
 mysql -uroot -p class_deduction_system < doc/migrations/20260928_participant_course_refund_state.sql
 ```
 
+For an existing installation with Course-level holidays, run
+`doc/migrations/20260929_grade_level_class_holidays.sql` once. The current bootstrap schema already
+contains Grade-scoped holidays and `schedule_base_end_date`, so do not run this upgrade after a clean import.
+
 If the SQL client does not support MySQL `SOURCE`, run the course matrix seed separately after `init_seed_required.sql`:
 
 ```bash
@@ -30,6 +34,7 @@ mysql -uroot -p class_deduction_system < doc/migrations/20260727_seed_ppt_course
 - `doc/migrations/20260924_sys_user_active_unique_keys.sql`: limits account uniqueness to active users and allows repeated soft deletion while preserving account history.
 - `doc/migrations/20260928_class_group_slot_classroom.sql`: adds independent classroom storage for each group-class weekly schedule slot.
 - `doc/migrations/20260928_participant_course_refund_state.sql`: stores stop amounts and periods per student-course row so shared receipts can stop one student's course without changing other participants.
+- `doc/migrations/20260929_grade_level_class_holidays.sql`: upgrades existing Course-wide class holidays to independent Course + Grade ranges and stores the original schedule end date for stable holiday recalculation.
 - `doc/migrations/20260924_recurring_schedule_two_year_horizon.sql`: historical migration retained for existing installs; current scheduler ignores this legacy column.
 
 ## Required Seed Data

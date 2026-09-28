@@ -5,6 +5,10 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
+import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
+import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
+import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -49,6 +53,8 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
 
     private final ClassHolidayMapper classHolidayMapper;
     private final CourseProductMapper courseProductMapper;
+    private final CoursePriceOptionMapper coursePriceOptionMapper;
+    private final ProductGradeConfigMapper productGradeConfigMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
@@ -371,18 +377,20 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                 continue;
             }
             List<ClassGroupScheduleSlotEntity> slots = loadSlots(group.getId());
-            LocalDate originalEnd = resolveScheduleEnd(group);
-            int requiredSessions = isSessionBilling(group.getBillingType())
-                    ? (group.getTotalSessions() == null ? 0 : group.getTotalSessions())
-                    : ClassScheduleDates.countScheduledDays(group.getStartDate(), originalEnd, slots);
-            if (requiredSessions < 1) continue;
-            LocalDate targetEnd = ClassScheduleDates.nthScheduledDay(group.getStartDate(), requiredSessions,
-                    slots, date -> holidayForDate(holidays, date) != null);
+            LocalDate effectiveEnd = resolveScheduleEnd(group);
+            LocalDate baseEnd = ClassScheduleDates.resolveBaseEndDate(group.getScheduleBaseEndDate(), effectiveEnd);
+            LocalDate targetEnd = ClassScheduleDates.endDateAfterHolidays(group.getStartDate(), baseEnd,
+                    group.getBillingType(), group.getTotalSessions(), slots,
+                    date -> holidayForDate(holidays, date) != null);
             if (targetEnd == null) continue;
-            if (group.getEndDate() == null || targetEnd.isAfter(group.getEndDate())) {
+            boolean needsUpdate = !targetEnd.equals(group.getEndDate()) || group.getScheduleBaseEndDate() == null;
+            group.setScheduleBaseEndDate(baseEnd);
+            if (needsUpdate) {
                 group.setEndDate(targetEnd);
                 classGroupMapper.updateById(group);
             }
+
+            removeFutureRegularOccurrencesAfter(group.getId(), targetEnd, now);
 
             LocalDate generationStart = group.getStartDate().isBefore(today) ? today : group.getStartDate();
             if (targetEnd.isBefore(generationStart)) continue;
@@ -429,6 +437,23 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     existingKeys.add(key);
                 }
             }
+        }
+    }
+
+    /** 假期缩短后，清理旧周期尾部被顺延出来且尚未上课的自动周课次。 */
+    private void removeFutureRegularOccurrencesAfter(Long classGroupId, LocalDate targetEnd, LocalDateTime now) {
+        List<LessonOccurrenceEntity> excessOccurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classGroupId)
+                        .eq(LessonOccurrenceEntity::getOccurrenceType, "REGULAR")
+                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
+                        .isNotNull(LessonOccurrenceEntity::getScheduleSlotId)
+                        .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                        .gt(LessonOccurrenceEntity::getPlannedStartAt, now)
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, targetEnd.plusDays(1).atStartOfDay()));
+        for (LessonOccurrenceEntity occurrence : excessOccurrences) {
+            ensureNoLessonRecord(occurrence);
+            lessonOccurrenceMapper.deleteById(occurrence.getId());
         }
     }
 
@@ -574,12 +599,24 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
 
     private void requireGroupGrade(Long courseProductId, String gradeBand) {
         requireGroupCourse(courseProductId);
-        if (!StringUtils.hasText(gradeBand)
-                || classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
+        if (!StringUtils.hasText(gradeBand)) {
+            throw new BusinessException("CLASS_HOLIDAY_INVALID_GRADE", "Select a grade configured for this course.");
+        }
+        String normalizedGrade = normalizeGrade(gradeBand);
+        boolean hasClass = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
                 .eq(ClassGroupEntity::getProductId, courseProductId)
-                .eq(ClassGroupEntity::getGradeBand, normalizeGrade(gradeBand))
-                .eq(ClassGroupEntity::getIsDeleted, 0)) == 0) {
-            throw new BusinessException("CLASS_HOLIDAY_INVALID_GRADE", "Select a grade that has actual classes in this course.");
+                .eq(ClassGroupEntity::getGradeBand, normalizedGrade)
+                .eq(ClassGroupEntity::getIsDeleted, 0)) > 0;
+        boolean hasPriceOption = coursePriceOptionMapper.selectCount(new LambdaQueryWrapper<CoursePriceOptionEntity>()
+                .eq(CoursePriceOptionEntity::getCourseProductId, courseProductId)
+                .eq(CoursePriceOptionEntity::getGradeBand, normalizedGrade)
+                .eq(CoursePriceOptionEntity::getIsDeleted, 0)) > 0;
+        boolean hasGradeConfig = productGradeConfigMapper.selectCount(new LambdaQueryWrapper<ProductGradeConfigEntity>()
+                .eq(ProductGradeConfigEntity::getCourseProductId, courseProductId)
+                .eq(ProductGradeConfigEntity::getGradeLabel, normalizedGrade)
+                .eq(ProductGradeConfigEntity::getIsDeleted, 0)) > 0;
+        if (!hasClass && !hasPriceOption && !hasGradeConfig) {
+            throw new BusinessException("CLASS_HOLIDAY_INVALID_GRADE", "Select a grade configured for this course.");
         }
     }
 

@@ -515,6 +515,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 : "MONTH");
         classGroup.setStartDate(request.getGroupStartDate());
         classGroup.setEndDate(request.getGroupEndDate());
+        classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
         classGroup.setTotalSessions(request.getGroupTotalSessions());
         classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
         classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
@@ -586,6 +587,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 : "MONTH");
         classGroup.setStartDate(request.getGroupStartDate());
         classGroup.setEndDate(request.getGroupEndDate());
+        classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
         classGroup.setTotalSessions(request.getGroupTotalSessions());
         classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
         classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
@@ -647,14 +649,20 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         LocalDate endDate = resolveOccurrenceEndDate(classGroup, startDate);
         List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), classGroup.getGradeBand());
         if (classGroup.getStartDate() != null) {
-            int requiredSessions = isSessionBilling(classGroup.getBillingType())
-                    ? (classGroup.getTotalSessions() == null ? 0 : classGroup.getTotalSessions())
-                    : ClassScheduleDates.countScheduledDays(classGroup.getStartDate(), endDate, slots);
-            LocalDate scheduleEnd = ClassScheduleDates.nthScheduledDay(classGroup.getStartDate(), requiredSessions,
-                    slots, date -> classHolidayService.isHoliday(date, holidays));
-            if (scheduleEnd != null && scheduleEnd.isAfter(endDate)) {
-                endDate = scheduleEnd;
-                classGroup.setEndDate(scheduleEnd);
+            LocalDate baseEndDate = ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate);
+            LocalDate scheduleEnd = ClassScheduleDates.endDateAfterHolidays(classGroup.getStartDate(), baseEndDate,
+                    classGroup.getBillingType(), classGroup.getTotalSessions(), slots,
+                    date -> classHolidayService.isHoliday(date, holidays));
+            boolean needsUpdate = scheduleEnd != null && !scheduleEnd.equals(endDate);
+            if (classGroup.getScheduleBaseEndDate() == null) {
+                classGroup.setScheduleBaseEndDate(baseEndDate);
+                needsUpdate = true;
+            }
+            if (needsUpdate) {
+                if (scheduleEnd != null) {
+                    endDate = scheduleEnd;
+                    classGroup.setEndDate(scheduleEnd);
+                }
                 classGroupMapper.updateById(classGroup);
             }
         }

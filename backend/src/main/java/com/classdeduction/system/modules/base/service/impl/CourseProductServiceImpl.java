@@ -189,6 +189,7 @@ public class CourseProductServiceImpl implements CourseProductService {
             targetClass.setProductId(targetProductId);
             targetClass.setStartDate(shiftDate(targetClass.getStartDate(), dateShiftYears));
             targetClass.setEndDate(shiftDate(targetClass.getEndDate(), dateShiftYears));
+            targetClass.setScheduleBaseEndDate(shiftDate(targetClass.getScheduleBaseEndDate(), dateShiftYears));
             targetClass.setStartMonth(shiftDate(targetClass.getStartMonth(), dateShiftYears));
             targetClass.setEndMonth(shiftDate(targetClass.getEndMonth(), dateShiftYears));
             classGroupMapper.insert(targetClass);

@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
+import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
@@ -42,6 +44,8 @@ class ClassHolidayServiceImplTest {
 
     @Mock private ClassHolidayMapper classHolidayMapper;
     @Mock private CourseProductMapper courseProductMapper;
+    @Mock private CoursePriceOptionMapper coursePriceOptionMapper;
+    @Mock private ProductGradeConfigMapper productGradeConfigMapper;
     @Mock private LessonOccurrenceMapper lessonOccurrenceMapper;
     @Mock private ClassEnrollmentMapper classEnrollmentMapper;
     @Mock private PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
@@ -64,7 +68,8 @@ class ClassHolidayServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        service = new ClassHolidayServiceImpl(classHolidayMapper, courseProductMapper, lessonOccurrenceMapper,
+        service = new ClassHolidayServiceImpl(classHolidayMapper, courseProductMapper, coursePriceOptionMapper,
+                productGradeConfigMapper, lessonOccurrenceMapper,
                 classEnrollmentMapper, privateLessonGroupMemberMapper, classGroupMapper,
                 classGroupScheduleSlotMapper, lessonRecordMapper);
     }

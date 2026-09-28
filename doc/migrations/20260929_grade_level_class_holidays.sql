@@ -1,6 +1,14 @@
 -- 将原 Course 范围的班课假期拆分为 Course + Grade。
 -- 每个旧假期复制到该 Course 下实际存在的所有 Grade，保持迁移前的排课覆盖范围。
 -- 本迁移需在 MySQL 8 执行；临时映射表用于把已被假期取消的课次关联到对应 Grade 的新假期行。
+-- 执行迁移时应暂停应用写入，确保 MAX(id) 分配期间没有并发新增假期。
+
+ALTER TABLE `class_group`
+  ADD COLUMN `schedule_base_end_date` date DEFAULT NULL COMMENT 'User-configured schedule end before holiday extensions' AFTER `end_date`;
+
+UPDATE `class_group`
+SET `schedule_base_end_date` = `end_date`
+WHERE `schedule_base_end_date` IS NULL;
 
 ALTER TABLE `course_holiday`
   ADD COLUMN `grade_band` varchar(64) DEFAULT NULL COMMENT 'Grade scope within this course product' AFTER `course_product_id`;
@@ -12,13 +20,14 @@ SELECT
   ranked.`grade_band`,
   ranked.`grade_rank`,
   CASE WHEN ranked.`grade_rank` = 1 THEN ranked.`old_holiday_id`
-       ELSE 9000000000000000000 - ranked.`migration_rank`
+       ELSE ranked.`max_holiday_id` + ranked.`migration_rank`
   END AS `new_holiday_id`
 FROM (
   SELECT
     holiday.`id` AS `old_holiday_id`,
     holiday.`course_product_id`,
     grade.`grade_band`,
+    (SELECT MAX(`id`) FROM `course_holiday`) AS `max_holiday_id`,
     ROW_NUMBER() OVER (PARTITION BY holiday.`id` ORDER BY grade.`grade_band`) AS `grade_rank`,
     ROW_NUMBER() OVER (ORDER BY holiday.`id`, grade.`grade_band`) AS `migration_rank`
   FROM `course_holiday` holiday
@@ -30,6 +39,10 @@ FROM (
     SELECT DISTINCT `course_product_id`, TRIM(`grade_band`)
     FROM `course_price_option`
     WHERE `course_product_id` IS NOT NULL AND `grade_band` IS NOT NULL AND TRIM(`grade_band`) <> ''
+    UNION
+    SELECT DISTINCT `course_product_id`, TRIM(`grade_label`)
+    FROM `product_grade_config`
+    WHERE `course_product_id` IS NOT NULL AND `grade_label` IS NOT NULL AND TRIM(`grade_label`) <> ''
   ) grade ON grade.`course_product_id` = holiday.`course_product_id`
 ) ranked;
 

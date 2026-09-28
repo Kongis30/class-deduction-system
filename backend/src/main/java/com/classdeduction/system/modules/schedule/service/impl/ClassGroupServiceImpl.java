@@ -732,6 +732,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         classGroup.setClassroomId(firstClassroomId(slots));
         classGroup.setStartDate(startDate);
         classGroup.setEndDate(endDate);
+        if (body != null && body.containsKey("endDate")) {
+            classGroup.setScheduleBaseEndDate(endDate);
+        }
         classGroup.setScheduleDesc(buildScheduleDesc(slots));
         classGroupMapper.updateById(classGroup);
 
@@ -816,6 +819,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         classGroup.setBillingType(sibling.getBillingType());
         classGroup.setStartDate(sibling.getStartDate());
         classGroup.setEndDate(sibling.getEndDate());
+        classGroup.setScheduleBaseEndDate(sibling.getScheduleBaseEndDate() == null
+                ? sibling.getEndDate() : sibling.getScheduleBaseEndDate());
         classGroup.setTotalSessions(sibling.getTotalSessions());
         classGroup.setStartMonth(sibling.getStartMonth());
         classGroup.setEndMonth(sibling.getEndMonth());
@@ -867,6 +872,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
         classGroup.setStartDate(startDate);
         classGroup.setEndDate(endDate);
+        if (body != null && body.containsKey("endDate")) {
+            classGroup.setScheduleBaseEndDate(endDate);
+        }
     }
 
     @Override
@@ -1524,14 +1532,20 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 : resolveClassScheduleHorizon(classGroup.getId(), startDate);
         List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), classGroup.getGradeBand());
         if (configuredStart != null) {
-            int requiredSessions = isSessionBilling(classGroup.getBillingType())
-                    ? (classGroup.getTotalSessions() == null ? 0 : classGroup.getTotalSessions())
-                    : ClassScheduleDates.countScheduledDays(configuredStart, endDate, slots);
-            LocalDate requiredEnd = ClassScheduleDates.nthScheduledDay(configuredStart, requiredSessions,
-                    slots, date -> classHolidayService.isHoliday(date, holidays));
-            if (requiredEnd != null && requiredEnd.isAfter(endDate)) {
-                endDate = requiredEnd;
-                classGroup.setEndDate(requiredEnd);
+            LocalDate baseEnd = ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate);
+            LocalDate requiredEnd = ClassScheduleDates.endDateAfterHolidays(configuredStart, baseEnd,
+                    classGroup.getBillingType(), classGroup.getTotalSessions(), slots,
+                    date -> classHolidayService.isHoliday(date, holidays));
+            boolean needsUpdate = requiredEnd != null && !requiredEnd.equals(endDate);
+            if (classGroup.getScheduleBaseEndDate() == null) {
+                classGroup.setScheduleBaseEndDate(baseEnd);
+                needsUpdate = true;
+            }
+            if (needsUpdate) {
+                if (requiredEnd != null) {
+                    endDate = requiredEnd;
+                    classGroup.setEndDate(requiredEnd);
+                }
                 classGroupMapper.updateById(classGroup);
             }
         }

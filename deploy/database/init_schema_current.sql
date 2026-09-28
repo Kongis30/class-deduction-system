@@ -170,6 +170,7 @@ CREATE TABLE `class_group` (
   `billing_type` varchar(32) DEFAULT NULL COMMENT 'PER_SESSION or MONTHLY',
   `start_date` date DEFAULT NULL COMMENT 'First date for a per-session grade class',
   `end_date` date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class',
+  `schedule_base_end_date` date DEFAULT NULL COMMENT 'User-configured schedule end before holiday extensions',
   `total_sessions` int DEFAULT NULL COMMENT 'Total sessions for a per-session grade class',
   `start_month` date DEFAULT NULL COMMENT 'First month for a monthly grade class',
   `end_month` date DEFAULT NULL COMMENT 'Last month for a monthly grade class',
@@ -203,7 +204,8 @@ CREATE TABLE `class_group_schedule_slot` (
   `id` bigint NOT NULL,
   `class_group_id` bigint NOT NULL,
   `teacher_id` bigint DEFAULT NULL COMMENT 'Optional teacher override for this weekly slot',
-  `classroom_id` bigint DEFAULT NULL COMMENT 'Classroom override for this weekly class slot',
+  `delivery_mode` varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE',
+  `classroom_id` bigint DEFAULT NULL COMMENT 'Classroom override for this weekly slot',
   `subject_name` varchar(128) DEFAULT NULL COMMENT 'Subject taught in this weekly class slot',
   `weekday` tinyint NOT NULL,
   `start_time` time NOT NULL,
@@ -413,6 +415,34 @@ CREATE TABLE `course_product` (
   KEY `idx_course_product_type` (`course_type`,`status`),
   KEY `idx_course_product_sort_order` (`sort_order`,`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Course product templates';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `course_holiday`
+--
+
+DROP TABLE IF EXISTS `course_holiday`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `course_holiday` (
+  `id` bigint NOT NULL,
+  `course_product_id` bigint NOT NULL,
+  `grade_band` varchar(64) NOT NULL COMMENT 'Grade scope within this course product',
+  `holiday_name` varchar(100) NOT NULL,
+  `start_date` date NOT NULL,
+  `end_date` date NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `created_by` bigint DEFAULT NULL,
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  `updated_by` bigint DEFAULT NULL,
+  `is_deleted` tinyint(1) NOT NULL DEFAULT '0',
+  `deleted_at` datetime(3) DEFAULT NULL,
+  `deleted_by` bigint DEFAULT NULL,
+  `version` int NOT NULL DEFAULT '0',
+  PRIMARY KEY (`id`),
+  KEY `idx_course_holiday_dates` (`course_product_id`,`grade_band`,`is_deleted`,`start_date`,`end_date`),
+  CONSTRAINT `fk_course_holiday_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Group-class holidays scoped to a course grade';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -717,12 +747,15 @@ CREATE TABLE `lesson_occurrence` (
   `schedule_slot_id` bigint DEFAULT NULL COMMENT 'Source slot ID',
   `occurrence_type` varchar(32) NOT NULL COMMENT 'Occurrence type: REGULAR/MAKEUP/MANUAL',
   `planned_teacher_id` bigint DEFAULT NULL COMMENT 'Planned teacher ID',
+  `delivery_mode` varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE',
   `planned_classroom_id` bigint DEFAULT NULL COMMENT 'Planned classroom ID',
   `planned_start_at` datetime(3) NOT NULL COMMENT 'Planned start time',
   `planned_end_at` datetime(3) NOT NULL COMMENT 'Planned end time',
   `planned_units` int NOT NULL COMMENT 'Planned units',
   `hourly_rate_snapshot` decimal(10,2) DEFAULT NULL COMMENT 'Teacher hourly pay-rate snapshot copied from schedule/allocation',
   `planning_status` varchar(32) NOT NULL DEFAULT 'SCHEDULED' COMMENT 'Planning status: SCHEDULED/ADJUSTED/CANCELLED/MERGED',
+  `course_holiday_id` bigint DEFAULT NULL COMMENT 'Course holiday that cancelled this occurrence',
+  `holiday_previous_status` varchar(32) DEFAULT NULL COMMENT 'Occurrence status before holiday cancellation',
   `source_occurrence_id` bigint DEFAULT NULL COMMENT 'Source occurrence ID used for makeup lessons or adjustments',
   `conflict_checked` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'Conflict check completed: 0=no, 1=yes',
   `notes` varchar(500) DEFAULT NULL COMMENT 'Notes',
@@ -744,7 +777,9 @@ CREATE TABLE `lesson_occurrence` (
   KEY `idx_occurrence_slot` (`schedule_slot_id`),
   KEY `idx_occurrence_source` (`source_occurrence_id`),
   KEY `idx_occurrence_class_group` (`class_group_id`),
+  KEY `idx_occurrence_course_holiday` (`course_holiday_id`),
   CONSTRAINT `fk_occurrence_class_group` FOREIGN KEY (`class_group_id`) REFERENCES `class_group` (`id`),
+  CONSTRAINT `fk_occurrence_course_holiday` FOREIGN KEY (`course_holiday_id`) REFERENCES `course_holiday` (`id`),
   CONSTRAINT `fk_occurrence_classroom` FOREIGN KEY (`planned_classroom_id`) REFERENCES `classroom` (`id`),
   CONSTRAINT `fk_occurrence_package` FOREIGN KEY (`package_id`) REFERENCES `course_package` (`id`),
   CONSTRAINT `fk_occurrence_rule` FOREIGN KEY (`schedule_rule_id`) REFERENCES `recurring_schedule_rule` (`id`),
@@ -1193,6 +1228,8 @@ CREATE TABLE `recurring_schedule_slot` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `rule_id` bigint NOT NULL COMMENT 'Rule ID',
   `teacher_id` bigint DEFAULT NULL COMMENT 'Teacher assigned to this recurring weekly slot',
+  `delivery_mode` varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE',
+  `classroom_id` bigint DEFAULT NULL COMMENT 'Classroom assigned to this weekly slot',
   `subject_name` varchar(128) DEFAULT NULL COMMENT 'Course/subject name taught in this recurring weekly slot',
   `weekday` tinyint NOT NULL COMMENT 'Weekday: 1-7',
   `start_time` time NOT NULL COMMENT 'Start time',
