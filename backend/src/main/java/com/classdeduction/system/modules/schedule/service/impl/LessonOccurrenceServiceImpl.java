@@ -665,7 +665,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         .eq(CoursePackageEntity::getTeachingMode, "ONE_ON_ONE")
                         .or()
                         .isNull(CoursePackageEntity::getTeachingMode))
-                .eq(CoursePackageEntity::getPackageStatus, "ACTIVE")
+                // 1 对 1 消课页同时承担待处理和历史查询；已完成/暂停/关闭课包只要有课次记录也必须可追溯。
+                .in(CoursePackageEntity::getPackageStatus, "ACTIVE", "PAUSED", "COMPLETED", "CLOSED")
                 .in(teacherId != null, CoursePackageEntity::getId, teacherPackageIds)
                 .eq(studentId != null, CoursePackageEntity::getStudentId, studentId)
                 .eq(safeQuery.getPackageId() != null, CoursePackageEntity::getId, safeQuery.getPackageId())
@@ -702,7 +703,17 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
             groupMembersByPackage = loadPrivateGroupMembersByPackage(packageIds);
         }
-        Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersForView = groupMembersByPackage;
+        Map<Long, List<LessonOccurrenceEntity>> occurrenceMap = loadOneOnOneOccurrenceMap(packageIds, safeQuery.getStartAt(), safeQuery.getEndAt());
+        Set<Long> packagesWithOccurrences = occurrenceMap.keySet();
+        packages = packages.stream()
+                .filter(coursePackage -> "ACTIVE".equals(coursePackage.getPackageStatus())
+                        || packagesWithOccurrences.contains(coursePackage.getId()))
+                .toList();
+        if (packages.isEmpty()) {
+            return Collections.emptyList();
+        }
+        packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
+        Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersForView = loadPrivateGroupMembersByPackage(packageIds);
         List<CoursePackageEntity> packagesForParticipantContext = new ArrayList<>(packages);
         Set<Long> relatedPackageIds = groupMembersForView.values().stream()
                 .flatMap(List::stream)
@@ -716,7 +727,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (!relatedPackageIds.isEmpty()) {
             packagesForParticipantContext.addAll(coursePackageMapper.selectBatchIds(relatedPackageIds));
         }
-        Map<Long, List<LessonOccurrenceEntity>> occurrenceMap = loadOneOnOneOccurrenceMap(packageIds, safeQuery.getStartAt(), safeQuery.getEndAt());
         Set<Long> occurrenceIds = occurrenceMap.values().stream()
                 .flatMap(List::stream)
                 .map(LessonOccurrenceEntity::getId)

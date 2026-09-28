@@ -532,10 +532,12 @@
 
     <el-dialog v-model="adjustDialogVisible" title="Adjust Lesson" width="560px" :close-on-click-modal="false" class="no-print">
       <p class="oo-form-hint">
-        Change only this lesson's time or teacher. The recurring schedule will not be changed.
+        {{ isTeacher
+          ? "Change this lesson's time. Only your own unconfirmed lesson can be adjusted."
+          : "Change only this lesson's time or teacher. The recurring schedule will not be changed." }}
       </p>
       <el-form label-width="110px">
-        <el-form-item label="Teacher">
+        <el-form-item v-if="!isTeacher" label="Teacher">
           <el-select
             v-model="adjustForm.teacherId"
             clearable
@@ -545,6 +547,9 @@
           >
             <el-option v-for="teacher in teacherOptions" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
           </el-select>
+        </el-form-item>
+        <el-form-item v-else label="Teacher">
+          <span>{{ displayResourceName(adjustLesson?.plannedTeacherName) }}</span>
         </el-form-item>
         <el-form-item label="Start Time" required>
           <el-date-picker
@@ -1295,14 +1300,14 @@ function clearSelection() {
 }
 
 function canAdminConfirm(row: OneOnOneLesson) {
-  if (!isAdmin.value || row.planningStatus === 'CANCELLED') return false;
+  if (!isAdmin.value || !canConfirmPackageLessons.value || row.planningStatus === 'CANCELLED') return false;
   if (row.confirmStage === 'CONFIRMED' || row.confirmStage === 'REJECTED') return false;
   if (row.confirmStage === 'PENDING_ADMIN') return Boolean(row.lessonRecordId);
   return isAwaitingTeacherConfirmation(row);
 }
 
 function canInitialConfirm(row: OneOnOneLesson) {
-  if (!isTeacher.value) return false;
+  if (!isTeacher.value || !canConfirmPackageLessons.value) return false;
   if (row.planningStatus === 'CANCELLED') return false;
   if (row.confirmStage === 'PENDING_ADMIN' || row.confirmStage === 'CONFIRMED') return false;
   if (row.resultStatus && row.confirmStage !== 'REJECTED') return false;
@@ -1318,7 +1323,8 @@ function isAwaitingTeacherConfirmation(row: OneOnOneLesson) {
 }
 
 function canAssignLessonResources(row: OneOnOneLesson) {
-  return row.planningStatus !== 'CANCELLED'
+  return activePackage.value?.packageStatus === 'ACTIVE'
+    && row.planningStatus !== 'CANCELLED'
     && row.confirmStage !== 'PENDING_ADMIN'
     && row.confirmStage !== 'CONFIRMED';
 }
@@ -1328,8 +1334,16 @@ function needsLessonResources(row: OneOnOneLesson) {
     && !row.plannedTeacherId;
 }
 
+const canConfirmPackageLessons = computed(() => {
+  const packageStatus = activePackage.value?.packageStatus;
+  return packageStatus === 'ACTIVE' || packageStatus === 'PAUSED';
+});
+
 function canAdjustLesson(row: OneOnOneLesson) {
-  return canManageLessonResources.value
+  const teacherOwnsLesson = isTeacher.value
+    && String(row.plannedTeacherId ?? '') === String(authStore.currentUser?.teacherId ?? '');
+  return activePackage.value?.packageStatus === 'ACTIVE'
+    && (canManageLessonResources.value || teacherOwnsLesson)
     && row.planningStatus !== 'CANCELLED'
     && row.confirmStage !== 'PENDING_ADMIN'
     && row.confirmStage !== 'CONFIRMED'
