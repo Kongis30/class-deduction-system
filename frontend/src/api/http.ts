@@ -30,7 +30,7 @@ function resolveAppPath(path: string): string {
 // 本地页面即使被直接以 file:// 打开，也必须只访问本机后端，避免误触线上数据。
 const apiBaseURL =
   import.meta.env.VITE_API_BASE_URL ??
-  (window.location.protocol === 'file:' ? 'http://127.0.0.1:8084/api' : '/api');
+  (window.location.protocol === 'file:' ? 'https://class.jinbesttutoring.com/api' : '/api');
 
 const http = axios.create({
   baseURL: apiBaseURL,
