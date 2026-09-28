@@ -20,6 +20,12 @@ public class RecurringScheduleSlotRequest {
     @Schema(description = "Teacher assigned to this slot")
     private Long teacherId;
 
+    @Schema(description = "Internal delivery mode: IN_PERSON or ONLINE")
+    private String deliveryMode;
+
+    @Schema(description = "Classroom assigned to this slot; null for online lessons")
+    private Long classroomId;
+
     @NotBlank(message = "Course/subject name is required for every slot")
     @Schema(description = "Course/subject name taught in this slot, e.g. History, Chemistry")
     private String subjectName;

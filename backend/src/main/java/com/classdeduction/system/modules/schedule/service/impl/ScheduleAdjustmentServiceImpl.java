@@ -332,6 +332,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private void applyRequestedPlanningFields(LessonOccurrenceEntity target, LessonOccurrenceEntity source, ScheduleAdjustmentRequest request) {
         target.setPlannedTeacherId(request.getPlannedTeacherId() != null ? request.getPlannedTeacherId() : source.getPlannedTeacherId());
         target.setPlannedClassroomId(request.getPlannedClassroomId() != null ? request.getPlannedClassroomId() : source.getPlannedClassroomId());
+        target.setDeliveryMode(target.getPlannedClassroomId() == null
+                ? source.getDeliveryMode() : "IN_PERSON");
         target.setPlannedStartAt(request.getPlannedStartAt() != null ? request.getPlannedStartAt() : source.getPlannedStartAt());
         target.setPlannedEndAt(request.getPlannedEndAt() != null ? request.getPlannedEndAt() : source.getPlannedEndAt());
         target.setPlannedUnits(request.getPlannedUnits() != null ? request.getPlannedUnits() : source.getPlannedUnits());
@@ -542,6 +544,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         adjusted.setPlanningStatus("ADJUSTED");
         adjusted.setPlannedTeacherId(item.getPlannedTeacherId());
         adjusted.setPlannedClassroomId(item.getPlannedClassroomId());
+        adjusted.setDeliveryMode(item.getPlannedClassroomId() == null ? source.getDeliveryMode() : "IN_PERSON");
         adjusted.setPlannedStartAt(item.getPlannedStartAt());
         adjusted.setPlannedEndAt(item.getPlannedEndAt());
         adjusted.setPlannedUnits(item.getPlannedUnits());
@@ -575,6 +578,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         created.setConflictChecked(1);
         created.setPlannedTeacherId(item.getPlannedTeacherId());
         created.setPlannedClassroomId(item.getPlannedClassroomId());
+        created.setDeliveryMode(item.getPlannedClassroomId() == null ? null : "IN_PERSON");
         created.setPlannedStartAt(item.getPlannedStartAt());
         created.setPlannedEndAt(item.getPlannedEndAt());
         created.setPlannedUnits(item.getPlannedUnits());
@@ -1153,6 +1157,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         snapshot.put("studentId", occurrence.getStudentId());
         snapshot.put("occurrenceType", occurrence.getOccurrenceType());
         snapshot.put("plannedTeacherId", occurrence.getPlannedTeacherId());
+        snapshot.put("deliveryMode", occurrence.getDeliveryMode());
         snapshot.put("plannedClassroomId", occurrence.getPlannedClassroomId());
         snapshot.put("plannedStartAt", occurrence.getPlannedStartAt());
         snapshot.put("plannedEndAt", occurrence.getPlannedEndAt());
@@ -1190,6 +1195,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 .scheduleSlotId(occurrence.getScheduleSlotId())
                 .occurrenceType(occurrence.getOccurrenceType())
                 .plannedTeacherId(occurrence.getPlannedTeacherId())
+                .deliveryMode(occurrence.getDeliveryMode())
                 .plannedClassroomId(occurrence.getPlannedClassroomId())
                 .plannedStartAt(occurrence.getPlannedStartAt())
                 .plannedEndAt(occurrence.getPlannedEndAt())

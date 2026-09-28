@@ -68,7 +68,11 @@
             class="product-table"
             :show-empty="true"
           >
-            <el-table-column min-width="170">
+            <el-table-column
+              min-width="170"
+              sortable
+              :sort-method="compareCourseNames"
+            >
               <template #header>
                 <div class="table-header-filter">
                   <span>Course</span>
@@ -91,20 +95,20 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Student" min-width="140">
+            <el-table-column label="Student" min-width="140" sortable :sort-method="compareStudentNames">
               <template #default="{ row }">
                 <span>{{ row.studentName ?? '—' }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="Original price" min-width="110" align="right">
+            <el-table-column label="Original price" min-width="110" align="right" sortable :sort-method="compareOriginalPrices">
               <template #default="{ row }">${{ row.originalAmount?.toFixed(2) }}</template>
             </el-table-column>
-            <el-table-column label="Discount" min-width="90" align="right">
+            <el-table-column label="Discount" min-width="90" align="right" sortable :sort-method="compareDiscounts">
               <template #default="{ row }">
                 <span class="discount-text">-${{ row.discountAmount?.toFixed(2) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="Received" min-width="100" align="right">
+            <el-table-column label="Received" min-width="100" align="right" sortable :sort-method="compareReceivedAmounts">
               <template #default="{ row }">
                 <strong>${{ row.receivedAmount?.toFixed(2) }}</strong>
               </template>
@@ -115,6 +119,7 @@
                   <span>Payment</span>
                   <el-select
                     v-model="filters.paymentStatus"
+                    class="table-header-filter-select"
                     size="small"
                     placeholder="All"
                     clearable
@@ -141,6 +146,7 @@
                   <span>Status</span>
                   <el-select
                     v-model="filters.orderStatus"
+                    class="table-header-filter-select"
                     size="small"
                     placeholder="All"
                     clearable
@@ -2046,6 +2052,27 @@ function paymentStatusLabel(status: string) {
   return map[status] ?? status;
 }
 
+// 1-on-1 列表在当前已加载页内排序；共享课包已先按学生拆成行，因此排序使用行上展示的学生金额。
+function compareCourseNames(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return (left.courseProductName ?? '').localeCompare(right.courseProductName ?? '', undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareStudentNames(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return (left.studentName ?? '').localeCompare(right.studentName ?? '', undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function compareOriginalPrices(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return Number(left.originalAmount ?? 0) - Number(right.originalAmount ?? 0);
+}
+
+function compareDiscounts(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return Number(right.discountAmount ?? 0) - Number(left.discountAmount ?? 0);
+}
+
+function compareReceivedAmounts(left: EnrollmentOrderItem, right: EnrollmentOrderItem): number {
+  return Number(left.receivedAmount ?? 0) - Number(right.receivedAmount ?? 0);
+}
+
 // ─── Load Data ──────────────────────────────────────
 async function loadData() {
   const requestId = ++latestOrderListRequest;
@@ -3096,6 +3123,45 @@ void initializePage();
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid #ebeef5;
+}
+
+.product-table:not(.group-table) :deep(.table-header-filter--center) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+}
+
+.product-table:not(.group-table) :deep(.table-header-filter--center > span) {
+  color: #41556d;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 14px;
+  letter-spacing: 0.015em;
+}
+
+.product-table:not(.group-table) :deep(.table-header-filter-select) {
+  width: min(100%, 168px);
+}
+
+.product-table:not(.group-table) :deep(.table-header-filter-select .el-select__wrapper) {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 0 0 1px #d9e2ec inset, 0 1px 2px rgb(26 45 68 / 5%);
+  transition: box-shadow 0.16s ease, background-color 0.16s ease;
+}
+
+.product-table:not(.group-table) :deep(.table-header-filter-select:hover .el-select__wrapper) {
+  background: #fbfdff;
+  box-shadow: 0 0 0 1px #aebfd2 inset, 0 1px 2px rgb(26 45 68 / 6%);
+}
+
+.product-table:not(.group-table) :deep(.table-header-filter-select.is-focused .el-select__wrapper) {
+  box-shadow: 0 0 0 1px #6b9ce8 inset, 0 0 0 3px rgb(64 128 224 / 10%);
 }
 
 .enrollment-row-actions {

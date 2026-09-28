@@ -332,6 +332,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getClassGroupId, classGroupId)
                         .isNull(LessonOccurrenceEntity::getPlannedClassroomId)
+                        .and(wrapper -> wrapper.ne(LessonOccurrenceEntity::getDeliveryMode, "ONLINE")
+                                .or().isNull(LessonOccurrenceEntity::getDeliveryMode))
                         .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                         .ge(LessonOccurrenceEntity::getPlannedEndAt, now)
                         .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
@@ -340,6 +342,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toSet());
         for (LessonOccurrenceEntity occurrence : occurrences) {
             occurrence.setPlannedClassroomId(classroom.getId());
+            occurrence.setDeliveryMode("IN_PERSON");
         }
         ensureNoInternalClassroomConflicts(occurrences);
         ensureNoClassroomBackfillConflicts(occurrences, occurrenceIds);
@@ -364,11 +367,15 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if ("CANCELLED".equals(occurrence.getPlanningStatus())) {
             throw new BusinessException("LESSON_OCCURRENCE_CANCELLED", "Cancelled lesson occurrences cannot be backfilled.");
         }
+        if ("ONLINE".equals(occurrence.getDeliveryMode())) {
+            throw new BusinessException("ONLINE_CLASSROOM_NOT_REQUIRED", "Online lessons do not need a classroom assignment.");
+        }
         if (occurrence.getPlannedClassroomId() != null) {
             throw new BusinessException("CLASSROOM_ALREADY_ASSIGNED", "This lesson occurrence already has a classroom.");
         }
 
         occurrence.setPlannedClassroomId(classroom.getId());
+        occurrence.setDeliveryMode("IN_PERSON");
         ensureNoClassroomBackfillConflicts(List.of(occurrence), Set.of(occurrence.getId()));
         occurrence.setConflictChecked(1);
         requireOccurrenceUpdate(lessonOccurrenceMapper.updateById(occurrence));
@@ -843,8 +850,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .occurrenceType(item.getOccurrenceType())
                             .plannedTeacherId(item.getPlannedTeacherId())
                             .plannedTeacherName(teacher == null ? null : teacher.getTeacherName())
+                            .deliveryMode(item.getDeliveryMode())
                             .plannedClassroomId(item.getPlannedClassroomId())
-                            .plannedClassroomName(classroom == null ? null : classroom.getRoomName())
+                            .plannedClassroomName("ONLINE".equals(item.getDeliveryMode()) ? "Online" : classroom == null ? null : classroom.getRoomName())
                             .plannedStartAt(item.getPlannedStartAt())
                             .plannedEndAt(item.getPlannedEndAt())
                             .plannedUnits(item.getPlannedUnits())
@@ -1492,6 +1500,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         }
         Long actualTeacherId = record == null ? null : record.getActualTeacherId();
         Long plannedClassroomId = record == null ? occurrence.getPlannedClassroomId() : record.getPlannedClassroomId();
+        String deliveryMode = occurrence.getDeliveryMode();
         Long actualClassroomId = record == null ? null : record.getActualClassroomId();
         TeacherEntity plannedTeacher = plannedTeacherId == null ? null : teacherMap.get(plannedTeacherId);
         TeacherEntity actualTeacher = actualTeacherId == null ? null : teacherMap.get(actualTeacherId);
@@ -1506,8 +1515,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .plannedTeacherId(plannedTeacherId)
                 .plannedTeacherName(plannedTeacher == null ? null : plannedTeacher.getTeacherName())
                 .subjectName(resolveOccurrenceSubjectName(occurrence, recurringSlotMap))
+                .deliveryMode(deliveryMode)
                 .plannedClassroomId(plannedClassroomId)
-                .plannedClassroomName(plannedClassroom == null ? null : plannedClassroom.getRoomName())
+                .plannedClassroomName("ONLINE".equals(deliveryMode) ? "Online" : plannedClassroom == null ? null : plannedClassroom.getRoomName())
                 .plannedStartAt(occurrence.getPlannedStartAt())
                 .plannedEndAt(occurrence.getPlannedEndAt())
                 .plannedUnits(UnitConverter.toHoursDecimal(occurrence.getPlannedUnits()))

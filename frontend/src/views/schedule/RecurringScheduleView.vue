@@ -188,8 +188,8 @@
                     <span>{{ slotTeacherNames(currentRule) }}</span>
                   </div>
                   <div class="summary-field">
-                    <label>Classroom</label>
-                    <span>{{ currentRule.defaultClassroomName ?? '—' }}</span>
+                    <label>Classrooms</label>
+                    <span>{{ slotClassroomNames(currentRule) }}</span>
                   </div>
                   <div class="summary-field">
                     <label>Period</label>
@@ -302,34 +302,6 @@
         </div>
 
         <el-form ref="editFormRef" :model="editForm" :rules="editFormRules" label-width="130px">
-          <el-form-item label="Classroom" prop="defaultClassroomId">
-            <el-select
-              v-model="editForm.defaultClassroomId"
-              popper-class="classroom-campus-picker"
-              placeholder="Select classroom"
-              clearable
-              filterable
-              style="width: 100%;"
-            >
-              <el-option-group
-                v-for="group in classroomOptionGroups"
-                :key="group.campusKey"
-                :label="group.campusName"
-                class="classroom-campus-group"
-              >
-                <el-option
-                  v-for="c in group.classrooms"
-                  :key="c.id"
-                  :label="classroomSelectLabel(c)"
-                  :value="c.id"
-                >
-                  <div class="classroom-select-option">
-                    <span>{{ c.roomName }}</span>
-                  </div>
-                </el-option>
-              </el-option-group>
-            </el-select>
-          </el-form-item>
           <el-form-item label="Start Date" prop="startDate">
             <el-date-picker
               v-model="editForm.startDate"
@@ -390,6 +362,29 @@
               placeholder="Select teacher"
             >
               <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+            </el-select>
+            <el-select
+              v-model="slot.classroomSelection"
+              popper-class="classroom-campus-picker"
+              filterable
+              placeholder="Select classroom or Online"
+            >
+              <el-option label="Online" value="ONLINE" />
+              <el-option-group
+                v-for="group in classroomOptionGroups"
+                :key="group.campusKey"
+                :label="group.campusName"
+                class="classroom-campus-group"
+              >
+                <el-option
+                  v-for="c in group.classrooms"
+                  :key="c.id"
+                  :label="classroomSelectLabel(c)"
+                  :value="`ROOM:${c.id}`"
+                >
+                  <div class="classroom-select-option"><span>{{ c.roomName }}</span></div>
+                </el-option>
+              </el-option-group>
             </el-select>
             <el-input
               v-model="slot.subjectName"
@@ -753,8 +748,8 @@
               <span>{{ slotTeacherNames(detailData) }}</span>
             </div>
             <div class="detail-field">
-              <label>Classroom</label>
-              <span>{{ detailData.defaultClassroomName ?? '—' }}</span>
+              <label>Classrooms</label>
+              <span>{{ slotClassroomNames(detailData) }}</span>
             </div>
             <div class="detail-field">
               <label>Generated Lessons</label>
@@ -953,6 +948,22 @@ function slotTeacherNames(rule: { slots?: Array<{ teacherId?: EntityId }> }): st
     .map(slot => teachers.value.find(teacher => String(teacher.id) === String(slot.teacherId))?.teacherName)
     .filter((name): name is string => Boolean(name));
   return [...new Set(teacherNames)].join(', ') || '—';
+}
+
+function slotClassroomNames(rule: {
+  slots?: Array<{ deliveryMode?: string; classroomId?: EntityId }>;
+  defaultClassroomId?: EntityId;
+  defaultClassroomName?: string;
+}): string {
+  const names = (rule.slots ?? []).map(slot => {
+    if (slot.deliveryMode === 'ONLINE') return 'Online';
+    const classroomId = slot.classroomId ?? rule.defaultClassroomId;
+    if (classroomId == null) return null;
+    return classrooms.value.find(classroom => String(classroom.id) === String(classroomId))?.roomName
+      ?? (String(classroomId) === String(rule.defaultClassroomId) ? rule.defaultClassroomName : null)
+      ?? 'Classroom';
+  }).filter((name): name is string => Boolean(name));
+  return [...new Set(names)].join(' · ') || '—';
 }
 
 // ─── All package rules (preloaded per student) ──
@@ -1309,11 +1320,10 @@ const selectedParticipants = computed<ScheduleParticipant[]>(() => {
 
 // 编辑弹窗的状态必须先于 editWeekMonday 计算属性声明；初始化 watch 会立即读取该计算属性。
 const editForm = reactive({
-  defaultClassroomId: undefined as EntityId | undefined,
   ruleStatus: undefined as string | undefined,
   startDate: '',
   notes: '',
-  slots: [] as Array<SlotDef & { teacherId?: EntityId; subjectName?: string; allocatedHours?: number }>,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string; subjectName?: string; allocatedHours?: number }>,
 });
 
 const editFormRules: FormRules = {
@@ -1736,7 +1746,6 @@ async function openCreateDialog() {
   editingRuleId.value = null;
   editFormRef.value?.resetFields();
   Object.assign(editForm, {
-    defaultClassroomId: undefined,
     ruleStatus: undefined,
     startDate: '',
     notes: '',
@@ -1752,12 +1761,16 @@ async function openEditDialog() {
   editingRuleId.value = detail.id;
   editFormRef.value?.resetFields();
   Object.assign(editForm, {
-    defaultClassroomId: detail.defaultClassroomId,
     ruleStatus: detail.ruleStatus,
     startDate: detail.startDate,
     notes: detail.notes || '',
     slots: (detail.slots || []).map((s: any) => ({
       teacherId: s.teacherId,
+      classroomSelection: s.deliveryMode === 'ONLINE'
+        ? 'ONLINE'
+        : s.classroomId != null || detail.defaultClassroomId != null
+          ? `ROOM:${s.classroomId ?? detail.defaultClassroomId}`
+          : '',
       subjectName: s.subjectName,
       weekday: s.weekday,
       startTime: s.startTime,
@@ -1798,6 +1811,10 @@ async function submitCreateForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
+    if (editForm.slots.some(slot => !slot.classroomSelection)) {
+      ElMessage.warning('Choose a classroom or Online for every time slot.');
+      return;
+    }
     if (allocationExceedsRemaining.value) {
       ElMessage.warning('Allocated hours exceed the remaining package hours. Please reduce the allocation.');
       return;
@@ -1807,11 +1824,12 @@ async function submitCreateForm() {
     try {
       await createRecurringScheduleRule({
         packageId: selectedPackageId.value!,
-        defaultClassroomId: editForm.defaultClassroomId,
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
           teacherId: s.teacherId,
+          deliveryMode: s.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
+          classroomId: s.classroomSelection?.startsWith('ROOM:') ? s.classroomSelection.slice(5) : undefined,
           subjectName: s.subjectName || undefined,
           weekday: s.weekday,
           startTime: s.startTime,
@@ -1840,6 +1858,10 @@ async function submitEditForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
+    if (editForm.slots.some(slot => !slot.classroomSelection)) {
+      ElMessage.warning('Choose a classroom or Online for every time slot.');
+      return;
+    }
     if (allocationExceedsRemaining.value) {
       ElMessage.warning('Allocated hours exceed the remaining package hours. Please reduce the allocation.');
       return;
@@ -1848,12 +1870,13 @@ async function submitEditForm() {
     submitting.value = true;
     try {
       const result = await updateRecurringScheduleRule(editingRuleId.value!, {
-        defaultClassroomId: editForm.defaultClassroomId,
         ruleStatus: editForm.ruleStatus,
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
           teacherId: s.teacherId,
+          deliveryMode: s.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
+          classroomId: s.classroomSelection?.startsWith('ROOM:') ? s.classroomSelection.slice(5) : undefined,
           subjectName: s.subjectName || undefined,
           weekday: s.weekday,
           startTime: s.startTime,
@@ -2687,7 +2710,7 @@ function disabledPastDate(date: Date) {
 
 .slot-teacher-row {
   display: grid;
-  grid-template-columns: minmax(170px, 1.1fr) minmax(160px, 1fr) minmax(150px, 1fr) 120px auto;
+  grid-template-columns: minmax(140px, 1fr) repeat(3, minmax(135px, 1fr)) 110px auto;
   align-items: center;
   gap: 12px;
   padding: 8px 10px;

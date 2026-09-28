@@ -139,13 +139,18 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Page<RecurringScheduleRuleEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
         List<Long> matchedPackageIds = findMatchedPackageIds(query.getKeyword());
         List<Long> matchedRuleIds = findMatchedRuleIdsBySlotTeacher(query.getTeacherId());
+        List<Long> matchedClassroomRuleIds = query.getClassroomId() == null
+                ? Collections.emptyList() : findMatchedRuleIdsByClassroom(query.getClassroomId());
+        if (query.getClassroomId() != null && matchedClassroomRuleIds.isEmpty()) {
+            return PageResponse.empty(query.getPageNum(), query.getPageSize());
+        }
         LambdaQueryWrapper<RecurringScheduleRuleEntity> wrapper = new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                 .and(StringUtils.hasText(query.getKeyword()), nested -> nested
                         .like(RecurringScheduleRuleEntity::getNotes, query.getKeyword())
                         .or(!matchedPackageIds.isEmpty(), inner -> inner.in(RecurringScheduleRuleEntity::getPackageId, matchedPackageIds)))
                 .eq(StringUtils.hasText(query.getRuleStatus()), RecurringScheduleRuleEntity::getRuleStatus, query.getRuleStatus())
                 .in(query.getTeacherId() != null, RecurringScheduleRuleEntity::getId, matchedRuleIds)
-                .eq(query.getClassroomId() != null, RecurringScheduleRuleEntity::getDefaultClassroomId, query.getClassroomId())
+                .in(query.getClassroomId() != null, RecurringScheduleRuleEntity::getId, matchedClassroomRuleIds)
                 .eq(query.getPackageId() != null, RecurringScheduleRuleEntity::getPackageId, query.getPackageId())
                 .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt);
         IPage<RecurringScheduleRuleEntity> result = recurringScheduleRuleMapper.selectPage(page, wrapper);
@@ -244,6 +249,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         ClassroomEntity classroom = resolveClassroom(request.getDefaultClassroomId());
         validateRuleDates(request);
         validateSlots(request.getSlots());
+        normalizeSlotClassrooms(request.getSlots(), classroom == null ? null : classroom.getId());
         validateSlotTeachers(request.getSlots());
         validateSlotAllocations(request.getSlots(), coursePackage);
 
@@ -261,6 +267,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         List<RecurringScheduleSlotEntity> slots = request.getSlots().stream()
                 .map(slotRequest -> toSlotEntity(rule.getId(), slotRequest))
                 .toList();
+        rule.setDefaultClassroomId(firstSlotClassroomId(slots));
+        recurringScheduleRuleMapper.updateById(rule);
         slots.forEach(recurringScheduleSlotMapper::insert);
 
         List<LessonOccurrenceEntity> generatedOccurrences = buildOccurrences(rule, slots, coursePackage, student.getId());
@@ -268,7 +276,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Map<Long, LessonRecordEntity> recordByOccurrenceId = listActiveRecordsByOccurrenceId(existingOccurrences);
         generatedOccurrences = removeOccurrencesOverlappingPreserved(generatedOccurrences, existingOccurrences);
         generatedOccurrences = capGeneratedOccurrencesToPackageBalance(generatedOccurrences, existingOccurrences, recordByOccurrenceId, coursePackage);
-        ensureNoConflictsForPrivateLessonGroup(generatedOccurrences, student.getId(), rule.getDefaultClassroomId(), privateLessonGroupId);
+        ensureNoConflictsForPrivateLessonGroup(generatedOccurrences, student.getId(), privateLessonGroupId);
         generatedOccurrences.forEach(lessonOccurrenceMapper::insert);
 
         LocalDateTime firstStart = generatedOccurrences.stream().map(LessonOccurrenceEntity::getPlannedStartAt).min(LocalDateTime::compareTo).orElse(null);
@@ -338,7 +346,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return 0;
         }
 
-        ensureNoConflictsForPrivateLessonGroup(toInsert, coursePackage.getStudentId(), rule.getDefaultClassroomId(), rule.getPrivateLessonGroupId());
+        ensureNoConflictsForPrivateLessonGroup(toInsert, coursePackage.getStudentId(), rule.getPrivateLessonGroupId());
         toInsert.forEach(lessonOccurrenceMapper::insert);
         return toInsert.size();
     }
@@ -366,15 +374,17 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         StudentEntity student = requireStudent(coursePackage.getStudentId());
 
         // c) Resolve teacher and classroom: use request value if provided, otherwise keep existing
+        boolean needsLegacyDefaultClassroom = request.getSlots() != null && request.getSlots().stream()
+                .anyMatch(slot -> slot.getDeliveryMode() == null && slot.getClassroomId() == null);
         ClassroomEntity classroom = request.getDefaultClassroomId() != null
                 ? resolveClassroom(request.getDefaultClassroomId())
-                : (existingRule.getDefaultClassroomId() != null
-                        ? resolveClassroom(existingRule.getDefaultClassroomId())
-                        : null);
+                : (needsLegacyDefaultClassroom && existingRule.getDefaultClassroomId() != null
+                        ? resolveClassroom(existingRule.getDefaultClassroomId()) : null);
 
         // d) Validate dates and slots
         validateUpdateRuleDates(request);
         validateSlots(request.getSlots());
+        normalizeSlotClassrooms(request.getSlots(), classroom == null ? null : classroom.getId());
         validateSlotTeachers(request.getSlots());
         if (validateRemainingAllocation) {
             validateSlotAllocations(request.getSlots(), coursePackage);
@@ -451,6 +461,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         List<RecurringScheduleSlotEntity> newSlots = request.getSlots().stream()
                 .map(slotRequest -> toSlotEntity(id, slotRequest))
                 .toList();
+        existingRule.setDefaultClassroomId(firstSlotClassroomId(newSlots));
+        recurringScheduleRuleMapper.updateById(existingRule);
         newSlots.forEach(recurringScheduleSlotMapper::insert);
 
         // i) Build and insert new occurrences only for an active package and rule.
@@ -465,7 +477,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
         // j) Conflict check excluding this rule's preserved occurrences
         ensureNoConflictsExcludingPrivateLessonGroup(newOccurrences, student.getId(),
-                existingRule.getDefaultClassroomId(), id, existingRule.getPrivateLessonGroupId());
+                id, existingRule.getPrivateLessonGroupId());
 
         newOccurrences.forEach(lessonOccurrenceMapper::insert);
 
@@ -513,6 +525,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private RecurringScheduleSlotRequest toSlotRequest(RecurringScheduleSlotEntity slot) {
         RecurringScheduleSlotRequest request = new RecurringScheduleSlotRequest();
         request.setTeacherId(slot.getTeacherId());
+        request.setDeliveryMode(slot.getDeliveryMode());
+        request.setClassroomId(slot.getClassroomId());
         request.setSubjectName(slot.getSubjectName());
         request.setWeekday(slot.getWeekday());
         request.setStartTime(slot.getStartTime());
@@ -619,7 +633,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     }
 
     private void ensureNoConflictsExcludingRule(List<LessonOccurrenceEntity> candidates,
-                                                Long studentId, Long classroomId, Long excludeRuleId) {
+                                                Long studentId, Long excludeRuleId) {
         if (candidates.isEmpty()) {
             return;
         }
@@ -638,8 +652,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .ne(LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
-        List<LessonOccurrenceEntity> classroomOccurrences = classroomId == null ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPlannedClassroomId, classroomId)
+        Set<Long> classroomIds = candidates.stream().map(LessonOccurrenceEntity::getPlannedClassroomId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> classroomOccurrences = classroomIds.isEmpty() ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPlannedClassroomId, classroomIds)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .ne(LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
@@ -662,10 +678,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 details.add(buildConflictDetail("TEACHER", candidateTeacherId,
                         resolveTeacherName(candidateTeacherId), teacherConflict));
             }
-            LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
-            if (classroomId != null && classroomConflict != null) {
+            Long candidateClassroomId = candidate.getPlannedClassroomId();
+            LessonOccurrenceEntity classroomConflict = candidateClassroomId == null ? null : firstOverlap(candidate, classroomOccurrences.stream()
+                    .filter(existing -> Objects.equals(existing.getPlannedClassroomId(), candidateClassroomId)).toList());
+            if (candidateClassroomId != null && classroomConflict != null) {
                 conflicts.add("Classroom conflict at " + candidate.getPlannedStartAt());
-                details.add(buildConflictDetail("CLASSROOM", classroomId, resolveClassroomName(classroomId), classroomConflict));
+                details.add(buildConflictDetail("CLASSROOM", candidateClassroomId, resolveClassroomName(candidateClassroomId), classroomConflict));
             }
             if (conflicts.size() >= 3) {
                 break;
@@ -679,9 +697,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     /** 共享私教课只生成一条 occurrence，但每个成员都必须通过学生冲突校验。 */
     private void ensureNoConflictsForPrivateLessonGroup(List<LessonOccurrenceEntity> candidates,
                                                         Long primaryStudentId,
-                                                        Long classroomId,
                                                         Long privateLessonGroupId) {
-        ensureNoConflicts(candidates, primaryStudentId, classroomId);
+        ensureNoConflicts(candidates, primaryStudentId);
         if (privateLessonGroupId == null) {
             return;
         }
@@ -690,16 +707,15 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 continue;
             }
             ensureNoConflicts(copyCandidatesForStudent(candidates, member.getStudentId()),
-                    member.getStudentId(), classroomId);
+                    member.getStudentId());
         }
     }
 
     private void ensureNoConflictsExcludingPrivateLessonGroup(List<LessonOccurrenceEntity> candidates,
                                                               Long primaryStudentId,
-                                                              Long classroomId,
                                                               Long excludeRuleId,
                                                               Long privateLessonGroupId) {
-        ensureNoConflictsExcludingRule(candidates, primaryStudentId, classroomId, excludeRuleId);
+        ensureNoConflictsExcludingRule(candidates, primaryStudentId, excludeRuleId);
         if (privateLessonGroupId == null) {
             return;
         }
@@ -708,7 +724,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 continue;
             }
             ensureNoConflictsExcludingRule(copyCandidatesForStudent(candidates, member.getStudentId()),
-                    member.getStudentId(), classroomId, excludeRuleId);
+                    member.getStudentId(), excludeRuleId);
         }
     }
 
@@ -720,6 +736,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             copy.setStudentId(studentId);
             copy.setPrivateLessonGroupId(candidate.getPrivateLessonGroupId());
             copy.setPlannedTeacherId(candidate.getPlannedTeacherId());
+            copy.setDeliveryMode(candidate.getDeliveryMode());
             copy.setPlannedClassroomId(candidate.getPlannedClassroomId());
             copy.setPlannedStartAt(candidate.getPlannedStartAt());
             copy.setPlannedEndAt(candidate.getPlannedEndAt());
@@ -877,10 +894,36 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return classroom;
     }
 
+    /** 保存每个时段明确的线上/线下状态；旧客户端仍可通过规则默认教室补齐。 */
+    private void normalizeSlotClassrooms(List<RecurringScheduleSlotRequest> slots, Long legacyDefaultClassroomId) {
+        for (RecurringScheduleSlotRequest slot : slots) {
+            String mode = slot.getDeliveryMode();
+            if ("ONLINE".equalsIgnoreCase(mode)) {
+                if (slot.getClassroomId() != null) {
+                    throw new BusinessException("INVALID_SLOT_CLASSROOM", "Online slots cannot have a classroom.");
+                }
+                slot.setDeliveryMode("ONLINE");
+                continue;
+            }
+            if (mode != null && !"IN_PERSON".equalsIgnoreCase(mode)) {
+                throw new BusinessException("INVALID_DELIVERY_MODE", "Choose a classroom or Online for every slot.");
+            }
+            Long classroomId = slot.getClassroomId() != null ? slot.getClassroomId() : legacyDefaultClassroomId;
+            if (classroomId == null) {
+                throw new BusinessException("SLOT_CLASSROOM_REQUIRED", "Choose a classroom or Online for every slot.");
+            }
+            ClassroomEntity classroom = resolveClassroom(classroomId);
+            slot.setDeliveryMode("IN_PERSON");
+            slot.setClassroomId(classroom.getId());
+        }
+    }
+
     private RecurringScheduleSlotEntity toSlotEntity(Long ruleId, RecurringScheduleSlotRequest request) {
         RecurringScheduleSlotEntity entity = new RecurringScheduleSlotEntity();
         entity.setRuleId(ruleId);
         entity.setTeacherId(request.getTeacherId());
+        entity.setDeliveryMode(request.getDeliveryMode());
+        entity.setClassroomId(request.getClassroomId());
         entity.setSubjectName(request.getSubjectName());
         entity.setWeekday(request.getWeekday());
         entity.setStartTime(request.getStartTime());
@@ -889,6 +932,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         entity.setAllocatedUnits(request.getAllocatedUnits());
         entity.setSlotStatus("ACTIVE");
         return entity;
+    }
+
+    private Long firstSlotClassroomId(List<RecurringScheduleSlotEntity> slots) {
+        return slots.stream().map(RecurringScheduleSlotEntity::getClassroomId)
+                .filter(Objects::nonNull).findFirst().orElse(null);
     }
 
     /** 按时段分配生成课次，不设固定日历上限；调用方随后按课包余额截断。 */
@@ -931,7 +979,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(slot.getTeacherId());
-                occurrence.setPlannedClassroomId(rule.getDefaultClassroomId());
+                boolean legacySlot = slot.getDeliveryMode() == null;
+                Long classroomId = slot.getClassroomId() != null ? slot.getClassroomId()
+                        : (legacySlot ? rule.getDefaultClassroomId() : null);
+                occurrence.setDeliveryMode(legacySlot && classroomId != null ? "IN_PERSON" : slot.getDeliveryMode());
+                occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(start);
                 // 末次课不足整次时按余数收尾，结束时间随之缩短（每 unit = 30 分钟）。
                 occurrence.setPlannedEndAt(start.plusMinutes(thisUnits * 30L));
@@ -1047,8 +1099,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
      * 冲突检测一次性拉取时间窗口内相关课次，避免按课次逐条扫库。
      */
     private void ensureNoConflicts(List<LessonOccurrenceEntity> generatedOccurrences,
-                                   Long studentId,
-                                   Long classroomId) {
+                                   Long studentId) {
         if (generatedOccurrences.isEmpty()) {
             return;
         }
@@ -1066,8 +1117,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
-        List<LessonOccurrenceEntity> classroomOccurrences = classroomId == null ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPlannedClassroomId, classroomId)
+        Set<Long> classroomIds = generatedOccurrences.stream().map(LessonOccurrenceEntity::getPlannedClassroomId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> classroomOccurrences = classroomIds.isEmpty() ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPlannedClassroomId, classroomIds)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
@@ -1089,10 +1142,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 details.add(buildConflictDetail("TEACHER", candidateTeacherId,
                         resolveTeacherName(candidateTeacherId), teacherConflict));
             }
-            LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
-            if (classroomId != null && classroomConflict != null) {
+            Long candidateClassroomId = candidate.getPlannedClassroomId();
+            LessonOccurrenceEntity classroomConflict = candidateClassroomId == null ? null : firstOverlap(candidate, classroomOccurrences.stream()
+                    .filter(existing -> Objects.equals(existing.getPlannedClassroomId(), candidateClassroomId)).toList());
+            if (candidateClassroomId != null && classroomConflict != null) {
                 conflicts.add("Classroom conflict at " + candidate.getPlannedStartAt());
-                details.add(buildConflictDetail("CLASSROOM", classroomId, resolveClassroomName(classroomId), classroomConflict));
+                details.add(buildConflictDetail("CLASSROOM", candidateClassroomId, resolveClassroomName(candidateClassroomId), classroomConflict));
             }
             if (conflicts.size() >= 3) {
                 break;
@@ -1285,10 +1340,29 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .toList();
     }
 
+    /** 教室筛选同时覆盖逐时段教室与旧规则默认教室，供规则列表分页使用。 */
+    private List<Long> findMatchedRuleIdsByClassroom(Long classroomId) {
+        Set<Long> ruleIds = recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .eq(RecurringScheduleSlotEntity::getClassroomId, classroomId))
+                .stream()
+                .map(RecurringScheduleSlotEntity::getRuleId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        recurringScheduleRuleMapper.selectList(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .eq(RecurringScheduleRuleEntity::getDefaultClassroomId, classroomId))
+                .stream()
+                .map(RecurringScheduleRuleEntity::getId)
+                .filter(Objects::nonNull)
+                .forEach(ruleIds::add);
+        return List.copyOf(ruleIds);
+    }
+
     private RecurringScheduleSlotVO toSlotVO(RecurringScheduleSlotEntity slot) {
         return RecurringScheduleSlotVO.builder()
                 .id(slot.getId())
                 .teacherId(slot.getTeacherId())
+                .deliveryMode(slot.getDeliveryMode())
+                .classroomId(slot.getClassroomId())
                 .subjectName(slot.getSubjectName())
                 .weekday(slot.getWeekday())
                 .startTime(slot.getStartTime())

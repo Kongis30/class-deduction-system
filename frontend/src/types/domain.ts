@@ -511,6 +511,8 @@ export interface RecurringScheduleRuleItem {
 export interface RecurringScheduleSlotItem {
   id: EntityId;
   teacherId?: EntityId;
+  deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
+  classroomId?: EntityId;
   subjectName?: string;
   weekday: number;
   startTime: string;
@@ -548,6 +550,7 @@ export interface LessonOccurrenceItem {
   occurrenceType: string;
   plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
+  deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
   plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
   plannedStartAt: string;
@@ -646,6 +649,7 @@ export interface ClassGroupItem {
   scheduleSlots?: Array<{
     teacherId?: EntityId;
     classroomId?: EntityId;
+    deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
     weekday: number;
     startTime: string;
     endTime: string;
@@ -674,6 +678,7 @@ export interface ClassOccurrenceItem {
   occurrenceType: string;
   plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
+  deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
   plannedClassroomId?: EntityId;
   plannedClassroomName?: string;
   plannedStartAt: string;

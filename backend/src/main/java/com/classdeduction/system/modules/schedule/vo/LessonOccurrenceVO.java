@@ -29,6 +29,7 @@ public record LessonOccurrenceVO(
         String occurrenceType,
         Long plannedTeacherId,
         String plannedTeacherName,
+        String deliveryMode,
         Long plannedClassroomId,
         String plannedClassroomName,
         LocalDateTime plannedStartAt,

@@ -92,6 +92,8 @@ export function fetchRecurringScheduleRule(id: EntityId) {
 
 export interface RecurringScheduleSlotPayload {
   teacherId?: EntityId;
+  deliveryMode?: 'IN_PERSON' | 'ONLINE';
+  classroomId?: EntityId;
   subjectName?: string;
   weekday: number;
   startTime: string;
@@ -285,6 +287,7 @@ export function fetchClassOccurrences(classId: string | number) {
 export interface ClassScheduleSlotPayload {
   teacherId?: string | number;
   classroomId?: string | number;
+  deliveryMode?: 'IN_PERSON' | 'ONLINE';
   weekday: number;
   startTime: string;
   endTime: string;

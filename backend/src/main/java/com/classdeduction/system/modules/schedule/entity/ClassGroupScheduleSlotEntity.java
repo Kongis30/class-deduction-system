@@ -21,6 +21,8 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
 
     private Long teacherId;
 
+    private String deliveryMode;
+
     private Long classroomId;
 
     private String subjectName;
