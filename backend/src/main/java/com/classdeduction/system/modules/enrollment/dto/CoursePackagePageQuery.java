@@ -39,4 +39,13 @@ public class CoursePackagePageQuery extends PageQuery {
 
     @Schema(description = "排序方向：asc | desc", example = "asc")
     private String sortOrder;
+
+    @Schema(description = "Only include active packages ending within this many days", example = "15")
+    private Integer renewalDueWithinDays;
+
+    @Schema(description = "Include batched recurring schedule status and next lesson details")
+    private Boolean includeScheduleSummary;
+
+    @Schema(description = "Prioritize packages with low remaining balance before pagination")
+    private Boolean prioritizeLowBalance;
 }

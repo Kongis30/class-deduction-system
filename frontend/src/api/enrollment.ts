@@ -374,6 +374,9 @@ export interface CoursePackageQuery {
   packageStatuses?: string;
   teacherId?: EntityId;
   teachingMode?: string;
+  renewalDueWithinDays?: number;
+  includeScheduleSummary?: boolean;
+  prioritizeLowBalance?: boolean;
   sortBy?: string;
   sortOrder?: string;
   pageNum?: number;

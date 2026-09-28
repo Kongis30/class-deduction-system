@@ -46,10 +46,12 @@ import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -89,6 +91,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
@@ -117,20 +120,31 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .eq(query.getCourseProductId() != null, CoursePackageEntity::getCourseProductId, query.getCourseProductId())
                 .eq(StringUtils.hasText(query.getTeachingMode()), CoursePackageEntity::getTeachingMode, query.getTeachingMode())
                 .eq(StringUtils.hasText(query.getPackageStatus()), CoursePackageEntity::getPackageStatus, query.getPackageStatus());
+        if (query.getRenewalDueWithinDays() != null) {
+            int dueWithinDays = Math.max(0, Math.min(query.getRenewalDueWithinDays(), 3650));
+            lambda.eq(CoursePackageEntity::getPackageStatus, "ACTIVE")
+                    .le(CoursePackageEntity::getEstimatedEndDate, AppTime.nowLocalDateTime().toLocalDate().plusDays(dueWithinDays));
+        }
         if (StringUtils.hasText(query.getPackageStatuses())) {
             List<String> statuses = Arrays.stream(query.getPackageStatuses().split(","))
                     .map(String::trim).filter(StringUtils::hasText).distinct().toList();
             if (!statuses.isEmpty()) lambda.in(CoursePackageEntity::getPackageStatus, statuses);
         }
 
-        // Apply user-specified sort before default createdAt sort
-        if (StringUtils.hasText(query.getSortBy())) {
-            boolean isAsc = !"desc".equals(query.getSortOrder());
-            if ("subjectName".equals(query.getSortBy())) {
-                lambda.orderBy(true, isAsc, CoursePackageEntity::getSubjectName);
+        if (Boolean.TRUE.equals(query.getPrioritizeLowBalance())) {
+            // remaining_units 使用半小时为单位，10 小时等于 20 units；排序放在分页查询中保障低余额包位于列表前页。
+            wrapper.last("ORDER BY CASE WHEN COALESCE(remaining_units, 0) <= 20 THEN 0 ELSE 1 END, "
+                    + "CASE WHEN COALESCE(remaining_units, 0) <= 20 THEN COALESCE(remaining_units, 0) END ASC, created_at DESC");
+        } else {
+            // Apply user-specified sort before default createdAt sort
+            if (StringUtils.hasText(query.getSortBy())) {
+                boolean isAsc = !"desc".equals(query.getSortOrder());
+                if ("subjectName".equals(query.getSortBy())) {
+                    lambda.orderBy(true, isAsc, CoursePackageEntity::getSubjectName);
+                }
             }
+            lambda.orderByDesc(CoursePackageEntity::getCreatedAt);
         }
-        lambda.orderByDesc(CoursePackageEntity::getCreatedAt);
 
         IPage<CoursePackageEntity> result = coursePackageMapper.selectPage(page, wrapper);
         if (result.getRecords().isEmpty()) {
@@ -154,13 +168,16 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 : enrollmentOrderItemMapper.selectBatchIds(orderItemIds).stream()
                         .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, item -> item));
         Map<Long, String> primaryTeacherNameMap = buildPrimaryTeacherNameMap(result.getRecords().stream().map(CoursePackageEntity::getId).toList());
+        Map<Long, PackageScheduleSummary> scheduleSummaryMap = Boolean.TRUE.equals(query.getIncludeScheduleSummary())
+                ? loadPackageScheduleSummaries(result.getRecords())
+                : Collections.emptyMap();
 
         Map<Long, Integer> pendingDeductionByPackage = loadPendingDeductionUnits(
                 result.getRecords().stream().map(CoursePackageEntity::getId).toList());
         List<CoursePackageListItemVO> records = result.getRecords().stream()
                 .map(item -> toListItem(item, studentMap.get(item.getStudentId()), productMap.get(item.getCourseProductId()),
                         orderItemMap.get(item.getEnrollmentOrderItemId()), primaryTeacherNameMap.get(item.getId()),
-                        pendingDeductionByPackage.getOrDefault(item.getId(), 0)))
+                        pendingDeductionByPackage.getOrDefault(item.getId(), 0), scheduleSummaryMap.get(item.getId())))
                 .toList();
         return PageResponse.of(records, result.getTotal(), result.getCurrent(), result.getSize());
     }
@@ -661,7 +678,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
     private CoursePackageListItemVO toListItem(CoursePackageEntity item, StudentEntity student, CourseProductEntity product,
                                                EnrollmentOrderItemEntity orderItem, String primaryTeacherName,
-                                               int pendingDeductionUnits) {
+                                               int pendingDeductionUnits, PackageScheduleSummary scheduleSummary) {
         return CoursePackageListItemVO.builder()
                 .id(item.getId())
                 .packageNo(item.getPackageNo())
@@ -681,11 +698,85 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
                 .receivedAmount(item.getReceivedAmount())
                 .packageStatus(item.getPackageStatus())
+                .scheduleStatus(scheduleSummary == null ? "Needs setup" : scheduleSummary.status())
+                .nextLessonStartAt(scheduleSummary == null ? null : scheduleSummary.nextLessonStartAt())
                 .startDate(item.getStartDate())
                 .estimatedEndDate(item.getEstimatedEndDate())
                 .primaryTeacherName(primaryTeacherName)
                 .createdAt(item.getCreatedAt())
                 .build();
+    }
+
+    /**
+     * 批量计算当前页 1-on-1 课包的排课状态与下一节课，避免列表逐行请求规则和详情。
+     * 页面通过 pagePackages 调用此方法，结果直接随课包列表返回。
+     */
+    private Map<Long, PackageScheduleSummary> loadPackageScheduleSummaries(List<CoursePackageEntity> packages) {
+        List<CoursePackageEntity> oneOnOnePackages = packages.stream()
+                .filter(item -> "ONE_ON_ONE".equals(item.getTeachingMode()))
+                .toList();
+        if (oneOnOnePackages.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<Long> packageIds = oneOnOnePackages.stream().map(CoursePackageEntity::getId).toList();
+        List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .in(RecurringScheduleRuleEntity::getPackageId, packageIds)
+                        .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt));
+        if (rules.isEmpty()) {
+            return oneOnOnePackages.stream().collect(Collectors.toMap(
+                    CoursePackageEntity::getId,
+                    item -> new PackageScheduleSummary("Needs setup", null)));
+        }
+
+        List<Long> ruleIds = rules.stream().map(RecurringScheduleRuleEntity::getId).toList();
+        Map<Long, List<RecurringScheduleSlotEntity>> slotsByRuleId = recurringScheduleSlotMapper.selectList(
+                        new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                                .in(RecurringScheduleSlotEntity::getRuleId, ruleIds))
+                .stream()
+                .collect(Collectors.groupingBy(RecurringScheduleSlotEntity::getRuleId));
+
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        Map<Long, LocalDateTime> nextLessonByRuleId = lessonOccurrenceMapper.selectList(
+                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                                .select(LessonOccurrenceEntity::getScheduleRuleId, LessonOccurrenceEntity::getPlannedStartAt,
+                                        LessonOccurrenceEntity::getPlanningStatus)
+                                .in(LessonOccurrenceEntity::getScheduleRuleId, ruleIds)
+                                .ge(LessonOccurrenceEntity::getPlannedStartAt, now)
+                                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                                .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt))
+                .stream()
+                .filter(item -> item.getScheduleRuleId() != null && item.getPlannedStartAt() != null)
+                .collect(Collectors.toMap(LessonOccurrenceEntity::getScheduleRuleId,
+                        LessonOccurrenceEntity::getPlannedStartAt, (first, ignored) -> first));
+
+        Map<Long, List<RecurringScheduleRuleEntity>> rulesByPackageId = rules.stream()
+                .filter(rule -> rule.getPackageId() != null)
+                .collect(Collectors.groupingBy(RecurringScheduleRuleEntity::getPackageId, LinkedHashMap::new, Collectors.toList()));
+        Map<Long, PackageScheduleSummary> result = new LinkedHashMap<>();
+        for (CoursePackageEntity coursePackage : oneOnOnePackages) {
+            List<RecurringScheduleRuleEntity> packageRules = rulesByPackageId.getOrDefault(coursePackage.getId(), Collections.emptyList());
+            // Keep the list's existing rule choice: the schedule page selected the newest rule first.
+            RecurringScheduleRuleEntity rule = packageRules.isEmpty() ? null : packageRules.get(0);
+            if (rule == null) {
+                result.put(coursePackage.getId(), new PackageScheduleSummary("Needs setup", null));
+                continue;
+            }
+
+            boolean paused = "PAUSED".equals(coursePackage.getPackageStatus()) || "PAUSED".equals(rule.getRuleStatus());
+            boolean incomplete = slotsByRuleId.getOrDefault(rule.getId(), Collections.emptyList()).stream()
+                    .anyMatch(slot -> slot.getTeacherId() == null
+                            || !StringUtils.hasText(slot.getSubjectName())
+                            || slot.getAllocatedUnits() == null
+                            || slot.getAllocatedUnits() <= 0);
+            String status = paused ? "Paused" : incomplete ? "Incomplete" : "Scheduled";
+            result.put(coursePackage.getId(), new PackageScheduleSummary(status, nextLessonByRuleId.get(rule.getId())));
+        }
+        return result;
+    }
+
+    private record PackageScheduleSummary(String status, LocalDateTime nextLessonStartAt) {
     }
 
     /** 批量统计等待管理员确认、且最终需要扣课的记录，供课包余额拆分展示使用。 */

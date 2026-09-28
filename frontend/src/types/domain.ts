@@ -381,6 +381,8 @@ export interface CoursePackageItem {
   remainingUnits: number;
   receivedAmount: number;
   packageStatus: string;
+  scheduleStatus?: 'Scheduled' | 'Needs setup' | 'Incomplete' | 'Paused';
+  nextLessonStartAt?: string;
   startDate?: string;
   estimatedEndDate?: string;
   privateLessonGroupId?: EntityId;

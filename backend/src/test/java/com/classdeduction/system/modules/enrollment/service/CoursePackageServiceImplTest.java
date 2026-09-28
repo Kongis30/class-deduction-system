@@ -35,6 +35,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -107,6 +108,9 @@ class CoursePackageServiceImplTest {
     private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
 
     @Mock
+    private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+
+    @Mock
     private LessonRecordMapper lessonRecordMapper;
 
     @Mock
@@ -126,6 +130,7 @@ class CoursePackageServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonRecordEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleRuleEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleSlotEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CourseProductEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
@@ -147,6 +152,7 @@ class CoursePackageServiceImplTest {
                 classEnrollmentMapper,
                 lessonOccurrenceMapper,
                 recurringScheduleRuleMapper,
+                recurringScheduleSlotMapper,
                 lessonRecordMapper,
                 hourLedgerMapper,
                 packageBalanceSnapshotMapper,
@@ -185,6 +191,90 @@ class CoursePackageServiceImplTest {
         assertThat(wrapperCaptor.getValue().getSqlSegment()).contains("packageStatus IN");
         assertThat(wrapperCaptor.getValue().getParamNameValuePairs().values())
                 .contains("ACTIVE", "PAUSED");
+    }
+
+    @Test
+    void shouldApplyRenewalDueFilterOnThePagedPackageQuery() {
+        CoursePackagePageQuery query = new CoursePackagePageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+        query.setTeachingMode("ONE_ON_ONE");
+        query.setRenewalDueWithinDays(15);
+        when(coursePackageMapper.selectPage(any(Page.class), any())).thenReturn(new Page<>(1, 10));
+
+        coursePackageService.pagePackages(query);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<QueryWrapper<CoursePackageEntity>> wrapperCaptor = ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(coursePackageMapper).selectPage(any(Page.class), wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().getSqlSegment())
+                .contains("packageStatus =", "estimatedEndDate <=");
+        assertThat(wrapperCaptor.getValue().getParamNameValuePairs().values()).contains("ACTIVE");
+    }
+
+    @Test
+    void shouldPrioritizeLowBalancePackagesBeforeApplyingPagination() {
+        CoursePackagePageQuery query = new CoursePackagePageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+        query.setTeachingMode("ONE_ON_ONE");
+        query.setPrioritizeLowBalance(true);
+        when(coursePackageMapper.selectPage(any(Page.class), any())).thenReturn(new Page<>(1, 10));
+
+        coursePackageService.pagePackages(query);
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<QueryWrapper<CoursePackageEntity>> wrapperCaptor = ArgumentCaptor.forClass(QueryWrapper.class);
+        verify(coursePackageMapper).selectPage(any(Page.class), wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().getSqlSegment())
+                .contains("ORDER BY CASE WHEN COALESCE(remaining_units, 0) <= 20 THEN 0 ELSE 1 END")
+                .contains("CASE WHEN COALESCE(remaining_units, 0) <= 20 THEN COALESCE(remaining_units, 0) END ASC");
+    }
+
+    @Test
+    void shouldIncludeScheduleSummaryInPackageListWithoutPerPackageDetailLookups() {
+        CoursePackagePageQuery query = new CoursePackagePageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+        query.setTeachingMode("ONE_ON_ONE");
+        query.setIncludeScheduleSummary(true);
+
+        CoursePackageEntity coursePackage = new CoursePackageEntity();
+        coursePackage.setId(101L);
+        coursePackage.setStudentId(201L);
+        coursePackage.setCourseProductId(301L);
+        coursePackage.setTeachingMode("ONE_ON_ONE");
+        coursePackage.setPackageStatus("ACTIVE");
+        Page<CoursePackageEntity> page = new Page<>(1, 10);
+        page.setRecords(List.of(coursePackage));
+        page.setTotal(1);
+        when(coursePackageMapper.selectPage(any(Page.class), any())).thenReturn(page);
+
+        RecurringScheduleRuleEntity rule = new RecurringScheduleRuleEntity();
+        rule.setId(501L);
+        rule.setPackageId(101L);
+        rule.setRuleStatus("ACTIVE");
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
+
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setRuleId(501L);
+        slot.setTeacherId(601L);
+        slot.setSubjectName("Math");
+        slot.setAllocatedUnits(20);
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+
+        LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+        occurrence.setScheduleRuleId(501L);
+        occurrence.setPlannedStartAt(LocalDateTime.of(2099, 1, 1, 12, 0));
+        occurrence.setPlanningStatus("SCHEDULED");
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+
+        PageResponse<CoursePackageListItemVO> result = coursePackageService.pagePackages(query);
+
+        assertThat(result.records()).hasSize(1);
+        assertThat(result.records().get(0).scheduleStatus()).isEqualTo("Scheduled");
+        assertThat(result.records().get(0).nextLessonStartAt()).isEqualTo(occurrence.getPlannedStartAt());
+        verify(recurringScheduleRuleService, never()).getRule(any());
     }
 
     @Test

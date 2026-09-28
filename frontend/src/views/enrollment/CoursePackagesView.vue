@@ -58,6 +58,7 @@
             <div class="package-group__title">
               <strong>{{ group.courseName }}</strong>
               <span>{{ group.gradeBand }}</span>
+              <el-tag v-if="group.lowBalanceRenewal" size="small" type="danger">Renewal needed · ≤10h left</el-tag>
             </div>
             <small>{{ group.packages.length }} packages</small>
           </header>
@@ -83,8 +84,12 @@
             </el-table-column>
             <el-table-column label="Available" min-width="145" align="center">
               <template #default="{ row }">
-                <strong>{{ formatHours(row.remainingUnits) }} / {{ formatHours(row.totalUnits) }}</strong>
+                <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(row) }">{{ formatHours(row.remainingUnits) }}</strong>
+                <span> / {{ formatHours(row.totalUnits) }}</span>
                 <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
+                <el-tag v-if="isLowBalanceRenewalDue(row)" class="renewal-reminder-tag" size="small" type="danger">
+                  Renewal needed
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="Schedule setup" min-width="150" align="center">
@@ -98,13 +103,6 @@
               <template #default="{ row }">
                 <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
                 <span v-else class="muted-text">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="Period" min-width="170">
-              <template #default="{ row }">
-                <span :class="{ 'renewal-due-text': isOneOnOneRenewalDue(row) }">
-                  {{ row.startDate ?? '—' }} ~ {{ row.estimatedEndDate ?? '—' }}
-                </span>
               </template>
             </el-table-column>
             <el-table-column label="Package status" min-width="110" align="center">
@@ -510,7 +508,6 @@ import {
   fetchCoursePackages,
   pauseCoursePackage,
   resumeCoursePackage,
-  type CoursePackageQuery,
 } from '@/api/enrollment';
 import {
   fetchLessonRecord,
@@ -533,6 +530,7 @@ import type {
 
 const router = useRouter();
 const RENEWAL_DUE_DAYS = 15;
+const LOW_BALANCE_RENEWAL_HOURS = 10;
 const loading = ref(false);
 const detailDialogVisible = ref(false);
 const detailTab = ref('overview');
@@ -615,16 +613,18 @@ const groupedTableData = computed(() => {
     key: string;
     courseName: string;
     gradeBand: string;
+    lowBalanceRenewal: boolean;
     packages: OneOnOnePackageRow[];
   }>();
 
   for (const pkg of tableData.value) {
     const courseName = pkg.courseProductName?.trim() || pkg.packageName?.trim() || 'Unassigned course';
     const gradeBand = pkg.gradeBand?.trim() || 'General';
-    const key = JSON.stringify([normalizeLabel(courseName), normalizeLabel(gradeBand)]);
+    const lowBalanceRenewal = isLowBalanceRenewalDue(pkg);
+    const key = JSON.stringify([normalizeLabel(courseName), normalizeLabel(gradeBand), lowBalanceRenewal]);
     let group = groups.get(key);
     if (!group) {
-      group = { key, courseName, gradeBand, packages: [] };
+      group = { key, courseName, gradeBand, lowBalanceRenewal, packages: [] };
       groups.set(key, group);
     }
     group.packages.push(pkg);
@@ -634,10 +634,12 @@ const groupedTableData = computed(() => {
     .map(group => ({
       ...group,
       packages: [...group.packages].sort((left, right) =>
-        left.studentName.localeCompare(right.studentName)
+        (group.lowBalanceRenewal ? Number(left.remainingUnits) - Number(right.remainingUnits) : 0)
+        || left.studentName.localeCompare(right.studentName)
         || left.packageName.localeCompare(right.packageName)),
     }))
-    .sort((left, right) => left.courseName.localeCompare(right.courseName)
+    .sort((left, right) => Number(right.lowBalanceRenewal) - Number(left.lowBalanceRenewal)
+      || left.courseName.localeCompare(right.courseName)
       || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
 });
 
@@ -681,7 +683,13 @@ function isOneOnOneRenewalDue(row: CoursePackageItem): boolean {
   return row.packageStatus === 'ACTIVE' && isRenewalDueByDate(row.estimatedEndDate);
 }
 
+function isLowBalanceRenewalDue(row: CoursePackageItem): boolean {
+  const remainingHours = Number(row.remainingUnits);
+  return Number.isFinite(remainingHours) && remainingHours <= LOW_BALANCE_RENEWAL_HOURS;
+}
+
 function oneOnOneRowClassName({ row }: { row: OneOnOnePackageRow }) {
+  if (isLowBalanceRenewalDue(row)) return 'low-balance-renewal-row';
   return isOneOnOneRenewalDue(row) ? 'renewal-due-row' : '';
 }
 
@@ -712,90 +720,28 @@ function packageStatusLabel(status: string) {
 async function loadData() {
   loading.value = true;
   try {
-    const allPackages = await loadAllOneOnOnePackages();
-    const packages = filters.onlyRenewalDue
-      ? allPackages.filter(isOneOnOneRenewalDue)
-      : allPackages;
-    pagination.total = packages.length;
-    const pagePackages = packages.slice((pagination.page - 1) * pagination.size, pagination.page * pagination.size);
-    tableData.value = await enrichOneOnOnePackages(pagePackages);
+    const res = await fetchCoursePackages({
+      keyword: filters.keyword || undefined,
+      studentId: filters.studentId,
+      packageStatus: filters.packageStatus || undefined,
+      teachingMode: 'ONE_ON_ONE',
+      renewalDueWithinDays: filters.onlyRenewalDue ? RENEWAL_DUE_DAYS : undefined,
+      includeScheduleSummary: true,
+      prioritizeLowBalance: true,
+      pageNum: pagination.page,
+      pageSize: pagination.size,
+    });
+    const data = res.data.data;
+    pagination.total = data.total;
+    tableData.value = data.records.map((pkg) => ({
+      ...pkg,
+      scheduleStatus: pkg.scheduleStatus ?? 'Needs setup',
+    }));
   } catch {
     ElMessage.error('Failed to load packages.');
   } finally {
     loading.value = false;
   }
-}
-
-async function loadAllOneOnOnePackages(): Promise<CoursePackageItem[]> {
-  const pageSize = 200;
-  let pageNum = 1;
-  let total = 0;
-  const records: CoursePackageItem[] = [];
-
-  do {
-    const params: CoursePackageQuery = {
-      keyword: filters.keyword || undefined,
-      studentId: filters.studentId,
-      packageStatus: filters.packageStatus || undefined,
-      teachingMode: 'ONE_ON_ONE',
-      pageNum,
-      pageSize,
-    };
-    const res = await fetchCoursePackages(params);
-    const data = res.data.data;
-    records.push(...data.records);
-    total = data.total;
-    pageNum += 1;
-  } while (records.length < total);
-
-  return records;
-}
-
-async function enrichOneOnOnePackages(packages: CoursePackageItem[]): Promise<OneOnOnePackageRow[]> {
-  const rows = await Promise.all(packages.map(async (pkg) => {
-    try {
-      const rulesResponse = await fetchRecurringScheduleRules({
-        packageId: pkg.id,
-        pageNum: 1,
-        pageSize: 1,
-      });
-      const rules = rulesResponse.data.data.records;
-      const ruleSummary = rules.find(item => item.ruleStatus === 'ACTIVE' || item.ruleStatus === 'PAUSED')
-        ?? rules[0];
-      if (!ruleSummary) {
-        return {
-          ...pkg,
-          scheduleStatus: 'Needs setup' as const,
-        };
-      }
-
-      const detailResponse = await fetchRecurringScheduleRule(ruleSummary.id);
-      const rule = detailResponse.data.data;
-      const isPaused = pkg.packageStatus === 'PAUSED' || rule.ruleStatus === 'PAUSED';
-      const isIncomplete = rule.slots.some(slot =>
-        !slot.teacherId
-        || !slot.subjectName?.trim()
-        || !slot.allocatedUnits
-        || slot.allocatedUnits <= 0,
-      );
-
-      return {
-        ...pkg,
-        scheduleStatus: isPaused
-          ? 'Paused' as const
-          : isIncomplete
-            ? 'Incomplete' as const
-            : 'Scheduled' as const,
-        nextLessonStartAt: ruleSummary.nextLessonStartAt,
-      };
-    } catch {
-      return {
-        ...pkg,
-        scheduleStatus: 'Needs setup' as const,
-      };
-    }
-  }));
-  return rows;
 }
 
 function scheduleStatusType(status: OneOnOnePackageRow['scheduleStatus']) {
@@ -1136,9 +1082,20 @@ loadTeachers();
   background: #ffe4e6 !important;
 }
 
-.renewal-due-text {
-  color: #e11d48;
-  font-weight: 700;
+.product-table :deep(.low-balance-renewal-row > td) {
+  background: #fff0f0 !important;
+}
+
+.product-table :deep(.low-balance-renewal-row:hover > td) {
+  background: #ffe1e1 !important;
+}
+
+.low-balance-renewal-text {
+  color: #dc2626;
+}
+
+.renewal-reminder-tag {
+  margin-top: 4px;
 }
 
 .row-action-button {

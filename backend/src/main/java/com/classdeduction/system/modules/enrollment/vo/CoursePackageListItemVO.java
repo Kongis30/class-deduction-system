@@ -32,6 +32,8 @@ public record CoursePackageListItemVO(
         Double remainingUnits,
         BigDecimal receivedAmount,
         String packageStatus,
+        String scheduleStatus,
+        LocalDateTime nextLessonStartAt,
         LocalDate startDate,
         LocalDate estimatedEndDate,
         String primaryTeacherName,
