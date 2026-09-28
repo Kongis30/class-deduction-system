@@ -305,6 +305,7 @@
           <el-form-item label="Classroom" prop="defaultClassroomId">
             <el-select
               v-model="editForm.defaultClassroomId"
+              popper-class="classroom-campus-picker"
               placeholder="Select classroom"
               clearable
               filterable
@@ -314,6 +315,7 @@
                 v-for="group in classroomOptionGroups"
                 :key="group.campusKey"
                 :label="group.campusName"
+                class="classroom-campus-group"
               >
                 <el-option
                   v-for="c in group.classrooms"
@@ -323,7 +325,6 @@
                 >
                   <div class="classroom-select-option">
                     <span>{{ c.roomName }}</span>
-                    <small>{{ group.campusName }}</small>
                   </div>
                 </el-option>
               </el-option-group>
@@ -655,11 +656,12 @@
             </div>
             <div class="weekly-editor__field">
               <label>Classroom</label>
-              <el-select v-model="selectedRow.plannedClassroomId" clearable filterable placeholder="Classroom" :disabled="selectedRow.markedForDelete">
+              <el-select v-model="selectedRow.plannedClassroomId" popper-class="classroom-campus-picker" clearable filterable placeholder="Classroom" :disabled="selectedRow.markedForDelete">
                 <el-option-group
                   v-for="group in classroomOptionGroups"
                   :key="group.campusKey"
                   :label="group.campusName"
+                  class="classroom-campus-group"
                 >
                   <el-option
                     v-for="c in group.classrooms"
@@ -669,7 +671,6 @@
                   >
                     <div class="classroom-select-option">
                       <span>{{ c.roomName }}</span>
-                      <small>{{ group.campusName }}</small>
                     </div>
                   </el-option>
                 </el-option-group>
@@ -2603,12 +2604,6 @@ function disabledPastDate(date: Date) {
   white-space: nowrap;
 }
 
-.classroom-select-option small {
-  flex-shrink: 0;
-  color: #909399;
-  font-size: 12px;
-}
-
 .schedule-calendar {
   padding: 12px;
 }
@@ -3144,5 +3139,38 @@ function disabledPastDate(date: Date) {
 .slots-table {
   border: 1px solid #ebeef5;
   border-radius: 4px;
+}
+</style>
+
+<!-- el-select 的下拉面板会 teleport 到 body，校区分组样式需放在非 scoped 样式中。 -->
+<style>
+.classroom-campus-picker .el-select-group__wrap {
+  margin: 6px 8px;
+  overflow: hidden;
+  border: 1px solid #d7e3f1;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.classroom-campus-picker .el-select-group__wrap + .el-select-group__wrap {
+  margin-top: 10px;
+}
+
+.classroom-campus-picker .el-select-group__title {
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid #d7e3f1;
+  background: #eef6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 32px;
+}
+
+.classroom-campus-picker .el-select-group__wrap .el-select-dropdown__item {
+  min-height: 34px;
+  padding: 6px 12px 6px 24px;
+  font-size: 13px;
+  line-height: 1.35;
 }
 </style>
