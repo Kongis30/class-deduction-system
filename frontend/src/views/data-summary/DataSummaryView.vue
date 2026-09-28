@@ -930,6 +930,7 @@ function openOrderAction(action: 'pay' | 'refund') {
       participantIndex: (action === 'pay' || action === 'refund') && row.participantIndex != null
         ? String(row.participantIndex)
         : undefined,
+      courseOnly: action === 'refund' ? 'true' : undefined,
     },
   });
 }

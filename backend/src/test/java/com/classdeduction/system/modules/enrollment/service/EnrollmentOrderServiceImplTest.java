@@ -727,6 +727,31 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldRejectDataSummaryRefundWithoutCourse() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setPaymentStatus("PAID");
+        order.setReceivedAmount(new BigDecimal("100.00"));
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+
+        com.classdeduction.system.modules.enrollment.dto.RefundRequest request =
+                new com.classdeduction.system.modules.enrollment.dto.RefundRequest();
+        request.setCourseOnly(true);
+        request.setRefundAmount(new BigDecimal("50.00"));
+        request.setPaymentMethod("CASH");
+        request.setHandledByName("Amy");
+
+        assertThatThrownBy(() -> enrollmentOrderService.refundOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("REFUND_COURSE_REQUIRED");
+
+        verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+        verify(enrollmentOrderMapper, never()).updateById(any(EnrollmentOrderEntity.class));
+    }
+
+    @Test
     void shouldRefundOneOnOneOrderAndRecordNegativePayment() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);

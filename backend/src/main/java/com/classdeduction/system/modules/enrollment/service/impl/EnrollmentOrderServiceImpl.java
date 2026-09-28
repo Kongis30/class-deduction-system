@@ -2072,6 +2072,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if ("REFUNDED".equals(order.getPaymentStatus())) {
             throw new BusinessException("ORDER_ALREADY_REFUNDED", "Order has already been refunded.");
         }
+        if (Boolean.TRUE.equals(request.getCourseOnly()) && request.getOrderItemId() == null) {
+            throw new BusinessException("REFUND_COURSE_REQUIRED",
+                    "Select the course to refund from Data Summary.");
+        }
         BigDecimal received = order.getReceivedAmount() != null ? order.getReceivedAmount() : BigDecimal.ZERO;
         Integer participantIndex = request.getParticipantIndex();
         if (participantIndex != null && participantIndex < 1) {

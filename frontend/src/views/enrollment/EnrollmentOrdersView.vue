@@ -882,7 +882,7 @@
         </div>
         <el-form-item v-if="!isSharedParticipantRefund && refundCourseOptions.length > 1" label="Course to refund" prop="orderItemId">
           <el-select v-model="refundForm.orderItemId" placeholder="Select a course" style="width: 100%" :loading="refundPreviewLoading" @change="handleRefundCourseChange">
-            <el-option label="Entire receipt · allocate across all courses" value="ALL" />
+            <el-option v-if="!refundCourseOnly" label="Entire receipt · allocate across all courses" value="ALL" />
             <el-option
               v-for="item in refundCourseOptions"
               :key="item.orderItemId"
@@ -2364,6 +2364,7 @@ async function openRequestedOrderAction() {
   const participantIndexText = String(route.query.participantIndex ?? '').trim();
   const participantIndex = participantIndexText ? Number(participantIndexText) : null;
   const orderItemId = String(route.query.orderItemId ?? '').trim();
+  const courseOnly = String(route.query.courseOnly ?? '').trim().toLowerCase() === 'true';
   const courseBalanceText = String(route.query.courseBalance ?? '').trim();
   const requestedCourseBalance = courseBalanceText ? Number(courseBalanceText) : null;
   if (!orderId || (action !== 'pay' && action !== 'refund')) {
@@ -2404,7 +2405,7 @@ async function openRequestedOrderAction() {
     } else if (!canRefundOrder(order, participant)) {
       ElMessage.warning('This order has no refundable payment.');
     } else {
-      await openRefundDialog(order, participant, orderItemId || undefined);
+      await openRefundDialog(order, participant, orderItemId || undefined, courseOnly);
     }
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to load the selected order.');
@@ -2418,6 +2419,7 @@ async function openRequestedOrderAction() {
         orderItemId: undefined,
         participantIndex: undefined,
         courseBalance: undefined,
+        courseOnly: undefined,
       },
     });
     requestedActionInFlight = false;
@@ -2431,6 +2433,7 @@ watch(
     route.query.orderItemId,
     route.query.participantIndex,
     route.query.courseBalance,
+    route.query.courseOnly,
   ],
   () => {
     if (pageInitialized) {
@@ -2518,6 +2521,7 @@ const refunding = ref(false);
 const refundFormRef = ref();
 const refundOrder = ref<EnrollmentOrderItem | null>(null);
 const refundParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
+const refundCourseOnly = ref(false);
 const refundCourseOptions = ref<RefundCoursePreviewItem[]>([]);
 const refundPreviewLoading = ref(false);
 const refundForm = reactive({
@@ -2566,9 +2570,11 @@ async function openRefundDialog(
   row: EnrollmentOrderItem,
   participant: EnrollmentOrderParticipantItem | null = null,
   requestedOrderItemId?: string | number,
+  courseOnly = false,
 ) {
   refundOrder.value = row;
   refundParticipant.value = participant;
+  refundCourseOnly.value = courseOnly;
   refundCourseOptions.value = [];
   refundFormRef.value?.resetFields();
   Object.assign(refundForm, {
@@ -2584,15 +2590,20 @@ async function openRefundDialog(
   try {
     const response = await fetchRefundPreview(row.id, participant?.participantIndex);
     refundCourseOptions.value = response.data.data.items ?? [];
+    const selected = refundCourseOptions.value.find((item) =>
+      requestedOrderItemId != null && String(item.orderItemId) === String(requestedOrderItemId));
+    if (courseOnly && !selected) {
+      ElMessage.error('The selected Data Summary row has no valid course. Refund was not opened.');
+      refundDialogVisible.value = false;
+      return;
+    }
     if (!(participant && (row.participants?.length ?? 0) > 1)) {
-      const selected = refundCourseOptions.value.find((item) =>
-        requestedOrderItemId != null && String(item.orderItemId) === String(requestedOrderItemId));
       const refundableCourses = refundCourseOptions.value.filter((item) => item.paidAmount > 0);
       const initial = selected ?? (refundableCourses.length === 1 ? refundableCourses[0] : null);
       if (initial) {
         refundForm.orderItemId = initial.orderItemId;
         refundForm.refundAmount = initial.paidAmount;
-      } else if (refundCourseOptions.value.length > 1) {
+      } else if (!courseOnly && refundCourseOptions.value.length > 1) {
         refundForm.orderItemId = 'ALL';
         refundForm.refundAmount = refundReceivedAmount.value;
       }
@@ -2618,6 +2629,10 @@ async function handleRefundSubmit() {
     ElMessage.warning('Select the course to refund.');
     return;
   }
+  if (refundCourseOnly.value && (!refundForm.orderItemId || refundForm.orderItemId === 'ALL')) {
+    ElMessage.warning('Data Summary refunds must target the selected course.');
+    return;
+  }
   if (refundForm.refundAmount > refundCourseReceivedAmount.value) {
     ElMessage.warning('Refund amount cannot exceed the selected course payment.');
     return;
@@ -2628,6 +2643,7 @@ async function handleRefundSubmit() {
       refundAmount: refundForm.refundAmount,
       orderItemId: !isSharedParticipantRefund.value && refundForm.orderItemId && refundForm.orderItemId !== 'ALL'
         ? refundForm.orderItemId : undefined,
+      courseOnly: refundCourseOnly.value,
       participantIndex: refundParticipant.value?.participantIndex,
       paymentMethod: refundForm.paymentMethod,
       handledByName: refundForm.handledByName,

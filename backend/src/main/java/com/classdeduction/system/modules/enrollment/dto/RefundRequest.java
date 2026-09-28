@@ -26,6 +26,10 @@ public class RefundRequest {
     @Schema(description = "退款金额，不能超过订单当前已收金额", example = "200.00")
     private BigDecimal refundAmount;
 
+    /** Data Summary 入口的业务约束：必须指定课程，不能按整单历史规则平摊。 */
+    @Schema(description = "是否必须指定课程退款", example = "true")
+    private Boolean courseOnly;
+
     @NotBlank(message = "Refund method is required")
     @Schema(description = "退款方式", example = "CASH")
     private String paymentMethod;
