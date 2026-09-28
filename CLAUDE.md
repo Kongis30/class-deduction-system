@@ -14,6 +14,14 @@ The MVP is staff-facing only — parent/teacher portals are out of scope for the
 
 用户已开启 auto-permit 模式。每完成一个有意义的开发节点（功能实现、Bug 修复、重构、测试通过），必须主动执行 `git add` + `git commit` 保存进度。commit message 用中文简要描述改动内容。不要等到用户要求才提交。
 
+### Git 主分支与发布纪律
+
+- `main` 是唯一主分支，始终保存最新、完整、可构建的项目代码，也是唯一允许部署到线上的代码来源。
+- 新功能或较大修复先从最新 `main` 创建临时本地分支（例如 `codex/<feature-name>`），完成后必须将后端、前端、测试、数据库迁移和文档等完整改动合并回 `main`。
+- 不允许从 `release/*`、`online`、dirty worktree、其他会话的临时分支或历史 `deploy/` 包直接部署。
+- 部署必须从 `main` 最新 commit 创建干净 worktree，重新编译完整后端 jar 和前端 dist，并记录同一 commit 的版本号、产物校验和及迁移执行结果。
+- 多会话并行开发时，每个会话只负责一个明确临时分支；不要把同一功能拆成多个会话后分别提交不完整改动。发现未提交的其他会话改动时，不覆盖、不回退、不擅自混入，交由集成方统一合并。
+
 ### 数据库操作审查原则
 
 所有数据库操作（尤其是表结构变更 DDL）必须遵守以下流程：
