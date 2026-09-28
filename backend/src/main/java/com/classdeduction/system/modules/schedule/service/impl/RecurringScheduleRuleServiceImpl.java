@@ -139,13 +139,18 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Page<RecurringScheduleRuleEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
         List<Long> matchedPackageIds = findMatchedPackageIds(query.getKeyword());
         List<Long> matchedRuleIds = findMatchedRuleIdsBySlotTeacher(query.getTeacherId());
+        List<Long> matchedClassroomRuleIds = query.getClassroomId() == null
+                ? Collections.emptyList() : findMatchedRuleIdsByClassroom(query.getClassroomId());
+        if (query.getClassroomId() != null && matchedClassroomRuleIds.isEmpty()) {
+            return PageResponse.empty(query.getPageNum(), query.getPageSize());
+        }
         LambdaQueryWrapper<RecurringScheduleRuleEntity> wrapper = new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                 .and(StringUtils.hasText(query.getKeyword()), nested -> nested
                         .like(RecurringScheduleRuleEntity::getNotes, query.getKeyword())
                         .or(!matchedPackageIds.isEmpty(), inner -> inner.in(RecurringScheduleRuleEntity::getPackageId, matchedPackageIds)))
                 .eq(StringUtils.hasText(query.getRuleStatus()), RecurringScheduleRuleEntity::getRuleStatus, query.getRuleStatus())
                 .in(query.getTeacherId() != null, RecurringScheduleRuleEntity::getId, matchedRuleIds)
-                .eq(query.getClassroomId() != null, RecurringScheduleRuleEntity::getDefaultClassroomId, query.getClassroomId())
+                .in(query.getClassroomId() != null, RecurringScheduleRuleEntity::getId, matchedClassroomRuleIds)
                 .eq(query.getPackageId() != null, RecurringScheduleRuleEntity::getPackageId, query.getPackageId())
                 .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt);
         IPage<RecurringScheduleRuleEntity> result = recurringScheduleRuleMapper.selectPage(page, wrapper);
@@ -1333,6 +1338,23 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .map(RecurringScheduleSlotEntity::getRuleId)
                 .distinct()
                 .toList();
+    }
+
+    /** 教室筛选同时覆盖逐时段教室与旧规则默认教室，供规则列表分页使用。 */
+    private List<Long> findMatchedRuleIdsByClassroom(Long classroomId) {
+        Set<Long> ruleIds = recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .eq(RecurringScheduleSlotEntity::getClassroomId, classroomId))
+                .stream()
+                .map(RecurringScheduleSlotEntity::getRuleId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        recurringScheduleRuleMapper.selectList(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .eq(RecurringScheduleRuleEntity::getDefaultClassroomId, classroomId))
+                .stream()
+                .map(RecurringScheduleRuleEntity::getId)
+                .filter(Objects::nonNull)
+                .forEach(ruleIds::add);
+        return List.copyOf(ruleIds);
     }
 
     private RecurringScheduleSlotVO toSlotVO(RecurringScheduleSlotEntity slot) {

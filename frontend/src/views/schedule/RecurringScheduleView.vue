@@ -188,8 +188,8 @@
                     <span>{{ slotTeacherNames(currentRule) }}</span>
                   </div>
                   <div class="summary-field">
-                    <label>Classroom</label>
-                    <span>{{ currentRule.defaultClassroomName ?? '—' }}</span>
+                    <label>Classrooms</label>
+                    <span>{{ slotClassroomNames(currentRule) }}</span>
                   </div>
                   <div class="summary-field">
                     <label>Period</label>
@@ -748,8 +748,8 @@
               <span>{{ slotTeacherNames(detailData) }}</span>
             </div>
             <div class="detail-field">
-              <label>Classroom</label>
-              <span>{{ detailData.defaultClassroomName ?? '—' }}</span>
+              <label>Classrooms</label>
+              <span>{{ slotClassroomNames(detailData) }}</span>
             </div>
             <div class="detail-field">
               <label>Generated Lessons</label>
@@ -948,6 +948,22 @@ function slotTeacherNames(rule: { slots?: Array<{ teacherId?: EntityId }> }): st
     .map(slot => teachers.value.find(teacher => String(teacher.id) === String(slot.teacherId))?.teacherName)
     .filter((name): name is string => Boolean(name));
   return [...new Set(teacherNames)].join(', ') || '—';
+}
+
+function slotClassroomNames(rule: {
+  slots?: Array<{ deliveryMode?: string; classroomId?: EntityId }>;
+  defaultClassroomId?: EntityId;
+  defaultClassroomName?: string;
+}): string {
+  const names = (rule.slots ?? []).map(slot => {
+    if (slot.deliveryMode === 'ONLINE') return 'Online';
+    const classroomId = slot.classroomId ?? rule.defaultClassroomId;
+    if (classroomId == null) return null;
+    return classrooms.value.find(classroom => String(classroom.id) === String(classroomId))?.roomName
+      ?? (String(classroomId) === String(rule.defaultClassroomId) ? rule.defaultClassroomName : null)
+      ?? 'Classroom';
+  }).filter((name): name is string => Boolean(name));
+  return [...new Set(names)].join(' · ') || '—';
 }
 
 // ─── All package rules (preloaded per student) ──
