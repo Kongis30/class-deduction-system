@@ -2742,7 +2742,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .collect(Collectors.toSet());
 
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(windowStart, horizonEnd);
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), windowStart, horizonEnd);
         for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
             if (classHolidayService.isHoliday(date, holidays)) {
                 continue;

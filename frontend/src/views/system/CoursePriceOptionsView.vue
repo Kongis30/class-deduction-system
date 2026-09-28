@@ -73,8 +73,8 @@
                 Back to Courses
               </el-button>
               <el-button @click="openGradeDialog">Manage grades</el-button>
-              <el-button v-if="selectedMode === 'GROUP'" @click="openClassHolidayDialog">
-                Manage class holidays
+              <el-button v-if="selectedMode === 'GROUP' && query.courseProductId" @click="openClassHolidayDialog">
+                Manage course holidays
               </el-button>
               <el-button type="primary" @click="openDialog()">
                 {{ matrixPrimaryActionLabel }}
@@ -707,11 +707,11 @@
       v-model="classHolidayDialogVisible"
       width="min(760px, calc(100vw - 40px))"
       :close-on-click-modal="false"
-      title="Class holidays"
+      :title="`${selectedProduct?.productName ?? 'Course'} holidays`"
       class="class-holiday-dialog"
     >
       <el-alert
-        title="These dates apply to all group classes and campuses. One-on-one schedules are not affected."
+        :title="`These dates apply to every class and campus under ${selectedProduct?.productName ?? 'this course'}. Other courses and one-on-one schedules are not affected.`"
         type="info"
         :closable="false"
         show-icon
@@ -1264,15 +1264,20 @@ async function loadAll() {
 }
 
 async function openClassHolidayDialog() {
+  if (!query.courseProductId) return;
   classHolidayDialogVisible.value = true;
   resetClassHolidayForm();
   await loadClassHolidays();
 }
 
 async function loadClassHolidays() {
+  if (!query.courseProductId) {
+    classHolidayRows.value = [];
+    return;
+  }
   loadingClassHolidays.value = true;
   try {
-    const response = await fetchClassHolidays();
+    const response = await fetchClassHolidays(query.courseProductId);
     classHolidayRows.value = response.data.data ?? [];
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
@@ -1312,7 +1317,9 @@ async function saveClassHoliday() {
   };
   savingClassHoliday.value = true;
   try {
-    const previewResponse = await previewClassHoliday(payload, editingHolidayId.value ?? undefined);
+    const courseProductId = query.courseProductId;
+    if (!courseProductId) return;
+    const previewResponse = await previewClassHoliday(courseProductId, payload, editingHolidayId.value ?? undefined);
     const preview = previewResponse.data.data;
     if (preview.conflicts.length) {
       await ElMessageBox.alert(preview.conflicts.join('\n'), 'Resolve schedule conflicts first', {
@@ -1321,18 +1328,18 @@ async function saveClassHoliday() {
       });
       return;
     }
-    const impactText = `${preview.affectedOccurrenceCount} scheduled class lesson(s) and ${preview.affectedSessionEnrollmentCount} SESSION enrollment(s) will be recalculated.`;
+    const impactText = `For ${selectedProduct.value?.productName ?? 'this course'}, ${preview.affectedOccurrenceCount} scheduled lesson(s) and ${preview.affectedSessionEnrollmentCount} SESSION enrollment(s) will be recalculated.`;
     await ElMessageBox.confirm(impactText, 'Apply class holiday', {
       type: 'warning',
       confirmButtonText: editingHolidayId.value ? 'Save changes' : 'Add holiday',
       cancelButtonText: 'Cancel',
     });
     if (editingHolidayId.value) {
-      await updateClassHoliday(editingHolidayId.value, payload);
-      ElMessage.success('Class holiday updated.');
+      await updateClassHoliday(courseProductId, editingHolidayId.value, payload);
+      ElMessage.success('Course holiday updated.');
     } else {
-      await createClassHoliday(payload);
-      ElMessage.success('Class holiday added.');
+      await createClassHoliday(courseProductId, payload);
+      ElMessage.success('Course holiday added.');
     }
     resetClassHolidayForm();
     await loadClassHolidays();
@@ -1351,7 +1358,9 @@ async function removeClassHoliday(holiday: ClassHolidayItem) {
       'Delete class holiday',
       { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
     );
-    await deleteClassHoliday(holiday.id);
+    const courseProductId = query.courseProductId;
+    if (!courseProductId) return;
+    await deleteClassHoliday(courseProductId, holiday.id);
     if (editingHolidayId.value === holiday.id) resetClassHolidayForm();
     ElMessage.success('Class holiday deleted.');
     await loadClassHolidays();

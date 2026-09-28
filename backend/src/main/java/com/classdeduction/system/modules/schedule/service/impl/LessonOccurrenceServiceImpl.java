@@ -159,7 +159,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .eq(query.getTeacherId() != null, LessonOccurrenceEntity::getPlannedTeacherId, query.getTeacherId())
                 .eq(query.getClassroomId() != null, LessonOccurrenceEntity::getPlannedClassroomId, query.getClassroomId())
                 .eq(query.getClassGroupId() != null, LessonOccurrenceEntity::getClassGroupId, query.getClassGroupId())
-                .isNull(LessonOccurrenceEntity::getClassHolidayId)
+                .isNull(LessonOccurrenceEntity::getCourseHolidayId)
                 .ge(LessonOccurrenceEntity::getPlannedStartAt, window[0])
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, window[1])
                 .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt);
