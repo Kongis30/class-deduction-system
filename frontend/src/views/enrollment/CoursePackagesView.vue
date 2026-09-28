@@ -69,8 +69,22 @@
             :show-empty="false"
             :row-class-name="oneOnOneRowClassName"
           >
-            <el-table-column label="Student" min-width="150" prop="studentName" />
-            <el-table-column label="Product / Package" min-width="230">
+            <el-table-column
+              label="Student"
+              min-width="150"
+              prop="studentName"
+              sortable
+              :filters="textColumnFilters(group.packages, row => row.studentName)"
+              :filter-method="filterStudentName"
+            />
+            <el-table-column
+              label="Product / Package"
+              min-width="230"
+              sortable
+              :sort-method="comparePackageNames"
+              :filters="packageNameFilters(group.packages)"
+              :filter-method="filterPackageName"
+            >
               <template #default="{ row }">
                 <div class="package-name-cell">
                   <strong class="package-name-cell__title">
@@ -82,7 +96,15 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="Available" min-width="145" align="center">
+            <el-table-column
+              label="Available"
+              min-width="145"
+              align="center"
+              sortable
+              :sort-method="compareAvailableHours"
+              :filters="availableHourFilters"
+              :filter-method="filterAvailableHours"
+            >
               <template #default="{ row }">
                 <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(row) }">{{ formatHours(row.remainingUnits) }}</strong>
                 <span> / {{ formatHours(row.totalUnits) }}</span>
@@ -92,20 +114,39 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Schedule setup" min-width="150" align="center">
+            <el-table-column
+              label="Schedule setup"
+              min-width="150"
+              align="center"
+              :filters="textColumnFilters(group.packages, row => row.scheduleStatus)"
+              :filter-method="filterScheduleStatus"
+            >
               <template #default="{ row }">
                 <el-tag size="small" :type="scheduleStatusType(row.scheduleStatus)">
                   {{ row.scheduleStatus }}
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="Next lesson" min-width="180">
+            <el-table-column
+              label="Next lesson"
+              min-width="180"
+              sortable
+              :sort-method="compareNextLessonDates"
+              :filters="nextLessonFilters(group.packages)"
+              :filter-method="filterNextLesson"
+            >
               <template #default="{ row }">
                 <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
                 <span v-else class="muted-text">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="Package status" min-width="110" align="center">
+            <el-table-column
+              label="Package status"
+              min-width="110"
+              align="center"
+              :filters="textColumnFilters(group.packages, row => packageStatusLabel(row.packageStatus))"
+              :filter-method="filterPackageStatus"
+            >
               <template #default="{ row }">
                 <el-tag size="small" :type="packageStatusType(row.packageStatus)">
                   {{ packageStatusLabel(row.packageStatus) }}
@@ -228,21 +269,59 @@
                     hide-hint
                   />
                   <el-table :data="packageScheduleRule.slots" size="small" class="schedule-slot-table">
-                    <el-table-column label="Time" min-width="150">
+                    <el-table-column
+                      label="Time"
+                      min-width="150"
+                      sortable
+                      :sort-method="compareScheduleTimes"
+                      :filters="scheduleTimeFilters(packageScheduleRule.slots)"
+                      :filter-method="filterScheduleTime"
+                    >
                       <template #default="{ row }">
                         {{ weekdayLabel(row.weekday) }} · {{ row.startTime }}–{{ row.endTime }}
                       </template>
                     </el-table-column>
-                    <el-table-column label="Teacher" min-width="150">
+                    <el-table-column
+                      label="Teacher"
+                      min-width="150"
+                      sortable
+                      :sort-method="compareScheduleTeachers"
+                      :filters="scheduleTeacherFilters(packageScheduleRule.slots)"
+                      :filter-method="filterScheduleTeacher"
+                    >
                       <template #default="{ row }">{{ scheduleTeacherName(row.teacherId) }}</template>
                     </el-table-column>
-                    <el-table-column label="Lesson name" min-width="130">
+                    <el-table-column
+                      label="Lesson name"
+                      min-width="130"
+                      sortable
+                      :sort-method="compareLessonNames"
+                      :filters="textColumnFilters(packageScheduleRule.slots, row => row.subjectName || '—')"
+                      :filter-method="filterLessonName"
+                    >
                       <template #default="{ row }">{{ row.subjectName || '—' }}</template>
                     </el-table-column>
-                    <el-table-column label="Each lesson" width="110" align="center">
+                    <el-table-column
+                      label="Each lesson"
+                      width="110"
+                      align="center"
+                      prop="plannedUnits"
+                      sortable
+                      :filters="numberColumnFilters(packageScheduleRule.slots, row => row.plannedUnits, formatUnitsAsHours)"
+                      :filter-method="filterScheduleUnits"
+                    >
                       <template #default="{ row }">{{ formatUnitsAsHours(row.plannedUnits) }}</template>
                     </el-table-column>
-                    <el-table-column label="Allocated" width="110" align="center">
+                    <el-table-column
+                      label="Allocated"
+                      width="110"
+                      align="center"
+                      prop="allocatedUnits"
+                      sortable
+                      :sort-method="compareAllocatedUnits"
+                      :filters="numberColumnFilters(packageScheduleRule.slots, row => row.allocatedUnits, formatUnitsAsHours)"
+                      :filter-method="filterAllocatedUnits"
+                    >
                       <template #default="{ row }">{{ formatUnitsAsHours(row.allocatedUnits) }}</template>
                     </el-table-column>
                   </el-table>
@@ -284,24 +363,68 @@
               No confirmed lessons yet.
             </div>
             <el-table v-else :data="lessonHistory" row-key="id" size="small" class="lesson-history-table">
-              <el-table-column label="Lesson No." min-width="130" prop="lessonNo" />
-              <el-table-column label="Status" min-width="100" align="center">
+              <el-table-column
+                label="Lesson No."
+                min-width="130"
+                prop="lessonNo"
+                sortable
+                :filters="textColumnFilters(lessonHistory, row => row.lessonNo)"
+                :filter-method="filterLessonNumber"
+              />
+              <el-table-column
+                label="Status"
+                min-width="100"
+                align="center"
+                :filters="textColumnFilters(lessonHistory, row => resultStatusLabel(row.resultStatus))"
+                :filter-method="filterLessonStatus"
+              >
                 <template #default="{ row }">
                   <el-tag size="small" :type="resultStatusTag(row.resultStatus)">
                     {{ resultStatusLabel(row.resultStatus) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="Hours" min-width="70" align="center">
+              <el-table-column
+                label="Hours"
+                min-width="70"
+                align="center"
+                prop="actualUnits"
+                sortable
+                :filters="numberColumnFilters(lessonHistory, row => row.actualUnits)"
+                :filter-method="filterActualUnits"
+              >
                 <template #default="{ row }">{{ row.actualUnits }}</template>
               </el-table-column>
-              <el-table-column label="Deducted" min-width="80" align="center">
+              <el-table-column
+                label="Deducted"
+                min-width="80"
+                align="center"
+                prop="deductedUnits"
+                sortable
+                :filters="numberColumnFilters(lessonHistory, row => row.deductedUnits)"
+                :filter-method="filterDeductedUnits"
+              >
                 <template #default="{ row }">
                   <span :class="{ 'deducted-text': row.shouldDeduct }">{{ row.deductedUnits }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="Teacher" min-width="110" prop="actualTeacherName" />
-              <el-table-column label="Confirmed" min-width="150" prop="confirmedAt" />
+              <el-table-column
+                label="Teacher"
+                min-width="110"
+                prop="actualTeacherName"
+                sortable
+                :filters="textColumnFilters(lessonHistory, row => row.actualTeacherName || '—')"
+                :filter-method="filterActualTeacher"
+              />
+              <el-table-column
+                label="Confirmed"
+                min-width="150"
+                prop="confirmedAt"
+                sortable
+                :sort-method="compareConfirmedDates"
+                :filters="confirmedDateFilters(lessonHistory)"
+                :filter-method="filterConfirmedDate"
+              />
               <el-table-column label="" min-width="60" fixed="right">
                 <template #default="{ row }">
                   <el-button class="row-action-button" text type="primary" size="small" @click="openLessonDetailDialog(row)">Detail</el-button>
@@ -525,6 +648,7 @@ import type {
   LessonRecordDetailItem,
   LessonRecordItem,
   RecurringScheduleRuleDetailItem,
+  RecurringScheduleSlotItem,
   TeacherItem,
 } from '@/types/domain';
 
@@ -642,6 +766,195 @@ const groupedTableData = computed(() => {
       || left.courseName.localeCompare(right.courseName)
       || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
 });
+
+type TableFilterOption = { text: string; value: string };
+
+function textColumnFilters<T>(rows: T[], getValue: (row: T) => string | undefined | null): TableFilterOption[] {
+  const values = new Map<string, string>();
+  rows.forEach((row) => {
+    const label = getValue(row)?.trim() || '—';
+    values.set(normalizeLabel(label), label);
+  });
+  return [...values.entries()].map(([value, text]) => ({ text, value }));
+}
+
+function numberColumnFilters<T>(
+  rows: T[],
+  getValue: (row: T) => number | undefined,
+  formatValue: (value?: number) => string = value => value == null ? '—' : String(value),
+): TableFilterOption[] {
+  const values = new Map<string, string>();
+  rows.forEach((row) => {
+    const number = getValue(row);
+    const value = number == null ? '__NONE__' : String(number);
+    values.set(value, formatValue(number));
+  });
+  return [...values.entries()].map(([value, text]) => ({ text, value }));
+}
+
+function packageNameFilters(rows: OneOnOnePackageRow[]): TableFilterOption[] {
+  const labels = rows.flatMap(row => [row.packageName || row.courseProductName || 'Unnamed package', row.courseProductName || '']);
+  const values = new Map<string, string>();
+  labels.filter(Boolean).forEach((label) => values.set(normalizeLabel(label), label));
+  return [...values.entries()].map(([value, text]) => ({ text, value }));
+}
+
+const availableHourFilters: TableFilterOption[] = [
+  { text: '10h or less', value: '0-10' },
+  { text: 'Over 10h to 20h', value: '10-20' },
+  { text: 'Over 20h', value: '20+' },
+];
+
+function nextLessonFilters(rows: OneOnOnePackageRow[]): TableFilterOption[] {
+  const values = new Map<string, string>();
+  rows.forEach((row) => {
+    const value = row.nextLessonStartAt || '__NONE__';
+    values.set(value, row.nextLessonStartAt ? formatScheduleDate(row.nextLessonStartAt) : 'No upcoming lesson');
+  });
+  return [...values.entries()].map(([value, text]) => ({ text, value }));
+}
+
+function scheduleTimeFilters(rows: RecurringScheduleSlotItem[]): TableFilterOption[] {
+  return rows.map(row => ({
+    text: `${weekdayLabel(row.weekday)} · ${row.startTime}–${row.endTime}`,
+    value: scheduleTimeKey(row),
+  }));
+}
+
+function scheduleTeacherFilters(rows: RecurringScheduleSlotItem[]): TableFilterOption[] {
+  const values = new Map<string, string>();
+  rows.forEach((row) => {
+    const value = row.teacherId == null ? '__NONE__' : String(row.teacherId);
+    values.set(value, scheduleTeacherName(row.teacherId));
+  });
+  return [...values.entries()].map(([value, text]) => ({ text, value }));
+}
+
+function confirmedDateFilters(rows: LessonRecordItem[]): TableFilterOption[] {
+  const values = new Map<string, string>();
+  rows.forEach((row) => {
+    const value = row.confirmedAt || '__NONE__';
+    values.set(value, row.confirmedAt || '—');
+  });
+  return [...values.entries()].map(([value, text]) => ({ text, value }));
+}
+
+function filterStudentName(value: string, row: OneOnOnePackageRow): boolean {
+  return normalizeLabel(row.studentName) === value;
+}
+
+function filterPackageName(value: string, row: OneOnOnePackageRow): boolean {
+  return [row.packageName, row.courseProductName].some(name => normalizeLabel(name) === value);
+}
+
+function filterAvailableHours(value: string, row: OneOnOnePackageRow): boolean {
+  const hours = Number(row.remainingUnits);
+  if (value === '0-10') return hours <= 10;
+  if (value === '10-20') return hours > 10 && hours <= 20;
+  return hours > 20;
+}
+
+function filterScheduleStatus(value: string, row: OneOnOnePackageRow): boolean {
+  return normalizeLabel(row.scheduleStatus) === value;
+}
+
+function filterNextLesson(value: string, row: OneOnOnePackageRow): boolean {
+  return value === '__NONE__' ? !row.nextLessonStartAt : row.nextLessonStartAt === value;
+}
+
+function filterPackageStatus(value: string, row: OneOnOnePackageRow): boolean {
+  return normalizeLabel(packageStatusLabel(row.packageStatus)) === value;
+}
+
+function filterScheduleTime(value: string, row: RecurringScheduleSlotItem): boolean {
+  return scheduleTimeKey(row) === value;
+}
+
+function filterScheduleTeacher(value: string, row: RecurringScheduleSlotItem): boolean {
+  return value === '__NONE__' ? row.teacherId == null : String(row.teacherId) === value;
+}
+
+function filterLessonName(value: string, row: RecurringScheduleSlotItem): boolean {
+  return normalizeLabel(row.subjectName || '—') === value;
+}
+
+function filterScheduleUnits(value: string, row: RecurringScheduleSlotItem): boolean {
+  return value === '__NONE__' ? row.plannedUnits == null : String(row.plannedUnits) === value;
+}
+
+function filterAllocatedUnits(value: string, row: RecurringScheduleSlotItem): boolean {
+  return value === '__NONE__' ? row.allocatedUnits == null : String(row.allocatedUnits) === value;
+}
+
+function filterLessonNumber(value: string, row: LessonRecordItem): boolean {
+  return normalizeLabel(row.lessonNo) === value;
+}
+
+function filterLessonStatus(value: string, row: LessonRecordItem): boolean {
+  return normalizeLabel(resultStatusLabel(row.resultStatus)) === value;
+}
+
+function filterActualUnits(value: string, row: LessonRecordItem): boolean {
+  return String(row.actualUnits) === value;
+}
+
+function filterDeductedUnits(value: string, row: LessonRecordItem): boolean {
+  return String(row.deductedUnits) === value;
+}
+
+function filterActualTeacher(value: string, row: LessonRecordItem): boolean {
+  return normalizeLabel(row.actualTeacherName || '—') === value;
+}
+
+function filterConfirmedDate(value: string, row: LessonRecordItem): boolean {
+  return value === '__NONE__' ? !row.confirmedAt : row.confirmedAt === value;
+}
+
+function comparePackageNames(left: OneOnOnePackageRow, right: OneOnOnePackageRow): number {
+  return packageDisplayName(left).localeCompare(packageDisplayName(right));
+}
+
+function packageDisplayName(row: OneOnOnePackageRow): string {
+  return row.packageName || row.courseProductName || 'Unnamed package';
+}
+
+function compareAvailableHours(left: OneOnOnePackageRow, right: OneOnOnePackageRow): number {
+  return Number(left.remainingUnits) - Number(right.remainingUnits);
+}
+
+function compareNextLessonDates(left: OneOnOnePackageRow, right: OneOnOnePackageRow): number {
+  return dateSortValue(left.nextLessonStartAt) - dateSortValue(right.nextLessonStartAt);
+}
+
+function compareScheduleTimes(left: RecurringScheduleSlotItem, right: RecurringScheduleSlotItem): number {
+  return left.weekday - right.weekday || left.startTime.localeCompare(right.startTime) || left.endTime.localeCompare(right.endTime);
+}
+
+function compareScheduleTeachers(left: RecurringScheduleSlotItem, right: RecurringScheduleSlotItem): number {
+  return scheduleTeacherName(left.teacherId).localeCompare(scheduleTeacherName(right.teacherId));
+}
+
+function compareLessonNames(left: RecurringScheduleSlotItem, right: RecurringScheduleSlotItem): number {
+  return (left.subjectName || '').localeCompare(right.subjectName || '');
+}
+
+function compareAllocatedUnits(left: RecurringScheduleSlotItem, right: RecurringScheduleSlotItem): number {
+  return Number(left.allocatedUnits ?? -1) - Number(right.allocatedUnits ?? -1);
+}
+
+function compareConfirmedDates(left: LessonRecordItem, right: LessonRecordItem): number {
+  return dateSortValue(left.confirmedAt) - dateSortValue(right.confirmedAt);
+}
+
+function dateSortValue(value?: string): number {
+  if (!value) return Number.MAX_SAFE_INTEGER;
+  const time = new Date(value).getTime();
+  return Number.isNaN(time) ? Number.MAX_SAFE_INTEGER : time;
+}
+
+function scheduleTimeKey(row: RecurringScheduleSlotItem): string {
+  return `${row.weekday}|${row.startTime}|${row.endTime}`;
+}
 
 function handleFilterChange() {
   pagination.page = 1;
