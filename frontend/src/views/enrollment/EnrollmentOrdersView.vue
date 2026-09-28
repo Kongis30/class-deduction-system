@@ -190,7 +190,7 @@
               v-model:page-size="pagination.size"
               background
               layout="prev, pager, next, sizes"
-              :page-sizes="[10, 20, 50]"
+              :page-sizes="[10, 20, 50, 100]"
               :total="pagination.total"
               @current-change="loadData"
               @size-change="loadData"
@@ -1906,7 +1906,7 @@ const filters = reactive({
 
 const pagination = reactive({
   page: 1,
-  size: 10,
+  size: 100,
   total: 0,
   get start() {
     return this.total === 0 ? 0 : (this.page - 1) * this.size + 1;
