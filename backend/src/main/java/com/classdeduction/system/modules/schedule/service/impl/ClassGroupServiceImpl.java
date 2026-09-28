@@ -1522,7 +1522,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         LocalDate endDate = configuredEnd != null
                 ? configuredEnd
                 : resolveClassScheduleHorizon(classGroup.getId(), startDate);
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId());
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), classGroup.getGradeBand());
         if (configuredStart != null) {
             int requiredSessions = isSessionBilling(classGroup.getBillingType())
                     ? (classGroup.getTotalSessions() == null ? 0 : classGroup.getTotalSessions())

@@ -645,7 +645,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 .collect(java.util.stream.Collectors.toSet());
         LocalDate startDate = resolveOccurrenceStartDate(classGroup);
         LocalDate endDate = resolveOccurrenceEndDate(classGroup, startDate);
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId());
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), classGroup.getGradeBand());
         if (classGroup.getStartDate() != null) {
             int requiredSessions = isSessionBilling(classGroup.getBillingType())
                     ? (classGroup.getTotalSessions() == null ? 0 : classGroup.getTotalSessions())

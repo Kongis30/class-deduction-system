@@ -16,6 +16,11 @@ mysql -uroot -p class_deduction_system < doc/migrations/20260928_class_group_slo
 mysql -uroot -p class_deduction_system < doc/migrations/20260928_course_class_holidays.sql
 ```
 
+For an existing installation that already has the 2026-09-28 Course-level holiday schema, run
+`doc/migrations/20260929_grade_level_class_holidays.sql` once to add Grade scope and split existing
+holiday rows across each Course's configured Grades. Do not run that upgrade migration after importing
+`init_schema_current.sql`, which already contains the Grade-level schema.
+
 If the SQL client does not support MySQL `SOURCE`, run the course matrix seed separately after `init_seed_required.sql`:
 
 ```bash
@@ -31,7 +36,8 @@ mysql -uroot -p class_deduction_system < doc/migrations/20260727_seed_ppt_course
 - `doc/migrations/20260924_sys_user_active_unique_keys.sql`: limits account uniqueness to active users and allows repeated soft deletion while preserving account history.
 - `doc/migrations/20260926_registration_managers_and_daily_log.sql`: adds immutable registration operator snapshots and the `MANAGER` role for daily registration reporting.
 - `doc/migrations/20260928_class_group_slot_classroom.sql`: adds independent classroom storage for each group-class weekly schedule slot.
-- `doc/migrations/20260928_course_class_holidays.sql`: adds course-scoped group-class holiday ranges and reversible holiday cancellation metadata on lesson occurrences.
+- `doc/migrations/20260928_course_class_holidays.sql`: adds group-class holiday ranges and reversible holiday cancellation metadata on lesson occurrences.
+- `doc/migrations/20260929_grade_level_class_holidays.sql`: existing-install upgrade only; migrates Course-wide holidays into independent Course + Grade ranges and remaps affected occurrences.
 - `doc/migrations/20260924_recurring_schedule_two_year_horizon.sql`: historical migration retained for existing installs; current scheduler ignores this legacy column.
 
 ## Required Seed Data

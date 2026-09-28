@@ -28,26 +28,34 @@ export interface ClassHolidayPreview {
   conflicts: string[];
 }
 
-export function fetchClassHolidays(courseProductId: EntityId) {
-  return http.get<ApiResponse<ClassHolidayItem[]>>(`/v1/base/course-products/${courseProductId}/holidays`);
-}
-
-export function previewClassHoliday(courseProductId: EntityId, data: ClassHolidaySavePayload, holidayId?: EntityId) {
-  return http.post<ApiResponse<ClassHolidayPreview>>(`/v1/base/course-products/${courseProductId}/holidays/preview`, data, {
-    params: holidayId ? { holidayId } : undefined,
+export function fetchClassHolidays(courseProductId: EntityId, gradeBand: string) {
+  return http.get<ApiResponse<ClassHolidayItem[]>>(`/v1/base/course-products/${courseProductId}/holidays`, {
+    params: { gradeBand },
   });
 }
 
-export function createClassHoliday(courseProductId: EntityId, data: ClassHolidaySavePayload) {
-  return http.post<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays`, data);
+export function previewClassHoliday(courseProductId: EntityId, gradeBand: string, data: ClassHolidaySavePayload, holidayId?: EntityId) {
+  return http.post<ApiResponse<ClassHolidayPreview>>(`/v1/base/course-products/${courseProductId}/holidays/preview`, data, {
+    params: { gradeBand, ...(holidayId ? { holidayId } : {}) },
+  });
 }
 
-export function updateClassHoliday(courseProductId: EntityId, id: EntityId, data: ClassHolidaySavePayload) {
-  return http.put<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`, data);
+export function createClassHoliday(courseProductId: EntityId, gradeBand: string, data: ClassHolidaySavePayload) {
+  return http.post<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays`, data, {
+    params: { gradeBand },
+  });
 }
 
-export function deleteClassHoliday(courseProductId: EntityId, id: EntityId) {
-  return http.delete<ApiResponse<void>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`);
+export function updateClassHoliday(courseProductId: EntityId, gradeBand: string, id: EntityId, data: ClassHolidaySavePayload) {
+  return http.put<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`, data, {
+    params: { gradeBand },
+  });
+}
+
+export function deleteClassHoliday(courseProductId: EntityId, gradeBand: string, id: EntityId) {
+  return http.delete<ApiResponse<void>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`, {
+    params: { gradeBand },
+  });
 }
 
 export interface ScheduleStudentOption {

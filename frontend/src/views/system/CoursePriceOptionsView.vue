@@ -74,9 +74,6 @@
               </el-button>
               <div class="matrix-toolbar__actions">
                 <el-button @click="openGradeDialog">Manage grades</el-button>
-                <el-button v-if="selectedMode === 'GROUP' && query.courseProductId" @click="openClassHolidayDialog">
-                  Manage course holidays
-                </el-button>
                 <el-button type="primary" @click="openDialog()">
                   {{ matrixPrimaryActionLabel }}
                 </el-button>
@@ -97,6 +94,13 @@
                   <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }} for this grade</small>
                 </div>
                 <div class="product-price-group__actions">
+                  <el-button
+                    v-if="selectedMode === 'GROUP' && query.courseProductId && group.gradeLabel !== 'Grade not set'"
+                    size="small"
+                    @click="openClassHolidayDialog(group.gradeLabel)"
+                  >
+                    Manage holidays
+                  </el-button>
                   <small v-if="selectedMode === 'GROUP' && groupHalfDayPriceSummary(group)" class="group-halfday-summary">
                     {{ groupHalfDayPriceSummary(group) }}
                   </small>
@@ -709,18 +713,18 @@
       v-model="classHolidayDialogVisible"
       width="min(760px, calc(100vw - 40px))"
       :close-on-click-modal="false"
-      :title="`${selectedProduct?.productName ?? 'Course'} holidays`"
+      :title="`${selectedProduct?.productName ?? 'Course'} · ${classHolidayGradeBand} holidays`"
       class="class-holiday-dialog"
     >
       <el-alert
-        :title="`These dates apply to every class and campus under ${selectedProduct?.productName ?? 'this course'}. Other courses and one-on-one schedules are not affected.`"
+        :title="`These dates apply to every actual class in ${classHolidayGradeBand} under ${selectedProduct?.productName ?? 'this course'}. Other grades, courses, and one-on-one schedules are not affected.`"
         type="info"
         :closable="false"
         show-icon
       />
       <el-alert
         class="class-holiday-schedule-note"
-        title="Lessons that fall during the holiday are skipped. The same weekly schedule continues afterward so the course keeps its planned number of class days."
+        title="Lessons that fall during the holiday are skipped. The same weekly schedule continues afterward so this grade keeps its planned number of class days."
         type="success"
         :closable="false"
         show-icon
@@ -980,6 +984,7 @@ const actualClassInfoForm = reactive({
   endDate: '' as string,
 });
 const classHolidayDialogVisible = ref(false);
+const classHolidayGradeBand = ref('');
 const loadingClassHolidays = ref(false);
 const savingClassHoliday = ref(false);
 const classHolidayRows = ref<ClassHolidayItem[]>([]);
@@ -1276,8 +1281,9 @@ async function loadAll() {
   await Promise.all([loadProductsAndClasses(), loadOptions()]);
 }
 
-async function openClassHolidayDialog() {
-  if (!query.courseProductId) return;
+async function openClassHolidayDialog(gradeBand: string) {
+  if (!query.courseProductId || !gradeBand.trim()) return;
+  classHolidayGradeBand.value = gradeBand.trim();
   classHolidayDialogVisible.value = true;
   resetClassHolidayForm();
   await loadClassHolidays();
@@ -1290,7 +1296,7 @@ async function loadClassHolidays() {
   }
   loadingClassHolidays.value = true;
   try {
-    const response = await fetchClassHolidays(query.courseProductId);
+    const response = await fetchClassHolidays(query.courseProductId, classHolidayGradeBand.value);
     classHolidayRows.value = response.data.data ?? [];
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
@@ -1332,7 +1338,8 @@ async function saveClassHoliday() {
   try {
     const courseProductId = query.courseProductId;
     if (!courseProductId) return;
-    const previewResponse = await previewClassHoliday(courseProductId, payload, editingHolidayId.value ?? undefined);
+    const gradeBand = classHolidayGradeBand.value;
+    const previewResponse = await previewClassHoliday(courseProductId, gradeBand, payload, editingHolidayId.value ?? undefined);
     const preview = previewResponse.data.data;
     if (preview.conflicts.length) {
       await ElMessageBox.alert(preview.conflicts.join('\n'), 'Resolve schedule conflicts first', {
@@ -1345,18 +1352,18 @@ async function saveClassHoliday() {
     const enrollmentImpact = preview.affectedSessionEnrollmentCount > 0
       ? `将重新计算 ${preview.affectedSessionEnrollmentCount} 条按课次计费的报名记录有效期`
       : '没有按课次计费的报名记录需要重算';
-    const impactText = `${courseName}：假期期间将跳过 ${preview.affectedOccurrenceCount} 节排课并顺延补排；${enrollmentImpact}。`;
+    const impactText = `${courseName} · ${gradeBand}：假期期间将跳过 ${preview.affectedOccurrenceCount} 节排课并顺延补排；${enrollmentImpact}。`;
     await ElMessageBox.confirm(impactText, '确认设置假期', {
       type: 'warning',
       confirmButtonText: editingHolidayId.value ? '保存更改' : '添加假期',
       cancelButtonText: '取消',
     });
     if (editingHolidayId.value) {
-      await updateClassHoliday(courseProductId, editingHolidayId.value, payload);
-      ElMessage.success('Course holiday updated.');
+      await updateClassHoliday(courseProductId, gradeBand, editingHolidayId.value, payload);
+      ElMessage.success('Grade holiday updated.');
     } else {
-      await createClassHoliday(courseProductId, payload);
-      ElMessage.success('Course holiday added.');
+      await createClassHoliday(courseProductId, gradeBand, payload);
+      ElMessage.success('Grade holiday added.');
     }
     resetClassHolidayForm();
     await loadClassHolidays();
@@ -1372,14 +1379,14 @@ async function removeClassHoliday(holiday: ClassHolidayItem) {
   try {
     await ElMessageBox.confirm(
       `Delete “${holiday.holidayName}” (${holiday.startDate} – ${holiday.endDate})? Class lessons will be restored where no other holiday applies.`,
-      'Delete class holiday',
+      'Delete grade holiday',
       { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
     );
     const courseProductId = query.courseProductId;
     if (!courseProductId) return;
-    await deleteClassHoliday(courseProductId, holiday.id);
+    await deleteClassHoliday(courseProductId, classHolidayGradeBand.value, holiday.id);
     if (editingHolidayId.value === holiday.id) resetClassHolidayForm();
-    ElMessage.success('Class holiday deleted.');
+    ElMessage.success('Grade holiday deleted.');
     await loadClassHolidays();
   } catch (error: any) {
     if (error === 'cancel' || error === 'close') return;

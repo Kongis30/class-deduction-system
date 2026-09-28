@@ -17,7 +17,9 @@ import com.classdeduction.system.modules.base.vo.ProductGradeConfigVO;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
 import com.classdeduction.system.modules.finance.mapper.TeacherPayRateMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassHolidayEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -56,6 +58,9 @@ class ProductGradeConfigServiceImplTest {
     private ClassGroupMapper classGroupMapper;
 
     @Mock
+    private ClassHolidayMapper classHolidayMapper;
+
+    @Mock
     private TeacherPayRateMapper teacherPayRateMapper;
 
     private ProductGradeConfigServiceImpl service;
@@ -65,6 +70,7 @@ class ProductGradeConfigServiceImplTest {
         MybatisConfiguration configuration = new MybatisConfiguration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePriceOptionEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassHolidayEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), TeacherPayRateEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ProductGradeConfigEntity.class);
     }
@@ -76,6 +82,7 @@ class ProductGradeConfigServiceImplTest {
                 courseProductMapper,
                 coursePriceOptionMapper,
                 classGroupMapper,
+                classHolidayMapper,
                 teacherPayRateMapper
         );
     }
@@ -123,7 +130,7 @@ class ProductGradeConfigServiceImplTest {
     }
 
     @Test
-    void saveCascadesRenameToPriceOptionsClassGroupsAndPayRates() {
+    void saveCascadesRenameToPriceOptionsClassGroupsHolidaysAndPayRates() {
         mockProductExists();
         when(productGradeConfigMapper.selectList(any())).thenReturn(List.of(config("G3-G6", 99)));
         when(coursePriceOptionMapper.selectList(any())).thenReturn(List.of(priceOption("G3-G6")));
@@ -133,6 +140,7 @@ class ProductGradeConfigServiceImplTest {
         // 三张业务表都按旧名匹配、改成新名。
         verify(coursePriceOptionMapper).update(isNull(), argThat(wrapper -> wrapperSqlContains(wrapper, "G3-6")));
         verify(classGroupMapper).update(isNull(), argThat(wrapper -> wrapperSqlContains(wrapper, "G3-6")));
+        verify(classHolidayMapper).update(isNull(), argThat(wrapper -> wrapperSqlContains(wrapper, "G3-6")));
         verify(teacherPayRateMapper).update(isNull(), argThat(wrapper -> wrapperSqlContains(wrapper, "G3-6")));
         // 配置表旧行软删、新行插入。
         verify(productGradeConfigMapper).deleteById(900L);
@@ -152,6 +160,7 @@ class ProductGradeConfigServiceImplTest {
 
         verify(coursePriceOptionMapper, never()).update(any(), any());
         verify(classGroupMapper, never()).update(any(), any());
+        verify(classHolidayMapper, never()).update(any(), any());
         verify(teacherPayRateMapper, never()).update(any(), any());
         verify(productGradeConfigMapper).insert(any(ProductGradeConfigEntity.class));
     }

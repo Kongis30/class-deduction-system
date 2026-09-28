@@ -3885,7 +3885,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 if (window == null) {
                     continue;
                 }
-                List<ClassHolidayVO> holidays = classHolidayService.listHolidays(group.getProductId());
+                List<ClassHolidayVO> holidays = classHolidayService.listHolidays(group.getProductId(), group.getGradeBand());
                 inserted += ensureClassOccurrencesThrough(group, window[0], window[1], holidays);
             } catch (RuntimeException ex) {
                 log.warn("Failed to renew occurrences for class group id={}: {}", group.getId(), ex.getMessage());

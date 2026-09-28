@@ -60,7 +60,7 @@ public class LessonOccurrenceEntity extends BaseEntity {
 
     private String planningStatus;
 
-    /** 命中的 Course 级班课假期；非空时此课次因放假取消。 */
+    /** 命中的 Course + Grade 班课假期；非空时此课次因放假取消。 */
     private Long courseHolidayId;
 
     /** 放假取消前的状态，撤销假期时用于恢复原课次。 */

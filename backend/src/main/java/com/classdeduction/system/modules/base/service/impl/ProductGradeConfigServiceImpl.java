@@ -15,7 +15,9 @@ import com.classdeduction.system.modules.base.vo.ProductGradeConfigVO;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
 import com.classdeduction.system.modules.finance.mapper.TeacherPayRateMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassHolidayEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +49,7 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
     private final CourseProductMapper courseProductMapper;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final ClassHolidayMapper classHolidayMapper;
     private final TeacherPayRateMapper teacherPayRateMapper;
 
     @Override
@@ -155,7 +158,7 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
             }
         }
 
-        // 5. 级联改名：价格行 / 班级 / 老师费率作用域（历史订单快照不动）。
+        // 5. 级联改名：价格行 / 班级 / 假期 / 老师费率作用域（历史订单快照不动）。
         for (NormalizedItem item : normalized) {
             if (item.newLabel.equals(item.currentLabel)) {
                 continue;
@@ -168,6 +171,10 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
                     .set(ClassGroupEntity::getGradeBand, item.newLabel)
                     .eq(ClassGroupEntity::getProductId, productId)
                     .eq(ClassGroupEntity::getGradeBand, item.currentLabel));
+            classHolidayMapper.update(null, new LambdaUpdateWrapper<ClassHolidayEntity>()
+                    .set(ClassHolidayEntity::getGradeBand, item.newLabel)
+                    .eq(ClassHolidayEntity::getCourseProductId, productId)
+                    .eq(ClassHolidayEntity::getGradeBand, item.currentLabel));
             teacherPayRateMapper.update(null, new LambdaUpdateWrapper<TeacherPayRateEntity>()
                     .set(TeacherPayRateEntity::getGradeBand, item.newLabel)
                     .eq(TeacherPayRateEntity::getCourseProductId, productId)

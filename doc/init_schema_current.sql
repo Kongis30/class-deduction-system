@@ -426,6 +426,7 @@ DROP TABLE IF EXISTS `course_holiday`;
 CREATE TABLE `course_holiday` (
   `id` bigint NOT NULL,
   `course_product_id` bigint NOT NULL,
+  `grade_band` varchar(64) NOT NULL COMMENT 'Grade scope within this course product',
   `holiday_name` varchar(100) NOT NULL,
   `start_date` date NOT NULL,
   `end_date` date NOT NULL,
@@ -438,9 +439,9 @@ CREATE TABLE `course_holiday` (
   `deleted_by` bigint DEFAULT NULL,
   `version` int NOT NULL DEFAULT '0',
   PRIMARY KEY (`id`),
-  KEY `idx_course_holiday_dates` (`course_product_id`,`is_deleted`,`start_date`,`end_date`),
+  KEY `idx_course_holiday_dates` (`course_product_id`,`grade_band`,`is_deleted`,`start_date`,`end_date`),
   CONSTRAINT `fk_course_holiday_product` FOREIGN KEY (`course_product_id`) REFERENCES `course_product` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Group-class holidays scoped to a course product';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Group-class holidays scoped to a course grade';
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --

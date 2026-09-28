@@ -10,22 +10,22 @@ import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 
 public interface ClassHolidayService {
 
-    List<ClassHolidayVO> listHolidays(Long courseProductId);
+    List<ClassHolidayVO> listHolidays(Long courseProductId, String gradeBand);
 
-    List<ClassHolidayVO> listHolidays(Long courseProductId, LocalDate startDate, LocalDate endDate);
+    List<ClassHolidayVO> listHolidays(Long courseProductId, String gradeBand, LocalDate startDate, LocalDate endDate);
 
-    boolean isHoliday(Long courseProductId, LocalDate date);
+    boolean isHoliday(Long courseProductId, String gradeBand, LocalDate date);
 
     default boolean isHoliday(LocalDate date, List<ClassHolidayVO> holidays) {
         return holidays != null && holidays.stream().anyMatch(holiday ->
                 !date.isBefore(holiday.startDate()) && !date.isAfter(holiday.endDate()));
     }
 
-    ClassHolidayPreviewVO previewHoliday(Long courseProductId, Long holidayId, ClassHolidaySaveRequest request);
+    ClassHolidayPreviewVO previewHoliday(Long courseProductId, String gradeBand, Long holidayId, ClassHolidaySaveRequest request);
 
-    ClassHolidayVO createHoliday(Long courseProductId, ClassHolidaySaveRequest request);
+    ClassHolidayVO createHoliday(Long courseProductId, String gradeBand, ClassHolidaySaveRequest request);
 
-    ClassHolidayVO updateHoliday(Long courseProductId, Long id, ClassHolidaySaveRequest request);
+    ClassHolidayVO updateHoliday(Long courseProductId, String gradeBand, Long id, ClassHolidaySaveRequest request);
 
-    void deleteHoliday(Long courseProductId, Long id);
+    void deleteHoliday(Long courseProductId, String gradeBand, Long id);
 }

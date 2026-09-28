@@ -94,9 +94,9 @@ Shared conventions:
 
 ### Scheduling
 
-- `GET /api/v1/base/course-products/{courseProductId}/holidays` lists the holiday ranges for one group-class Course. All actual classes under that Course share these holidays.
-- `POST /api/v1/base/course-products/{courseProductId}/holidays/preview` validates a proposed range and reports affected lessons, SESSION enrollments, and blocking conflicts for that Course.
-- `POST /api/v1/base/course-products/{courseProductId}/holidays`, `PUT /api/v1/base/course-products/{courseProductId}/holidays/{id}`, and `DELETE /api/v1/base/course-products/{courseProductId}/holidays/{id}` maintain that Course's holidays. Changes affect only its future group-class occurrences and recalculate its SESSION enrollment expiry dates transactionally; other Courses and one-on-one schedules are unaffected.
+- `GET /api/v1/base/course-products/{courseProductId}/holidays?gradeBand=...` lists holidays for one group-class Course + Grade. All actual classes in that Grade share the holidays.
+- `POST /api/v1/base/course-products/{courseProductId}/holidays/preview?gradeBand=...` validates a proposed range and reports affected lessons, SESSION enrollments, and blocking conflicts for that Grade.
+- `POST /api/v1/base/course-products/{courseProductId}/holidays?gradeBand=...`, `PUT /api/v1/base/course-products/{courseProductId}/holidays/{id}?gradeBand=...`, and `DELETE /api/v1/base/course-products/{courseProductId}/holidays/{id}?gradeBand=...` maintain that Grade's holidays. Changes affect only its future group-class occurrences and recalculate its SESSION enrollment expiry dates transactionally; other Grades, Courses, and one-on-one schedules are unaffected.
 - `GET /api/v1/schedule/students/one-on-one` returns active students with at least one active one-on-one course package for the Schedule student picker.
 - `GET /api/v1/schedule/rules`
 - `GET /api/v1/schedule/rules/{id}`

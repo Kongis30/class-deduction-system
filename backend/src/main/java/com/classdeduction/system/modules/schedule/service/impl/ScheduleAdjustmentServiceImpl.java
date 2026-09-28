@@ -91,7 +91,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         ClassGroupEntity sourceClassGroup = source.getClassGroupId() == null
                 ? null : classGroupMapper.selectById(source.getClassGroupId());
         if (sourceClassGroup != null && request.getPlannedStartAt() != null
-                && classHolidayService.isHoliday(sourceClassGroup.getProductId(), request.getPlannedStartAt().toLocalDate())) {
+                && classHolidayService.isHoliday(sourceClassGroup.getProductId(), sourceClassGroup.getGradeBand(),
+                request.getPlannedStartAt().toLocalDate())) {
             throw new BusinessException("CLASS_LESSON_ON_HOLIDAY",
                     "A group-class lesson cannot be scheduled during a class holiday.");
         }
