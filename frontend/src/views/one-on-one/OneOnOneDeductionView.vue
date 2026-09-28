@@ -822,7 +822,7 @@ const teacherCourseGroups = computed<TeacherCourseGroup[]>(() => {
     .sort((left, right) => left.teacherName.localeCompare(right.teacherName));
 });
 const candidateScopeLabel = computed(() => {
-  if (!hasActiveFilters.value) return 'All active 1-on-1 student courses';
+  if (!hasActiveFilters.value) return 'All 1-on-1 student courses';
   const filters = [
     activeStudentSearch.value && 'student',
     selectedTeacherKey.value && 'teacher',
@@ -832,11 +832,11 @@ const candidateScopeLabel = computed(() => {
   return `Matching ${filters.join(' + ')}`;
 });
 const candidateEmptyMessage = computed(() => {
-  if (!hasActiveFilters.value) return 'No active 1-on-1 student courses found.';
+  if (!hasActiveFilters.value) return 'No 1-on-1 student courses found.';
   if (activeStudentSearch.value && studentSearchResults.value.length === 0) {
     return 'No student matches this search.';
   }
-  return 'No active 1-on-1 student courses match this selection.';
+  return 'No 1-on-1 student courses match this selection.';
 });
 const pendingTeacherCount = computed(() =>
   activePackage.value?.lessons.filter(isAwaitingTeacherConfirmation).length ?? 0
