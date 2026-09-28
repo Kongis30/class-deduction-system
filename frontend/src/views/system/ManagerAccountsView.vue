@@ -44,6 +44,7 @@
       width="480px"
       :close-on-click-modal="false"
       :close-on-press-escape="false"
+      :show-close="!deleting"
       @close="clearDeleteTimer"
     >
       <p v-if="deleteTarget">
@@ -51,7 +52,7 @@
         The account will lose login access; registration records will be kept.
       </p>
       <template #footer>
-        <el-button @click="closeDeleteDialog">Cancel</el-button>
+        <el-button :disabled="deleting" @click="closeDeleteDialog">Cancel</el-button>
         <el-button
           type="danger"
           :disabled="deleteCountdown > 0"
