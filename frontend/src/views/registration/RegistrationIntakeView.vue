@@ -536,12 +536,41 @@
                             filterable
                             @change="() => handleClassChange(line)"
                           >
+                            <template #label="{ label, value }">
+                              <span class="registration-class-option">
+                                <el-tag
+                                  size="small"
+                                  effect="plain"
+                                  :type="campusOptionTagType(classOptionCampusName(value, label))"
+                                >
+                                  {{ classOptionCampusName(value, label) }}
+                                </el-tag>
+                                <span class="registration-class-option__name">
+                                  {{ classOptionName(value, label) }}
+                                </span>
+                              </span>
+                            </template>
                             <el-option
                               v-for="classGroup in classOptionsForLine(line)"
                               :key="classGroup.id"
                               :label="formatClassOptionLabel(classGroup)"
                               :value="classGroup.id"
-                            />
+                            >
+                              <template #default>
+                                <span class="registration-class-option">
+                                  <el-tag
+                                    size="small"
+                                    effect="plain"
+                                    :type="campusOptionTagType(classGroup.campusName)"
+                                  >
+                                    {{ classGroup.campusName?.trim() || '—' }}
+                                  </el-tag>
+                                  <span class="registration-class-option__name">
+                                    {{ formatClassLabel(classGroup) }}
+                                  </span>
+                                </span>
+                              </template>
+                            </el-option>
                           </el-select>
                           <el-button
                             v-if="selectedCampus"
@@ -5233,6 +5262,27 @@ function formatClassOptionLabel(item: ClassGroupItem) {
   return `${formatClassLabel(item)} · ${item.campusName?.trim() || '—'}`;
 }
 
+function classOptionCampusName(value: unknown, label: string) {
+  const campusName = classGroups.value.find(item => String(item.id) === String(value))?.campusName?.trim();
+  if (campusName) return campusName;
+  const separatorIndex = label.lastIndexOf(' · ');
+  return separatorIndex >= 0 ? label.slice(separatorIndex + 3) : '—';
+}
+
+function classOptionName(value: unknown, label: string) {
+  const classGroup = classGroups.value.find(item => String(item.id) === String(value));
+  if (classGroup) return formatClassLabel(classGroup);
+  const separatorIndex = label.lastIndexOf(' · ');
+  return separatorIndex >= 0 ? label.slice(0, separatorIndex) : label;
+}
+
+function campusOptionTagType(campusName?: string): 'primary' | 'success' | 'info' {
+  const normalized = campusName?.toLowerCase() ?? '';
+  if (normalized.includes('north')) return 'primary';
+  if (normalized.includes('south')) return 'success';
+  return 'info';
+}
+
 function formatCourseType(type: string) {
   const configured = courseCategoryLabels.value[type];
   if (configured) {
@@ -6501,6 +6551,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 .registration-class-campus-toggle {
   padding: 0 4px;
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.registration-class-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.registration-class-option__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
