@@ -8,13 +8,15 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.dto.CoursePriceOptionPageQuery;
 import com.classdeduction.system.modules.base.dto.CoursePriceOptionSaveRequest;
+import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.CoursePriceOptionService;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
@@ -67,6 +69,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     private final CourseProductMapper courseProductMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final ClassGroupMapper classGroupMapper;
+    private final ProductGradeConfigMapper productGradeConfigMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
@@ -472,6 +475,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         }
         String gradeBand = StringUtils.hasText(request.getGradeBand()) ? request.getGradeBand().trim() : "General";
         List<String> actualClasses = resolveActualClasses(request.getActualClasses(), gradeBand);
+        ProductGradeConfigEntity gradePeriod = findConfiguredGradeClassPeriod(product.getId(), gradeBand);
         ClassGroupEntity primary = null;
         for (String actualClass : actualClasses) {
             ClassGroupEntity classGroup = findClassGroup(product.getId(), gradeBand, actualClass);
@@ -499,13 +503,14 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 }
             }
             applyGroupBillingMetadata(classGroup, request);
+            applyConfiguredGradeClassPeriod(classGroup, gradePeriod);
             if (primary == null || Objects.equals(classGroup.getId(), request.getClassId())) {
                 primary = classGroup;
             }
         }
         option.setClassId(primary == null ? null : primary.getId());
         if (primary != null && request.getGroupScheduleSlots() != null && !request.getGroupScheduleSlots().isEmpty()) {
-            applyGroupSchedule(primary, request);
+            applyGroupSchedule(primary, request, gradePeriod);
         }
     }
 
@@ -513,12 +518,37 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         classGroup.setBillingType(StringUtils.hasText(request.getPackageUnit())
                 ? request.getPackageUnit().trim().toUpperCase(Locale.ROOT)
                 : "MONTH");
-        classGroup.setStartDate(request.getGroupStartDate());
-        classGroup.setEndDate(request.getGroupEndDate());
-        classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
+        if (request.getGroupStartDate() != null) {
+            classGroup.setStartDate(request.getGroupStartDate());
+        }
+        if (request.getGroupEndDate() != null) {
+            classGroup.setEndDate(request.getGroupEndDate());
+            classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
+        }
         classGroup.setTotalSessions(request.getGroupTotalSessions());
         classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
         classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
+        classGroupMapper.updateById(classGroup);
+    }
+
+    /** 年级统一配置优先于旧价格选项载荷，避免编辑某个选项后同年级日期分裂。 */
+    /** 查找该产品 Grade 的唯一共享周期；未显式配置时保留旧 class_group 日期兼容行为。 */
+    private ProductGradeConfigEntity findConfiguredGradeClassPeriod(Long productId, String gradeBand) {
+        return productGradeConfigMapper.selectOne(
+                new LambdaQueryWrapper<ProductGradeConfigEntity>()
+                        .eq(ProductGradeConfigEntity::getCourseProductId, productId)
+                        .eq(ProductGradeConfigEntity::getGradeLabel, gradeBand)
+                        .eq(ProductGradeConfigEntity::getClassPeriodConfigured, true)
+                        .last("LIMIT 1"));
+    }
+
+    private void applyConfiguredGradeClassPeriod(ClassGroupEntity classGroup, ProductGradeConfigEntity config) {
+        if (config == null) {
+            return;
+        }
+        classGroup.setStartDate(config.getClassStartDate());
+        classGroup.setEndDate(config.getClassEndDate());
+        classGroup.setScheduleBaseEndDate(config.getClassEndDate());
         classGroupMapper.updateById(classGroup);
     }
 
@@ -576,7 +606,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         return classes;
     }
 
-    private void applyGroupSchedule(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request) {
+    private void applyGroupSchedule(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request,
+                                    ProductGradeConfigEntity gradePeriod) {
         if (request.getGroupScheduleSlots() == null || request.getGroupScheduleSlots().isEmpty()) {
             return;
         }
@@ -585,9 +616,18 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         classGroup.setBillingType(StringUtils.hasText(request.getPackageUnit())
                 ? request.getPackageUnit().trim().toUpperCase(Locale.ROOT)
                 : "MONTH");
-        classGroup.setStartDate(request.getGroupStartDate());
-        classGroup.setEndDate(request.getGroupEndDate());
-        classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
+        if (request.getGroupStartDate() != null) {
+            classGroup.setStartDate(request.getGroupStartDate());
+        }
+        if (request.getGroupEndDate() != null) {
+            classGroup.setEndDate(request.getGroupEndDate());
+            classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
+        }
+        if (gradePeriod != null) {
+            classGroup.setStartDate(gradePeriod.getClassStartDate());
+            classGroup.setEndDate(gradePeriod.getClassEndDate());
+            classGroup.setScheduleBaseEndDate(gradePeriod.getClassEndDate());
+        }
         classGroup.setTotalSessions(request.getGroupTotalSessions());
         classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
         classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
@@ -933,6 +973,9 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         BigDecimal packageQuantity = resolvePackageQuantity(entity, classGroup, packageUnit);
         BigDecimal totalPrice = resolveTotalPrice(entity);
         BigDecimal derivedUnitPrice = deriveUnitPrice(totalPrice, packageQuantity);
+        LocalDate configuredEndDate = classGroup == null ? null
+                : classGroup.getScheduleBaseEndDate() == null
+                        ? classGroup.getEndDate() : classGroup.getScheduleBaseEndDate();
         List<CoursePriceOptionVO.GroupScheduleSlotVO> groupScheduleSlots = classGroup == null
                 ? List.of()
                 : classGroupScheduleSlotMapper.selectList(new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
@@ -978,8 +1021,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 .groupBillingType(classGroup == null ? null : classGroup.getBillingType())
                 .groupStartDate(classGroup == null || classGroup.getStartDate() == null
                         ? null : classGroup.getStartDate().toString())
-                .groupEndDate(classGroup == null || classGroup.getEndDate() == null
-                        ? null : classGroup.getEndDate().toString())
+                .groupEndDate(configuredEndDate == null ? null : configuredEndDate.toString())
                 .groupTotalSessions(classGroup == null ? null : classGroup.getTotalSessions())
                 .groupStartMonth(classGroup == null || classGroup.getStartMonth() == null
                         ? null : YearMonth.from(classGroup.getStartMonth()).toString())

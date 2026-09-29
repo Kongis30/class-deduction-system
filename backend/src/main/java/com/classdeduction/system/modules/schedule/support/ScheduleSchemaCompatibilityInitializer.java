@@ -22,6 +22,12 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         dropLegacyOccurrenceSlotForeignKey();
         addClassGroupColumnIfMissing("end_date",
                 "date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class' AFTER start_date");
+        addProductGradeConfigColumnIfMissing("class_start_date",
+                "date DEFAULT NULL COMMENT 'Grade-wide actual class period start date' AFTER display_order");
+        addProductGradeConfigColumnIfMissing("class_end_date",
+                "date DEFAULT NULL COMMENT 'Grade-wide actual class period end date' AFTER class_start_date");
+        addProductGradeConfigColumnIfMissing("class_period_configured",
+                "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Whether the grade-wide class period is explicitly configured' AFTER class_end_date");
         addClassGroupColumnIfMissing("actual_class",
                 "varchar(64) DEFAULT NULL COMMENT 'Actual class name under a billing grade, e.g. G1/G2' AFTER grade_band");
         addEnrollmentOrderItemColumnIfMissing("start_date",
@@ -79,6 +85,21 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         }
         jdbcTemplate.execute("ALTER TABLE enrollment_order_item ADD COLUMN `" + columnName + "` " + columnDefinition);
         log.info("Added enrollment_order_item.{} column for course-line enrollment start dates.", columnName);
+    }
+
+    private void addProductGradeConfigColumnIfMissing(String columnName, String columnDefinition) {
+        Integer count = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*)
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'product_grade_config'
+                  AND COLUMN_NAME = ?
+                """, Integer.class, columnName);
+        if (count != null && count > 0) {
+            return;
+        }
+        jdbcTemplate.execute("ALTER TABLE product_grade_config ADD COLUMN `" + columnName + "` " + columnDefinition);
+        log.info("Added product_grade_config.{} for grade-wide actual class periods.", columnName);
     }
 
     private void addEnrollmentOrderColumnIfMissing(String columnName, String columnDefinition) {

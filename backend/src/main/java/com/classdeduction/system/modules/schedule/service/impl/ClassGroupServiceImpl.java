@@ -7,10 +7,12 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -71,6 +73,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final CourseProductMapper courseProductMapper;
+    private final ProductGradeConfigMapper productGradeConfigMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final ClassHolidayService classHolidayService;
@@ -695,13 +698,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // 保留旧客户端的班级默认值作为兼容回退；新页面按 slot 提交独立资源。
         Long defaultTeacherId = parseLongFromBody(body, "teacherId");
         Long defaultClassroomId = parseLongFromBody(body, "classroomId");
-        LocalDate startDate = body != null && body.containsKey("startDate")
-                ? parseDateParam(body, "startDate") : classGroup.getStartDate();
-        LocalDate endDate = body != null && body.containsKey("endDate")
-                ? parseDateParam(body, "endDate") : classGroup.getEndDate();
-        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
-            throw new BusinessException("INVALID_CLASS_DATE_RANGE", "Class end date cannot be earlier than the start date.");
-        }
         List<ClassGroupScheduleSlotEntity> slots = parseClassScheduleSlots(
                 body.get("slots"), defaultTeacherId, defaultClassroomId);
         if (slots.isEmpty()) {
@@ -730,11 +726,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // 班级字段仅保留首个已配置资源供旧列表兼容，课次生成以 slot 字段为准。
         classGroup.setTeacherId(firstTeacherId(slots));
         classGroup.setClassroomId(firstClassroomId(slots));
-        classGroup.setStartDate(startDate);
-        classGroup.setEndDate(endDate);
-        if (body != null && body.containsKey("endDate")) {
-            classGroup.setScheduleBaseEndDate(endDate);
-        }
         classGroup.setScheduleDesc(buildScheduleDesc(slots));
         classGroupMapper.updateById(classGroup);
 
@@ -773,7 +764,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         classGroup.setListPrice(java.math.BigDecimal.ZERO);
         classGroup.setStatus("ACTIVE");
         inheritGradeBillingMetadata(classGroup);
-        applyClassDateRange(classGroup, body);
         classGroupMapper.insert(classGroup);
         return toClassInfoMap(classGroup);
     }
@@ -789,7 +779,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         ensureActualClassUnique(classId, classGroup.getProductId(), classGroup.getGradeBand(), actualClass);
         classGroup.setActualClass(actualClass);
         classGroup.setClassName(resolveClassName(body, actualClass));
-        applyClassDateRange(classGroup, body);
         classGroupMapper.updateById(classGroup);
         return toClassInfoMap(classGroup);
     }
@@ -807,23 +796,36 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
     }
 
+    /** 新建实际班时优先沿用同 Grade 班级的计费元数据；无同级班时回退到 Grade 共享日期配置。 */
     private void inheritGradeBillingMetadata(ClassGroupEntity classGroup) {
         ClassGroupEntity sibling = classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
                 .eq(ClassGroupEntity::getProductId, classGroup.getProductId())
                 .eq(ClassGroupEntity::getGradeBand, classGroup.getGradeBand())
                 .eq(ClassGroupEntity::getIsDeleted, 0)
                 .last("LIMIT 1"));
-        if (sibling == null) {
+        if (sibling != null) {
+            classGroup.setBillingType(sibling.getBillingType());
+            classGroup.setStartDate(sibling.getStartDate());
+            classGroup.setEndDate(sibling.getEndDate());
+            classGroup.setScheduleBaseEndDate(sibling.getScheduleBaseEndDate() == null
+                    ? sibling.getEndDate() : sibling.getScheduleBaseEndDate());
+            classGroup.setTotalSessions(sibling.getTotalSessions());
+            classGroup.setStartMonth(sibling.getStartMonth());
+            classGroup.setEndMonth(sibling.getEndMonth());
             return;
         }
-        classGroup.setBillingType(sibling.getBillingType());
-        classGroup.setStartDate(sibling.getStartDate());
-        classGroup.setEndDate(sibling.getEndDate());
-        classGroup.setScheduleBaseEndDate(sibling.getScheduleBaseEndDate() == null
-                ? sibling.getEndDate() : sibling.getScheduleBaseEndDate());
-        classGroup.setTotalSessions(sibling.getTotalSessions());
-        classGroup.setStartMonth(sibling.getStartMonth());
-        classGroup.setEndMonth(sibling.getEndMonth());
+
+        ProductGradeConfigEntity gradeConfig = productGradeConfigMapper.selectOne(
+                new LambdaQueryWrapper<ProductGradeConfigEntity>()
+                        .eq(ProductGradeConfigEntity::getCourseProductId, classGroup.getProductId())
+                        .eq(ProductGradeConfigEntity::getGradeLabel, classGroup.getGradeBand())
+                        .eq(ProductGradeConfigEntity::getClassPeriodConfigured, true)
+                        .last("LIMIT 1"));
+        if (gradeConfig != null) {
+            classGroup.setStartDate(gradeConfig.getClassStartDate());
+            classGroup.setEndDate(gradeConfig.getClassEndDate());
+            classGroup.setScheduleBaseEndDate(gradeConfig.getClassEndDate());
+        }
     }
 
     private String resolveClassName(Map<String, Object> body, String actualClass) {
@@ -859,22 +861,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("endDate", classGroup.getEndDate());
         item.put("scheduleDesc", classGroup.getScheduleDesc());
         return item;
-    }
-
-    /** Actual class 的周期属于 class 本身，和共享的 registration option 分开保存。 */
-    private void applyClassDateRange(ClassGroupEntity classGroup, Map<String, Object> body) {
-        LocalDate startDate = body != null && body.containsKey("startDate")
-                ? parseDateParam(body, "startDate") : classGroup.getStartDate();
-        LocalDate endDate = body != null && body.containsKey("endDate")
-                ? parseDateParam(body, "endDate") : classGroup.getEndDate();
-        if (startDate != null && endDate != null && endDate.isBefore(startDate)) {
-            throw new BusinessException("INVALID_CLASS_DATE_RANGE", "Class end date cannot be earlier than the start date.");
-        }
-        classGroup.setStartDate(startDate);
-        classGroup.setEndDate(endDate);
-        if (body != null && body.containsKey("endDate")) {
-            classGroup.setScheduleBaseEndDate(endDate);
-        }
     }
 
     @Override
@@ -1255,24 +1241,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             }
         }
         return null;
-    }
-
-    /**
-     * 解析 Actual class 的教学周期；空字符串表示清空日期，非法日期直接阻止保存。
-     */
-    private LocalDate parseDateParam(Map<String, Object> body, String key) {
-        Object value = body == null ? null : body.get(key);
-        if (value == null || (value instanceof String text && text.isBlank())) {
-            return null;
-        }
-        if (value instanceof String text) {
-            try {
-                return LocalDate.parse(text);
-            } catch (RuntimeException exception) {
-                throw new BusinessException("INVALID_CLASS_DATE", "Class dates must use YYYY-MM-DD format.");
-            }
-        }
-        throw new BusinessException("INVALID_CLASS_DATE", "Class dates must use YYYY-MM-DD format.");
     }
 
     private void ensureNoClassConfirmConflicts(LessonOccurrenceEntity source,

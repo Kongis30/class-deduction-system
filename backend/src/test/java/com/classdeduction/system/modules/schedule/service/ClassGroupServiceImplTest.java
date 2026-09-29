@@ -6,11 +6,13 @@ import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -91,6 +93,9 @@ class ClassGroupServiceImplTest {
     private CourseProductMapper courseProductMapper;
 
     @Mock
+    private ProductGradeConfigMapper productGradeConfigMapper;
+
+    @Mock
     private CoursePackageMapper coursePackageMapper;
 
     @Mock
@@ -115,6 +120,7 @@ class ClassGroupServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassEnrollmentEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassGroupScheduleSlotEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ProductGradeConfigEntity.class);
     }
 
     @BeforeEach
@@ -129,6 +135,7 @@ class ClassGroupServiceImplTest {
                 teacherMapper,
                 classroomMapper,
                 courseProductMapper,
+                productGradeConfigMapper,
                 coursePackageMapper,
                 privateLessonGroupMemberMapper,
                 classHolidayService

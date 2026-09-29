@@ -23,6 +23,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -34,8 +35,8 @@ import java.util.Set;
  * grade 配置服务实现。
  *
  * <p>grade_band 是散落在 course_price_option / class_group / teacher_pay_rate 中的
- * 自由文本。本服务的配置表只是覆盖层（决定顺序），改名时在同一事务内级联更新
- * 三张业务表，保证价格行、班级、老师费率作用域同步，历史订单快照不动。</p>
+ * 自由文本。本服务维护产品级 grade 元数据，并在同一事务内级联更新改名和共享日期，
+ * 保证价格行、班级、假期和老师费率作用域同步，历史订单快照不动。</p>
  */
 @Service
 @RequiredArgsConstructor
@@ -71,6 +72,27 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
 
         // 自动发现：价格行里实际存在、但尚未入库配置的 grade（含仅存在于配置表的残留项）。
         Set<String> knownLabels = new LinkedHashSet<>(configured.keySet());
+        Map<String, ClassPeriod> legacyPeriods = new LinkedHashMap<>();
+        for (ClassGroupEntity classGroup : classGroupMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupEntity>()
+                        .eq(ClassGroupEntity::getProductId, productId)
+                        .eq(ClassGroupEntity::getIsDeleted, 0)
+                        .orderByAsc(ClassGroupEntity::getId))) {
+            if (!StringUtils.hasText(classGroup.getGradeBand())) {
+                continue;
+            }
+            String key = classGroup.getGradeBand().trim().toLowerCase();
+            ClassPeriod previous = legacyPeriods.get(key);
+            LocalDate startDate = previous != null && previous.startDate() != null
+                    ? previous.startDate() : classGroup.getStartDate();
+            // endDate 可能已因假期顺延；scheduleBaseEndDate 才是管理员最初设定的结束日期。
+            LocalDate endDate = previous != null && previous.endDate() != null
+                    ? previous.endDate()
+                    : classGroup.getScheduleBaseEndDate() == null
+                            ? classGroup.getEndDate() : classGroup.getScheduleBaseEndDate();
+            legacyPeriods.put(key, new ClassPeriod(startDate, endDate));
+            knownLabels.add(classGroup.getGradeBand());
+        }
         for (CoursePriceOptionEntity option : coursePriceOptionMapper.selectList(
                 new LambdaQueryWrapper<CoursePriceOptionEntity>()
                         .eq(CoursePriceOptionEntity::getCourseProductId, productId)
@@ -84,10 +106,17 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
         List<ProductGradeConfigVO> result = new ArrayList<>();
         for (String label : knownLabels) {
             ProductGradeConfigEntity entity = configured.get(label);
+            ClassPeriod fallback = legacyPeriods.get(label.trim().toLowerCase());
+            boolean classPeriodConfigured = entity != null && Boolean.TRUE.equals(entity.getClassPeriodConfigured());
             result.add(ProductGradeConfigVO.builder()
                     .id(entity == null ? null : entity.getId())
                     .gradeLabel(label)
                     .displayOrder(entity == null ? DEFAULT_ORDER : safeOrder(entity.getDisplayOrder()))
+                    .startDate(classPeriodConfigured ? entity.getClassStartDate()
+                            : fallback == null ? null : fallback.startDate())
+                    .endDate(classPeriodConfigured ? entity.getClassEndDate()
+                            : fallback == null ? null : fallback.endDate())
+                    .classPeriodConfigured(classPeriodConfigured)
                     .build());
         }
         result.sort((left, right) -> {
@@ -106,6 +135,10 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
                 ? List.of() : request.getItems();
 
         // 1. 规范化：newLabel 为空 = 不改名；传了纯空白 = 非法。
+        List<ProductGradeConfigVO> existingGrades = buildGradeConfigs(productId);
+        Map<String, ProductGradeConfigVO> existingByLabel = existingGrades.stream()
+                .collect(java.util.stream.Collectors.toMap(
+                        item -> item.gradeLabel().toLowerCase(), item -> item));
         List<NormalizedItem> normalized = new ArrayList<>();
         for (ProductGradeConfigSaveRequest.Item item : items) {
             String currentLabel = item.getCurrentLabel() == null ? "" : item.getCurrentLabel().trim();
@@ -119,7 +152,18 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
                 }
                 newLabel = item.getNewLabel().trim();
             }
-            normalized.add(new NormalizedItem(currentLabel, newLabel, safeOrder(item.getDisplayOrder())));
+            ProductGradeConfigVO existing = existingByLabel.get(currentLabel.toLowerCase());
+            boolean updateClassPeriod = Boolean.TRUE.equals(item.getUpdateClassPeriod());
+            LocalDate startDate = updateClassPeriod ? item.getStartDate()
+                    : existing == null ? null : existing.startDate();
+            LocalDate endDate = updateClassPeriod ? item.getEndDate()
+                    : existing == null ? null : existing.endDate();
+            if (updateClassPeriod && startDate != null && endDate != null && endDate.isBefore(startDate)) {
+                throw new BusinessException("INVALID_GRADE_CLASS_PERIOD",
+                        "Class end date cannot be earlier than the start date for grade " + currentLabel + ".");
+            }
+            normalized.add(new NormalizedItem(currentLabel, newLabel, safeOrder(item.getDisplayOrder()),
+                    startDate, endDate, updateClassPeriod || (existing != null && Boolean.TRUE.equals(existing.classPeriodConfigured()))));
         }
 
         // 2. currentLabel 不得重复提交。
@@ -133,7 +177,7 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
 
         // 3. currentLabel 必须真实存在（配置表 ∪ 价格行），拒绝过期数据。
         Set<String> knownKeys = new LinkedHashSet<>();
-        for (ProductGradeConfigVO vo : buildGradeConfigs(productId)) {
+        for (ProductGradeConfigVO vo : existingGrades) {
             knownKeys.add(vo.gradeLabel().toLowerCase());
         }
         for (NormalizedItem item : normalized) {
@@ -160,25 +204,33 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
 
         // 5. 级联改名：价格行 / 班级 / 假期 / 老师费率作用域（历史订单快照不动）。
         for (NormalizedItem item : normalized) {
-            if (item.newLabel.equals(item.currentLabel)) {
-                continue;
+            if (!item.newLabel.equals(item.currentLabel)) {
+                coursePriceOptionMapper.update(null, new LambdaUpdateWrapper<CoursePriceOptionEntity>()
+                        .set(CoursePriceOptionEntity::getGradeBand, item.newLabel)
+                        .eq(CoursePriceOptionEntity::getCourseProductId, productId)
+                        .eq(CoursePriceOptionEntity::getGradeBand, item.currentLabel));
+                classGroupMapper.update(null, new LambdaUpdateWrapper<ClassGroupEntity>()
+                        .set(ClassGroupEntity::getGradeBand, item.newLabel)
+                        .eq(ClassGroupEntity::getProductId, productId)
+                        .eq(ClassGroupEntity::getGradeBand, item.currentLabel));
+                classHolidayMapper.update(null, new LambdaUpdateWrapper<ClassHolidayEntity>()
+                        .set(ClassHolidayEntity::getGradeBand, item.newLabel)
+                        .eq(ClassHolidayEntity::getCourseProductId, productId)
+                        .eq(ClassHolidayEntity::getGradeBand, item.currentLabel));
+                teacherPayRateMapper.update(null, new LambdaUpdateWrapper<TeacherPayRateEntity>()
+                        .set(TeacherPayRateEntity::getGradeBand, item.newLabel)
+                        .eq(TeacherPayRateEntity::getCourseProductId, productId)
+                        .eq(TeacherPayRateEntity::getGradeBand, item.currentLabel));
             }
-            coursePriceOptionMapper.update(null, new LambdaUpdateWrapper<CoursePriceOptionEntity>()
-                    .set(CoursePriceOptionEntity::getGradeBand, item.newLabel)
-                    .eq(CoursePriceOptionEntity::getCourseProductId, productId)
-                    .eq(CoursePriceOptionEntity::getGradeBand, item.currentLabel));
-            classGroupMapper.update(null, new LambdaUpdateWrapper<ClassGroupEntity>()
-                    .set(ClassGroupEntity::getGradeBand, item.newLabel)
-                    .eq(ClassGroupEntity::getProductId, productId)
-                    .eq(ClassGroupEntity::getGradeBand, item.currentLabel));
-            classHolidayMapper.update(null, new LambdaUpdateWrapper<ClassHolidayEntity>()
-                    .set(ClassHolidayEntity::getGradeBand, item.newLabel)
-                    .eq(ClassHolidayEntity::getCourseProductId, productId)
-                    .eq(ClassHolidayEntity::getGradeBand, item.currentLabel));
-            teacherPayRateMapper.update(null, new LambdaUpdateWrapper<TeacherPayRateEntity>()
-                    .set(TeacherPayRateEntity::getGradeBand, item.newLabel)
-                    .eq(TeacherPayRateEntity::getCourseProductId, productId)
-                    .eq(TeacherPayRateEntity::getGradeBand, item.currentLabel));
+            if (item.classPeriodConfigured) {
+                classGroupMapper.update(null, new LambdaUpdateWrapper<ClassGroupEntity>()
+                        .set(ClassGroupEntity::getStartDate, item.startDate)
+                        .set(ClassGroupEntity::getEndDate, item.endDate)
+                        .set(ClassGroupEntity::getScheduleBaseEndDate, item.endDate)
+                        .eq(ClassGroupEntity::getProductId, productId)
+                        .eq(ClassGroupEntity::getGradeBand, item.newLabel)
+                        .eq(ClassGroupEntity::getIsDeleted, 0));
+            }
         }
 
         // 6. 全量重建配置行：旧行改写墓碑名后软删，再按提交顺序插入（uk 含 is_deleted，墓碑名保证不撞）。
@@ -193,6 +245,9 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
             entity.setCourseProductId(productId);
             entity.setGradeLabel(item.newLabel);
             entity.setDisplayOrder(item.displayOrder);
+            entity.setClassStartDate(item.startDate);
+            entity.setClassEndDate(item.endDate);
+            entity.setClassPeriodConfigured(item.classPeriodConfigured);
             productGradeConfigMapper.insert(entity);
         }
     }
@@ -225,6 +280,10 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
         return order == null ? DEFAULT_ORDER : order;
     }
 
-    private record NormalizedItem(String currentLabel, String newLabel, int displayOrder) {
+    private record NormalizedItem(String currentLabel, String newLabel, int displayOrder,
+                                  LocalDate startDate, LocalDate endDate, boolean classPeriodConfigured) {
+    }
+
+    private record ClassPeriod(LocalDate startDate, LocalDate endDate) {
     }
 }

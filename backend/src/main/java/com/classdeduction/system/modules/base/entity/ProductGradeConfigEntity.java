@@ -8,12 +8,14 @@ import com.classdeduction.system.common.model.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.time.LocalDate;
+
 /**
- * 课程产品维度的 grade 名称与显示顺序配置。
+ * 课程产品维度的 grade 名称、显示顺序和共享班级周期配置。
  *
  * <p>grade_band 是散落在 course_price_option / class_group / teacher_pay_rate
- * 中的自由文本，本表作为覆盖层只决定每个产品下 grade 的展示顺序；改名时由
- * 服务层在同一事务内级联更新三张表的 grade_band，历史订单快照不动。</p>
+ * 中的自由文本，本表保存产品级 grade 配置；改名时由服务层在同一事务内级联更新
+ * 业务表的 grade_band，历史订单快照不动。</p>
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -31,4 +33,13 @@ public class ProductGradeConfigEntity extends BaseEntity {
 
     @TableField("display_order")
     private Integer displayOrder;
+
+    @TableField("class_start_date")
+    private LocalDate classStartDate;
+
+    @TableField("class_end_date")
+    private LocalDate classEndDate;
+
+    @TableField("class_period_configured")
+    private Boolean classPeriodConfigured;
 }

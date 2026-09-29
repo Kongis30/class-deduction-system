@@ -3,6 +3,8 @@ package com.classdeduction.system.modules.base.vo;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
+import java.time.LocalDate;
+
 /**
  * grade 配置响应项。未入库（自动发现）的行 id 为 null。
  */
@@ -11,6 +13,9 @@ import lombok.Builder;
 public record ProductGradeConfigVO(
         Long id,
         String gradeLabel,
-        Integer displayOrder
+        Integer displayOrder,
+        LocalDate startDate,
+        LocalDate endDate,
+        Boolean classPeriodConfigured
 ) {
 }

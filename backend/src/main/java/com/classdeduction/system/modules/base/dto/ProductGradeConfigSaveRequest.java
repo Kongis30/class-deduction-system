@@ -6,6 +6,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -34,5 +35,14 @@ public class ProductGradeConfigSaveRequest {
 
         @Schema(description = "Display order", example = "1")
         private Integer displayOrder;
+
+        @Schema(description = "Grade-wide actual class period start date")
+        private LocalDate startDate;
+
+        @Schema(description = "Grade-wide actual class period end date")
+        private LocalDate endDate;
+
+        @Schema(description = "When true, save the provided class date range, including clearing both dates")
+        private Boolean updateClassPeriod;
     }
 }

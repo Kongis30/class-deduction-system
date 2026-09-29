@@ -306,8 +306,6 @@ export interface ClassScheduleUpdatePayload {
   /** 兼容旧页面；新页面应在每个 slot 中提交资源。 */
   teacherId?: string | number;
   classroomId?: string | number;
-  startDate?: string;
-  endDate?: string;
   /** 用户明确选择继续改后续排课时，保留已开始但尚未确认的课次。 */
   preserveStartedLessons?: boolean;
   slots: ClassScheduleSlotPayload[];
@@ -318,8 +316,6 @@ export interface ClassInfoPayload {
   gradeBand?: string;
   actualClass: string;
   className?: string;
-  startDate?: string;
-  endDate?: string;
 }
 
 export function createActualClass(data: ClassInfoPayload) {

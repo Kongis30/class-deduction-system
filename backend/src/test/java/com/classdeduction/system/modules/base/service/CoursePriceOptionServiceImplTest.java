@@ -10,6 +10,7 @@ import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.impl.CoursePriceOptionServiceImpl;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
@@ -57,6 +58,9 @@ class CoursePriceOptionServiceImplTest {
     private ClassGroupMapper classGroupMapper;
 
     @Mock
+    private ProductGradeConfigMapper productGradeConfigMapper;
+
+    @Mock
     private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
 
     @Mock
@@ -83,6 +87,7 @@ class CoursePriceOptionServiceImplTest {
                 courseProductMapper,
                 enrollmentOrderItemMapper,
                 classGroupMapper,
+                productGradeConfigMapper,
                 classGroupScheduleSlotMapper,
                 lessonOccurrenceMapper,
                 lessonRecordMapper,

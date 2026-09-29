@@ -206,6 +206,9 @@ export interface ProductGradeConfigItem {
   id?: EntityId;
   gradeLabel: string;
   displayOrder: number;
+  startDate?: string;
+  endDate?: string;
+  classPeriodConfigured?: boolean;
 }
 
 export function fetchProductGradeConfigs(productId: EntityId) {
@@ -216,6 +219,9 @@ export interface ProductGradeConfigSaveItem {
   currentLabel: string;
   newLabel?: string;
   displayOrder?: number;
+  startDate?: string;
+  endDate?: string;
+  updateClassPeriod?: boolean;
 }
 
 export function saveProductGradeConfigs(productId: EntityId, items: ProductGradeConfigSaveItem[]) {

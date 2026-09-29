@@ -543,18 +543,44 @@
     <el-dialog
       v-model="gradeDialogVisible"
       title="Manage grades"
-      width="520px"
+      width="min(900px, calc(100vw - 40px))"
       :close-on-click-modal="false"
     >
       <p class="category-dialog__hint">
-        Rename a grade or change its display order. Renaming updates this course's
-        price rows, classes, and teacher pay rate scopes together. Grades without
-        a schedule stay in place; use the arrows to reorder.
+        <template v-if="selectedMode === 'GROUP'">
+          Set the class period once per grade. All actual classes under this grade share these dates.
+          Renaming also updates this course's price rows, classes, holidays, and teacher pay rate scopes.
+        </template>
+        <template v-else>
+          Rename a grade or change its display order. Renaming updates this course's price rows and teacher pay rate scopes.
+        </template>
       </p>
       <el-table :data="gradeRows" size="small" class="category-table">
         <el-table-column label="Grade name" min-width="240">
           <template #default="{ row }">
             <el-input v-model="row.newLabel" maxlength="64" />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="selectedMode === 'GROUP'" label="Class start date" min-width="190">
+          <template #default="{ row }">
+            <el-date-picker
+              v-model="row.startDate"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="Select start date"
+              style="width: 100%;"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column v-if="selectedMode === 'GROUP'" label="Class end date" min-width="190">
+          <template #default="{ row }">
+            <el-date-picker
+              v-model="row.endDate"
+              type="date"
+              value-format="YYYY-MM-DD"
+              placeholder="Select end date"
+              style="width: 100%;"
+            />
           </template>
         </el-table-column>
         <el-table-column label="Order" width="130" align="center">
@@ -681,26 +707,7 @@
         <el-form-item label="Class name">
           <el-input v-model="actualClassInfoForm.className" maxlength="128" placeholder="e.g. G1" />
         </el-form-item>
-        <div class="form-grid form-grid--two">
-          <el-form-item label="Class start date">
-            <el-date-picker
-              v-model="actualClassInfoForm.startDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="Select start date"
-              style="width: 100%;"
-            />
-          </el-form-item>
-          <el-form-item label="Class end date">
-            <el-date-picker
-              v-model="actualClassInfoForm.endDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="Select end date"
-              style="width: 100%;"
-            />
-          </el-form-item>
-        </div>
+        <p class="category-dialog__hint">Class dates are managed once for the whole grade in “Manage grades”.</p>
       </el-form>
       <template #footer>
         <el-button @click="actualClassInfoDialogVisible = false">Cancel</el-button>
@@ -894,7 +901,18 @@ const categoryRows = ref<CourseCategoryItem[]>([]);
 const DEFAULT_GRADE_ORDER = 999;
 const gradeDialogVisible = ref(false);
 const savingGrades = ref(false);
-const gradeRows = ref<Array<{ currentLabel: string; newLabel: string; displayOrder: number }>>([]);
+const gradeRows = ref<Array<{
+  currentLabel: string;
+  newLabel: string;
+  displayOrder: number;
+  startDate?: string;
+  endDate?: string;
+}>>([]);
+const gradeClassPeriodMap = ref(new Map<string, {
+  startDate?: string;
+  endDate?: string;
+  configured: boolean;
+}>());
 const gradeOrderMap = ref<Map<string, number>>(new Map());
 
 const courseTypes = computed<CourseTypeDef[]>(() =>
@@ -981,8 +999,6 @@ const actualClassInfoForm = reactive({
   productId: undefined as EntityId | undefined,
   gradeBand: '',
   className: '',
-  startDate: '' as string,
-  endDate: '' as string,
 });
 const classHolidayDialogVisible = ref(false);
 const classHolidayGradeBand = ref('');
@@ -1449,18 +1465,28 @@ async function saveCategories() {
 async function loadGradeConfigs() {
   if (!query.courseProductId) {
     gradeOrderMap.value = new Map();
+    gradeClassPeriodMap.value = new Map();
     return;
   }
   try {
     const res = await fetchProductGradeConfigs(query.courseProductId);
     const map = new Map<string, number>();
+    const periods = new Map<string, { startDate?: string; endDate?: string; configured: boolean }>();
     for (const item of res.data.data ?? []) {
-      map.set(item.gradeLabel.toLowerCase(), item.displayOrder ?? 99);
+      const key = item.gradeLabel.trim().toLowerCase();
+      map.set(key, item.displayOrder ?? 99);
+      periods.set(key, {
+        startDate: item.startDate,
+        endDate: item.endDate,
+        configured: item.classPeriodConfigured === true,
+      });
     }
     gradeOrderMap.value = map;
+    gradeClassPeriodMap.value = periods;
   } catch {
     // 加载失败时退回字典序排序，不阻塞页面。
     gradeOrderMap.value = new Map();
+    gradeClassPeriodMap.value = new Map();
   }
 }
 
@@ -1478,6 +1504,8 @@ async function openGradeDialog() {
       currentLabel: item.gradeLabel,
       newLabel: item.gradeLabel,
       displayOrder: item.displayOrder ?? 99,
+      startDate: item.startDate,
+      endDate: item.endDate,
     }));
     gradeDialogVisible.value = true;
   } catch {
@@ -1519,10 +1547,13 @@ async function saveGrades() {
       currentLabel: row.currentLabel,
       newLabel: row.newLabel.trim() === row.currentLabel ? undefined : row.newLabel.trim(),
       displayOrder: index + 1,
+      startDate: selectedMode.value === 'GROUP' ? row.startDate || undefined : undefined,
+      endDate: selectedMode.value === 'GROUP' ? row.endDate || undefined : undefined,
+      updateClassPeriod: selectedMode.value === 'GROUP',
     })));
     gradeDialogVisible.value = false;
     ElMessage.success('Grades updated.');
-    await Promise.all([loadOptions(), loadGradeConfigs()]);
+    await Promise.all([loadProductsAndClasses(), loadOptions(), loadGradeConfigs()]);
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to save grades.');
   } finally {
@@ -1927,8 +1958,6 @@ function openActualClassInfoDialog(group: ProductPriceGroup, actualClass?: Actua
   actualClassInfoForm.productId = productId;
   actualClassInfoForm.gradeBand = actualClass?.gradeBand || group.gradeLabel;
   actualClassInfoForm.className = actualClass?.className || actualClass?.actualClass || '';
-  actualClassInfoForm.startDate = actualClass?.startDate || '';
-  actualClassInfoForm.endDate = actualClass?.endDate || '';
   actualClassInfoDialogVisible.value = true;
 }
 
@@ -1942,12 +1971,6 @@ async function saveActualClassInfo() {
     ElMessage.warning('Class name is required.');
     return;
   }
-  if (actualClassInfoForm.startDate
-      && actualClassInfoForm.endDate
-      && actualClassInfoForm.endDate < actualClassInfoForm.startDate) {
-    ElMessage.warning('Class end date cannot be earlier than the start date.');
-    return;
-  }
   savingActualClassInfo.value = true;
   try {
     const payload = {
@@ -1955,8 +1978,6 @@ async function saveActualClassInfo() {
       gradeBand: actualClassInfoForm.gradeBand.trim(),
       actualClass: className,
       className,
-      startDate: actualClassInfoForm.startDate || undefined,
-      endDate: actualClassInfoForm.endDate || undefined,
     };
     if (editingActualClassInfo.value) {
       await updateClassInfo(editingActualClassInfo.value.id, payload);
@@ -2195,6 +2216,7 @@ function actualClassClassroomLabel(actualClass: ActualClassScheduleRow): string 
 
 function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[] {
   const productId = group.rows[0]?.courseProductId;
+  const gradePeriod = gradeClassPeriodMap.value.get(group.gradeLabel.trim().toLowerCase());
   const byId = new Map<string, ActualClassScheduleRow>();
   const matchingClassGroups = classGroups.value.filter(item =>
     String(item.productId ?? '') === String(productId ?? '')
@@ -2211,8 +2233,8 @@ function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[
       teacherName: classGroup.teacherName,
       classroomId: classGroup.classroomId,
       classroomName: classGroup.classroomName,
-      startDate: classGroup.startDate,
-      endDate: classGroup.endDate,
+      startDate: gradePeriod?.configured ? gradePeriod.startDate : classGroup.startDate,
+      endDate: gradePeriod?.configured ? gradePeriod.endDate : classGroup.endDate,
       scheduleDesc: classGroup.scheduleDesc,
       scheduleSlots: classGroup.scheduleSlots,
     });
@@ -2226,6 +2248,8 @@ function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[
       ...actualClass,
       productId,
       gradeBand: group.gradeLabel,
+      startDate: gradePeriod?.configured ? gradePeriod.startDate : actualClass.startDate,
+      endDate: gradePeriod?.configured ? gradePeriod.endDate : actualClass.endDate,
     });
   }
 
