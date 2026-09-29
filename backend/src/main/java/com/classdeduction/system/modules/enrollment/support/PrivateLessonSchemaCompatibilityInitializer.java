@@ -124,6 +124,9 @@ public class PrivateLessonSchemaCompatibilityInitializer {
         addColumnIfMissing("enrollment_order_item", "extra_fee_detail",
                 "json DEFAULT NULL COMMENT 'Other fee detail for this course line' AFTER extra_fee_amount",
                 "course transport snapshot");
+        addColumnIfMissing("enrollment_order", "billing_policy",
+                "varchar(32) DEFAULT NULL COMMENT 'New registration money policy; NULL for legacy orders' AFTER currency_code",
+                "registration billing policy");
     }
 
     private void createTablesIfMissing() {

@@ -22,6 +22,12 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         dropLegacyOccurrenceSlotForeignKey();
         addClassGroupColumnIfMissing("end_date",
                 "date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class' AFTER start_date");
+        // 兼容旧库：排课服务会读取这个字段，缺列会直接导致注册页的班级查询返回 500。
+        boolean baseEndDateAdded = addClassGroupColumnIfMissing("schedule_base_end_date",
+                "date DEFAULT NULL COMMENT 'User-configured schedule end before holiday extensions' AFTER end_date");
+        if (baseEndDateAdded) {
+            jdbcTemplate.update("UPDATE class_group SET schedule_base_end_date = end_date WHERE schedule_base_end_date IS NULL");
+        }
         addProductGradeConfigColumnIfMissing("class_start_date",
                 "date DEFAULT NULL COMMENT 'Grade-wide actual class period start date' AFTER display_order");
         addProductGradeConfigColumnIfMissing("class_end_date",
@@ -57,7 +63,7 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         makeTeacherPayRateProductScopeOptional();
     }
 
-    private void addClassGroupColumnIfMissing(String columnName, String columnDefinition) {
+    private boolean addClassGroupColumnIfMissing(String columnName, String columnDefinition) {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                 FROM information_schema.COLUMNS
@@ -66,10 +72,11 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                   AND COLUMN_NAME = ?
                 """, Integer.class, columnName);
         if (count != null && count > 0) {
-            return;
+            return false;
         }
         jdbcTemplate.execute("ALTER TABLE class_group ADD COLUMN `" + columnName + "` " + columnDefinition);
         log.info("Added class_group.{} column for fixed-date group classes.", columnName);
+        return true;
     }
 
     private void addEnrollmentOrderItemColumnIfMissing(String columnName, String columnDefinition) {
