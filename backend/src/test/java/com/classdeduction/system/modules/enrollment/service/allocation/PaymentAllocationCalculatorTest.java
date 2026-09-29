@@ -93,6 +93,14 @@ class PaymentAllocationCalculatorTest {
     }
 
     @Test
+    void wholeDollarRemainderDoesNotCreateCents() {
+        List<PaymentAllocationCalculator.AllocationLine> lines = PaymentAllocationCalculator.evenSplitWithCap(
+                $("100"), List.of(t(1, "100"), t(2, "100"), t(3, "100")), BigDecimal.ONE);
+        assertThat(toMap(lines)).containsEntry(1L, $("34"))
+                .containsEntry(2L, $("33")).containsEntry(3L, $("33"));
+    }
+
+    @Test
     void zeroRemainingItemsExcluded() {
         // 一课余额为 0 不参与分摊，不生成 0 元行
         List<PaymentAllocationCalculator.AllocationLine> lines = PaymentAllocationCalculator.evenSplitWithCap(

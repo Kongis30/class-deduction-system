@@ -438,7 +438,7 @@
                         >
                           <div class="price-option-row">
                             <span>{{ durationOptionLabel(option) }}</span>
-                            <small>{{ formatMoney(packageBasePrice(option, defaultAttendanceOption(option))) }}</small>
+                            <small>{{ formatMoney(wholeDollarForm ? ceilRegistrationAmount(packageBasePrice(option, defaultAttendanceOption(option))) : packageBasePrice(option, defaultAttendanceOption(option))) }}</small>
                           </div>
                         </el-option>
                       </el-select>
@@ -584,7 +584,7 @@
                   <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
                 <template v-else>
-                  <MoneyAmountInput v-model="line.priceAmount" :min="0" class="table-price" @change="() => handlePriceChange(line)" />
+                  <MoneyAmountInput v-model="line.priceAmount" :min="0" :whole-dollars="wholeDollarForm" class="table-price" @change="() => handlePriceChange(line)" />
                   <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
               </td>
@@ -658,7 +658,7 @@
                     </div>
                     <label class="course-service-field course-service-field--amount">
                       <span>Fee</span>
-                      <MoneyAmountInput v-model="line.pickupFeeAmount" :min="0" :disabled="!line.pickupRequired" />
+                      <MoneyAmountInput v-model="line.pickupFeeAmount" :min="0" :whole-dollars="wholeDollarForm" :disabled="!line.pickupRequired" />
                     </label>
                   </div>
                 </div>
@@ -673,7 +673,7 @@
                     </div>
                     <label class="course-service-field course-service-field--amount">
                       <span>Fee</span>
-                      <MoneyAmountInput v-model="line.dropoffFeeAmount" :min="0" :disabled="!line.dropoffRequired" />
+                      <MoneyAmountInput v-model="line.dropoffFeeAmount" :min="0" :whole-dollars="wholeDollarForm" :disabled="!line.dropoffRequired" />
                     </label>
                   </div>
                 </div>
@@ -681,7 +681,7 @@
               <div v-if="line.serviceFees.length" class="course-service-other-title">Other fees</div>
               <div v-for="(fee, feeIndex) in line.serviceFees" :key="fee.rowKey" class="adjustment-row">
                 <el-input v-model="fee.label" placeholder="Other fee label" />
-                <MoneyAmountInput v-model="fee.amount" :min="0" />
+                <MoneyAmountInput v-model="fee.amount" :min="0" :whole-dollars="wholeDollarForm" />
                 <el-button v-if="line.serviceFees.length > 1" class="remove-adjustment-row" text type="danger" aria-label="Remove fee" @click="removeCourseServiceFee(line, feeIndex)">×</el-button>
               </div>
               <footer class="course-adjustment-card__footer">
@@ -737,6 +737,7 @@
                   <MoneyAmountInput
                     v-model="discount.amount"
                     :min="0"
+                    :whole-dollars="wholeDollarForm"
                     :disabled="!isCustomDiscount(discount)"
                   />
                 </div>
@@ -794,6 +795,7 @@
                           :model-value="coursePaymentAmount(payment, line.rowKey)"
                           :min="0"
                           :max="maxCoursePaymentAmount(payment, line.rowKey)"
+                          :whole-dollars="wholeDollarForm"
                           @input="handlePaymentInput(payment, line.rowKey, $event)"
                           @update:model-value="setCoursePaymentAmount(payment, line.rowKey, $event)"
                         />
@@ -996,6 +998,7 @@
               <MoneyAmountInput
                 v-model="creditTopUpAmount"
                 :min="0"
+                :whole-dollars="wholeDollarForm"
                 :disabled="isReadOnly"
               />
             </label>
@@ -1323,6 +1326,7 @@ const editingCorrection = ref(false);
 const savingCorrection = ref(false);
 const correctionSetupLoading = ref(false);
 const historicalOrder = ref<EnrollmentOrderDetailItem | null>(null);
+const wholeDollarForm = computed(() => !isReadOnly.value || historicalOrder.value?.billingPolicy === 'WHOLE_DOLLAR_V1');
 // Contact fields are editable when creating a new registration or when correcting a saved one.
 const contactLocked = computed(() => isReadOnly.value && !editingCorrection.value);
 // 收据更正态复用报名表控件，但保存时更新原订单，不创建新的报名单。
@@ -1484,7 +1488,7 @@ const privateParticipantTotalPrice = computed(() => {
 const privateParticipantShareAmount = computed(() => {
   const total = privateParticipantTotalPrice.value;
   return privateParticipantCount.value > 0
-    ? splitShareAmount(total, privateParticipantCount.value, 0)
+    ? splitShareAmount(total, privateParticipantCount.value, 0, wholeDollarForm.value)
     : 0;
 });
 const primaryPrivateCourseLabel = computed(() => {
@@ -3056,7 +3060,7 @@ function isCustomDiscount(discount: DiscountLine) {
 function discountPresetLabel(preset: DiscountPresetItem) {
   const value = preset.discountType === 'PERCENTAGE'
     ? `${preset.discountValue}% off`
-    : `${formatMoney(preset.discountValue)} off`;
+    : `${formatMoney(wholeDollarForm.value ? ceilRegistrationAmount(numeric(preset.discountValue)) : preset.discountValue)} off`;
   return `${preset.presetName} (${value})`;
 }
 
@@ -3093,9 +3097,9 @@ function recalculatePresetDiscount(discount: DiscountLine) {
       ? participantCoursePrice(courseLine, participantIndex - 1)
       : courseAggregatePrice(courseLine)
     : discountableAmount.value;
-  discount.amount = preset.discountType === 'PERCENTAGE'
-    ? roundMoney(baseAmount * numeric(preset.discountValue) / 100)
-    : roundMoney(preset.discountValue);
+  const amount = preset.discountType === 'PERCENTAGE'
+    ? baseAmount * numeric(preset.discountValue) / 100 : numeric(preset.discountValue);
+  discount.amount = wholeDollarForm.value ? ceilRegistrationAmount(amount) : roundMoney(amount);
 }
 
 function courseLineOptionLabel(line: RegistrationCourseLine, index: number) {
@@ -3575,7 +3579,9 @@ function syncCourseTransportFee(line: RegistrationCourseLine, type: 'pickup' | '
         line.pickupAddress = form.student.pickupAddress;
       }
       if (!isReadOnly.value && numeric(line.pickupFeeAmount) === 0) {
-        line.pickupFeeAmount = selectedCampus.value?.defaultPickupFeeAmount ?? 0;
+        line.pickupFeeAmount = wholeDollarForm.value
+          ? ceilRegistrationAmount(selectedCampus.value?.defaultPickupFeeAmount ?? 0)
+          : selectedCampus.value?.defaultPickupFeeAmount ?? 0;
       }
     }
     return;
@@ -3588,7 +3594,9 @@ function syncCourseTransportFee(line: RegistrationCourseLine, type: 'pickup' | '
       line.dropoffAddress = form.student.dropoffAddress;
     }
     if (!isReadOnly.value && numeric(line.dropoffFeeAmount) === 0) {
-      line.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
+      line.dropoffFeeAmount = wholeDollarForm.value
+        ? ceilRegistrationAmount(selectedCampus.value?.defaultDropoffFeeAmount ?? 0)
+        : selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
     }
   }
 }
@@ -3753,11 +3761,15 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
   const configuredSessionCount = isSessionPackage(line) ? packageSessionCount(line) : 0;
   const computedPrice = isOneOnOneLine(line)
     ? configuredHours > 0
-      ? roundMoney(numeric(fullPackagePrice) / configuredHours * numeric(line.oneOnOneHours))
+      ? wholeDollarForm.value
+        ? ceilRegistrationAmount(numeric(fullPackagePrice) / configuredHours * numeric(line.oneOnOneHours))
+        : roundMoney(numeric(fullPackagePrice) / configuredHours * numeric(line.oneOnOneHours))
       : 0
     : isSessionPackage(line) && configuredSessionCount > 0
-      ? calculateProratedSessionPrice(fullPackagePrice, sessionCount, configuredSessionCount)
-      : fullPackagePrice;
+      ? wholeDollarForm.value
+        ? calculateProratedSessionPrice(fullPackagePrice, sessionCount, configuredSessionCount)
+        : Math.floor(Math.round(fullPackagePrice * 100) * sessionCount / (configuredSessionCount * 100))
+      : wholeDollarForm.value ? ceilRegistrationAmount(fullPackagePrice) : fullPackagePrice;
   // Keep the configured full-package price as the proration basis for receipt edits and historical display.
   line.packageTotalPrice = isSessionPackage(line) ? fullPackagePrice : computedPrice;
   line.originalPriceAmount = computedPrice;
@@ -3988,8 +4000,9 @@ function courseAggregatePrice(line: RegistrationCourseLine) {
   if (isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1) {
     return numeric(line.priceAmount);
   }
-  return roundMoney(numeric(line.priceAmount)
-    * (isOneOnOneLine(line) ? privateParticipantMultiplier.value : privateParticipantCount.value));
+  const aggregate = numeric(line.priceAmount)
+    * (isOneOnOneLine(line) ? privateParticipantMultiplier.value : privateParticipantCount.value);
+  return wholeDollarForm.value ? ceilRegistrationAmount(aggregate) : roundMoney(aggregate);
 }
 
 /** 单个参与人的课程金额，用于学生标签页、折扣和付款上限。 */
@@ -3998,12 +4011,12 @@ function participantCoursePrice(line: RegistrationCourseLine, participantIndex: 
     return numeric(line.priceAmount);
   }
   if (isReadOnly.value && privateParticipantPriceSnapshots.value.length > 1) {
-    return splitShareAmount(numeric(line.priceAmount), privateParticipantCount.value, participantIndex);
+    return splitShareAmount(numeric(line.priceAmount), privateParticipantCount.value, participantIndex, wholeDollarForm.value);
   }
   if (!isOneOnOneLine(line)) {
     return numeric(line.priceAmount);
   }
-  return splitShareAmount(courseAggregatePrice(line), privateParticipantCount.value, participantIndex);
+  return splitShareAmount(courseAggregatePrice(line), privateParticipantCount.value, participantIndex, wholeDollarForm.value);
 }
 
 function privateParticipantLineTotalPrice(line: RegistrationCourseLine) {
@@ -4326,6 +4339,26 @@ function buildStudentContextRoute() {
 
 function validateForm() {
   const errors: string[] = [];
+  if (wholeDollarForm.value) {
+    const requireWhole = (amount: number, label: string) => {
+      if (!Number.isInteger(roundMoney(amount))) errors.push(`${label} must be a whole dollar amount.`);
+    };
+    requireWhole(creditTopUpAmount.value, 'Credit top-up');
+    courseLines.value.forEach((line, index) => {
+      requireWhole(line.priceAmount, `Course ${index + 1} price`);
+      requireWhole(line.pickupFeeAmount, `Course ${index + 1} pickup fee`);
+      requireWhole(line.dropoffFeeAmount, `Course ${index + 1} drop-off fee`);
+      line.serviceFees.forEach((fee) => requireWhole(fee.amount, 'Course fee'));
+    });
+    extraFees.value.forEach((fee) => requireWhole(fee.amount, 'Extra fee'));
+    [...discounts.value, ...participantBillings.value.flatMap((billing) => billing.discounts)]
+      .forEach((discount) => requireWhole(discount.amount, 'Discount'));
+    [...payments.value, ...participantBillings.value.flatMap((billing) => billing.payments)]
+      .forEach((payment) => {
+        requireWhole(payment.amount, 'Payment');
+        Object.values(payment.courseAllocations ?? {}).forEach((amount) => requireWhole(numeric(amount), 'Course payment allocation'));
+      });
+  }
   if (!selectedCampus.value && !isCreditTopUpOnly.value) {
     errors.push('Select one campus before submitting.');
   }
@@ -5213,10 +5246,16 @@ function roundMoney(value: number) {
   return Math.round((numeric(value) + Number.EPSILON) * 100) / 100;
 }
 
-// 与后端 RegistrationIntakeServiceImpl.splitSharedTuition 保持一致：
-// 每份 = 总额/人数向下截断到 2 位小数，最后一名吸收分币误差。
-function splitShareAmount(total: number, count: number, index: number) {
-  const share = Math.floor((numeric(total) * 100) / Math.max(1, count)) / 100;
+/** 前端仅预览自动报价；后端用 BigDecimal 重算并校验同一整美元规则。 */
+function ceilRegistrationAmount(value: number) {
+  return Math.ceil(numeric(value) - 1e-9);
+}
+
+// 与后端 splitSharedTuition 一致：新订单按整美元、历史订单按分均分，最后一位承接余数。
+function splitShareAmount(total: number, count: number, index: number, wholeDollars = false) {
+  const share = wholeDollars
+    ? Math.floor(numeric(total) / Math.max(1, count))
+    : Math.floor((numeric(total) * 100) / Math.max(1, count)) / 100;
   if (index >= count - 1) {
     return roundMoney(numeric(total) - share * (count - 1));
   }

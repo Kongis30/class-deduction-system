@@ -44,6 +44,9 @@ public class StudentCreditServiceImpl implements StudentCreditService {
     @Transactional
     public void adjustBalance(Long studentId, BigDecimal targetBalance,
                               Long handledByUserId, String handledByName, String remark) {
+        if (targetBalance != null && targetBalance.stripTrailingZeros().scale() > 0) {
+            throw new BusinessException("WHOLE_DOLLAR_REQUIRED", "Credit balance must be a whole dollar amount.");
+        }
         if (studentId == null || ledgerMapper.lockStudent(studentId) == null) {
             throw new BusinessException("CREDIT_STUDENT_REQUIRED", "The Credit student does not exist.");
         }

@@ -9,6 +9,7 @@ import com.classdeduction.system.modules.enrollment.entity.PaymentRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentAllocationMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
+import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -87,8 +88,8 @@ public class PaymentAllocationService {
                 applySavedAllocation(saved, remaining);
             } else {
                 List<PaymentAllocationCalculator.AllocationLine> lines = amount.compareTo(BigDecimal.ZERO) > 0
-                        ? evenPay(amount, remaining)
-                        : legacyRefund(amount.negate(), items, remaining);
+                        ? evenPay(amount, remaining, WholeDollarBilling.appliesTo(order))
+                        : legacyRefund(amount.negate(), items, remaining, WholeDollarBilling.appliesTo(order));
                 for (PaymentAllocationCalculator.AllocationLine line : lines) {
                     BigDecimal signedAmount = amount.signum() > 0 ? line.amount() : line.amount().negate();
                     insertAllocation(record, order.getId(), line.orderItemId(), signedAmount);
@@ -159,6 +160,9 @@ public class PaymentAllocationService {
      * 校验并计算一次付款的建议分摊（预览用，只读、不落库）。
      */
     public List<AllocationPreview> preview(EnrollmentOrderEntity order, BigDecimal amount) {
+        if (WholeDollarBilling.appliesTo(order)) {
+            WholeDollarBilling.requireInteger(amount, "Payment");
+        }
         List<EnrollmentOrderItemEntity> items = listActiveItems(order.getId());
         if (items.isEmpty()) {
             throw new BusinessException("PAYMENT_ALLOCATION_FAILED",
@@ -167,7 +171,8 @@ public class PaymentAllocationService {
         ensureItemAmountDue(order, items, false);
         Map<Long, BigDecimal> remaining = currentRemaining(items);
         List<PaymentAllocationCalculator.AllocationLine> lines =
-                PaymentAllocationCalculator.evenSplitWithCap(amount, toTargets(remaining));
+                PaymentAllocationCalculator.evenSplitWithCap(amount, toTargets(remaining),
+                        WholeDollarBilling.appliesTo(order) ? BigDecimal.ONE : new BigDecimal("0.01"));
 
         Map<Long, EnrollmentOrderItemEntity> itemById = items.stream()
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, Function.identity()));
@@ -211,9 +216,11 @@ public class PaymentAllocationService {
     // ─── 内部 ───────────────────────────────────────────────────────────
 
     private List<PaymentAllocationCalculator.AllocationLine> evenPay(BigDecimal amount,
-                                                                     Map<Long, BigDecimal> remaining) {
+                                                                     Map<Long, BigDecimal> remaining,
+                                                                     boolean wholeDollars) {
         try {
-            return PaymentAllocationCalculator.evenSplitWithCap(amount, toTargets(remaining));
+            return PaymentAllocationCalculator.evenSplitWithCap(amount, toTargets(remaining),
+                    wholeDollars ? BigDecimal.ONE : new BigDecimal("0.01"));
         } catch (IllegalArgumentException ex) {
             throw new BusinessException("PAYMENT_ALLOCATION_FAILED",
                     "Unable to allocate this payment across the enrolled courses: " + ex.getMessage());
@@ -224,7 +231,8 @@ public class PaymentAllocationService {
      * 退款按各课程累计已付比例回冲，cap 到该课程已付（不会退成负余额）。
      */
     private List<PaymentAllocationCalculator.AllocationLine> proportionalRefund(BigDecimal refundAmount,
-                                                                                Map<Long, BigDecimal> paid) {
+                                                                                Map<Long, BigDecimal> paid,
+                                                                                boolean wholeDollars) {
         List<PaymentAllocationCalculator.AllocationTarget> targets = paid.entrySet().stream()
                 .filter(entry -> entry.getValue().compareTo(BigDecimal.ZERO) > 0)
                 .map(entry -> new PaymentAllocationCalculator.AllocationTarget(entry.getKey(), entry.getValue()))
@@ -233,7 +241,8 @@ public class PaymentAllocationService {
             throw new BusinessException("PAYMENT_ALLOCATION_FAILED", "No paid courses to refund.");
         }
         try {
-            return PaymentAllocationCalculator.evenSplitWithCap(refundAmount, targets);
+            return PaymentAllocationCalculator.evenSplitWithCap(refundAmount, targets,
+                    wholeDollars ? BigDecimal.ONE : new BigDecimal("0.01"));
         } catch (IllegalArgumentException ex) {
             throw new BusinessException("REFUND_AMOUNT_EXCEEDS_RECEIVED",
                     "Refund amount cannot exceed the currently received amount.");
@@ -242,11 +251,12 @@ public class PaymentAllocationService {
 
     private List<PaymentAllocationCalculator.AllocationLine> legacyRefund(BigDecimal refundAmount,
                                                                            List<EnrollmentOrderItemEntity> items,
-                                                                           Map<Long, BigDecimal> remaining) {
+                                                                           Map<Long, BigDecimal> remaining,
+                                                                           boolean wholeDollars) {
         Map<Long, BigDecimal> paid = remaining.entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey,
                         entry -> defaultAmount(amountDueOf(items, entry.getKey())).subtract(entry.getValue())));
-        return proportionalRefund(refundAmount, paid);
+        return proportionalRefund(refundAmount, paid, wholeDollars);
     }
 
     private void validateSavedAllocation(PaymentRecordEntity payment,

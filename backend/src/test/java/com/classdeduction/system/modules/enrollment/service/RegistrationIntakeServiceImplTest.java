@@ -788,7 +788,7 @@ class RegistrationIntakeServiceImplTest {
                 ArgumentCaptor.forClass(EnrollmentOrderParticipantEntity.class);
         verify(enrollmentOrderParticipantMapper, times(3)).insert(billingCaptor.capture());
         assertThat(billingCaptor.getAllValues()).extracting(EnrollmentOrderParticipantEntity::getGrossAmount)
-                .containsExactly(new BigDecimal("266.66"), new BigDecimal("266.66"), new BigDecimal("266.68"));
+                .containsExactly(new BigDecimal("266.00"), new BigDecimal("266.00"), new BigDecimal("268.00"));
         assertThat(billingCaptor.getAllValues()).extracting(EnrollmentOrderParticipantEntity::getDiscountAmount)
                 .containsExactly(new BigDecimal("0.00"), new BigDecimal("5.00"), new BigDecimal("10.00"));
         assertThat(billingCaptor.getAllValues()).extracting(EnrollmentOrderParticipantEntity::getPaidAmount)
@@ -911,7 +911,7 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldSaveFlooredSessionPriceAndMarkExactWholeDollarPaymentAsPaid() {
+    void shouldSaveCeiledSessionPriceAndMarkExactWholeDollarPaymentAsPaid() {
         stubUnscheduledGroupClassIntake(new BigDecimal("1399.00"), 13);
         when(paymentMethodMapper.selectOne(any())).thenReturn(activePaymentMethod("CASH"));
         when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(invocation -> {
@@ -922,7 +922,7 @@ class RegistrationIntakeServiceImplTest {
 
         RegistrationIntakeRequest request = buildGroupClassRequest();
         request.getItems().get(0).setSessions(12);
-        request.setPayments(List.of(payment("1291.00", 1, "1291.00")));
+        request.setPayments(List.of(payment("1292.00", 1, "1292.00")));
 
         RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
 
@@ -930,19 +930,19 @@ class RegistrationIntakeServiceImplTest {
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         EnrollmentOrderEntity order = enrollmentOrderCaptor.getValue();
         EnrollmentOrderItemEntity item = orderItemCaptor.getValue();
-        assertThat(item.getOriginalPriceAmount()).isEqualByComparingTo("1291.00");
-        assertThat(item.getPriceAmount()).isEqualByComparingTo("1291.00");
-        assertThat(item.getAmountDue()).isEqualByComparingTo("1291.00");
-        assertThat(item.getPaidAmount()).isEqualByComparingTo("1291.00");
+        assertThat(item.getOriginalPriceAmount()).isEqualByComparingTo("1292.00");
+        assertThat(item.getPriceAmount()).isEqualByComparingTo("1292.00");
+        assertThat(item.getAmountDue()).isEqualByComparingTo("1292.00");
+        assertThat(item.getPaidAmount()).isEqualByComparingTo("1292.00");
         assertThat(item.getBalanceAmount()).isEqualByComparingTo("0.00");
-        assertThat(order.getAmountDue()).isEqualByComparingTo("1291.00");
+        assertThat(order.getAmountDue()).isEqualByComparingTo("1292.00");
+        assertThat(order.getBillingPolicy()).isEqualTo("WHOLE_DOLLAR_V1");
         assertThat(order.getPaymentStatus()).isEqualTo("PAID");
         assertThat(result.paymentStatus()).isEqualTo("PAID");
     }
 
     @Test
-    void shouldKeepExplicitManualSessionPriceWithoutAutomaticFlooring() {
-        stubUnscheduledGroupClassIntake(new BigDecimal("1399.00"), 13);
+    void shouldRejectFractionalManualSessionPrice() {
         RegistrationIntakeRequest request = buildGroupClassRequest();
         RegistrationIntakeRequest.CourseItemPayload line = request.getItems().get(0);
         line.setSessions(12);
@@ -950,11 +950,32 @@ class RegistrationIntakeServiceImplTest {
         line.setPriceAmount(new BigDecimal("1291.38"));
         line.setRemark("Approved manual price");
 
-        registrationIntakeService.submitIntake(request);
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("whole dollar");
+        verify(enrollmentOrderItemMapper, never()).insert(any(EnrollmentOrderItemEntity.class));
+    }
 
-        verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
-        assertThat(orderItemCaptor.getValue().getOriginalPriceAmount()).isEqualByComparingTo("1291.00");
-        assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("1291.38");
+    @Test
+    void shouldRejectFractionalDiscountBeforeWritingOrder() {
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.setDiscountAmount(new BigDecimal("10.25"));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Discount must be a whole dollar");
+        verify(enrollmentOrderMapper, never()).insert(any(EnrollmentOrderEntity.class));
+    }
+
+    @Test
+    void shouldRejectFractionalCreditPaymentBeforeWritingOrder() {
+        RegistrationIntakeRequest request = buildOneOnOneRequest();
+        request.setPayments(List.of(payment("10.50", 1, "10.50")));
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Payment must be a whole dollar");
+        verify(enrollmentOrderMapper, never()).insert(any(EnrollmentOrderEntity.class));
     }
 
     @Test

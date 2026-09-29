@@ -7,9 +7,12 @@ const roundedDollarFormatter = new Intl.NumberFormat('en-US', {
 
 const integerFormatter = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
-/** 仅处理展示；金额计算和提交仍使用原始分值。 */
+/** 新订单显示整美元；旧订单若有分值则原样显示，不能再把欠款藏掉。 */
 export function formatRoundedUsd(value: number | null | undefined): string {
-  return roundedDollarFormatter.format(Number(value ?? 0));
+  const amount = Number(value ?? 0);
+  return Number.isInteger(Math.round(amount * 100) / 100)
+    ? roundedDollarFormatter.format(amount)
+    : formatExactUsd(amount);
 }
 
 export function formatRoundedAmount(value: number | null | undefined): string {

@@ -223,6 +223,7 @@ export interface EnrollmentOrderItem {
   dropoffRequiredSnapshot?: boolean;
   dropoffAddressSnapshot?: string;
   currencyCode?: string;
+  billingPolicy?: string;
   tuitionSubtotalAmount?: number;
   pickupFeeAmount?: number;
   dropoffFeeAmount?: number;
@@ -268,6 +269,7 @@ export interface EnrollmentOrderDetailItem {
   dropoffRequiredSnapshot?: boolean;
   dropoffAddressSnapshot?: string;
   currencyCode?: string;
+  billingPolicy?: string;
   tuitionSubtotalAmount?: number;
   pickupFeeAmount?: number;
   dropoffFeeAmount?: number;

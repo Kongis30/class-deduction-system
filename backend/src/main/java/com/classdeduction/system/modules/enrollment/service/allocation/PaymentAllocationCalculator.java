@@ -12,7 +12,7 @@ import java.util.Map;
  *
  * 策略：平均分摊（EVEN）+ 上限封顶 + 超额顺延：
  *   1. 总额校验：total > SUM(remaining) 时拒绝（订单级不超付）
- *   2. 平均分摊：A_i = total / n，四舍五入到分，分位余差依次补给前 k 项
+ *   2. 平均分摊：旧订单以分、新订单以美元为最小单位，余差依次补给前 k 项
  *   3. 封顶顺延：A_i 超过该课程剩余应付时截到上限，超出部分重新均分给其余课程，
  *      循环直至分完或全部封满
  *   4. 最终校验：SUM(A_i) = total 且每个 A_i ≤ R_i
@@ -43,11 +43,29 @@ public final class PaymentAllocationCalculator {
      * @throws IllegalArgumentException total 非法、超过总剩余应付、或无法分完（兜底）
      */
     public static List<AllocationLine> evenSplitWithCap(BigDecimal total, List<AllocationTarget> targets) {
+        return evenSplitWithCap(total, targets, CENT);
+    }
+
+    /** 新报名按美元分配，旧订单仍按分分配；两种路径都保持总额与课程余额守恒。 */
+    public static List<AllocationLine> evenSplitWithCap(BigDecimal total, List<AllocationTarget> targets,
+                                                         BigDecimal unit) {
+        if (unit == null || unit.compareTo(CENT) < 0) {
+            throw new IllegalArgumentException("Allocation unit must be at least one cent");
+        }
+        if (total != null && total.remainder(unit).compareTo(BigDecimal.ZERO) != 0) {
+            throw new IllegalArgumentException("Allocation total must match the order's money unit");
+        }
         if (total == null || total.compareTo(ZERO) <= 0) {
             throw new IllegalArgumentException("Allocation total must be positive");
         }
         if (targets == null || targets.isEmpty()) {
             throw new IllegalArgumentException("Allocation targets must not be empty");
+        }
+        for (AllocationTarget target : targets) {
+            if (target.remainingDue() != null
+                    && target.remainingDue().remainder(unit).compareTo(BigDecimal.ZERO) != 0) {
+                throw new IllegalArgumentException("Course balance must match the order's money unit");
+            }
         }
 
         BigDecimal sumRemaining = targets.stream()
@@ -72,12 +90,11 @@ public final class PaymentAllocationCalculator {
         BigDecimal remainingTotal = total;
         while (remainingTotal.compareTo(ZERO) > 0 && !active.isEmpty()) {
             int n = active.size();
-            // 均分到分：base 为每项基础额，remCents 为分位余差（补给前 remCents 项）
+            // 按订单计价单位均分；余数依次补给前面的课程。
             BigDecimal base = remainingTotal
-                    .divide(new BigDecimal(n), 2, RoundingMode.DOWN)
-                    .setScale(2, RoundingMode.UNNECESSARY);
-            long remCents = remainingTotal.subtract(base.multiply(new BigDecimal(n)))
-                    .movePointRight(2)
+                    .divide(new BigDecimal(n), unit.scale(), RoundingMode.DOWN);
+            long remainderUnits = remainingTotal.subtract(base.multiply(new BigDecimal(n)))
+                    .divide(unit, 0, RoundingMode.DOWN)
                     .setScale(0, RoundingMode.DOWN)
                     .longValueExact();
 
@@ -86,8 +103,8 @@ public final class PaymentAllocationCalculator {
             for (int i = 0; i < n; i++) {
                 Target target = active.get(i);
                 BigDecimal share = base;
-                if (i < remCents) {
-                    share = share.add(CENT);
+                if (i < remainderUnits) {
+                    share = share.add(unit);
                 }
                 BigDecimal amount = share.min(target.remaining);
                 if (amount.compareTo(ZERO) > 0) {

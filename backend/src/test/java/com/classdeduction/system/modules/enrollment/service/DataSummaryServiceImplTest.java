@@ -916,6 +916,36 @@ class DataSummaryServiceImplTest {
                 });
     }
 
+    @Test
+    void wholeDollarSharedRegistrationKeepsParticipantRowsIntegral() {
+        EnrollmentOrderEntity order = order(1L, "151.00", "0.00", "151.00");
+        order.setBillingPolicy("WHOLE_DOLLAR_V1");
+        EnrollmentOrderItemEntity course = item(11L, 1, "151.00");
+        course.setCourseType("ONE_ON_ONE");
+        course.setAmountDue(new BigDecimal("151.00"));
+        PrivateLessonGroupEntity group = new PrivateLessonGroupEntity();
+        group.setId(91L);
+        group.setEnrollmentOrderId(1L);
+        group.setEnrollmentOrderItemId(11L);
+        group.setParticipantCount(2);
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(course));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(
+                billedParticipant(1L, 1, "Student 1", "75.00", "0.00", "75.00", "0.00", "[]"),
+                billedParticipant(2L, 2, "Student 2", "76.00", "0.00", "76.00", "0.00", "[]")));
+        when(privateLessonGroupMapper.selectList(any())).thenReturn(List.of(group));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(
+                student(1L, "Student 1"), student(2L, "Student 2")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::linePriceAmount)
+                .containsExactly(new BigDecimal("75.00"), new BigDecimal("76.00"));
+        assertThat(response.rows()).extracting(DataSummaryResponseVO.RowVO::amountDue)
+                .containsExactly(new BigDecimal("75.00"), new BigDecimal("76.00"));
+    }
+
     private EnrollmentOrderEntity order(Long id, String amountDue, String receivedAmount, String balanceAmount) {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(id);

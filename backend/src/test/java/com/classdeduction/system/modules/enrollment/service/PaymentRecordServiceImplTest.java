@@ -631,6 +631,21 @@ class PaymentRecordServiceImplTest {
         }
 
         @Test
+        void newWholeDollarOrderRejectsFractionalPayment() {
+            testOrder.setBillingPolicy("WHOLE_DOLLAR_V1");
+            PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();
+            request.setEnrollmentOrderId(1L);
+            request.setSplits(List.of(new PaymentSplitDTO("CASH", new BigDecimal("10.50"))));
+            request.setHandledByName("Admin");
+            when(enrollmentOrderMapper.selectById(1L)).thenReturn(testOrder);
+
+            assertThatThrownBy(() -> paymentRecordService.createPaymentRecord(request))
+                    .isInstanceOf(BusinessException.class)
+                    .extracting("code").isEqualTo("WHOLE_DOLLAR_REQUIRED");
+            verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
+        }
+
+        @Test
         @DisplayName("Should require payment method details when using Other")
         void shouldRequirePaymentMethodDetailsForOther() {
             PaymentRecordSaveRequest request = new PaymentRecordSaveRequest();

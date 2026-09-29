@@ -91,7 +91,7 @@
         <el-input-number
           v-model="editForm.creditBalance"
           :min="0"
-          :precision="2"
+          :precision="0"
           :controls="false"
           class="credit-edit-amount"
           placeholder="Enter new balance"
@@ -224,9 +224,9 @@ function openEditDialog(group: StudentCreditGroup) {
 
 async function saveCreditAdjustment() {
   if (!editingGroup.value) return;
-  const targetBalance = Number(Number(editForm.creditBalance || 0).toFixed(2));
-  if (!Number.isFinite(targetBalance) || targetBalance < 0) {
-    ElMessage.warning('Credit balance cannot be negative.');
+  const targetBalance = Number(editForm.creditBalance);
+  if (!Number.isInteger(targetBalance) || targetBalance < 0) {
+    ElMessage.warning('Credit balance must be a non-negative whole dollar amount.');
     return;
   }
   saving.value = true;

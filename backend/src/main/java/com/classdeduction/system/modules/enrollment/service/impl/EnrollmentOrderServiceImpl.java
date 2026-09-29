@@ -63,6 +63,7 @@ import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.RefundCoursePreviewVO;
 import com.classdeduction.system.modules.finance.service.StudentCreditService;
+import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
@@ -487,6 +488,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .dropoffRequiredSnapshot(Boolean.TRUE.equals(order.getDropoffRequiredSnapshot()))
                 .dropoffAddressSnapshot(order.getDropoffAddressSnapshot())
                 .currencyCode(order.getCurrencyCode())
+                .billingPolicy(order.getBillingPolicy())
                 .tuitionSubtotalAmount(order.getTuitionSubtotalAmount())
                 .pickupFeeAmount(order.getPickupFeeAmount())
                 .dropoffFeeAmount(order.getDropoffFeeAmount())
@@ -1003,6 +1005,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .dropoffRequiredSnapshot(Boolean.TRUE.equals(order.getDropoffRequiredSnapshot()))
                 .dropoffAddressSnapshot(order.getDropoffAddressSnapshot())
                 .currencyCode(order.getCurrencyCode())
+                .billingPolicy(order.getBillingPolicy())
                 .tuitionSubtotalAmount(order.getTuitionSubtotalAmount())
                 .pickupFeeAmount(order.getPickupFeeAmount())
                 .dropoffFeeAmount(order.getDropoffFeeAmount())
@@ -1062,6 +1065,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .dropoffRequiredSnapshot(Boolean.TRUE.equals(order.getDropoffRequiredSnapshot()))
                 .dropoffAddressSnapshot(order.getDropoffAddressSnapshot())
                 .currencyCode(order.getCurrencyCode())
+                .billingPolicy(order.getBillingPolicy())
                 .tuitionSubtotalAmount(order.getTuitionSubtotalAmount())
                 .pickupFeeAmount(order.getPickupFeeAmount())
                 .dropoffFeeAmount(order.getDropoffFeeAmount())
@@ -1217,6 +1221,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Transactional(rollbackFor = Exception.class)
     public void correctOrder(Long id, EnrollmentOrderCorrectionRequest request) {
         EnrollmentOrderEntity order = requireOrder(id);
+        if (WholeDollarBilling.appliesTo(order)) {
+            validateWholeDollarCorrection(request);
+        }
         if ("CANCELLED".equals(order.getOrderStatus())) {
             throw new BusinessException("ORDER_CANCELLED_NOT_EDITABLE",
                     "Cancelled orders cannot be edited.");
@@ -1331,6 +1338,54 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
         // Keep every saved receipt snapshot in sync so print/preview and the order detail agree.
         syncReceiptSnapshots(order, request.getCampusAddress(), request.getCampusPhone(), request.getTaxId(), request);
+    }
+
+    /** 新订单更正仍遵守原订单的整美元计价契约；旧订单不受此校验影响。 */
+    private void validateWholeDollarCorrection(EnrollmentOrderCorrectionRequest request) {
+        WholeDollarBilling.requireInteger(request.getPickupFeeAmount(), "Pickup fee");
+        WholeDollarBilling.requireInteger(request.getDropoffFeeAmount(), "Drop-off fee");
+        WholeDollarBilling.requireInteger(request.getExtraFeeAmount(), "Extra fee");
+        WholeDollarBilling.requireInteger(request.getDiscountAmount(), "Discount");
+        validateWholeDollarLines(request.getExtraFees());
+        validateWholeDollarLines(request.getDiscounts());
+        validateWholeDollarPayments(request.getPayments());
+        if (request.getItems() != null) {
+            for (RegistrationIntakeRequest.CourseItemPayload item : request.getItems()) {
+                if (item == null) continue;
+                WholeDollarBilling.requireInteger(item.getPriceAmount(), "Course price");
+                WholeDollarBilling.requireInteger(item.getPickupFeeAmount(), "Course pickup fee");
+                WholeDollarBilling.requireInteger(item.getDropoffFeeAmount(), "Course drop-off fee");
+                validateWholeDollarLines(item.getServiceFees());
+            }
+        }
+        if (request.getParticipantBillings() != null) {
+            for (RegistrationIntakeRequest.ParticipantBillingPayload billing : request.getParticipantBillings()) {
+                if (billing == null) continue;
+                WholeDollarBilling.requireInteger(billing.getDiscountAmount(), "Participant discount");
+                validateWholeDollarLines(billing.getDiscounts());
+                validateWholeDollarPayments(billing.getPayments());
+            }
+        }
+    }
+
+    private void validateWholeDollarLines(List<RegistrationIntakeRequest.FeeLinePayload> lines) {
+        if (lines == null) return;
+        for (RegistrationIntakeRequest.FeeLinePayload line : lines) {
+            if (line != null) WholeDollarBilling.requireInteger(line.getAmount(), "Fee or discount");
+        }
+    }
+
+    private void validateWholeDollarPayments(List<RegistrationIntakeRequest.PaymentPayload> payments) {
+        if (payments == null) return;
+        for (RegistrationIntakeRequest.PaymentPayload payment : payments) {
+            if (payment == null) continue;
+            WholeDollarBilling.requireInteger(payment.getAmount(), "Payment");
+            if (payment.getAllocations() != null) {
+                for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payment.getAllocations()) {
+                    if (allocation != null) WholeDollarBilling.requireInteger(allocation.getAmount(), "Course payment allocation");
+                }
+            }
+        }
     }
 
     /**
@@ -2301,6 +2356,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("NO_PAYMENT_TO_REFUND", "There is no received payment to refund.");
         }
         BigDecimal refundAmount = defaultAmount(request.getRefundAmount());
+        if (WholeDollarBilling.appliesTo(order)) {
+            WholeDollarBilling.requireInteger(request.getRefundAmount(), "Refund");
+        }
         if (refundAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessException("INVALID_REFUND_AMOUNT", "Refund amount must be greater than zero.");
         }
@@ -2586,7 +2644,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     .toList();
         }
         if (item.getClassId() != null) {
-            return calculateClassUsage(item, enrollments, Math.max(1, participantCount), participant);
+            return calculateClassUsage(order, item, enrollments, Math.max(1, participantCount), participant);
         }
         if (participant == null || participant.getStudentId() == null) {
             return ClassUsage.empty();
@@ -2622,11 +2680,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (usedUnits <= 0) {
             return new ClassUsage(0, ZERO_AMOUNT, null, null, true);
         }
-        BigDecimal studentGross = participantCourseGross(item, participant, participantCount)
-                .subtract(participantCourseDiscount(item, participant, participantCount))
+        BigDecimal studentGross = participantCourseGross(order, item, participant, participantCount)
+                .subtract(participantCourseDiscount(order, item, participant, participantCount))
                 .max(ZERO_AMOUNT);
         BigDecimal consumed = studentGross.multiply(BigDecimal.valueOf(usedUnits))
-                .divide(packageUnits, 2, RoundingMode.HALF_UP);
+                .divide(packageUnits, WholeDollarBilling.appliesTo(order) ? 0 : 2,
+                        WholeDollarBilling.appliesTo(order) ? RoundingMode.CEILING : RoundingMode.HALF_UP);
         LocalDate first = records.stream()
                 .filter(record -> record.getDeductedUnits() != null && record.getDeductedUnits() > 0)
                 .filter(record -> record.getPlannedStartAt() != null)
@@ -2650,7 +2709,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
         if (participants == null || participants.isEmpty()) {
             return item.getClassId() == null ? ClassUsage.empty()
-                    : calculateClassUsage(item, listClassEnrollments(item, order), 1);
+                    : calculateClassUsage(order, item, listClassEnrollments(item, order), 1);
         }
         int count = 0;
         BigDecimal amount = ZERO_AMOUNT;
@@ -2753,9 +2812,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         int participantCount = Math.max(1, participants.size());
         BigDecimal originalCourseDue = participantCount <= 1
                 ? defaultAmount(item.getAmountDue())
-                : participantCourseGross(item, participant, participantCount)
+                : participantCourseGross(order, item, participant, participantCount)
                         .add(participantCourseFee(item, participant))
-                        .subtract(participantCourseDiscount(item, participant, participantCount))
+                        .subtract(participantCourseDiscount(order, item, participant, participantCount))
                         .max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
         BigDecimal stoppedCourseDue = usage.consumedAmount().min(originalCourseDue)
                 .setScale(2, RoundingMode.HALF_UP);
@@ -2897,18 +2956,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     /** 已确认且可计费的班课记录按学生与上课日期去重，金额使用报名时课程价和优惠快照。 */
-    private ClassUsage calculateClassUsage(EnrollmentOrderItemEntity item,
+    private ClassUsage calculateClassUsage(EnrollmentOrderEntity order, EnrollmentOrderItemEntity item,
                                            List<ClassEnrollmentEntity> enrollments) {
-        return calculateClassUsage(item, enrollments, Math.max(1, enrollments.size()));
+        return calculateClassUsage(order, item, enrollments, Math.max(1, enrollments.size()));
     }
 
-    private ClassUsage calculateClassUsage(EnrollmentOrderItemEntity item,
+    private ClassUsage calculateClassUsage(EnrollmentOrderEntity order, EnrollmentOrderItemEntity item,
                                            List<ClassEnrollmentEntity> enrollments,
                                            int participantCount) {
-        return calculateClassUsage(item, enrollments, participantCount, null);
+        return calculateClassUsage(order, item, enrollments, participantCount, null);
     }
 
-    private ClassUsage calculateClassUsage(EnrollmentOrderItemEntity item,
+    private ClassUsage calculateClassUsage(EnrollmentOrderEntity order, EnrollmentOrderItemEntity item,
                                            List<ClassEnrollmentEntity> enrollments,
                                            int participantCount,
                                            EnrollmentOrderParticipantEntity participant) {
@@ -2937,8 +2996,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         BigDecimal tuition = participant == null
                 ? defaultAmount(item.getPriceAmount()).subtract(defaultAmount(item.getDiscountAmount()))
                 .max(ZERO_AMOUNT)
-                : participantCourseGross(item, participant, participantCount)
-                .subtract(participantCourseDiscount(item, participant, participantCount)).max(ZERO_AMOUNT);
+                : participantCourseGross(order, item, participant, participantCount)
+                .subtract(participantCourseDiscount(order, item, participant, participantCount)).max(ZERO_AMOUNT);
         BigDecimal sessionCount = item.getPackageQuantity();
         if (sessionCount == null || sessionCount.compareTo(BigDecimal.ZERO) <= 0) {
             sessionCount = enrollments.stream().map(ClassEnrollmentEntity::getPurchasedQuantity)
@@ -2947,9 +3006,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (sessionCount.compareTo(BigDecimal.ZERO) <= 0) {
             return new ClassUsage(0, ZERO_AMOUNT, null, null, true);
         }
-        BigDecimal amountPerStudentSession = participant == null
-                ? tuition.divide(sessionCount.multiply(BigDecimal.valueOf(Math.max(1, participantCount))), 4, RoundingMode.HALF_UP)
-                : tuition.divide(sessionCount, 4, RoundingMode.HALF_UP);
+        BigDecimal billedSessions = participant == null
+                ? sessionCount.multiply(BigDecimal.valueOf(Math.max(1, participantCount))) : sessionCount;
+        BigDecimal amountPerStudentSession = tuition.divide(billedSessions, 4, RoundingMode.HALF_UP);
 
         Map<Long, Set<LocalDate>> datesByStudent = new LinkedHashMap<>();
         List<LessonRecordEntity> records = lessonRecordMapper.selectList(
@@ -2975,27 +3034,29 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .min(Comparator.naturalOrder()).orElse(null);
         LocalDate lastUsedDate = datesByStudent.values().stream().flatMap(Set::stream)
                 .max(Comparator.naturalOrder()).orElse(null);
-        BigDecimal consumedAmount = amountPerStudentSession.multiply(BigDecimal.valueOf(count))
-                .setScale(2, RoundingMode.HALF_UP);
+        BigDecimal consumedAmount = WholeDollarBilling.appliesTo(order)
+                ? tuition.multiply(BigDecimal.valueOf(count)).divide(billedSessions, 0, RoundingMode.CEILING).setScale(2)
+                : amountPerStudentSession.multiply(BigDecimal.valueOf(count)).setScale(2, RoundingMode.HALF_UP);
         return new ClassUsage(count, consumedAmount, firstUsedDate, lastUsedDate, true);
     }
 
     /** 还原报名时某个学生在单个课程项上的实际原价份额。 */
-    private BigDecimal participantCourseGross(EnrollmentOrderItemEntity item,
+    private BigDecimal participantCourseGross(EnrollmentOrderEntity order, EnrollmentOrderItemEntity item,
                                              EnrollmentOrderParticipantEntity participant,
                                              int participantCount) {
         BigDecimal total = defaultAmount(item.getPriceAmount());
         if (participant == null || participantCount <= 1) {
             return total;
         }
-        BigDecimal share = total.divide(BigDecimal.valueOf(participantCount), 2, RoundingMode.DOWN);
+        BigDecimal share = total.divide(BigDecimal.valueOf(participantCount),
+                WholeDollarBilling.appliesTo(order) ? 0 : 2, RoundingMode.DOWN).setScale(2);
         return participant.getParticipantIndex() != null && participant.getParticipantIndex() == participantCount
                 ? total.subtract(share.multiply(BigDecimal.valueOf(participantCount - 1))).setScale(2, RoundingMode.HALF_UP)
                 : share;
     }
 
     /** 优先用学生收据快照里的课程折扣；旧数据没有课程归属时沿用报名时的按价格比例分摊。 */
-    private BigDecimal participantCourseDiscount(EnrollmentOrderItemEntity item,
+    private BigDecimal participantCourseDiscount(EnrollmentOrderEntity order, EnrollmentOrderItemEntity item,
                                                  EnrollmentOrderParticipantEntity participant,
                                                  int participantCount) {
         if (participant == null || participantCount <= 1) {
@@ -3030,9 +3091,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             BigDecimal share = index == orderItems.size() - 1
                     ? totalDiscount.subtract(assigned)
                     : totalWeight.compareTo(ZERO_AMOUNT) <= 0
-                    ? totalDiscount.divide(BigDecimal.valueOf(orderItems.size()), 2, RoundingMode.DOWN)
+                    ? totalDiscount.divide(BigDecimal.valueOf(orderItems.size()),
+                            WholeDollarBilling.appliesTo(order) ? 0 : 2, RoundingMode.DOWN)
                     : totalDiscount.multiply(defaultAmount(course.getPriceAmount()))
-                    .divide(totalWeight, 2, RoundingMode.DOWN);
+                    .divide(totalWeight, WholeDollarBilling.appliesTo(order) ? 0 : 2, RoundingMode.DOWN);
             if (Objects.equals(course.getId(), item.getId())) {
                 return share.setScale(2, RoundingMode.HALF_UP);
             }
@@ -3086,7 +3148,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (enrollments.stream().noneMatch(enrollment -> "ACTIVE".equalsIgnoreCase(enrollment.getStatus()))) {
                 continue;
             }
-            ClassUsage usage = calculateClassUsage(item, enrollments);
+            ClassUsage usage = calculateClassUsage(order, item, enrollments);
             BigDecimal previousPaid = paidBeforeRefund.get(item.getId());
             BigDecimal currentPaid = resolveItemPaidAmount(item);
             if (usage.automaticStopSupported() && previousPaid != null

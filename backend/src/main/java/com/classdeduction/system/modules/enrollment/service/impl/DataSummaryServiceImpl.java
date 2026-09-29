@@ -14,6 +14,7 @@ import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity;
@@ -686,8 +687,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         if (sharedParticipantOrder) {
             rowLinePriceAmount = item == null
                     ? resolveParticipantGrossAmount(participant, coursePackage, null, order, privateLessonParticipantCount)
-                    : splitAmount(item.getPriceAmount(), privateLessonParticipantCount, participant.getParticipantIndex());
-            rowDiscountAmount = participantCourseDiscountAmount(participant, item, orderItems,
+                    : splitAmount(item.getPriceAmount(), privateLessonParticipantCount,
+                            participant.getParticipantIndex(), WholeDollarBilling.appliesTo(order));
+            rowDiscountAmount = participantCourseDiscountAmount(order, participant, item, orderItems,
                     privateLessonParticipantCount);
             BigDecimal courseFeeAmount = item == null
                     ? amount(order.getPickupFeeAmount()).add(amount(order.getDropoffFeeAmount())).add(amount(order.getExtraFeeAmount()))
@@ -695,7 +697,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             .add(amount(item.getDiscountAmount())).max(ZERO_AMOUNT);
             rowPickupFeeAmount = primaryParticipant
                     ? item == null ? amount(order.getPickupFeeAmount())
-                            : allocateOrderAmountToItem(order.getPickupFeeAmount(), orderItems, item)
+                            : allocateOrderAmountToItem(order, order.getPickupFeeAmount(), orderItems, item)
                     : ZERO_AMOUNT;
             rowExtraFeeAmount = primaryParticipant
                     ? courseFeeAmount.subtract(rowPickupFeeAmount).max(ZERO_AMOUNT)
@@ -879,15 +881,18 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             return amount(coursePackage.getOriginalAmount());
         }
         BigDecimal totalAmount = item == null ? order.getAmountDue() : item.getPriceAmount();
-        return splitAmount(totalAmount, participantCount, participant.getParticipantIndex());
+        return splitAmount(totalAmount, participantCount, participant.getParticipantIndex(),
+                WholeDollarBilling.appliesTo(order));
     }
 
-    private BigDecimal participantCourseDiscountAmount(EnrollmentOrderParticipantEntity participant,
+    private BigDecimal participantCourseDiscountAmount(EnrollmentOrderEntity order,
+                                                        EnrollmentOrderParticipantEntity participant,
                                                         EnrollmentOrderItemEntity item,
                                                         List<EnrollmentOrderItemEntity> orderItems,
                                                         Integer participantCount) {
         if (participant == null) {
-            return item == null ? ZERO_AMOUNT : splitAmount(item.getDiscountAmount(), participantCount, null);
+            return item == null ? ZERO_AMOUNT : splitAmount(item.getDiscountAmount(), participantCount, null,
+                    WholeDollarBilling.appliesTo(order));
         }
         BigDecimal participantDiscount = amount(participant.getDiscountAmount());
         if (item == null) {
@@ -916,9 +921,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             BigDecimal share = index == orderItems.size() - 1
                     ? participantDiscount.subtract(assigned)
                     : totalWeight.compareTo(ZERO_AMOUNT) <= 0
-                    ? participantDiscount.divide(BigDecimal.valueOf(orderItems.size()), 2, RoundingMode.DOWN)
+                    ? participantDiscount.divide(BigDecimal.valueOf(orderItems.size()),
+                            WholeDollarBilling.appliesTo(order) ? 0 : 2, RoundingMode.DOWN)
                     : participantDiscount.multiply(amount(course.getPriceAmount()))
-                    .divide(totalWeight, 2, RoundingMode.DOWN);
+                    .divide(totalWeight, WholeDollarBilling.appliesTo(order) ? 0 : 2, RoundingMode.DOWN);
             if (Objects.equals(course.getId(), item.getId())) {
                 return share.setScale(2, RoundingMode.HALF_UP);
             }
@@ -958,13 +964,14 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         }
     }
 
-    private BigDecimal allocateOrderAmountToItem(BigDecimal totalAmount,
+    private BigDecimal allocateOrderAmountToItem(EnrollmentOrderEntity order, BigDecimal totalAmount,
                                                  List<EnrollmentOrderItemEntity> items,
                                                  EnrollmentOrderItemEntity targetItem) {
         if (items == null || items.isEmpty()) {
             return ZERO_AMOUNT;
         }
-        List<BigDecimal> shares = allocateByWeights(totalAmount, itemPriceWeights(items));
+        List<BigDecimal> shares = allocateByWeights(totalAmount, itemPriceWeights(items),
+                WholeDollarBilling.appliesTo(order));
         for (int index = 0; index < items.size(); index++) {
             if (Objects.equals(items.get(index).getId(), targetItem.getId())) {
                 return shares.get(index);
@@ -993,7 +1000,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             }
             BigDecimal participantPaid = resolveParticipantPaidAmount(participant, participantKey,
                     paidAmountByParticipant, order, primaryParticipant);
-            return item == null ? participantPaid : allocateOrderAmountToItem(participantPaid, orderItems, item);
+            return item == null ? participantPaid : allocateOrderAmountToItem(order, participantPaid, orderItems, item);
         }
 
         BigDecimal coursePaid = amount(paidAmountByParticipantAndItem.get(
@@ -1006,7 +1013,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         BigDecimal participantPaid = resolveParticipantPaidAmount(participant, participantKey,
                 paidAmountByParticipant, order, primaryParticipant);
         BigDecimal legacyUnallocatedPaid = participantPaid.subtract(explicitPaid).max(ZERO_AMOUNT);
-        return coursePaid.add(allocateOrderAmountToItem(legacyUnallocatedPaid, orderItems, item));
+        return coursePaid.add(allocateOrderAmountToItem(order, legacyUnallocatedPaid, orderItems, item));
     }
 
     private BigDecimal resolveParticipantPaidAmount(EnrollmentOrderParticipantEntity participant,
@@ -1024,13 +1031,15 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         return primaryParticipant ? amount(order.getReceivedAmount()) : ZERO_AMOUNT;
     }
 
-    private BigDecimal splitAmount(BigDecimal totalAmount, Integer participantCount, Integer participantIndex) {
+    private BigDecimal splitAmount(BigDecimal totalAmount, Integer participantCount, Integer participantIndex,
+                                   boolean wholeDollars) {
         BigDecimal total = amount(totalAmount);
         int count = participantCount == null || participantCount < 1 ? 1 : participantCount;
         if (count == 1) {
             return total;
         }
-        BigDecimal base = total.divide(BigDecimal.valueOf(count), 2, RoundingMode.DOWN);
+        BigDecimal base = total.divide(BigDecimal.valueOf(count), wholeDollars ? 0 : 2, RoundingMode.DOWN)
+                .setScale(2);
         int index = participantIndex == null ? 1 : participantIndex;
         if (index >= count) {
             return total.subtract(base.multiply(BigDecimal.valueOf(count - 1)))
@@ -1311,13 +1320,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             putItemAllocation(allocation, participantIndex, items, itemWeights,
                     amount(order.getPickupFeeAmount()), amount(order.getExtraFeeAmount()),
                     amount(order.getDiscountAmount()), amount(order.getAmountDue()),
-                    amount(order.getReceivedAmount()), true);
+                    amount(order.getReceivedAmount()), true, WholeDollarBilling.appliesTo(order));
             return allocation;
         }
         participantBucketAmounts(order, participants, paidAmountByParticipant).forEach((index, bucket) ->
                 putItemAllocation(allocation, index, items, itemWeights,
                         bucket.pickupFeeAmount(), bucket.extraFeeAmount(), bucket.discountAmount(),
-                        bucket.amountDue(), bucket.paidAmount(), false));
+                        bucket.amountDue(), bucket.paidAmount(), false, WholeDollarBilling.appliesTo(order)));
         return allocation;
     }
 
@@ -1330,15 +1339,16 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                    BigDecimal discount,
                                    BigDecimal amountDue,
                                    BigDecimal paid,
-                                   boolean preferStoredCourseAmounts) {
-        List<BigDecimal> pickupShares = allocateByWeights(pickupFee, itemWeights);
-        List<BigDecimal> extraFeeShares = allocateByWeights(extraFee, itemWeights);
+                                   boolean preferStoredCourseAmounts,
+                                   boolean wholeDollars) {
+        List<BigDecimal> pickupShares = allocateByWeights(pickupFee, itemWeights, wholeDollars);
+        List<BigDecimal> extraFeeShares = allocateByWeights(extraFee, itemWeights, wholeDollars);
         List<BigDecimal> discountShares = storedShares(items, EnrollmentOrderItemEntity::getDiscountAmount,
-                discount, itemWeights, preferStoredCourseAmounts);
+                discount, itemWeights, preferStoredCourseAmounts, wholeDollars);
         List<BigDecimal> amountDueShares = storedShares(items, EnrollmentOrderItemEntity::getAmountDue,
-                amountDue, itemWeights, preferStoredCourseAmounts);
+                amountDue, itemWeights, preferStoredCourseAmounts, wholeDollars);
         List<BigDecimal> paidShares = storedShares(items, EnrollmentOrderItemEntity::getPaidAmount,
-                paid, itemWeights, preferStoredCourseAmounts);
+                paid, itemWeights, preferStoredCourseAmounts, wholeDollars);
         for (int i = 0; i < items.size(); i++) {
             allocation.put(new AllocationKey(participantIndex, items.get(i).getId()), new AllocatedAmounts(
                     pickupShares.get(i), extraFeeShares.get(i), discountShares.get(i),
@@ -1354,9 +1364,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                           Function<EnrollmentOrderItemEntity, BigDecimal> valueOf,
                                           BigDecimal expectedTotal,
                                           List<BigDecimal> fallbackWeights,
-                                          boolean preferStoredCourseAmounts) {
+                                          boolean preferStoredCourseAmounts,
+                                          boolean wholeDollars) {
         if (!preferStoredCourseAmounts || items.stream().anyMatch(item -> valueOf.apply(item) == null)) {
-            return allocateByWeights(expectedTotal, fallbackWeights);
+            return allocateByWeights(expectedTotal, fallbackWeights, wholeDollars);
         }
         return items.stream().map(item -> amount(valueOf.apply(item))).toList();
     }
@@ -1378,11 +1389,12 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                                                     Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant) {
         List<BigDecimal> dueWeights = participantDueWeights(participants);
         List<BigDecimal> paidWeights = participantPaidWeights(order, participants, paidAmountByParticipant, dueWeights);
-        List<BigDecimal> pickupShares = allocateByWeights(amount(order.getPickupFeeAmount()), dueWeights);
-        List<BigDecimal> extraFeeShares = allocateByWeights(amount(order.getExtraFeeAmount()), dueWeights);
-        List<BigDecimal> discountShares = allocateByWeights(amount(order.getDiscountAmount()), dueWeights);
-        List<BigDecimal> amountDueShares = allocateByWeights(amount(order.getAmountDue()), dueWeights);
-        List<BigDecimal> paidShares = allocateByWeights(amount(order.getReceivedAmount()), paidWeights);
+        boolean wholeDollars = WholeDollarBilling.appliesTo(order);
+        List<BigDecimal> pickupShares = allocateByWeights(amount(order.getPickupFeeAmount()), dueWeights, wholeDollars);
+        List<BigDecimal> extraFeeShares = allocateByWeights(amount(order.getExtraFeeAmount()), dueWeights, wholeDollars);
+        List<BigDecimal> discountShares = allocateByWeights(amount(order.getDiscountAmount()), dueWeights, wholeDollars);
+        List<BigDecimal> amountDueShares = allocateByWeights(amount(order.getAmountDue()), dueWeights, wholeDollars);
+        List<BigDecimal> paidShares = allocateByWeights(amount(order.getReceivedAmount()), paidWeights, wholeDollars);
         Map<Integer, AllocatedAmounts> buckets = new LinkedHashMap<>();
         for (int i = 0; i < participants.size(); i++) {
             buckets.put(participants.get(i).getParticipantIndex(), new AllocatedAmounts(
@@ -1476,6 +1488,11 @@ public class DataSummaryServiceImpl implements DataSummaryService {
      * 按权重把金额拆成 n 份：每份 scale=2 向下取整，尾差并入最后一份，保证合计精确等于总额。
      */
     private List<BigDecimal> allocateByWeights(BigDecimal total, List<BigDecimal> weights) {
+        return allocateByWeights(total, weights, false);
+    }
+
+    /** 新订单只在整美元边界拆分，最后一行吸收美元余数；历史订单维持分位规则。 */
+    private List<BigDecimal> allocateByWeights(BigDecimal total, List<BigDecimal> weights, boolean wholeDollars) {
         BigDecimal normalizedTotal = amount(total);
         int size = weights.size();
         List<BigDecimal> shares = new ArrayList<>();
@@ -1498,9 +1515,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             }
             BigDecimal weight = weights.get(i) == null ? ZERO_AMOUNT : weights.get(i);
             BigDecimal share = weightSum.compareTo(ZERO_AMOUNT) == 0
-                    ? normalizedTotal.divide(BigDecimal.valueOf(size), 2, RoundingMode.DOWN)
-                    : normalizedTotal.multiply(weight).divide(weightSum, 2, RoundingMode.DOWN);
-            shares.add(share);
+                    ? normalizedTotal.divide(BigDecimal.valueOf(size), wholeDollars ? 0 : 2, RoundingMode.DOWN)
+                    : normalizedTotal.multiply(weight).divide(weightSum, wholeDollars ? 0 : 2, RoundingMode.DOWN);
+            shares.add(share.setScale(2));
             allocated = allocated.add(share);
         }
         return shares;

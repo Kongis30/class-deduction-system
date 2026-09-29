@@ -41,6 +41,7 @@ public record EnrollmentOrderListItemVO(
         Boolean dropoffRequiredSnapshot,
         String dropoffAddressSnapshot,
         String currencyCode,
+        String billingPolicy,
         BigDecimal tuitionSubtotalAmount,
         BigDecimal pickupFeeAmount,
         BigDecimal dropoffFeeAmount,

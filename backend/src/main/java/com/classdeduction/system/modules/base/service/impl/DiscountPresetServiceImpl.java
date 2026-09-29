@@ -81,6 +81,12 @@ public class DiscountPresetServiceImpl implements DiscountPresetService {
     }
 
     private void applyPreset(DiscountPresetEntity entity, DiscountPresetSaveRequest request) {
+        // 百分比是费率，可有小数；固定金额直接进入报名优惠，必须为整美元。
+        if ("FIXED".equalsIgnoreCase(request.getDiscountType())
+                && request.getDiscountValue() != null
+                && request.getDiscountValue().stripTrailingZeros().scale() > 0) {
+            throw new BusinessException("WHOLE_DOLLAR_REQUIRED", "Fixed discount must be a whole dollar amount.");
+        }
         entity.setPresetName(request.getPresetName());
         entity.setDiscountType(request.getDiscountType());
         entity.setDiscountValue(request.getDiscountValue());

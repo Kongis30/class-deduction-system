@@ -77,6 +77,9 @@ public class EnrollmentOrderEntity extends BaseEntity {
 
     private String currencyCode;
 
+    /** 新报名的金额规则；空值代表旧订单，不能重新取整其历史账目。 */
+    private String billingPolicy;
+
     private BigDecimal tuitionSubtotalAmount;
 
     private BigDecimal pickupFeeAmount;

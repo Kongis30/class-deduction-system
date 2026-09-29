@@ -18,7 +18,7 @@ public class StudentCreditAdjustmentRequest {
 
     @NotNull(message = "Credit balance is required")
     @DecimalMin(value = "0.00", message = "Credit balance cannot be negative")
-    @Digits(integer = 12, fraction = 2, message = "Credit balance must use at most 2 decimal places")
+    @Digits(integer = 12, fraction = 0, message = "Credit balance must be a whole dollar amount")
     @Schema(description = "调整后的目标余额", example = "150.00")
     private BigDecimal creditBalance;
 

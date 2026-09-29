@@ -47,6 +47,7 @@ import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService;
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
+import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
 import com.classdeduction.system.modules.finance.service.StudentCreditService;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
@@ -137,6 +138,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public RegistrationIntakeResultVO submitIntake(RegistrationIntakeRequest request, CurrentUserResponse operator) {
+        validateWholeDollarInputs(request);
         validateRegistrationPeriod(request);
         validateCampusSelection(request);
         validateRenewalRequestShape(request);
@@ -619,21 +621,21 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             BigDecimal orderMultiplier = line.oneOnOne
                     ? privateLessonMultiplier
                     : BigDecimal.valueOf(participantCount);
-            line.priceAmount = line.priceAmount.multiply(orderMultiplier).setScale(2, RoundingMode.HALF_UP);
-            line.originalPriceAmount = defaultAmount(line.originalPriceAmount)
-                    .multiply(orderMultiplier).setScale(2, RoundingMode.HALF_UP);
+            line.priceAmount = WholeDollarBilling.ceil(line.priceAmount.multiply(orderMultiplier));
+            line.originalPriceAmount = WholeDollarBilling.ceil(defaultAmount(line.originalPriceAmount)
+                    .multiply(orderMultiplier));
         }
     }
 
     /**
-     * 共享私教的订单总价由上游先计算，这里只负责平均分摊到每个学生；最后一位吸收分币误差。
+     * 共享私教的整美元订单价平均分摊到学生；最后一位吸收不足整除的美元。
      */
     private BigDecimal splitSharedTuition(BigDecimal totalTuition, int participantCount, int participantIndex) {
         if (participantCount <= 1) {
             return defaultAmount(totalTuition);
         }
         BigDecimal share = defaultAmount(totalTuition).divide(
-                BigDecimal.valueOf(participantCount), 2, RoundingMode.DOWN);
+                BigDecimal.valueOf(participantCount), 0, RoundingMode.DOWN).setScale(2);
         if (participantIndex == participantCount - 1) {
             return defaultAmount(totalTuition).subtract(
                             share.multiply(BigDecimal.valueOf(participantCount - 1)))
@@ -809,12 +811,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         "Selected sessions must be between 1 and the configured package session count.");
             }
             line.sessions = selectedSessions;
-            // 与注册页一致：课次比例价向下取整到整美元，正价课包最低收 $1。
+            // 购买课次的最终报价向上取整，避免展示整数却保存角分。
             configuredPrice = configuredUnitPrice.multiply(BigDecimal.valueOf(selectedSessions))
-                    .divide(BigDecimal.valueOf(configuredSessions), 0, RoundingMode.FLOOR);
-            if (configuredUnitPrice.compareTo(ZERO_AMOUNT) > 0) {
-                configuredPrice = configuredPrice.max(BigDecimal.ONE);
-            }
+                    .divide(BigDecimal.valueOf(configuredSessions), 0, RoundingMode.CEILING);
         } else {
             configuredPrice = configuredUnitPrice;
         }
@@ -822,11 +821,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("COURSE_LINE_PRICE_REQUIRED",
                     "Manual course line price is required for a $0 course template.");
         }
-        line.originalPriceAmount = defaultAmount(configuredPrice);
+        line.originalPriceAmount = WholeDollarBilling.ceil(configuredPrice);
         line.priceAmount = manualPriceOverride
-                ? requirePositiveAmount(item.getPriceAmount(), "COURSE_LINE_PRICE_REQUIRED",
+                ? requirePositiveAmount(WholeDollarBilling.requireInteger(item.getPriceAmount(), "Manual course price"), "COURSE_LINE_PRICE_REQUIRED",
                         "Manual course line price is required.")
-                : defaultAmount(configuredPrice);
+                : WholeDollarBilling.ceil(configuredPrice);
         line.manualPriceOverride = manualPriceOverride;
     }
 
@@ -841,10 +840,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("ONE_ON_ONE_HOURS_REQUIRED",
                     "Enter purchased one-on-one hours.");
         }
-        return configuredPrice
-                .divide(configuredHours, 8, RoundingMode.HALF_UP)
-                .multiply(purchasedHours)
-                .setScale(2, RoundingMode.HALF_UP);
+        return configuredPrice.multiply(purchasedHours)
+                .divide(configuredHours, 0, RoundingMode.CEILING);
     }
 
     private int resolveGroupPurchasedQuantity(ResolvedCourseLine line) {
@@ -1395,9 +1392,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             BigDecimal amount = index == lines.size() - 1
                     ? totalAmount.subtract(assigned)
                     : weightSum.compareTo(ZERO_AMOUNT) <= 0
-                    ? totalAmount.divide(BigDecimal.valueOf(lines.size()), 2, RoundingMode.DOWN)
+                    ? totalAmount.divide(BigDecimal.valueOf(lines.size()), 0, RoundingMode.DOWN).setScale(2)
                     : totalAmount.multiply(lines.get(index).priceAmount)
-                    .divide(weightSum, 2, RoundingMode.DOWN);
+                    .divide(weightSum, 0, RoundingMode.DOWN).setScale(2);
             amounts.add(amount);
             assigned = assigned.add(amount);
         }
@@ -1457,6 +1454,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         order.setDropoffRequiredSnapshot(Boolean.TRUE.equals(student.getDropoffRequired()));
         order.setDropoffAddressSnapshot(student.getDropoffAddress());
         order.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
+        order.setBillingPolicy(WholeDollarBilling.POLICY);
         order.setTuitionSubtotalAmount(money.tuitionSubtotal());
         order.setPickupFeeAmount(money.pickupFeeAmount());
         order.setDropoffFeeAmount(money.dropoffFeeAmount());
@@ -3008,6 +3006,57 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 && request.getPeriodEndDate().isBefore(request.getPeriodStartDate())) {
             throw new BusinessException("INVALID_REGISTRATION_PERIOD",
                     "Registration period end date cannot be earlier than start date.");
+        }
+    }
+
+    /** 新报名写账前统一校验人工金额；此入口不用于旧收据更正。 */
+    private void validateWholeDollarInputs(RegistrationIntakeRequest request) {
+        WholeDollarBilling.requireInteger(request.getCreditTopUpAmount(), "Credit top-up");
+        WholeDollarBilling.requireInteger(request.getPickupFeeAmount(), "Pickup fee");
+        WholeDollarBilling.requireInteger(request.getDropoffFeeAmount(), "Drop-off fee");
+        WholeDollarBilling.requireInteger(request.getExtraFeeAmount(), "Extra fee");
+        WholeDollarBilling.requireInteger(request.getDiscountAmount(), "Discount");
+        validateWholeDollarLines(request.getExtraFees(), "Extra fee");
+        validateWholeDollarLines(request.getDiscounts(), "Discount");
+        validateWholeDollarPayments(request.getPayments());
+        if (request.getItems() != null) {
+            for (RegistrationIntakeRequest.CourseItemPayload item : request.getItems()) {
+                if (item == null) continue;
+                if (Boolean.TRUE.equals(item.getManualPriceOverride())) {
+                    WholeDollarBilling.requireInteger(item.getPriceAmount(), "Manual course price");
+                }
+                WholeDollarBilling.requireInteger(item.getPickupFeeAmount(), "Course pickup fee");
+                WholeDollarBilling.requireInteger(item.getDropoffFeeAmount(), "Course drop-off fee");
+                validateWholeDollarLines(item.getServiceFees(), "Course fee");
+            }
+        }
+        if (request.getParticipantBillings() != null) {
+            for (RegistrationIntakeRequest.ParticipantBillingPayload billing : request.getParticipantBillings()) {
+                if (billing == null) continue;
+                WholeDollarBilling.requireInteger(billing.getDiscountAmount(), "Participant discount");
+                validateWholeDollarLines(billing.getDiscounts(), "Participant discount");
+                validateWholeDollarPayments(billing.getPayments());
+            }
+        }
+    }
+
+    private void validateWholeDollarLines(List<RegistrationIntakeRequest.FeeLinePayload> lines, String field) {
+        if (lines == null) return;
+        for (RegistrationIntakeRequest.FeeLinePayload line : lines) {
+            if (line != null) WholeDollarBilling.requireInteger(line.getAmount(), field);
+        }
+    }
+
+    private void validateWholeDollarPayments(List<RegistrationIntakeRequest.PaymentPayload> payments) {
+        if (payments == null) return;
+        for (RegistrationIntakeRequest.PaymentPayload payment : payments) {
+            if (payment == null) continue;
+            WholeDollarBilling.requireInteger(payment.getAmount(), "Payment");
+            if (payment.getAllocations() != null) {
+                for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payment.getAllocations()) {
+                    if (allocation != null) WholeDollarBilling.requireInteger(allocation.getAmount(), "Course payment allocation");
+                }
+            }
         }
     }
 

@@ -746,8 +746,8 @@
               </el-select>
               <el-input-number
                 v-model="split.amount"
-                :min="0.01"
-                :precision="2"
+                :min="payOrder?.billingPolicy === 'WHOLE_DOLLAR_V1' ? 1 : 0.01"
+                :precision="payOrder?.billingPolicy === 'WHOLE_DOLLAR_V1' ? 0 : 2"
                 :controls="false"
                 style="flex: 1;"
                 placeholder="Amount"
@@ -816,7 +816,7 @@
                     :model-value="split.allocations[String(row.id)] ?? 0"
                     :min="0"
                     :max="courseAllocationLimit(split, row)"
-                    :precision="2"
+                    :precision="payOrder?.billingPolicy === 'WHOLE_DOLLAR_V1' ? 0 : 2"
                     :controls="false"
                     :disabled="courseAllocationLimit(split, row) <= 0 || (payTargetCourseId != null && String(row.id) !== payTargetCourseId)"
                     @update:model-value="setSplitCourseAllocation(split, row.id, $event)"
@@ -926,9 +926,9 @@
         <el-form-item label="Refund amount" prop="refundAmount">
           <el-input-number
             v-model="refundForm.refundAmount"
-            :min="0.01"
+            :min="refundOrder?.billingPolicy === 'WHOLE_DOLLAR_V1' ? 1 : 0.01"
             :max="refundCourseReceivedAmount"
-            :precision="2"
+            :precision="refundOrder?.billingPolicy === 'WHOLE_DOLLAR_V1' ? 0 : 2"
             :controls="false"
             style="width: 100%;"
           />
@@ -1075,8 +1075,8 @@
           <el-form-item label="Value" prop="discountValue">
             <el-input-number
               v-model="presetForm.discountValue"
-              :min="0.01"
-              :precision="2"
+              :min="presetForm.discountType === 'FIXED' ? 1 : 0.01"
+              :precision="presetForm.discountType === 'FIXED' ? 0 : 2"
               :controls="false"
               style="width: 100%;"
               :placeholder="presetForm.discountType === 'PERCENTAGE' ? '10 = 10%' : '100 = $100'"
@@ -1532,7 +1532,6 @@ watch(
 );
 
 // ─── Discount preset selection for dialogs ──────────
-type DiscountSelectionId = EntityId | '__none__' | '__custom__' | null;
 
 async function loadDiscountPresets() {
   try {
@@ -1565,6 +1564,10 @@ function openPresetEditDialog(preset?: DiscountPresetItem) {
 async function submitPreset() {
   const valid = await presetFormRef.value?.validate().catch(() => false);
   if (!valid) return;
+  if (presetForm.discountType === 'FIXED' && !Number.isInteger(presetForm.discountValue)) {
+    ElMessage.warning('Fixed discount must be a whole dollar amount.');
+    return;
+  }
   savingPreset.value = true;
   try {
     const payload = {
@@ -1695,22 +1698,6 @@ async function handleDeleteMethod(id: EntityId) {
     loadActivePaymentMethods();
   } catch {
     // user cancelled
-  }
-}
-
-// ─── Compute discount amount from selected preset ──
-function applyPresetDiscount(presetId: DiscountSelectionId, form: { originalAmount: number; discountAmount: number }) {
-  if (presetId === '__none__') {
-    form.discountAmount = 0;
-    return;
-  }
-  if (!presetId || presetId === '__custom__') return;
-  const preset = discountPresets.value.find(p => p.id === presetId);
-  if (!preset) return;
-  if (preset.discountType === 'PERCENTAGE') {
-    form.discountAmount = Number(((form.originalAmount * preset.discountValue) / 100).toFixed(2));
-  } else {
-    form.discountAmount = preset.discountValue;
   }
 }
 
@@ -2663,6 +2650,10 @@ function handleRefundCourseChange() {
 async function handleRefundSubmit() {
   const valid = await refundFormRef.value?.validate().catch(() => false);
   if (!valid || !refundOrder.value) return;
+  if (refundOrder.value.billingPolicy === 'WHOLE_DOLLAR_V1' && !Number.isInteger(refundForm.refundAmount)) {
+    ElMessage.warning('Refund amount must be a whole dollar amount.');
+    return;
+  }
   if (refundCourseOptions.value.length > 0 && !refundForm.orderItemId) {
     ElMessage.warning('Select the course to refund.');
     return;
@@ -2856,6 +2847,12 @@ async function handlePaySubmit() {
     return;
   }
   if (!payOrder.value) return;
+  if (payOrder.value.billingPolicy === 'WHOLE_DOLLAR_V1'
+      && rows.some((row) => !Number.isInteger(row.amount)
+        || Object.values(row.allocations).some((amount) => !Number.isInteger(amount)))) {
+    ElMessage.warning('Payments and course allocations must use whole dollars.');
+    return;
+  }
   const requiresCourseAllocation = Boolean(payTargetCourseId.value)
     || (!payParticipant.value && payCourseItems.value.length > 1);
   if (requiresCourseAllocation) {

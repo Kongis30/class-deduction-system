@@ -45,6 +45,14 @@ class StudentCreditServiceImplTest {
     }
 
     @Test
+    void manualCreditBalanceCannotBeFractional() {
+        assertThatThrownBy(() -> service.adjustBalance(8L, new BigDecimal("150.25"), 3L, "Admin", "Correction"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Credit balance must be a whole dollar");
+        verify(ledgerMapper, never()).insert(org.mockito.ArgumentMatchers.any(StudentCreditLedgerEntity.class));
+    }
+
+    @Test
     void zeroDifferenceDoesNotCreateAnUnnecessaryLedgerEntry() {
         when(ledgerMapper.lockStudent(8L)).thenReturn(8L);
         when(ledgerMapper.selectBalance(8L)).thenReturn(new BigDecimal("100.00"));

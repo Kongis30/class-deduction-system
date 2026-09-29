@@ -21,6 +21,7 @@ import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.PaymentRecordService;
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
+import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
 import com.classdeduction.system.modules.enrollment.vo.PaymentRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import com.classdeduction.system.modules.finance.service.StudentCreditService;
@@ -107,6 +108,9 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
                 throw new BusinessException("INVALID_AMOUNT_SCALE",
                         "Each split amount must use at most 2 decimal places.");
             }
+            if (WholeDollarBilling.appliesTo(order)) {
+                WholeDollarBilling.requireInteger(split.getAmount(), "Payment");
+            }
             requireActivePaymentMethod(split.getPaymentMethod());
             if (!StringUtils.hasText(resolveHandledByName(request, split))) {
                 throw new BusinessException("PAYMENT_HANDLER_REQUIRED",
@@ -125,6 +129,9 @@ public class PaymentRecordServiceImpl implements PaymentRecordService {
                             || allocation.getAmount().stripTrailingZeros().scale() > 2) {
                         throw new BusinessException("PAYMENT_ALLOCATION_INVALID",
                                 "Each course allocation must have a course and a positive amount with at most 2 decimals.");
+                    }
+                    if (WholeDollarBilling.appliesTo(order)) {
+                        WholeDollarBilling.requireInteger(allocation.getAmount(), "Course payment allocation");
                     }
                 }
                 BigDecimal allocationTotal = split.getAllocations().stream()
