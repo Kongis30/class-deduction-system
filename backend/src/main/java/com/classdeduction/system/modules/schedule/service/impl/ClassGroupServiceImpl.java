@@ -1392,12 +1392,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 slot.setDeliveryMode("ONLINE");
             } else {
                 if (deliveryMode != null && !"IN_PERSON".equalsIgnoreCase(deliveryMode)) {
-                    throw new BusinessException("INVALID_DELIVERY_MODE", "Choose a classroom or Online for every slot.");
+                    throw new BusinessException("INVALID_DELIVERY_MODE", "Delivery mode must be In-person or Online.");
                 }
                 Long resolvedClassroomId = classroomId != null ? classroomId : defaultClassroomId;
-                if (resolvedClassroomId == null) {
-                    throw new BusinessException("SLOT_CLASSROOM_REQUIRED", "Choose a classroom or Online for every slot.");
-                }
+                // 教室可以留空；仍将线下时段标为 IN_PERSON，Online 仍由显式选项单独标记。
                 slot.setDeliveryMode("IN_PERSON");
                 slot.setClassroomId(resolvedClassroomId);
             }

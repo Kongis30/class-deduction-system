@@ -641,9 +641,10 @@
             <span>Classroom</span>
             <el-select
               v-model="slot.classroomSelection"
+              clearable
               popper-class="actual-classroom-picker"
               filterable
-              placeholder="Select classroom or Online"
+              placeholder="No classroom (optional)"
             >
               <el-option label="Online" value="ONLINE" />
               <el-option-group
@@ -2031,10 +2032,6 @@ async function saveActualClassSchedule() {
   }
   if (actualClassScheduleForm.slots.length === 0) {
     ElMessage.warning('Add at least one weekly class time.');
-    return;
-  }
-  if (actualClassScheduleForm.slots.some(slot => !slot.classroomSelection)) {
-    ElMessage.warning('Choose a classroom or Online for every time slot.');
     return;
   }
   savingActualClassSchedule.value = true;

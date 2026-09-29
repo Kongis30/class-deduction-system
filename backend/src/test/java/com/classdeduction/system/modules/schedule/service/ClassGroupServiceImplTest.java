@@ -692,6 +692,8 @@ class ClassGroupServiceImplTest {
         assertThat(slotCaptor.getValue().getWeekday()).isEqualTo(weekday);
         assertThat(occurrenceCaptor.getValue().getClassGroupId()).isEqualTo(501L);
         assertThat(occurrenceCaptor.getValue().getPlannedTeacherId()).isEqualTo(702L);
+        assertThat(occurrenceCaptor.getValue().getDeliveryMode()).isEqualTo("IN_PERSON");
+        assertThat(occurrenceCaptor.getValue().getPlannedClassroomId()).isNull();
         assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(3);
         assertThat(result.get("generatedOccurrences")).isEqualTo(1);
     }
