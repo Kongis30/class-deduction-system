@@ -1188,6 +1188,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .enrollmentOrderId(item.getEnrollmentOrderId())
                 .studentId(item.getStudentId())
                 .paymentRecordId(item.getPaymentRecordId())
+                .enrollmentOrderActive(true)
                 .studentName(studentName)
                 .templateCode(item.getTemplateCode())
                 .receiptPayload(item.getReceiptPayload())

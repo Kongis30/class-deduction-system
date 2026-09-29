@@ -5,7 +5,10 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.enrollment.dto.ReceiptPageQuery;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
 import com.classdeduction.system.modules.enrollment.service.impl.ReceiptServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
@@ -36,11 +39,18 @@ class ReceiptServiceImplTest {
     @Mock
     private StudentMapper studentMapper;
 
+    @Mock
+    private EnrollmentOrderMapper enrollmentOrderMapper;
+
+    @Mock
+    private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
+
     private ReceiptServiceImpl receiptService;
 
     @BeforeEach
     void setUp() {
-        receiptService = new ReceiptServiceImpl(receiptRecordMapper, studentMapper);
+        receiptService = new ReceiptServiceImpl(
+                receiptRecordMapper, studentMapper, enrollmentOrderMapper, enrollmentOrderItemMapper);
     }
 
     @Test
@@ -48,6 +58,8 @@ class ReceiptServiceImplTest {
         ReceiptRecordEntity receipt = buildReceipt();
         when(receiptRecordMapper.selectById(6001L)).thenReturn(receipt);
         when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(buildOrder());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of());
 
         ReceiptRecordVO result = receiptService.getReceipt(6001L);
 
@@ -61,6 +73,8 @@ class ReceiptServiceImplTest {
         page.setRecords(List.of(receipt));
         when(receiptRecordMapper.selectPage(any(), any())).thenReturn(page);
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(enrollmentOrderMapper.selectBatchIds(any())).thenReturn(List.of(buildOrder()));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of());
 
         ReceiptPageQuery query = new ReceiptPageQuery();
         query.setPageNum(1);
@@ -90,5 +104,11 @@ class ReceiptServiceImplTest {
         student.setId(101L);
         student.setStudentName("Olivia Lin");
         return student;
+    }
+
+    private EnrollmentOrderEntity buildOrder() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        return order;
     }
 }

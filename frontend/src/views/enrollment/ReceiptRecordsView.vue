@@ -105,14 +105,20 @@
                 <div class="row-actions">
                   <el-button link type="primary" @click="openReceipt(row)">View</el-button>
                   <el-button
-                    v-if="receiptType === 'registration'"
+                    v-if="canDeleteCourse(row)"
                     link
                     type="danger"
-                    :disabled="receiptCourseOptions(row).length === 0"
                     @click="openDeleteCourseDialog(row)"
                   >
                     Delete course
                   </el-button>
+                  <span
+                    v-else-if="receiptType === 'registration' && hasReceiptCourses(row)"
+                    class="muted-value"
+                    :title="row.enrollmentOrderActive ? 'This receipt has no active course enrollment.' : 'The enrollment order is no longer active.'"
+                  >
+                    View only
+                  </span>
                 </div>
               </template>
             </el-table-column>
@@ -401,10 +407,12 @@ function receiptSummary(row: ReceiptRecordItem) {
 function receiptCourseOptions(row: ReceiptRecordItem) {
   const rawItems = receiptPayload(row).items;
   if (!Array.isArray(rawItems)) return [];
+  const activeItemIds = new Set((row.activeCourseItemIds ?? []).map((id) => String(id)));
   return rawItems.flatMap((raw, index) => {
     const item = asRecord(raw);
     const itemId = item.orderItemId ?? item.id;
     if (itemId == null || String(itemId).trim() === '') return [];
+    if (!activeItemIds.has(String(itemId))) return [];
     const label = [item.courseProductName, item.registerClass, item.detail, item.gradeBand, item.periodLabel]
       .map((value) => String(value ?? '').trim())
       .filter(Boolean)
@@ -412,6 +420,21 @@ function receiptCourseOptions(row: ReceiptRecordItem) {
       .join(' · ') || 'Course';
     return [{ key: String(itemId), label: `${label}${rawItems.length > 1 ? ` (Course ${index + 1})` : ''}` }];
   });
+}
+
+function hasReceiptCourses(row: ReceiptRecordItem) {
+  const rawItems = receiptPayload(row).items;
+  return Array.isArray(rawItems) && rawItems.some((raw) => {
+    const item = asRecord(raw);
+    const itemId = item.orderItemId ?? item.id;
+    return itemId != null && String(itemId).trim() !== '';
+  });
+}
+
+function canDeleteCourse(row: ReceiptRecordItem) {
+  return receiptType.value === 'registration'
+    && row.enrollmentOrderActive === true
+    && receiptCourseOptions(row).length > 0;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
