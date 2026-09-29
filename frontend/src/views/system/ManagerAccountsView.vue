@@ -81,9 +81,13 @@
     <el-dialog v-model="dialogVisible" :title="editing ? 'Edit manager account' : 'Add manager account'" width="520px" destroy-on-close>
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top">
         <el-form-item label="Display name" prop="displayName"><el-input v-model="form.displayName" /></el-form-item>
-        <el-form-item label="Username" prop="username"><el-input v-model="form.username" :disabled="editing" /></el-form-item>
+        <el-form-item label="Username" prop="username">
+          <el-input v-model="form.username" :disabled="editing" :readonly="!editing" placeholder="Enter a first and last name above" />
+          <div v-if="!editing" class="form-hint">Generated from the name: first name + last initial + @jin.</div>
+        </el-form-item>
         <el-form-item :label="editing ? 'New password (optional)' : 'Initial password'" prop="password">
-          <el-input v-model="form.password" type="password" show-password autocomplete="new-password" />
+          <el-input v-model="form.password" :readonly="!editing" type="password" show-password autocomplete="new-password" />
+          <div v-if="!editing" class="form-hint">The user can change this after signing in.</div>
         </el-form-item>
         <el-form-item label="Phone"><el-input v-model="form.mobile" /></el-form-item>
         <el-form-item label="Email"><el-input v-model="form.email" /></el-form-item>
@@ -105,7 +109,7 @@
 
 <script setup lang="ts">
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import {
   createManagerAccount,
@@ -116,6 +120,7 @@ import {
 } from '@/api/manager-accounts';
 import { extractErrorMessage } from '@/api/http';
 import type { EntityId } from '@/types/domain';
+import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 
 interface AccountForm {
   username: string;
@@ -189,6 +194,7 @@ function openCreate() {
   editing.value = false;
   editingId.value = undefined;
   Object.assign(form, emptyForm());
+  form.password = DEFAULT_INITIAL_PASSWORD;
   dialogVisible.value = true;
 }
 
@@ -282,8 +288,14 @@ async function confirmDelete() {
 }
 
 function emptyForm(): AccountForm {
-  return { username: '', password: '', displayName: '', mobile: '', email: '', status: 'ACTIVE', remark: '' };
+  return { username: '', password: DEFAULT_INITIAL_PASSWORD, displayName: '', mobile: '', email: '', status: 'ACTIVE', remark: '' };
 }
+
+watch(() => form.displayName, (displayName) => {
+  if (!editing.value) {
+    form.username = usernameFromName(displayName);
+  }
+});
 
 function dateTime(value?: string) {
   if (!value) return '—';
@@ -297,6 +309,7 @@ defineExpose({ openCreateDialog: openCreate });
 .manager-accounts-page { display: grid; gap: 14px; }
 .manager-accounts-toolbar { display: flex; align-items: center; gap: 10px; }
 .manager-accounts-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #64748b; font-size: 13px; }
+.form-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
 @media (max-width: 720px) {
   .manager-accounts-toolbar,
   .manager-accounts-footer { flex-wrap: wrap; }

@@ -289,7 +289,7 @@
         </div>
         <el-form label-position="top" class="student-form">
           <el-form-item label="Username">
-            <el-input v-model="studentAccountForm.username" placeholder="Login username" />
+            <el-input v-model="studentAccountForm.username" :readonly="studentAccountMode === 'create'" placeholder="Login username" />
           </el-form-item>
           <el-form-item label="Display name">
             <el-input v-model="studentAccountForm.displayName" placeholder="Defaults to student name" />
@@ -307,6 +307,7 @@
             <el-input
               v-model="studentAccountForm.password"
               type="password"
+              :readonly="studentAccountMode === 'create'"
               :placeholder="studentAccountMode === 'create' ? 'Min 8 characters' : 'Leave blank to keep current'"
               show-password
             />
@@ -790,6 +791,7 @@ import {
 } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
 import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, StudentAccountItem, StudentItem } from '@/types/domain';
+import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 
 const loading = ref(false);
@@ -950,12 +952,12 @@ function openStudentAccountDialog(row: StudentItem) {
   editingStudentAccount.value = account ?? null;
   studentAccountMode.value = account ? 'edit' : 'create';
   Object.assign(studentAccountForm, {
-    username: account?.username ?? '',
+    username: account?.username ?? usernameFromName(row.studentName),
     displayName: account?.displayName ?? row.studentName,
     email: account?.email ?? row.guardianEmail ?? '',
     status: account?.status ?? 'ACTIVE',
-    password: '',
-    confirmPassword: '',
+    password: account ? '' : DEFAULT_INITIAL_PASSWORD,
+    confirmPassword: account ? '' : DEFAULT_INITIAL_PASSWORD,
   });
   studentAccountDialogVisible.value = true;
 }

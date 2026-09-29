@@ -19,6 +19,7 @@ import com.classdeduction.system.modules.auth.mapper.RoleMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.auth.service.TeacherAccountService;
+import com.classdeduction.system.modules.auth.support.AccountCredentialGenerator;
 import com.classdeduction.system.modules.auth.vo.TeacherAccountVO;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -87,14 +88,14 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createTeacherAccount(TeacherAccountCreateRequest request) {
-        ensureUsernameUnique(request.getUsername());
-
         TeacherEntity teacher = resolveTeacherForAccount(request);
+        String username = resolveUsername(request.getUsername(), teacher.getTeacherName());
+        String password = resolveInitialPassword(request.getPassword());
 
         // Login access belongs to one teacher profile. The profile may be existing or newly created.
         UserAccountEntity entity = new UserAccountEntity();
-        entity.setUsername(request.getUsername());
-        entity.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        entity.setUsername(username);
+        entity.setPasswordHash(passwordEncoder.encode(password));
         entity.setUserType("TEACHER");
         entity.setDisplayName(StringUtils.hasText(request.getDisplayName()) ? request.getDisplayName() : teacher.getTeacherName());
         entity.setMobile(request.getMobile());
@@ -225,6 +226,39 @@ public class TeacherAccountServiceImpl implements TeacherAccountService {
             }
         }
         return String.format("INS-%04d", nextSeq);
+    }
+
+    /**
+     * 创建账号时按老师姓名生成用户名；重名时追加数字后缀保证账号唯一。
+     */
+    private String resolveUsername(String requestedUsername, String profileName) {
+        if (StringUtils.hasText(requestedUsername)) {
+            String username = requestedUsername.trim();
+            ensureUsernameUnique(username);
+            return username;
+        }
+        String baseUsername = AccountCredentialGenerator.usernameFromName(profileName);
+        if (!StringUtils.hasText(baseUsername)) {
+            throw new BusinessException("USERNAME_REQUIRED", "A first and last name are required to generate the username.");
+        }
+        String candidate = baseUsername;
+        int suffix = 2;
+        while (usernameExists(candidate)) {
+            candidate = baseUsername + suffix++;
+        }
+        return candidate;
+    }
+
+    private String resolveInitialPassword(String requestedPassword) {
+        return StringUtils.hasText(requestedPassword)
+                ? requestedPassword.trim()
+                : AccountCredentialGenerator.DEFAULT_INITIAL_PASSWORD;
+    }
+
+    private boolean usernameExists(String username) {
+        return userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccountEntity>()
+                .eq(UserAccountEntity::getUsername, username)
+                .eq(UserAccountEntity::getIsDeleted, 0)) > 0;
     }
 
     private void ensureUsernameUnique(String username) {
