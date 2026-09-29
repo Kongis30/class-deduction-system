@@ -338,7 +338,7 @@
           </div>
 
 
-          <div class="class-section">
+          <div ref="classLessonSectionRef" class="class-section">
             <div class="class-section__header">
               <h3>Lesson Occurrences</h3>
             </div>
@@ -443,7 +443,9 @@
       class="adj-dialog class-schedule-dialog"
     >
       <el-alert
-        title="Saving will rebuild future unconfirmed lessons. Confirmed lessons stay unchanged."
+        :title="preserveStartedClassLessons
+          ? 'Saving updates future lessons only. Started lessons, including unconfirmed lessons, stay unchanged and can be reviewed below.'
+          : 'Saving will rebuild future unconfirmed lessons. Confirmed lessons stay unchanged.'"
         type="info"
         :closable="false"
         show-icon
@@ -487,6 +489,32 @@
       <template #footer>
         <el-button @click="classScheduleDialogVisible = false">Cancel</el-button>
         <el-button type="primary" :loading="submitting" @click="submitClassSchedule">Save Schedule</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="classScheduleEditDecisionVisible"
+      width="min(540px, calc(100vw - 36px))"
+      :close-on-click-modal="false"
+      title="Some class lessons still need confirmation"
+      class="adj-dialog class-schedule-decision-dialog"
+    >
+      <div class="class-schedule-decision">
+        <p>This class has lessons that have already started but have not been confirmed yet. Choose whether to review those lessons first or update the future schedule now.</p>
+        <el-alert
+          v-if="classScheduleEditBlockDetails"
+          :title="classScheduleEditBlockDetails"
+          type="info"
+          :closable="false"
+          show-icon
+        />
+        <p class="class-schedule-decision__note">If you continue, started lessons stay unchanged. Only future lessons are rebuilt from the new weekly schedule.</p>
+      </div>
+      <template #footer>
+        <div class="class-schedule-decision__actions">
+          <el-button @click="reviewStartedClassLessons">Review lessons</el-button>
+          <el-button type="primary" @click="continueClassScheduleEdit">Continue with future schedule</el-button>
+        </div>
       </template>
     </el-dialog>
 
@@ -689,7 +717,7 @@
 <script setup lang="ts">
 import { ArrowDown } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
@@ -787,6 +815,10 @@ const detailData = ref<LessonOccurrenceItem | null>(null);
 const rejectDialogVisible = ref(false);
 const classScheduleDialogVisible = ref(false);
 const checkingClassSchedule = ref(false);
+const classScheduleEditDecisionVisible = ref(false);
+const classScheduleEditBlockDetails = ref('');
+const preserveStartedClassLessons = ref(false);
+const classLessonSectionRef = ref<HTMLElement | null>(null);
 const classAdjustDialogVisible = ref(false);
 const confirmFormRef = ref<FormInstance>();
 const rejectFormRef = ref<FormInstance>();
@@ -1500,20 +1532,52 @@ async function openClassScheduleDialog() {
   if (!selectedClass.value || checkingClassSchedule.value) return;
   const classId = selectedClass.value.id;
   checkingClassSchedule.value = true;
+  preserveStartedClassLessons.value = false;
   try {
     await checkClassScheduleEditable(classId);
     if (String(selectedClass.value?.id) !== String(classId)) return;
-    classScheduleFormRef.value?.resetFields();
-    Object.assign(classScheduleForm, {
-      teacherId: selectedClass.value.teacherId,
-      slots: normalizeClassScheduleSlots(selectedClass.value.scheduleSlots, selectedClass.value.classroomId),
-    });
-    classScheduleDialogVisible.value = true;
+    prepareClassScheduleEdit(false);
   } catch (err) {
-    ElMessage.error(extractErrorMessage(err));
+    if (String(selectedClass.value?.id) !== String(classId)) return;
+    if (scheduleApiErrorCode(err) === 'CLASS_LESSONS_NOT_CONFIRMED') {
+      classScheduleEditBlockDetails.value = extractErrorMessage(err);
+      classScheduleEditDecisionVisible.value = true;
+    } else {
+      ElMessage.error(extractErrorMessage(err));
+    }
   } finally {
     checkingClassSchedule.value = false;
   }
+}
+
+/** 统一准备班级排课表单；仅在用户明确选择继续时保留已开始但未确认的课次。 */
+function prepareClassScheduleEdit(preserveStarted: boolean) {
+  const currentClass = selectedClass.value;
+  if (!currentClass) return;
+  preserveStartedClassLessons.value = preserveStarted;
+  classScheduleFormRef.value?.resetFields();
+  Object.assign(classScheduleForm, {
+    teacherId: currentClass.teacherId,
+    slots: normalizeClassScheduleSlots(currentClass.scheduleSlots, currentClass.classroomId),
+  });
+  classScheduleDialogVisible.value = true;
+}
+
+function continueClassScheduleEdit() {
+  classScheduleEditDecisionVisible.value = false;
+  prepareClassScheduleEdit(true);
+}
+
+async function reviewStartedClassLessons() {
+  classScheduleEditDecisionVisible.value = false;
+  await nextTick();
+  classLessonSectionRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function scheduleApiErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('response' in error)) return undefined;
+  const response = (error as { response?: { data?: { code?: unknown } } }).response;
+  return typeof response?.data?.code === 'string' ? response.data.code : undefined;
 }
 
 async function submitClassSchedule() {
@@ -1524,6 +1588,7 @@ async function submitClassSchedule() {
     try {
       await updateClassSchedule(selectedClassId.value!, {
         teacherId: classScheduleForm.teacherId,
+        preserveStartedLessons: preserveStartedClassLessons.value,
         slots: classScheduleForm.slots.map(({ teacherId, classroomSelection, weekday, startTime, endTime }) => ({
           teacherId,
           deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
@@ -1533,6 +1598,7 @@ async function submitClassSchedule() {
       });
       ElMessage.success('Class schedule updated.');
       classScheduleDialogVisible.value = false;
+      preserveStartedClassLessons.value = false;
       await loadClasses();
       if (selectedClassId.value) {
         await loadClassOccurrences(selectedClassId.value);
@@ -2368,6 +2434,29 @@ onMounted(async () => {
   background: linear-gradient(135deg, #f0faf6, #f6f9fc);
   border-radius: 8px;
   border: 1px solid #e8edf2;
+}
+.class-schedule-decision p {
+  margin: 0;
+  color: #475569;
+  line-height: 1.6;
+}
+.class-schedule-decision .el-alert {
+  margin-top: 12px;
+}
+.class-schedule-decision__note {
+  margin-top: 12px !important;
+  color: #64748b !important;
+  font-size: 13px;
+}
+.class-schedule-decision__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@media (max-width: 560px) {
+  .class-schedule-decision__actions {
+    flex-direction: column-reverse;
+  }
 }
 .class-detail__title-row {
   display: flex;

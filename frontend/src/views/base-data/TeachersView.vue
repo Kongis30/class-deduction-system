@@ -282,6 +282,54 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="subjectManagerVisible"
+      title="Manage subject options"
+      width="620px"
+      :close-on-click-modal="false"
+      class="teacher-dialog"
+      @closed="resetSubjectForm"
+    >
+      <p class="subject-manager__hint">These subjects are available when setting a teacher’s subjects. Existing teacher profiles keep their saved labels when an option is renamed or removed.</p>
+      <el-form class="subject-manager__form" inline @submit.prevent="saveSubjectOption">
+        <el-form-item label="Subject name">
+          <el-input
+            v-model="subjectForm.subjectName"
+            maxlength="64"
+            placeholder="e.g. Mathematics"
+            @keyup.enter="saveSubjectOption"
+          />
+        </el-form-item>
+        <el-form-item label="Order">
+          <el-input-number v-model="subjectForm.displayOrder" :min="0" :max="9999" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="subjectSaving" @click="saveSubjectOption">
+            {{ editingSubjectId == null ? 'Add subject' : 'Save changes' }}
+          </el-button>
+          <el-button v-if="editingSubjectId != null" @click="resetSubjectForm">Cancel edit</el-button>
+        </el-form-item>
+      </el-form>
+      <el-table v-loading="subjectsLoading" :data="subjectItems" row-key="id" class="product-table" max-height="360">
+        <el-table-column label="Subject" min-width="220" prop="subjectName" />
+        <el-table-column label="Order" width="100" align="center" prop="displayOrder" />
+        <el-table-column label="Actions" width="150" align="right" fixed="right">
+          <template #default="{ row }">
+            <div class="table-actions">
+              <el-button text type="primary" @click="editSubjectOption(row)">Edit</el-button>
+              <el-button text type="danger" :loading="deletingSubjectId === row.id" @click="removeSubjectOption(row)">Remove</el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!subjectsLoading && subjectItems.length === 0" description="No subject options yet." />
+      <template #footer>
+        <div class="dialog-footer">
+          <el-button @click="subjectManagerVisible = false">Close</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
     <!-- Deleted Teachers Dialog -->
     <el-dialog
       v-model="deletedDialogVisible"
@@ -315,7 +363,7 @@
 
 <script setup lang="ts">
 import { Delete } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
 import {
@@ -327,17 +375,21 @@ import {
 } from '@/api/auth';
 import {
   createTeacher,
-  fetchAllTeachers,
+  createSubject,
+  deleteSubject,
   fetchDeletedTeachers,
+  fetchSubjects,
   fetchTeachers,
   deleteTeacher,
+  updateSubject,
   updateTeacher,
+  type SubjectSavePayload,
   type TeacherQuery,
   type TeacherSavePayload,
 } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { fetchClassGroupsByTeacher } from '@/api/schedule';
-import type { TeacherAccountItem, TeacherItem } from '@/types/domain';
+import type { SubjectItem, TeacherAccountItem, TeacherItem } from '@/types/domain';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 
 const loading = ref(false);
@@ -514,7 +566,102 @@ async function submitTeacherAccount() {
 watch(() => filters.status, handleFilterChange);
 
 
-const subjectOptions = ['Math', 'English', 'Science', 'SAT', 'Music', 'Reading'];
+const subjectItems = ref<SubjectItem[]>([]);
+const subjectOptions = computed(() => subjectItems.value.map(subject => subject.subjectName));
+const subjectManagerVisible = ref(false);
+const subjectsLoading = ref(false);
+const subjectSaving = ref(false);
+const deletingSubjectId = ref<SubjectItem['id'] | null>(null);
+const editingSubjectId = ref<SubjectItem['id'] | null>(null);
+const editingSubjectNotes = ref<string | undefined>();
+const subjectForm = reactive({ subjectName: '', displayOrder: 1 });
+
+// 老师资料与管理窗口共用服务端科目选项，避免静态列表和实际配置不一致。
+async function loadSubjectOptions() {
+  subjectsLoading.value = true;
+  try {
+    const response = await fetchSubjects();
+    subjectItems.value = response.data.data ?? [];
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    subjectsLoading.value = false;
+  }
+}
+
+async function openSubjectManager() {
+  resetSubjectForm();
+  subjectManagerVisible.value = true;
+  await loadSubjectOptions();
+  subjectForm.displayOrder = subjectItems.value.length + 1;
+}
+
+function editSubjectOption(subject: SubjectItem) {
+  editingSubjectId.value = subject.id;
+  editingSubjectNotes.value = subject.notes;
+  subjectForm.subjectName = subject.subjectName;
+  subjectForm.displayOrder = subject.displayOrder;
+}
+
+function resetSubjectForm() {
+  editingSubjectId.value = null;
+  editingSubjectNotes.value = undefined;
+  subjectForm.subjectName = '';
+  subjectForm.displayOrder = subjectItems.value.length + 1;
+}
+
+async function saveSubjectOption() {
+  const subjectName = subjectForm.subjectName.trim();
+  if (!subjectName) {
+    ElMessage.warning('Enter a subject name.');
+    return;
+  }
+  const payload: SubjectSavePayload = {
+    subjectName,
+    displayOrder: subjectForm.displayOrder,
+    status: 'ACTIVE',
+    notes: editingSubjectNotes.value,
+  };
+  subjectSaving.value = true;
+  try {
+    if (editingSubjectId.value == null) {
+      await createSubject(payload);
+      ElMessage.success('Subject added.');
+    } else {
+      await updateSubject(editingSubjectId.value, payload);
+      ElMessage.success('Subject updated.');
+    }
+    await loadSubjectOptions();
+    resetSubjectForm();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    subjectSaving.value = false;
+  }
+}
+
+async function removeSubjectOption(subject: SubjectItem) {
+  try {
+    await ElMessageBox.confirm(
+      `Remove “${subject.subjectName}” from the available subject options? Existing teacher records will keep their saved subject labels.`,
+      'Remove subject option',
+      { type: 'warning', confirmButtonText: 'Remove', cancelButtonText: 'Cancel' },
+    );
+  } catch {
+    return;
+  }
+  deletingSubjectId.value = subject.id;
+  try {
+    await deleteSubject(subject.id);
+    ElMessage.success('Subject removed.');
+    if (editingSubjectId.value === subject.id) resetSubjectForm();
+    await loadSubjectOptions();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    deletingSubjectId.value = null;
+  }
+}
 
 
 const teacherForm = reactive<TeacherSavePayload>({
@@ -579,7 +726,10 @@ async function handleTeacherSubmit() {
   }
 }
 
-defineExpose({ openCreateDialog: () => openTeacherDialog() });
+defineExpose({
+  openCreateDialog: () => openTeacherDialog(),
+  openSubjectManager,
+});
 
 async function handleDeleteTeacher(row: TeacherItem) {
   deleteTarget.value = row;
@@ -677,6 +827,7 @@ async function openDeletedDialog() {
 
 
 loadData();
+void loadSubjectOptions();
 
 onBeforeUnmount(() => {
   clearDeleteCooldown();
@@ -777,6 +928,24 @@ onBeforeUnmount(() => {
   margin: 0 0 12px;
   font-size: 12px;
   color: #909399;
+}
+
+.subject-manager__hint {
+  margin: 0 0 14px;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.subject-manager__form {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0 10px;
+  margin-bottom: 8px;
+}
+
+.subject-manager__form :deep(.el-form-item) {
+  margin-right: 0;
 }
 
 .delete-confirm {

@@ -137,7 +137,39 @@
               </el-button>
             </div>
           </div>
-          <div v-if="teacherGradeGroups.length" class="oo-package-list">
+          <div v-if="isTeacher && teacherStudentGroups.length" class="oo-package-list oo-package-list--students">
+            <section
+              v-for="studentGroup in teacherStudentGroups"
+              :key="studentGroup.key"
+              class="oo-student-group"
+            >
+              <button
+                type="button"
+                class="oo-student-group__toggle"
+                :class="{ 'oo-student-group__toggle--open': expandedStudentGroupKeys.has(studentGroup.key) }"
+                :aria-expanded="expandedStudentGroupKeys.has(studentGroup.key)"
+                @click="toggleStudentGroup(studentGroup.key)"
+              >
+                <strong>{{ studentGroup.studentName }}</strong>
+                <small>{{ studentGroup.candidates.length }} courses</small>
+                <span aria-hidden="true">›</span>
+              </button>
+              <div v-if="expandedStudentGroupKeys.has(studentGroup.key)" class="oo-student-group__packages">
+                <button
+                  v-for="candidate in studentGroup.candidates"
+                  :key="candidate.pkg.packageId"
+                  type="button"
+                  class="oo-package-item oo-package-item--detailed"
+                  :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
+                  @click="selectCandidatePackage(candidate)"
+                >
+                  <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
+                  <small>{{ normalizedGradeBand(candidate.pkg.gradeBand) }} · {{ formatHours(candidate.pkg.remainingUnits) }}h remaining</small>
+                </button>
+              </div>
+            </section>
+          </div>
+          <div v-else-if="teacherGradeGroups.length" class="oo-package-list">
             <section
               v-for="teacherGroup in teacherGradeGroups"
               :key="teacherGroup.key"
@@ -821,6 +853,48 @@ const teacherGradeGroups = computed<TeacherGradeGroup[]>(() => {
     }))
     .sort((left, right) => left.teacherName.localeCompare(right.teacherName));
 });
+const teacherStudentGroups = computed<StudentPackageGroup[]>(() => {
+  const studentGroups = new Map<string, StudentPackageGroup>();
+  for (const candidate of filteredPackageCandidates.value) {
+    const privateGroupId = candidate.pkg.privateLessonGroupId;
+    const groupId = privateGroupId == null
+      ? `student:${candidate.studentKey}`
+      : `private-group:${entityKey(privateGroupId)}`;
+    let studentGroup = studentGroups.get(groupId);
+    if (!studentGroup) {
+      const participantNames = (candidate.pkg.participants ?? [])
+        .map(participant => participant.studentName?.trim())
+        .filter((name): name is string => Boolean(name));
+      studentGroup = {
+        key: `teacher:${groupId}`,
+        studentKey: privateGroupId == null ? candidate.studentKey : entityKey(privateGroupId),
+        studentName: (candidate.pkg.participantCount ?? 1) > 1 && participantNames.length > 0
+          ? participantNames.join(' / ')
+          : candidate.student.studentName,
+        candidates: [],
+      };
+      studentGroups.set(groupId, studentGroup);
+    }
+    if (!studentGroup.candidates.some(existing => String(existing.pkg.packageId) === String(candidate.pkg.packageId))) {
+      studentGroup.candidates.push(candidate);
+    }
+  }
+  return Array.from(studentGroups.values())
+    .map(group => {
+      const primaryPackages = group.candidates.filter(candidate =>
+        candidate.pkg.privateLessonGroupId == null || candidate.pkg.privateLessonGroupPrimary === true);
+      // 1 对 2 的成员各有自己的余额包，但共享同一套排课和消课记录；左侧只列主课包，避免重复入口。
+      const visiblePackages = primaryPackages.length > 0 ? primaryPackages : group.candidates;
+      return {
+        ...group,
+        candidates: visiblePackages.sort((left, right) =>
+        courseTypeLabel(left.pkg).localeCompare(courseTypeLabel(right.pkg), undefined, { sensitivity: 'base' })
+        || normalizedGradeBand(left.pkg.gradeBand).localeCompare(normalizedGradeBand(right.pkg.gradeBand), undefined, { numeric: true, sensitivity: 'base' })
+        || left.pkg.packageName.localeCompare(right.pkg.packageName, undefined, { sensitivity: 'base' })),
+      };
+    })
+    .sort((left, right) => left.studentName.localeCompare(right.studentName, undefined, { sensitivity: 'base' }));
+});
 const candidateScopeLabel = computed(() => {
   if (!hasActiveFilters.value) return 'All 1-on-1 student courses';
   const filters = [
@@ -1141,6 +1215,9 @@ async function searchStudents() {
       if (entry) matchedEntries.set(entityKey(entry.student.studentId), entry);
     });
     studentSearchResults.value = [...matchedEntries.values()];
+    if (isTeacher.value) {
+      expandedStudentGroupKeys.value = new Set(teacherStudentGroups.value.map(group => group.key));
+    }
   } catch (err) {
     studentSearchResults.value = [];
     matchedSearchStudentIds.value = new Set();
@@ -1203,6 +1280,12 @@ function candidatePackageLabel(pkg: OneOnOnePackage) {
     .filter((name): name is string => Boolean(name));
   const studentSummary = names.length > 0 ? ` · ${names.join(' / ')}` : '';
   return `1-on-${participantCount} · ${pkg.packageName}${studentSummary}`;
+}
+
+function teacherStudentGroupKey(student: OneOnOneStudent, pkg: OneOnOnePackage) {
+  return pkg.privateLessonGroupId == null
+    ? `teacher:student:${entityKey(student.studentId)}`
+    : `teacher:private-group:${entityKey(pkg.privateLessonGroupId)}`;
 }
 
 function matchesCandidateFilters(candidate: PackageCandidate) {
@@ -1277,6 +1360,11 @@ function selectPackage(teacher: OneOnOneTeacher, student: OneOnOneStudent, pkg: 
   activeTeacher.value = teacher;
   activeStudent.value = student;
   activePackage.value = pkg;
+  if (isTeacher.value) {
+    const groupKey = teacherStudentGroupKey(student, pkg);
+    expandedStudentGroupKeys.value = new Set([...expandedStudentGroupKeys.value, groupKey]);
+    return;
+  }
   const teacherGroupKey = entityKey(teacher.teacherId)
     || `teacher-name:${optionKey(teacher.teacherName)}`;
   const gradeGroupKey = `${teacherGroupKey}::grade:${optionKey(normalizedGradeBand(pkg.gradeBand))}`;
@@ -2114,6 +2202,12 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
+.oo-student-group__toggle small {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 10px;
+}
+
 .oo-student-group__toggle span {
   flex: 0 0 auto;
   color: #64748b;
@@ -2152,6 +2246,24 @@ onMounted(async () => {
   border-color: #60a5fa;
   background: #f0f7ff;
   color: #1d4ed8;
+}
+
+.oo-package-item--detailed {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  white-space: normal;
+}
+
+.oo-package-item--detailed > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oo-package-item--detailed small {
+  color: #64748b;
+  font-size: 10px;
 }
 
 .oo-record-panel {

@@ -283,7 +283,7 @@
                         <el-button size="small" plain @click="openActualClassInfoDialog(group, actualClass)">
                           Edit info
                         </el-button>
-                        <el-button size="small" plain type="primary" :loading="checkingActualClassSchedule" @click="openActualClassScheduleDialog(actualClass)">
+                        <el-button size="small" plain type="primary" @click="openActualClassScheduleDialog(actualClass)">
                           Edit schedule
                         </el-button>
                       </div>
@@ -599,36 +599,6 @@
     </el-dialog>
 
     <el-dialog
-      v-model="scheduleEditDecisionVisible"
-      width="min(540px, calc(100vw - 36px))"
-      :close-on-click-modal="false"
-      title="Some class lessons still need confirmation"
-      class="schedule-edit-decision-dialog"
-    >
-      <div class="schedule-edit-decision">
-        <p>
-          This class has lessons that have already started but have not been confirmed yet. Choose whether to confirm them first or update the future schedule now.
-        </p>
-        <el-alert
-          v-if="scheduleEditBlockDetails"
-          :title="scheduleEditBlockDetails"
-          type="info"
-          :closable="false"
-          show-icon
-        />
-        <p class="schedule-edit-decision__note">
-          If you continue, started lessons will stay unchanged and remain available for confirmation later. Only future lessons will be rebuilt from the new schedule.
-        </p>
-      </div>
-      <template #footer>
-        <div class="schedule-edit-decision__actions">
-          <el-button @click="goToClassLessons">Go to class lessons</el-button>
-          <el-button type="primary" @click="continueScheduleEdit">Continue with future schedule</el-button>
-        </div>
-      </template>
-    </el-dialog>
-
-    <el-dialog
       v-model="actualClassScheduleDialogVisible"
       width="min(920px, calc(100vw - 48px))"
       :close-on-click-modal="false"
@@ -636,9 +606,7 @@
       class="actual-class-schedule-dialog"
     >
       <el-alert
-        :title="preserveStartedLessons
-          ? 'Saving updates future lessons only. Started lessons, including lessons awaiting confirmation, stay unchanged.'
-          : 'Saving rebuilds future unconfirmed lessons for this actual class only. Confirmed lessons stay unchanged.'"
+        title="Saving rebuilds future unconfirmed lessons for this actual class only. Confirmed lessons stay unchanged."
         type="info"
         :closable="false"
         show-icon
@@ -813,7 +781,6 @@ import {
   type CoursePriceOptionSavePayload,
 } from '@/api/base-data';
 import {
-  checkClassScheduleEditable,
   createActualClass,
   createClassHoliday,
   deleteClassGroup,
@@ -982,12 +949,7 @@ const dialogVisible = ref(false);
 const editingId = ref<EntityId | null>(null);
 const formRef = ref();
 const actualClassScheduleDialogVisible = ref(false);
-const checkingActualClassSchedule = ref(false);
 const savingActualClassSchedule = ref(false);
-const scheduleEditDecisionVisible = ref(false);
-const scheduleEditBlockDetails = ref('');
-const scheduleEditDecisionClass = ref<ActualClassScheduleRow | null>(null);
-const preserveStartedLessons = ref(false);
 const editingActualClass = ref<ActualClassScheduleRow | null>(null);
 const actualClassInfoDialogVisible = ref(false);
 const savingActualClassInfo = ref(false);
@@ -1893,63 +1855,19 @@ async function saveOption() {
   }
 }
 
-async function openActualClassScheduleDialog(actualClass: ActualClassScheduleRow) {
-  if (checkingActualClassSchedule.value) return;
-  checkingActualClassSchedule.value = true;
-  preserveStartedLessons.value = false;
-  try {
-    await checkClassScheduleEditable(actualClass.id);
-    prepareActualClassScheduleEdit(actualClass, false);
-  } catch (err) {
-    if (apiErrorCode(err) === 'CLASS_LESSONS_NOT_CONFIRMED') {
-      scheduleEditDecisionClass.value = actualClass;
-      scheduleEditBlockDetails.value = extractErrorMessage(err);
-      scheduleEditDecisionVisible.value = true;
-    } else {
-      ElMessage.error(extractErrorMessage(err));
-    }
-  } finally {
-    checkingActualClassSchedule.value = false;
-  }
+function openActualClassScheduleDialog(actualClass: ActualClassScheduleRow) {
+  prepareActualClassScheduleEdit(actualClass);
 }
 
-/** 统一装载实际班级排课编辑表单；仅用户显式选择继续时保留未确认的已开始课次。 */
-function prepareActualClassScheduleEdit(actualClass: ActualClassScheduleRow, preserveStarted: boolean) {
+function prepareActualClassScheduleEdit(actualClass: ActualClassScheduleRow) {
   const classDetail = classGroups.value.find(item => String(item.id) === String(actualClass.id)) ?? actualClass;
   editingActualClass.value = actualClass;
-  preserveStartedLessons.value = preserveStarted;
   actualClassScheduleForm.slots = normalizeActualClassScheduleSlots(
     classDetail.scheduleSlots,
     classDetail.teacherId,
     classDetail.classroomId,
   );
   actualClassScheduleDialogVisible.value = true;
-}
-
-function continueScheduleEdit() {
-  const actualClass = scheduleEditDecisionClass.value;
-  if (!actualClass) return;
-  scheduleEditDecisionVisible.value = false;
-  prepareActualClassScheduleEdit(actualClass, true);
-  scheduleEditDecisionClass.value = null;
-}
-
-function goToClassLessons() {
-  const actualClass = scheduleEditDecisionClass.value;
-  scheduleEditDecisionVisible.value = false;
-  if (actualClass) {
-    router.push({
-      name: 'schedule-adjustments',
-      query: { tab: 'class', classId: String(actualClass.id) },
-    });
-  }
-  scheduleEditDecisionClass.value = null;
-}
-
-function apiErrorCode(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object' || !('response' in error)) return undefined;
-  const response = (error as { response?: { data?: { code?: unknown } } }).response;
-  return typeof response?.data?.code === 'string' ? response.data.code : undefined;
 }
 
 function openActualClassInfoDialog(group: ProductPriceGroup, actualClass?: ActualClassScheduleRow) {
@@ -2058,7 +1976,7 @@ async function saveActualClassSchedule() {
   savingActualClassSchedule.value = true;
   try {
     await updateClassSchedule(editingActualClass.value.id, {
-      preserveStartedLessons: preserveStartedLessons.value,
+      preserveStartedLessons: false,
       slots: actualClassScheduleForm.slots.map(({ teacherId, classroomSelection, weekday, startTime, endTime, plannedUnits }) => ({
         teacherId,
         deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
@@ -2071,7 +1989,6 @@ async function saveActualClassSchedule() {
     });
     ElMessage.success('Class schedule updated.');
     actualClassScheduleDialogVisible.value = false;
-    preserveStartedLessons.value = false;
     await loadAll();
   } catch (err) {
     ElMessage.error({ message: extractErrorMessage(err), duration: 10000, showClose: true });
@@ -2727,34 +2644,6 @@ function normalizeSlotAttendance(value?: string) {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
-}
-
-.schedule-edit-decision p {
-  margin: 0;
-  color: #475569;
-  line-height: 1.6;
-}
-
-.schedule-edit-decision .el-alert {
-  margin-top: 12px;
-}
-
-.schedule-edit-decision__note {
-  margin-top: 12px !important;
-  color: #64748b !important;
-  font-size: 13px;
-}
-
-.schedule-edit-decision__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-@media (max-width: 560px) {
-  .schedule-edit-decision__actions {
-    flex-direction: column-reverse;
-  }
 }
 
 .actual-class-schedules__head {

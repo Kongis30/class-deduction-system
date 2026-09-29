@@ -12,6 +12,7 @@
           <el-button type="primary" @click="openStudentCreate">Add student</el-button>
         </template>
         <template v-else-if="activeTab === 'teachers'">
+          <el-button @click="openSubjectManager">Manage subjects</el-button>
           <el-button type="primary" plain @click="openTeacherCreate">Add teacher</el-button>
         </template>
         <el-button v-else-if="activeTab === 'managers'" type="primary" @click="openManagerCreate">Add manager</el-button>
@@ -90,6 +91,12 @@ async function openTeacherCreate() {
   activeTab.value = 'teachers';
   await syncTabAndRender('teachers');
   teachersViewRef.value?.openCreateDialog();
+}
+
+async function openSubjectManager() {
+  activeTab.value = 'teachers';
+  await syncTabAndRender('teachers');
+  teachersViewRef.value?.openSubjectManager();
 }
 
 async function openManagerCreate() {
