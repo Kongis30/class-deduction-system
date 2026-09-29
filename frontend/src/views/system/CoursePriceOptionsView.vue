@@ -263,7 +263,7 @@
                             class="actual-class-card__campus"
                             :class="campusBadgeClass(actualClass.campusName)"
                           >
-                            {{ actualClass.campusName || 'Campus not set' }}
+                            {{ actualClass.campusName || '—' }}
                           </span>
                         </div>
                         <span>{{ actualClass.scheduleDesc || 'Schedule not set' }}</span>

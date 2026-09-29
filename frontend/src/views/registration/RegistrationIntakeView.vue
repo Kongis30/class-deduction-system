@@ -527,21 +527,33 @@
                     <div v-if="!isOneOnOneLine(line)" class="teacher-class-line">
                       <label class="course-control course-control--wide">
                         <span>Class</span>
-                        <el-select
-                          v-model="line.classId"
-                          class="table-select option"
-                          :placeholder="classSelectPlaceholder(line)"
-                        :disabled="!receiptEditingEnabled || !line.coursePriceOptionId || classOptionsForLine(line).length === 0"
-                          filterable
-                          @change="() => handleClassChange(line)"
-                        >
-                          <el-option
-                            v-for="classGroup in classOptionsForLine(line)"
-                            :key="classGroup.id"
-                            :label="formatClassLabel(classGroup)"
-                            :value="classGroup.id"
-                          />
-                        </el-select>
+                        <div class="registration-class-select-row">
+                          <el-select
+                            v-model="line.classId"
+                            class="table-select option"
+                            :placeholder="classSelectPlaceholder(line)"
+                            :disabled="!receiptEditingEnabled || !line.coursePriceOptionId || classOptionsForLine(line).length === 0"
+                            filterable
+                            @change="() => handleClassChange(line)"
+                          >
+                            <el-option
+                              v-for="classGroup in classOptionsForLine(line)"
+                              :key="classGroup.id"
+                              :label="formatClassLabel(classGroup)"
+                              :value="classGroup.id"
+                            />
+                          </el-select>
+                          <el-button
+                            v-if="selectedCampus"
+                            class="registration-class-campus-toggle no-print"
+                            size="small"
+                            text
+                            type="primary"
+                            @click="showAllCampusClasses = !showAllCampusClasses"
+                          >
+                            {{ showAllCampusClasses ? 'Selected campus only' : 'All campuses' }}
+                          </el-button>
+                        </div>
                         <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
                       </label>
                       <span v-if="!line.coursePriceOptionId" class="course-detail-hint">{{ courseLineHint(line) }}</span>
@@ -1259,6 +1271,7 @@ const priceOptions = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
 const productGradeOrderMaps = ref<Map<string, Map<string, number>>>(new Map());
 const classGroups = ref<ClassGroupItem[]>([]);
+const showAllCampusClasses = ref(false);
 const discountPresets = ref<DiscountPresetItem[]>([]);
 const courseCategoryLabels = ref<Record<string, string>>({});
 const reusableStudent = ref<StudentItem | null>(null);
@@ -1843,6 +1856,7 @@ watch(() => form.student.dropoffRequired, (dropoffRequired) => {
 });
 
 watch(() => form.campusKey, () => {
+  showAllCampusClasses.value = false;
   if (isReadOnly.value && !editingCorrection.value) {
     return;
   }
@@ -3879,40 +3893,52 @@ function classOptionsForLine(line: RegistrationCourseLine) {
   if (!line.courseProductId || !line.gradeBand) {
     return [];
   }
-  const currentClasses = classGroupsForProductGrade(line.courseProductId, line.gradeBand, selectedCampus.value?.campusId);
+  const campusId = classCampusFilterId();
+  const currentClasses = classGroupsForProductGrade(line.courseProductId, line.gradeBand, campusId);
   if (currentClasses.length > 0) {
     return currentClasses;
   }
   const option = findOption(line.coursePriceOptionId);
   if (option?.actualClasses && option.actualClasses.length > 0) {
     return option.actualClasses
-      .filter(item => selectedCampus.value?.campusId != null && String(item.campusId ?? '') === String(selectedCampus.value.campusId))
+      .filter(item => campusId === undefined
+        || (campusId === null ? item.campusId == null : String(item.campusId ?? '') === String(campusId)))
       .map(item => classGroupFromActualClassOption(item, line.courseProductId, line.gradeBand));
   }
   return [];
 }
 
 function actualClassOptionsForOption(option: CoursePriceOptionItem) {
-  const currentClasses = classGroupsForProductGrade(option.courseProductId, option.gradeBand || '', selectedCampus.value?.campusId);
+  const campusId = classCampusFilterId();
+  const currentClasses = classGroupsForProductGrade(option.courseProductId, option.gradeBand || '', campusId);
   if (currentClasses.length > 0) {
     return currentClasses;
   }
   if (option.actualClasses && option.actualClasses.length > 0) {
     return option.actualClasses
-      .filter(item => selectedCampus.value?.campusId != null && String(item.campusId ?? '') === String(selectedCampus.value.campusId))
+      .filter(item => campusId === undefined
+        || (campusId === null ? item.campusId == null : String(item.campusId ?? '') === String(campusId)))
       .map(item => classGroupFromActualClassOption(item, option.courseProductId, option.gradeBand || ''));
   }
   return [];
 }
 
-function classGroupsForProductGrade(productId?: EntityId, gradeBand = '', campusId?: EntityId) {
-  if (!productId || !gradeBand || campusId == null) {
+function classCampusFilterId(): EntityId | null | undefined {
+  if (!selectedCampus.value || showAllCampusClasses.value) {
+    return undefined;
+  }
+  return selectedCampus.value.campusId ?? null;
+}
+
+function classGroupsForProductGrade(productId?: EntityId, gradeBand = '', campusId?: EntityId | null) {
+  if (!productId || !gradeBand) {
     return [];
   }
   return classGroups.value.filter((item) =>
     String(item.productId) === String(productId)
       && String(item.gradeBand || '').toLowerCase() === String(gradeBand || '').toLowerCase()
-      && String(item.campusId ?? '') === String(campusId));
+      && (campusId === undefined
+        || (campusId === null ? item.campusId == null : String(item.campusId ?? '') === String(campusId))));
 }
 
 function classGroupFromActualClassOption(
@@ -4191,9 +4217,6 @@ function handleAttendanceChange(line: RegistrationCourseLine) {
 function classSelectPlaceholder(line: RegistrationCourseLine) {
   if (!line.coursePriceOptionId) {
     return 'Select option first';
-  }
-  if (!selectedCampus.value?.campusId) {
-    return 'Select a campus first';
   }
   if (classOptionsForLine(line).length > 0) {
     return 'Select actual class';
@@ -6461,6 +6484,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 .teacher-class-line {
   display: grid;
   gap: 4px;
+}
+
+.registration-class-select-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.registration-class-campus-toggle {
+  padding: 0 4px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .course-control {
