@@ -207,6 +207,7 @@ public class CourseProductServiceImpl implements CourseProductService {
                 clearAuditFields(targetSlot);
                 targetSlot.setId(null);
                 targetSlot.setClassGroupId(targetClass.getId());
+                targetSlot.setRotationAnchorDate(shiftDate(sourceSlot.getRotationAnchorDate(), dateShiftYears));
                 classGroupScheduleSlotMapper.insert(targetSlot);
             }
         }

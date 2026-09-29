@@ -295,6 +295,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         newOccurrence.setScheduleRuleId(source.getScheduleRuleId());
         newOccurrence.setScheduleSlotId(source.getScheduleSlotId());
         newOccurrence.setOccurrenceType("MAKEUP");
+        newOccurrence.setSubjectName(source.getSubjectName());
         newOccurrence.setSourceOccurrenceId(source.getId());
         newOccurrence.setPlanningStatus("SCHEDULED");
         newOccurrence.setConflictChecked(1);
@@ -318,6 +319,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         updated.setScheduleRuleId(source.getScheduleRuleId());
         updated.setScheduleSlotId(source.getScheduleSlotId());
         updated.setOccurrenceType(source.getOccurrenceType());
+        updated.setSubjectName(source.getSubjectName());
         updated.setSourceOccurrenceId(source.getSourceOccurrenceId());
         updated.setNotes(source.getNotes());
         updated.setConflictChecked(1);
@@ -539,6 +541,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         adjusted.setScheduleRuleId(source.getScheduleRuleId());
         adjusted.setScheduleSlotId(source.getScheduleSlotId());
         adjusted.setOccurrenceType(source.getOccurrenceType());
+        adjusted.setSubjectName(source.getSubjectName());
         adjusted.setSourceOccurrenceId(source.getSourceOccurrenceId());
         adjusted.setNotes(source.getNotes());
         adjusted.setConflictChecked(1);

@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Builder;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -57,6 +58,11 @@ public record CoursePriceOptionVO(
     public record GroupScheduleSlotVO(
             Long teacherId,
             String subjectName,
+            Long alternateTeacherId,
+            String alternateSubjectName,
+            Long alternateClassroomId,
+            String alternateDeliveryMode,
+            LocalDate rotationAnchorDate,
             Integer weekday,
             String startTime,
             String endTime,

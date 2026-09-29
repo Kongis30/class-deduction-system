@@ -35,6 +35,7 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
+import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
 import lombok.RequiredArgsConstructor;
@@ -290,6 +291,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 item -> item,
                 (a, b) -> b
         ));
+        Map<Long, ClassGroupScheduleSlotEntity> scheduleSlotById = listClassScheduleSlots(classId).stream()
+                .collect(Collectors.toMap(ClassGroupScheduleSlotEntity::getId, item -> item));
 
         // 批量加载教师和教室
         Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(occurrences, LessonOccurrenceEntity::getPlannedTeacherId);
@@ -309,6 +312,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("id", occ.getId());
             item.put("lessonNo", occ.getLessonNo());
             item.put("occurrenceType", occ.getOccurrenceType());
+            ClassGroupScheduleSlotEntity scheduleSlot = scheduleSlotById.get(occ.getScheduleSlotId());
+            item.put("subjectName", StringUtils.hasText(occ.getSubjectName()) ? occ.getSubjectName()
+                    : scheduleSlot == null ? null : scheduleSlot.getSubjectName());
             item.put("plannedTeacherId", occ.getPlannedTeacherId());
             item.put("plannedTeacherName", teacherName);
             item.put("plannedClassroomId", occ.getPlannedClassroomId());
@@ -692,16 +698,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     @Override
-    @Transactional(readOnly = true)
-    public void checkClassScheduleEditable(Long classId) {
-        ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
-        if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
-            throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
-        }
-        ensureStartedClassLessonsConfirmed(classId, AppTime.nowLocalDateTime());
-    }
-
-    @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body) {
         ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
@@ -723,19 +719,18 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .distinct()
                 .forEach(this::validateTeacher);
         slots.stream()
-                .map(ClassGroupScheduleSlotEntity::getClassroomId)
+                .map(ClassGroupScheduleSlotEntity::getAlternateTeacherId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .forEach(this::validateTeacher);
+        slots.stream()
+                .flatMap(slot -> java.util.stream.Stream.of(slot.getClassroomId(), slot.getAlternateClassroomId()))
                 .filter(Objects::nonNull)
                 .distinct()
                 .forEach(this::validateClassroom);
         lockClassScheduleResources(classId, slots);
 
         LocalDateTime rebuildFrom = AppTime.nowLocalDateTime();
-        // 默认阻止未确认的已开始课次被后续操作遗漏；仅用户在界面明确选择后续改课时允许跳过。
-        boolean preserveStartedLessons = body != null && Boolean.TRUE.equals(body.get("preserveStartedLessons"));
-        if (!preserveStartedLessons) {
-            ensureStartedClassLessonsConfirmed(classId, rebuildFrom);
-        }
-
         // 班级字段仅保留首个已配置资源供旧列表兼容，课次生成以 slot 字段为准。
         classGroup.setTeacherId(firstTeacherId(slots));
         classGroup.setClassroomId(firstClassroomId(slots));
@@ -745,6 +740,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         classGroupScheduleSlotMapper.delete(new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
                 .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId));
         for (ClassGroupScheduleSlotEntity slot : slots) {
+            if ((slot.getAlternateTeacherId() != null || StringUtils.hasText(slot.getAlternateSubjectName()))
+                    && slot.getRotationAnchorDate() == null) {
+                slot.setRotationAnchorDate(classGroup.getStartDate() == null
+                        ? rebuildFrom.toLocalDate() : classGroup.getStartDate());
+            }
             slot.setClassGroupId(classId);
             classGroupScheduleSlotMapper.insert(slot);
         }
@@ -1158,7 +1158,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 || classGroupScheduleSlotMapper.selectCount(
                 new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
                         .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId())
-                        .eq(ClassGroupScheduleSlotEntity::getTeacherId, teacherId)
+                        .and(wrapper -> wrapper.eq(ClassGroupScheduleSlotEntity::getTeacherId, teacherId)
+                                .or().eq(ClassGroupScheduleSlotEntity::getAlternateTeacherId, teacherId))
                         .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0)) > 0;
         if (!assignedToClass) {
             throw new BusinessException("FORBIDDEN", "Teachers can only view their own classes.");
@@ -1168,7 +1169,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private List<Long> classIdsBySlotTeacher(Long teacherId) {
         return classGroupScheduleSlotMapper.selectList(
                         new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
-                                .eq(ClassGroupScheduleSlotEntity::getTeacherId, teacherId)
+                                .and(wrapper -> wrapper.eq(ClassGroupScheduleSlotEntity::getTeacherId, teacherId)
+                                        .or().eq(ClassGroupScheduleSlotEntity::getAlternateTeacherId, teacherId))
                                 .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0))
                 .stream()
                 .map(ClassGroupScheduleSlotEntity::getClassGroupId)
@@ -1383,8 +1385,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             }
             ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
             Long teacherId = parseLongValue(map.get("teacherId"));
+            Long alternateTeacherId = parseLongValue(map.get("alternateTeacherId"));
             Long classroomId = parseLongValue(map.get("classroomId"));
+            Long alternateClassroomId = parseLongValue(map.get("alternateClassroomId"));
             String deliveryMode = map.get("deliveryMode") == null ? null : String.valueOf(map.get("deliveryMode"));
+            String alternateDeliveryMode = map.get("alternateDeliveryMode") == null
+                    ? null : String.valueOf(map.get("alternateDeliveryMode"));
             if ("ONLINE".equalsIgnoreCase(deliveryMode)) {
                 if (classroomId != null) {
                     throw new BusinessException("INVALID_SLOT_CLASSROOM", "Online slots cannot have a classroom.");
@@ -1400,6 +1406,28 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 slot.setClassroomId(resolvedClassroomId);
             }
             slot.setTeacherId(teacherId != null ? teacherId : defaultTeacherId);
+            slot.setSubjectName(optionalText(map.get("subjectName")));
+            slot.setAlternateTeacherId(alternateTeacherId);
+            slot.setAlternateSubjectName(optionalText(map.get("alternateSubjectName")));
+            if (alternateDeliveryMode != null && !alternateDeliveryMode.isBlank()) {
+                alternateDeliveryMode = alternateDeliveryMode.trim().toUpperCase(Locale.ROOT);
+                if (!"ONLINE".equals(alternateDeliveryMode) && !"IN_PERSON".equals(alternateDeliveryMode)) {
+                    throw new BusinessException("INVALID_DELIVERY_MODE", "Delivery mode must be In-person or Online.");
+                }
+            }
+            if ("ONLINE".equals(alternateDeliveryMode) && alternateClassroomId != null) {
+                throw new BusinessException("INVALID_SLOT_CLASSROOM", "Online slots cannot have a classroom.");
+            }
+            slot.setAlternateDeliveryMode(alternateDeliveryMode);
+            slot.setAlternateClassroomId(alternateClassroomId);
+            Object rotationAnchor = map.get("rotationAnchorDate");
+            if (rotationAnchor instanceof String text && !text.isBlank()) {
+                try {
+                    slot.setRotationAnchorDate(LocalDate.parse(text));
+                } catch (RuntimeException exception) {
+                    throw new BusinessException("INVALID_CLASS_DATE", "Rotation start dates must use YYYY-MM-DD format.");
+                }
+            }
             slot.setWeekday(weekday);
             slot.setStartTime(start);
             slot.setEndTime(end);
@@ -1421,6 +1449,19 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             if (!seen.add(key)) {
                 throw new BusinessException("INVALID_CLASS_SCHEDULE", "Duplicate class schedule slots are not allowed.");
             }
+            boolean hasAlternate = slot.getAlternateTeacherId() != null
+                    || StringUtils.hasText(slot.getAlternateSubjectName())
+                    || slot.getAlternateClassroomId() != null
+                    || StringUtils.hasText(slot.getAlternateDeliveryMode());
+            validateClassroom(slot.getClassroomId());
+            validateClassroom(slot.getAlternateClassroomId());
+            if (hasAlternate && (slot.getTeacherId() == null
+                    || !StringUtils.hasText(slot.getSubjectName())
+                    || slot.getAlternateTeacherId() == null
+                    || !StringUtils.hasText(slot.getAlternateSubjectName()))) {
+                throw new BusinessException("INVALID_CLASS_ROTATION",
+                        "An alternating slot requires a teacher and subject for both lessons.");
+            }
         }
         for (int i = 0; i < slots.size(); i++) {
             ClassGroupScheduleSlotEntity left = slots.get(i);
@@ -1431,40 +1472,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         && left.getEndTime().isAfter(right.getStartTime())) {
                     throw new BusinessException("INVALID_CLASS_SCHEDULE", "Class schedule slots cannot overlap on the same day.");
                 }
-            }
-        }
-    }
-
-    /** Edit Schedule 的保存门槛：已经开始且有学生参加的课次，必须完成管理员最终消课。 */
-    private void ensureStartedClassLessonsConfirmed(Long classId, LocalDateTime editingAt) {
-        List<LessonOccurrenceEntity> startedLessons = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
-                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                        .ne(LessonOccurrenceEntity::getPlanningStatus, "MERGED")
-                        .le(LessonOccurrenceEntity::getPlannedStartAt, editingAt)
-                        .orderByDesc(LessonOccurrenceEntity::getPlannedStartAt));
-        if (startedLessons.isEmpty()) {
-            return;
-        }
-        List<ClassEnrollmentEntity> activeEnrollments = classEnrollmentMapper.selectList(
-                new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .eq(ClassEnrollmentEntity::getClassId, classId)
-                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
-        if (activeEnrollments.isEmpty()) {
-            return;
-        }
-        Map<Long, List<LocalDate>> confirmedDates = activeEnrollments.stream()
-                .anyMatch(enrollment -> "PER_SESSION".equals(enrollment.getBillingType()))
-                ? loadConfirmedLessonDatesByStudent(classId) : Collections.emptyMap();
-        for (LessonOccurrenceEntity lesson : startedLessons) {
-            if (activeEnrollments.stream().anyMatch(enrollment ->
-                    isEnrollmentEligibleForOccurrence(enrollment, lesson, confirmedDates))) {
-                throw new BusinessException("CLASS_LESSONS_NOT_CONFIRMED",
-                        "Confirm all started class lessons before editing the schedule. An unconfirmed lesson starts on "
-                                + lesson.getPlannedStartAt().format(CONFLICT_DATE_TIME)
-                                + " ET. Lessons already in progress also require confirmation.");
             }
         }
     }
@@ -1593,12 +1600,17 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(hasSlotTeacher
-                        ? slot.getTeacherId() : classGroup.getTeacherId());
-                Long classroomId = "ONLINE".equals(slot.getDeliveryMode()) ? null
-                        : hasSlotClassroom ? slot.getClassroomId() : classGroup.getClassroomId();
-                occurrence.setDeliveryMode(slot.getDeliveryMode() == null && classroomId != null
-                        ? "IN_PERSON" : slot.getDeliveryMode());
+                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
+                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                occurrence.setPlannedTeacherId(assignment.teacherId() != null ? assignment.teacherId()
+                        : hasSlotTeacher ? slot.getTeacherId() : classGroup.getTeacherId());
+                occurrence.setSubjectName(assignment.subjectName());
+                Long classroomId = assignment.alternate()
+                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
+                        : "ONLINE".equals(assignment.deliveryMode()) ? null
+                                : hasSlotClassroom ? assignment.classroomId() : classGroup.getClassroomId();
+                occurrence.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
+                        ? "IN_PERSON" : assignment.deliveryMode());
                 occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(plannedEndAt);
@@ -2050,7 +2062,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                             return toSlotMap(slot.getTeacherId(), slot.getClassroomId(), slot.getDeliveryMode(), slot.getWeekday(),
                                     slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
                                     slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
-                                    minutes > 0 ? minutes / 30 : 0);
+                                    minutes > 0 ? minutes / 30 : 0,
+                                    slot.getSubjectName(), slot.getAlternateTeacherId(),
+                                    slot.getAlternateSubjectName(), slot.getAlternateClassroomId(),
+                                    slot.getAlternateDeliveryMode(), slot.getRotationAnchorDate());
                         })
                         .toList();
             }
@@ -2066,8 +2081,23 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
     private Map<String, Object> toSlotMap(Long teacherId, Long classroomId, String deliveryMode, int weekday,
                                           String startTime, String endTime, int plannedUnits) {
+        return toSlotMap(teacherId, classroomId, deliveryMode, weekday, startTime, endTime, plannedUnits,
+                null, null, null, null, null, null);
+    }
+
+    private Map<String, Object> toSlotMap(Long teacherId, Long classroomId, String deliveryMode, int weekday,
+                                          String startTime, String endTime, int plannedUnits,
+                                          String subjectName, Long alternateTeacherId,
+                                          String alternateSubjectName, Long alternateClassroomId,
+                                          String alternateDeliveryMode, LocalDate rotationAnchorDate) {
         Map<String, Object> m = new HashMap<>();
         m.put("teacherId", teacherId);
+        m.put("subjectName", subjectName);
+        m.put("alternateTeacherId", alternateTeacherId);
+        m.put("alternateSubjectName", alternateSubjectName);
+        m.put("alternateClassroomId", alternateClassroomId);
+        m.put("alternateDeliveryMode", alternateDeliveryMode);
+        m.put("rotationAnchorDate", rotationAnchorDate);
         m.put("classroomId", classroomId);
         m.put("deliveryMode", deliveryMode);
         m.put("weekday", weekday);
@@ -2075,6 +2105,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         m.put("endTime", endTime);
         m.put("plannedUnits", plannedUnits);
         return m;
+    }
+
+    private String optionalText(Object value) {
+        if (!(value instanceof String text) || text.isBlank()) return null;
+        return text.trim();
     }
 
     private Long parseLongValue(Object value) {

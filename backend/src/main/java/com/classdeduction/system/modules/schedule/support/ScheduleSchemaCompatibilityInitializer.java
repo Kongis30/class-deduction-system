@@ -52,8 +52,20 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "bigint DEFAULT NULL COMMENT 'Classroom assigned to this weekly slot' AFTER delivery_mode");
         addScheduleColumnIfMissing("class_group_schedule_slot", "delivery_mode",
                 "varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE' AFTER teacher_id");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "alternate_teacher_id",
+                "bigint DEFAULT NULL COMMENT 'Teacher for the alternating lesson in this weekly slot' AFTER teacher_id");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "alternate_subject_name",
+                "varchar(128) DEFAULT NULL COMMENT 'Subject for the alternating lesson in this weekly slot' AFTER subject_name");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "alternate_delivery_mode",
+                "varchar(16) DEFAULT NULL COMMENT 'Delivery mode for the alternating lesson' AFTER alternate_subject_name");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "alternate_classroom_id",
+                "bigint DEFAULT NULL COMMENT 'Classroom for the alternating lesson' AFTER alternate_delivery_mode");
+        addScheduleColumnIfMissing("class_group_schedule_slot", "rotation_anchor_date",
+                "date DEFAULT NULL COMMENT 'First scheduled date assigned to the primary teacher and subject' AFTER alternate_subject_name");
         addScheduleColumnIfMissing("lesson_occurrence", "delivery_mode",
                 "varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE' AFTER planned_teacher_id");
+        addScheduleColumnIfMissing("lesson_occurrence", "subject_name",
+                "varchar(128) DEFAULT NULL COMMENT 'Subject snapshot copied from the weekly class slot' AFTER planned_teacher_id");
         jdbcTemplate.update("UPDATE recurring_schedule_slot SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND classroom_id IS NOT NULL");
         jdbcTemplate.update("UPDATE class_group_schedule_slot SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND classroom_id IS NOT NULL");
         jdbcTemplate.update("UPDATE lesson_occurrence SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND planned_classroom_id IS NOT NULL");

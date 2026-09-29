@@ -27,6 +27,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
+import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayPreviewVO;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
@@ -40,8 +41,10 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 维护 Course + Grade 级班课假期，并协调该 Grade 下未来课次和 SESSION 报名周期。
@@ -399,6 +402,47 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     .eq(LessonOccurrenceEntity::getIsDeleted, 0)
                     .ge(LessonOccurrenceEntity::getPlannedStartAt, generationStart.atStartOfDay())
                     .lt(LessonOccurrenceEntity::getPlannedStartAt, targetEnd.plusDays(1).atStartOfDay()));
+            Map<Long, ClassGroupScheduleSlotEntity> slotsById = slots.stream()
+                    .collect(Collectors.toMap(ClassGroupScheduleSlotEntity::getId, item -> item));
+            Set<Long> occurrenceIds = occurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
+            Set<Long> recordedOccurrenceIds = occurrenceIds.isEmpty() ? Set.of()
+                    : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                                    .select(LessonRecordEntity::getOccurrenceId)
+                                    .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                                    .eq(LessonRecordEntity::getIsDeleted, 0))
+                            .stream().map(LessonRecordEntity::getOccurrenceId).collect(Collectors.toSet());
+
+            // 假期會改變後續輪換次序；只更新未開始、未消課、仍由模板控制的未來課次。
+            for (LessonOccurrenceEntity occurrence : occurrences) {
+                ClassGroupScheduleSlotEntity slot = slotsById.get(occurrence.getScheduleSlotId());
+                if (slot == null || !"SCHEDULED".equals(occurrence.getPlanningStatus())
+                        || occurrence.getCourseHolidayId() != null
+                        || occurrence.getPlannedStartAt().isBefore(now)
+                        || recordedOccurrenceIds.contains(occurrence.getId())) {
+                    continue;
+                }
+                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot,
+                        occurrence.getPlannedStartAt().toLocalDate(), group.getStartDate(),
+                        date -> holidayForDate(holidays, date) != null);
+                Long resolvedTeacherId = assignment.teacherId() == null ? group.getTeacherId() : assignment.teacherId();
+                Long resolvedClassroomId = assignment.alternate()
+                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
+                        : "ONLINE".equals(assignment.deliveryMode()) ? null
+                                : assignment.classroomId() != null ? assignment.classroomId() : group.getClassroomId();
+                String resolvedDeliveryMode = assignment.deliveryMode() == null && resolvedClassroomId != null
+                        ? "IN_PERSON" : assignment.deliveryMode();
+                if (!Objects.equals(resolvedTeacherId, occurrence.getPlannedTeacherId())
+                        || !Objects.equals(assignment.subjectName(), occurrence.getSubjectName())
+                        || !Objects.equals(resolvedClassroomId, occurrence.getPlannedClassroomId())
+                        || !Objects.equals(resolvedDeliveryMode, occurrence.getDeliveryMode())) {
+                    occurrence.setPlannedTeacherId(resolvedTeacherId);
+                    occurrence.setSubjectName(assignment.subjectName());
+                    occurrence.setPlannedClassroomId(resolvedClassroomId);
+                    occurrence.setDeliveryMode(resolvedDeliveryMode);
+                    ensureNoResourceConflict(occurrence);
+                    lessonOccurrenceMapper.updateById(occurrence);
+                }
+            }
             Set<String> existingKeys = occurrences.stream()
                     .map(item -> occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt()))
                     .collect(java.util.stream.Collectors.toSet());
@@ -419,11 +463,17 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     occurrence.setClassGroupId(group.getId());
                     occurrence.setScheduleSlotId(slot.getId());
                     occurrence.setOccurrenceType("REGULAR");
-                    occurrence.setPlannedTeacherId(slot.getTeacherId() == null ? group.getTeacherId() : slot.getTeacherId());
-                    Long classroomId = slot.getClassroomId() != null ? slot.getClassroomId()
-                            : ("ONLINE".equals(slot.getDeliveryMode()) ? null : group.getClassroomId());
-                    occurrence.setDeliveryMode(slot.getDeliveryMode() == null && classroomId != null
-                            ? "IN_PERSON" : slot.getDeliveryMode());
+                    ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
+                            group.getStartDate(), holidayDate -> holidayForDate(holidays, holidayDate) != null);
+                    occurrence.setPlannedTeacherId(assignment.teacherId() == null
+                            ? group.getTeacherId() : assignment.teacherId());
+                    occurrence.setSubjectName(assignment.subjectName());
+                    Long classroomId = assignment.alternate()
+                            ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
+                            : "ONLINE".equals(assignment.deliveryMode()) ? null
+                                    : assignment.classroomId() != null ? assignment.classroomId() : group.getClassroomId();
+                    occurrence.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
+                            ? "IN_PERSON" : assignment.deliveryMode());
                     occurrence.setPlannedClassroomId(classroomId);
                     occurrence.setPlannedStartAt(startAt);
                     occurrence.setPlannedEndAt(endAt);

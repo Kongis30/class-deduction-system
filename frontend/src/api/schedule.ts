@@ -294,6 +294,12 @@ export function fetchClassOccurrences(classId: string | number) {
 
 export interface ClassScheduleSlotPayload {
   teacherId?: string | number;
+  subjectName?: string;
+  alternateTeacherId?: string | number;
+  alternateSubjectName?: string;
+  alternateClassroomId?: string | number;
+  alternateDeliveryMode?: 'IN_PERSON' | 'ONLINE';
+  rotationAnchorDate?: string;
   classroomId?: string | number;
   deliveryMode?: 'IN_PERSON' | 'ONLINE';
   weekday: number;
@@ -306,8 +312,6 @@ export interface ClassScheduleUpdatePayload {
   /** 兼容旧页面；新页面应在每个 slot 中提交资源。 */
   teacherId?: string | number;
   classroomId?: string | number;
-  /** 用户明确选择继续改后续排课时，保留已开始但尚未确认的课次。 */
-  preserveStartedLessons?: boolean;
   slots: ClassScheduleSlotPayload[];
 }
 
@@ -329,10 +333,6 @@ export function updateClassInfo(classId: string | number, data: ClassInfoPayload
 
 export function updateClassSchedule(classId: string | number, data: ClassScheduleUpdatePayload) {
   return http.put<ApiResponse<Record<string, any>>>(`/v1/classes/${classId}/schedule`, data);
-}
-
-export function checkClassScheduleEditable(classId: string | number) {
-  return http.get<ApiResponse<null>>(`/v1/classes/${classId}/schedule/edit-check`);
 }
 
 export function confirmClassLesson(classId: string | number, occurrenceId: string | number, data: ClassGroupConfirmPayload = {}) {

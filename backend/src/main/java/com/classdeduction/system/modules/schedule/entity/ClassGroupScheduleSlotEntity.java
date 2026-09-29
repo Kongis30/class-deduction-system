@@ -7,6 +7,7 @@ import com.classdeduction.system.common.model.BaseEntity;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.LocalDate;
 import java.time.LocalTime;
 
 @Getter
@@ -25,7 +26,17 @@ public class ClassGroupScheduleSlotEntity extends BaseEntity {
 
     private Long classroomId;
 
+    private String alternateDeliveryMode;
+
+    private Long alternateClassroomId;
+
     private String subjectName;
+
+    private Long alternateTeacherId;
+
+    private String alternateSubjectName;
+
+    private LocalDate rotationAnchorDate;
 
     private Integer weekday;
 

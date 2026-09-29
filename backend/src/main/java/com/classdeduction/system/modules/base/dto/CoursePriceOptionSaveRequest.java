@@ -139,6 +139,12 @@ public class CoursePriceOptionSaveRequest {
         private Long teacherId;
         @Size(max = 128, message = "Subject name must not exceed 128 characters")
         private String subjectName;
+        private Long alternateTeacherId;
+        @Size(max = 128, message = "Alternate subject name must not exceed 128 characters")
+        private String alternateSubjectName;
+        private Long alternateClassroomId;
+        private String alternateDeliveryMode;
+        private LocalDate rotationAnchorDate;
         private Integer weekday;
         private String startTime;
         private String endTime;

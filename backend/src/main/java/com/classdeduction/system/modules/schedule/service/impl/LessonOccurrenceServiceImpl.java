@@ -1620,6 +1620,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private String resolveOccurrenceSubjectName(LessonOccurrenceEntity occurrence,
                                                 Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
                                                 Map<Long, ClassGroupScheduleSlotEntity> classSlotMap) {
+        if (StringUtils.hasText(occurrence.getSubjectName())) {
+            return occurrence.getSubjectName();
+        }
         if (occurrence.getScheduleSlotId() == null) {
             return null;
         }

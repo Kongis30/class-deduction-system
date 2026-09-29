@@ -299,6 +299,11 @@ export interface CoursePriceOptionSavePayload {
   groupScheduleSlots?: {
     teacherId?: EntityId;
     subjectName?: string;
+    alternateTeacherId?: EntityId;
+    alternateSubjectName?: string;
+    alternateClassroomId?: EntityId;
+    alternateDeliveryMode?: 'IN_PERSON' | 'ONLINE';
+    rotationAnchorDate?: string;
     weekday: number;
     startTime: string;
     endTime: string;

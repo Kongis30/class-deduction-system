@@ -88,14 +88,6 @@ public class ClassGroupController {
         return ApiResponse.success("Rejected successfully.", null);
     }
 
-    @GetMapping("/{classId}/schedule/edit-check")
-    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
-    @Operation(summary = "Check whether all started class lessons are confirmed before editing the schedule")
-    public ApiResponse<Void> checkClassScheduleEditable(@PathVariable Long classId) {
-        classGroupService.checkClassScheduleEditable(classId);
-        return ApiResponse.success(null);
-    }
-
     @PutMapping("/{classId}/schedule")
     @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Update class weekly schedule and rebuild future planned lessons")

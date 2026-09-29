@@ -153,6 +153,11 @@ export interface CoursePriceOptionItem {
   groupScheduleSlots?: Array<{
     teacherId?: EntityId;
     subjectName?: string;
+    alternateTeacherId?: EntityId;
+    alternateSubjectName?: string;
+    alternateClassroomId?: EntityId;
+    alternateDeliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
+    rotationAnchorDate?: string;
     weekday: number;
     startTime: string;
     endTime: string;
@@ -660,6 +665,12 @@ export interface ClassGroupItem {
     teacherId?: EntityId;
     classroomId?: EntityId;
     deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
+    subjectName?: string;
+    alternateTeacherId?: EntityId;
+    alternateSubjectName?: string;
+    alternateClassroomId?: EntityId;
+    alternateDeliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
+    rotationAnchorDate?: string;
     weekday: number;
     startTime: string;
     endTime: string;
@@ -686,6 +697,7 @@ export interface ClassOccurrenceItem {
   recordId?: EntityId;
   lessonNo: string;
   occurrenceType: string;
+  subjectName?: string;
   plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
   deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;

@@ -54,6 +54,7 @@ import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
@@ -2771,10 +2772,18 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(slot.getTeacherId() == null
-                        ? classGroup.getTeacherId()
-                        : slot.getTeacherId());
-                occurrence.setPlannedClassroomId(classGroup.getClassroomId());
+                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
+                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                occurrence.setPlannedTeacherId(assignment.teacherId() == null
+                        ? classGroup.getTeacherId() : assignment.teacherId());
+                occurrence.setSubjectName(assignment.subjectName());
+                Long classroomId = assignment.alternate()
+                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
+                        : "ONLINE".equals(assignment.deliveryMode()) ? null
+                                : assignment.classroomId() != null ? assignment.classroomId() : classGroup.getClassroomId();
+                occurrence.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
+                        ? "IN_PERSON" : assignment.deliveryMode());
+                occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
                 occurrence.setPlannedUnits((int) (minutes / 30));
@@ -2786,7 +2795,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
 
         if (!occurrences.isEmpty()) {
             occurrences.sort(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt));
-            ensureNoConflicts(occurrences, null, null, classGroup.getClassroomId());
+            occurrences.stream().map(LessonOccurrenceEntity::getPlannedClassroomId)
+                    .filter(Objects::nonNull).distinct()
+                    .forEach(classroomId -> ensureNoConflicts(occurrences.stream()
+                            .filter(item -> Objects.equals(item.getPlannedClassroomId(), classroomId)).toList(),
+                            null, null, classroomId));
             occurrences.stream()
                     .filter(item -> item.getPlannedTeacherId() != null)
                     .collect(Collectors.groupingBy(LessonOccurrenceEntity::getPlannedTeacherId))

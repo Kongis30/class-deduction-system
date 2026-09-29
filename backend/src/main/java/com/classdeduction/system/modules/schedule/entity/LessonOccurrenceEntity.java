@@ -48,6 +48,9 @@ public class LessonOccurrenceEntity extends BaseEntity {
 
     private Long plannedTeacherId;
 
+    /** 课次生成时的科目快照，避免排课模板后续修改影响历史课次展示。 */
+    private String subjectName;
+
     private String deliveryMode;
 
     private Long plannedClassroomId;

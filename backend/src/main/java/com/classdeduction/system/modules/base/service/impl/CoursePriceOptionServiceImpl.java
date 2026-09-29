@@ -35,6 +35,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
+import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -652,6 +653,13 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             entity.setClassGroupId(classGroup.getId());
             entity.setTeacherId(slot.getTeacherId());
             entity.setSubjectName(StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName().trim() : null);
+            entity.setAlternateTeacherId(slot.getAlternateTeacherId());
+            entity.setAlternateSubjectName(StringUtils.hasText(slot.getAlternateSubjectName())
+                    ? slot.getAlternateSubjectName().trim() : null);
+            entity.setAlternateClassroomId(slot.getAlternateClassroomId());
+            entity.setAlternateDeliveryMode(StringUtils.hasText(slot.getAlternateDeliveryMode())
+                    ? slot.getAlternateDeliveryMode().trim().toUpperCase(Locale.ROOT) : null);
+            entity.setRotationAnchorDate(slot.getRotationAnchorDate());
             entity.setWeekday(slot.getWeekday());
             entity.setStartTime(start);
             entity.setEndTime(end);
@@ -743,10 +751,18 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 occurrence.setClassGroupId(classGroup.getId());
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
-                occurrence.setPlannedTeacherId(slot.getTeacherId() == null
-                        ? classGroup.getTeacherId()
-                        : slot.getTeacherId());
-                occurrence.setPlannedClassroomId(classGroup.getClassroomId());
+                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
+                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                occurrence.setPlannedTeacherId(assignment.teacherId() == null
+                        ? classGroup.getTeacherId() : assignment.teacherId());
+                occurrence.setSubjectName(assignment.subjectName());
+                Long classroomId = assignment.alternate()
+                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
+                        : "ONLINE".equals(assignment.deliveryMode()) ? null
+                                : assignment.classroomId() != null ? assignment.classroomId() : classGroup.getClassroomId();
+                occurrence.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
+                        ? "IN_PERSON" : assignment.deliveryMode());
+                occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(startAt);
                 occurrence.setPlannedEndAt(endAt);
                 occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
@@ -989,7 +1005,9 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                                 .orderByAsc(ClassGroupScheduleSlotEntity::getStartTime))
                         .stream()
                         .map(slot -> new CoursePriceOptionVO.GroupScheduleSlotVO(
-                                slot.getTeacherId(), slot.getSubjectName(), slot.getWeekday(),
+                                slot.getTeacherId(), slot.getSubjectName(), slot.getAlternateTeacherId(),
+                                slot.getAlternateSubjectName(), slot.getAlternateClassroomId(),
+                                slot.getAlternateDeliveryMode(), slot.getRotationAnchorDate(), slot.getWeekday(),
                                 slot.getStartTime().toString(), slot.getEndTime().toString(),
                                 slot.getMorningEndTime() == null ? null : slot.getMorningEndTime().toString(),
                                 slot.getAfternoonStartTime() == null ? null : slot.getAfternoonStartTime().toString(),

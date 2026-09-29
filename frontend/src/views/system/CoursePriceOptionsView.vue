@@ -641,41 +641,82 @@
           :key="`${slot.weekday}-${slot.startTime}-${index}`"
           class="actual-class-slot-row"
         >
-          <div class="slot-time-cell">
-            <small>Time</small>
-            <strong>{{ groupSlotLabel(slot) }}</strong>
+          <div class="actual-class-slot-heading">
+            <div class="actual-class-slot-time-label">
+              <strong>{{ groupSlotLabel(slot) }}</strong>
+              <span>{{ (slot.plannedUnits * 0.5).toFixed(1) }} hours</span>
+            </div>
+            <el-tooltip content="Teacher, subject, and classroom alternate each class. Holidays are skipped." placement="top">
+              <div class="slot-rotation-toggle">
+                <span>A/B rotation</span>
+                <el-switch v-model="slot.rotationEnabled" />
+              </div>
+            </el-tooltip>
           </div>
-          <label class="slot-field">
-            <span>Teacher</span>
-            <el-select v-model="slot.teacherId" clearable filterable placeholder="No teacher for this slot">
-              <el-option v-for="teacher in sortedTeachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-            </el-select>
-          </label>
-          <label class="slot-field">
-            <span>Classroom</span>
-            <el-select
-              v-model="slot.classroomSelection"
-              clearable
-              popper-class="actual-classroom-picker"
-              filterable
-              placeholder="No classroom (optional)"
-            >
-              <el-option label="Online" value="ONLINE" />
-              <el-option-group
-                v-for="group in classroomGroups"
-                :key="group.key"
-                :label="group.label"
-                class="actual-classroom-campus-group"
+          <div class="actual-class-slot-fields">
+            <label class="slot-field">
+              <span>Teacher</span>
+              <el-select v-model="slot.teacherId" clearable filterable placeholder="No teacher for this slot">
+                <el-option v-for="teacher in sortedTeachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+              </el-select>
+            </label>
+            <label class="slot-field">
+              <span>Course / subject</span>
+              <el-input v-model="slot.subjectName" placeholder="e.g. English" maxlength="128" />
+            </label>
+            <label class="slot-field">
+              <span>Classroom</span>
+              <el-select
+                v-model="slot.classroomSelection"
+                clearable
+                popper-class="actual-classroom-picker"
+                filterable
+                placeholder="No classroom (optional)"
               >
-                <el-option
-                  v-for="room in group.classrooms"
-                  :key="room.id"
-                  :label="room.roomName"
-                  :value="`ROOM:${room.id}`"
-                />
-              </el-option-group>
-            </el-select>
-          </label>
+                <el-option label="Online" value="ONLINE" />
+                <el-option-group
+                  v-for="group in classroomGroups"
+                  :key="group.key"
+                  :label="group.label"
+                  class="actual-classroom-campus-group"
+                >
+                  <el-option
+                    v-for="room in group.classrooms"
+                    :key="room.id"
+                    :label="room.roomName"
+                    :value="`ROOM:${room.id}`"
+                  />
+                </el-option-group>
+              </el-select>
+            </label>
+          </div>
+          <div v-if="slot.rotationEnabled" class="actual-class-alternate-fields">
+            <label class="slot-field">
+              <span>Teacher (B)</span>
+              <el-select v-model="slot.alternateTeacherId" clearable filterable placeholder="Select teacher">
+                <el-option v-for="teacher in sortedTeachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+              </el-select>
+            </label>
+            <label class="slot-field">
+              <span>Course / subject (B)</span>
+              <el-input v-model="slot.alternateSubjectName" placeholder="e.g. Math" maxlength="128" />
+            </label>
+            <label class="slot-field">
+              <span>Classroom (B)</span>
+              <el-select
+                v-model="slot.alternateClassroomSelection"
+                clearable
+                popper-class="actual-classroom-picker"
+                filterable
+                placeholder="No classroom (optional)"
+              >
+                <el-option label="Online" value="ONLINE" />
+                <el-option-group v-for="group in classroomGroups" :key="group.key" :label="group.label" class="actual-classroom-campus-group">
+                  <el-option v-for="room in group.classrooms" :key="room.id" :label="room.roomName" :value="`ROOM:${room.id}`" />
+                </el-option-group>
+              </el-select>
+            </label>
+          </div>
         </div>
       </div>
       <template #footer>
@@ -991,7 +1032,16 @@ const actualClassInfoDialogVisible = ref(false);
 const savingActualClassInfo = ref(false);
 const editingActualClassInfo = ref<ActualClassScheduleRow | null>(null);
 const actualClassScheduleForm = reactive({
-  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string }>,
+  slots: [] as Array<SlotDef & {
+    teacherId?: EntityId;
+    subjectName?: string;
+    alternateTeacherId?: EntityId;
+    alternateSubjectName?: string;
+    alternateClassroomSelection?: string;
+    rotationAnchorDate?: string;
+    rotationEnabled: boolean;
+    classroomSelection?: string;
+  }>,
 });
 const actualClassInfoForm = reactive({
   productId: undefined as EntityId | undefined,
@@ -1038,6 +1088,11 @@ const form = reactive({
   groupScheduleSlots: [] as Array<{
     teacherId?: EntityId;
     subjectName?: string;
+    alternateTeacherId?: EntityId;
+    alternateSubjectName?: string;
+    alternateClassroomId?: EntityId;
+    alternateDeliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
+    rotationAnchorDate?: string;
     weekday: number;
     startTime: string;
     endTime: string;
@@ -1800,9 +1855,16 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
     groupTeacherId: undefined,
     groupClassroomId: canEditActualClassesInOptionForm.value ? form.groupClassroomId : undefined,
     groupScheduleSlots: canEditActualClassesInOptionForm.value
-      ? form.groupScheduleSlots.map(({ teacherId, subjectName, weekday, startTime, endTime, attendanceOptions }) => ({
+      ? form.groupScheduleSlots.map(({ teacherId, subjectName, alternateTeacherId, alternateSubjectName,
+        alternateClassroomId, alternateDeliveryMode,
+        rotationAnchorDate, weekday, startTime, endTime, attendanceOptions }) => ({
           teacherId,
           subjectName: subjectName?.trim() || undefined,
+          alternateTeacherId,
+          alternateSubjectName: alternateSubjectName?.trim() || undefined,
+          alternateClassroomId,
+          alternateDeliveryMode,
+          rotationAnchorDate,
           weekday,
           startTime,
           endTime,
@@ -1905,6 +1967,7 @@ function prepareActualClassScheduleEdit(actualClass: ActualClassScheduleRow) {
     classDetail.scheduleSlots,
     classDetail.teacherId,
     classDetail.classroomId,
+    classDetail.startDate,
   );
   actualClassScheduleDialogVisible.value = true;
 }
@@ -1989,12 +2052,30 @@ function normalizeActualClassScheduleSlots(
   slots: ClassGroupItem['scheduleSlots'],
   defaultTeacherId?: EntityId,
   defaultClassroomId?: EntityId,
-): Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string }> {
+  classStartDate?: string,
+): Array<SlotDef & {
+  teacherId?: EntityId;
+  subjectName?: string;
+  alternateTeacherId?: EntityId;
+  alternateSubjectName?: string;
+  alternateClassroomSelection?: string;
+  rotationAnchorDate?: string;
+  rotationEnabled: boolean;
+  classroomSelection?: string;
+}> {
   const hasSlotTeacher = (slots ?? []).some(slot => slot.teacherId != null);
   const hasConfiguredSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null || slot.deliveryMode === 'ONLINE');
   return (slots ?? []).map(slot => ({
     weekday: slot.weekday,
     teacherId: hasSlotTeacher ? slot.teacherId : defaultTeacherId,
+    subjectName: slot.subjectName ?? '',
+    alternateTeacherId: slot.alternateTeacherId,
+    alternateSubjectName: slot.alternateSubjectName ?? '',
+    alternateClassroomSelection: slot.alternateDeliveryMode === 'ONLINE'
+      ? 'ONLINE' : slot.alternateClassroomId != null ? `ROOM:${slot.alternateClassroomId}` : '',
+    rotationAnchorDate: slot.rotationAnchorDate || classStartDate || '',
+    rotationEnabled: Boolean(slot.alternateTeacherId || slot.alternateSubjectName
+      || slot.alternateClassroomId || slot.alternateDeliveryMode),
     classroomSelection: slot.deliveryMode === 'ONLINE'
       ? 'ONLINE'
       : (hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId) != null
@@ -2016,10 +2097,17 @@ async function saveActualClassSchedule() {
   }
   savingActualClassSchedule.value = true;
   try {
-    await updateClassSchedule(editingActualClass.value.id, {
-      preserveStartedLessons: false,
-      slots: actualClassScheduleForm.slots.map(({ teacherId, classroomSelection, weekday, startTime, endTime, plannedUnits }) => ({
+      await updateClassSchedule(editingActualClass.value.id, {
+      slots: actualClassScheduleForm.slots.map(({ teacherId, subjectName, alternateTeacherId, alternateSubjectName,
+        alternateClassroomSelection, rotationAnchorDate, rotationEnabled, classroomSelection, weekday, startTime, endTime, plannedUnits }) => ({
         teacherId,
+        subjectName: subjectName?.trim() || undefined,
+        alternateTeacherId: rotationEnabled ? alternateTeacherId : undefined,
+        alternateSubjectName: rotationEnabled ? alternateSubjectName?.trim() || undefined : undefined,
+        alternateDeliveryMode: rotationEnabled ? alternateClassroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON' : undefined,
+        alternateClassroomId: rotationEnabled && alternateClassroomSelection?.startsWith('ROOM:')
+          ? alternateClassroomSelection.slice(5) : undefined,
+        rotationAnchorDate: rotationEnabled ? rotationAnchorDate || editingActualClass.value?.startDate || undefined : undefined,
         deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
         classroomId: classroomSelection?.startsWith('ROOM:') ? classroomSelection.slice(5) : undefined,
         weekday,
@@ -2144,7 +2232,7 @@ function actualClassPeriodLabel(actualClass: ActualClassScheduleRow) {
 // 卡片上的教师以排课 slot 为准，汇总同一 class 已分配的老师并去重；没有 slot 老师时兼容旧的 class 默认老师。
 function actualClassTeacherNames(actualClass: ActualClassScheduleRow): string[] {
   const names = (actualClass.scheduleSlots ?? [])
-    .map(slot => slot.teacherId)
+    .flatMap(slot => [slot.teacherId, slot.alternateTeacherId])
     .filter((teacherId): teacherId is EntityId => teacherId !== undefined && teacherId !== null)
     .map(teacherId => teachers.value.find(item => String(item.id) === String(teacherId))?.teacherName?.trim())
     .filter((name): name is string => Boolean(name));
@@ -3165,13 +3253,63 @@ function normalizeSlotAttendance(value?: string) {
 
 .actual-class-slot-row {
   display: grid;
-  grid-template-columns: minmax(140px, 0.8fr) repeat(2, minmax(220px, 1fr));
-  align-items: end;
   gap: 10px;
-  padding: 10px;
+  padding: 12px;
   border: 1px solid #dbeafe;
   border-radius: 8px;
   background: #fbfdff;
+}
+
+.actual-class-slot-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.actual-class-slot-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.actual-class-slot-time-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.actual-class-slot-heading strong {
+  color: #1e293b;
+  font-size: 14px;
+}
+
+.actual-class-slot-time-label > span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eaf1fb;
+  color: #52627a;
+  font-size: 11px;
+}
+
+.slot-rotation-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  color: #64748b;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.actual-class-alternate-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e5edf7;
 }
 
 .slot-time-cell,
@@ -3334,8 +3472,8 @@ function normalizeSlotAttendance(value?: string) {
     grid-column: 1 / -1;
   }
 
-  .actual-class-slot-row {
-    grid-template-columns: 1fr;
+  .actual-class-slot-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -3345,6 +3483,11 @@ function normalizeSlotAttendance(value?: string) {
   }
 
   .slot-teacher-row {
+    grid-template-columns: 1fr;
+  }
+
+  .actual-class-slot-fields,
+  .actual-class-alternate-fields {
     grid-template-columns: 1fr;
   }
 }

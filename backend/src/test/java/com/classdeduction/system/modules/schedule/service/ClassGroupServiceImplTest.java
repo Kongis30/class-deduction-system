@@ -813,7 +813,7 @@ class ClassGroupServiceImplTest {
         when(courseProductMapper.selectById(300L)).thenReturn(product);
         when(teacherMapper.selectById(702L)).thenReturn(teacher);
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(
-                List.of(), List.of(), List.of(), List.of(conflict));
+                List.of(), List.of(), List.of(conflict));
 
         assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("teacherId", 702L,
@@ -906,50 +906,23 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
-    void shouldRequireFinalConfirmationBeforeEditingAnAlreadyStartedClassLesson() {
+    void shouldAllowScheduleEditWhenAStartedLessonHasNotBeenConfirmed() {
         LocalDateTime now = AppTime.nowLocalDateTime();
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setStatus("ACTIVE");
+        classGroup.setStartDate(now.toLocalDate().minusDays(1));
+        classGroup.setEndDate(now.toLocalDate().minusDays(1));
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, now.toLocalDate().minusDays(1), now.toLocalDate().plusDays(1))));
         LessonOccurrenceEntity inProgress = scheduledOccurrence(now.minusMinutes(1));
         inProgress.setPlannedEndAt(now.plusHours(1));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(inProgress));
-
-        assertThatThrownBy(() -> classGroupService.checkClassScheduleEditable(501L))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo("CLASS_LESSONS_NOT_CONFIRMED");
-        assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
-                "slots", List.of(Map.of("weekday", now.getDayOfWeek().getValue(),
-                        "startTime", "15:00", "endTime", "18:00")))))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo("CLASS_LESSONS_NOT_CONFIRMED");
-        verify(classGroupMapper, never()).updateById(any(ClassGroupEntity.class));
-        verify(classGroupScheduleSlotMapper, never()).insert(any(ClassGroupScheduleSlotEntity.class));
-        verify(lessonOccurrenceMapper, never()).delete(any());
-    }
-
-    @Test
-    void shouldAllowExplicitlyPreservingStartedLessonsWhenUpdatingFutureSchedule() {
-        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
-        ClassGroupEntity classGroup = new ClassGroupEntity();
-        classGroup.setId(501L);
-        classGroup.setStatus("ACTIVE");
-        classGroup.setStartDate(today.minusDays(7));
-        classGroup.setEndDate(today.minusDays(1));
-        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
-        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
-                activeEnrollment(601L, today.minusDays(7), today.plusDays(7))));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of(inProgress));
 
         Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
-                "preserveStartedLessons", true,
-                "slots", List.of(Map.of("weekday", today.plusDays(1).getDayOfWeek().getValue(),
-                        "startTime", "15:00", "endTime", "17:00"))));
+                "slots", List.of(Map.of("weekday", now.getDayOfWeek().getValue(),
+                        "startTime", "15:00", "endTime", "18:00"))));
 
         verify(classGroupMapper, atLeastOnce()).updateById(classGroup);
         verify(classGroupScheduleSlotMapper).insert(any(ClassGroupScheduleSlotEntity.class));
@@ -997,7 +970,7 @@ class ClassGroupServiceImplTest {
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, preservedDate, preservedDate)));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(
-                List.of(), List.of(preserved), List.of(preserved));
+                List.of(preserved), List.of(preserved));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
         Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
@@ -1027,7 +1000,7 @@ class ClassGroupServiceImplTest {
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, lessonDate, lessonDate)));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(
-                List.of(), List.of(recorded), List.of(recorded), List.of());
+                List.of(recorded), List.of(recorded), List.of());
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
         Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
@@ -1088,7 +1061,7 @@ class ClassGroupServiceImplTest {
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(
                 activeEnrollment(601L, lessonDate, lessonDate)));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(
-                List.of(), List.of(recorded), List.of(recorded));
+                List.of(recorded), List.of(recorded));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
         assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
@@ -1193,7 +1166,7 @@ class ClassGroupServiceImplTest {
         other.setClassGroupId(900L);
         other.setPlannedEndAt(date.atTime(16, 0));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(
-                List.of(), List.of(previous), List.of(), List.of(other));
+                List.of(previous), List.of(), List.of(other));
     }
 
     private LessonRecordEntity pendingClassRecord(Long id, Long studentId) {

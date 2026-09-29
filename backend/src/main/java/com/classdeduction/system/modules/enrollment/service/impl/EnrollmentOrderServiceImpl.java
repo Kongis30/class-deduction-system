@@ -77,6 +77,7 @@ import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEnti
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
@@ -4184,9 +4185,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 LessonOccurrenceEntity occ = new LessonOccurrenceEntity();
                 occ.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
                 occ.setClassGroupId(classGroup.getId());
+                occ.setScheduleSlotId(slot.getId());
                 occ.setOccurrenceType("REGULAR");
-                occ.setPlannedTeacherId(slot.getTeacherId() == null ? classGroup.getTeacherId() : slot.getTeacherId());
-                occ.setPlannedClassroomId(classGroup.getClassroomId());
+                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
+                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
+                occ.setPlannedTeacherId(assignment.teacherId() == null
+                        ? classGroup.getTeacherId() : assignment.teacherId());
+                occ.setSubjectName(assignment.subjectName());
+                Long classroomId = assignment.alternate()
+                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
+                        : "ONLINE".equals(assignment.deliveryMode()) ? null
+                                : assignment.classroomId() != null ? assignment.classroomId() : classGroup.getClassroomId();
+                occ.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
+                        ? "IN_PERSON" : assignment.deliveryMode());
+                occ.setPlannedClassroomId(classroomId);
                 occ.setPlannedStartAt(plannedStartAt);
                 occ.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
                 occ.setPlannedUnits((int) (minutes / 30));
@@ -4197,7 +4209,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
 
         if (!occurrences.isEmpty()) {
-            ensureNoConflicts(occurrences, null, null, classGroup.getClassroomId());
+            occurrences.stream().map(LessonOccurrenceEntity::getPlannedClassroomId)
+                    .filter(Objects::nonNull).distinct()
+                    .forEach(classroomId -> ensureNoConflicts(occurrences.stream()
+                            .filter(item -> Objects.equals(item.getPlannedClassroomId(), classroomId)).toList(),
+                            null, null, classroomId));
             occurrences.stream()
                     .filter(item -> item.getPlannedTeacherId() != null)
                     .collect(Collectors.groupingBy(LessonOccurrenceEntity::getPlannedTeacherId))
