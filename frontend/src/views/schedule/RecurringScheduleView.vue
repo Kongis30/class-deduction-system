@@ -282,7 +282,7 @@
     <el-dialog
       v-model="editDialogVisible"
       :title="isEditing ? 'Edit Weekly Schedule' : 'Create Weekly Schedule'"
-      width="720px"
+      width="min(980px, calc(100vw - 32px))"
       :close-on-click-modal="false"
       class="schedule-dialog"
     >
@@ -356,50 +356,64 @@
               <strong>{{ scheduleSlotLabel(slot) }}</strong>
               <small>Each lesson {{ formatSlotHours(slot.plannedUnits) }} · {{ slotLessonPlan(slot) }}</small>
             </div>
-            <el-select
-              v-model="slot.teacherId"
-              filterable
-              placeholder="Select teacher"
-            >
-              <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-            </el-select>
-            <el-select
-              v-model="slot.classroomSelection"
-              popper-class="classroom-campus-picker"
-              filterable
-              placeholder="Select classroom or Online"
-            >
-              <el-option label="Online" value="ONLINE" />
-              <el-option-group
-                v-for="group in classroomOptionGroups"
-                :key="group.campusKey"
-                :label="group.campusName"
-                class="classroom-campus-group"
+            <label class="slot-teacher-row__field">
+              <span>Teacher</span>
+              <el-select
+                v-model="slot.teacherId"
+                filterable
+                placeholder="Select teacher"
               >
-                <el-option
-                  v-for="c in group.classrooms"
-                  :key="c.id"
-                  :label="classroomSelectLabel(c)"
-                  :value="`ROOM:${c.id}`"
+                <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+              </el-select>
+            </label>
+            <label class="slot-teacher-row__field">
+              <span>Classroom</span>
+              <el-select
+                v-model="slot.classroomSelection"
+                popper-class="classroom-campus-picker"
+                filterable
+                placeholder="Select classroom or Online"
+              >
+                <el-option label="Online" value="ONLINE" />
+                <el-option-group
+                  v-for="group in classroomOptionGroups"
+                  :key="group.campusKey"
+                  :label="group.campusName"
+                  class="classroom-campus-group"
                 >
-                  <div class="classroom-select-option"><span>{{ c.roomName }}</span></div>
-                </el-option>
-              </el-option-group>
-            </el-select>
-            <el-input
-              v-model="slot.subjectName"
-              placeholder="Lesson name"
-              maxlength="128"
-            />
-            <el-input-number
-              v-model="slot.allocatedHours"
-              :min="0.5"
-              :step="0.5"
-              :precision="1"
-              controls-position="right"
-              placeholder="Hours"
-            />
-            <span class="slot-teacher-row__unit">h</span>
+                  <el-option
+                    v-for="c in group.classrooms"
+                    :key="c.id"
+                    :label="classroomSelectLabel(c)"
+                    :value="`ROOM:${c.id}`"
+                  >
+                    <div class="classroom-select-option"><span>{{ c.roomName }}</span></div>
+                  </el-option>
+                </el-option-group>
+              </el-select>
+            </label>
+            <label class="slot-teacher-row__field">
+              <span>Lesson name</span>
+              <el-input
+                v-model="slot.subjectName"
+                placeholder="Lesson name"
+                maxlength="128"
+              />
+            </label>
+            <label class="slot-teacher-row__field slot-teacher-row__field--hours">
+              <span>Allocated hours</span>
+              <span class="slot-teacher-row__hours-control">
+                <el-input-number
+                  v-model="slot.allocatedHours"
+                  :min="0.5"
+                  :step="0.5"
+                  :precision="1"
+                  controls-position="right"
+                  placeholder="Hours"
+                />
+                <em>h</em>
+              </span>
+            </label>
           </div>
         </div>
         <div v-if="editForm.slots.length > 0" class="edit-schedule__summary">
@@ -2710,24 +2724,79 @@ function disabledPastDate(date: Date) {
 
 .slot-teacher-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) repeat(3, minmax(135px, 1fr)) 110px auto;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 10px;
+  grid-template-columns: minmax(185px, 1.25fr) minmax(145px, 1fr) minmax(145px, 1fr) minmax(135px, 0.95fr);
+  align-items: end;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid #dbeafe;
-  border-radius: 6px;
-  background: #f8fbff;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f8fbff 0%, #f4f8fd 100%);
 }
 
 .slot-teacher-row__time {
+  min-width: 0;
+  align-self: center;
   color: #303133;
   font-size: 13px;
   font-weight: 500;
 }
 
-.slot-teacher-row__unit {
-  color: #909399;
-  font-size: 13px;
+.slot-teacher-row__time strong,
+.slot-teacher-row__time small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.slot-teacher-row__time strong {
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.slot-teacher-row__time small {
+  margin-top: 4px;
+  color: #7b8797;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.slot-teacher-row__field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  color: #68788c;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.slot-teacher-row__field :deep(.el-select),
+.slot-teacher-row__field :deep(.el-input),
+.slot-teacher-row__field :deep(.el-input-number) {
+  width: 100%;
+  min-width: 0;
+}
+
+.slot-teacher-row__hours-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.slot-teacher-row__hours-control :deep(.el-input-number) {
+  flex: 1;
+}
+
+.slot-teacher-row__hours-control em {
+  flex: 0 0 auto;
+  color: #7b8797;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 500;
 }
 
 /* This week adjustment */
@@ -3087,8 +3156,9 @@ function disabledPastDate(date: Date) {
 
 /* ── Dialog ─────────────────────────────────── */
 .schedule-dialog :deep(.el-dialog__body) {
-  max-height: 70vh;
+  max-height: 76vh;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px 20px;
 }
 
@@ -3106,6 +3176,32 @@ function disabledPastDate(date: Date) {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+@media (max-width: 900px) {
+  .slot-teacher-row {
+    grid-template-columns: minmax(160px, 1fr) repeat(2, minmax(0, 1fr));
+  }
+
+  .slot-teacher-row__time {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .schedule-dialog :deep(.el-dialog__body) {
+    padding: 12px;
+  }
+
+  .slot-teacher-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+    padding: 10px;
+  }
+
+  .slot-teacher-row__time {
+    grid-column: 1 / -1;
+  }
 }
 
 /* Detail */
