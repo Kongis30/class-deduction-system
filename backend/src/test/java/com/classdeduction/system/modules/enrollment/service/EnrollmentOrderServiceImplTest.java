@@ -275,6 +275,7 @@ class EnrollmentOrderServiceImplTest {
         ReceiptRecordEntity receipt = receiptCaptor.getValue();
 
         assertThat(order.getEnrollmentNo()).startsWith("EO");
+        assertThat(order.getBillingPolicy()).isEqualTo("WHOLE_DOLLAR_V1");
         assertThat(order.getPaymentStatus()).isEqualTo("PAID");
         assertThat(coursePackage.getPackageNo()).startsWith("PK");
         assertThat(coursePackage.getTotalUnits()).isEqualTo(160);
@@ -305,6 +306,46 @@ class EnrollmentOrderServiceImplTest {
         verify(paymentRecordMapper, never()).insert(any(PaymentRecordEntity.class));
         assertThat(orderCaptor.getValue().getPaymentStatus()).isEqualTo("PAID");
         assertThat(result.paymentIds()).isEmpty();
+    }
+
+    @Test
+    void shouldRejectFractionalAmountsOnLegacyOrderCreationEndpoint() {
+        EnrollmentCreateRequest request = buildCreateRequest();
+        request.setOriginalAmount(new BigDecimal("1200.01"));
+        assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WHOLE_DOLLAR_REQUIRED");
+
+        request.setOriginalAmount(new BigDecimal("1200"));
+        request.setDiscountAmount(new BigDecimal("100.01"));
+        assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WHOLE_DOLLAR_REQUIRED");
+
+        request.setDiscountAmount(new BigDecimal("100"));
+        request.setReceivedAmount(new BigDecimal("1100.01"));
+        assertThatThrownBy(() -> enrollmentOrderService.createOrder(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WHOLE_DOLLAR_REQUIRED");
+        verify(enrollmentOrderMapper, never()).insert(any(EnrollmentOrderEntity.class));
+    }
+
+    @Test
+    void shouldRejectFractionalCourseDiscountBeforeCorrectingWholeDollarOrder() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setBillingPolicy("WHOLE_DOLLAR_V1");
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        RegistrationIntakeRequest.CourseItemPayload item = new RegistrationIntakeRequest.CourseItemPayload();
+        item.setOrderItemId(8001L);
+        item.setDiscountAmount(new BigDecimal("1.01"));
+        request.setItems(List.of(item));
+
+        assertThatThrownBy(() -> enrollmentOrderService.correctOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("WHOLE_DOLLAR_REQUIRED");
+        verify(enrollmentOrderItemMapper, never()).updateById(any(EnrollmentOrderItemEntity.class));
     }
 
     @Test

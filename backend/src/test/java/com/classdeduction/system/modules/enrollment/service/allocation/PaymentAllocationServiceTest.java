@@ -156,6 +156,54 @@ class PaymentAllocationServiceTest {
     }
 
     @Test
+    void replayRebuildsWholeDollarCourseBalancesBeforeAllocatingLaterPayment() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(4L);
+        order.setBillingPolicy("WHOLE_DOLLAR_V1");
+        order.setPickupFeeAmount(new BigDecimal("1.00"));
+        order.setAmountDue(new BigDecimal("201.00"));
+        EnrollmentOrderItemEntity first = item(51L, 1);
+        EnrollmentOrderItemEntity second = item(52L, 2);
+        first.setAmountDue(null);
+        second.setAmountDue(null);
+        PaymentRecordEntity laterPayment = payment(801L, "1.00", "PAID", 3);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(laterPayment));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+
+        paymentAllocationService.replayAllocations(order);
+
+        assertThat(first.getAmountDue()).isEqualByComparingTo("100.00");
+        assertThat(second.getAmountDue()).isEqualByComparingTo("101.00");
+        assertThat(first.getPaidAmount()).isEqualByComparingTo("1.00");
+        assertThat(second.getPaidAmount()).isEqualByComparingTo("0.00");
+        ArgumentCaptor<PaymentAllocationEntity> allocationCaptor =
+                ArgumentCaptor.forClass(PaymentAllocationEntity.class);
+        verify(paymentAllocationMapper).insert(allocationCaptor.capture());
+        assertThat(allocationCaptor.getValue().getAmount()).isEqualByComparingTo("1.00");
+    }
+
+    @Test
+    void replayPreservesCentFeeSharesForHistoricalOrder() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(5L);
+        order.setPickupFeeAmount(new BigDecimal("1.00"));
+        order.setAmountDue(new BigDecimal("201.00"));
+        EnrollmentOrderItemEntity first = item(61L, 1);
+        EnrollmentOrderItemEntity second = item(62L, 2);
+        first.setAmountDue(null);
+        second.setAmountDue(null);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of());
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of());
+
+        paymentAllocationService.replayAllocations(order);
+
+        assertThat(first.getAmountDue()).isEqualByComparingTo("100.50");
+        assertThat(second.getAmountDue()).isEqualByComparingTo("100.50");
+    }
+
+    @Test
     void replayKeepsStoppedCoursePaidAtConsumedAmountAndLeavesOtherCourseUntouched() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(3L);

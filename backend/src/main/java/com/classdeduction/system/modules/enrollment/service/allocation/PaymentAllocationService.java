@@ -366,7 +366,7 @@ public class PaymentAllocationService {
         boolean explicitDiscounts = items.stream().allMatch(item -> item.getDiscountAmount() != null);
         List<BigDecimal> discountShares = explicitDiscounts
                 ? items.stream().map(item -> defaultAmount(item.getDiscountAmount())).toList()
-                : allocateByWeights(defaultAmount(order.getDiscountAmount()), weights);
+                : allocateByWeights(defaultAmount(order.getDiscountAmount()), weights, order);
         BigDecimal assigned = BigDecimal.ZERO;
         for (int i = 0; i < items.size(); i++) {
             EnrollmentOrderItemEntity item = items.get(i);
@@ -428,7 +428,7 @@ public class PaymentAllocationService {
             if (unassignedFeeTotal.compareTo(BigDecimal.ZERO) == 0) {
                 return courseFees;
             }
-            List<BigDecimal> unassignedShares = allocateByWeights(unassignedFeeTotal, weights);
+            List<BigDecimal> unassignedShares = allocateByWeights(unassignedFeeTotal, weights, order);
             return IntStream.range(0, items.size())
                     .mapToObj(index -> courseFees.get(index).add(unassignedShares.get(index)))
                     .toList();
@@ -436,7 +436,7 @@ public class PaymentAllocationService {
         BigDecimal feeTotal = defaultAmount(order.getPickupFeeAmount())
                 .add(defaultAmount(order.getDropoffFeeAmount()))
                 .add(defaultAmount(order.getExtraFeeAmount()));
-        return allocateByWeights(feeTotal, weights);
+        return allocateByWeights(feeTotal, weights, order);
     }
 
     private boolean hasCourseFeeSnapshot(EnrollmentOrderItemEntity item) {
@@ -447,19 +447,21 @@ public class PaymentAllocationService {
                 || defaultAmount(item.getExtraFeeAmount()).compareTo(BigDecimal.ZERO) > 0;
     }
 
-    private List<BigDecimal> allocateByWeights(BigDecimal total, List<BigDecimal> weights) {
+    private List<BigDecimal> allocateByWeights(BigDecimal total, List<BigDecimal> weights,
+                                               EnrollmentOrderEntity order) {
         if (weights.isEmpty()) {
             return List.of();
         }
         BigDecimal normalizedTotal = defaultAmount(total);
         BigDecimal weightSum = weights.stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        int scale = WholeDollarBilling.appliesTo(order) ? 0 : 2;
         BigDecimal assigned = BigDecimal.ZERO;
         List<BigDecimal> result = new ArrayList<>(weights.size());
         for (int i = 0; i < weights.size(); i++) {
             BigDecimal share = i == weights.size() - 1
                     ? normalizedTotal.subtract(assigned)
                     : normalizedTotal.multiply(weights.get(i))
-                    .divide(weightSum, 2, RoundingMode.DOWN);
+                    .divide(weightSum, scale, RoundingMode.DOWN);
             result.add(share);
             assigned = assigned.add(share);
         }

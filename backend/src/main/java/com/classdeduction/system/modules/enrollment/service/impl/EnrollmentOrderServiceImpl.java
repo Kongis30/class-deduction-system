@@ -550,6 +550,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             order.setRegistrationOperatorName(operator.displayName());
         }
         order.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
+        order.setBillingPolicy(WholeDollarBilling.POLICY);
         order.setOriginalAmount(request.getOriginalAmount());
         order.setDiscountAmount(request.getDiscountAmount());
         order.setReceivedAmount(request.getReceivedAmount());
@@ -595,6 +596,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private void validateAmounts(EnrollmentCreateRequest request) {
+        WholeDollarBilling.requireInteger(request.getOriginalAmount(), "Course price");
+        WholeDollarBilling.requireInteger(request.getDiscountAmount(), "Discount");
+        WholeDollarBilling.requireInteger(request.getReceivedAmount(), "Received amount");
         BigDecimal discountedAmount = request.getOriginalAmount().subtract(request.getDiscountAmount());
         if (discountedAmount.compareTo(BigDecimal.ZERO) < 0) {
             throw new BusinessException("DISCOUNT_EXCEEDS_AMOUNT", "Discount cannot exceed original amount.");
@@ -1353,6 +1357,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             for (RegistrationIntakeRequest.CourseItemPayload item : request.getItems()) {
                 if (item == null) continue;
                 WholeDollarBilling.requireInteger(item.getPriceAmount(), "Course price");
+                WholeDollarBilling.requireInteger(item.getDiscountAmount(), "Course discount");
                 WholeDollarBilling.requireInteger(item.getPickupFeeAmount(), "Course pickup fee");
                 WholeDollarBilling.requireInteger(item.getDropoffFeeAmount(), "Course drop-off fee");
                 validateWholeDollarLines(item.getServiceFees());
