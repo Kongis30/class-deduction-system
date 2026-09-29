@@ -151,7 +151,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("COURSE_ITEM_REQUIRED",
                     "Add at least one course or enter a Credit top-up amount.");
         }
-        List<ResolvedCourseLine> lines = resolveCourseLines(request.getItems());
+        List<ResolvedCourseLine> lines = resolveCourseLines(request.getItems(), request.getCampusId());
         validatePrivateLessonParticipants(request, participantResolutions, lines);
         applyParticipantPricing(lines, participantResolutions.size());
         validateRenewalLines(request, lines);
@@ -711,7 +711,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         student.setCampusId(campusId);
     }
 
-    private List<ResolvedCourseLine> resolveCourseLines(List<RegistrationIntakeRequest.CourseItemPayload> items) {
+    private List<ResolvedCourseLine> resolveCourseLines(List<RegistrationIntakeRequest.CourseItemPayload> items, Long registrationCampusId) {
         List<ResolvedCourseLine> lines = new ArrayList<>();
         int nextLineNo = 1;
         for (RegistrationIntakeRequest.CourseItemPayload item : items) {
@@ -764,6 +764,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.openingUsedHours = item.getOpeningUsedHours();
             line.oneOnOneUnits = item.getOneOnOneUnits();
             line.classId = firstNonNull(item.getClassId(), option.getClassId());
+            line.registrationCampusId = registrationCampusId;
             line.sessions = item.getSessions();
             line.purchasedMonths = item.getPurchasedMonths();
             line.startMonth = item.getStartMonth();
@@ -951,6 +952,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
         if (classGroup.getProductId() == null) {
             throw new BusinessException("CLASS_PRODUCT_REQUIRED", "Class group must be linked to a group course product.");
+        }
+        if (line.registrationCampusId == null || classGroup.getCampusId() == null
+                || !Objects.equals(line.registrationCampusId, classGroup.getCampusId())) {
+            throw new BusinessException("CLASS_CAMPUS_MISMATCH",
+                    "Selected class does not belong to the selected registration campus. Choose a class for that campus.");
         }
         CourseProductEntity product = requireCourseProduct(classGroup.getProductId());
         if (!"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
@@ -3240,6 +3246,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private Long courseProductId;
         private Long coursePriceOptionId;
         private Long classId;
+        private Long registrationCampusId;
         private String detail;
         private String gradeBand;
         private String periodLabel;

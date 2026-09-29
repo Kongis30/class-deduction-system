@@ -145,6 +145,8 @@ export interface CoursePriceOptionItem {
     classroomId?: EntityId;
     classroomName?: string;
     scheduleDesc?: string;
+    campusId?: EntityId;
+    campusName?: string;
   }>;
   groupTeacherId?: EntityId;
   groupClassroomId?: EntityId;
@@ -649,6 +651,8 @@ export interface ClassGroupItem {
   teacherName?: string;
   classroomId?: EntityId;
   classroomName?: string;
+  campusId?: EntityId;
+  campusName?: string;
   startDate?: string;
   endDate?: string;
   activeStudentCount: number;

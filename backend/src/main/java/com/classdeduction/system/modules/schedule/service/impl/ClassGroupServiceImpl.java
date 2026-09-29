@@ -6,11 +6,13 @@ import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
@@ -72,6 +74,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final CampusMapper campusMapper;
     private final CourseProductMapper courseProductMapper;
     private final ProductGradeConfigMapper productGradeConfigMapper;
     private final CoursePackageMapper coursePackageMapper;
@@ -122,6 +125,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         // 批量加载教师和教室
         Map<Long, TeacherEntity> teacherMap = batchLoadTeachers(classes, ClassGroupEntity::getTeacherId);
         Map<Long, ClassroomEntity> classroomMap = batchLoadClassrooms(classes, ClassGroupEntity::getClassroomId);
+        Set<Long> campusIds = classes.stream().map(ClassGroupEntity::getCampusId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, CampusEntity> campusMap = campusIds.isEmpty() ? Map.of() : campusMapper.selectBatchIds(campusIds).stream()
+                .collect(Collectors.toMap(CampusEntity::getId, item -> item));
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassGroupEntity clz : classes) {
             String teacherName = resolveTeacherName(clz.getTeacherId(), teacherMap);
@@ -136,15 +143,18 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("teacherName", teacherName);
             item.put("classroomId", clz.getClassroomId());
             item.put("classroomName", classroomName);
+            CampusEntity campus = clz.getCampusId() == null ? null : campusMap.get(clz.getCampusId());
+            item.put("campusId", clz.getCampusId());
+            item.put("campusName", campus == null ? null : campus.getCampusName());
             item.put("listPrice", clz.getListPrice());
-        item.put("productId", clz.getProductId());
-        item.put("productName", product == null ? null : product.getProductName());
+            item.put("productId", clz.getProductId());
+            item.put("productName", product == null ? null : product.getProductName());
             item.put("registerClass", product == null ? null : product.getRegisterClass());
             item.put("courseType", product == null ? null : product.getCourseType());
             item.put("gradeBand", clz.getGradeBand());
-        item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
-        item.put("startDate", clz.getStartDate());
-        item.put("endDate", clz.getEndDate());
+            item.put("actualClass", StringUtils.hasText(clz.getActualClass()) ? clz.getActualClass() : clz.getGradeBand());
+            item.put("startDate", clz.getStartDate());
+            item.put("endDate", clz.getEndDate());
             item.put("status", clz.getStatus());
             item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
             item.put("activeStudentCount", enrollmentCounts.getOrDefault(clz.getId(), 0L));
@@ -171,6 +181,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         detail.put("endDate", clz.getEndDate());
         detail.put("teacherName", teacher != null ? teacher.getTeacherName() : null);
         detail.put("classroomName", classroom != null ? classroom.getRoomName() : null);
+        CampusEntity campus = clz.getCampusId() == null ? null : campusMapper.selectById(clz.getCampusId());
+        detail.put("campusId", clz.getCampusId());
+        detail.put("campusName", campus == null ? null : campus.getCampusName());
         detail.put("status", clz.getStatus());
         return detail;
     }
@@ -761,6 +774,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         classGroup.setGradeBand(gradeBand);
         classGroup.setActualClass(actualClass);
         classGroup.setClassName(resolveClassName(body, actualClass));
+        classGroup.setCampusId(parseLongFromBody(body, "campusId"));
+        validateCampus(classGroup.getCampusId());
         classGroup.setListPrice(java.math.BigDecimal.ZERO);
         classGroup.setStatus("ACTIVE");
         inheritGradeBillingMetadata(classGroup);
@@ -779,6 +794,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         ensureActualClassUnique(classId, classGroup.getProductId(), classGroup.getGradeBand(), actualClass);
         classGroup.setActualClass(actualClass);
         classGroup.setClassName(resolveClassName(body, actualClass));
+        if (body.containsKey("campusId")) {
+            classGroup.setCampusId(parseLongFromBody(body, "campusId"));
+            validateCampus(classGroup.getCampusId());
+        }
         classGroupMapper.updateById(classGroup);
         return toClassInfoMap(classGroup);
     }
@@ -841,6 +860,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return value;
     }
 
+    private void validateCampus(Long campusId) {
+        if (campusId == null) {
+            return;
+        }
+        CampusEntity campus = campusMapper.selectById(campusId);
+        if (campus == null || !"ACTIVE".equals(campus.getStatus())) {
+            throw new BusinessException("CAMPUS_NOT_FOUND", "Selected campus is not active.");
+        }
+    }
+
     private String textFromBody(Map<String, Object> body, String key) {
         Object value = body.get(key);
         return value == null ? "" : String.valueOf(value).trim();
@@ -857,6 +886,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 : classGroup.getGradeBand());
         item.put("teacherId", classGroup.getTeacherId());
         item.put("classroomId", classGroup.getClassroomId());
+        item.put("campusId", classGroup.getCampusId());
+        CampusEntity campus = classGroup.getCampusId() == null ? null : campusMapper.selectById(classGroup.getCampusId());
+        item.put("campusName", campus == null ? null : campus.getCampusName());
         item.put("startDate", classGroup.getStartDate());
         item.put("endDate", classGroup.getEndDate());
         item.put("scheduleDesc", classGroup.getScheduleDesc());

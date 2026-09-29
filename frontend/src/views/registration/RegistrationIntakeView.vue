@@ -1843,7 +1843,7 @@ watch(() => form.student.dropoffRequired, (dropoffRequired) => {
 });
 
 watch(() => form.campusKey, () => {
-  if (isReadOnly.value) {
+  if (isReadOnly.value && !editingCorrection.value) {
     return;
   }
   if (form.student.pickupRequired) {
@@ -1852,6 +1852,12 @@ watch(() => form.campusKey, () => {
   if (form.student.dropoffRequired) {
     form.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
   }
+  courseLines.value.forEach((line) => {
+    if (!isOneOnOneLine(line) && line.classId
+        && !classOptionsForLine(line).some((classGroup) => String(classGroup.id) === String(line.classId))) {
+      line.classId = undefined;
+    }
+  });
 });
 
 watch(selectedStudentCreditId, () => {
@@ -3873,35 +3879,40 @@ function classOptionsForLine(line: RegistrationCourseLine) {
   if (!line.courseProductId || !line.gradeBand) {
     return [];
   }
-  const currentClasses = classGroupsForProductGrade(line.courseProductId, line.gradeBand);
+  const currentClasses = classGroupsForProductGrade(line.courseProductId, line.gradeBand, selectedCampus.value?.campusId);
   if (currentClasses.length > 0) {
     return currentClasses;
   }
   const option = findOption(line.coursePriceOptionId);
   if (option?.actualClasses && option.actualClasses.length > 0) {
-    return option.actualClasses.map(item => classGroupFromActualClassOption(item, line.courseProductId, line.gradeBand));
+    return option.actualClasses
+      .filter(item => selectedCampus.value?.campusId != null && String(item.campusId ?? '') === String(selectedCampus.value.campusId))
+      .map(item => classGroupFromActualClassOption(item, line.courseProductId, line.gradeBand));
   }
   return [];
 }
 
 function actualClassOptionsForOption(option: CoursePriceOptionItem) {
-  const currentClasses = classGroupsForProductGrade(option.courseProductId, option.gradeBand || '');
+  const currentClasses = classGroupsForProductGrade(option.courseProductId, option.gradeBand || '', selectedCampus.value?.campusId);
   if (currentClasses.length > 0) {
     return currentClasses;
   }
   if (option.actualClasses && option.actualClasses.length > 0) {
-    return option.actualClasses.map(item => classGroupFromActualClassOption(item, option.courseProductId, option.gradeBand || ''));
+    return option.actualClasses
+      .filter(item => selectedCampus.value?.campusId != null && String(item.campusId ?? '') === String(selectedCampus.value.campusId))
+      .map(item => classGroupFromActualClassOption(item, option.courseProductId, option.gradeBand || ''));
   }
   return [];
 }
 
-function classGroupsForProductGrade(productId?: EntityId, gradeBand = '') {
-  if (!productId || !gradeBand) {
+function classGroupsForProductGrade(productId?: EntityId, gradeBand = '', campusId?: EntityId) {
+  if (!productId || !gradeBand || campusId == null) {
     return [];
   }
   return classGroups.value.filter((item) =>
     String(item.productId) === String(productId)
-      && String(item.gradeBand || '').toLowerCase() === String(gradeBand || '').toLowerCase());
+      && String(item.gradeBand || '').toLowerCase() === String(gradeBand || '').toLowerCase()
+      && String(item.campusId ?? '') === String(campusId));
 }
 
 function classGroupFromActualClassOption(
@@ -3917,6 +3928,8 @@ function classGroupFromActualClassOption(
     id: item.id,
     className: item.className,
     actualClass: item.actualClass,
+    campusId: item.campusId,
+    campusName: item.campusName,
     gradeBand,
     productId,
     teacherId: item.teacherId,
@@ -4179,7 +4192,23 @@ function classSelectPlaceholder(line: RegistrationCourseLine) {
   if (!line.coursePriceOptionId) {
     return 'Select option first';
   }
-  return classOptionsForLine(line).length > 0 ? 'Select actual class' : 'No actual class configured';
+  if (!selectedCampus.value?.campusId) {
+    return 'Select a campus first';
+  }
+  if (classOptionsForLine(line).length > 0) {
+    return 'Select actual class';
+  }
+  return hasUnassignedClassForLine(line) ? 'Assign class campus in Prices > Edit Info' : 'No class for this campus';
+}
+
+function hasUnassignedClassForLine(line: RegistrationCourseLine) {
+  if (!line.courseProductId || !line.gradeBand) {
+    return false;
+  }
+  return classGroups.value.some((item) =>
+    String(item.productId) === String(line.courseProductId)
+      && String(item.gradeBand || '').toLowerCase() === String(line.gradeBand || '').toLowerCase()
+      && item.campusId == null);
 }
 
 function classScheduleLabel(line: RegistrationCourseLine) {
@@ -4463,8 +4492,19 @@ function validateForm() {
     if (line.dropoffRequired && !effectiveCourseDropoffAddress(line)) {
       errors.push(`${label}: drop-off address is required when drop-off is checked.`);
     }
-    if (!isOneOnOneLine(line) && classOptionsForLine(line).length > 0 && !line.classId) {
-      errors.push(`${label}: select an active class for group registration.`);
+    if (!isOneOnOneLine(line)) {
+      const availableClasses = classOptionsForLine(line);
+      const unchangedLegacyClass = isReadOnly.value && editingCorrection.value && Boolean(line.classId);
+      if (availableClasses.length === 0 && !unchangedLegacyClass) {
+        errors.push(hasUnassignedClassForLine(line)
+          ? `${label}: assign a campus to this class in Prices > Edit Info first.`
+          : `${label}: no class is configured for the selected campus and grade.`);
+      } else if (availableClasses.length > 0 && !line.classId) {
+        errors.push(`${label}: select an active class for group registration.`);
+      } else if (availableClasses.length > 0 && line.classId
+          && !availableClasses.some(classGroup => String(classGroup.id) === String(line.classId))) {
+        errors.push(`${label}: select a class for the selected campus.`);
+      }
     }
     if (!isOneOnOneLine(line) && line.coursePriceOptionId && !line.startDate) {
       errors.push(`${label}: select the enrollment start date.`);

@@ -33,6 +33,9 @@ public class ClassGroupEntity extends BaseEntity {
 
     private Long classroomId;
 
+    /** 班级所属校区；历史数据允许为空，需由管理员确认后维护。 */
+    private Long campusId;
+
     private BigDecimal listPrice;
 
     private String scheduleDesc;

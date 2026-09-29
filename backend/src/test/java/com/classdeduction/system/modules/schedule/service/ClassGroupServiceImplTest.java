@@ -8,9 +8,11 @@ import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
@@ -90,6 +92,9 @@ class ClassGroupServiceImplTest {
     private ClassroomMapper classroomMapper;
 
     @Mock
+    private CampusMapper campusMapper;
+
+    @Mock
     private CourseProductMapper courseProductMapper;
 
     @Mock
@@ -134,6 +139,7 @@ class ClassGroupServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
+                campusMapper,
                 courseProductMapper,
                 productGradeConfigMapper,
                 coursePackageMapper,
@@ -186,6 +192,32 @@ class ClassGroupServiceImplTest {
                 .containsEntry("purchasedQuantity", 4)
                 .containsEntry("usedSessions", 1L)
                 .containsEntry("remainingSessions", 3);
+    }
+
+    @Test
+    void shouldSaveCampusWhenUpdatingActualClassInfo() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setProductId(601L);
+        classGroup.setGradeBand("G3-G6");
+        classGroup.setActualClass("G3");
+        classGroup.setClassName("G3");
+        classGroup.setStatus("ACTIVE");
+        CampusEntity campus = new CampusEntity();
+        campus.setId(701L);
+        campus.setCampusName("North Campus");
+        campus.setStatus("ACTIVE");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(campusMapper.selectById(701L)).thenReturn(campus);
+
+        classGroupService.updateClassInfo(501L, Map.of(
+                "actualClass", "G3",
+                "className", "G3 North Campus",
+                "campusId", 701L));
+
+        ArgumentCaptor<ClassGroupEntity> savedClass = ArgumentCaptor.forClass(ClassGroupEntity.class);
+        verify(classGroupMapper).updateById(savedClass.capture());
+        assertThat(savedClass.getValue().getCampusId()).isEqualTo(701L);
     }
 
     @Test

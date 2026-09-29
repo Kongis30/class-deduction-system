@@ -74,7 +74,9 @@ public record CoursePriceOptionVO(
             String teacherName,
             Long classroomId,
             String classroomName,
-            String scheduleDesc
+            String scheduleDesc,
+            Long campusId,
+            String campusName
     ) {
     }
 }

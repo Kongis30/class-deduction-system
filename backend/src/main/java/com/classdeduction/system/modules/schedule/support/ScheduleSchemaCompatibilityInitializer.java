@@ -36,6 +36,8 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Whether the grade-wide class period is explicitly configured' AFTER class_end_date");
         addClassGroupColumnIfMissing("actual_class",
                 "varchar(64) DEFAULT NULL COMMENT 'Actual class name under a billing grade, e.g. G1/G2' AFTER grade_band");
+        addClassGroupColumnIfMissing("campus_id",
+                "bigint DEFAULT NULL COMMENT 'Campus assigned to this actual class' AFTER classroom_id");
         addEnrollmentOrderItemColumnIfMissing("start_date",
                 "date DEFAULT NULL COMMENT 'Course line enrollment start date' AFTER time_slot_label");
         addEnrollmentOrderColumnIfMissing("student_class_snapshot",
