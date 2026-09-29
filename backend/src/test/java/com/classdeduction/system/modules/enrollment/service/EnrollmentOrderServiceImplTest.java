@@ -49,6 +49,7 @@ import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEn
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
+import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationLogMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -507,7 +508,10 @@ class EnrollmentOrderServiceImplTest {
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
         slot.setWeekday(1);
         when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
-        when(classHolidayService.listHolidays(any(), any(), any(), any())).thenReturn(List.of());
+        // 13 个周一里有一天放假：完整定价课包放不下，但实际购买的 3 次可以排完。
+        when(classHolidayService.listHolidays(any(), any(), any(), any())).thenReturn(List.of(
+                new ClassHolidayVO(1L, "Holiday", LocalDate.of(2026, 11, 2), LocalDate.of(2026, 11, 2))));
+        when(classHolidayService.isHoliday(any(LocalDate.class), any(List.class))).thenCallRealMethod();
 
         enrollmentOrderService.correctOrder(2001L, request);
 
@@ -583,7 +587,7 @@ class EnrollmentOrderServiceImplTest {
 
         ClassGroupEntity group = buildClassGroup(202L);
         group.setStartDate(LocalDate.of(2026, 9, 1));
-        group.setEndDate(LocalDate.of(2026, 10, 5));
+        group.setEndDate(LocalDate.of(2026, 12, 7));
         group.setGradeBand("G1-G5");
 
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
