@@ -43,13 +43,16 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -130,6 +133,14 @@ class ClassGroupServiceImplTest {
                 privateLessonGroupMemberMapper,
                 classHolidayService
         );
+        lenient().when(classroomMapper.selectById(801L)).thenReturn(activeClassroom(801L));
+    }
+
+    /** 排课用例默认使用有效教室；独立资源用例可继续在各 slot 覆盖教室。 */
+    private Map<String, Object> updateScheduleWithDefaultClassroom(Long classId, Map<String, Object> body) {
+        Map<String, Object> request = new HashMap<>(body);
+        request.putIfAbsent("classroomId", 801L);
+        return classGroupService.updateClassSchedule(classId, request);
     }
 
     @Test
@@ -663,7 +674,7 @@ class ClassGroupServiceImplTest {
                 activeEnrollment(601L, futureDate, futureDate)));
 
         int weekday = futureDate.getDayOfWeek().getValue();
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of(
                         "teacherId", 702L,
                         "weekday", weekday,
@@ -672,7 +683,7 @@ class ClassGroupServiceImplTest {
         ));
 
         ArgumentCaptor<ClassGroupScheduleSlotEntity> slotCaptor = ArgumentCaptor.forClass(ClassGroupScheduleSlotEntity.class);
-        verify(classGroupMapper).updateById(classGroup);
+        verify(classGroupMapper, atLeastOnce()).updateById(classGroup);
         verify(classGroupScheduleSlotMapper).insert(slotCaptor.capture());
         verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
         assertThat(classGroup.getScheduleDesc()).isEqualTo(weekdayShortLabel(weekday) + " 10:00-11:30");
@@ -706,7 +717,7 @@ class ClassGroupServiceImplTest {
                 activeEnrollment(601L, futureDate, futureDate)));
 
         int weekday = futureDate.getDayOfWeek().getValue();
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(
                         Map.of("teacherId", 702L, "classroomId", 801L,
                                 "weekday", weekday, "startTime", "10:00", "endTime", "11:00"),
@@ -763,7 +774,7 @@ class ClassGroupServiceImplTest {
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(
                 List.of(), List.of(), List.of(), List.of(conflict));
 
-        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+        assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("teacherId", 702L,
                         "weekday", lessonDate.getDayOfWeek().getValue(),
                         "startTime", "10:00", "endTime", "11:30")))))
@@ -820,7 +831,7 @@ class ClassGroupServiceImplTest {
         // 当天已开始的旧课不在“未来可删除课次”查询中，但仍留在数据库参与冲突检查。
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
 
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(
                         Map.of("weekday", today.getDayOfWeek().getValue(),
                                 "startTime", "00:00", "endTime", "00:30"),
@@ -840,7 +851,7 @@ class ClassGroupServiceImplTest {
         classGroup.setStatus("ACTIVE");
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
 
-        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+        assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(
                         Map.of("weekday", 1, "startTime", "10:00", "endTime", "11:00"),
                         Map.of("weekday", 1, "startTime", "10:30", "endTime", "11:30"))
@@ -870,7 +881,7 @@ class ClassGroupServiceImplTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo("CLASS_LESSONS_NOT_CONFIRMED");
-        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+        assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("weekday", now.getDayOfWeek().getValue(),
                         "startTime", "15:00", "endTime", "18:00")))))
                 .isInstanceOf(BusinessException.class)
@@ -894,12 +905,12 @@ class ClassGroupServiceImplTest {
                 activeEnrollment(601L, today.minusDays(7), today.plusDays(7))));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
 
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "preserveStartedLessons", true,
                 "slots", List.of(Map.of("weekday", today.plusDays(1).getDayOfWeek().getValue(),
                         "startTime", "15:00", "endTime", "17:00"))));
 
-        verify(classGroupMapper).updateById(classGroup);
+        verify(classGroupMapper, atLeastOnce()).updateById(classGroup);
         verify(classGroupScheduleSlotMapper).insert(any(ClassGroupScheduleSlotEntity.class));
         assertThat(result.get("classId")).isEqualTo(501L);
     }
@@ -921,7 +932,7 @@ class ClassGroupServiceImplTest {
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(
                 List.of(historical), List.of(), List.of(), List.of());
 
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("weekday", tomorrow.getDayOfWeek().getValue(),
                         "startTime", "10:00", "endTime", "11:00"))));
 
@@ -948,7 +959,7 @@ class ClassGroupServiceImplTest {
                 List.of(), List.of(preserved), List.of(preserved));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of(
                         "weekday", preservedDate.getDayOfWeek().getValue(),
                         "startTime", "10:00",
@@ -978,7 +989,7 @@ class ClassGroupServiceImplTest {
                 List.of(), List.of(recorded), List.of(recorded), List.of());
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(
                         Map.of("weekday", lessonDate.getDayOfWeek().getValue(),
                                 "startTime", "10:00", "endTime", "11:30"),
@@ -1039,7 +1050,7 @@ class ClassGroupServiceImplTest {
                 List.of(), List.of(recorded), List.of(recorded));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
 
-        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+        assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("weekday", lessonDate.getDayOfWeek().getValue(),
                         "startTime", "11:00", "endTime", "12:00")))))
                 .isInstanceOf(BusinessException.class)
@@ -1053,7 +1064,7 @@ class ClassGroupServiceImplTest {
         LocalDate date = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
         stubPreviouslyOverlappingClassSchedule(date);
 
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("weekday", date.getDayOfWeek().getValue(),
                         "startTime", "15:00", "endTime", "18:00"))));
 
@@ -1066,7 +1077,7 @@ class ClassGroupServiceImplTest {
         LocalDate date = AppTime.nowLocalDateTime().toLocalDate().plusDays(1);
         stubPreviouslyOverlappingClassSchedule(date);
 
-        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
+        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("weekday", date.getDayOfWeek().getValue(),
                         "startTime", "15:00", "endTime", "19:00"))));
 
@@ -1082,7 +1093,7 @@ class ClassGroupServiceImplTest {
         student.setStudentName("Osborn Wang");
         when(studentMapper.selectById(601L)).thenReturn(student);
 
-        assertThatThrownBy(() -> classGroupService.updateClassSchedule(501L, Map.of(
+        assertThatThrownBy(() -> updateScheduleWithDefaultClassroom(501L, Map.of(
                 "slots", List.of(Map.of("weekday", date.getDayOfWeek().getValue(),
                         "startTime", "14:00", "endTime", "18:00")))))
                 .isInstanceOf(BusinessException.class)
