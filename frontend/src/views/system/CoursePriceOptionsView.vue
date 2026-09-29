@@ -250,52 +250,64 @@
                       </el-dropdown>
                     </div>
                   </div>
-                  <div v-if="groupActualClassRows(group).length" class="actual-class-grid">
-                    <article
-                      v-for="actualClass in groupActualClassRows(group)"
-                      :key="actualClass.id"
-                      class="actual-class-card"
+                  <div v-if="groupActualClassRows(group).length" class="actual-class-campus-groups">
+                    <section
+                      v-for="campusGroup in groupActualClassesByCampus(group)"
+                      :key="campusGroup.key"
+                      class="actual-class-campus-group"
                     >
-                      <div class="actual-class-card__main">
-                        <div class="actual-class-card__heading">
-                          <strong>{{ actualClassDisplayLabel(actualClass) }}</strong>
-                          <span
-                            class="actual-class-card__campus"
-                            :class="campusBadgeClass(actualClass.campusName)"
-                          >
-                            {{ actualClass.campusName || '—' }}
-                          </span>
-                        </div>
-                        <span>{{ actualClass.scheduleDesc || 'Schedule not set' }}</span>
-                        <small>Class period: {{ actualClassPeriodLabel(actualClass) }}</small>
+                      <div class="actual-class-campus-group__head">
+                        <strong>{{ campusGroup.campusName }}</strong>
+                        <span>{{ campusGroup.rows.length }} {{ campusGroup.rows.length === 1 ? 'class' : 'classes' }}</span>
                       </div>
-                      <dl>
-                        <div>
-                          <dt>Teacher</dt>
-                          <el-tooltip
-                            :content="actualClassTeacherLabel(actualClass)"
-                            placement="top"
-                            :disabled="!actualClassTeacherNames(actualClass).length"
-                          >
-                            <dd class="actual-class-card__teacher">
-                              {{ actualClassTeacherLabel(actualClass) }}
-                            </dd>
-                          </el-tooltip>
-                        </div>
-                        <div>
-                          <dt>Room</dt>
-                          <dd>{{ actualClassClassroomLabel(actualClass) }}</dd>
-                        </div>
-                      </dl>
-                      <div class="actual-class-card__actions">
-                        <el-button size="small" plain @click="openActualClassInfoDialog(group, actualClass)">
-                          Edit info
-                        </el-button>
-                        <el-button size="small" plain type="primary" @click="openActualClassScheduleDialog(actualClass)">
-                          Edit schedule
-                        </el-button>
+                      <div class="actual-class-grid">
+                        <article
+                          v-for="actualClass in campusGroup.rows"
+                          :key="actualClass.id"
+                          class="actual-class-card"
+                        >
+                          <div class="actual-class-card__main">
+                            <div class="actual-class-card__heading">
+                              <strong>{{ actualClassDisplayLabel(actualClass) }}</strong>
+                              <span
+                                class="actual-class-card__campus"
+                                :class="campusBadgeClass(actualClass.campusName)"
+                              >
+                                {{ actualClass.campusName || '—' }}
+                              </span>
+                            </div>
+                            <span>{{ actualClass.scheduleDesc || 'Schedule not set' }}</span>
+                            <small>Class period: {{ actualClassPeriodLabel(actualClass) }}</small>
+                          </div>
+                          <dl>
+                            <div>
+                              <dt>Teacher</dt>
+                              <el-tooltip
+                                :content="actualClassTeacherLabel(actualClass)"
+                                placement="top"
+                                :disabled="!actualClassTeacherNames(actualClass).length"
+                              >
+                                <dd class="actual-class-card__teacher">
+                                  {{ actualClassTeacherLabel(actualClass) }}
+                                </dd>
+                              </el-tooltip>
+                            </div>
+                            <div>
+                              <dt>Room</dt>
+                              <dd>{{ actualClassClassroomLabel(actualClass) }}</dd>
+                            </div>
+                          </dl>
+                          <div class="actual-class-card__actions">
+                            <el-button size="small" plain @click="openActualClassInfoDialog(group, actualClass)">
+                              Edit info
+                            </el-button>
+                            <el-button size="small" plain type="primary" @click="openActualClassScheduleDialog(actualClass)">
+                              Edit schedule
+                            </el-button>
+                          </div>
+                        </article>
                       </div>
-                    </article>
+                    </section>
                   </div>
                   <el-empty v-else :image-size="40" description="No actual classes for this grade yet." />
                 </section>
@@ -848,6 +860,12 @@ interface ActualClassScheduleRow {
   endDate?: string;
   scheduleDesc?: string;
   scheduleSlots?: ClassGroupItem['scheduleSlots'];
+}
+
+interface ActualClassCampusGroup {
+  key: string;
+  campusName: string;
+  rows: ActualClassScheduleRow[];
 }
 
 const HeaderTip = defineComponent({
@@ -2210,6 +2228,25 @@ function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[
     }));
 }
 
+function groupActualClassesByCampus(group: ProductPriceGroup): ActualClassCampusGroup[] {
+  const campuses = new Map<string, ActualClassCampusGroup>();
+  for (const row of groupActualClassRows(group)) {
+    const campusName = row.campusName?.trim() || '—';
+    const key = row.campusId != null
+      ? `campus:${String(row.campusId)}`
+      : `name:${campusName.toLocaleLowerCase()}`;
+    const campusGroup = campuses.get(key) ?? { key, campusName, rows: [] };
+    campusGroup.rows.push(row);
+    campuses.set(key, campusGroup);
+  }
+
+  return [...campuses.values()].sort((left, right) => {
+    if (left.campusName === '—') return 1;
+    if (right.campusName === '—') return -1;
+    return left.campusName.localeCompare(right.campusName, undefined, { sensitivity: 'base' });
+  });
+}
+
 function existingActualClassNames(productId?: EntityId, gradeBand = '') {
   const names = classGroups.value
     .filter(item => String(item.productId ?? '') === String(productId ?? '')
@@ -2706,6 +2743,34 @@ function normalizeSlotAttendance(value?: string) {
 .actual-class-schedules__head span {
   color: #64748b;
   font-size: 12px;
+}
+
+.actual-class-campus-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.actual-class-campus-group {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.actual-class-campus-group__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #334155;
+  font-size: 12px;
+}
+
+.actual-class-campus-group__head span {
+  color: #64748b;
+  font-weight: 400;
 }
 
 .actual-class-grid {

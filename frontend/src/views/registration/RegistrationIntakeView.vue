@@ -539,7 +539,7 @@
                             <el-option
                               v-for="classGroup in classOptionsForLine(line)"
                               :key="classGroup.id"
-                              :label="formatClassLabel(classGroup)"
+                              :label="formatClassOptionLabel(classGroup)"
                               :value="classGroup.id"
                             />
                           </el-select>
@@ -5227,6 +5227,10 @@ function formatClassLabel(item: ClassGroupItem) {
   const actualClass = item.actualClass?.trim();
   const className = item.className?.trim();
   return className || actualClass || item.gradeBand || 'Class';
+}
+
+function formatClassOptionLabel(item: ClassGroupItem) {
+  return `${formatClassLabel(item)} · ${item.campusName?.trim() || '—'}`;
 }
 
 function formatCourseType(type: string) {
