@@ -121,6 +121,11 @@ class ControllerRoleBoundaryTest {
         assertThat(Set.of(confirmLesson.value())).containsExactlyInAnyOrder("ADMIN", "STAFF", "MANAGER", "TEACHER");
     }
 
+    @Test
+    void teacherCalendarShouldBeAvailableToManagers() {
+        assertClassRoles(LessonOccurrenceController.class, "ADMIN", "STAFF", "MANAGER", "TEACHER", "STUDENT");
+    }
+
     private void assertClassRoles(Class<?> controller, String... expectedRoles) {
         assertThat(Set.of(controller.getAnnotation(RequireRoles.class).value()))
                 .containsExactlyInAnyOrder(expectedRoles);
