@@ -532,10 +532,21 @@
                             v-model="line.classId"
                             class="table-select option"
                             :placeholder="classSelectPlaceholder(line)"
-                            :disabled="!receiptEditingEnabled || !line.coursePriceOptionId || classOptionsForLine(line).length === 0"
+                            :disabled="!receiptEditingEnabled || !line.coursePriceOptionId || (!selectedCampus && classOptionsForLine(line).length === 0)"
                             filterable
                             @change="() => handleClassChange(line)"
                           >
+                            <template #prefix v-if="selectedCampus">
+                              <el-button
+                                class="registration-class-campus-toggle no-print"
+                                size="small"
+                                text
+                                type="primary"
+                                @click.stop="showAllCampusClasses = !showAllCampusClasses"
+                              >
+                                {{ showAllCampusClasses ? 'Selected campus' : 'All campuses' }}
+                              </el-button>
+                            </template>
                             <template #label="{ label, value }">
                               <span class="registration-class-option">
                                 <el-tag
@@ -550,38 +561,34 @@
                                 </span>
                               </span>
                             </template>
-                            <el-option
-                              v-for="classGroup in classOptionsForLine(line)"
-                              :key="classGroup.id"
-                              :label="formatClassOptionLabel(classGroup)"
-                              :value="classGroup.id"
+                            <el-option-group
+                              v-for="campusGroup in classOptionGroupsForLine(line)"
+                              :key="campusGroup.key"
+                              :label="campusGroup.campusName"
                             >
-                              <template #default>
-                                <span class="registration-class-option">
-                                  <el-tag
-                                    size="small"
-                                    effect="plain"
-                                    :type="campusOptionTagType(classGroup.campusName)"
-                                  >
-                                    {{ classGroup.campusName?.trim() || '—' }}
-                                  </el-tag>
-                                  <span class="registration-class-option__name">
-                                    {{ formatClassLabel(classGroup) }}
+                              <el-option
+                                v-for="classGroup in campusGroup.options"
+                                :key="classGroup.id"
+                                :label="formatClassOptionLabel(classGroup)"
+                                :value="classGroup.id"
+                              >
+                                <template #default>
+                                  <span class="registration-class-option">
+                                    <el-tag
+                                      size="small"
+                                      effect="plain"
+                                      :type="campusOptionTagType(classGroup.campusName)"
+                                    >
+                                      {{ classGroup.campusName?.trim() || '—' }}
+                                    </el-tag>
+                                    <span class="registration-class-option__name">
+                                      {{ formatClassLabel(classGroup) }}
+                                    </span>
                                   </span>
-                                </span>
-                              </template>
-                            </el-option>
+                                </template>
+                              </el-option>
+                            </el-option-group>
                           </el-select>
-                          <el-button
-                            v-if="selectedCampus"
-                            class="registration-class-campus-toggle no-print"
-                            size="small"
-                            text
-                            type="primary"
-                            @click="showAllCampusClasses = !showAllCampusClasses"
-                          >
-                            {{ showAllCampusClasses ? 'Selected campus only' : 'All campuses' }}
-                          </el-button>
                         </div>
                         <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
                       </label>
@@ -1171,6 +1178,12 @@ interface RegistrationCourseLine {
   dropoffFeeAmount: number;
   serviceFees: MoneyLine[];
   remark?: string;
+}
+
+interface ClassOptionCampusGroup {
+  key: string;
+  campusName: string;
+  options: ClassGroupItem[];
 }
 
 interface MoneyLine {
@@ -3937,6 +3950,33 @@ function classOptionsForLine(line: RegistrationCourseLine) {
   return [];
 }
 
+// 下拉选项先按校区归组，再按班级名称排序，确保各校区内的查找顺序稳定。
+function classOptionGroupsForLine(line: RegistrationCourseLine): ClassOptionCampusGroup[] {
+  const groups = new Map<string, ClassOptionCampusGroup>();
+  for (const classGroup of classOptionsForLine(line)) {
+    const campusName = classGroup.campusName?.trim() || 'Unassigned';
+    const key = campusName.toLocaleLowerCase();
+    const group = groups.get(key) ?? { key, campusName, options: [] };
+    group.options.push(classGroup);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      options: group.options.sort((left, right) =>
+        formatClassLabel(left).localeCompare(formatClassLabel(right), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        })),
+    }))
+    .sort((left, right) => {
+      if (left.campusName === 'Unassigned') return 1;
+      if (right.campusName === 'Unassigned') return -1;
+      return left.campusName.localeCompare(right.campusName, undefined, { sensitivity: 'base' });
+    });
+}
+
 function actualClassOptionsForOption(option: CoursePriceOptionItem) {
   const campusId = classCampusFilterId();
   const currentClasses = classGroupsForProductGrade(option.courseProductId, option.gradeBand || '', campusId);
@@ -6541,15 +6581,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 .registration-class-select-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
+  display: block;
   min-width: 0;
 }
 
 .registration-class-campus-toggle {
-  padding: 0 4px;
+  min-height: 22px;
+  padding: 0 3px;
   font-size: 11px;
   white-space: nowrap;
 }
