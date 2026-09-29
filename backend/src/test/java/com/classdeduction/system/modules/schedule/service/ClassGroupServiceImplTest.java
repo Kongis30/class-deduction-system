@@ -674,7 +674,7 @@ class ClassGroupServiceImplTest {
                 activeEnrollment(601L, futureDate, futureDate)));
 
         int weekday = futureDate.getDayOfWeek().getValue();
-        Map<String, Object> result = updateScheduleWithDefaultClassroom(501L, Map.of(
+        Map<String, Object> result = classGroupService.updateClassSchedule(501L, Map.of(
                 "slots", List.of(Map.of(
                         "teacherId", 702L,
                         "weekday", weekday,
