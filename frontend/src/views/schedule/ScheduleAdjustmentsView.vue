@@ -470,7 +470,7 @@
             <el-select v-model="slot.teacherId" clearable filterable placeholder="Use default teacher">
               <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
             </el-select>
-            <el-select v-model="slot.classroomSelection" filterable placeholder="Select classroom or Online">
+            <el-select v-model="slot.classroomSelection" clearable filterable placeholder="No classroom (optional)">
               <el-option label="Online" value="ONLINE" />
               <el-option-group v-for="group in classScheduleClassroomGroups" :key="group.key" :label="group.label">
                 <el-option
@@ -1520,10 +1520,6 @@ async function submitClassSchedule() {
   if (!classScheduleFormRef.value || !selectedClassId.value) return;
   await classScheduleFormRef.value.validate(async (valid) => {
     if (!valid) return;
-    if (classScheduleForm.slots.some(slot => !slot.classroomSelection)) {
-      ElMessage.warning('Choose a classroom or Online for every time slot.');
-      return;
-    }
     submitting.value = true;
     try {
       await updateClassSchedule(selectedClassId.value!, {
