@@ -257,7 +257,15 @@
                       class="actual-class-card"
                     >
                       <div class="actual-class-card__main">
-                        <strong>{{ actualClassDisplayLabel(actualClass) }}</strong>
+                        <div class="actual-class-card__heading">
+                          <strong>{{ actualClassDisplayLabel(actualClass) }}</strong>
+                          <span
+                            class="actual-class-card__campus"
+                            :class="campusBadgeClass(actualClass.campusName)"
+                          >
+                            {{ actualClass.campusName || 'Campus not set' }}
+                          </span>
+                        </div>
                         <span>{{ actualClass.scheduleDesc || 'Schedule not set' }}</span>
                         <small>Class period: {{ actualClassPeriodLabel(actualClass) }}</small>
                       </div>
@@ -2100,6 +2108,14 @@ function actualClassDisplayLabel(actualClass: ActualClassScheduleRow) {
   return className || classCode || actualClass.gradeBand || 'Class';
 }
 
+function campusBadgeClass(campusName?: string) {
+  const normalized = campusName?.trim().toLowerCase() || '';
+  if (!normalized) return 'actual-class-card__campus--unassigned';
+  if (normalized.includes('north') || normalized.includes('北')) return 'actual-class-card__campus--north';
+  if (normalized.includes('south') || normalized.includes('南')) return 'actual-class-card__campus--south';
+  return 'actual-class-card__campus--assigned';
+}
+
 function actualClassPeriodLabel(actualClass: ActualClassScheduleRow) {
   if (actualClass.startDate && actualClass.endDate) {
     return `${actualClass.startDate} to ${actualClass.endDate}`;
@@ -2715,6 +2731,54 @@ function normalizeSlotAttendance(value?: string) {
 .actual-class-card__main strong {
   color: #0f172a;
   font-size: 14px;
+}
+
+.actual-class-card__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.actual-class-card__heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actual-class-card__campus {
+  flex: none;
+  max-width: 52%;
+  overflow: hidden;
+  padding: 2px 8px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actual-class-card__campus--north {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.actual-class-card__campus--south {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.actual-class-card__campus--unassigned {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #64748b;
 }
 
 .actual-class-card__main span {
