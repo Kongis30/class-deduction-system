@@ -11,16 +11,16 @@ import lombok.Setter;
 @Schema(description = "报名管理者账号创建请求")
 public class ManagerAccountCreateRequest {
 
-    @NotBlank
     @Size(max = 64)
+    @Schema(description = "Optional login username; defaults to first name + last initial + @jin")
     private String username;
 
-    @NotBlank
     @Size(min = 8, max = 64)
+    @Schema(description = "Optional initial password; defaults to the system initial password")
     private String password;
 
-    @NotBlank
     @Size(max = 64)
+    @NotBlank
     private String displayName;
 
     @Size(max = 32)

@@ -195,7 +195,7 @@
         </div>
         <el-form label-position="top" class="teacher-form">
           <el-form-item label="Username">
-            <el-input v-model="teacherAccountForm.username" placeholder="Login username" />
+            <el-input v-model="teacherAccountForm.username" :readonly="teacherAccountMode === 'create'" placeholder="Login username" />
           </el-form-item>
           <el-form-item label="Display name">
             <el-input v-model="teacherAccountForm.displayName" placeholder="Defaults to teacher name" />
@@ -213,6 +213,7 @@
             <el-input
               v-model="teacherAccountForm.password"
               type="password"
+              :readonly="teacherAccountMode === 'create'"
               :placeholder="teacherAccountMode === 'create' ? 'Min 8 characters' : 'Leave blank to keep current'"
               show-password
             />
@@ -338,6 +339,7 @@ import {
 import { extractErrorMessage } from '@/api/http';
 import { fetchClassGroupsByTeacher } from '@/api/schedule';
 import type { TeacherAccountItem, TeacherItem } from '@/types/domain';
+import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 
 const loading = ref(false);
@@ -441,12 +443,12 @@ function openTeacherAccountDialog(row: TeacherItem) {
   editingTeacherAccount.value = account ?? null;
   teacherAccountMode.value = account ? 'edit' : 'create';
   Object.assign(teacherAccountForm, {
-    username: account?.username ?? '',
+    username: account?.username ?? usernameFromName(row.teacherName),
     displayName: account?.displayName ?? row.teacherName,
     email: account?.email ?? row.email ?? '',
     status: account?.status ?? 'ACTIVE',
-    password: '',
-    confirmPassword: '',
+    password: account ? '' : DEFAULT_INITIAL_PASSWORD,
+    confirmPassword: account ? '' : DEFAULT_INITIAL_PASSWORD,
   });
   teacherAccountDialogVisible.value = true;
 }

@@ -145,14 +145,13 @@
         <!-- Account fields (common) -->
         <div class="form-divider">Account Info</div>
         <el-form-item label="Account" prop="username">
-          <el-input v-model="createForm.username" placeholder="Login username" />
+          <el-input v-model="createForm.username" readonly placeholder="Enter a first and last name above" />
+          <div class="form-hint">Generated from the name: first name + last initial + @jin.</div>
         </el-form-item>
         <div class="form-row">
           <el-form-item label="Password" prop="password">
-            <el-input v-model="createForm.password" type="password" placeholder="Min 8 characters" show-password />
-          </el-form-item>
-          <el-form-item label="Confirm password" prop="confirmPassword">
-            <el-input v-model="createForm.confirmPassword" type="password" placeholder="Re-enter password" show-password />
+            <el-input v-model="createForm.password" readonly />
+            <div class="form-hint">The user can change this after signing in.</div>
           </el-form-item>
         </div>
       </el-form>
@@ -274,9 +273,10 @@
 <script setup lang="ts">
 import { Delete, MoreFilled, Plus } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { createStudentAccount, createTeacherAccount, deleteStudentAccount, deleteTeacherAccount, fetchDeletedStudentAccounts, fetchDeletedTeacherAccounts, fetchStudentAccounts, fetchTeacherAccounts, updateTeacherAccount, updateStudentAccount } from '@/api/auth';
 import type { StudentAccountItem, TeacherAccountItem } from '@/types/domain';
+import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 
 const teacherLoading = ref(false);
 const studentLoading = ref(false);
@@ -382,8 +382,8 @@ const createForm = reactive({
   guardianPhone: '',
   guardianEmail: '',
   username: '',
-  password: '',
-  confirmPassword: '',
+  password: DEFAULT_INITIAL_PASSWORD,
+  confirmPassword: DEFAULT_INITIAL_PASSWORD,
   email: '',
 });
 
@@ -395,22 +395,21 @@ const formRules = computed(() => ({
   studentName: [
     { required: createForm.userType === 'STUDENT', message: 'Student name is required' },
   ],
-  username: [{ required: true, message: 'Username is required' }],
-  password: [{ required: true, message: 'Password is required', min: 8 }],
-  confirmPassword: [
-    { required: true, message: 'Please confirm password' },
-    {
-      validator: (_rule: any, value: string, callback: Function) => {
-        if (value !== createForm.password) {
-          callback(new Error('Passwords do not match'));
-        } else {
-          callback();
-        }
-      },
-      trigger: 'blur',
-    },
-  ],
+  username: [{ required: true, message: 'Enter a first and last name above' }],
+  password: [{ required: true, message: 'Initial password is required' }],
 }));
+
+function updateGeneratedCredentials() {
+  const name = createForm.userType === 'TEACHER' ? createForm.teacherName : createForm.studentName;
+  createForm.username = usernameFromName(name);
+  createForm.password = DEFAULT_INITIAL_PASSWORD;
+  createForm.confirmPassword = DEFAULT_INITIAL_PASSWORD;
+}
+
+watch(
+  () => [createForm.userType, createForm.teacherName, createForm.studentName],
+  updateGeneratedCredentials,
+);
 
 // ─── Edit Account ────────────────────────────────────
 const editDialogVisible = ref(false);
@@ -516,10 +515,11 @@ function openCreateDialog(type: 'TEACHER' | 'STUDENT') {
     guardianPhone: '',
     guardianEmail: '',
     username: '',
-    password: '',
-    confirmPassword: '',
+    password: DEFAULT_INITIAL_PASSWORD,
+    confirmPassword: DEFAULT_INITIAL_PASSWORD,
     email: '',
   });
+  updateGeneratedCredentials();
   formRef.value?.clearValidate();
   dialogVisible.value = true;
 }
@@ -618,6 +618,12 @@ async function handleCreate() {
   padding-bottom: 6px;
   margin-top: 8px;
   margin-bottom: 6px;
+}
+.form-hint {
+  margin-top: 4px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
 }
 .account-dialog :deep(.el-dialog__body) {
   padding: 16px 20px;

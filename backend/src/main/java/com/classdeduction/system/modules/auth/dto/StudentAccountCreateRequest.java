@@ -2,7 +2,6 @@ package com.classdeduction.system.modules.auth.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -28,14 +27,12 @@ public class StudentAccountCreateRequest {
     @Schema(description = "Guardian email", example = "parent@example.com")
     private String guardianEmail;
 
-    @NotBlank(message = "Username is required")
     @Size(max = 64, message = "Username must not exceed 64 characters")
-    @Schema(description = "Login username", example = "student.sophia")
+    @Schema(description = "Optional login username; defaults to first name + last initial + @jin")
     private String username;
 
-    @NotBlank(message = "Password is required")
     @Size(min = 8, max = 64, message = "Password length must be between 8 and 64 characters")
-    @Schema(description = "Initial password", example = "Student@123456")
+    @Schema(description = "Optional initial password; defaults to the system initial password")
     private String password;
 
     @Schema(description = "Display name, defaulting to student name")

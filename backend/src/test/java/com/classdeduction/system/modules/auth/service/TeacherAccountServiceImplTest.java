@@ -116,6 +116,31 @@ class TeacherAccountServiceImplTest {
     }
 
     @Test
+    void shouldGenerateDefaultCredentialsWhenCreatingTeacherAccount() {
+        TeacherAccountCreateRequest request = new TeacherAccountCreateRequest();
+        request.setTeacherName("Allen Mars");
+
+        when(userAccountMapper.selectCount(any())).thenReturn(0L);
+        when(roleMapper.selectOne(any())).thenReturn(buildTeacherRole());
+        doAnswer(invocation -> {
+            TeacherEntity entity = invocation.getArgument(0);
+            entity.setId(702L);
+            return 1;
+        }).when(teacherMapper).insert(any(TeacherEntity.class));
+        doAnswer(invocation -> {
+            UserAccountEntity entity = invocation.getArgument(0);
+            entity.setId(9004L);
+            return 1;
+        }).when(userAccountMapper).insert(any(UserAccountEntity.class));
+
+        teacherAccountService.createTeacherAccount(request);
+
+        verify(userAccountMapper).insert(userCaptor.capture());
+        assertThat(userCaptor.getValue().getUsername()).isEqualTo("allenm@jin");
+        assertThat(passwordEncoder.matches("9297019872", userCaptor.getValue().getPasswordHash())).isTrue();
+    }
+
+    @Test
     void shouldCreateLoginForExistingTeacherProfile() {
         TeacherAccountCreateRequest request = new TeacherAccountCreateRequest();
         request.setTeacherId(701L);
@@ -125,7 +150,6 @@ class TeacherAccountServiceImplTest {
 
         when(userAccountMapper.selectOne(any())).thenReturn(null);
         when(teacherMapper.selectById(701L)).thenReturn(buildActiveTeacher());
-        when(userAccountMapper.selectCount(any())).thenReturn(0L);
         when(roleMapper.selectOne(any())).thenReturn(buildTeacherRole());
         doAnswer(invocation -> {
             UserAccountEntity entity = invocation.getArgument(0);

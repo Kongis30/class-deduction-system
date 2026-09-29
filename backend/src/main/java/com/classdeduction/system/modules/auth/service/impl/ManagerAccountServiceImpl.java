@@ -18,6 +18,7 @@ import com.classdeduction.system.modules.auth.mapper.RoleMapper;
 import com.classdeduction.system.modules.auth.mapper.UserAccountMapper;
 import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.auth.service.ManagerAccountService;
+import com.classdeduction.system.modules.auth.support.AccountCredentialGenerator;
 import com.classdeduction.system.modules.auth.vo.ManagerAccountVO;
 import com.classdeduction.system.modules.auth.vo.ManagerRegistrationStatsVO;
 import lombok.RequiredArgsConstructor;
@@ -62,7 +63,10 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Long createManagerAccount(ManagerAccountCreateRequest request) {
-        ensureUsernameAvailable(request.getUsername());
+        String username = resolveUsername(request.getUsername(), request.getDisplayName());
+        String password = StringUtils.hasText(request.getPassword())
+                ? request.getPassword().trim()
+                : AccountCredentialGenerator.DEFAULT_INITIAL_PASSWORD;
         RoleEntity managerRole = roleMapper.selectOne(new LambdaQueryWrapper<RoleEntity>()
                 .eq(RoleEntity::getRoleCode, "MANAGER")
                 .eq(RoleEntity::getIsDeleted, 0)
@@ -72,8 +76,8 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
         }
 
         UserAccountEntity user = new UserAccountEntity();
-        user.setUsername(request.getUsername().trim());
-        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setUsername(username);
+        user.setPasswordHash(passwordEncoder.encode(password));
         user.setUserType("STAFF");
         user.setDisplayName(request.getDisplayName().trim());
         user.setMobile(request.getMobile());
@@ -155,13 +159,33 @@ public class ManagerAccountServiceImpl implements ManagerAccountService {
         return wrapper;
     }
 
-    private void ensureUsernameAvailable(String username) {
-        Long count = userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccountEntity>()
-                .eq(UserAccountEntity::getUsername, username.trim())
-                .eq(UserAccountEntity::getIsDeleted, 0));
-        if (count != null && count > 0) {
-            throw new BusinessException("USERNAME_ALREADY_EXISTS", "Username is already in use.");
+    /**
+     * 管理者账号与学生、老师使用同一套姓名用户名规则，重名时追加数字后缀。
+     */
+    private String resolveUsername(String requestedUsername, String displayName) {
+        if (StringUtils.hasText(requestedUsername)) {
+            String username = requestedUsername.trim();
+            if (usernameExists(username)) {
+                throw new BusinessException("USERNAME_ALREADY_EXISTS", "Username is already in use.");
+            }
+            return username;
         }
+        String baseUsername = AccountCredentialGenerator.usernameFromName(displayName);
+        if (!StringUtils.hasText(baseUsername)) {
+            throw new BusinessException("USERNAME_REQUIRED", "A first and last name are required to generate the username.");
+        }
+        String candidate = baseUsername;
+        int suffix = 2;
+        while (usernameExists(candidate)) {
+            candidate = baseUsername + suffix++;
+        }
+        return candidate;
+    }
+
+    private boolean usernameExists(String username) {
+        return userAccountMapper.selectCount(new LambdaQueryWrapper<UserAccountEntity>()
+                .eq(UserAccountEntity::getUsername, username)
+                .eq(UserAccountEntity::getIsDeleted, 0)) > 0;
     }
 
     private ManagerAccountVO toVO(UserAccountEntity user, ManagerRegistrationStatsVO stats) {
