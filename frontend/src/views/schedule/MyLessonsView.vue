@@ -58,24 +58,28 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Action" width="220" fixed="right" align="center" header-align="center">
+        <el-table-column label="Action" width="280" fixed="right" align="center" header-align="center">
           <template #default="{ row }">
-            <el-button
-              v-if="canAdjustTime(row)"
-              size="small"
-              @click="openAdjustDialog(row)"
-            >
-              Adjust
-            </el-button>
-            <el-button
-              v-if="canSubmitAttendance(row)"
-              type="primary"
-              size="small"
-              @click="openConfirmDialog(row)"
-            >
-              Confirm
-            </el-button>
-            <span v-else class="my-lessons-no-action">{{ actionLabel(row) }}</span>
+            <div class="my-lessons-action">
+              <el-button
+                v-if="canAdjustTime(row)"
+                size="small"
+                @click="openAdjustDialog(row)"
+              >
+                Adjust
+              </el-button>
+              <el-button
+                v-if="canSubmitAttendance(row)"
+                type="primary"
+                size="small"
+                @click="openConfirmDialog(row)"
+              >
+                Confirm
+              </el-button>
+              <span v-if="!canSubmitAttendance(row)" class="my-lessons-no-action">
+                {{ actionLabel(row) }}
+              </span>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -87,13 +91,13 @@
       width="520px"
       :close-on-click-modal="false"
     >
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="Confirm the lesson result and submit it for admin review. Hours are deducted only after admin confirmation."
-        class="my-lessons-confirm-alert"
-      />
+      <el-alert type="info" :closable="false" show-icon class="my-lessons-confirm-alert">
+        <template #title>Submit this lesson for review</template>
+        <div class="my-lessons-alert-body">
+          <p>Record what happened in the lesson and send it to the administrator.</p>
+          <p>Hours are deducted only after the administrator confirms the result.</p>
+        </div>
+      </el-alert>
       <el-form label-width="130px">
         <el-form-item label="Result status">
           <el-select v-model="confirmForm.resultStatus" style="width: 100%">
@@ -137,13 +141,13 @@
       width="520px"
       :close-on-click-modal="false"
     >
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="This changes the scheduled time for this lesson. Lesson duration stays the same."
-        class="my-lessons-confirm-alert"
-      />
+      <el-alert type="info" :closable="false" show-icon class="my-lessons-confirm-alert">
+        <template #title>Adjust an unconfirmed lesson</template>
+        <div class="my-lessons-alert-body">
+          <p>You can adjust the time even after the original lesson time has passed.</p>
+          <p>The lesson duration stays the same. Save the time that should be recorded for this lesson.</p>
+        </div>
+      </el-alert>
       <el-form label-width="130px">
         <el-form-item label="New start time">
           <el-date-picker
@@ -260,8 +264,7 @@ function canAdjustTime(lesson: LessonOccurrenceItem) {
     && lesson.planningStatus !== 'CANCELLED'
     && lesson.confirmStage !== 'PENDING_ADMIN'
     && lesson.confirmStage !== 'CONFIRMED'
-    && !lesson.resultStatus
-    && dayjs(lesson.plannedStartAt).isAfter(dayjs());
+    && !lesson.resultStatus;
 }
 
 function openAdjustDialog(lesson: LessonOccurrenceItem) {
@@ -276,11 +279,6 @@ async function submitTimeAdjustment() {
     ElMessage.error('Choose a new lesson start time.');
     return;
   }
-  if (!dayjs(adjustForm.plannedStartAt).isAfter(dayjs())) {
-    ElMessage.error('The new lesson time must be in the future.');
-    return;
-  }
-
   adjusting.value = true;
   try {
     await createScheduleAdjustment({
@@ -466,12 +464,33 @@ function formatTimeRange(startAt: string, endAt: string) {
   margin-bottom: 16px;
 }
 
+.my-lessons-alert-body {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+  line-height: 1.45;
+}
+
+.my-lessons-alert-body p {
+  margin: 0;
+}
+
 .my-lessons-form-hint {
   margin-left: 10px;
 }
 
+.my-lessons-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 32px;
+}
+
 .my-lessons-no-action {
   line-height: 1.35;
+  max-width: 190px;
 }
 
 @media (max-width: 720px) {
