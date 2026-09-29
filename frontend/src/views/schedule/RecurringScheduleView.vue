@@ -356,64 +356,66 @@
               <strong>{{ scheduleSlotLabel(slot) }}</strong>
               <small>Each lesson {{ formatSlotHours(slot.plannedUnits) }} · {{ slotLessonPlan(slot) }}</small>
             </div>
-            <label class="slot-teacher-row__field">
-              <span>Teacher</span>
-              <el-select
-                v-model="slot.teacherId"
-                filterable
-                placeholder="Select teacher"
-              >
-                <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
-              </el-select>
-            </label>
-            <label class="slot-teacher-row__field">
-              <span>Classroom</span>
-              <el-select
-                v-model="slot.classroomSelection"
-                popper-class="classroom-campus-picker"
-                filterable
-                placeholder="Select classroom or Online"
-              >
-                <el-option label="Online" value="ONLINE" />
-                <el-option-group
-                  v-for="group in classroomOptionGroups"
-                  :key="group.campusKey"
-                  :label="group.campusName"
-                  class="classroom-campus-group"
+            <div class="slot-teacher-row__fields">
+              <label class="slot-teacher-row__field">
+                <span>Teacher</span>
+                <el-select
+                  v-model="slot.teacherId"
+                  filterable
+                  placeholder="Select teacher"
                 >
-                  <el-option
-                    v-for="c in group.classrooms"
-                    :key="c.id"
-                    :label="classroomSelectLabel(c)"
-                    :value="`ROOM:${c.id}`"
+                  <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+                </el-select>
+              </label>
+              <label class="slot-teacher-row__field">
+                <span>Classroom</span>
+                <el-select
+                  v-model="slot.classroomSelection"
+                  popper-class="classroom-campus-picker"
+                  filterable
+                  placeholder="Select classroom or Online"
+                >
+                  <el-option label="Online" value="ONLINE" />
+                  <el-option-group
+                    v-for="group in classroomOptionGroups"
+                    :key="group.campusKey"
+                    :label="group.campusName"
+                    class="classroom-campus-group"
                   >
-                    <div class="classroom-select-option"><span>{{ c.roomName }}</span></div>
-                  </el-option>
-                </el-option-group>
-              </el-select>
-            </label>
-            <label class="slot-teacher-row__field">
-              <span>Lesson name</span>
-              <el-input
-                v-model="slot.subjectName"
-                placeholder="Lesson name"
-                maxlength="128"
-              />
-            </label>
-            <label class="slot-teacher-row__field slot-teacher-row__field--hours">
-              <span>Allocated hours</span>
-              <span class="slot-teacher-row__hours-control">
-                <el-input-number
-                  v-model="slot.allocatedHours"
-                  :min="0.5"
-                  :step="0.5"
-                  :precision="1"
-                  controls-position="right"
-                  placeholder="Hours"
+                    <el-option
+                      v-for="c in group.classrooms"
+                      :key="c.id"
+                      :label="classroomSelectLabel(c)"
+                      :value="`ROOM:${c.id}`"
+                    >
+                      <div class="classroom-select-option"><span>{{ c.roomName }}</span></div>
+                    </el-option>
+                  </el-option-group>
+                </el-select>
+              </label>
+              <label class="slot-teacher-row__field">
+                <span>Lesson name</span>
+                <el-input
+                  v-model="slot.subjectName"
+                  placeholder="Lesson name"
+                  maxlength="128"
                 />
-                <em>h</em>
-              </span>
-            </label>
+              </label>
+              <label class="slot-teacher-row__field slot-teacher-row__field--hours">
+                <span>Allocated hours</span>
+                <span class="slot-teacher-row__hours-control">
+                  <el-input-number
+                    v-model="slot.allocatedHours"
+                    :min="0.5"
+                    :step="0.5"
+                    :precision="1"
+                    controls-position="right"
+                    placeholder="Hours"
+                  />
+                  <em>h</em>
+                </span>
+              </label>
+            </div>
           </div>
         </div>
         <div v-if="editForm.slots.length > 0" class="edit-schedule__summary">
@@ -2723,9 +2725,8 @@ function disabledPastDate(date: Date) {
 }
 
 .slot-teacher-row {
-  display: grid;
-  grid-template-columns: minmax(185px, 1.25fr) minmax(145px, 1fr) minmax(145px, 1fr) minmax(135px, 0.95fr);
-  align-items: end;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   padding: 12px;
   border: 1px solid #dbeafe;
@@ -2760,6 +2761,13 @@ function disabledPastDate(date: Date) {
   font-weight: 400;
   line-height: 1.3;
   white-space: nowrap;
+}
+
+.slot-teacher-row__fields {
+  display: grid;
+  grid-template-columns: minmax(145px, 1.1fr) minmax(145px, 1fr) minmax(135px, 0.95fr) minmax(150px, 0.9fr);
+  align-items: end;
+  gap: 10px;
 }
 
 .slot-teacher-row__field {
@@ -3178,13 +3186,9 @@ function disabledPastDate(date: Date) {
   gap: 8px;
 }
 
-@media (max-width: 900px) {
-  .slot-teacher-row {
-    grid-template-columns: minmax(160px, 1fr) repeat(2, minmax(0, 1fr));
-  }
-
-  .slot-teacher-row__time {
-    grid-column: 1 / -1;
+@media (max-width: 720px) {
+  .slot-teacher-row__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -3193,14 +3197,9 @@ function disabledPastDate(date: Date) {
     padding: 12px;
   }
 
-  .slot-teacher-row {
+  .slot-teacher-row__fields {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 9px;
-    padding: 10px;
-  }
-
-  .slot-teacher-row__time {
-    grid-column: 1 / -1;
   }
 }
 
