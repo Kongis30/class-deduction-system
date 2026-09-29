@@ -26,6 +26,7 @@ public record EnrollmentOrderItemVO(
         String periodLabel,
         String timeSlotLabel,
         LocalDate startDate,
+        Integer sessions,
         BigDecimal priceAmount,
         BigDecimal originalPriceAmount,
         Boolean manualPriceOverride,

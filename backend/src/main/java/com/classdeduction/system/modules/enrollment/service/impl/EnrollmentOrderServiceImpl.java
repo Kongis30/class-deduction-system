@@ -416,6 +416,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         EnrollmentOrderEntity order = requireOrder(id);
         StudentEntity student = requireStudent(order.getStudentId());
         List<EnrollmentOrderItemEntity> orderItems = listOrderItemsByOrderId(id);
+        List<Long> sessionItemIds = orderItems.stream()
+                .filter(item -> "SESSION".equalsIgnoreCase(item.getPackageUnit()))
+                .map(EnrollmentOrderItemEntity::getId).toList();
+        Map<Long, Integer> selectedSessionsByItemId = sessionItemIds.isEmpty() ? Map.of()
+                : classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, sessionItemIds)
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
+                        .orderByDesc(ClassEnrollmentEntity::getId)).stream()
+                        .filter(enrollment -> enrollment.getPurchasedQuantity() != null)
+                        .collect(Collectors.toMap(ClassEnrollmentEntity::getEnrollmentOrderItemId,
+                                ClassEnrollmentEntity::getPurchasedQuantity, (newer, older) -> newer));
         List<PaymentRecordEntity> payments = listPaymentsByOrderId(id);
         List<ReceiptRecordEntity> receipts = listReceiptsByOrderIds(List.of(id));
         List<EnrollmentOrderParticipantEntity> participants = enrollmentOrderParticipantMapper.selectList(
@@ -488,7 +500,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .balanceAmount(order.getBalanceAmount())
                 .paymentStatus(order.getPaymentStatus())
                 .remark(order.getRemark())
-                .items(orderItems.stream().map(this::toOrderItemVO).toList())
+                .items(orderItems.stream().map(item -> toOrderItemVO(item,
+                        selectedSessionsByItemId.get(item.getId()))).toList())
                 .participants(participants.stream().map(this::toParticipantVO).toList())
                 .payments(payments.stream().map(this::toPaymentVO).toList())
                 .packages(packages.stream().map(item -> toPackageListItem(item, student, primaryTeacherNameMap.get(item.getId()), productMap.get(item.getCourseProductId()))).toList())
@@ -1068,6 +1081,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item) {
+        return toOrderItemVO(item, null);
+    }
+
+    private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, Integer selectedSessions) {
         return EnrollmentOrderItemVO.builder()
                 .id(item.getId())
                 .enrollmentOrderId(item.getEnrollmentOrderId())
@@ -1082,6 +1099,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .periodLabel(item.getPeriodLabel())
                 .timeSlotLabel(item.getTimeSlotLabel())
                 .startDate(item.getStartDate())
+                .sessions(selectedSessions)
                 .priceAmount(item.getPriceAmount())
                 .originalPriceAmount(item.getOriginalPriceAmount())
                 .manualPriceOverride(Boolean.TRUE.equals(item.getManualPriceOverride()))
@@ -1493,12 +1511,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (item == null) {
                 throw new BusinessException("CORRECTION_ORDER_ITEM_NOT_FOUND", "Edited course row does not belong to this order.");
             }
-            Long oldClassId = item.getClassId();
+            ClassItemBefore previous = new ClassItemBefore(item.getClassId(), item.getStartDate(),
+                    item.getPackageUnit(), item.getPackageQuantity(), item.getCourseProductId(), item.getGradeBand());
             copyCorrectionItem(item, payload);
             enrollmentOrderItemMapper.updateById(item);
             persistCorrectedItemTransportSnapshot(item, payload);
             if (isGroupItem(item)) {
-                migrateCorrectedClassEnrollment(order, student, item, oldClassId);
+                migrateCorrectedClassEnrollment(order, student, item, previous, payload.getSessions());
             } else {
                 updateCorrectedOneOnOnePackage(order, item);
             }
@@ -1569,34 +1588,75 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return !"ONE_ON_ONE".equalsIgnoreCase(item.getCourseType());
     }
 
+    private record ClassItemBefore(Long classId, LocalDate startDate, String packageUnit,
+                                   BigDecimal packageQuantity, Long courseProductId, String gradeBand) {
+    }
+
     private void migrateCorrectedClassEnrollment(EnrollmentOrderEntity order,
                                                  StudentEntity student,
                                                  EnrollmentOrderItemEntity item,
-                                                 Long oldClassId) {
+                                                 ClassItemBefore previous,
+                                                 Integer selectedSessions) {
         ClassGroupEntity targetClass = item.getClassId() == null ? null : classGroupMapper.selectById(item.getClassId());
-        if (targetClass != null && (Integer.valueOf(1).equals(targetClass.getIsDeleted()) || !"ACTIVE".equals(targetClass.getStatus()))) {
-            throw new BusinessException("CORRECTION_CLASS_INVALID", "The selected class is no longer active.");
-        }
-        if (targetClass != null && item.getCourseProductId() != null
-                && !Objects.equals(targetClass.getProductId(), item.getCourseProductId())) {
-            throw new BusinessException("CORRECTION_CLASS_PRODUCT_MISMATCH", "The selected class does not belong to the selected course.");
-        }
-        if (targetClass != null && StringUtils.hasText(item.getGradeBand()) && StringUtils.hasText(targetClass.getGradeBand())
-                && !item.getGradeBand().trim().equalsIgnoreCase(targetClass.getGradeBand().trim())) {
-            throw new BusinessException("CORRECTION_CLASS_GRADE_MISMATCH", "The selected class does not belong to the selected grade.");
-        }
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .eq(ClassEnrollmentEntity::getEnrollmentOrderItemId, item.getId())
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0));
         ClassEnrollmentEntity current = enrollments.stream()
-                .filter(enrollment -> "ACTIVE".equals(enrollment.getStatus()))
+                .filter(enrollment -> "ACTIVE".equals(enrollment.getStatus())
+                        || "EXPIRED".equals(enrollment.getStatus()))
                 .findFirst().orElse(null);
-        if (Objects.equals(oldClassId, item.getClassId()) && current != null) {
-            // 班级未变：以原在册起始日（或更正后的 start）为基线重算有效期，
-            // 保证购买数量等字段调整后 expiry_date 同步刷新。
+        if (current == null) {
+            // 续报会把在册记录转挂到新订单项；已停课的记录也不应因编辑旧收据而重新入班。
+            Integer oldSessions = "SESSION".equalsIgnoreCase(previous.packageUnit())
+                    ? originalReceiptSessions(order.getId(), item.getLineNo()) : null;
+            Integer storedSessions = oldSessions == null ? wholeNumber(previous.packageQuantity()) : oldSessions;
+            boolean sessionCountChanged = selectedSessions != null && "SESSION".equalsIgnoreCase(item.getPackageUnit())
+                    && !Objects.equals(selectedSessions, storedSessions);
+            if (!Objects.equals(previous.classId(), item.getClassId())
+                    || !Objects.equals(previous.startDate(), item.getStartDate())
+                    || !Objects.equals(previous.packageUnit(), item.getPackageUnit())
+                    || !sameQuantity(previous.packageQuantity(), item.getPackageQuantity())
+                    || !Objects.equals(previous.courseProductId(), item.getCourseProductId())
+                    || !Objects.equals(previous.gradeBand(), item.getGradeBand()) || sessionCountChanged) {
+                throw new BusinessException("CORRECTION_ENROLLMENT_DETACHED",
+                        "This receipt no longer owns a class enrollment. Edit the current enrollment before changing its schedule or sessions.");
+            }
+            return;
+        }
+        Integer originalSessions = "SESSION".equalsIgnoreCase(previous.packageUnit())
+                ? originalReceiptSessions(order.getId(), item.getLineNo()) : null;
+        boolean cumulativeSessionEnrollment = "SESSION".equalsIgnoreCase(previous.packageUnit())
+                && (originalSessions != null && current.getPurchasedQuantity() != null
+                    && current.getPurchasedQuantity() > originalSessions
+                    || originalSessions == null && current.getEnrollmentDate() != null
+                    && previous.startDate() != null && current.getEnrollmentDate().isBefore(previous.startDate()));
+        if (Objects.equals(previous.classId(), item.getClassId())) {
             LocalDate baseline = item.getStartDate() == null ? current.getEnrollmentDate() : item.getStartDate();
-            ClassBillingService.ClassBilling billing = computeCorrectedClassBilling(targetClass, baseline, item);
+            LocalDate previousStart = previous.startDate() == null ? current.getEnrollmentDate() : previous.startDate();
+            boolean quantityChanged = "SESSION".equalsIgnoreCase(item.getPackageUnit())
+                    ? selectedSessions != null && !Objects.equals(selectedSessions,
+                        originalSessions == null ? current.getPurchasedQuantity() : originalSessions)
+                    : !sameQuantity(previous.packageQuantity(), item.getPackageQuantity());
+            if (Objects.equals(previousStart, baseline)
+                    && Objects.equals(previous.packageUnit(), item.getPackageUnit())
+                    && Objects.equals(previous.courseProductId(), item.getCourseProductId())
+                    && Objects.equals(previous.gradeBand(), item.getGradeBand()) && !quantityChanged) {
+                // 金额或收据信息更正不改变既有在册有效期，也不追溯重校验后来新增的假期。
+                if (!Objects.equals(current.getAttendanceOption(), item.getAttendanceOption())) {
+                    current.setAttendanceOption(item.getAttendanceOption());
+                    classEnrollmentMapper.updateById(current);
+                }
+                return;
+            }
+            if (cumulativeSessionEnrollment) {
+                throw new BusinessException("CORRECTION_RENEWAL_SESSIONS_UNSUPPORTED",
+                        "This enrollment includes earlier purchases. Change its sessions from the current enrollment, not an old receipt.");
+            }
+            BigDecimal billingQuantity = correctedBillingQuantity(item, previous.packageUnit(), current, selectedSessions);
+            validateCorrectedClassTarget(targetClass, item);
+            ClassBillingService.ClassBilling billing = computeCorrectedClassBilling(
+                    targetClass, baseline, item, billingQuantity);
             current.setEnrollmentDate(billing.enrollmentDate());
             current.setExpiryDate(billing.expiryDate());
             current.setBillingType(item.getPackageUnit());
@@ -1605,6 +1665,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             classEnrollmentMapper.updateById(current);
             return;
         }
+        if (cumulativeSessionEnrollment) {
+            throw new BusinessException("CORRECTION_RENEWAL_SESSIONS_UNSUPPORTED",
+                    "This enrollment includes earlier purchases. Change its sessions from the current enrollment, not an old receipt.");
+        }
+        if (targetClass != null) {
+            validateCorrectedClassTarget(targetClass, item);
+        }
+        BigDecimal billingQuantity = correctedBillingQuantity(item, previous.packageUnit(), current, selectedSessions);
         for (ClassEnrollmentEntity enrollment : enrollments) {
             if ("ACTIVE".equals(enrollment.getStatus())) {
                 enrollment.setStatus("CANCELLED");
@@ -1617,7 +1685,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         ClassEnrollmentEntity replacement = new ClassEnrollmentEntity();
         // 换班/换年级：按新班级同一套计费规则重建在册记录，expiry_date 取自计算结果而非订单/班级的冗余字段。
         ClassBillingService.ClassBilling billing = computeCorrectedClassBilling(targetClass,
-                item.getStartDate() == null ? order.getSignupDate() : item.getStartDate(), item);
+                item.getStartDate() == null ? order.getSignupDate() : item.getStartDate(), item, billingQuantity);
         replacement.setClassId(targetClass.getId());
         replacement.setStudentId(student.getId());
         replacement.setEnrollmentOrderItemId(item.getId());
@@ -1630,19 +1698,98 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         classEnrollmentMapper.insert(replacement);
     }
 
+    /** 班级关系真正变化时才校验当前班级状态；旧收据金额更正不受后续停用影响。 */
+    private void validateCorrectedClassTarget(ClassGroupEntity targetClass, EnrollmentOrderItemEntity item) {
+        if (targetClass == null || Integer.valueOf(1).equals(targetClass.getIsDeleted())
+                || !"ACTIVE".equals(targetClass.getStatus())) {
+            throw new BusinessException("CORRECTION_CLASS_INVALID", "The selected class is no longer active.");
+        }
+        if (item.getCourseProductId() != null
+                && !Objects.equals(targetClass.getProductId(), item.getCourseProductId())) {
+            throw new BusinessException("CORRECTION_CLASS_PRODUCT_MISMATCH",
+                    "The selected class does not belong to the selected course.");
+        }
+        if (StringUtils.hasText(item.getGradeBand()) && StringUtils.hasText(targetClass.getGradeBand())
+                && !item.getGradeBand().trim().equalsIgnoreCase(targetClass.getGradeBand().trim())) {
+            throw new BusinessException("CORRECTION_CLASS_GRADE_MISMATCH",
+                    "The selected class does not belong to the selected grade.");
+        }
+    }
+
     /**
      * 更正后的班课在册有效期：与报名新增链路共用同一套计费规则（ClassBillingService），
      * 保证 expiry_date 口径一致且永不为空。
      *
      * @param targetClass 新班级
-     * @param baseline    起始日期：item 更正后的 start；为空时由调用方回退（换班用 signupDate，原班保留原在册起始日）
-     * @param item        更正后的订单课程项
+     * @param baseline 起始日期：item 更正后的 start；为空时由调用方回退
+     * @param item 更正后的订单课程项
+     * @param billingQuantity 实际购买数量；SESSION 使用所选次数，不使用定价选项的最大次数
      */
     private ClassBillingService.ClassBilling computeCorrectedClassBilling(ClassGroupEntity targetClass,
                                                                           LocalDate baseline,
-                                                                          EnrollmentOrderItemEntity item) {
+                                                                          EnrollmentOrderItemEntity item,
+                                                                          BigDecimal billingQuantity) {
         return classBillingService.compute(targetClass, baseline, null,
-                item.getPackageUnit(), item.getPackageQuantity());
+                item.getPackageUnit(), billingQuantity);
+    }
+
+    /** 收据编辑的 SESSION 数量来自学生选购次数，价格选项的 packageQuantity 只是上限。 */
+    private BigDecimal correctedBillingQuantity(EnrollmentOrderItemEntity item, String oldPackageUnit,
+                                                ClassEnrollmentEntity current, Integer selectedSessions) {
+        if (!"SESSION".equalsIgnoreCase(item.getPackageUnit())) {
+            return item.getPackageQuantity();
+        }
+        Integer actualSessions = selectedSessions;
+        if (actualSessions == null && "SESSION".equalsIgnoreCase(oldPackageUnit) && current != null) {
+            actualSessions = current.getPurchasedQuantity();
+        }
+        if (actualSessions == null && item.getPackageQuantity() != null) {
+            try {
+                actualSessions = item.getPackageQuantity().intValueExact();
+            } catch (ArithmeticException ex) {
+                throw new BusinessException("REGISTRATION_DURATION_INVALID",
+                        "Selected sessions must be a whole number.");
+            }
+        }
+        if (actualSessions == null || actualSessions < 1 || (item.getPackageQuantity() != null
+                && BigDecimal.valueOf(actualSessions).compareTo(item.getPackageQuantity()) > 0)) {
+            throw new BusinessException("REGISTRATION_DURATION_INVALID",
+                    "Selected sessions must be between 1 and the package session limit.");
+        }
+        return BigDecimal.valueOf(actualSessions);
+    }
+
+    private boolean sameQuantity(BigDecimal left, BigDecimal right) {
+        return left == null || right == null ? left == right : left.compareTo(right) == 0;
+    }
+
+    /** 续报后的旧订单不再拥有 class_enrollment，原购买次数从其保存的收据快照读取。 */
+    private Integer originalReceiptSessions(Long orderId, Integer lineNo) {
+        List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(new LambdaQueryWrapper<ReceiptRecordEntity>()
+                .eq(ReceiptRecordEntity::getEnrollmentOrderId, orderId)
+                .orderByDesc(ReceiptRecordEntity::getId));
+        for (ReceiptRecordEntity receipt : receipts) {
+            Map<String, Object> snapshot = jsonHelper.fromJson(receipt.getReceiptPayload(),
+                    new TypeReference<LinkedHashMap<String, Object>>() {});
+            if (snapshot == null || !(snapshot.get("items") instanceof List<?> rows)) continue;
+            for (Object row : rows) {
+                if (!(row instanceof Map<?, ?> values)) continue;
+                Integer rowLineNo = wholeNumber(values.get("lineNo"));
+                if ((lineNo != null && !lineNo.equals(rowLineNo)) || (lineNo == null && rows.size() != 1)) continue;
+                Integer sessions = wholeNumber(values.get("sessions"));
+                if (sessions != null) return sessions;
+            }
+        }
+        return null;
+    }
+
+    private Integer wholeNumber(Object value) {
+        if (value == null) return null;
+        try {
+            return new BigDecimal(value.toString()).intValueExact();
+        } catch (NumberFormatException | ArithmeticException ex) {
+            return null;
+        }
     }
 
     private void updateCorrectedOneOnOnePackage(EnrollmentOrderEntity order, EnrollmentOrderItemEntity item) {

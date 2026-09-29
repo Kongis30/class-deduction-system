@@ -42,6 +42,7 @@ import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
@@ -487,6 +488,147 @@ class EnrollmentOrderServiceImplTest {
         verify(classEnrollmentMapper, atLeastOnce()).updateById(updatedCaptor.capture());
         assertThat(updatedCaptor.getAllValues()).anySatisfy(updated ->
                 assertThat(updated.getStatus()).isEqualTo("CANCELLED"));
+    }
+
+    @Test
+    void shouldPreserveExistingSessionEnrollmentWhenOnlyReceiptPriceChanges() {
+        // 旧订单只购买 4 次，定价选项上限为 13 次；收据改金额不应按 13 次重算或重验新假期。
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 4);
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classGroupScheduleSlotMapper, never()).selectList(any());
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldRecomputeSessionEnrollmentUsingSelectedSessionsWhenCountChanges() {
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(2, 3);
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setWeekday(1);
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        when(classHolidayService.listHolidays(any(), any(), any(), any())).thenReturn(List.of());
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classEnrollmentMapper).updateById(classEnrollmentCaptor.capture());
+        assertThat(classEnrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(3);
+        assertThat(classEnrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 9, 28));
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldNotRecreateClassEnrollmentWhenEditingAnOldRenewalReceipt() {
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 4);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
+        stubSavedSessionReceipt(4);
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldRejectSessionChangesWhenOldReceiptNoLongerOwnsEnrollment() {
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 5);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
+        stubSavedSessionReceipt(4);
+
+        assertThatThrownBy(() -> enrollmentOrderService.correctOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("CORRECTION_ENROLLMENT_DETACHED");
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldPreserveCumulativeSessionsWhenEditingRenewalReceiptPrice() {
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(14, 4);
+        stubSavedSessionReceipt(4);
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldRejectChangingRenewalSessionsFromReceipt() {
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(14, 5);
+        stubSavedSessionReceipt(4);
+
+        assertThatThrownBy(() -> enrollmentOrderService.correctOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("CORRECTION_RENEWAL_SESSIONS_UNSUPPORTED");
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
+    }
+
+    private void stubSavedSessionReceipt(int sessions) {
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setId(6001L);
+        receipt.setReceiptPayload("{\"items\":[]}");
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("items", List.of(Map.of("lineNo", 1, "sessions", sessions)));
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of(receipt));
+        when(jsonHelper.fromJson(any(), any())).thenReturn(snapshot);
+    }
+
+    private EnrollmentOrderCorrectionRequest stubSessionCorrection(int previousSessions, int selectedSessions) {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setStudentId(101L);
+        order.setClassId(801L);
+        order.setSignupDate(LocalDate.of(2026, 9, 14));
+
+        ClassGroupEntity group = buildClassGroup(202L);
+        group.setStartDate(LocalDate.of(2026, 9, 1));
+        group.setEndDate(LocalDate.of(2026, 10, 5));
+        group.setGradeBand("G1-G5");
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setLineNo(1);
+        item.setEnrollmentOrderId(2001L);
+        item.setCourseType("GROUP");
+        item.setCourseProductId(202L);
+        item.setClassId(801L);
+        item.setGradeBand("G1-G5");
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("13"));
+        item.setStartDate(LocalDate.of(2026, 9, 14));
+
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setId(9001L);
+        enrollment.setClassId(801L);
+        enrollment.setStudentId(101L);
+        enrollment.setEnrollmentOrderItemId(8001L);
+        enrollment.setEnrollmentDate(LocalDate.of(2026, 9, 14));
+        enrollment.setExpiryDate(LocalDate.of(2026, 10, 5));
+        enrollment.setPurchasedQuantity(previousSessions);
+        enrollment.setStatus("ACTIVE");
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectById(801L)).thenReturn(group);
+        lenient().when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        lenient().when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        RegistrationIntakeRequest.CourseItemPayload payload = new RegistrationIntakeRequest.CourseItemPayload();
+        payload.setOrderItemId(8001L);
+        payload.setClassId(801L);
+        payload.setGradeBand("G1-G5");
+        payload.setCourseType("GROUP");
+        payload.setCourseProductId(202L);
+        payload.setPackageUnit("SESSION");
+        payload.setPackageQuantity(new BigDecimal("13"));
+        payload.setSessions(selectedSessions);
+        payload.setStartDate(LocalDate.of(2026, 9, 14));
+        payload.setPriceAmount(new BigDecimal("800"));
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        request.setItems(List.of(payload));
+        return request;
     }
 
     @Test
@@ -1321,6 +1463,36 @@ class EnrollmentOrderServiceImplTest {
         assertThat(result.receipts()).singleElement()
                 .extracting(ReceiptRecordVO::receiptPayload)
                 .isEqualTo(receipt.getReceiptPayload());
+    }
+
+    @Test
+    void shouldExposePurchasedSessionsInOrderDetailForLegacyReceiptFallback() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setClassId(801L);
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setEnrollmentOrderId(2001L);
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("13"));
+        ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
+        enrollment.setEnrollmentOrderItemId(8001L);
+        enrollment.setPurchasedQuantity(4);
+        enrollment.setStatus("ACTIVE");
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(classGroupMapper.selectById(801L)).thenReturn(buildClassGroup(202L));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of());
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        EnrollmentOrderDetailVO detail = enrollmentOrderService.getOrder(2001L);
+
+        assertThat(detail.items()).singleElement().satisfies(line ->
+                assertThat(line.sessions()).isEqualTo(4));
     }
 
     private void stubGeneratedIds(boolean includePaymentInsert) {

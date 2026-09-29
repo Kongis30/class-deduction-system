@@ -329,6 +329,8 @@ export interface EnrollmentOrderLineItem {
   periodLabel?: string;
   timeSlotLabel?: string;
   startDate?: string;
+  /** 学生实际购买的 SESSION 次数；packageQuantity 是定价选项上限。 */
+  sessions?: number;
   packageUnit?: string;
   packageQuantity?: number;
   packageTotalPrice?: number;
