@@ -677,6 +677,11 @@
         <el-form-item label="Class name">
           <el-input v-model="actualClassInfoForm.className" maxlength="128" placeholder="e.g. G1" />
         </el-form-item>
+        <el-form-item label="Campus">
+          <el-select v-model="actualClassInfoForm.campusId" clearable filterable placeholder="Select campus" style="width: 100%;">
+            <el-option v-for="campus in activeCampuses" :key="campus.id" :label="campus.campusName" :value="campus.id" />
+          </el-select>
+        </el-form-item>
         <div class="form-grid form-grid--two">
           <el-form-item label="Class start date">
             <el-date-picker
@@ -790,6 +795,7 @@ import {
   createCoursePriceOption,
   deleteCoursePriceOption,
   fetchAllClassrooms,
+  fetchCampuses,
   fetchAllTeachers,
   fetchCoursePriceOptions,
   fetchCourseCategories,
@@ -817,7 +823,7 @@ import {
 } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
-import type { ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
+import type { CampusItem, ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
 
 type CourseMode = 'ONE_ON_ONE' | 'GROUP';
 type CourseTypeValue = 'AFTER_SCHOOL' | 'SATURDAY' | 'SUMMER' | 'SPRINT' | 'ONE_ON_ONE';
@@ -843,6 +849,8 @@ interface ProductPriceGroup {
 interface ActualClassScheduleRow {
   id: EntityId;
   className: string;
+  campusId?: EntityId;
+  campusName?: string;
   productId?: EntityId;
   gradeBand?: string;
   actualClass?: string;
@@ -929,6 +937,8 @@ const saving = ref(false);
 const options = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
 const classGroups = ref<ClassGroupItem[]>([]);
+const campuses = ref<CampusItem[]>([]);
+const activeCampuses = computed(() => campuses.value.filter(campus => campus.status === 'ACTIVE'));
 const teachers = ref<TeacherItem[]>([]);
 const sortedTeachers = computed(() => [...teachers.value].sort((left, right) =>
   left.teacherName.localeCompare(right.teacherName, undefined, { sensitivity: 'base' })));
@@ -977,6 +987,7 @@ const actualClassInfoForm = reactive({
   productId: undefined as EntityId | undefined,
   gradeBand: '',
   className: '',
+  campusId: undefined as EntityId | undefined,
   startDate: '' as string,
   endDate: '' as string,
 });
@@ -1526,16 +1537,18 @@ async function saveGrades() {
 async function loadProductsAndClasses() {
   loadingProducts.value = true;
   try {
-    const [productsRes, classRes, teachersRes, classroomsRes] = await Promise.all([
+    const [productsRes, classRes, teachersRes, classroomsRes, campusesRes] = await Promise.all([
       fetchCourseProducts({ pageNum: 1, pageSize: 200 }),
       fetchClassGroups({ includeInactiveProducts: true }).catch(() => ({ data: { data: [] as ClassGroupItem[] } })),
       fetchAllTeachers(),
       fetchAllClassrooms(),
+      fetchCampuses().catch(() => ({ data: { data: [] as CampusItem[] } })),
     ]);
     courseProducts.value = productsRes.data.data.records ?? [];
     classGroups.value = classRes.data.data ?? [];
     teachers.value = teachersRes.data.data ?? [];
     classrooms.value = classroomsRes.data.data ?? [];
+    campuses.value = campusesRes.data.data ?? [];
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to load courses.');
   } finally {
@@ -1920,6 +1933,7 @@ function openActualClassInfoDialog(group: ProductPriceGroup, actualClass?: Actua
   actualClassInfoForm.productId = productId;
   actualClassInfoForm.gradeBand = actualClass?.gradeBand || group.gradeLabel;
   actualClassInfoForm.className = actualClass?.className || actualClass?.actualClass || '';
+  actualClassInfoForm.campusId = actualClass?.campusId;
   actualClassInfoForm.startDate = actualClass?.startDate || '';
   actualClassInfoForm.endDate = actualClass?.endDate || '';
   actualClassInfoDialogVisible.value = true;
@@ -1948,6 +1962,7 @@ async function saveActualClassInfo() {
       gradeBand: actualClassInfoForm.gradeBand.trim(),
       actualClass: className,
       className,
+      campusId: actualClassInfoForm.campusId,
       startDate: actualClassInfoForm.startDate || undefined,
       endDate: actualClassInfoForm.endDate || undefined,
     };
@@ -2197,6 +2212,8 @@ function groupActualClassRows(group: ProductPriceGroup): ActualClassScheduleRow[
     byId.set(String(classGroup.id), {
       id: classGroup.id,
       className: classGroup.className,
+      campusId: classGroup.campusId,
+      campusName: classGroup.campusName,
       productId: classGroup.productId,
       gradeBand: classGroup.gradeBand,
       actualClass: classGroup.actualClass,

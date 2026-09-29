@@ -162,6 +162,7 @@ CREATE TABLE `class_group` (
   `description` varchar(500) DEFAULT NULL COMMENT 'Description',
   `teacher_id` bigint DEFAULT NULL COMMENT 'Assigned teacher ID',
   `classroom_id` bigint DEFAULT NULL COMMENT 'Default classroom ID',
+  `campus_id` bigint DEFAULT NULL COMMENT 'Campus assigned to this actual class',
   `list_price` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Original price (sticker price for this class group)',
   `schedule_desc` varchar(255) DEFAULT NULL COMMENT 'Schedule description (e.g. Weekly Sat 10:00-12:00)',
   `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/DISABLED',
@@ -186,7 +187,9 @@ CREATE TABLE `class_group` (
   KEY `idx_class_group_teacher` (`teacher_id`),
   KEY `idx_class_group_status` (`status`),
   KEY `fk_class_group_classroom` (`classroom_id`),
+  KEY `idx_class_group_campus` (`campus_id`),
   KEY `idx_class_group_product_grade` (`product_id`,`grade_band`),
+  CONSTRAINT `fk_class_group_campus` FOREIGN KEY (`campus_id`) REFERENCES `campus` (`id`),
   CONSTRAINT `fk_class_group_classroom` FOREIGN KEY (`classroom_id`) REFERENCES `classroom` (`id`),
   CONSTRAINT `fk_class_group_teacher` FOREIGN KEY (`teacher_id`) REFERENCES `teacher` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='Group class master';

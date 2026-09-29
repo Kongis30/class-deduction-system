@@ -310,6 +310,7 @@ export interface ClassInfoPayload {
   gradeBand?: string;
   actualClass: string;
   className?: string;
+  campusId?: EntityId;
   startDate?: string;
   endDate?: string;
 }

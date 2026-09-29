@@ -706,6 +706,7 @@ class RegistrationIntakeServiceImplTest {
         groupProduct.setStatus("ACTIVE");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
+        classGroup.setCampusId(1L);
         classGroup.setProductId(302L);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("MONTHLY");
@@ -808,6 +809,24 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
+    void shouldRejectGroupClassFromAnotherCampus() {
+        stubGroupClassIntake();
+        ClassGroupEntity otherCampusClass = new ClassGroupEntity();
+        otherCampusClass.setId(501L);
+        otherCampusClass.setCampusId(2L);
+        otherCampusClass.setProductId(202L);
+        otherCampusClass.setStatus("ACTIVE");
+        otherCampusClass.setBillingType("MONTHLY");
+        when(classGroupMapper.selectById(501L)).thenReturn(otherCampusClass);
+
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(buildGroupClassRequest()))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CLASS_CAMPUS_MISMATCH");
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
     void shouldAllowGroupClassIntakeAfterStudentScheduleConflictAcknowledgement() {
         stubGroupClassStudentConflict();
         RegistrationIntakeRequest request = buildGroupClassRequest();
@@ -827,6 +846,7 @@ class RegistrationIntakeServiceImplTest {
         product.setTeachingMode("GROUP");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
+        classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setTeacherId(301L);
@@ -1117,6 +1137,7 @@ class RegistrationIntakeServiceImplTest {
         product.setTeachingMode("GROUP");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
+        classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("MONTHLY");
@@ -1136,17 +1157,17 @@ class RegistrationIntakeServiceImplTest {
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
         when(courseProductMapper.selectById(202L)).thenReturn(product);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
-        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
-        when(jsonHelper.toJson(any())).thenReturn("{}");
+        lenient().when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        lenient().when(jsonHelper.toJson(any())).thenReturn("{}");
         lenient().when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
         lenient().when(lessonOccurrenceMapper.selectList(any()))
                 .thenReturn(Collections.emptyList(), List.of(targetOccurrence), Collections.emptyList(), Collections.emptyList());
-        doAnswer(invocation -> {
+        lenient().doAnswer(invocation -> {
             EnrollmentOrderEntity order = invocation.getArgument(0);
             order.setId(2001L);
             return 1;
         }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
-        doAnswer(invocation -> {
+        lenient().doAnswer(invocation -> {
             EnrollmentOrderItemEntity item = invocation.getArgument(0);
             item.setId(2101L);
             return 1;
@@ -1170,6 +1191,7 @@ class RegistrationIntakeServiceImplTest {
         product.setBillingType("SESSION");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
+        classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("SESSION");
@@ -1210,6 +1232,7 @@ class RegistrationIntakeServiceImplTest {
         product.setBillingType("MONTHLY");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
+        classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("MONTHLY");
@@ -1231,6 +1254,7 @@ class RegistrationIntakeServiceImplTest {
         product.setBillingType("MONTHLY");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
+        classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("MONTHLY");

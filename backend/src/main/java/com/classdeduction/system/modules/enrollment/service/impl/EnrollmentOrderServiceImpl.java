@@ -1229,8 +1229,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             order.setParentPhone2Snapshot(request.getGuardianPhone2().trim());
             student.setGuardianPhone2(request.getGuardianPhone2().trim());
         }
-        boolean campusChanged = request.getCampusName() != null;
-        if (campusChanged) {
+        boolean campusChanged = request.getCampusName() != null
+                && (!Objects.equals(order.getCampusNameSnapshot(), request.getCampusName().trim())
+                    || (order.getCampusId() != null && request.getCampusId() != null
+                        && !Objects.equals(order.getCampusId(), request.getCampusId())));
+        if (request.getCampusName() != null) {
             order.setCampusNameSnapshot(request.getCampusName().trim());
             order.setCampusId(request.getCampusId());
         }
@@ -1265,7 +1268,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             applyCorrectedParticipants(order, request.getParticipants());
         }
         if (request.getItems() != null && !request.getItems().isEmpty()) {
-            applyCorrectedItems(order, student, request.getItems());
+            Long targetCampusId = request.getCampusId() != null ? request.getCampusId() : order.getCampusId();
+            applyCorrectedItems(order, student, request.getItems(), targetCampusId, campusChanged);
         }
         if (request.getParticipantBillings() != null && !request.getParticipantBillings().isEmpty()) {
             reconcileCorrectedParticipantPayments(order, request.getParticipantBillings());
@@ -1481,7 +1485,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
      */
     private void applyCorrectedItems(EnrollmentOrderEntity order,
                                      StudentEntity student,
-                                     List<RegistrationIntakeRequest.CourseItemPayload> payloads) {
+                                     List<RegistrationIntakeRequest.CourseItemPayload> payloads,
+                                     Long campusId,
+                                     boolean validateCampus) {
         List<EnrollmentOrderItemEntity> existingItems = listOrderItemsByOrderId(order.getId());
         Map<Long, EnrollmentOrderItemEntity> itemMap = existingItems.stream()
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, item -> item));
@@ -1494,6 +1500,19 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 throw new BusinessException("CORRECTION_ORDER_ITEM_NOT_FOUND", "Edited course row does not belong to this order.");
             }
             Long oldClassId = item.getClassId();
+            if (isGroupItem(item) && payload.getClassId() == null) {
+                throw new BusinessException("GRADE_CLASS_REQUIRED",
+                        "Select a class for each group-class course before saving the receipt.");
+            }
+            boolean classChanged = !Objects.equals(oldClassId, payload.getClassId());
+            if (payload.getClassId() != null && (validateCampus || (classChanged && campusId != null))) {
+                ClassGroupEntity selectedClass = classGroupMapper.selectById(payload.getClassId());
+                if (validateCampus && (campusId == null || selectedClass == null || selectedClass.getCampusId() == null
+                        || !Objects.equals(campusId, selectedClass.getCampusId()))) {
+                    throw new BusinessException("CLASS_CAMPUS_MISMATCH",
+                            "Selected class does not belong to the selected registration campus. Choose a class for that campus.");
+                }
+            }
             copyCorrectionItem(item, payload);
             enrollmentOrderItemMapper.updateById(item);
             persistCorrectedItemTransportSnapshot(item, payload);

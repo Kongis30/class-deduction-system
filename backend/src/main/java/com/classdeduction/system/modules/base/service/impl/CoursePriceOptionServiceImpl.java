@@ -11,8 +11,10 @@ import com.classdeduction.system.modules.base.dto.CoursePriceOptionSaveRequest;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -72,6 +74,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     private final LessonRecordMapper lessonRecordMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final CampusMapper campusMapper;
     private final ClassHolidayService classHolidayService;
 
     @Override
@@ -1011,10 +1014,13 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         }
         Set<Long> teacherIds = classes.stream().map(ClassGroupEntity::getTeacherId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
         Set<Long> classroomIds = classes.stream().map(ClassGroupEntity::getClassroomId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
+        Set<Long> campusIds = classes.stream().map(ClassGroupEntity::getCampusId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet());
         Map<Long, TeacherEntity> teachers = teacherIds.isEmpty() ? Map.of() : teacherMapper.selectBatchIds(teacherIds).stream()
                 .collect(java.util.stream.Collectors.toMap(TeacherEntity::getId, item -> item));
         Map<Long, ClassroomEntity> classrooms = classroomIds.isEmpty() ? Map.of() : classroomMapper.selectBatchIds(classroomIds).stream()
                 .collect(java.util.stream.Collectors.toMap(ClassroomEntity::getId, item -> item));
+        Map<Long, CampusEntity> campuses = campusIds.isEmpty() ? Map.of() : campusMapper.selectBatchIds(campusIds).stream()
+                .collect(java.util.stream.Collectors.toMap(CampusEntity::getId, item -> item));
         return classes.stream()
                 .map(item -> new CoursePriceOptionVO.ActualClassVO(
                         item.getId(),
@@ -1024,7 +1030,10 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                         teacherName(item.getTeacherId(), teachers),
                         item.getClassroomId(),
                         classroomName(item.getClassroomId(), classrooms),
-                        item.getScheduleDesc()))
+                        item.getScheduleDesc(),
+                        item.getCampusId(),
+                        item.getCampusId() == null || campuses.get(item.getCampusId()) == null
+                                ? null : campuses.get(item.getCampusId()).getCampusName()))
                 .toList();
     }
 
