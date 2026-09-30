@@ -12,7 +12,7 @@
         class="wts-row"
         v-for="time in timeSlots"
         :key="time.label"
-        :class="{ 'wts-row--end-boundary': time.isEndBoundary }"
+        :class="{ 'wts-row--last-slot': time.isLastSlot }"
       >
         <span class="wts-row__label">{{ time.label }}</span>
         <div
@@ -80,6 +80,9 @@
           </template>
         </div>
       </div>
+    </div>
+    <div class="wts-time-boundary" aria-hidden="true">
+      <span class="wts-time-boundary__label">24:00</span>
     </div>
 
     <!-- Selected slots summary -->
@@ -170,11 +173,11 @@ const GRID_START_MINUTES = 7 * 60 + 30;
 const GRID_END_MINUTES = 24 * 60;
 
 const timeSlots = computed(() => {
-  const rows: { label: string; hour: number; minute: number; isEndBoundary: boolean }[] = [];
-  for (let minutes = GRID_START_MINUTES; minutes <= GRID_END_MINUTES; minutes += 30) {
+  const rows: { label: string; hour: number; minute: number; isLastSlot: boolean }[] = [];
+  for (let minutes = GRID_START_MINUTES; minutes < GRID_END_MINUTES; minutes += 30) {
     const hour = Math.floor(minutes / 60);
     const minute = minutes % 60;
-    rows.push({ label: formatTime(minutes), hour, minute, isEndBoundary: minutes === GRID_END_MINUTES });
+    rows.push({ label: formatTime(minutes), hour, minute, isLastSlot: minutes === GRID_END_MINUTES - 30 });
   }
   return rows;
 });
@@ -353,13 +356,15 @@ function onMouseUp() {
 
   const anchorMin = timeToMinutes(anchor.value.hour, anchor.value.minute);
   const hoverMin = timeToMinutes(hover.hour, hover.minute);
-  if (Math.abs(hoverMin - anchorMin) < 30) {
+  if (hoverMin !== anchorMin && Math.abs(hoverMin - anchorMin) < 30) {
     selecting.value = false;
     return;
   }
 
   const startMin = Math.min(anchorMin, hoverMin);
-  const endMin = Math.max(anchorMin, hoverMin);
+  const endMin = hoverMin === anchorMin
+    ? anchorMin + 30
+    : Math.max(anchorMin, hoverMin);
   const units = Math.round((endMin - startMin) / 30);
 
   // Check no overlap with occupied slots
@@ -503,6 +508,7 @@ function weekdayName(d: number) {
 
 /* ─── Body (grid container) ─────────── */
 .wts-body {
+  position: relative;
   border: 1px solid #e8e8e8;
   border-top: none;
   border-radius: 0 0 6px 6px;
@@ -514,18 +520,30 @@ function weekdayName(d: number) {
   grid-template-columns: 56px repeat(7, 1fr);
 }
 
-.wts-row--end-boundary .wts-row__label,
-.wts-row--end-boundary .wts-cell {
-  height: 10px;
-  line-height: 10px;
-  font-size: 10px;
-  border-bottom: none;
-  background: #fafafa;
+.wts-row--last-slot .wts-row__label,
+.wts-row--last-slot .wts-cell {
+  border-bottom: 1px solid #d7dee8;
 }
 
-.wts-row--end-boundary .wts-cell {
-  cursor: default;
-  border-top: 1px solid #d7dee8;
+.wts-time-boundary {
+  display: grid;
+  grid-template-columns: 56px repeat(7, 1fr);
+  height: 16px;
+  margin-top: -1px;
+  border-bottom: 1px solid #e8e8e8;
+  border-radius: 0 0 6px 6px;
+  background: #fff;
+}
+
+.wts-time-boundary__label {
+  grid-column: 1;
+  color: #999;
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+  background: #fafafa;
+  border-right: 1px solid #e8e8e8;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ─── Time label column ─────────── */
