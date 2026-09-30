@@ -756,6 +756,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 // Session packages are based on the configured full package; only the selected count varies per student.
                 line.packageUnit = "SESSION";
                 line.packageQuantity = resolveOptionPackageQuantity(option);
+            } else if ("MONTH".equals(resolveOptionPackageUnit(option))) {
+                // 月数上限和整包价格以当前价格选项为准；实际购买月数单独记录。
+                line.packageUnit = "MONTH";
+                line.packageQuantity = resolveOptionPackageQuantity(option);
             }
             line.packageTotalPrice = firstNonNull(item.getPackageTotalPrice(), resolveOptionTotalPrice(option));
             line.attendanceOption = normalizeAttendanceOption(item.getAttendanceOption());
@@ -768,6 +772,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.registrationCampusId = registrationCampusId;
             line.sessions = item.getSessions();
             line.purchasedMonths = item.getPurchasedMonths();
+            if ("MONTH".equals(line.packageUnit) && line.purchasedMonths == null && line.packageQuantity != null) {
+                try {
+                    line.purchasedMonths = line.packageQuantity.intValueExact();
+                } catch (ArithmeticException ex) {
+                    throw new BusinessException("REGISTRATION_DURATION_INVALID",
+                            "Configured package months must be a whole number.");
+                }
+            }
             line.startMonth = item.getStartMonth();
             line.endMonth = item.getEndMonth();
             line.remark = item.getRemark();
@@ -816,6 +828,16 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             // 购买课次的最终报价向上取整，避免展示整数却保存角分。
             configuredPrice = configuredUnitPrice.multiply(BigDecimal.valueOf(selectedSessions))
                     .divide(BigDecimal.valueOf(configuredSessions), 0, RoundingMode.CEILING);
+        } else if ("MONTH".equals(resolveOptionPackageUnit(option))) {
+            int configuredMonths = resolveOptionPackageQuantity(option) == null
+                    ? 0 : resolveOptionPackageQuantity(option).intValueExact();
+            int selectedMonths = resolveGroupPurchasedQuantity(line);
+            if (configuredMonths < 1 || selectedMonths > configuredMonths) {
+                throw new BusinessException("REGISTRATION_DURATION_INVALID",
+                        "Selected months must be between 1 and the configured package month count.");
+            }
+            configuredPrice = configuredUnitPrice.multiply(BigDecimal.valueOf(selectedMonths))
+                    .divide(BigDecimal.valueOf(configuredMonths), 0, RoundingMode.CEILING);
         } else {
             configuredPrice = configuredUnitPrice;
         }
@@ -850,13 +872,17 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if (line.oneOnOne) {
             return 1;
         }
+        if (!"MONTH".equalsIgnoreCase(line.packageUnit)) {
+            return line.packageQuantity == null ? 1 : line.packageQuantity.setScale(0, RoundingMode.CEILING).intValue();
+        }
         if (line.purchasedMonths == null) {
             throw new BusinessException("REGISTRATION_DURATION_MISSING",
                     "Enter purchased months on the registration form.");
         }
-        if (line.purchasedMonths < 1 || line.purchasedMonths > 36) {
+        int maximumMonths = line.packageQuantity == null ? 36 : line.packageQuantity.intValue();
+        if (line.purchasedMonths < 1 || line.purchasedMonths > maximumMonths || line.purchasedMonths > 36) {
             throw new BusinessException("REGISTRATION_DURATION_INVALID",
-                    "Purchased months must be between 1 and 36.");
+                    "Purchased months must be between 1 and the configured package month count.");
         }
         return line.purchasedMonths;
     }
@@ -2718,7 +2744,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                     LocalDate signupDate) {
         BigDecimal billingQuantity = "SESSION".equals(line.packageUnit) && line.sessions != null
                 ? BigDecimal.valueOf(line.sessions)
-                : line.packageQuantity;
+                : "MONTH".equals(line.packageUnit) && line.purchasedMonths != null
+                    ? BigDecimal.valueOf(line.purchasedMonths)
+                    : line.packageQuantity;
         int quantity = billingQuantity == null
                 ? resolveGroupPurchasedQuantity(line)
                 : billingQuantity.setScale(0, RoundingMode.CEILING).intValue();
