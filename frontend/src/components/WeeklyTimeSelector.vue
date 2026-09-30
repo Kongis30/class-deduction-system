@@ -480,7 +480,8 @@ function weekdayName(d: number) {
 }
 
 .wts-grid-scroll {
-  max-height: min(70vh, 720px);
+  max-height: min(85vh, 900px);
+  padding-bottom: 7px;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
@@ -540,7 +541,7 @@ function weekdayName(d: number) {
 
 .wts-time-boundary {
   position: relative;
-  height: 14px;
+  height: 0;
   margin-top: -1px;
   pointer-events: none;
 }
