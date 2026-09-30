@@ -820,10 +820,13 @@
     <PauseConfirmationDialog
       v-model="pauseConfirmationVisible"
       title="Pause Course"
-      message="Before pausing, please deduct lessons that have already started but are not yet deducted. You can still pause without deducting them. Pausing cancels future lessons that have not been recorded; after resuming, create a new schedule to continue."
-      confirm-text="Pause Course"
+      message="Please deduct all lessons that have already started before pausing. Go to 1-on-1 Lessons to deduct them, or wait 5 seconds and pause without deducting. Pausing cancels future lessons without records."
+      confirm-text="Pause Without Deducting"
+      :confirm-cooldown-seconds="5"
+      alternate-action-text="Go to 1-on-1 Lessons"
       :loading="pausingPackageId !== null"
       @confirm="confirmPauseSelectedPackage"
+      @alternate-action="goToOneOnOneDeduction"
     />
   </div>
 </template>
@@ -834,7 +837,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { FormInstance, FormRules } from 'element-plus';
 import dayjs from 'dayjs';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
@@ -880,6 +883,7 @@ interface WeeklyAdjustmentRow {
 const loadingPackages = ref(false);
 let packageLoadSequence = 0;
 const route = useRoute();
+const router = useRouter();
 const editDialogVisible = ref(false);
 const detailDialogVisible = ref(false);
 const weeklyDialogVisible = ref(false);
@@ -1601,6 +1605,23 @@ function pauseSelectedPackage() {
   const studentId = selectedStudentId.value;
   if (!packageToPause || packageToPause.packageStatus !== 'ACTIVE' || !studentId) return;
   pauseConfirmationVisible.value = true;
+}
+
+// 将当前学生和课包带到 1-on-1 消课页，便于管理员直接找到待核销课次。
+function goToOneOnOneDeduction() {
+  const packageToDeduct = selectedPackage.value;
+  const studentId = selectedStudentId.value;
+  if (!packageToDeduct || !studentId) return;
+
+  pauseConfirmationVisible.value = false;
+  void router.push({
+    name: 'one-on-one-deduction',
+    query: {
+      focus: 'deduction',
+      studentId: String(studentId),
+      packageId: String(packageToDeduct.id),
+    },
+  });
 }
 
 // 倒计时结束后才执行停课请求。

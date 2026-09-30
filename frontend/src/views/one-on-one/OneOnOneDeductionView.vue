@@ -1163,6 +1163,20 @@ function routePrintTarget() {
   return { studentId, packageId, mode: printSheet };
 }
 
+/** 排课页带入消课目标：选中指定学生课包，落到现有消课明细流程。 */
+function selectRouteDeductionTarget() {
+  const { focus, studentId, packageId } = route.query;
+  if (focus !== 'deduction' || typeof studentId !== 'string' || typeof packageId !== 'string') return;
+
+  const candidate = allPackageCandidates.value.find(({ student, pkg }) =>
+    String(student.studentId) === studentId && String(pkg.packageId) === packageId);
+  if (!candidate) {
+    ElMessage.warning('The selected student course is not available in the deduction list.');
+    return;
+  }
+  selectCandidatePackage(candidate);
+}
+
 /** 排课页打开打印标签后，等目标课包加载并选中，再调用现有签字表打印流程。 */
 async function printRoutePackage() {
   const target = routePrintTarget();
@@ -1733,6 +1747,7 @@ function displayResourceName(name?: string) {
 onMounted(async () => {
   await Promise.all([loadTeachers(), loadClassrooms()]);
   await loadData();
+  selectRouteDeductionTarget();
   await printRoutePackage();
 });
 </script>

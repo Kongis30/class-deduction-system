@@ -14,9 +14,12 @@
     </div>
 
     <template #footer>
-      <el-button @click="emit('update:modelValue', false)">Cancel</el-button>
+      <el-button v-if="alternateActionText" type="primary" plain @click="emit('alternate-action')">
+        {{ alternateActionText }}
+      </el-button>
+      <el-button v-else @click="emit('update:modelValue', false)">Cancel</el-button>
       <el-button type="danger" :disabled="remainingSeconds > 0 || loading" :loading="loading" @click="emit('confirm')">
-        {{ remainingSeconds > 0 ? `Pause in ${remainingSeconds}s` : confirmText }}
+        {{ remainingSeconds > 0 ? `${confirmText} (${remainingSeconds}s)` : confirmText }}
       </el-button>
     </template>
   </el-dialog>
@@ -25,24 +28,28 @@
 <script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue';
 
-const COOLDOWN_SECONDS = 10;
+const DEFAULT_COOLDOWN_SECONDS = 10;
 
 const props = withDefaults(defineProps<{
   modelValue: boolean;
   title: string;
   message: string;
   confirmText: string;
+  confirmCooldownSeconds?: number;
+  alternateActionText?: string;
   loading?: boolean;
 }>(), {
+  confirmCooldownSeconds: DEFAULT_COOLDOWN_SECONDS,
   loading: false,
 });
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean];
   confirm: [];
+  'alternate-action': [];
 }>();
 
-const remainingSeconds = ref(COOLDOWN_SECONDS);
+const remainingSeconds = ref(props.confirmCooldownSeconds);
 let countdownTimer: ReturnType<typeof setInterval> | undefined;
 
 function clearCountdown() {
@@ -50,10 +57,10 @@ function clearCountdown() {
   countdownTimer = undefined;
 }
 
-watch(() => props.modelValue, (visible) => {
+watch(() => [props.modelValue, props.confirmCooldownSeconds] as const, ([visible, cooldownSeconds]) => {
   clearCountdown();
-  remainingSeconds.value = COOLDOWN_SECONDS;
-  if (!visible) return;
+  remainingSeconds.value = Math.max(0, Math.ceil(cooldownSeconds));
+  if (!visible || remainingSeconds.value === 0) return;
 
   countdownTimer = setInterval(() => {
     remainingSeconds.value = Math.max(0, remainingSeconds.value - 1);
