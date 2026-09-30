@@ -125,7 +125,9 @@
                       v-if="selectedPackage?.packageStatus === 'ACTIVE' && currentRule"
                       type="primary"
                       size="small"
-                      @click="openEditDialog"
+                      :loading="checkingEditDeduction"
+                      :disabled="checkingEditDeduction"
+                      @click="requestEditSchedule"
                     >
                       Edit Schedule
                     </el-button>
@@ -817,6 +819,28 @@
       </template>
     </el-dialog>
 
+    <el-dialog
+      v-model="editDeductionPromptVisible"
+      title="Started Lessons Need Deduction"
+      width="min(540px, calc(100vw - 32px))"
+      :close-on-click-modal="false"
+    >
+      <el-alert
+        :title="`${pendingStartedLessons.length} lesson(s) have started but are not yet deducted.`"
+        type="warning"
+        :closable="false"
+        show-icon
+      />
+      <p class="edit-deduction-prompt__message">
+        Deduct these lessons before editing the schedule, or continue editing without deducting them.
+      </p>
+
+      <template #footer>
+        <el-button type="primary" plain @click="goToOneOnOneDeduction">Go to 1-on-1 Lessons</el-button>
+        <el-button type="warning" @click="continueEditSchedule">Continue Edit Schedule</el-button>
+      </template>
+    </el-dialog>
+
     <PauseConfirmationDialog
       v-model="pauseConfirmationVisible"
       title="Pause Course"
@@ -843,7 +867,7 @@ import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
 import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
-import { fetchOneOnOneDeductions } from '@/api/one-on-one';
+import { fetchOneOnOneDeductions, type OneOnOneLesson } from '@/api/one-on-one';
 import {
   createRecurringScheduleRule,
   updateRecurringScheduleRule,
@@ -999,6 +1023,9 @@ const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
 const pausingPackageId = ref<EntityId | null>(null);
 const pauseConfirmationVisible = ref(false);
+const checkingEditDeduction = ref(false);
+const editDeductionPromptVisible = ref(false);
+const pendingStartedLessons = ref<OneOnOneLesson[]>([]);
 const resumingPackageId = ref<EntityId | null>(null);
 const packageHoursDialogVisible = ref(false);
 const deductedHoursDraft = ref(0);
@@ -1607,6 +1634,58 @@ function pauseSelectedPackage() {
   pauseConfirmationVisible.value = true;
 }
 
+// 点击 Edit Schedule 时先核对当前课包已开始的课次；只有未消课课次需要额外提示。
+async function requestEditSchedule() {
+  const packageToEdit = selectedPackage.value;
+  const studentId = selectedStudentId.value;
+  if (!packageToEdit || !studentId || !currentRule.value || checkingEditDeduction.value) return;
+
+  checkingEditDeduction.value = true;
+  try {
+    const response = await fetchOneOnOneDeductions({
+      studentId,
+      packageId: packageToEdit.id,
+    });
+    if (String(selectedStudentId.value) !== String(studentId)
+      || String(selectedPackageId.value) !== String(packageToEdit.id)) return;
+
+    const coursePackage = response.data.data
+      .flatMap(teacher => teacher.students)
+      .flatMap(student => student.packages.map(item => ({ student, item })))
+      .find(({ student, item }) =>
+        String(student.studentId) === String(studentId)
+        && String(item.packageId) === String(packageToEdit.id))?.item;
+
+    if (!coursePackage) {
+      ElMessage.error('Unable to find this course in the deduction records. Please refresh and try again.');
+      return;
+    }
+
+    const now = dayjs();
+    pendingStartedLessons.value = coursePackage.lessons.filter(lesson =>
+      lesson.planningStatus !== 'CANCELLED'
+      && dayjs(lesson.plannedStartAt).isValid()
+      && !dayjs(lesson.plannedStartAt).isAfter(now)
+      && lesson.confirmStage !== 'CONFIRMED');
+
+    if (pendingStartedLessons.value.length > 0) {
+      editDeductionPromptVisible.value = true;
+      return;
+    }
+    await openEditDialog();
+  } catch (error) {
+    ElMessage.error(`Unable to check lessons that need deduction. ${extractErrorMessage(error)}`);
+  } finally {
+    checkingEditDeduction.value = false;
+  }
+}
+
+// 弹窗的继续操作不重新查询，直接进入已有的周排课编辑流程。
+async function continueEditSchedule() {
+  editDeductionPromptVisible.value = false;
+  await openEditDialog();
+}
+
 // 将当前学生和课包带到 1-on-1 消课页，便于管理员直接找到待核销课次。
 function goToOneOnOneDeduction() {
   const packageToDeduct = selectedPackage.value;
@@ -1614,6 +1693,7 @@ function goToOneOnOneDeduction() {
   if (!packageToDeduct || !studentId) return;
 
   pauseConfirmationVisible.value = false;
+  editDeductionPromptVisible.value = false;
   void router.push({
     name: 'one-on-one-deduction',
     query: {
@@ -2326,6 +2406,12 @@ function disabledPastDate(date: Date) {
 </script>
 
 <style scoped>
+.edit-deduction-prompt__message {
+  margin: 12px 0 0;
+  color: #606266;
+  line-height: 1.6;
+}
+
 .schedule-page {
   gap: 10px;
   height: calc(100vh - 120px);
