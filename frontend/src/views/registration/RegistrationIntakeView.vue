@@ -445,7 +445,7 @@
                       <strong class="print-only print-course-value">{{ printCourseScheduleLabel(line) }}</strong>
                     </label>
                     <label v-if="showDurationInput(line)" class="course-control">
-                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : isSessionPackage(line) ? 'Selected sessions' : 'Selected length' }}</span>
+                      <span>{{ isOneOnOneLine(line) ? 'Package hours' : isSessionPackage(line) ? 'Selected sessions' : line.packageUnit === 'MONTH' ? 'Selected months' : 'Selected length' }}</span>
                       <el-input-number
                         v-if="isOneOnOneLine(line)"
                         v-model="line.oneOnOneHours"
@@ -472,9 +472,18 @@
                           :value="sessionCount"
                         />
                       </el-select>
-                      <div v-else-if="line.packageUnit === 'MONTH'" class="class-schedule-summary">
-                        {{ printRegistrationDurationLabel(line) }}
-                      </div>
+                      <el-input-number
+                        v-else-if="line.packageUnit === 'MONTH'"
+                        v-model="line.groupPurchasedMonths"
+                        class="table-price"
+                        :min="1"
+                        :max="configuredGroupPackageMonths(line)"
+                        :step="1"
+                        :precision="0"
+                        :controls="true"
+                        :disabled="!receiptEditingEnabled"
+                        @change="() => handleGroupMonthCountChange(line)"
+                      />
                       <div v-else class="class-schedule-summary">
                         {{ printRegistrationDurationLabel(line) }}
                       </div>
@@ -2660,8 +2669,8 @@ function normalizeHistoricalLineReferences() {
         detailText: line.detail || 'Historical package',
         packageUnit: line.packageUnit,
         packageQuantity: line.packageQuantity,
-        totalPrice: line.priceAmount,
-        priceAmount: line.priceAmount,
+        totalPrice: line.packageTotalPrice ?? line.priceAmount,
+        priceAmount: line.packageTotalPrice ?? line.priceAmount,
         currencyCode: 'USD',
         courseProductId: line.courseProductId,
         actualClasses: line.classId ? [{
@@ -3779,6 +3788,11 @@ function handleGroupSessionCountChange(line: RegistrationCourseLine) {
   handleRegistrationDurationChange(line);
 }
 
+function handleGroupMonthCountChange(line: RegistrationCourseLine) {
+  line.manualPriceOverride = false;
+  handleRegistrationDurationChange(line);
+}
+
 function selectedClassGroup(line: RegistrationCourseLine) {
   return classGroups.value.find((item) => String(item.id) === String(line.classId));
 }
@@ -3801,14 +3815,21 @@ function resolveGroupPackageMonths(option?: CoursePriceOptionItem) {
   return months > 0 ? months : undefined;
 }
 
+function configuredGroupPackageMonths(line: RegistrationCourseLine) {
+  return resolveGroupPackageMonths(findOption(line.coursePriceOptionId)) || numeric(line.packageQuantity);
+}
+
 function syncGroupDurationFromSelectedPackage(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line) || line.packageUnit !== 'MONTH') {
     return;
   }
   const option = findOption(line.coursePriceOptionId);
   const months = resolveGroupPackageMonths(option);
-  line.groupPurchasedMonths = months;
-  line.groupDurationMode = durationModeForMonths(months);
+  if (!Number.isInteger(line.groupPurchasedMonths) || !line.groupPurchasedMonths || !months
+      || line.groupPurchasedMonths > months) {
+    line.groupPurchasedMonths = months;
+  }
+  line.groupDurationMode = durationModeForMonths(line.groupPurchasedMonths);
   if (months !== undefined) {
     line.packageQuantity = months;
   }
@@ -3821,6 +3842,9 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
   const fullPackagePrice = packageBasePrice(option, line.attendanceOption);
   const sessionCount = isSessionPackage(line) ? selectedSessionCount(line) : 0;
   const configuredSessionCount = isSessionPackage(line) ? packageSessionCount(line) : 0;
+  const configuredMonthCount = line.packageUnit?.toUpperCase() === 'MONTH'
+    ? resolveGroupPackageMonths(option) || 0
+    : 0;
   const computedPrice = isOneOnOneLine(line)
     ? configuredHours > 0
       ? wholeDollarForm.value
@@ -3831,9 +3855,13 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
       ? wholeDollarForm.value
         ? calculateProratedSessionPrice(fullPackagePrice, sessionCount, configuredSessionCount)
         : Math.floor(Math.round(fullPackagePrice * 100) * sessionCount / (configuredSessionCount * 100))
+      : configuredMonthCount > 0
+        ? wholeDollarForm.value
+          ? ceilRegistrationAmount(numeric(fullPackagePrice) * numeric(line.groupPurchasedMonths) / configuredMonthCount)
+          : roundMoney(numeric(fullPackagePrice) * numeric(line.groupPurchasedMonths) / configuredMonthCount)
       : wholeDollarForm.value ? ceilRegistrationAmount(fullPackagePrice) : fullPackagePrice;
   // Keep the configured full-package price as the proration basis for receipt edits and historical display.
-  line.packageTotalPrice = isSessionPackage(line) ? fullPackagePrice : computedPrice;
+  line.packageTotalPrice = isSessionPackage(line) || configuredMonthCount > 0 ? fullPackagePrice : computedPrice;
   line.originalPriceAmount = computedPrice;
   if (!line.manualPriceOverride) {
     line.priceAmount = computedPrice;
@@ -4158,7 +4186,10 @@ function printRegistrationDurationLabel(line: RegistrationCourseLine) {
   }
   if (line.packageQuantity && line.packageUnit) {
     const unit = line.packageUnit.toLowerCase();
-    return `${line.packageQuantity} ${Number(line.packageQuantity) === 1 ? unit : `${unit}s`}`;
+    const quantity = line.packageUnit.toUpperCase() === 'MONTH'
+      ? numeric(line.groupPurchasedMonths) || numeric(line.packageQuantity)
+      : line.packageQuantity;
+    return `${quantity} ${Number(quantity) === 1 ? unit : `${unit}s`}`;
   }
   return line.periodLabel || '—';
 }
@@ -4718,6 +4749,14 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
     const selectedSessions = numeric(line.groupSessionCount);
     if (!Number.isInteger(selectedSessions) || selectedSessions < 1 || selectedSessions > totalSessions) {
       errors.push(`${label}: selected sessions must be between 1 and ${totalSessions}.`);
+      return true;
+    }
+  }
+  if (line.packageUnit?.toUpperCase() === 'MONTH') {
+    const maximumMonths = configuredGroupPackageMonths(line);
+    const selectedMonths = numeric(line.groupPurchasedMonths);
+    if (!Number.isInteger(selectedMonths) || selectedMonths < 1 || selectedMonths > maximumMonths) {
+      errors.push(`${label}: selected months must be between 1 and ${maximumMonths}.`);
       return true;
     }
   }

@@ -1579,7 +1579,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (item == null) {
                 throw new BusinessException("CORRECTION_ORDER_ITEM_NOT_FOUND", "Edited course row does not belong to this order.");
             }
-            ClassItemBefore previous = new ClassItemBefore(item.getClassId(), item.getStartDate(),
+            ClassItemBefore previous = new ClassItemBefore(item.getLineNo(), item.getClassId(), item.getStartDate(),
                     item.getPackageUnit(), item.getPackageQuantity(), item.getCourseProductId(), item.getGradeBand());
             Long oldClassId = item.getClassId();
             if (isGroupItem(item) && payload.getClassId() == null) {
@@ -1599,7 +1599,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             enrollmentOrderItemMapper.updateById(item);
             persistCorrectedItemTransportSnapshot(item, payload);
             if (isGroupItem(item)) {
-                migrateCorrectedClassEnrollment(order, student, item, previous, payload.getSessions());
+                migrateCorrectedClassEnrollment(order, student, item, previous,
+                        payload.getSessions(), payload.getPurchasedMonths());
             } else {
                 updateCorrectedOneOnOnePackage(order, item);
             }
@@ -1670,7 +1671,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return !"ONE_ON_ONE".equalsIgnoreCase(item.getCourseType());
     }
 
-    private record ClassItemBefore(Long classId, LocalDate startDate, String packageUnit,
+    private record ClassItemBefore(Integer lineNo, Long classId, LocalDate startDate, String packageUnit,
                                    BigDecimal packageQuantity, Long courseProductId, String gradeBand) {
     }
 
@@ -1678,7 +1679,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                                                  StudentEntity student,
                                                  EnrollmentOrderItemEntity item,
                                                  ClassItemBefore previous,
-                                                 Integer selectedSessions) {
+                                                 Integer selectedSessions,
+                                                 Integer selectedMonths) {
         ClassGroupEntity targetClass = item.getClassId() == null ? null : classGroupMapper.selectById(item.getClassId());
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
@@ -1691,27 +1693,40 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (current == null) {
             // 续报会把在册记录转挂到新订单项；已停课的记录也不应因编辑旧收据而重新入班。
             Integer oldSessions = "SESSION".equalsIgnoreCase(previous.packageUnit())
-                    ? originalReceiptSessions(order.getId(), item.getLineNo()) : null;
+                    ? originalReceiptSessions(order.getId(), previous.lineNo()) : null;
             Integer storedSessions = oldSessions == null ? wholeNumber(previous.packageQuantity()) : oldSessions;
             boolean sessionCountChanged = selectedSessions != null && "SESSION".equalsIgnoreCase(item.getPackageUnit())
                     && !Objects.equals(selectedSessions, storedSessions);
+            Integer oldMonths = "MONTH".equalsIgnoreCase(previous.packageUnit())
+                    ? originalReceiptPurchasedMonths(order.getId(), previous.lineNo()) : null;
+            Integer storedMonths = oldMonths == null ? wholeNumber(previous.packageQuantity()) : oldMonths;
+            boolean monthCountChanged = selectedMonths != null && "MONTH".equalsIgnoreCase(item.getPackageUnit())
+                    && !Objects.equals(selectedMonths, storedMonths);
             if (!Objects.equals(previous.classId(), item.getClassId())
                     || !Objects.equals(previous.startDate(), item.getStartDate())
                     || !Objects.equals(previous.packageUnit(), item.getPackageUnit())
                     || !sameQuantity(previous.packageQuantity(), item.getPackageQuantity())
                     || !Objects.equals(previous.courseProductId(), item.getCourseProductId())
-                    || !Objects.equals(previous.gradeBand(), item.getGradeBand()) || sessionCountChanged) {
+                    || !Objects.equals(previous.gradeBand(), item.getGradeBand())
+                    || sessionCountChanged || monthCountChanged) {
                 throw new BusinessException("CORRECTION_ENROLLMENT_DETACHED",
-                        "This receipt no longer owns a class enrollment. Edit the current enrollment before changing its schedule or sessions.");
+                        "This receipt no longer owns a class enrollment. Edit the current enrollment before changing its schedule or package duration.");
             }
             return;
         }
         Integer originalSessions = "SESSION".equalsIgnoreCase(previous.packageUnit())
-                ? originalReceiptSessions(order.getId(), item.getLineNo()) : null;
+                ? originalReceiptSessions(order.getId(), previous.lineNo()) : null;
+        Integer originalMonths = "MONTH".equalsIgnoreCase(previous.packageUnit())
+                ? originalReceiptPurchasedMonths(order.getId(), previous.lineNo()) : null;
         boolean cumulativeSessionEnrollment = "SESSION".equalsIgnoreCase(previous.packageUnit())
                 && (originalSessions != null && current.getPurchasedQuantity() != null
                     && current.getPurchasedQuantity() > originalSessions
                     || originalSessions == null && current.getEnrollmentDate() != null
+                    && previous.startDate() != null && current.getEnrollmentDate().isBefore(previous.startDate()));
+        boolean cumulativeMonthEnrollment = "MONTH".equalsIgnoreCase(previous.packageUnit())
+                && (originalMonths != null && current.getPurchasedQuantity() != null
+                    && current.getPurchasedQuantity() > originalMonths
+                    || originalMonths == null && current.getEnrollmentDate() != null
                     && previous.startDate() != null && current.getEnrollmentDate().isBefore(previous.startDate()));
         if (Objects.equals(previous.classId(), item.getClassId())) {
             LocalDate baseline = item.getStartDate() == null ? current.getEnrollmentDate() : item.getStartDate();
@@ -1719,7 +1734,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             boolean quantityChanged = "SESSION".equalsIgnoreCase(item.getPackageUnit())
                     ? selectedSessions != null && !Objects.equals(selectedSessions,
                         originalSessions == null ? current.getPurchasedQuantity() : originalSessions)
-                    : !sameQuantity(previous.packageQuantity(), item.getPackageQuantity());
+                    : "MONTH".equalsIgnoreCase(item.getPackageUnit())
+                        ? selectedMonths != null && !Objects.equals(selectedMonths,
+                            originalMonths == null ? wholeNumber(current.getPurchasedQuantity()) : originalMonths)
+                        : !sameQuantity(previous.packageQuantity(), item.getPackageQuantity());
             if (Objects.equals(previousStart, baseline)
                     && Objects.equals(previous.packageUnit(), item.getPackageUnit())
                     && Objects.equals(previous.courseProductId(), item.getCourseProductId())
@@ -1731,11 +1749,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 }
                 return;
             }
-            if (cumulativeSessionEnrollment) {
+            if (cumulativeSessionEnrollment || cumulativeMonthEnrollment) {
                 throw new BusinessException("CORRECTION_RENEWAL_SESSIONS_UNSUPPORTED",
-                        "This enrollment includes earlier purchases. Change its sessions from the current enrollment, not an old receipt.");
+                        "This enrollment includes earlier purchases. Change its package duration from the current enrollment, not an old receipt.");
             }
-            BigDecimal billingQuantity = correctedBillingQuantity(item, previous.packageUnit(), current, selectedSessions);
+            BigDecimal billingQuantity = correctedBillingQuantity(item, previous.packageUnit(), current,
+                    selectedSessions, selectedMonths);
             validateCorrectedClassTarget(targetClass, item);
             ClassBillingService.ClassBilling billing = computeCorrectedClassBilling(
                     targetClass, baseline, item, billingQuantity);
@@ -1747,14 +1766,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             classEnrollmentMapper.updateById(current);
             return;
         }
-        if (cumulativeSessionEnrollment) {
+        if (cumulativeSessionEnrollment || cumulativeMonthEnrollment) {
             throw new BusinessException("CORRECTION_RENEWAL_SESSIONS_UNSUPPORTED",
-                    "This enrollment includes earlier purchases. Change its sessions from the current enrollment, not an old receipt.");
+                    "This enrollment includes earlier purchases. Change its package duration from the current enrollment, not an old receipt.");
         }
         if (targetClass != null) {
             validateCorrectedClassTarget(targetClass, item);
         }
-        BigDecimal billingQuantity = correctedBillingQuantity(item, previous.packageUnit(), current, selectedSessions);
+        BigDecimal billingQuantity = correctedBillingQuantity(item, previous.packageUnit(), current,
+                selectedSessions, selectedMonths);
         for (ClassEnrollmentEntity enrollment : enrollments) {
             if ("ACTIVE".equals(enrollment.getStatus())) {
                 enrollment.setStatus("CANCELLED");
@@ -1817,7 +1837,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     /** 收据编辑的 SESSION 数量来自学生选购次数，价格选项的 packageQuantity 只是上限。 */
     private BigDecimal correctedBillingQuantity(EnrollmentOrderItemEntity item, String oldPackageUnit,
-                                                ClassEnrollmentEntity current, Integer selectedSessions) {
+                                                ClassEnrollmentEntity current, Integer selectedSessions,
+                                                Integer selectedMonths) {
+        if ("MONTH".equalsIgnoreCase(item.getPackageUnit())) {
+            Integer actualMonths = selectedMonths;
+            if (actualMonths == null && "MONTH".equalsIgnoreCase(oldPackageUnit) && current != null) {
+                actualMonths = wholeNumber(current.getPurchasedQuantity());
+            }
+            if (actualMonths == null || actualMonths < 1 || actualMonths > 36 || (item.getPackageQuantity() != null
+                    && BigDecimal.valueOf(actualMonths).compareTo(item.getPackageQuantity()) > 0)) {
+                throw new BusinessException("REGISTRATION_DURATION_INVALID",
+                        "Selected months must be between 1 and the package month limit.");
+            }
+            return BigDecimal.valueOf(actualMonths);
+        }
         if (!"SESSION".equalsIgnoreCase(item.getPackageUnit())) {
             return item.getPackageQuantity();
         }
@@ -1860,6 +1893,26 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 if ((lineNo != null && !lineNo.equals(rowLineNo)) || (lineNo == null && rows.size() != 1)) continue;
                 Integer sessions = wholeNumber(values.get("sessions"));
                 if (sessions != null) return sessions;
+            }
+        }
+        return null;
+    }
+
+    /** 收据快照保存学生实际购买月数；订单项 package_quantity 表示定价选项的月数上限。 */
+    private Integer originalReceiptPurchasedMonths(Long orderId, Integer lineNo) {
+        List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(new LambdaQueryWrapper<ReceiptRecordEntity>()
+                .eq(ReceiptRecordEntity::getEnrollmentOrderId, orderId)
+                .orderByDesc(ReceiptRecordEntity::getId));
+        for (ReceiptRecordEntity receipt : receipts) {
+            Map<String, Object> snapshot = jsonHelper.fromJson(receipt.getReceiptPayload(),
+                    new TypeReference<LinkedHashMap<String, Object>>() {});
+            if (snapshot == null || !(snapshot.get("items") instanceof List<?> rows)) continue;
+            for (Object row : rows) {
+                if (!(row instanceof Map<?, ?> values)) continue;
+                Integer rowLineNo = wholeNumber(values.get("lineNo"));
+                if ((lineNo != null && !lineNo.equals(rowLineNo)) || (lineNo == null && rows.size() != 1)) continue;
+                Integer months = wholeNumber(values.get("purchasedMonths"));
+                if (months != null) return months;
             }
         }
         return null;
