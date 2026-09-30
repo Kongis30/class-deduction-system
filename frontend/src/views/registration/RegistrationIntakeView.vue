@@ -7766,6 +7766,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     display: none !important;
   }
 
+  .student-phone-display {
+    display: none !important;
+  }
+
   .student-phone-print {
     display: inline-flex !important;
     align-items: center;
