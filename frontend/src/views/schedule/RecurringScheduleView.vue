@@ -820,7 +820,7 @@
     <PauseConfirmationDialog
       v-model="pauseConfirmationVisible"
       title="Pause Course"
-      message="Pausing this course cancels its future lessons that have not been recorded. After resuming, you must create a new schedule to continue lessons."
+      message="Before pausing, please deduct lessons that have already started but are not yet deducted. You can still pause without deducting them. Pausing cancels future lessons that have not been recorded; after resuming, create a new schedule to continue."
       confirm-text="Pause Course"
       :loading="pausingPackageId !== null"
       @confirm="confirmPauseSelectedPackage"
