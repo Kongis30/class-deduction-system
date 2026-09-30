@@ -347,7 +347,7 @@ const pagination = reactive({
 });
 
 const tableData = ref<CourseProductItem[]>([]);
-const activeTab = ref(route.query.tab === 'group' ? 'GROUP' : 'ONE_ON_ONE');
+const activeTab = ref(route.query.tab === 'one-on-one' ? 'ONE_ON_ONE' : 'GROUP');
 
 const oneOnOneData = computed(() =>
   sortCourseProducts(tableData.value.filter(p => p.teachingMode === 'ONE_ON_ONE'))
