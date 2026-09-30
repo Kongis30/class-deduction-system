@@ -801,6 +801,36 @@ class ScheduleAdjustmentServiceImplTest {
     }
 
     @Test
+    void shouldCreateOnlineWeeklyAdjustmentWithoutClassroom() {
+        LocalDate weekStartDate = currentWeekStartDate();
+        LocalDateTime existingStartAt = weekStartDate.atTime(18, 0);
+        LocalDateTime createStartAt = weekStartDate.plusDays(3).atTime(18, 0);
+        LocalDateTime futureStartAt = weekStartDate.plusDays(8).atTime(18, 0);
+        LessonOccurrenceEntity existing = buildWeeklyOccurrence(1001L, existingStartAt, 4);
+        LessonOccurrenceEntity future = buildWeeklyOccurrence(2001L, futureStartAt, 4);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(existing), List.of(existing), List.of(future));
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
+        doAnswer(invocation -> {
+            LessonOccurrenceEntity entity = invocation.getArgument(0);
+            entity.setId(2002L);
+            return 1;
+        }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
+
+        WeeklyScheduleAdjustmentRequest.Item onlineItem = createItem(createStartAt, 4);
+        onlineItem.setPlannedClassroomId(null);
+        onlineItem.setDeliveryMode("ONLINE");
+
+        WeeklyScheduleAdjustmentResultVO result = scheduleAdjustmentService.adjustWeekly(buildWeeklyRequest(onlineItem));
+
+        verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
+        assertThat(result.createdCount()).isEqualTo(1);
+        assertThat(occurrenceCaptor.getValue().getDeliveryMode()).isEqualTo("ONLINE");
+        assertThat(occurrenceCaptor.getValue().getPlannedClassroomId()).isNull();
+    }
+
+    @Test
     void shouldRejectCreateWhenConflictDetected() {
         LocalDate weekStartDate = currentWeekStartDate();
         LocalDateTime existingStartAt = weekStartDate.atTime(18, 0);

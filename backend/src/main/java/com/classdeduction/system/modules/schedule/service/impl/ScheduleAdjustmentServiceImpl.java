@@ -381,12 +381,29 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
     private void requirePlanningFields(WeeklyScheduleAdjustmentRequest.Item item) {
         if (item.getPlannedTeacherId() == null
-                || item.getPlannedClassroomId() == null
+                || (item.getPlannedClassroomId() == null && !"ONLINE".equalsIgnoreCase(item.getDeliveryMode()))
                 || item.getPlannedStartAt() == null
                 || item.getPlannedEndAt() == null
                 || item.getPlannedUnits() == null) {
-            throw new BusinessException("INCOMPLETE_ADJUSTMENT", "Adjusted lesson must include teacher, classroom, start time, end time, and planned units.");
+            throw new BusinessException("INCOMPLETE_ADJUSTMENT", "Adjusted lesson must include teacher, classroom or Online, start time, end time, and planned units.");
         }
+    }
+
+    /** 临时调课允许 Online 不绑定实体教室；其它授课方式仍要求有效教室。 */
+    private Long resolveClassroomId(WeeklyScheduleAdjustmentRequest.Item item) {
+        return "ONLINE".equalsIgnoreCase(item.getDeliveryMode()) ? null : item.getPlannedClassroomId();
+    }
+
+    /** 保留旧请求兼容性，同时将 Online 与实体教室选择明确写入课次。 */
+    private String resolveDeliveryMode(WeeklyScheduleAdjustmentRequest.Item item, String fallback) {
+        String mode = item.getDeliveryMode();
+        if (mode == null || mode.isBlank()) {
+            if (item.getPlannedClassroomId() != null) return "IN_PERSON";
+            return fallback;
+        }
+        if ("ONLINE".equalsIgnoreCase(mode)) return "ONLINE";
+        if ("IN_PERSON".equalsIgnoreCase(mode) && item.getPlannedClassroomId() != null) return "IN_PERSON";
+        throw new BusinessException("INVALID_DELIVERY_MODE", "Choose a classroom for in-person lessons or select Online.");
     }
 
     /**
@@ -547,8 +564,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         adjusted.setConflictChecked(1);
         adjusted.setPlanningStatus("ADJUSTED");
         adjusted.setPlannedTeacherId(item.getPlannedTeacherId());
-        adjusted.setPlannedClassroomId(item.getPlannedClassroomId());
-        adjusted.setDeliveryMode(item.getPlannedClassroomId() == null ? source.getDeliveryMode() : "IN_PERSON");
+        adjusted.setPlannedClassroomId(resolveClassroomId(item));
+        adjusted.setDeliveryMode(resolveDeliveryMode(item, source.getDeliveryMode()));
         adjusted.setPlannedStartAt(item.getPlannedStartAt());
         adjusted.setPlannedEndAt(item.getPlannedEndAt());
         adjusted.setPlannedUnits(item.getPlannedUnits());
@@ -581,8 +598,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         created.setPlanningStatus("SCHEDULED");
         created.setConflictChecked(1);
         created.setPlannedTeacherId(item.getPlannedTeacherId());
-        created.setPlannedClassroomId(item.getPlannedClassroomId());
-        created.setDeliveryMode(item.getPlannedClassroomId() == null ? null : "IN_PERSON");
+        created.setPlannedClassroomId(resolveClassroomId(item));
+        created.setDeliveryMode(resolveDeliveryMode(item, null));
         created.setPlannedStartAt(item.getPlannedStartAt());
         created.setPlannedEndAt(item.getPlannedEndAt());
         created.setPlannedUnits(item.getPlannedUnits());

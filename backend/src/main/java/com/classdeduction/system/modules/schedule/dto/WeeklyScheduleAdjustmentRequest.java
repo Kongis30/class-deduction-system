@@ -55,6 +55,9 @@ public class WeeklyScheduleAdjustmentRequest {
         @Schema(description = "Adjusted planned classroom ID", example = "1880000000000000003")
         private Long plannedClassroomId;
 
+        @Schema(description = "Lesson delivery mode: IN_PERSON or ONLINE", example = "ONLINE")
+        private String deliveryMode;
+
         @Schema(description = "Adjusted planned start time", example = "2026-04-13T18:00:00")
         private LocalDateTime plannedStartAt;
 

@@ -669,7 +669,8 @@
             </div>
             <div class="weekly-editor__field">
               <label>Classroom</label>
-              <el-select v-model="selectedRow.plannedClassroomId" popper-class="classroom-campus-picker" clearable filterable placeholder="Classroom" :disabled="selectedRow.markedForDelete">
+              <el-select v-model="selectedRow.classroomSelection" popper-class="classroom-campus-picker" filterable placeholder="Classroom or Online" :disabled="selectedRow.markedForDelete">
+                <el-option label="Online" value="ONLINE" />
                 <el-option-group
                   v-for="group in classroomOptionGroups"
                   :key="group.campusKey"
@@ -680,7 +681,7 @@
                     v-for="c in group.classrooms"
                     :key="c.id"
                     :label="classroomSelectLabel(c)"
-                    :value="c.id"
+                    :value="`ROOM:${c.id}`"
                   >
                     <div class="classroom-select-option">
                       <span>{{ c.roomName }}</span>
@@ -896,7 +897,7 @@ interface WeeklyAdjustmentRow {
   plannedEndAt: string;
   plannedHours: number;
   plannedTeacherId?: EntityId;
-  plannedClassroomId?: EntityId;
+  classroomSelection?: string;
 
   markedForDelete: boolean;
 
@@ -2130,7 +2131,8 @@ function buildWeeklyItem(row: WeeklyAdjustmentRow): WeeklyScheduleAdjustmentItem
       plannedEndAt: row.plannedEndAt,
       plannedUnits: Math.round(row.plannedHours * 2),
       plannedTeacherId: normalizeOptionalId(row.plannedTeacherId),
-      plannedClassroomId: normalizeOptionalId(row.plannedClassroomId),
+      plannedClassroomId: classroomIdFromSelection(row.classroomSelection),
+      deliveryMode: deliveryModeFromSelection(row.classroomSelection),
       itemReason: row.itemReason.trim(),
     };
   }
@@ -2143,7 +2145,8 @@ function buildWeeklyItem(row: WeeklyAdjustmentRow): WeeklyScheduleAdjustmentItem
     plannedEndAt: row.plannedEndAt,
     plannedUnits: Math.round(row.plannedHours * 2),
     plannedTeacherId: normalizeOptionalId(row.plannedTeacherId),
-    plannedClassroomId: normalizeOptionalId(row.plannedClassroomId),
+    plannedClassroomId: classroomIdFromSelection(row.classroomSelection),
+    deliveryMode: deliveryModeFromSelection(row.classroomSelection),
   };
 }
 
@@ -2183,7 +2186,9 @@ function toWeeklyAdjustmentRow(occ: LessonOccurrenceItem): WeeklyAdjustmentRow {
     plannedEndAt: occ.plannedEndAt,
     plannedHours: (occ.plannedUnits ?? 0) * 0.5,
     plannedTeacherId: occ.plannedTeacherId,
-    plannedClassroomId: occ.plannedClassroomId,
+    classroomSelection: occ.deliveryMode === 'ONLINE'
+      ? 'ONLINE'
+      : occ.plannedClassroomId == null ? undefined : `ROOM:${occ.plannedClassroomId}`,
     markedForDelete: false,
     itemReason: '',
     original: occ,
@@ -2204,7 +2209,7 @@ function addWeeklyNewRow(startAt?: dayjs.Dayjs, hours = 1): WeeklyAdjustmentRow 
     plannedEndAt: base.add(hours, 'hour').format('YYYY-MM-DDTHH:mm:ss'),
     plannedHours: hours,
     plannedTeacherId: currentRule.value?.slots?.[0]?.teacherId,
-    plannedClassroomId: currentRule.value?.defaultClassroomId,
+    classroomSelection: defaultWeeklyClassroomSelection(),
     markedForDelete: false,
     itemReason: '',
   };
@@ -2244,6 +2249,9 @@ function validateWeeklyRows(): string {
     if (Math.round(row.plannedHours * 2) < 1) {
       return 'Lesson hours must be at least 0.5h.';
     }
+    if (!row.classroomSelection) {
+      return 'Choose a classroom or Online for every lesson.';
+    }
     if (!isHalfHourIncrement(row.plannedHours)) {
       return 'Lesson hours must be in 0.5h increments.';
     }
@@ -2270,7 +2278,25 @@ function isWeeklyRowChanged(row: WeeklyAdjustmentRow): boolean {
     || row.plannedEndAt !== original.plannedEndAt
     || Math.round(row.plannedHours * 2) !== original.plannedUnits
     || normalizeOptionalId(row.plannedTeacherId) !== normalizeOptionalId(original.plannedTeacherId)
-    || normalizeOptionalId(row.plannedClassroomId) !== normalizeOptionalId(original.plannedClassroomId);
+    || row.classroomSelection !== (original.deliveryMode === 'ONLINE'
+      ? 'ONLINE'
+      : original.plannedClassroomId == null ? undefined : `ROOM:${original.plannedClassroomId}`);
+}
+
+function classroomIdFromSelection(selection?: string): EntityId | undefined {
+  return selection?.startsWith('ROOM:') ? selection.slice(5) : undefined;
+}
+
+function deliveryModeFromSelection(selection?: string): 'IN_PERSON' | 'ONLINE' | undefined {
+  if (selection === 'ONLINE') return 'ONLINE';
+  return selection?.startsWith('ROOM:') ? 'IN_PERSON' : undefined;
+}
+
+function defaultWeeklyClassroomSelection(): string | undefined {
+  const slot = currentRule.value?.slots?.[0];
+  if (slot?.deliveryMode === 'ONLINE') return 'ONLINE';
+  const classroomId = slot?.classroomId ?? currentRule.value?.defaultClassroomId;
+  return classroomId == null ? undefined : `ROOM:${classroomId}`;
 }
 
 function normalizeOptionalId(id?: EntityId): EntityId | undefined {
