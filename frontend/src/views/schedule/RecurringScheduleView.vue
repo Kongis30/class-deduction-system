@@ -524,7 +524,7 @@
         </details>
 
 
-        <div class="weekly-cal">
+        <div class="weekly-cal" :style="{ '--weekly-slot-height': `${CAL_SLOT_HEIGHT}px` }">
           <div class="weekly-cal__head">
             <span class="weekly-cal__corner"></span>
             <span
@@ -540,8 +540,18 @@
           <div class="weekly-cal__body">
 
             <div class="weekly-cal__times">
-              <span v-for="r in calendarRows" :key="r.label" class="weekly-cal__time">{{ r.label }}</span>
-              <span class="weekly-cal__time weekly-cal__time--end">24:00</span>
+              <span
+                v-for="(r, index) in calendarRows"
+                :key="r.label"
+                class="weekly-cal__time"
+                :class="{ 'weekly-cal__time--last': index === calendarRows.length - 1 }"
+              >
+                <template v-if="index === calendarRows.length - 1">
+                  <span>{{ r.label }}</span>
+                  <span>24:00</span>
+                </template>
+                <template v-else>{{ r.label }}</template>
+              </span>
             </div>
 
             <div
@@ -3022,14 +3032,20 @@ function disabledPastDate(date: Date) {
 .weekly-cal {
   border: 1px solid #e8edf2;
   border-radius: 8px;
-  overflow: hidden;
+  max-height: min(85vh, 900px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   user-select: none;
 }
 
 
 .weekly-cal__head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: grid;
-  grid-template-columns: 56px repeat(7, 1fr);
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
   background: #f5f7fa;
   border-bottom: 1px solid #e8edf2;
 }
@@ -3067,9 +3083,8 @@ function disabledPastDate(date: Date) {
 
 .weekly-cal__body {
   display: grid;
-  grid-template-columns: 56px repeat(7, 1fr);
-  max-height: 420px;
-  overflow-y: auto;
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
+  align-items: start;
 }
 
 
@@ -3081,7 +3096,9 @@ function disabledPastDate(date: Date) {
 }
 
 .weekly-cal__time {
-  height: 28px;
+  box-sizing: border-box;
+  flex: 0 0 var(--weekly-slot-height);
+  height: var(--weekly-slot-height);
   font-size: 11px;
   color: #909399;
   text-align: right;
@@ -3089,12 +3106,14 @@ function disabledPastDate(date: Date) {
   transform: translateY(-6px);
 }
 
-.weekly-cal__time--end {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  height: 0;
-  transform: translateY(6px);
+.weekly-cal__time--last {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding-top: 1px;
+  padding-bottom: 1px;
+  line-height: 11px;
+  transform: none;
 }
 
 
@@ -3108,7 +3127,8 @@ function disabledPastDate(date: Date) {
 }
 
 .weekly-cal__cell {
-  height: 28px;
+  box-sizing: border-box;
+  height: var(--weekly-slot-height);
   border-bottom: 1px solid #f5f7fa;
   cursor: pointer;
 }

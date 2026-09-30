@@ -15,7 +15,13 @@
           :key="time.label"
           :class="{ 'wts-row--last-slot': time.isLastSlot }"
         >
-          <span class="wts-row__label">{{ time.label }}</span>
+          <span class="wts-row__label">
+            <template v-if="time.isLastSlot">
+              <span>{{ time.label }}</span>
+              <span>24:00</span>
+            </template>
+            <template v-else>{{ time.label }}</template>
+          </span>
           <div
             v-for="day in 7"
             :key="day"
@@ -81,9 +87,6 @@
             </template>
           </div>
         </div>
-      </div>
-      <div class="wts-time-boundary" aria-hidden="true">
-        <span class="wts-time-boundary__label">24:00</span>
       </div>
     </div>
 
@@ -481,7 +484,6 @@ function weekdayName(d: number) {
 
 .wts-grid-scroll {
   max-height: min(85vh, 900px);
-  padding-bottom: 7px;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
@@ -539,27 +541,13 @@ function weekdayName(d: number) {
   border-bottom: 1px solid #d7dee8;
 }
 
-.wts-time-boundary {
-  position: relative;
-  height: 0;
-  margin-top: -1px;
-  pointer-events: none;
-}
-
-.wts-time-boundary__label {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 56px;
-  transform: translateY(-50%);
-  color: #999;
-  font-size: 11px;
-  line-height: 14px;
-  text-align: center;
-  background: #fafafa;
-  border-right: 1px solid #e8e8e8;
-  font-variant-numeric: tabular-nums;
-  z-index: 1;
+.wts-row--last-slot .wts-row__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1px 0;
+  line-height: 11px;
 }
 
 /* ─── Time label column ─────────── */
