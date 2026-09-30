@@ -2,8 +2,8 @@
   <div class="page-stack">
     <section class="course-product-panel">
       <el-tabs v-model="activeTab" class="product-tabs product-tabs--top">
-        <el-tab-pane label="1:1 Private" name="ONE_ON_ONE" />
         <el-tab-pane label="Group Class" name="GROUP" />
+        <el-tab-pane label="1:1 Private" name="ONE_ON_ONE" />
       </el-tabs>
 
       <div class="panel-header">
