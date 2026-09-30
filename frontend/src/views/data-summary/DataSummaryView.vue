@@ -695,7 +695,8 @@ const monthStats = computed(() => {
 const sortedRows = computed<DataSummaryDisplayRow[]>(() => {
   const source = [...filteredRows.value];
   if (!sortState.key) {
-    return source.sort(compareRowsByBusinessGroup);
+    const oneOnOneGroupNames = oneOnOneSortGroupNames(source);
+    return source.sort((left, right) => compareRowsByBusinessGroup(left, right, oneOnOneGroupNames));
   }
   const direction = sortState.direction === 'asc' ? 1 : -1;
   return source.sort((left, right) => {
@@ -1195,14 +1196,55 @@ function sortValue(row: DataSummaryRow, key: ColumnKey) {
   return value;
 }
 
-function compareRowsByBusinessGroup(left: DataSummaryDisplayRow, right: DataSummaryDisplayRow) {
-  return compareCampus(displayText(left.campusName), displayText(right.campusName))
-    || compareClassName(displayText(displayClassName(left)), displayText(displayClassName(right)))
+function compareRowsByBusinessGroup(
+  left: DataSummaryDisplayRow,
+  right: DataSummaryDisplayRow,
+  oneOnOneGroupNames: Map<string, string>,
+) {
+  const campusOrder = compareCampus(displayText(left.campusName), displayText(right.campusName));
+  if (campusOrder !== 0) return campusOrder;
+
+  const classOrder = compareClassName(displayText(displayClassName(left)), displayText(displayClassName(right)));
+  if (classOrder !== 0) return classOrder;
+
+  if (isPrivateLessonRow(left) && isPrivateLessonRow(right)) {
+    return naturalCompare(displayText(left.gradeBand), displayText(right.gradeBand))
+      || naturalCompare(oneOnOneGroupNames.get(oneOnOneSortGroupKey(left)) ?? displayText(left.studentName),
+        oneOnOneGroupNames.get(oneOnOneSortGroupKey(right)) ?? displayText(right.studentName))
+      || comparePrivateLessonGroup(left, right)
+      || naturalCompare(displayText(left.studentName), displayText(right.studentName))
+      || compareClassName(displayText(left.grade), displayText(right.grade))
+      || naturalCompare(left.signupDate ?? '', right.signupDate ?? '')
+      || naturalCompare(rowKey(left), rowKey(right));
+  }
+
+  return naturalCompare(displayText(left.studentName), displayText(right.studentName))
     || comparePrivateLessonGroup(left, right)
-    || naturalCompare(displayText(left.studentName), displayText(right.studentName))
     || compareClassName(displayText(left.grade), displayText(right.grade))
     || naturalCompare(left.signupDate ?? '', right.signupDate ?? '')
     || naturalCompare(rowKey(left), rowKey(right));
+}
+
+/** 同一 1 对 2/3 组以组内最靠前的学生姓名排序，使组记录相邻且不因成员名字被拆开。 */
+function oneOnOneSortGroupNames(source: DataSummaryDisplayRow[]) {
+  const namesByGroup = new Map<string, string[]>();
+  source.filter(isPrivateLessonRow).forEach((row) => {
+    const key = oneOnOneSortGroupKey(row);
+    const names = namesByGroup.get(key) ?? [];
+    names.push(displayText(row.studentName));
+    namesByGroup.set(key, names);
+  });
+
+  return new Map([...namesByGroup].map(([key, names]) => [
+    key,
+    names.sort(naturalCompare)[0] ?? '—',
+  ]));
+}
+
+function oneOnOneSortGroupKey(row: DataSummaryDisplayRow) {
+  return row.privateLessonGroupId != null
+    ? `group:${row.privateLessonGroupId}`
+    : `row:${rowKey(row)}`;
 }
 
 function comparePrivateLessonGroup(left: DataSummaryDisplayRow, right: DataSummaryDisplayRow) {
