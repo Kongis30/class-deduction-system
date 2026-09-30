@@ -1,88 +1,90 @@
 <template>
   <div class="weekly-time-selector">
-    <div class="wts-header">
-      <span class="wts-header__spacer"></span>
-      <span class="wts-header__cell" v-for="(label, idx) in dayLabelsWithDates" :key="idx">
-        <span class="wts-header__day">{{ label.day }}</span>
-        <span v-if="label.date" class="wts-header__date">{{ label.date }}</span>
-      </span>
-    </div>
-    <div class="wts-body">
-      <div
-        class="wts-row"
-        v-for="time in timeSlots"
-        :key="time.label"
-        :class="{ 'wts-row--last-slot': time.isLastSlot }"
-      >
-        <span class="wts-row__label">{{ time.label }}</span>
+    <div class="wts-grid-scroll">
+      <div class="wts-header">
+        <span class="wts-header__spacer"></span>
+        <span class="wts-header__cell" v-for="(label, idx) in dayLabelsWithDates" :key="idx">
+          <span class="wts-header__day">{{ label.day }}</span>
+          <span v-if="label.date" class="wts-header__date">{{ label.date }}</span>
+        </span>
+      </div>
+      <div class="wts-body">
         <div
-          v-for="day in 7"
-          :key="day"
-          class="wts-cell"
-          :class="[
-            cellClass(day, time.hour, time.minute),
-            { 'wts-cell--event-start': occupiedEvent(day, time.hour, time.minute) },
-          ]"
-          @mousedown.prevent="onMouseDown(day, time.hour, time.minute)"
-          @mouseenter="onMouseEnter(day, time.hour, time.minute)"
-          @click="onCellClick(day, time.hour, time.minute)"
+          class="wts-row"
+          v-for="time in timeSlots"
+          :key="time.label"
+          :class="{ 'wts-row--last-slot': time.isLastSlot }"
         >
-          <el-tooltip
-            v-if="isOccupied(day, time.hour, time.minute)"
-            :content="occupiedTooltipContent(day, time.hour, time.minute)"
-            placement="top"
-            :show-after="200"
-            raw-content
+          <span class="wts-row__label">{{ time.label }}</span>
+          <div
+            v-for="day in 7"
+            :key="day"
+            class="wts-cell"
+            :class="[
+              cellClass(day, time.hour, time.minute),
+              { 'wts-cell--event-start': occupiedEvent(day, time.hour, time.minute) },
+            ]"
+            @mousedown.prevent="onMouseDown(day, time.hour, time.minute)"
+            @mouseenter="onMouseEnter(day, time.hour, time.minute)"
+            @click="onCellClick(day, time.hour, time.minute)"
           >
-            <div
-              v-if="occupiedEvent(day, time.hour, time.minute)"
-              class="wts-event"
-              :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
-              :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
+            <el-tooltip
+              v-if="isOccupied(day, time.hour, time.minute)"
+              :content="occupiedTooltipContent(day, time.hour, time.minute)"
+              placement="top"
+              :show-after="200"
+              raw-content
             >
-              <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
-              <span
-                v-if="occupiedEvent(day, time.hour, time.minute)?.context"
-                class="wts-event__context"
+              <div
+                v-if="occupiedEvent(day, time.hour, time.minute)"
+                class="wts-event"
+                :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
+                :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
               >
-                {{ occupiedEvent(day, time.hour, time.minute)?.context }}
-              </span>
-              <span
-                v-if="occupiedEvent(day, time.hour, time.minute)?.showTime"
-                class="wts-event__time"
+                <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
+                <span
+                  v-if="occupiedEvent(day, time.hour, time.minute)?.context"
+                  class="wts-event__context"
+                >
+                  {{ occupiedEvent(day, time.hour, time.minute)?.context }}
+                </span>
+                <span
+                  v-if="occupiedEvent(day, time.hour, time.minute)?.showTime"
+                  class="wts-event__time"
+                >
+                  {{ occupiedEvent(day, time.hour, time.minute)?.timeLabel }}
+                </span>
+              </div>
+              <span v-else class="wts-cell__fill" style="display:block;height:100%;width:100%"></span>
+            </el-tooltip>
+            <template v-else>
+              <div
+                v-if="occupiedEvent(day, time.hour, time.minute)"
+                class="wts-event"
+                :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
+                :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
               >
-                {{ occupiedEvent(day, time.hour, time.minute)?.timeLabel }}
-              </span>
-            </div>
-            <span v-else class="wts-cell__fill" style="display:block;height:100%;width:100%"></span>
-          </el-tooltip>
-          <template v-else>
-            <div
-              v-if="occupiedEvent(day, time.hour, time.minute)"
-              class="wts-event"
-              :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
-              :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
-            >
-              <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
-              <span
-                v-if="occupiedEvent(day, time.hour, time.minute)?.context"
-                class="wts-event__context"
-              >
-                {{ occupiedEvent(day, time.hour, time.minute)?.context }}
-              </span>
-              <span
-                v-if="occupiedEvent(day, time.hour, time.minute)?.showTime"
-                class="wts-event__time"
-              >
-                {{ occupiedEvent(day, time.hour, time.minute)?.timeLabel }}
-              </span>
-            </div>
-          </template>
+                <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
+                <span
+                  v-if="occupiedEvent(day, time.hour, time.minute)?.context"
+                  class="wts-event__context"
+                >
+                  {{ occupiedEvent(day, time.hour, time.minute)?.context }}
+                </span>
+                <span
+                  v-if="occupiedEvent(day, time.hour, time.minute)?.showTime"
+                  class="wts-event__time"
+                >
+                  {{ occupiedEvent(day, time.hour, time.minute)?.timeLabel }}
+                </span>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="wts-time-boundary" aria-hidden="true">
-      <span class="wts-time-boundary__label">24:00</span>
+      <div class="wts-time-boundary" aria-hidden="true">
+        <span class="wts-time-boundary__label">24:00</span>
+      </div>
     </div>
 
     <!-- Selected slots summary -->
@@ -477,14 +479,25 @@ function weekdayName(d: number) {
   width: 100%;
 }
 
+.wts-grid-scroll {
+  max-height: min(70vh, 720px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 /* ─── Header ─────────── */
 .wts-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: grid;
-  grid-template-columns: 56px repeat(7, 1fr);
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
   margin-bottom: 0;
   border-left: 1px solid transparent;
   border-right: 1px solid transparent;
   box-sizing: border-box;
+  background: #fff;
 }
 .wts-header__spacer {
   /* occupies the 56px time-label column */
@@ -508,7 +521,6 @@ function weekdayName(d: number) {
 
 /* ─── Body (grid container) ─────────── */
 .wts-body {
-  position: relative;
   border: 1px solid #e8e8e8;
   border-top: none;
   border-radius: 0 0 6px 6px;
@@ -517,7 +529,8 @@ function weekdayName(d: number) {
 
 .wts-row {
   display: grid;
-  grid-template-columns: 56px repeat(7, 1fr);
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
+  height: 26px;
 }
 
 .wts-row--last-slot .wts-row__label,
@@ -526,28 +539,32 @@ function weekdayName(d: number) {
 }
 
 .wts-time-boundary {
-  display: grid;
-  grid-template-columns: 56px repeat(7, 1fr);
-  height: 16px;
+  position: relative;
+  height: 14px;
   margin-top: -1px;
-  border-bottom: 1px solid #e8e8e8;
-  border-radius: 0 0 6px 6px;
-  background: #fff;
+  pointer-events: none;
 }
 
 .wts-time-boundary__label {
-  grid-column: 1;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 56px;
+  transform: translateY(-50%);
   color: #999;
   font-size: 11px;
-  line-height: 15px;
+  line-height: 14px;
   text-align: center;
   background: #fafafa;
   border-right: 1px solid #e8e8e8;
   font-variant-numeric: tabular-nums;
+  z-index: 1;
 }
 
 /* ─── Time label column ─────────── */
 .wts-row__label {
+  box-sizing: border-box;
+  height: 26px;
   font-size: 11px;
   color: #999;
   line-height: 26px;
@@ -563,6 +580,7 @@ function weekdayName(d: number) {
 
 /* ─── Cells ─────────── */
 .wts-cell {
+  box-sizing: border-box;
   height: 26px;
   cursor: pointer;
   transition: background 0.1s;
