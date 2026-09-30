@@ -55,6 +55,7 @@ import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
+import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
@@ -73,7 +74,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -2787,14 +2787,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             }
             int weekday = date.getDayOfWeek().getValue();
             for (ClassGroupScheduleSlotEntity slot : slots) {
-                if (!Objects.equals(slot.getWeekday(), weekday) || !slot.getEndTime().isAfter(slot.getStartTime())) {
+                if (!Objects.equals(slot.getWeekday(), weekday)
+                        || !ScheduleSlotTime.isValidRange(slot.getStartTime(), slot.getEndTime())) {
                     continue;
                 }
                 LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
                 if (existingStarts.contains(plannedStartAt)) {
                     continue;
                 }
-                long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                long minutes = ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime());
                 LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
                 occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
                 occurrence.setClassGroupId(classGroup.getId());
@@ -2813,7 +2814,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         ? "IN_PERSON" : assignment.deliveryMode());
                 occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(plannedStartAt);
-                occurrence.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
+                occurrence.setPlannedEndAt(ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime()));
                 occurrence.setPlannedUnits((int) (minutes / 30));
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);

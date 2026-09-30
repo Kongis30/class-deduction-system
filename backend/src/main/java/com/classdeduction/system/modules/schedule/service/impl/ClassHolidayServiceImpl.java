@@ -28,6 +28,7 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
+import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayPreviewVO;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
@@ -37,7 +38,6 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -454,7 +454,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     if (!Objects.equals(slot.getWeekday(), weekday)) continue;
                     LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
                     if (startAt.isBefore(now)) continue;
-                    LocalDateTime endAt = LocalDateTime.of(date, slot.getEndTime());
+                    LocalDateTime endAt = ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime());
                     String key = occurrenceKey(startAt, endAt);
                     if (existingKeys.contains(key)) continue;
 
@@ -477,7 +477,7 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                     occurrence.setPlannedClassroomId(classroomId);
                     occurrence.setPlannedStartAt(startAt);
                     occurrence.setPlannedEndAt(endAt);
-                    occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                    occurrence.setPlannedUnits(ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime()) / 30);
                     occurrence.setPlanningStatus("SCHEDULED");
                     occurrence.setConflictChecked(1);
                     occurrence.setIsDeleted(0);

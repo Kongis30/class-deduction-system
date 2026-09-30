@@ -78,6 +78,7 @@ import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
+import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
@@ -105,7 +106,6 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -4227,14 +4227,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             }
             int weekday = date.getDayOfWeek().getValue(); // Monday=1, Sunday=7
             for (ClassGroupScheduleSlotEntity slot : slots) {
-                if (!Objects.equals(slot.getWeekday(), weekday) || !slot.getEndTime().isAfter(slot.getStartTime())) {
+                if (!Objects.equals(slot.getWeekday(), weekday)
+                        || !ScheduleSlotTime.isValidRange(slot.getStartTime(), slot.getEndTime())) {
                     continue;
                 }
                 LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
                 if (existingStarts.contains(plannedStartAt)) {
                     continue;
                 }
-                long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                long minutes = ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime());
                 LessonOccurrenceEntity occ = new LessonOccurrenceEntity();
                 occ.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
                 occ.setClassGroupId(classGroup.getId());
@@ -4253,7 +4254,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         ? "IN_PERSON" : assignment.deliveryMode());
                 occ.setPlannedClassroomId(classroomId);
                 occ.setPlannedStartAt(plannedStartAt);
-                occ.setPlannedEndAt(LocalDateTime.of(date, slot.getEndTime()));
+                occ.setPlannedEndAt(ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime()));
                 occ.setPlannedUnits((int) (minutes / 30));
                 occ.setPlanningStatus("SCHEDULED");
                 occ.setConflictChecked(1);
@@ -4342,7 +4343,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         Map<String, List<Integer>> timeToWeekdays = new LinkedHashMap<>();
         for (ClassGroupScheduleSlotEntity slot : slots) {
             String key = slot.getStartTime().format(DateTimeFormatter.ofPattern("HH:mm"))
-                    + "-" + slot.getEndTime().format(DateTimeFormatter.ofPattern("HH:mm"));
+                    + "-" + ScheduleSlotTime.formatEndTime(slot.getStartTime(), slot.getEndTime());
             timeToWeekdays.computeIfAbsent(key, k -> new ArrayList<>()).add(slot.getWeekday());
         }
         String[] weekdayAbbr = {"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};

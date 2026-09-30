@@ -748,6 +748,7 @@ import { isAdminOrStaffUser, isTeacherUser } from '@/types/auth';
 import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem, ClassroomItem, LessonRecordItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
+import { scheduleEndTimeForApi, scheduleEndTimeForDisplay, scheduleDurationMinutes, scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { ElMessageBox } from 'element-plus';
 
 const props = withDefaults(defineProps<{
@@ -1230,7 +1231,7 @@ function classTimeSlotLabels(clz: ClassGroupItem) {
     return [clz.scheduleDesc || 'Time not set'];
   }
   return slots
-    .map(slot => `${weekdayLabels[slot.weekday] ?? 'Day'} ${slot.startTime.slice(0, 5)}-${slot.endTime.slice(0, 5)}`);
+    .map(slot => `${weekdayLabels[slot.weekday] ?? 'Day'} ${slot.startTime.slice(0, 5)}-${scheduleEndTimeForDisplay(slot.startTime, slot.endTime)}`);
 }
 
 function openStudentProfile(row: ClassEnrolledStudentItem) {
@@ -1397,9 +1398,7 @@ function formatDate(dt: string): string {
 }
 function formatTimeRange(startAt: string, endAt: string): string {
   if (!startAt || !endAt) return '—';
-  const s = startAt.includes('T') ? startAt.split('T')[1].slice(0, 5) : startAt.slice(0, 5);
-  const e = endAt.includes('T') ? endAt.split('T')[1].slice(0, 5) : endAt.slice(0, 5);
-  return `${s} – ${e}`;
+  return scheduleOccurrenceTimeRange(startAt, endAt).replace('–', ' – ');
 }
 
 function resultStatusTag(status: string) {
@@ -1536,7 +1535,7 @@ function normalizeClassScheduleSlots(
   const hasConfiguredSlotClassroom = (slots ?? []).some(slot => slot.classroomId != null || slot.deliveryMode === 'ONLINE');
   return (slots ?? []).map(slot => {
     const start = slot.startTime.slice(0, 5);
-    const end = slot.endTime.slice(0, 5);
+    const end = scheduleEndTimeForDisplay(slot.startTime, slot.endTime);
     return {
       weekday: slot.weekday,
       teacherId: slot.teacherId,
@@ -1555,7 +1554,7 @@ function normalizeClassScheduleSlots(
           : '',
       startTime: start,
       endTime: end,
-      plannedUnits: slot.plannedUnits ?? Math.max(1, dayjs(`2026-01-01T${end}`).diff(dayjs(`2026-01-01T${start}`), 'minute') / 30),
+      plannedUnits: slot.plannedUnits ?? Math.max(1, scheduleDurationMinutes(start, end) / 30),
     };
   });
 }
@@ -1602,7 +1601,7 @@ async function submitClassSchedule() {
           rotationAnchorDate: rotationEnabled ? rotationAnchorDate || selectedClass.value?.startDate || undefined : undefined,
           deliveryMode: classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
           classroomId: classroomSelection?.startsWith('ROOM:') ? classroomSelection.slice(5) : undefined,
-          weekday, startTime, endTime,
+          weekday, startTime, endTime: scheduleEndTimeForApi(endTime),
         })),
       });
       ElMessage.success('Class schedule updated.');

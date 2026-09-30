@@ -36,6 +36,7 @@ import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
+import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.schedule.util.ScheduleDescParser;
 import lombok.RequiredArgsConstructor;
@@ -1379,7 +1380,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             }
             Integer weekday = parseInteger(map.get("weekday"));
             LocalTime start = parseTime(map.get("startTime"));
-            LocalTime end = parseTime(map.get("endTime"));
+            LocalTime end = parseEndTime(map.get("endTime"));
             if (weekday == null || start == null || end == null) {
                 continue;
             }
@@ -1442,7 +1443,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             if (slot.getWeekday() == null || slot.getWeekday() < 1 || slot.getWeekday() > 7) {
                 throw new BusinessException("INVALID_CLASS_SCHEDULE", "Weekday must be between 1 and 7.");
             }
-            if (slot.getStartTime() == null || slot.getEndTime() == null || !slot.getEndTime().isAfter(slot.getStartTime())) {
+            if (!ScheduleSlotTime.isValidRange(slot.getStartTime(), slot.getEndTime())) {
                 throw new BusinessException("INVALID_CLASS_SCHEDULE", "Schedule end time must be after start time.");
             }
             String key = slot.getWeekday() + "|" + slot.getStartTime() + "|" + slot.getEndTime();
@@ -1468,8 +1469,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             for (int j = i + 1; j < slots.size(); j++) {
                 ClassGroupScheduleSlotEntity right = slots.get(j);
                 if (Objects.equals(left.getWeekday(), right.getWeekday())
-                        && left.getStartTime().isBefore(right.getEndTime())
-                        && left.getEndTime().isAfter(right.getStartTime())) {
+                        && left.getStartTime().toSecondOfDay() / 60
+                                < ScheduleSlotTime.endMinutes(right.getStartTime(), right.getEndTime())
+                        && right.getStartTime().toSecondOfDay() / 60
+                                < ScheduleSlotTime.endMinutes(left.getStartTime(), left.getEndTime())) {
                     throw new BusinessException("INVALID_CLASS_SCHEDULE", "Class schedule slots cannot overlap on the same day.");
                 }
             }
@@ -1576,7 +1579,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 if (plannedStartAt.isBefore(rebuildFrom)) {
                     continue;
                 }
-                LocalDateTime plannedEndAt = LocalDateTime.of(date, slot.getEndTime());
+                LocalDateTime plannedEndAt = ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime());
                 List<LessonOccurrenceEntity> retainedOnDate = retainedByDate.getOrDefault(date, Collections.emptyList());
                 if (retainedOnDate.stream().anyMatch(existing ->
                         plannedStartAt.equals(existing.getPlannedStartAt())
@@ -1614,7 +1617,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(plannedStartAt);
                 occurrence.setPlannedEndAt(plannedEndAt);
-                occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                occurrence.setPlannedUnits(ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime()) / 30);
                 occurrence.setPlanningStatus("SCHEDULED");
                 ensureNoGeneratedClassOccurrenceConflicts(occurrence, classGroup,
                         previousByDate.getOrDefault(date, Collections.emptyList()));
@@ -1948,6 +1951,13 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         return null;
     }
 
+    private LocalTime parseEndTime(Object value) {
+        if (value instanceof String text && !text.isBlank()) {
+            return ScheduleSlotTime.parseEndTime(text);
+        }
+        return null;
+    }
+
     private void validateTeacher(Long teacherId) {
         if (teacherId == null) {
             return;
@@ -1975,7 +1985,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .map(slot -> weekdayShortLabel(slot.getWeekday()) + " "
                         + slot.getStartTime().toString().substring(0, 5)
                         + "-"
-                        + slot.getEndTime().toString().substring(0, 5))
+                        + ScheduleSlotTime.formatEndTime(slot.getStartTime(), slot.getEndTime()))
                 .collect(Collectors.joining("; "));
     }
 
@@ -2058,10 +2068,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             if (!classSlots.isEmpty()) {
                 return classSlots.stream()
                         .map(slot -> {
-                            int minutes = (int) ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                            int minutes = ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime());
                             return toSlotMap(slot.getTeacherId(), slot.getClassroomId(), slot.getDeliveryMode(), slot.getWeekday(),
                                     slot.getStartTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
-                                    slot.getEndTime().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")),
+                                    ScheduleSlotTime.formatEndTime(slot.getStartTime(), slot.getEndTime()),
                                     minutes > 0 ? minutes / 30 : 0,
                                     slot.getSubjectName(), slot.getAlternateTeacherId(),
                                     slot.getAlternateSubjectName(), slot.getAlternateClassroomId(),

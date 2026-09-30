@@ -36,6 +36,7 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
+import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
@@ -49,7 +50,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.YearMonth;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -645,8 +645,8 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 throw new BusinessException("INVALID_GROUP_SCHEDULE", "Weekday must be between 1 and 7.");
             }
             LocalTime start = LocalTime.parse(slot.getStartTime());
-            LocalTime end = LocalTime.parse(slot.getEndTime());
-            if (!end.isAfter(start)) {
+            LocalTime end = ScheduleSlotTime.parseEndTime(slot.getEndTime());
+            if (!ScheduleSlotTime.isValidRange(start, end)) {
                 throw new BusinessException("INVALID_GROUP_SCHEDULE", "Schedule end time must be after start time.");
             }
             ClassGroupScheduleSlotEntity entity = new ClassGroupScheduleSlotEntity();
@@ -741,7 +741,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                     continue;
                 }
                 LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
-                LocalDateTime endAt = LocalDateTime.of(date, slot.getEndTime());
+                LocalDateTime endAt = ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime());
                 String key = occurrenceKey(startAt, endAt);
                 if (existingKeys.contains(key)) {
                     continue;
@@ -765,7 +765,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 occurrence.setPlannedClassroomId(classroomId);
                 occurrence.setPlannedStartAt(startAt);
                 occurrence.setPlannedEndAt(endAt);
-                occurrence.setPlannedUnits((int) (ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime()) / 30));
+                occurrence.setPlannedUnits(ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime()) / 30);
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
                 lessonOccurrenceMapper.insert(occurrence);
@@ -1008,7 +1008,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                                 slot.getTeacherId(), slot.getSubjectName(), slot.getAlternateTeacherId(),
                                 slot.getAlternateSubjectName(), slot.getAlternateClassroomId(),
                                 slot.getAlternateDeliveryMode(), slot.getRotationAnchorDate(), slot.getWeekday(),
-                                slot.getStartTime().toString(), slot.getEndTime().toString(),
+                                slot.getStartTime().toString(), ScheduleSlotTime.formatEndTime(slot.getStartTime(), slot.getEndTime()),
                                 slot.getMorningEndTime() == null ? null : slot.getMorningEndTime().toString(),
                                 slot.getAfternoonStartTime() == null ? null : slot.getAfternoonStartTime().toString(),
                                 slot.getAttendanceOptions()))

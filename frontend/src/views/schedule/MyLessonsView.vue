@@ -177,6 +177,7 @@
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import dayjs from 'dayjs';
+import { scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 
 import { extractErrorMessage } from '@/api/http';
 import { confirmLesson } from '@/api/lesson';
@@ -394,7 +395,7 @@ function formatDate(value: string) {
 }
 
 function formatTimeRange(startAt: string, endAt: string) {
-  return `${dayjs(startAt).format('HH:mm')} - ${dayjs(endAt).format('HH:mm')}`;
+  return scheduleOccurrenceTimeRange(startAt, endAt).replace('–', ' - ');
 }
 </script>
 

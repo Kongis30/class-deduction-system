@@ -8,7 +8,12 @@
       </span>
     </div>
     <div class="wts-body">
-      <div class="wts-row" v-for="time in timeSlots" :key="time.label">
+      <div
+        class="wts-row"
+        v-for="time in timeSlots"
+        :key="time.label"
+        :class="{ 'wts-row--end-boundary': time.isEndBoundary }"
+      >
         <span class="wts-row__label">{{ time.label }}</span>
         <div
           v-for="day in 7"
@@ -89,7 +94,7 @@
         class="wts-tag"
         @close="removeSlot(idx)"
       >
-        {{ weekdayName(slot.weekday) }} {{ slot.startTime }}–{{ slot.endTime }}
+        {{ weekdayName(slot.weekday) }} {{ slot.startTime }}–{{ scheduleEndTimeForDisplay(slot.startTime, slot.endTime) }}
         ({{ (slot.plannedUnits * 0.5).toFixed(1) }}h)
       </el-tag>
     </div>
@@ -101,6 +106,7 @@
 
 <script setup lang="ts">
 import { computed, onUnmounted, ref } from 'vue';
+import { scheduleEndTimeForDisplay, scheduleTimeMinutes } from '@/utils/schedule-time';
 
 export interface SlotDef {
   weekday: number;   // 1=Mon..7=Sun
@@ -161,14 +167,14 @@ const dayLabelsWithDates = computed(() => {
 
 // ─── Grid config ─────────────────────────────
 const GRID_START_MINUTES = 7 * 60 + 30;
-const GRID_LAST_VISIBLE_MINUTES = 22 * 60 + 30;
+const GRID_END_MINUTES = 24 * 60;
 
 const timeSlots = computed(() => {
-  const rows: { label: string; hour: number; minute: number }[] = [];
-  for (let minutes = GRID_START_MINUTES; minutes <= GRID_LAST_VISIBLE_MINUTES; minutes += 30) {
+  const rows: { label: string; hour: number; minute: number; isEndBoundary: boolean }[] = [];
+  for (let minutes = GRID_START_MINUTES; minutes <= GRID_END_MINUTES; minutes += 30) {
     const hour = Math.floor(minutes / 60);
     const minute = minutes % 60;
-    rows.push({ label: formatTime(minutes), hour, minute });
+    rows.push({ label: formatTime(minutes), hour, minute, isEndBoundary: minutes === GRID_END_MINUTES });
   }
   return rows;
 });
@@ -179,8 +185,11 @@ function timeToMinutes(h: number, m: number) {
 }
 
 function parseTimeToMin(t: string) {
-  const [hh, mm] = t.split(':').map(Number);
-  return timeToMinutes(hh, mm);
+  return scheduleTimeMinutes(t);
+}
+
+function parseEndTimeToMin(startTime: string, endTime: string) {
+  return parseTimeToMin(scheduleEndTimeForDisplay(startTime, endTime));
 }
 
 function formatTime(minutes: number) {
@@ -194,7 +203,7 @@ const occupiedMap = computed(() => {
   const map = new Map<string, OccupiedSlotDef[]>();
   for (const slot of (props.occupiedSlots || [])) {
     const startMin = parseTimeToMin(slot.startTime);
-    const endMin = parseTimeToMin(slot.endTime);
+    const endMin = parseEndTimeToMin(slot.startTime, slot.endTime);
     // A lesson may start off-grid (for example 17:15). Mark every 30-minute
     // calendar cell touched by the lesson so overlaps are not silently missed.
     const firstCellMin = Math.floor(startMin / 30) * 30;
@@ -246,15 +255,16 @@ function occupiedEvent(day: number, hour: number, minute: number): OccupiedEvent
   }
   const slot = slots[0];
   if (minuteVal === Math.floor(parseTimeToMin(slot.startTime) / 30) * 30) {
-    const durationMinutes = parseTimeToMin(slot.endTime) - parseTimeToMin(slot.startTime);
+    const endMin = parseEndTimeToMin(slot.startTime, slot.endTime);
+    const durationMinutes = endMin - parseTimeToMin(slot.startTime);
     const coveredCells = Math.max(
       1,
-      Math.ceil(parseTimeToMin(slot.endTime) / 30) - Math.floor(parseTimeToMin(slot.startTime) / 30),
+      Math.ceil(endMin / 30) - Math.floor(parseTimeToMin(slot.startTime) / 30),
     );
     return {
       title: occupiedSlotTitle(slot),
       context: slot.contextLabel,
-      timeLabel: `${slot.startTime}–${slot.endTime}`,
+      timeLabel: `${slot.startTime}–${scheduleEndTimeForDisplay(slot.startTime, slot.endTime)}`,
       coveredCells,
       showTime: slot.showTimeInEvent ?? durationMinutes >= 60,
     };
@@ -269,7 +279,7 @@ function occupiedEventHeight(event: OccupiedEvent): number {
 function occupiedSlotTooltip(slot: OccupiedSlotDef): string {
   const lines = [
     `<b>${escapeHtml(occupiedSlotTitle(slot))}</b>`,
-    `Time: ${escapeHtml(slot.startTime)}–${escapeHtml(slot.endTime)}`,
+    `Time: ${escapeHtml(slot.startTime)}–${escapeHtml(scheduleEndTimeForDisplay(slot.startTime, slot.endTime))}`,
   ];
   if (slot.courseLabel) lines.push(`Course: ${escapeHtml(slot.courseLabel)}`);
   if (slot.studentName) lines.push(`Student: ${escapeHtml(slot.studentName)}`);
@@ -317,6 +327,7 @@ function onCellClick(weekday: number, hour: number, minute: number) {
 
 function onMouseDown(weekday: number, hour: number, minute: number) {
   if (props.readonly) return;
+  if (timeToMinutes(hour, minute) >= GRID_END_MINUTES) return;
   if (isOccupied(weekday, hour, minute)) return;
   anchor.value = { weekday, hour, minute };
   selecting.value = true;
@@ -355,7 +366,7 @@ function onMouseUp() {
   const overlapsOccupied = (props.occupiedSlots || []).some(s => {
     if (s.weekday !== anchor.value!.weekday) return false;
     const sStart = parseTimeToMin(s.startTime);
-    const sEnd = parseTimeToMin(s.endTime);
+    const sEnd = parseEndTimeToMin(s.startTime, s.endTime);
     return startMin < sEnd && endMin > sStart;
   });
   if (overlapsOccupied) {
@@ -376,7 +387,7 @@ function onMouseUp() {
   const overlaps = props.modelValue.some(s => {
     if (s.weekday !== newSlot.weekday) return false;
     const sStart = parseTimeToMin(s.startTime);
-    const sEnd = parseTimeToMin(s.endTime);
+    const sEnd = parseEndTimeToMin(s.startTime, s.endTime);
     return startMin < sEnd && endMin > sStart;
   });
   if (!overlaps) {
@@ -418,11 +429,12 @@ function cellClass(day: number, hour: number, minute: number) {
     // Check which selected slots cover this cell
     const coveringSlot = props.modelValue.find(s => {
       if (s.weekday !== day) return false;
-      return minuteVal >= parseTimeToMin(s.startTime) && minuteVal < parseTimeToMin(s.endTime);
+      return minuteVal >= parseTimeToMin(s.startTime)
+        && minuteVal < parseEndTimeToMin(s.startTime, s.endTime);
     });
     if (coveringSlot) {
       const sMin = parseTimeToMin(coveringSlot.startTime);
-      const eMin = parseTimeToMin(coveringSlot.endTime);
+      const eMin = parseEndTimeToMin(coveringSlot.startTime, coveringSlot.endTime);
       const isStart = minuteVal === sMin;
       const isEnd = minuteVal + 30 >= eMin;
       // Check if single cell
@@ -500,6 +512,20 @@ function weekdayName(d: number) {
 .wts-row {
   display: grid;
   grid-template-columns: 56px repeat(7, 1fr);
+}
+
+.wts-row--end-boundary .wts-row__label,
+.wts-row--end-boundary .wts-cell {
+  height: 10px;
+  line-height: 10px;
+  font-size: 10px;
+  border-bottom: none;
+  background: #fafafa;
+}
+
+.wts-row--end-boundary .wts-cell {
+  cursor: default;
+  border-top: 1px solid #d7dee8;
 }
 
 /* ─── Time label column ─────────── */

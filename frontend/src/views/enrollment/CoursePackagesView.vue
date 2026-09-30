@@ -276,7 +276,7 @@
                       :filter-method="filterScheduleTime"
                     >
                       <template #default="{ row }">
-                        {{ weekdayLabel(row.weekday) }} · {{ row.startTime }}–{{ row.endTime }}
+                        {{ weekdayLabel(row.weekday) }} · {{ row.startTime }}–{{ scheduleEndTimeForDisplay(row.startTime, row.endTime) }}
                       </template>
                     </el-table-column>
                     <el-table-column
@@ -637,6 +637,7 @@ import {
 } from '@/api/lesson';
 import { fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
 import { fetchRecurringScheduleRule, fetchRecurringScheduleRules } from '@/api/schedule';
+import { scheduleEndTimeForDisplay } from '@/utils/schedule-time';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
@@ -682,7 +683,7 @@ const packageScheduleCalendarSlots = computed<OccupiedSlotDef[]>(() =>
   (packageScheduleRule.value?.slots ?? []).map(slot => ({
     weekday: slot.weekday,
     startTime: slot.startTime,
-    endTime: slot.endTime,
+    endTime: scheduleEndTimeForDisplay(slot.startTime, slot.endTime),
     courseLabel: slot.subjectName || 'Scheduled lesson',
     subjectName: slot.subjectName,
     teacherName: scheduleTeacherName(slot.teacherId),
@@ -805,7 +806,7 @@ const availableHourFilters: TableFilterOption[] = [
 
 function scheduleTimeFilters(rows: RecurringScheduleSlotItem[]): TableFilterOption[] {
   return rows.map(row => ({
-    text: `${weekdayLabel(row.weekday)} · ${row.startTime}–${row.endTime}`,
+    text: `${weekdayLabel(row.weekday)} · ${row.startTime}–${scheduleEndTimeForDisplay(row.startTime, row.endTime)}`,
     value: scheduleTimeKey(row),
   }));
 }

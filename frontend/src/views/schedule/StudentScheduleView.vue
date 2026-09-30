@@ -483,7 +483,7 @@ function onCellClick(weekday: number, hour: number, minute: number) {
     if (sWeekday !== weekday) return false;
     const sMin = start.hour() * 60 + start.minute();
     const end = dayjs(o.plannedEndAt);
-    const eMin = end.hour() * 60 + end.minute();
+    const eMin = sMin + end.diff(start, 'minute');
     return clickedMinutes >= sMin && clickedMinutes < eMin;
   });
   if (occ) {

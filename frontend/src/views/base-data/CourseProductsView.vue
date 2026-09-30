@@ -287,7 +287,7 @@
 <script setup lang="ts">
 import { ArrowDown, Plus, QuestionFilled } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
@@ -347,7 +347,29 @@ const pagination = reactive({
 });
 
 const tableData = ref<CourseProductItem[]>([]);
-const activeTab = ref(route.query.tab === 'one-on-one' ? 'ONE_ON_ONE' : 'GROUP');
+type CourseProductTab = 'GROUP' | 'ONE_ON_ONE';
+const activeTabStorageKey = 'jin.course-products.active-tab';
+
+function parseCourseProductTab(value: unknown): CourseProductTab | null {
+  const tab = Array.isArray(value) ? value[0] : value;
+  if (tab === 'group' || tab === 'GROUP') return 'GROUP';
+  if (tab === 'one-on-one' || tab === 'ONE_ON_ONE') return 'ONE_ON_ONE';
+  return null;
+}
+
+const activeTab = ref<CourseProductTab>(
+  parseCourseProductTab(route.query.tab)
+    ?? parseCourseProductTab(localStorage.getItem(activeTabStorageKey))
+    ?? 'GROUP'
+);
+
+watch(activeTab, (tab) => {
+  localStorage.setItem(activeTabStorageKey, tab);
+  const routeTab = tab === 'GROUP' ? 'group' : 'one-on-one';
+  if (route.query.tab !== routeTab) {
+    void router.replace({ query: { ...route.query, tab: routeTab } });
+  }
+});
 
 const oneOnOneData = computed(() =>
   sortCourseProducts(tableData.value.filter(p => p.teachingMode === 'ONE_ON_ONE'))

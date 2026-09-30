@@ -352,6 +352,7 @@ import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
+import { scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms } from '@/api/base-data';
 import {
@@ -863,7 +864,7 @@ function toOccupancyRow(o: ClassroomOccupancyItem): OccupancyRow {
 }
 
 function formatConflictTime(startAt: string, endAt: string) {
-  return `${dayjs(startAt).format('ddd MMM D HH:mm')}–${dayjs(endAt).format('HH:mm')}`;
+  return `${dayjs(startAt).format('ddd MMM D')} ${scheduleOccurrenceTimeRange(startAt, endAt)}`;
 }
 
 function openConflictGroup(group: ConflictGroup) {
@@ -922,7 +923,7 @@ function onCellClick(weekday: number, hour: number, minute: number) {
     if (sWeekday !== weekday) return false;
     const sMin = start.hour() * 60 + start.minute();
     const end = dayjs(o.plannedEndAt);
-    const eMin = end.hour() * 60 + end.minute();
+    const eMin = sMin + end.diff(start, 'minute');
     return clickedMinutes >= sMin && clickedMinutes < eMin;
   });
   if (item) {

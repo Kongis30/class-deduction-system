@@ -37,6 +37,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotM
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
+import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleDetailVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleListItemVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleSlotVO;
@@ -53,7 +54,6 @@ import org.springframework.util.StringUtils;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -818,14 +818,15 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     .toList();
             RecurringScheduleSlotRequest previous = null;
             for (RecurringScheduleSlotRequest slot : sameDaySlots) {
-                if (!slot.getEndTime().isAfter(slot.getStartTime())) {
+                if (!ScheduleSlotTime.isValidRange(slot.getStartTime(), slot.getEndTime())) {
                     throw new BusinessException("INVALID_SLOT_TIME_RANGE", "Slot end time must be later than the start time.");
                 }
-                long minutes = ChronoUnit.MINUTES.between(slot.getStartTime(), slot.getEndTime());
+                long minutes = ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime());
                 if (minutes != slot.getPlannedUnits() * 30L) {
                     throw new BusinessException("SLOT_UNITS_MISMATCH", "Slot duration must exactly match planned units at 0.5h per unit.");
                 }
-                if (previous != null && slot.getStartTime().isBefore(previous.getEndTime())) {
+                if (previous != null && slot.getStartTime().toSecondOfDay() / 60
+                        < ScheduleSlotTime.endMinutes(previous.getStartTime(), previous.getEndTime())) {
                     throw new BusinessException("OVERLAPPING_SLOTS", "Recurring slots on the same weekday cannot overlap.");
                 }
                 previous = slot;

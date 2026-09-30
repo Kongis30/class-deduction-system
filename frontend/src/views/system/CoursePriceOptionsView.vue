@@ -862,6 +862,7 @@ import {
 } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
+import { scheduleEndTimeForApi, scheduleEndTimeForDisplay, scheduleDurationMinutes } from '@/utils/schedule-time';
 import type { CampusItem, ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
 
 type CourseMode = 'ONE_ON_ONE' | 'GROUP';
@@ -1178,7 +1179,12 @@ const registrationChoiceLabel = computed(() => {
     : `Choose a ${packageUnitText(form.packageUnit).toLowerCase()} count`;
 });
 
-const selectedMode = ref<CourseMode>('GROUP');
+const selectedModeStorageKey = 'jin.course-prices.selected-mode';
+const storedSelectedMode = localStorage.getItem(selectedModeStorageKey);
+const selectedMode = ref<CourseMode>(storedSelectedMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'GROUP');
+watch(selectedMode, (mode) => {
+  localStorage.setItem(selectedModeStorageKey, mode);
+});
 const selectedModeLabel = computed(() =>
   courseModes.find(item => item.value === selectedMode.value)?.label ?? ''
 );
@@ -1329,8 +1335,7 @@ async function initializePage() {
     query.courseType = requestedType as CourseTypeValue;
     selectedMode.value = requestedTypeDefinition.mode;
   } else {
-    query.courseType = 'AFTER_SCHOOL';
-    selectedMode.value = 'GROUP';
+    query.courseType = selectedMode.value === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : 'AFTER_SCHOOL';
   }
   await loadProductsAndClasses();
 
@@ -1737,7 +1742,7 @@ function openDialog(option?: CoursePriceOptionItem, gradeLabel = '') {
   form.groupClassroomId = option?.groupClassroomId;
   form.groupScheduleSlots = (option?.groupScheduleSlots ?? []).map(slot => ({
     ...slot,
-    plannedUnits: Math.round((timeToMinutes(slot.endTime) - timeToMinutes(slot.startTime)) / 30),
+    plannedUnits: Math.round(scheduleDurationMinutes(slot.startTime, slot.endTime) / 30),
     attendanceOptions: normalizeSlotAttendance(slot.attendanceOptions),
   }));
   form.groupStartDate = option?.groupStartDate ?? '';
@@ -1867,7 +1872,7 @@ function buildPayload(status = form.status): CoursePriceOptionSavePayload {
           rotationAnchorDate,
           weekday,
           startTime,
-          endTime,
+          endTime: scheduleEndTimeForApi(endTime),
           attendanceOptions: normalizeSlotAttendance(attendanceOptions),
         }))
       : undefined,
@@ -2082,7 +2087,7 @@ function normalizeActualClassScheduleSlots(
         ? `ROOM:${hasConfiguredSlotClassroom ? slot.classroomId : slot.classroomId ?? defaultClassroomId}`
         : '',
     startTime: slot.startTime.slice(0, 5),
-    endTime: slot.endTime.slice(0, 5),
+    endTime: scheduleEndTimeForDisplay(slot.startTime, slot.endTime),
     plannedUnits: slot.plannedUnits ?? plannedUnitsForSlot(slot.startTime, slot.endTime),
   }));
 }
@@ -2112,7 +2117,7 @@ async function saveActualClassSchedule() {
         classroomId: classroomSelection?.startsWith('ROOM:') ? classroomSelection.slice(5) : undefined,
         weekday,
         startTime,
-        endTime,
+        endTime: scheduleEndTimeForApi(endTime),
         plannedUnits,
       })),
     });
@@ -2392,7 +2397,7 @@ function formatQuantity(value: number) {
 
 function groupSlotLabel(slot: { weekday: number; startTime: string; endTime: string }) {
   const weekday = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][slot.weekday] ?? '';
-  return `${weekday} ${slot.startTime}-${slot.endTime}`;
+  return `${weekday} ${slot.startTime}-${scheduleEndTimeForDisplay(slot.startTime, slot.endTime)}`;
 }
 
 function expandGradeBand(gradeBand: string) {
@@ -2473,13 +2478,8 @@ function formatHours(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
-function timeToMinutes(value: string) {
-  const [hours, minutes] = value.split(':').map(Number);
-  return (hours * 60) + minutes;
-}
-
 function plannedUnitsForSlot(startTime: string, endTime: string) {
-  return Math.max(1, Math.round((timeToMinutes(endTime) - timeToMinutes(startTime)) / 30));
+  return Math.max(1, Math.round(scheduleDurationMinutes(startTime, endTime) / 30));
 }
 
 function normalizeSlotAttendance(value?: string) {

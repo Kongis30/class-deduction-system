@@ -518,7 +518,7 @@
           <summary>Other student lessons this week ({{ weeklyBusyOccurrences.length }})</summary>
           <div class="weekly-busy-list__items">
             <div v-for="busy in weeklyBusyOccurrences" :key="busy.id">
-              {{ busy.busyStudentNames.join(' / ') }} · {{ dayjs(busy.plannedStartAt).format('ddd M/D HH:mm') }}–{{ dayjs(busy.plannedEndAt).format('HH:mm') }} · {{ busy.packageName || busy.className || 'Lesson' }}
+              {{ busy.busyStudentNames.join(' / ') }} · {{ dayjs(busy.plannedStartAt).format('ddd M/D') }} {{ occurrenceTimeRange(busy.plannedStartAt, busy.plannedEndAt) }} · {{ busy.packageName || busy.className || 'Lesson' }}
             </div>
           </div>
         </details>
@@ -541,6 +541,7 @@
 
             <div class="weekly-cal__times">
               <span v-for="r in calendarRows" :key="r.label" class="weekly-cal__time">{{ r.label }}</span>
+              <span class="weekly-cal__time weekly-cal__time--end">24:00</span>
             </div>
 
             <div
@@ -641,7 +642,7 @@
               <el-time-select
                 :model-value="rowStartTime(selectedRow)"
                 start="07:30"
-                end="22:30"
+                end="23:30"
                 step="00:30"
                 :disabled="selectedRow.markedForDelete"
                 @update:model-value="(v: string) => setRowStartTime(selectedRow!, v)"
@@ -884,6 +885,7 @@ import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { APP_TIMEZONE } from '@/config/app-config';
 import { calendarWeekRange } from '@/utils/calendar-week';
+import { scheduleEndTimeForDisplay, scheduleEndTimeForApi, scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { renderSignatureSheetDocument } from '@/utils/signature-sheet-print';
 
 interface WeeklyAdjustmentRow {
@@ -1057,7 +1059,7 @@ const weeklyReason = ref('');
 // ─── Weekly adjustment calendar (Sat→Fri) ──────────────────
 
 const CAL_START_MINUTES = 7 * 60 + 30;
-const CAL_END_MINUTES = 23 * 60;
+const CAL_END_MINUTES = 24 * 60;
 const CAL_SLOT_MINUTES = 30;
 const CAL_SLOT_HEIGHT = 28;
 
@@ -1120,9 +1122,9 @@ function busyStyle(occ: LessonOccurrenceItem) {
   const start = dayjs(occ.plannedStartAt);
   const end = dayjs(occ.plannedEndAt);
   const startMin = start.hour() * 60 + start.minute();
-  const endMin = end.hour() * 60 + end.minute();
+  const durationMinutes = end.diff(start, 'minute');
   const top = ((startMin - CAL_START_MINUTES) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
-  const height = Math.max(((endMin - startMin) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
+  const height = Math.max((durationMinutes / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
   return { top: `${top}px`, height: `${height - 2}px` };
 }
 
@@ -1135,14 +1137,18 @@ function eventStyle(row: WeeklyAdjustmentRow) {
   const start = dayjs(row.plannedStartAt);
   const end = dayjs(row.plannedEndAt);
   const startMin = start.hour() * 60 + start.minute();
-  const endMin = end.hour() * 60 + end.minute();
+  const durationMinutes = end.diff(start, 'minute');
   const top = ((startMin - CAL_START_MINUTES) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
-  const height = Math.max(((endMin - startMin) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
+  const height = Math.max((durationMinutes / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
   return { top: `${top}px`, height: `${height - 2}px` };
 }
 
 function eventTimeLabel(row: WeeklyAdjustmentRow): string {
-  return `${dayjs(row.plannedStartAt).format('HH:mm')}–${dayjs(row.plannedEndAt).format('HH:mm')}`;
+  return occurrenceTimeRange(row.plannedStartAt, row.plannedEndAt);
+}
+
+function occurrenceTimeRange(startAt: string, endAt: string): string {
+  return scheduleOccurrenceTimeRange(startAt, endAt);
 }
 
 function eventTeacherLabel(row: WeeklyAdjustmentRow): string {
@@ -1428,7 +1434,7 @@ const currentRuleSlots = computed(() => {
   return rule.slots.map((s: any) => ({
     weekday: s.weekday,
     startTime: s.startTime,
-    endTime: s.endTime,
+    endTime: scheduleEndTimeForDisplay(s.startTime, s.endTime),
     plannedUnits: s.plannedUnits,
   }));
 });
@@ -1892,7 +1898,7 @@ async function openEditDialog() {
       subjectName: s.subjectName,
       weekday: s.weekday,
       startTime: s.startTime,
-      endTime: s.endTime,
+      endTime: scheduleEndTimeForDisplay(s.startTime, s.endTime),
       plannedUnits: s.plannedUnits,
       allocatedHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
     })),
@@ -1951,7 +1957,7 @@ async function submitCreateForm() {
           subjectName: s.subjectName || undefined,
           weekday: s.weekday,
           startTime: s.startTime,
-          endTime: s.endTime,
+          endTime: scheduleEndTimeForApi(s.endTime),
           plannedUnits: s.plannedUnits,
           allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
         })),
@@ -1998,7 +2004,7 @@ async function submitEditForm() {
           subjectName: s.subjectName || undefined,
           weekday: s.weekday,
           startTime: s.startTime,
-          endTime: s.endTime,
+          endTime: scheduleEndTimeForApi(s.endTime),
           plannedUnits: s.plannedUnits,
           allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
         })),
@@ -2258,6 +2264,9 @@ function validateWeeklyRows(): string {
     const minutes = endAt.diff(startAt, 'minute');
     if (minutes !== Math.round(row.plannedHours * 2) * 30) {
       return 'Lesson duration must match the selected hours.';
+    }
+    if (endAt.isAfter(startAt.startOf('day').add(1, 'day'))) {
+      return 'Lessons must finish by midnight.';
     }
     const busy = weeklyBusyOccurrences.value.find(occurrence =>
       startAt.isBefore(dayjs(occurrence.plannedEndAt))
@@ -3065,6 +3074,7 @@ function disabledPastDate(date: Date) {
 
 
 .weekly-cal__times {
+  position: relative;
   display: flex;
   flex-direction: column;
   border-right: 1px solid #e8edf2;
@@ -3077,6 +3087,14 @@ function disabledPastDate(date: Date) {
   text-align: right;
   padding-right: 6px;
   transform: translateY(-6px);
+}
+
+.weekly-cal__time--end {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  height: 0;
+  transform: translateY(6px);
 }
 
 

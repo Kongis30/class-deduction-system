@@ -94,7 +94,7 @@ public class ScheduleDescParser {
         try {
             int h = Integer.parseInt(parts[0]);
             int m = Integer.parseInt(parts[1]);
-            if (h < 0 || h > 23 || m < 0 || m > 59) {
+            if (h < 0 || h > 24 || m < 0 || m > 59 || (h == 24 && m != 0)) {
                 return null;
             }
             return String.format("%02d:%02d", h, m);
@@ -112,6 +112,9 @@ public class ScheduleDescParser {
             String[] endParts = endTime.split(":");
             int startMinutes = Integer.parseInt(startParts[0]) * 60 + Integer.parseInt(startParts[1]);
             int endMinutes = Integer.parseInt(endParts[0]) * 60 + Integer.parseInt(endParts[1]);
+            if (endMinutes == 0 && startMinutes > 0) {
+                endMinutes = 24 * 60;
+            }
             int diff = endMinutes - startMinutes;
             return diff > 0 ? diff / 30 : 0;
         } catch (NumberFormatException e) {
