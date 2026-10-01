@@ -610,7 +610,7 @@
     <PauseConfirmationDialog
       v-model="pauseConfirmationVisible"
       title="Pause Package"
-      message="Before pausing, please deduct lessons that have already started but are not yet deducted. You can still pause without deducting them. Pausing cancels future lessons that have not been recorded; after resuming, create a new schedule to continue."
+      message="Before pausing, please deduct lessons that have already started but are not yet deducted. You can still pause without deducting them. Pausing clears all future lessons from student and teacher schedules; after resuming, create a new schedule to continue."
       confirm-text="Pause Package"
       :loading="packageStatusSaving"
       @confirm="handlePausePackage"

@@ -506,18 +506,14 @@ class CoursePackageServiceImplTest {
     }
 
     @Test
-    void shouldPauseOnlyUnrecordedFutureOneOnOneLessons() {
+    void shouldReleaseFutureTeacherSlotsEvenWhenLessonHasARecord() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage("ACTIVE", 20);
         LessonOccurrenceEntity unrecorded = buildFutureOccurrence(501L, 601L, 4, "SCHEDULED");
-        LessonOccurrenceEntity recorded = buildFutureOccurrence(502L, 601L, 4, "SCHEDULED");
-        LessonRecordEntity activeRecord = new LessonRecordEntity();
-        activeRecord.setOccurrenceId(502L);
-        activeRecord.setConfirmStage("PENDING_ADMIN");
-        activeRecord.setIsDeleted(0);
+        LessonOccurrenceEntity pending = buildFutureOccurrence(502L, 601L, 4, "SCHEDULED");
+        LessonOccurrenceEntity confirmed = buildFutureOccurrence(503L, 601L, 4, "ADJUSTED");
 
         when(coursePackageMapper.selectById(101L)).thenReturn(coursePackage);
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(unrecorded, recorded));
-        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(activeRecord));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(unrecorded, pending, confirmed));
 
         coursePackageService.pausePackage(101L);
 
@@ -529,7 +525,16 @@ class CoursePackageServiceImplTest {
                 ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
         verify(lessonOccurrenceMapper).update(any(), updateCaptor.capture());
         assertThat(updateCaptor.getValue().getSqlSegment()).contains("id IN");
-        assertThat(updateCaptor.getValue().getParamNameValuePairs()).containsValue("CANCELLED");
+        assertThat(updateCaptor.getValue().getParamNameValuePairs().values())
+                .contains(501L, 502L, 503L, "CANCELLED");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<LessonRecordEntity>> recordCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(lessonRecordMapper).update(any(), recordCaptor.capture());
+        assertThat(recordCaptor.getValue().getSqlSegment()).contains("confirmStage");
+        assertThat(recordCaptor.getValue().getParamNameValuePairs().values())
+                .contains("PENDING_ADMIN", "REJECTED")
+                .doesNotContain("CONFIRMED");
     }
 
     @Test

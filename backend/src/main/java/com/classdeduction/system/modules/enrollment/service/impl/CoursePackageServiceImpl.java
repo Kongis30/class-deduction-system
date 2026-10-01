@@ -1001,7 +1001,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                     .eq(RecurringScheduleRuleEntity::getPackageId, coursePackage.getId())
                     .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
                     .set(RecurringScheduleRuleEntity::getRuleStatus, "PAUSED"));
-            cancelFutureUnrecordedOccurrences(coursePackage.getId());
+            cancelFutureOccurrencesWhenPaused(coursePackage.getId());
         }
     }
 
@@ -1135,7 +1135,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         return units == null ? 0 : Math.max(0, units);
     }
 
-    private void cancelFutureUnrecordedOccurrences(Long packageId) {
+    /** 停课释放所有未来课次的老师和教室占用；待审核消课同时退回，已确认记录保留供追溯。 */
+    private void cancelFutureOccurrencesWhenPaused(Long packageId) {
         List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .eq(LessonOccurrenceEntity::getPackageId, packageId)
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
@@ -1143,22 +1144,16 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         if (futureOccurrences.isEmpty()) {
             return;
         }
-        Set<Long> occurrenceIdsWithRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                        .in(LessonRecordEntity::getOccurrenceId, futureOccurrences.stream().map(LessonOccurrenceEntity::getId).toList())
-                        .ne(LessonRecordEntity::getConfirmStage, "REJECTED")
-                        .eq(LessonRecordEntity::getIsDeleted, 0))
-                .stream()
-                .map(LessonRecordEntity::getOccurrenceId)
-                .collect(Collectors.toSet());
-        List<Long> cancellableIds = futureOccurrences.stream()
-                .filter(item -> !occurrenceIdsWithRecords.contains(item.getId()))
-                .map(LessonOccurrenceEntity::getId)
-                .toList();
-        if (cancellableIds.isEmpty()) {
-            return;
-        }
+        List<Long> occurrenceIds = futureOccurrences.stream().map(LessonOccurrenceEntity::getId).toList();
+        lessonRecordMapper.update(null, new LambdaUpdateWrapper<LessonRecordEntity>()
+                .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_PENDING_ADMIN)
+                .eq(LessonRecordEntity::getIsDeleted, 0)
+                .set(LessonRecordEntity::getConfirmStage, "REJECTED")
+                .set(LessonRecordEntity::getRejectReason, "Package paused before the planned lesson.")
+                .set(LessonRecordEntity::getRejectedAt, AppTime.nowLocalDateTime()));
         lessonOccurrenceMapper.update(null, new LambdaUpdateWrapper<LessonOccurrenceEntity>()
-                .in(LessonOccurrenceEntity::getId, cancellableIds)
+                .in(LessonOccurrenceEntity::getId, occurrenceIds)
                 .set(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .set(LessonOccurrenceEntity::getNotes, "Cancelled when package was paused."));
     }

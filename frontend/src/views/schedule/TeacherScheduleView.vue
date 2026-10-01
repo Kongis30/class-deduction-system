@@ -308,6 +308,7 @@ async function loadSchedule() {
       teacherId,
       startAt: monday.format('YYYY-MM-DDTHH:mm:ss'),
       endAt: sunday.format('YYYY-MM-DDTHH:mm:ss'),
+      planningStatus: 'SCHEDULED,ADJUSTED,MERGED',
       pageSize: 200,
     });
     // Discard if a newer selection/week has superseded this request.

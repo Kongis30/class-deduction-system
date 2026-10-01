@@ -217,7 +217,7 @@
                 <div v-else class="schedule-none">
                   <el-icon :size="28" color="#c0c4cc"><Calendar /></el-icon>
                   <span>{{ selectedPackage?.packageStatus === 'PAUSED'
-                    ? 'Course paused. Resume it to create a new schedule; completed lessons remain and cancelled future lessons stay cancelled.'
+                    ? 'Course paused. Resume it to create a new schedule; completed lessons remain and future lessons stay cancelled.'
                     : 'No schedule yet for this package.' }}</span>
                 </div>
               </div>
@@ -856,7 +856,7 @@
     <PauseConfirmationDialog
       v-model="pauseConfirmationVisible"
       title="Pause Course"
-      message="Please deduct all lessons that have already started before pausing. Go to 1-on-1 Lessons to deduct them, or wait 5 seconds and pause without deducting. Pausing cancels future lessons without records."
+      message="Please deduct all lessons that have already started before pausing. Go to 1-on-1 Lessons to deduct them, or wait 5 seconds and pause without deducting. Pausing clears all future lessons from student and teacher schedules."
       confirm-text="Pause Without Deducting"
       :confirm-cooldown-seconds="5"
       alternate-action-text="Go to 1-on-1 Lessons"
@@ -1643,7 +1643,7 @@ function onPackageSelect(pkg: CoursePackageItem) {
   selectedPackageId.value = pkg.id;
 }
 
-// 打开停课确认窗；停课将保留已记录课次并取消未来未记录课次。
+// 打开停课确认窗；停课保留已开始课次，取消所有未来排课。
 function pauseSelectedPackage() {
   const packageToPause = selectedPackage.value;
   const studentId = selectedStudentId.value;
