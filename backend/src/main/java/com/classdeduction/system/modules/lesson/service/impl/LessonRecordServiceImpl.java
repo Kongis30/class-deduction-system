@@ -38,9 +38,7 @@ import com.classdeduction.system.modules.lesson.vo.LessonRecordDetailVO;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordListItemVO;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
-import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
-import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
 import lombok.RequiredArgsConstructor;
@@ -83,7 +81,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private final ClassroomMapper classroomMapper;
     private final NotificationOutboxService notificationOutboxService;
     private final NotificationTriggerRuleMapper notificationTriggerRuleMapper;
-    private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
 
     @Override
     public PageResponse<LessonRecordListItemVO> pageRecords(LessonRecordPageQuery query) {
@@ -1123,12 +1120,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
         coursePackage.setConsumedUnits(newConsumedUnits);
         coursePackage.setRemainingUnits(newRemainingUnits);
-        // 状态收敛：课时耗尽 → COMPLETED；排课耗尽且课程确实上过课 → 即时完结 COMPLETED；
-        // PAUSED 等其余状态保持不变（确认遗留课次不把停课课包改回 ACTIVE）。
+        // 只有余额耗尽才自动完结；排课暂时结束但仍有课时的课包必须留在排课列表。
         if (packageCompleted) {
-            coursePackage.setPackageStatus("COMPLETED");
-        } else if ("ACTIVE".equals(coursePackage.getPackageStatus())
-                && isCourseScheduleExhausted(coursePackage.getId())) {
             coursePackage.setPackageStatus("COMPLETED");
         }
         coursePackage.setCompletedAt(packageCompleted ? record.getConfirmedAt() : null);
@@ -1220,46 +1213,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             }
         }
         return candidateDate;
-    }
-
-    /**
-     * 判断课包的排课是否已耗尽（课程上完）。
-     * 三条规则同时满足才判定为完结，避免误伤仍在进行或尚未排课的课包：
-     * 1. 无未来非取消课次（planned_start_at >= now 且 planning_status != CANCELLED）；
-     * 2. 无 rule_status = ACTIVE 的重复排课规则（活跃规则会继续生成课次，说明课程仍在进行）；
-     * 3. 至少存在一条已确认的消课记录（排除"新报名尚未排课"的课包）。
-     */
-    private boolean isCourseScheduleExhausted(Long packageId) {
-        PrivateLessonGroupMemberEntity groupMember = privateLessonGroupMemberMapper.selectOne(
-                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
-                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
-                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
-                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
-                        .last("LIMIT 1"));
-        Long futureOccurrences = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, packageId)
-                        .or(groupMember != null && groupMember.getPrivateLessonGroupId() != null,
-                                group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId,
-                                        groupMember == null ? null : groupMember.getPrivateLessonGroupId())))
-                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .ge(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime()));
-        if (futureOccurrences != null && futureOccurrences > 0) {
-            return false;
-        }
-        Long activeRules = recurringScheduleRuleMapper.selectCount(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
-                .and(scope -> scope.eq(RecurringScheduleRuleEntity::getPackageId, packageId)
-                        .or(groupMember != null && groupMember.getPrivateLessonGroupId() != null,
-                                group -> group.eq(RecurringScheduleRuleEntity::getPrivateLessonGroupId,
-                                        groupMember == null ? null : groupMember.getPrivateLessonGroupId())))
-                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE"));
-        if (activeRules != null && activeRules > 0) {
-            return false;
-        }
-        Long confirmedRecords = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
-                .eq(LessonRecordEntity::getPackageId, packageId)
-                .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_CONFIRMED)
-                .eq(LessonRecordEntity::getIsDeleted, 0));
-        return confirmedRecords != null && confirmedRecords > 0;
     }
 
     /**

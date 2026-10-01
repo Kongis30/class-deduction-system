@@ -26,9 +26,7 @@ import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMap
 import com.classdeduction.system.modules.lesson.service.impl.LessonRecordServiceImpl;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
-import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
-import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -102,9 +100,6 @@ class LessonRecordServiceImplTest {
     @Mock
     private com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper notificationTriggerRuleMapper;
 
-    @Mock
-    private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
-
     @Captor
     private ArgumentCaptor<LessonRecordEntity> recordCaptor;
 
@@ -144,8 +139,7 @@ class LessonRecordServiceImplTest {
                 teacherMapper,
                 classroomMapper,
                 notificationOutboxService,
-                notificationTriggerRuleMapper,
-                recurringScheduleRuleMapper
+                notificationTriggerRuleMapper
         );
     }
 
@@ -551,6 +545,8 @@ class LessonRecordServiceImplTest {
         when(lessonOccurrenceMapper.selectOne(any())).thenReturn(future);
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(), List.of(future));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+        // 模拟已有已确认消课，防止有余额但排课暂时结束时误完结课包。
+        org.mockito.Mockito.lenient().when(lessonRecordMapper.selectCount(any())).thenReturn(1L);
         when(packageBalanceSnapshotMapper.selectById(501L)).thenReturn(null);
         when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
         stubInsertedIds();
@@ -564,6 +560,10 @@ class LessonRecordServiceImplTest {
         assertThat(occurrenceCaptor.getValue().getOccurrenceType()).isEqualTo("MAKEUP");
         assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(4);
         assertThat(result.deductedUnits()).isZero();
+        assertThat(result.remainingUnits()).isPositive();
+        assertThat(result.packageCompleted()).isFalse();
+        verify(coursePackageMapper, org.mockito.Mockito.atLeastOnce()).updateById(packageCaptor.capture());
+        assertThat(packageCaptor.getValue().getPackageStatus()).isEqualTo("ACTIVE");
     }
 
     @Test
