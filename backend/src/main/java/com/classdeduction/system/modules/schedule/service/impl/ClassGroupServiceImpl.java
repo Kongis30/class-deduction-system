@@ -1645,9 +1645,15 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         describeTeacherConflict(occurrence.getPlannedTeacherId(), classGroup, conflict, startAt, endAt));
             }
         }
-        if (occurrence.getPlannedClassroomId() != null && hasClassScheduleConflict(startAt, endAt,
-                wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId()))) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the new class schedule.");
+        if (occurrence.getPlannedClassroomId() != null) {
+            LessonOccurrenceEntity conflict = findClassScheduleConflict(startAt, endAt,
+                    wrapper -> wrapper.eq(LessonOccurrenceEntity::getPlannedClassroomId,
+                            occurrence.getPlannedClassroomId()));
+            if (conflict != null) {
+                throw new BusinessException("SCHEDULE_CONFLICT",
+                        describeClassroomConflict(occurrence.getPlannedClassroomId(), classGroup, conflict,
+                                startAt, endAt));
+            }
         }
         for (Long studentId : activeStudentIdsByClassOnDate(occurrence.getClassGroupId(), startAt.toLocalDate())) {
             for (LessonOccurrenceEntity conflict : findStudentConflictsForClassSchedule(
@@ -1691,6 +1697,38 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         String newTime = startAt.format(CONFLICT_DATE_TIME) + "–" + endAt.format(CONFLICT_TIME);
         return "Teacher " + teacherName + " is already assigned to " + describeConflictingCourse(conflict)
                 + " (" + existingTime + " ET); this overlaps " + newClass + " (" + newTime + " ET).";
+    }
+
+    /** 班课排课保存时说明占用教室、既有课程和双方时段，便于区分同名教室所在校区。 */
+    private String describeClassroomConflict(Long classroomId, ClassGroupEntity classGroup,
+                                             LessonOccurrenceEntity conflict,
+                                             LocalDateTime startAt, LocalDateTime endAt) {
+        ClassroomEntity classroom = classroomMapper.selectById(classroomId);
+        String roomName = classroom == null || !StringUtils.hasText(classroom.getRoomName())
+                ? "Classroom #" + classroomId : classroom.getRoomName();
+        String campusName = classroom == null || classroom.getCampusId() == null
+                ? null : Optional.ofNullable(campusMapper.selectById(classroom.getCampusId()))
+                .map(CampusEntity::getCampusName).filter(StringUtils::hasText).orElse(null);
+        String resource = campusName == null ? roomName : roomName + " (" + campusName + ")";
+        String existingTime = conflict.getPlannedStartAt().format(CONFLICT_DATE_TIME)
+                + "–" + conflict.getPlannedEndAt().format(CONFLICT_TIME);
+        String newTime = startAt.format(CONFLICT_DATE_TIME) + "–" + endAt.format(CONFLICT_TIME);
+        return "Classroom " + resource + " is already assigned to " + describeConflictingCourse(conflict)
+                + " (" + existingTime + " ET); this overlaps " + describeClassGroup(classGroup)
+                + " (" + newTime + " ET).";
+    }
+
+    private String describeClassGroup(ClassGroupEntity classGroup) {
+        List<String> parts = new ArrayList<>();
+        if (StringUtils.hasText(classGroup.getGradeBand())) {
+            parts.add(classGroup.getGradeBand());
+        }
+        String actualClass = StringUtils.hasText(classGroup.getActualClass())
+                ? classGroup.getActualClass() : classGroup.getClassName();
+        if (StringUtils.hasText(actualClass)) {
+            parts.add(actualClass);
+        }
+        return parts.isEmpty() ? "the new class" : String.join(" / ", parts);
     }
 
     /** 冲突课次既可能属于班课，也可能属于一对一课包。 */
@@ -1817,16 +1855,21 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .toList();
     }
 
-    private boolean hasClassScheduleConflict(LocalDateTime startAt,
-                                             LocalDateTime endAt,
-                                             java.util.function.Consumer<LambdaQueryWrapper<LessonOccurrenceEntity>> condition) {
+    private LessonOccurrenceEntity findClassScheduleConflict(LocalDateTime startAt,
+                                                              LocalDateTime endAt,
+                                                              java.util.function.Consumer<LambdaQueryWrapper<LessonOccurrenceEntity>> condition) {
         LambdaQueryWrapper<LessonOccurrenceEntity> wrapper = new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, endAt)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, startAt);
         condition.accept(wrapper);
         Long conflictCount = lessonOccurrenceMapper.selectCount(wrapper);
-        return conflictCount != null && conflictCount > 0;
+        if (conflictCount == null || conflictCount == 0) {
+            return null;
+        }
+        wrapper.orderByAsc(LessonOccurrenceEntity::getPlannedStartAt).last("LIMIT 1");
+        List<LessonOccurrenceEntity> conflicts = lessonOccurrenceMapper.selectList(wrapper);
+        return conflicts == null || conflicts.isEmpty() ? null : conflicts.get(0);
     }
 
     private List<Long> activeStudentIdsByClass(Long classId) {

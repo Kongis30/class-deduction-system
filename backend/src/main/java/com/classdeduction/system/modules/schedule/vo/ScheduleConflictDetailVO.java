@@ -15,6 +15,8 @@ public record ScheduleConflictDetailVO(
         String resourceType,
         Long resourceId,
         String resourceName,
+        LocalDateTime requestedStartAt,
+        LocalDateTime requestedEndAt,
         LocalDateTime conflictStartAt,
         LocalDateTime conflictEndAt,
         Long existingOccurrenceId,

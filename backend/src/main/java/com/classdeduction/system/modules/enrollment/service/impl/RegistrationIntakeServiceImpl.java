@@ -2182,6 +2182,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         .gt(LessonOccurrenceEntity::getPlannedEndAt, startAt));
 
         LessonOccurrenceEntity conflict = null;
+        LessonOccurrenceEntity conflictingTarget = null;
         for (LessonOccurrenceEntity target : targetOccurrences) {
             ClassGroupScheduleSlotEntity targetSlot = target.getScheduleSlotId() == null
                     ? null
@@ -2201,6 +2202,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         .orElse(null);
             }
             if (conflict != null) {
+                conflictingTarget = target;
                 break;
             }
         }
@@ -2214,7 +2216,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             return;
         }
         throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected for the selected class.",
-                List.of(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), conflict)));
+                List.of(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), conflictingTarget, conflict)));
     }
 
     private boolean isEnrollmentEffectiveOnAndMatchesAttendance(List<ClassEnrollmentEntity> enrollments,
@@ -2874,15 +2876,15 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         for (LessonOccurrenceEntity candidate : generatedOccurrences) {
             LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
             if (studentId != null && studentConflict != null) {
-                conflicts.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), studentConflict));
+                conflicts.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), candidate, studentConflict));
             }
             LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences);
             if (teacherId != null && teacherConflict != null) {
-                conflicts.add(buildConflictDetail("TEACHER", teacherId, resolveTeacherName(teacherId), teacherConflict));
+                conflicts.add(buildConflictDetail("TEACHER", teacherId, resolveTeacherName(teacherId), candidate, teacherConflict));
             }
             LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
             if (classroomId != null && classroomConflict != null) {
-                conflicts.add(buildConflictDetail("CLASSROOM", classroomId, null, classroomConflict));
+                conflicts.add(buildConflictDetail("CLASSROOM", classroomId, null, candidate, classroomConflict));
             }
             if (conflicts.size() >= 3) {
                 break;
@@ -2904,11 +2906,14 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private ScheduleConflictDetailVO buildConflictDetail(String resourceType,
                                                          Long resourceId,
                                                          String resourceName,
+                                                         LessonOccurrenceEntity candidate,
                                                          LessonOccurrenceEntity existing) {
         return ScheduleConflictDetailVO.builder()
                 .resourceType(resourceType)
                 .resourceId(resourceId)
                 .resourceName(resourceName)
+                .requestedStartAt(candidate.getPlannedStartAt())
+                .requestedEndAt(candidate.getPlannedEndAt())
                 .conflictStartAt(existing.getPlannedStartAt())
                 .conflictEndAt(existing.getPlannedEndAt())
                 .existingOccurrenceId(existing.getId())

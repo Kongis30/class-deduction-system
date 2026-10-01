@@ -1090,7 +1090,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                                Long ignoredOccurrenceId) {
         LessonOccurrenceEntity existing = findFirstConflict(target, field, fieldValue, ignoredOccurrenceId, null);
         throw new BusinessException("SCHEDULE_CONFLICT", message,
-                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, existing)));
+                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, target, existing)));
     }
 
     private void throwConflict(String resourceType,
@@ -1102,7 +1102,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                                Set<Long> ignoredOccurrenceIds) {
         LessonOccurrenceEntity existing = findFirstConflict(target, field, fieldValue, null, ignoredOccurrenceIds);
         throw new BusinessException("SCHEDULE_CONFLICT", message,
-                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, existing)));
+                existing == null ? Collections.emptyList() : List.of(buildConflictDetail(resourceType, resourceId, target, existing)));
     }
 
     private LessonOccurrenceEntity findFirstConflict(LessonOccurrenceEntity target,
@@ -1127,11 +1127,15 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         return conflicts == null || conflicts.isEmpty() ? null : conflicts.get(0);
     }
 
-    private ScheduleConflictDetailVO buildConflictDetail(String resourceType, Long resourceId, LessonOccurrenceEntity existing) {
+    private ScheduleConflictDetailVO buildConflictDetail(String resourceType, Long resourceId,
+                                                         LessonOccurrenceEntity target,
+                                                         LessonOccurrenceEntity existing) {
         return ScheduleConflictDetailVO.builder()
                 .resourceType(resourceType)
                 .resourceId(resourceId)
                 .resourceName(resolveResourceName(resourceType, resourceId))
+                .requestedStartAt(target.getPlannedStartAt())
+                .requestedEndAt(target.getPlannedEndAt())
                 .conflictStartAt(existing.getPlannedStartAt())
                 .conflictEndAt(existing.getPlannedEndAt())
                 .existingOccurrenceId(existing.getId())

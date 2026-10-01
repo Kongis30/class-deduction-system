@@ -543,7 +543,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 if (overlaps(left, right)) {
                     throw new BusinessException("SCHEDULE_CONFLICT",
                             "Pending lessons overlap and cannot be assigned to the same classroom together.",
-                            List.of(toClassroomConflictDetail(left.getPlannedClassroomId(), right)));
+                            List.of(toClassroomConflictDetail(left, right)));
                 }
             }
         }
@@ -559,17 +559,21 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt()));
             if (conflicts != null && !conflicts.isEmpty()) {
                 throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected for the selected room.",
-                        List.of(toClassroomConflictDetail(occurrence.getPlannedClassroomId(), conflicts.get(0))));
+                        List.of(toClassroomConflictDetail(occurrence, conflicts.get(0))));
             }
         }
     }
 
-    private ScheduleConflictDetailVO toClassroomConflictDetail(Long classroomId, LessonOccurrenceEntity existing) {
+    private ScheduleConflictDetailVO toClassroomConflictDetail(LessonOccurrenceEntity candidate,
+                                                               LessonOccurrenceEntity existing) {
+        Long classroomId = candidate.getPlannedClassroomId();
         ClassroomEntity classroom = classroomId == null ? null : classroomMapper.selectById(classroomId);
         return ScheduleConflictDetailVO.builder()
                 .resourceType("CLASSROOM")
                 .resourceId(classroomId)
                 .resourceName(classroom == null ? null : classroom.getRoomName())
+                .requestedStartAt(candidate.getPlannedStartAt())
+                .requestedEndAt(candidate.getPlannedEndAt())
                 .conflictStartAt(existing.getPlannedStartAt())
                 .conflictEndAt(existing.getPlannedEndAt())
                 .existingOccurrenceId(existing.getId())

@@ -6,6 +6,8 @@ import { clearStoredAuthSession, getStoredAuthToken } from '@/utils/auth-storage
 interface ScheduleConflictDetail {
   resourceType?: string;
   resourceName?: string;
+  requestedStartAt?: string;
+  requestedEndAt?: string;
   conflictStartAt?: string;
   conflictEndAt?: string;
   existingLessonNo?: string;
@@ -153,15 +155,26 @@ function formatScheduleConflictDetail(detail: unknown): string | null {
     return null;
   }
   const conflict = detail as ScheduleConflictDetail;
-  const resource = [conflict.resourceType, conflict.resourceName].filter(Boolean).join(' ');
-  const time = formatConflictTimeRange(conflict.conflictStartAt, conflict.conflictEndAt);
-  const lesson = conflict.existingLessonNo ? `existing lesson ${conflict.existingLessonNo}` : 'existing lesson';
-  return [resource || 'Resource', time, lesson].filter(Boolean).join(' · ');
+  const resourceType = conflict.resourceType?.toLowerCase();
+  const label = resourceType === 'teacher' ? 'Teacher'
+    : resourceType === 'classroom' ? 'Classroom'
+      : resourceType === 'student' ? 'Student' : 'Resource';
+  const resource = [label, conflict.resourceName].filter(Boolean).join(' ');
+  const requested = formatConflictTimeRange(conflict.requestedStartAt, conflict.requestedEndAt);
+  const occupied = formatConflictTimeRange(conflict.conflictStartAt, conflict.conflictEndAt);
+  const lesson = conflict.existingLessonNo ? `lesson ${conflict.existingLessonNo}` : 'another scheduled lesson';
+  if (requested && occupied) {
+    return `${resource} conflict: requested ${requested} overlaps ${lesson} (${occupied} ET)`;
+  }
+  if (occupied) {
+    return `${resource} conflict: ${lesson} is scheduled at ${occupied} ET`;
+  }
+  return `${resource} conflict detected`;
 }
 
 function formatConflictTimeRange(startAt?: string, endAt?: string): string {
   if (!startAt || !endAt) {
     return '';
   }
-  return `${startAt.replace('T', ' ')}-${endAt.replace('T', ' ')}`;
+  return `${startAt.replace('T', ' ').slice(0, 16)}–${endAt.replace('T', ' ').slice(0, 16)}`;
 }
