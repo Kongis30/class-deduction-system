@@ -18,7 +18,7 @@ public record ReceiptRecordVO(
         Long studentId,
         Long paymentRecordId,
         boolean enrollmentOrderActive,
-        List<Long> activeCourseItemIds,
+        List<String> activeCourseItemIds,
         String studentName,
         String templateCode,
         String receiptPayload,

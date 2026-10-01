@@ -186,7 +186,7 @@ import { useRouter } from 'vue-router';
 
 import { fetchStudents } from '@/api/base-data';
 import { deleteEnrollmentOrderItem, fetchReceipts } from '@/api/enrollment';
-import { extractErrorMessage } from '@/api/http';
+import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
 import type { ReceiptRecordItem, StudentItem } from '@/types/domain';
 import { formatRoundedUsd } from '@/utils/money-display';
 
@@ -486,7 +486,8 @@ function parseReceiptPayload(value: unknown): Record<string, unknown> {
   }
   if (typeof value !== 'string' || !value.trim()) return {};
   try {
-    const parsed = JSON.parse(value);
+    // 收据快照中的雪花 ID 可能超过 JS 安全整数范围；先转为字符串再解析。
+    const parsed = JSON.parse(preprocessLargeIds(value));
     return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
       ? parsed as Record<string, unknown>
       : {};

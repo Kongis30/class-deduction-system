@@ -6,6 +6,7 @@ import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.enrollment.dto.ReceiptPageQuery;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
@@ -85,6 +86,31 @@ class ReceiptServiceImplTest {
         assertThat(result.records()).singleElement()
                 .extracting(ReceiptRecordVO::receiptPayload)
                 .isEqualTo(RECEIPT_PAYLOAD);
+    }
+
+    @Test
+    void shouldReturnExactCourseItemIdsForReceiptDeletion() {
+        long itemId = 2104092472449245186L;
+        ReceiptRecordEntity receipt = buildReceipt();
+        receipt.setReceiptPayload("{\"items\":[{\"orderItemId\":" + itemId + "}]}");
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(itemId);
+        item.setEnrollmentOrderId(2001L);
+        Page<ReceiptRecordEntity> page = new Page<>(1, 10, 1);
+        page.setRecords(List.of(receipt));
+        when(receiptRecordMapper.selectPage(any(), any())).thenReturn(page);
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(enrollmentOrderMapper.selectBatchIds(any())).thenReturn(List.of(buildOrder()));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+
+        ReceiptPageQuery query = new ReceiptPageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+
+        ReceiptRecordVO result = receiptService.pageReceipts(query).records().get(0);
+
+        assertThat(result.activeCourseItemIds()).containsExactly("2104092472449245186");
+        assertThat(result.receiptPayload()).contains("\"orderItemId\":2104092472449245186");
     }
 
     private ReceiptRecordEntity buildReceipt() {

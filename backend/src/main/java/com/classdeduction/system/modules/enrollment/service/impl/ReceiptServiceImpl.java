@@ -61,7 +61,7 @@ public class ReceiptServiceImpl implements ReceiptService {
                 .stream()
                 .collect(Collectors.toMap(StudentEntity::getId, item -> item));
         Set<Long> activeOrderIds = findActiveOrderIds(result.getRecords());
-        Map<Long, List<Long>> activeItemsByOrderId = findActiveItemIds(activeOrderIds);
+        Map<Long, List<String>> activeItemsByOrderId = findActiveItemIds(activeOrderIds);
 
         return PageResponse.of(
                 result.getRecords().stream()
@@ -84,7 +84,7 @@ public class ReceiptServiceImpl implements ReceiptService {
         StudentEntity student = studentMapper.selectById(receipt.getStudentId());
         boolean orderActive = receipt.getEnrollmentOrderId() != null
                 && enrollmentOrderMapper.selectById(receipt.getEnrollmentOrderId()) != null;
-        List<Long> activeItemIds = orderActive
+        List<String> activeItemIds = orderActive
                 ? findActiveItemIds(Set.of(receipt.getEnrollmentOrderId()))
                         .getOrDefault(receipt.getEnrollmentOrderId(), List.of())
                 : List.of();
@@ -107,7 +107,7 @@ public class ReceiptServiceImpl implements ReceiptService {
     }
 
     /** 只把仍属于有效订单的课程项开放给收据页删除选择器。 */
-    private Map<Long, List<Long>> findActiveItemIds(Set<Long> activeOrderIds) {
+    private Map<Long, List<String>> findActiveItemIds(Set<Long> activeOrderIds) {
         if (activeOrderIds.isEmpty()) {
             return Map.of();
         }
@@ -115,8 +115,9 @@ public class ReceiptServiceImpl implements ReceiptService {
                         .in(EnrollmentOrderItemEntity::getEnrollmentOrderId, activeOrderIds))
                 .stream()
                 .filter(item -> item.getId() != null && item.getEnrollmentOrderId() != null)
+                // 浏览器无法精确表示雪花 ID；接口直接返回字符串供收据快照匹配及删除请求使用。
                 .collect(Collectors.groupingBy(EnrollmentOrderItemEntity::getEnrollmentOrderId,
-                        Collectors.mapping(EnrollmentOrderItemEntity::getId, Collectors.toList())));
+                        Collectors.mapping(item -> item.getId().toString(), Collectors.toList())));
     }
 
     private List<Long> findMatchedStudentIds(String keyword) {
@@ -133,7 +134,7 @@ public class ReceiptServiceImpl implements ReceiptService {
     }
 
     private ReceiptRecordVO toVO(ReceiptRecordEntity item, StudentEntity student, boolean orderActive,
-                                 List<Long> activeCourseItemIds) {
+                                 List<String> activeCourseItemIds) {
         return ReceiptRecordVO.builder()
                 .id(item.getId())
                 .receiptNo(item.getReceiptNo())
