@@ -149,7 +149,12 @@ public class StudentServiceImpl implements StudentService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteStudent(Long id) {
-        requireStudent(id);
+        // 报名会先锁学生行再写入 class_enrollment；删除也需先锁同一行，
+        // 让并发报名与级联清理串行执行，避免留下已删除学生的有效班课报名。
+        StudentEntity student = studentMapper.selectByIdForUpdate(id);
+        if (student == null) {
+            throw new BusinessException("NOT_FOUND", "Student not found.");
+        }
         cascadeDeleteStudentOperationalData(id);
         studentMapper.deleteById(id);
     }

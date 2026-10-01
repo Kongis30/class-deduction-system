@@ -15,11 +15,15 @@ import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
+import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
+import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeRequest;
@@ -41,12 +45,13 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
-import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService;
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
+import com.classdeduction.system.modules.enrollment.util.GroupRegistrationCoverage;
+import com.classdeduction.system.modules.enrollment.util.GroupClassEntitlementRules;
 import com.classdeduction.system.modules.enrollment.util.WholeDollarBilling;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
 import com.classdeduction.system.modules.finance.service.StudentCreditService;
@@ -54,12 +59,11 @@ import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
-import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
-import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -106,6 +110,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final CampusMapper campusMapper;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
     private final CourseProductMapper courseProductMapper;
+    private final GroupCourseProjectMapper groupCourseProjectMapper;
+    private final GroupRegistrationPlanMapper groupRegistrationPlanMapper;
     private final TeacherMapper teacherMapper;
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
@@ -121,7 +127,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private final PaymentRecordMapper paymentRecordMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
     private final PaymentAllocationService paymentAllocationService;
-    private final ClassBillingService classBillingService;
     private final UserAccountMapper userAccountMapper;
     private final RoleMapper roleMapper;
     private final UserRoleMapper userRoleMapper;
@@ -141,6 +146,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     public RegistrationIntakeResultVO submitIntake(RegistrationIntakeRequest request, CurrentUserResponse operator) {
         validateWholeDollarInputs(request);
         validateRegistrationPeriod(request);
+        Map<Long, ClassGroupEntity> lockedGroupClasses = Map.of();
+        if (!isCreditTopUpRequest(request)) {
+            lockRequestedGroupDefinitions(request.getItems());
+            lockedGroupClasses = lockRequestedGroupClasses(request.getItems());
+        }
         validateCampusSelection(request);
         validateRenewalRequestShape(request);
         List<StudentResolution> participantResolutions = resolveParticipantStudents(request);
@@ -152,7 +162,13 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("COURSE_ITEM_REQUIRED",
                     "Add at least one course or enter a Credit top-up amount.");
         }
-        List<ResolvedCourseLine> lines = resolveCourseLines(request.getItems(), request.getCampusId());
+        List<ResolvedCourseLine> lines = resolveCourseLines(request.getItems(), request.getCampusId(), lockedGroupClasses);
+        lockAndRevalidateCourseProducts(lines);
+        if (lines.stream().anyMatch(line -> !line.oneOnOne)) {
+            GroupClassEntitlementRules.lockStudents(studentMapper, participantResolutions.stream()
+                    .map(resolution -> resolution.student().getId())
+                    .toList());
+        }
         validatePrivateLessonParticipants(request, participantResolutions, lines);
         applyParticipantPricing(lines, participantResolutions.size());
         validateRenewalLines(request, lines);
@@ -192,7 +208,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                             ensureStudentAccount(studentResolution.student())));
                 } else {
                     for (StudentResolution participant : participantResolutions) {
-                        artifacts.add(createGroupClassArtifact(order, participant.student(), line,
+                        artifacts.add(createGroupClassArtifact(participant.student(), line,
                                 request.getRenewClassEnrollmentId(), allowStudentConflicts(request)));
                     }
                 }
@@ -238,6 +254,90 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .creditTopUpOrderId(creditTopUp == null ? null : creditTopUp.order().getId())
                 .creditTopUpAmount(creditTopUp == null ? null : creditTopUp.money().amountDue())
                 .build();
+    }
+
+    /** 报名写入与产品模式变更共用行锁；锁后复核产品类型，避免并发生成另一教学模式的订单。 */
+    private void lockAndRevalidateCourseProducts(List<ResolvedCourseLine> lines) {
+        List<Long> productIds = lines.stream()
+                .map(line -> line.courseProductId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        Map<Long, CourseProductEntity> lockedProducts = new LinkedHashMap<>();
+        for (Long productId : productIds) {
+            CourseProductEntity product = courseProductMapper.selectByIdForUpdate(productId);
+            if (product == null || !"ACTIVE".equals(product.getStatus())) {
+                throw new BusinessException("COURSE_PRODUCT_INVALID", "The selected course is no longer active.");
+            }
+            lockedProducts.put(productId, product);
+        }
+        for (ResolvedCourseLine line : lines) {
+            if (line.courseProductId == null) continue;
+            CourseProductEntity lockedProduct = lockedProducts.get(line.courseProductId);
+            if (line.product != null && !Objects.equals(line.product.getTeachingMode(), lockedProduct.getTeachingMode())) {
+                throw new BusinessException("COURSE_PRODUCT_MODE_CHANGED",
+                        "The course teaching mode changed while the registration was being prepared. Reload and try again.");
+            }
+            line.product = lockedProduct;
+            line.oneOnOne = "ONE_ON_ONE".equals(lockedProduct.getTeachingMode());
+        }
+    }
+
+    /** 报名和排课编辑/删除共用实际班级行锁，避免权益仍引用一份已改变的课表。 */
+    private Map<Long, ClassGroupEntity> lockRequestedGroupClasses(
+            List<RegistrationIntakeRequest.CourseItemPayload> items) {
+        if (items == null || items.isEmpty()) return Map.of();
+        List<Long> classIds = items.stream()
+                .filter(item -> item.getGroupProjectId() != null || item.getGroupRegistrationPlanId() != null)
+                .map(item -> {
+                    if (item.getClassId() == null) {
+                        throw new BusinessException("GROUP_CLASS_REQUIRED",
+                                "Select an actual class before registering for a group course.");
+                    }
+                    return item.getClassId();
+                })
+                .filter(Objects::nonNull)
+                .distinct()
+                .sorted()
+                .toList();
+        Map<Long, ClassGroupEntity> result = new LinkedHashMap<>();
+        for (Long classId : classIds) {
+            ClassGroupEntity classGroup = classGroupMapper.selectByIdForUpdate(classId);
+            if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
+                throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+            }
+            result.put(classId, classGroup);
+        }
+        return result;
+    }
+
+    /**
+     * 报名前先锁定项目和方案，再进行普通查询；配置编辑共用这些行锁，避免报名用旧价格或旧状态。
+     * 顺序固定为项目、方案、班级、产品、学生，和项目假期及班级创建路径保持一致。
+     */
+    private void lockRequestedGroupDefinitions(List<RegistrationIntakeRequest.CourseItemPayload> items) {
+        if (items == null || items.isEmpty()) return;
+        List<Long> projectIds = items.stream()
+                .filter(this::isV2GroupItem)
+                .map(RegistrationIntakeRequest.CourseItemPayload::getGroupProjectId)
+                .filter(Objects::nonNull)
+                .distinct().sorted().toList();
+        List<Long> planIds = items.stream()
+                .filter(this::isV2GroupItem)
+                .map(RegistrationIntakeRequest.CourseItemPayload::getGroupRegistrationPlanId)
+                .filter(Objects::nonNull)
+                .distinct().sorted().toList();
+        for (Long projectId : projectIds) {
+            groupCourseProjectMapper.selectByIdForUpdate(projectId);
+        }
+        for (Long planId : planIds) {
+            groupRegistrationPlanMapper.selectByIdForUpdate(planId);
+        }
+    }
+
+    private boolean isV2GroupItem(RegistrationIntakeRequest.CourseItemPayload item) {
+        return item != null && (item.getGroupProjectId() != null || item.getGroupRegistrationPlanId() != null);
     }
 
     /**
@@ -712,10 +812,25 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         student.setCampusId(campusId);
     }
 
-    private List<ResolvedCourseLine> resolveCourseLines(List<RegistrationIntakeRequest.CourseItemPayload> items, Long registrationCampusId) {
+    private List<ResolvedCourseLine> resolveCourseLines(List<RegistrationIntakeRequest.CourseItemPayload> items,
+                                                        Long registrationCampusId,
+                                                        Map<Long, ClassGroupEntity> lockedGroupClasses) {
         List<ResolvedCourseLine> lines = new ArrayList<>();
         int nextLineNo = 1;
         for (RegistrationIntakeRequest.CourseItemPayload item : items) {
+            if (item.getGroupProjectId() != null || item.getGroupRegistrationPlanId() != null) {
+                if (item.getGroupProjectId() == null || item.getGroupRegistrationPlanId() == null) {
+                    throw new BusinessException("GROUP_PROJECT_PLAN_REQUIRED",
+                            "Select a teaching project and its registration plan.");
+                }
+                ClassGroupEntity lockedClassGroup = lockedGroupClasses.get(item.getClassId());
+                ResolvedCourseLine line = resolveV2GroupCourseLine(item, registrationCampusId, nextLineNo,
+                        lockedClassGroup);
+                nextLineNo = Math.max(nextLineNo + 1, line.lineNo + 1);
+                validateResolvedLine(line);
+                lines.add(line);
+                continue;
+            }
             CoursePriceOptionEntity option = resolvePriceOption(item.getCoursePriceOptionId());
             if (option == null) {
                 throw new BusinessException("COURSE_PRICE_OPTION_REQUIRED",
@@ -733,6 +848,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             Long productId = firstNonNull(item.getCourseProductId(), option.getCourseProductId());
             CourseProductEntity product = productId == null ? null : requireCourseProduct(productId);
             validatePriceOptionProduct(option, product);
+            if (product != null && "GROUP".equals(product.getTeachingMode())) {
+                throw new BusinessException("GROUP_V2_PLAN_REQUIRED",
+                        "Choose a teaching project, registration plan, and actual class for group-class enrollment.");
+            }
             BigDecimal configuredUnitPrice = requireNonNegativeAmount(resolveOptionBasePrice(option, item.getAttendanceOption()), "COURSE_PRICE_REQUIRED",
                     "Configured course price is required.");
 
@@ -795,7 +914,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.serviceFees = item.getServiceFees() == null ? Collections.emptyList() : item.getServiceFees();
             line.product = product;
             line.oneOnOne = isOneOnOneLine(line, product);
-            applyLinePricing(line, item, configuredUnitPrice, option.getOneOnOneHours(), option);
+            applyLinePricing(line, item, configuredUnitPrice, option.getOneOnOneHours());
 
             validateResolvedLine(line);
             lines.add(line);
@@ -803,44 +922,221 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         return lines;
     }
 
+    /** 班课 V2 新报名只从项目、方案和唯一实际班级解析，不再借用旧价格行推导班级。 */
+    private ResolvedCourseLine resolveV2GroupCourseLine(RegistrationIntakeRequest.CourseItemPayload item,
+                                                        Long registrationCampusId,
+                                                        int defaultLineNo,
+                                                        ClassGroupEntity lockedClassGroup) {
+        GroupCourseProjectEntity project = groupCourseProjectMapper.selectById(item.getGroupProjectId());
+        GroupRegistrationPlanEntity plan = groupRegistrationPlanMapper.selectById(item.getGroupRegistrationPlanId());
+        if (project == null || plan == null || !Objects.equals(project.getId(), plan.getProjectId())
+                || !"ACTIVE".equals(project.getStatus()) || !"ACTIVE".equals(plan.getStatus())) {
+            throw new BusinessException("GROUP_PROJECT_PLAN_INVALID",
+                    "The selected teaching project or registration plan is no longer available.");
+        }
+        if (item.getCoursePriceOptionId() != null) {
+            throw new BusinessException("GROUP_V2_LEGACY_PRICE_MIXED",
+                    "Choose a V2 registration plan; legacy grade price rows cannot be combined with it.");
+        }
+        CourseProductEntity product = requireCourseProduct(project.getCourseProductId());
+        if (!"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
+            throw new BusinessException("GROUP_PRODUCT_INVALID", "Teaching project must belong to an active group-class product.");
+        }
+        ClassGroupEntity classGroup = lockedClassGroup;
+        if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+        }
+        if (!Objects.equals(classGroup.getProductId(), product.getId())
+                || !Objects.equals(classGroup.getGroupProjectId(), project.getId())) {
+            throw new BusinessException("GROUP_CLASS_PROJECT_MISMATCH",
+                    "The selected class does not belong to this teaching project.");
+        }
+        LocalDate classStart = classGroup.getStartDate() != null ? classGroup.getStartDate() : classGroup.getStartMonth();
+        LocalDate classEnd = classGroup.getEndDate() != null ? classGroup.getEndDate()
+                : classGroup.getEndMonth() == null ? null
+                : classGroup.getEndMonth().withDayOfMonth(classGroup.getEndMonth().lengthOfMonth());
+        if (item.getStartDate() != null && (classStart != null && item.getStartDate().isBefore(classStart)
+                || classEnd != null && item.getStartDate().isAfter(classEnd))) {
+            throw new BusinessException("ENROLLMENT_START_OUT_OF_RANGE",
+                    "Choose a first lesson date within the actual class period.");
+        }
+        if ("FIXED_DATES".equals(plan.getCoverageType()) && item.getStartDate() != null
+                && (plan.getCoverageStartDate() != null && item.getStartDate().isBefore(plan.getCoverageStartDate())
+                || plan.getCoverageEndDate() != null && item.getStartDate().isAfter(plan.getCoverageEndDate()))) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID",
+                    "Choose a first lesson date within this registration plan.");
+        }
+        if (registrationCampusId == null || (classGroup.getCampusId() != null
+                && !Objects.equals(registrationCampusId, classGroup.getCampusId()))) {
+            throw new BusinessException("CLASS_CAMPUS_MISMATCH",
+                    "Choose an actual class from the selected campus.");
+        }
+
+        ResolvedCourseLine line = new ResolvedCourseLine();
+        line.lineNo = item.getLineNo() == null ? defaultLineNo : item.getLineNo();
+        line.groupProjectId = project.getId();
+        line.groupRegistrationPlanId = plan.getId();
+        line.courseProductId = product.getId();
+        line.product = product;
+        line.classId = classGroup.getId();
+        line.classGroup = classGroup;
+        line.registrationCampusId = registrationCampusId;
+        line.registerClass = firstText(item.getRegisterClass(),
+                firstText(classGroup.getActualClass(), firstText(classGroup.getClassName(), product.getRegisterClass())));
+        line.courseType = product.getCourseType();
+        line.detail = firstText(item.getDetail(), project.getProjectName() + " · " + plan.getPlanName());
+        line.gradeBand = firstText(classGroup.getActualClass(), classGroup.getGradeBand());
+        line.periodLabel = plan.getPlanName();
+        line.startDate = item.getStartDate();
+        line.attendanceOption = normalizeAttendanceOption(item.getAttendanceOption());
+        line.attendanceScheduleJson = item.getAttendanceScheduleJson();
+        line.packageUnit = plan.getPackageUnit();
+        line.packageTotalPrice = plan.getFullDayPrice();
+        line.oneOnOne = false;
+        line.sessions = null;
+        line.purchasedMonths = null;
+
+        int configuredQuantity;
+        int selectedQuantity;
+        try {
+            configuredQuantity = plan.getPackageQuantity().intValueExact();
+            selectedQuantity = switch (plan.getCoverageType()) {
+                case "FIXED_DATES" -> item.getSessions() == null ? configuredQuantity : item.getSessions();
+                case "SESSION_COUNT" -> item.getSessions() == null ? configuredQuantity : item.getSessions();
+                case "ROLLING_MONTHS" -> item.getPurchasedMonths() == null ? configuredQuantity : item.getPurchasedMonths();
+                default -> throw new IllegalStateException("Unsupported group plan coverage type.");
+            };
+        } catch (ArithmeticException | NullPointerException ex) {
+            throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID", "Plan quantity must be a whole number.");
+        }
+        if (configuredQuantity < 1 || selectedQuantity < 1 || selectedQuantity > configuredQuantity) {
+            throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID",
+                    "Selected months or sessions must be within the plan limit.");
+        }
+        if ("MONTH".equals(plan.getPackageUnit())) {
+            line.purchasedMonths = selectedQuantity;
+            line.packageQuantity = BigDecimal.valueOf(selectedQuantity);
+        } else {
+            line.sessions = selectedQuantity;
+            line.packageQuantity = BigDecimal.valueOf(selectedQuantity);
+        }
+
+        BigDecimal configuredPrice = "FULL_DAY".equals(line.attendanceOption) || plan.getHalfDayPrice() == null
+                ? plan.getFullDayPrice() : plan.getHalfDayPrice();
+        configuredPrice = requireNonNegativeAmount(configuredPrice, "COURSE_PRICE_REQUIRED", "Plan price is required.");
+        if (configuredPrice.compareTo(ZERO_AMOUNT) <= 0) {
+            throw new BusinessException("COURSE_LINE_PRICE_REQUIRED", "Plan price must be greater than zero.");
+        }
+        BigDecimal proratedPrice = configuredPrice;
+        if (selectedQuantity < configuredQuantity) {
+            proratedPrice = configuredPrice.multiply(BigDecimal.valueOf(selectedQuantity))
+                    .divide(BigDecimal.valueOf(configuredQuantity), 0, RoundingMode.CEILING);
+        }
+        line.manualPriceOverride = Boolean.TRUE.equals(item.getManualPriceOverride());
+        line.originalPriceAmount = WholeDollarBilling.ceil(proratedPrice);
+        line.priceAmount = line.manualPriceOverride
+                ? requirePositiveAmount(WholeDollarBilling.requireInteger(item.getPriceAmount(), "Manual course price"),
+                    "COURSE_LINE_PRICE_REQUIRED", "Manual course price is required.")
+                : line.originalPriceAmount;
+        if (line.manualPriceOverride && !StringUtils.hasText(item.getRemark())) {
+            throw new BusinessException("MANUAL_PRICE_REASON_REQUIRED", "Manual course price requires a reason.");
+        }
+        line.remark = item.getRemark();
+
+        List<LocalDate> availableDates = findScheduledClassDates(classGroup,
+                plan.getCoverageType(), plan.getCoverageStartDate(), plan.getCoverageEndDate(),
+                line.startDate, selectedQuantity);
+        int requiredDates = "MONTH".equals(plan.getPackageUnit()) ? 1 : selectedQuantity;
+        if (availableDates.size() < requiredDates) {
+            throw new BusinessException("GROUP_PLAN_SCHEDULE_INSUFFICIENT",
+                    "The selected class does not have enough scheduled lesson dates for this plan. Update the class schedule first.");
+        }
+        // 固定季节方案保存整个学期的日期范围，但中途加入的学生只购买剩余课次。
+        // 固定方案按用户选定的首课日期起，取实际排课中的前 N 次；不会重排课程或补造日期。
+        line.entitlementStartDate = availableDates.get(0);
+        if ("MONTH".equals(plan.getPackageUnit())) {
+            // 有效期从系统确认的第一节实际课程起算，订单项会保存同一日期供改收据复用。
+            LocalDate requestedStart = line.entitlementStartDate;
+            LocalDate rollingEnd = "FIXED_DATES".equals(plan.getCoverageType())
+                    ? plan.getCoverageEndDate()
+                    : GroupRegistrationCoverage.rollingMonthEnd(requestedStart, selectedQuantity);
+            if (classEnd != null && rollingEnd.isAfter(classEnd)) rollingEnd = classEnd;
+            line.entitlementExpiryDate = rollingEnd;
+        } else {
+            line.entitlementExpiryDate = availableDates.get(selectedQuantity - 1);
+        }
+        if (line.entitlementExpiryDate == null || line.entitlementExpiryDate.isBefore(line.entitlementStartDate)) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID",
+                    "The selected registration plan does not include a valid class period.");
+        }
+        line.startDate = line.entitlementStartDate;
+
+        line.sessions = "MONTH".equals(plan.getPackageUnit()) ? null : selectedQuantity;
+        line.purchasedMonths = "MONTH".equals(plan.getPackageUnit()) ? selectedQuantity : null;
+        line.pickupRequired = Boolean.TRUE.equals(item.getPickupRequired());
+        line.pickupAddress = cleanText(item.getPickupAddress());
+        line.dropoffRequired = Boolean.TRUE.equals(item.getDropoffRequired());
+        line.dropoffAddress = cleanText(item.getDropoffAddress());
+        line.pickupFeeCharged = line.pickupRequired;
+        line.pickupFeeAmount = line.pickupFeeCharged ? defaultAmount(item.getPickupFeeAmount()) : ZERO_AMOUNT;
+        line.dropoffFeeCharged = line.dropoffRequired;
+        line.dropoffFeeAmount = line.dropoffFeeCharged ? defaultAmount(item.getDropoffFeeAmount()) : ZERO_AMOUNT;
+        line.serviceFees = item.getServiceFees() == null ? Collections.emptyList() : item.getServiceFees();
+        return line;
+    }
+
+    /** 报名可选日期来自实际班级的唯一周课表，并按项目假期过滤。 */
+    private List<LocalDate> findScheduledClassDates(ClassGroupEntity classGroup,
+                                                    String coverageType,
+                                                    LocalDate fixedStart,
+                                                    LocalDate fixedEnd,
+                                                    LocalDate requestedStart,
+                                                    int limit) {
+        Long classId = classGroup.getId();
+        LocalDate classStart = classGroup.getStartDate() != null ? classGroup.getStartDate() : classGroup.getStartMonth();
+        LocalDate classEnd = classGroup.getEndDate() != null ? classGroup.getEndDate()
+                : classGroup.getEndMonth() == null ? null
+                : classGroup.getEndMonth().withDayOfMonth(classGroup.getEndMonth().lengthOfMonth());
+        LocalDate start = requestedStart;
+        if ("FIXED_DATES".equals(coverageType) && fixedStart != null
+                && (start == null || start.isBefore(fixedStart))) {
+            start = fixedStart;
+        }
+        if (start == null) start = LocalDate.now(AppTime.APP_ZONE_ID);
+        if (classStart != null && start.isBefore(classStart)) start = classStart;
+        LocalDate end;
+        if ("FIXED_DATES".equals(coverageType)) {
+            end = fixedEnd;
+        } else if ("ROLLING_MONTHS".equals(coverageType)) {
+            // 月包覆盖到相应月份的最后一天，再取实际排好的上课日。
+            int monthCount = limit;
+            end = start.plusMonths(monthCount).minusDays(1);
+        } else {
+            end = classEnd;
+            if (end == null) end = start.plusYears(3);
+        }
+        if (classEnd != null && end.isAfter(classEnd)) end = classEnd;
+        if (start == null || end == null || end.isBefore(start)) return Collections.emptyList();
+        List<ClassGroupScheduleSlotEntity> slots = classGroupScheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
+                        .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classId)
+                        .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getGroupProjectId(), start, end);
+        return ClassScheduleDates.scheduledDays(start, end, slots, date -> holidays.stream()
+                .anyMatch(holiday -> !date.isBefore(holiday.startDate()) && !date.isAfter(holiday.endDate())));
+    }
+
     private void applyLinePricing(ResolvedCourseLine line,
                                   RegistrationIntakeRequest.CourseItemPayload item,
                                   BigDecimal configuredUnitPrice,
-                                  BigDecimal configuredOneOnOneHours,
-                                  CoursePriceOptionEntity option) {
-        boolean manualPriceOverride = Boolean.TRUE.equals(item.getManualPriceOverride());
-        BigDecimal configuredPrice;
-        if (line.oneOnOne) {
-            configuredPrice = calculateOneOnOnePrice(configuredUnitPrice, configuredOneOnOneHours, line.oneOnOneHours);
-        } else if ("SESSION".equals(resolveOptionPackageUnit(option))) {
-            int configuredSessions = resolveOptionPackageQuantity(option)
-                    .setScale(0, RoundingMode.CEILING).intValue();
-            if (configuredSessions < 1) {
-                throw new BusinessException("REGISTRATION_SESSION_COUNT_INVALID",
-                        "Configured package must contain at least one session.");
-            }
-            int selectedSessions = line.sessions == null ? configuredSessions : line.sessions;
-            if (selectedSessions < 1 || selectedSessions > configuredSessions) {
-                throw new BusinessException("REGISTRATION_SESSION_COUNT_INVALID",
-                        "Selected sessions must be between 1 and the configured package session count.");
-            }
-            line.sessions = selectedSessions;
-            // 购买课次的最终报价向上取整，避免展示整数却保存角分。
-            configuredPrice = configuredUnitPrice.multiply(BigDecimal.valueOf(selectedSessions))
-                    .divide(BigDecimal.valueOf(configuredSessions), 0, RoundingMode.CEILING);
-        } else if ("MONTH".equals(resolveOptionPackageUnit(option))) {
-            int configuredMonths = resolveOptionPackageQuantity(option) == null
-                    ? 0 : resolveOptionPackageQuantity(option).intValueExact();
-            int selectedMonths = resolveGroupPurchasedQuantity(line);
-            if (configuredMonths < 1 || selectedMonths > configuredMonths) {
-                throw new BusinessException("REGISTRATION_DURATION_INVALID",
-                        "Selected months must be between 1 and the configured package month count.");
-            }
-            configuredPrice = configuredUnitPrice.multiply(BigDecimal.valueOf(selectedMonths))
-                    .divide(BigDecimal.valueOf(configuredMonths), 0, RoundingMode.CEILING);
-        } else {
-            configuredPrice = configuredUnitPrice;
+                                  BigDecimal configuredOneOnOneHours) {
+        if (!line.oneOnOne) {
+            throw new BusinessException("GROUP_V2_PLAN_REQUIRED",
+                    "Group-class pricing must come from a teaching project registration plan.");
         }
+        boolean manualPriceOverride = Boolean.TRUE.equals(item.getManualPriceOverride());
+        BigDecimal configuredPrice = calculateOneOnOnePrice(configuredUnitPrice, configuredOneOnOneHours,
+                line.oneOnOneHours);
         if (!manualPriceOverride && configuredPrice.compareTo(ZERO_AMOUNT) <= 0) {
             throw new BusinessException("COURSE_LINE_PRICE_REQUIRED",
                     "Manual course line price is required for a $0 course template.");
@@ -866,25 +1162,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         }
         return configuredPrice.multiply(purchasedHours)
                 .divide(configuredHours, 0, RoundingMode.CEILING);
-    }
-
-    private int resolveGroupPurchasedQuantity(ResolvedCourseLine line) {
-        if (line.oneOnOne) {
-            return 1;
-        }
-        if (!"MONTH".equalsIgnoreCase(line.packageUnit)) {
-            return line.packageQuantity == null ? 1 : line.packageQuantity.setScale(0, RoundingMode.CEILING).intValue();
-        }
-        if (line.purchasedMonths == null) {
-            throw new BusinessException("REGISTRATION_DURATION_MISSING",
-                    "Enter purchased months on the registration form.");
-        }
-        int maximumMonths = line.packageQuantity == null ? 36 : line.packageQuantity.intValue();
-        if (line.purchasedMonths < 1 || line.purchasedMonths > maximumMonths || line.purchasedMonths > 36) {
-            throw new BusinessException("REGISTRATION_DURATION_INVALID",
-                    "Purchased months must be between 1 and the configured package month count.");
-        }
-        return line.purchasedMonths;
     }
 
     private BigDecimal requirePositiveAmount(BigDecimal amount, String code, String message) {
@@ -959,40 +1236,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             }
             return;
         }
-        resolveGroupClass(line);
-    }
-
-    private void resolveGroupClass(ResolvedCourseLine line) {
-        if (line.classId == null) {
-            throw new BusinessException("GRADE_CLASS_REQUIRED",
-                    "Select a price row with a configured grade class.");
+        if (line.groupProjectId == null || line.groupRegistrationPlanId == null || line.classGroup == null) {
+            throw new BusinessException("GROUP_V2_PLAN_REQUIRED",
+                    "Group-class enrollment must use a teaching project registration plan and actual class.");
         }
-        ClassGroupEntity classGroup = requireActiveClassGroup(line.classId);
-        if (line.courseProductId != null && !Objects.equals(line.courseProductId, classGroup.getProductId())) {
-            throw new BusinessException("CLASS_PRODUCT_MISMATCH", "Class group is not linked to the selected course product.");
-        }
-        if (StringUtils.hasText(line.gradeBand)
-                && StringUtils.hasText(classGroup.getGradeBand())
-                && !normalizedGrade(line.gradeBand).equals(normalizedGrade(classGroup.getGradeBand()))) {
-            throw new BusinessException("CLASS_GRADE_MISMATCH",
-                    "Selected class does not belong to the selected billing grade.");
-        }
-        if (classGroup.getProductId() == null) {
-            throw new BusinessException("CLASS_PRODUCT_REQUIRED", "Class group must be linked to a group course product.");
-        }
-        if (line.registrationCampusId == null || classGroup.getCampusId() == null
-                || !Objects.equals(line.registrationCampusId, classGroup.getCampusId())) {
-            throw new BusinessException("CLASS_CAMPUS_MISMATCH",
-                    "Selected class does not belong to the selected registration campus. Choose a class for that campus.");
-        }
-        CourseProductEntity product = requireCourseProduct(classGroup.getProductId());
-        if (!"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
-            throw new BusinessException("GROUP_PRODUCT_INVALID", "Class group product is not active or not a group product.");
-        }
-        line.courseProductId = product.getId();
-        line.product = product;
-        line.classGroup = classGroup;
-        line.gradeBand = classGroup.getGradeBand();
     }
 
     private MoneySnapshot calculateMoney(RegistrationIntakeRequest request,
@@ -1626,6 +1873,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.setRegisterClass(line.registerClass);
         item.setCourseType(line.courseType);
         item.setCourseProductId(line.courseProductId);
+        item.setGroupProjectId(line.groupProjectId);
+        item.setGroupRegistrationPlanId(line.groupRegistrationPlanId);
         item.setCoursePriceOptionId(line.coursePriceOptionId);
         item.setClassId(line.classId);
         item.setDetail(line.detail);
@@ -2008,85 +2257,46 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         return StringUtils.hasText(gradeBand) ? gradeBand.trim().toUpperCase(Locale.ROOT) : "GENERAL";
     }
 
-    private RegistrationIntakeResultVO.CourseArtifactVO createGroupClassArtifact(EnrollmentOrderEntity order,
-                                                                                 StudentEntity student,
+    private RegistrationIntakeResultVO.CourseArtifactVO createGroupClassArtifact(StudentEntity student,
                                                                                  ResolvedCourseLine line,
                                                                                  Long renewClassEnrollmentId,
                                                                                  boolean allowStudentConflicts) {
+        if (line.groupProjectId == null || line.groupRegistrationPlanId == null) {
+            throw new BusinessException("GROUP_V2_PLAN_REQUIRED",
+                    "Group-class enrollment must use a teaching project registration plan.");
+        }
+        return createV2GroupClassArtifact(student, line, renewClassEnrollmentId, allowStudentConflicts);
+    }
+
+    /** V2 续费始终创建新权益，并把该订单行绑定到新权益；历史权益不累加、不改绑。 */
+    private RegistrationIntakeResultVO.CourseArtifactVO createV2GroupClassArtifact(StudentEntity student,
+                                                                                  ResolvedCourseLine line,
+                                                                                  Long renewClassEnrollmentId,
+                                                                                  boolean allowStudentConflicts) {
         if (renewClassEnrollmentId != null) {
-            ClassEnrollmentEntity enrollment = requireRenewableClassEnrollment(renewClassEnrollmentId);
-            if (!Objects.equals(enrollment.getStudentId(), student.getId())) {
-                throw new BusinessException("RENEWAL_STUDENT_MISMATCH",
-                        "Renewal class enrollment does not belong to the selected student.");
+            ClassEnrollmentEntity source = requireRenewableClassEnrollment(renewClassEnrollmentId);
+            if (!Objects.equals(source.getStudentId(), student.getId())) {
+                throw new BusinessException("RENEWAL_STUDENT_MISMATCH", "Renewal entitlement belongs to another student.");
             }
-            if (!Objects.equals(enrollment.getClassId(), line.classId)) {
-                throw new BusinessException("RENEWAL_CLASS_MISMATCH",
-                        "Renewal class must match the existing enrollment.");
-            }
-            if (line.startDate == null && enrollment.getExpiryDate() != null) {
-                LocalDate tomorrow = order.getSignupDate().plusDays(1);
-                line.startDate = enrollment.getExpiryDate().isBefore(order.getSignupDate())
-                        ? order.getSignupDate()
-                        : enrollment.getExpiryDate().plusDays(1);
-                if (line.startDate.isBefore(tomorrow) && !enrollment.getExpiryDate().isBefore(order.getSignupDate())) {
-                    line.startDate = tomorrow;
-                }
-            }
-            ClassBillingResult billing = computeClassBilling(line.classGroup, line, order.getSignupDate());
-            ensureClassOccurrencesThrough(line.classGroup, line.product,
-                    billing.occurrenceWindowStart(), billing.occurrenceWindowEnd());
-            ensureNoStudentClassEnrollmentConflicts(student.getId(), line.classId,
-                    billing.occurrenceWindowStart(), billing.occurrenceWindowEnd(), line.attendanceOption,
-                    allowStudentConflicts);
-
-            enrollment.setEnrollmentOrderItemId(line.orderItemId);
-            if (enrollment.getEnrollmentDate() == null || billing.enrollmentDate().isBefore(enrollment.getEnrollmentDate())) {
-                enrollment.setEnrollmentDate(billing.enrollmentDate());
-            }
-            if (enrollment.getExpiryDate() == null || billing.expiryDate().isAfter(enrollment.getExpiryDate())) {
-                enrollment.setExpiryDate(billing.expiryDate());
-            }
-            enrollment.setBillingType(line.packageUnit);
-            enrollment.setPurchasedQuantity(safeQuantity(enrollment.getPurchasedQuantity()) + billing.purchasedQuantity());
-            enrollment.setAttendanceOption(normalizeAttendanceOption(line.attendanceOption));
-            enrollment.setStatus("ACTIVE");
-            classEnrollmentMapper.updateById(enrollment);
-
-            return RegistrationIntakeResultVO.CourseArtifactVO.builder()
-                    .orderItemId(line.orderItemId)
-                    .lineNo(line.lineNo)
-                    .courseType(line.courseType)
-                    .classEnrollmentId(enrollment.getId())
-                    .classId(line.classId)
-                    .build();
         }
-
-        ClassBillingResult billing = computeClassBilling(line.classGroup, line, order.getSignupDate());
-
-        Long duplicateCount = classEnrollmentMapper.selectCount(
-                new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .eq(ClassEnrollmentEntity::getClassId, line.classId)
-                        .eq(ClassEnrollmentEntity::getStudentId, student.getId())
-                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
-                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
-        if (duplicateCount != null && duplicateCount > 0) {
-            throw new BusinessException("ALREADY_ENROLLED", "Student is already enrolled in this class.");
-        }
-
-        ensureClassOccurrencesThrough(line.classGroup, line.product,
-                billing.occurrenceWindowStart(), billing.occurrenceWindowEnd());
+        GroupClassEntitlementRules.requireNoOverlappingActiveEntitlement(classEnrollmentMapper,
+                student.getId(), line.classId, line.entitlementStartDate, line.entitlementExpiryDate, null);
+        // 只允许用户确认当前实际冲突后继续；该确认不绕过同班权益日期重叠校验。
         ensureNoStudentClassEnrollmentConflicts(student.getId(), line.classId,
-                billing.occurrenceWindowStart(), billing.occurrenceWindowEnd(), line.attendanceOption,
-                allowStudentConflicts);
+                line.entitlementStartDate, line.entitlementExpiryDate,
+                line.attendanceOption, allowStudentConflicts);
 
         ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
         enrollment.setClassId(line.classId);
         enrollment.setStudentId(student.getId());
         enrollment.setEnrollmentOrderItemId(line.orderItemId);
-        enrollment.setEnrollmentDate(billing.enrollmentDate());
-        enrollment.setExpiryDate(billing.expiryDate());
-        enrollment.setBillingType(line.packageUnit);
-        enrollment.setPurchasedQuantity(billing.purchasedQuantity());
+        enrollment.setGroupProjectId(line.groupProjectId);
+        enrollment.setGroupRegistrationPlanId(line.groupRegistrationPlanId);
+        enrollment.setEnrollmentDate(line.entitlementStartDate);
+        enrollment.setExpiryDate(line.entitlementExpiryDate);
+        enrollment.setBillingType("MONTH".equals(line.packageUnit) ? "MONTHLY" : "PER_SESSION");
+        enrollment.setPurchasedQuantity("MONTH".equals(line.packageUnit)
+                ? line.purchasedMonths : line.sessions);
         enrollment.setAttendanceOption(normalizeAttendanceOption(line.attendanceOption));
         enrollment.setStatus("ACTIVE");
         classEnrollmentMapper.insert(enrollment);
@@ -2724,177 +2934,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .eq(UserAccountEntity::getIsDeleted, 0)) > 0;
     }
 
-    private ClassGroupEntity ensureClassGroupForGrade(CourseProductEntity product, String gradeBand) {
-        String normalizedGradeBand = StringUtils.hasText(gradeBand) ? gradeBand.trim() : "General";
-        ClassGroupEntity existing = classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getProductId, product.getId())
-                .eq(ClassGroupEntity::getGradeBand, normalizedGradeBand)
-                .eq(ClassGroupEntity::getIsDeleted, 0)
-                .last("LIMIT 1"));
-        if (existing != null) {
-            if (!"ACTIVE".equals(existing.getStatus())) {
-                throw new BusinessException("CLASS_INACTIVE", "Linked class group is not active.");
-            }
-            return existing;
-        }
-        throw new BusinessException("GRADE_CLASS_NOT_CONFIGURED",
-                "Grade class is not configured. Add the grade class in Price Matrix before registration.");
-    }
-
-    private ClassBillingResult computeClassBilling(ClassGroupEntity classGroup,
-                                                    ResolvedCourseLine line,
-                                                    LocalDate signupDate) {
-        BigDecimal billingQuantity = "SESSION".equals(line.packageUnit) && line.sessions != null
-                ? BigDecimal.valueOf(line.sessions)
-                : "MONTH".equals(line.packageUnit) && line.purchasedMonths != null
-                    ? BigDecimal.valueOf(line.purchasedMonths)
-                    : line.packageQuantity;
-        int quantity = billingQuantity == null
-                ? resolveGroupPurchasedQuantity(line)
-                : billingQuantity.setScale(0, RoundingMode.CEILING).intValue();
-        ClassBillingService.ClassBilling billing = classBillingService.compute(
-                classGroup, line.startDate, signupDate, line.packageUnit, billingQuantity);
-        return new ClassBillingResult(billing.enrollmentDate(), billing.expiryDate(),
-                billing.enrollmentDate(), billing.expiryDate(), quantity);
-    }
-
-    private int ensureClassOccurrencesThrough(ClassGroupEntity classGroup,
-                                               CourseProductEntity product,
-                                               LocalDate windowStart,
-                                               LocalDate horizonEnd) {
-        List<ClassGroupScheduleSlotEntity> slots = loadClassSlots(classGroup);
-        if (slots.isEmpty()) {
-            // 班课允许先报名、后排课；没有 weekly slot 时只保存 enrollment，不生成日历 occurrence。
-            return 0;
-        }
-
-        LocalDateTime windowStartAt = windowStart.atStartOfDay();
-        LocalDateTime windowEndAt = horizonEnd.plusDays(1).atStartOfDay();
-        Set<LocalDateTime> existingStarts = lessonOccurrenceMapper.selectList(
-                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                                .eq(LessonOccurrenceEntity::getClassGroupId, classGroup.getId())
-                                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                                .ge(LessonOccurrenceEntity::getPlannedStartAt, windowStartAt)
-                                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEndAt))
-                .stream()
-                .map(LessonOccurrenceEntity::getPlannedStartAt)
-                .collect(Collectors.toSet());
-
-        List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(
-                classGroup.getProductId(), classGroup.getGradeBand(), windowStart, horizonEnd);
-        for (LocalDate date = windowStart; !date.isAfter(horizonEnd); date = date.plusDays(1)) {
-            if (classHolidayService.isHoliday(date, holidays)) {
-                continue;
-            }
-            int weekday = date.getDayOfWeek().getValue();
-            for (ClassGroupScheduleSlotEntity slot : slots) {
-                if (!Objects.equals(slot.getWeekday(), weekday)
-                        || !ScheduleSlotTime.isValidRange(slot.getStartTime(), slot.getEndTime())) {
-                    continue;
-                }
-                LocalDateTime plannedStartAt = LocalDateTime.of(date, slot.getStartTime());
-                if (existingStarts.contains(plannedStartAt)) {
-                    continue;
-                }
-                long minutes = ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime());
-                LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
-                occurrence.setClassGroupId(classGroup.getId());
-                occurrence.setScheduleSlotId(slot.getId());
-                occurrence.setOccurrenceType("REGULAR");
-                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
-                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
-                occurrence.setPlannedTeacherId(assignment.teacherId() == null
-                        ? classGroup.getTeacherId() : assignment.teacherId());
-                occurrence.setSubjectName(assignment.subjectName());
-                Long classroomId = assignment.alternate()
-                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
-                        : "ONLINE".equals(assignment.deliveryMode()) ? null
-                                : assignment.classroomId() != null ? assignment.classroomId() : classGroup.getClassroomId();
-                occurrence.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
-                        ? "IN_PERSON" : assignment.deliveryMode());
-                occurrence.setPlannedClassroomId(classroomId);
-                occurrence.setPlannedStartAt(plannedStartAt);
-                occurrence.setPlannedEndAt(ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime()));
-                occurrence.setPlannedUnits((int) (minutes / 30));
-                occurrence.setPlanningStatus("SCHEDULED");
-                occurrence.setConflictChecked(1);
-                occurrences.add(occurrence);
-            }
-        }
-
-        if (!occurrences.isEmpty()) {
-            occurrences.sort(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt));
-            occurrences.stream().map(LessonOccurrenceEntity::getPlannedClassroomId)
-                    .filter(Objects::nonNull).distinct()
-                    .forEach(classroomId -> ensureNoConflicts(occurrences.stream()
-                            .filter(item -> Objects.equals(item.getPlannedClassroomId(), classroomId)).toList(),
-                            null, null, classroomId));
-            occurrences.stream()
-                    .filter(item -> item.getPlannedTeacherId() != null)
-                    .collect(Collectors.groupingBy(LessonOccurrenceEntity::getPlannedTeacherId))
-                    .forEach((teacherId, teacherOccurrences) ->
-                            ensureNoConflicts(teacherOccurrences, null, teacherId, null));
-            occurrences.forEach(lessonOccurrenceMapper::insert);
-        }
-        return occurrences.size();
-    }
-
-    private void ensureNoConflicts(List<LessonOccurrenceEntity> generatedOccurrences,
-                                   Long studentId,
-                                   Long teacherId,
-                                   Long classroomId) {
-        LocalDateTime windowStart = generatedOccurrences.stream()
-                .map(LessonOccurrenceEntity::getPlannedStartAt)
-                .min(Comparator.naturalOrder())
-                .orElseThrow();
-        LocalDateTime windowEnd = generatedOccurrences.stream()
-                .map(LessonOccurrenceEntity::getPlannedEndAt)
-                .max(Comparator.naturalOrder())
-                .orElseThrow();
-        List<LessonOccurrenceEntity> studentOccurrences = studentId == null ? Collections.emptyList()
-                : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getStudentId, studentId)
-                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
-                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
-        List<LessonOccurrenceEntity> teacherOccurrences = teacherId == null ? Collections.emptyList()
-                : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPlannedTeacherId, teacherId)
-                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
-                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
-        List<LessonOccurrenceEntity> classroomOccurrences = classroomId == null ? Collections.emptyList()
-                : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getPlannedClassroomId, classroomId)
-                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
-                .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
-
-        List<ScheduleConflictDetailVO> conflicts = new ArrayList<>();
-        for (LessonOccurrenceEntity candidate : generatedOccurrences) {
-            LessonOccurrenceEntity studentConflict = firstOverlap(candidate, studentOccurrences);
-            if (studentId != null && studentConflict != null) {
-                conflicts.add(buildConflictDetail("STUDENT", studentId, resolveStudentName(studentId), candidate, studentConflict));
-            }
-            LessonOccurrenceEntity teacherConflict = firstOverlap(candidate, teacherOccurrences);
-            if (teacherId != null && teacherConflict != null) {
-                conflicts.add(buildConflictDetail("TEACHER", teacherId, resolveTeacherName(teacherId), candidate, teacherConflict));
-            }
-            LessonOccurrenceEntity classroomConflict = firstOverlap(candidate, classroomOccurrences);
-            if (classroomId != null && classroomConflict != null) {
-                conflicts.add(buildConflictDetail("CLASSROOM", classroomId, null, candidate, classroomConflict));
-            }
-            if (conflicts.size() >= 3) {
-                break;
-            }
-        }
-        if (!conflicts.isEmpty()) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Schedule conflict detected.", conflicts);
-        }
-    }
-
     private LessonOccurrenceEntity firstOverlap(LessonOccurrenceEntity candidate, List<LessonOccurrenceEntity> existingOccurrences) {
         return existingOccurrences.stream().filter(existing ->
                 candidate.getPlannedStartAt().isBefore(existing.getPlannedEndAt())
@@ -2924,18 +2963,6 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     private String resolveStudentName(Long studentId) {
         StudentEntity student = studentMapper.selectById(studentId);
         return student == null ? null : student.getStudentName();
-    }
-
-    private String resolveTeacherName(Long teacherId) {
-        TeacherEntity teacher = teacherMapper.selectById(teacherId);
-        return teacher == null ? null : teacher.getTeacherName();
-    }
-
-    private List<ClassGroupScheduleSlotEntity> loadClassSlots(ClassGroupEntity classGroup) {
-        return classGroupScheduleSlotMapper.selectList(
-                new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
-                        .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId())
-                        .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
     }
 
     private YearMonth parseRequestMonth(String value, String fieldName) {
@@ -3276,14 +3303,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     ) {
     }
 
-    private record ClassBillingResult(
-            LocalDate enrollmentDate,
-            LocalDate expiryDate,
-            LocalDate occurrenceWindowStart,
-            LocalDate occurrenceWindowEnd,
-            Integer purchasedQuantity
-    ) {
-    }
+
 
     private static class ResolvedCourseLine {
         private Long orderItemId;
@@ -3291,6 +3311,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private String registerClass;
         private String courseType;
         private Long courseProductId;
+        private Long groupProjectId;
+        private Long groupRegistrationPlanId;
         private Long coursePriceOptionId;
         private Long classId;
         private Long registrationCampusId;
@@ -3299,6 +3321,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         private String periodLabel;
         private String timeSlotLabel;
         private LocalDate startDate;
+        private LocalDate entitlementStartDate;
+        private LocalDate entitlementExpiryDate;
         private String packageUnit;
         private BigDecimal packageQuantity;
         private BigDecimal packageTotalPrice;

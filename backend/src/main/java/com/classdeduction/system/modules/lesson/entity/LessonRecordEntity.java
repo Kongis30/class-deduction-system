@@ -30,6 +30,9 @@ public class LessonRecordEntity extends BaseEntity {
 
     private Long packageId;
 
+    /** 班课消课归属的具体报名权益；私教记录仍通过 package_id 关联。 */
+    private Long classEnrollmentId;
+
     private Long studentId;
 
     private Long plannedTeacherId;

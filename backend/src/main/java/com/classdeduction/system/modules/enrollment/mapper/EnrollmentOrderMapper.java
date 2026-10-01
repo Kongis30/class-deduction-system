@@ -10,6 +10,10 @@ import java.util.List;
 @Mapper
 public interface EnrollmentOrderMapper extends BaseMapper<EnrollmentOrderEntity> {
 
+    /** 收据更正以订单行串行化财务与报名权益修改。 */
+    @Select("SELECT * FROM enrollment_order WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
+    EnrollmentOrderEntity selectByIdForUpdate(@org.apache.ibatis.annotations.Param("id") Long id);
+
     /** 仅定位有接送需求的订单，供接送名单复用 Data Summary 行数据组装逻辑。 */
     @Select("""
             SELECT o.id AS order_id

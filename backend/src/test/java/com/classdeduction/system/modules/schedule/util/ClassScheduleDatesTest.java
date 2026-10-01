@@ -47,6 +47,17 @@ class ClassScheduleDatesTest {
                 .isEqualTo(LocalDate.of(2026, 10, 26));
     }
 
+    @Test
+    void listsUniqueWeeklyClassDatesAndSkipsProjectHolidays() {
+        List<ClassGroupScheduleSlotEntity> saturdaySlots = List.of(saturdaySlot(), saturdaySlot());
+        LocalDate holiday = LocalDate.of(2026, 10, 10);
+
+        assertThat(ClassScheduleDates.scheduledDays(
+                LocalDate.of(2026, 10, 3), LocalDate.of(2026, 10, 17), saturdaySlots,
+                date -> date.equals(holiday)))
+                .containsExactly(LocalDate.of(2026, 10, 3), LocalDate.of(2026, 10, 17));
+    }
+
     private LocalDate recalculate(Set<LocalDate> holidays) {
         return ClassScheduleDates.endDateAfterHolidays(START, BASE_END,
                 "MONTHLY", null, MONDAY_SCHEDULE, holidays::contains);
@@ -55,6 +66,12 @@ class ClassScheduleDatesTest {
     private static ClassGroupScheduleSlotEntity mondaySlot() {
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
         slot.setWeekday(1);
+        return slot;
+    }
+
+    private static ClassGroupScheduleSlotEntity saturdaySlot() {
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setWeekday(6);
         return slot;
     }
 }

@@ -6,6 +6,7 @@ import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
@@ -36,6 +37,7 @@ import com.classdeduction.system.modules.schedule.vo.ScheduleAdjustmentResultVO;
 import com.classdeduction.system.modules.schedule.vo.WeeklyScheduleAdjustmentResultVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
@@ -68,6 +70,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private static final String ACTION_DELETE = "DELETE";
 
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final GroupCourseProjectMapper groupCourseProjectMapper;
     private final LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
     private final LessonRecordMapper lessonRecordMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
@@ -81,17 +84,27 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final ClassHolidayService classHolidayService;
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public ScheduleAdjustmentResultVO adjust(ScheduleAdjustmentRequest request) {
-        LessonOccurrenceEntity source = requireOccurrence(request.getOccurrenceId());
+        return adjustInternal(request, null);
+    }
+
+    private ScheduleAdjustmentResultVO adjustInternal(ScheduleAdjustmentRequest request, CurrentUserResponse teacherUser) {
+        LessonOccurrenceEntity source = lockGroupOccurrenceForAdjustment(request.getOccurrenceId());
+        if (teacherUser != null) {
+            validateTeacherAdjustment(request, source, teacherUser);
+            request.setPlannedTeacherId(source.getPlannedTeacherId());
+            request.setPlannedClassroomId(source.getPlannedClassroomId());
+            request.setAdjustedBy(teacherUser.userId());
+        }
         ensureOneOnOnePackageActive(source.getPackageId());
         Map<String, Object> beforeSnapshot = toSnapshot(source);
         validateAdjustmentType(request.getAdjustmentType());
         validateResourceAssignment(request);
-        ClassGroupEntity sourceClassGroup = source.getClassGroupId() == null
-                ? null : classGroupMapper.selectById(source.getClassGroupId());
+        ClassGroupEntity sourceClassGroup = source.getClassGroupId() == null ? null
+                : classGroupMapper.selectById(source.getClassGroupId());
         if (sourceClassGroup != null && request.getPlannedStartAt() != null
-                && classHolidayService.isHoliday(sourceClassGroup.getProductId(), sourceClassGroup.getGradeBand(),
+                && classHolidayService.isHoliday(sourceClassGroup.getGroupProjectId(),
                 request.getPlannedStartAt().toLocalDate())) {
             throw new BusinessException("CLASS_LESSON_ON_HOLIDAY",
                     "A group-class lesson cannot be scheduled during a class holiday.");
@@ -148,13 +161,17 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
      * 最终仍复用管理员调课的冲突校验和日志流程，避免前端权限绕过后产生资源冲突。
      */
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public ScheduleAdjustmentResultVO adjustByTeacher(ScheduleAdjustmentRequest request, CurrentUserResponse currentUser) {
         if (currentUser == null || currentUser.teacherId() == null) {
             throw new BusinessException("TEACHER_PROFILE_REQUIRED", "This account is not linked to a teacher profile.");
         }
+        return adjustInternal(request, currentUser);
+    }
 
-        LessonOccurrenceEntity source = requireOccurrence(request.getOccurrenceId());
+    private void validateTeacherAdjustment(ScheduleAdjustmentRequest request,
+                                          LessonOccurrenceEntity source,
+                                          CurrentUserResponse currentUser) {
         if (!Objects.equals(source.getPlannedTeacherId(), currentUser.teacherId())) {
             throw new BusinessException("LESSON_NOT_ASSIGNED_TO_TEACHER", "You can only adjust lessons assigned to you.");
         }
@@ -167,11 +184,30 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         if (request.getPlannedClassroomId() != null && !Objects.equals(request.getPlannedClassroomId(), source.getPlannedClassroomId())) {
             throw new BusinessException("TEACHER_CANNOT_CHANGE_CLASSROOM", "Teachers can only adjust the lesson time.");
         }
+    }
 
-        request.setPlannedTeacherId(source.getPlannedTeacherId());
-        request.setPlannedClassroomId(source.getPlannedClassroomId());
-        request.setAdjustedBy(currentUser.userId());
-        return adjust(request);
+    /** 班课调课沿用项目→实际班级→课次的行锁顺序，再读取最新假期和排课数据。 */
+    private LessonOccurrenceEntity lockGroupOccurrenceForAdjustment(Long occurrenceId) {
+        LessonOccurrenceEntity initial = requireOccurrence(occurrenceId);
+        if (initial.getClassGroupId() == null) {
+            return initial;
+        }
+        ClassGroupEntity initialClass = classGroupMapper.selectById(initial.getClassGroupId());
+        if (initialClass == null) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found.");
+        }
+        if (initialClass.getGroupProjectId() != null) {
+            groupCourseProjectMapper.selectByIdForUpdate(initialClass.getGroupProjectId());
+        }
+        ClassGroupEntity lockedClass = classGroupMapper.selectByIdForUpdate(initialClass.getId());
+        if (lockedClass == null || !"ACTIVE".equals(lockedClass.getStatus())) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+        }
+        LessonOccurrenceEntity lockedOccurrence = lessonOccurrenceMapper.selectByIdForUpdate(occurrenceId);
+        if (lockedOccurrence == null || !Objects.equals(lockedOccurrence.getClassGroupId(), lockedClass.getId())) {
+            throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
+        }
+        return lockedOccurrence;
     }
 
     @Override

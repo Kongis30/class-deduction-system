@@ -36,4 +36,21 @@ public interface ClassEnrollmentMapper extends BaseMapper<ClassEnrollmentEntity>
             "GROUP BY class_id",
             "</script>"})
     List<Map<String, Object>> countActiveByClassIds(@Param("classIds") List<Long> classIds);
+
+    /** 当前读出目标学生在该实际班级的重叠权益；报名/更正前已锁定学生行，确保并发请求顺序可见。 */
+    @Select("""
+            SELECT id
+            FROM class_enrollment
+            WHERE student_id = #{studentId}
+              AND class_id = #{classId}
+              AND status = 'ACTIVE'
+              AND is_deleted = 0
+              AND enrollment_date <= #{endDate}
+              AND expiry_date >= #{startDate}
+            FOR UPDATE
+            """)
+    List<Long> selectActiveOverlappingForUpdate(@Param("studentId") Long studentId,
+                                                @Param("classId") Long classId,
+                                                @Param("startDate") java.time.LocalDate startDate,
+                                                @Param("endDate") java.time.LocalDate endDate);
 }

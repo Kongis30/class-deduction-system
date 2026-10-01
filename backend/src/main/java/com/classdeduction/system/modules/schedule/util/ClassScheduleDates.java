@@ -31,6 +31,22 @@ public final class ClassScheduleDates {
         return count;
     }
 
+    /** 返回班级唯一周课表在日期范围内真实可上的日期，同一天多个时段只返回一次。 */
+    public static List<LocalDate> scheduledDays(LocalDate startDate, LocalDate endDate,
+                                                List<ClassGroupScheduleSlotEntity> slots,
+                                                Predicate<LocalDate> isHoliday) {
+        if (startDate == null || endDate == null || endDate.isBefore(startDate) || slots == null || slots.isEmpty()) {
+            return List.of();
+        }
+        Set<Integer> weekdays = weekdays(slots);
+        if (weekdays.isEmpty()) return List.of();
+        java.util.ArrayList<LocalDate> dates = new java.util.ArrayList<>();
+        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            if (weekdays.contains(date.getDayOfWeek().getValue()) && !isHoliday.test(date)) dates.add(date);
+        }
+        return List.copyOf(dates);
+    }
+
     /** 从用户配置的原始结束日重算假期后的终点，避免反复顺延时把上次结果当成新基准。 */
     public static LocalDate endDateAfterHolidays(LocalDate startDate, LocalDate baseEndDate,
                                                   String billingType, Integer totalSessions,

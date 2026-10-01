@@ -15,9 +15,7 @@ import com.classdeduction.system.modules.base.vo.ProductGradeConfigVO;
 import com.classdeduction.system.modules.finance.entity.TeacherPayRateEntity;
 import com.classdeduction.system.modules.finance.mapper.TeacherPayRateMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
-import com.classdeduction.system.modules.schedule.entity.ClassHolidayEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
-import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,12 +48,14 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
     private final CourseProductMapper courseProductMapper;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
     private final ClassGroupMapper classGroupMapper;
-    private final ClassHolidayMapper classHolidayMapper;
     private final TeacherPayRateMapper teacherPayRateMapper;
 
     @Override
     public List<ProductGradeConfigVO> listGradeConfigs(Long productId) {
-        requireProduct(productId);
+        CourseProductEntity product = requireProduct(productId);
+        if ("GROUP".equals(product.getTeachingMode())) {
+            return List.of();
+        }
         return buildGradeConfigs(productId);
     }
 
@@ -129,7 +129,11 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveGradeConfigs(Long productId, ProductGradeConfigSaveRequest request) {
-        requireProduct(productId);
+        CourseProductEntity product = requireProductForUpdate(productId);
+        if ("GROUP".equals(product.getTeachingMode())) {
+            throw new BusinessException("GROUP_GRADE_CONFIG_UNSUPPORTED",
+                    "Group-class grades are managed by teaching projects and actual classes.");
+        }
 
         List<ProductGradeConfigSaveRequest.Item> items = request.getItems() == null
                 ? List.of() : request.getItems();
@@ -202,7 +206,7 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
             }
         }
 
-        // 5. 级联改名：价格行 / 班级 / 假期 / 老师费率作用域（历史订单快照不动）。
+        // 5. 私教 grade 仍以产品配置和费率作用域为准；班课假期已独立归属教学项目。
         for (NormalizedItem item : normalized) {
             if (!item.newLabel.equals(item.currentLabel)) {
                 coursePriceOptionMapper.update(null, new LambdaUpdateWrapper<CoursePriceOptionEntity>()
@@ -213,10 +217,6 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
                         .set(ClassGroupEntity::getGradeBand, item.newLabel)
                         .eq(ClassGroupEntity::getProductId, productId)
                         .eq(ClassGroupEntity::getGradeBand, item.currentLabel));
-                classHolidayMapper.update(null, new LambdaUpdateWrapper<ClassHolidayEntity>()
-                        .set(ClassHolidayEntity::getGradeBand, item.newLabel)
-                        .eq(ClassHolidayEntity::getCourseProductId, productId)
-                        .eq(ClassHolidayEntity::getGradeBand, item.currentLabel));
                 teacherPayRateMapper.update(null, new LambdaUpdateWrapper<TeacherPayRateEntity>()
                         .set(TeacherPayRateEntity::getGradeBand, item.newLabel)
                         .eq(TeacherPayRateEntity::getCourseProductId, productId)
@@ -252,11 +252,21 @@ public class ProductGradeConfigServiceImpl implements ProductGradeConfigService 
         }
     }
 
-    private void requireProduct(Long productId) {
+    private CourseProductEntity requireProduct(Long productId) {
         CourseProductEntity product = courseProductMapper.selectById(productId);
         if (product == null) {
             throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
         }
+        return product;
+    }
+
+    /** 保存期间锁住产品行，避免与教学模式切换并发写入旧 grade 配置。 */
+    private CourseProductEntity requireProductForUpdate(Long productId) {
+        CourseProductEntity product = courseProductMapper.selectByIdForUpdate(productId);
+        if (product == null) {
+            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
+        }
+        return product;
     }
 
     /**

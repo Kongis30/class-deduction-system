@@ -54,6 +54,7 @@ import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
@@ -308,24 +309,26 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public PendingClassroomAssignmentVO backfillPendingClassroom(PendingClassroomBackfillRequest request) {
-        ClassroomEntity classroom = requireActiveClassroomForUpdate(request.getClassroomId());
         String targetType = request.getTargetType() == null ? "" : request.getTargetType().trim().toUpperCase(Locale.ROOT);
         if ("CLASS_GROUP".equals(targetType)) {
-            return backfillClassGroupClassroom(request.getTargetId(), classroom);
+            // 班级补录和课表编辑统一先锁班级，避免出现“教室→班级”与“班级→教室”死锁。
+            ClassGroupEntity classGroup = requireActiveClassGroupForUpdate(request.getTargetId());
+            ClassroomEntity classroom = requireActiveClassroomForUpdate(request.getClassroomId());
+            return backfillClassGroupClassroom(classGroup, classroom);
         }
         if ("OCCURRENCE".equals(targetType)) {
-            return backfillOccurrenceClassroom(request.getTargetId(), classroom);
+            return backfillOccurrenceClassroom(request.getTargetId(), request.getClassroomId());
         }
         throw new BusinessException("INVALID_TARGET_TYPE", "Target type must be CLASS_GROUP or OCCURRENCE.");
     }
 
-    private PendingClassroomAssignmentVO backfillClassGroupClassroom(Long classGroupId, ClassroomEntity classroom) {
-        ClassGroupEntity classGroup = classGroupMapper.selectById(classGroupId);
+    private PendingClassroomAssignmentVO backfillClassGroupClassroom(ClassGroupEntity classGroup, ClassroomEntity classroom) {
         if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
             throw new BusinessException("CLASS_GROUP_NOT_FOUND", "Active class group not found.");
         }
+        Long classGroupId = classGroup.getId();
 
         LocalDateTime now = AppTime.nowLocalDateTime();
         List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
@@ -359,9 +362,20 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         return toPendingClassGroupVO(classGroup, nextOccurrence, context);
     }
 
-    private PendingClassroomAssignmentVO backfillOccurrenceClassroom(Long occurrenceId, ClassroomEntity classroom) {
-        LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectById(occurrenceId);
-        if (occurrence == null) {
+    private PendingClassroomAssignmentVO backfillOccurrenceClassroom(Long occurrenceId, Long classroomId) {
+        LessonOccurrenceEntity initial = lessonOccurrenceMapper.selectById(occurrenceId);
+        if (initial == null) {
+            throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
+        }
+        boolean groupClassOccurrence = initial.getClassGroupId() != null;
+        if (groupClassOccurrence) {
+            // 班课 occurrence 修改与班级课表/假期重算共用班级行锁；READ_COMMITTED 确保锁后校验读取最新状态。
+            requireActiveClassGroupForUpdate(initial.getClassGroupId());
+        }
+        // 单独课次没有班级行，继续按教室→课次获取锁；班课则按班级→课次→教室。
+        ClassroomEntity classroom = groupClassOccurrence ? null : requireActiveClassroomForUpdate(classroomId);
+        LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectByIdForUpdate(occurrenceId);
+        if (occurrence == null || !Objects.equals(occurrence.getClassGroupId(), initial.getClassGroupId())) {
             throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
         }
         if ("CANCELLED".equals(occurrence.getPlanningStatus())) {
@@ -374,6 +388,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             throw new BusinessException("CLASSROOM_ALREADY_ASSIGNED", "This lesson occurrence already has a classroom.");
         }
 
+        if (groupClassOccurrence) {
+            classroom = requireActiveClassroomForUpdate(classroomId);
+        }
         occurrence.setPlannedClassroomId(classroom.getId());
         occurrence.setDeliveryMode("IN_PERSON");
         ensureNoClassroomBackfillConflicts(List.of(occurrence), Set.of(occurrence.getId()));
@@ -382,6 +399,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
         PendingContext context = loadPendingContext(List.of(occurrence), List.of());
         return toPendingOccurrenceVO(occurrence, context);
+    }
+
+    private ClassGroupEntity requireActiveClassGroupForUpdate(Long classGroupId) {
+        ClassGroupEntity classGroup = classGroupMapper.selectByIdForUpdate(classGroupId);
+        if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
+            throw new BusinessException("CLASS_GROUP_NOT_FOUND", "Active class group not found.");
+        }
+        return classGroup;
     }
 
     private ClassroomEntity requireActiveClassroomForUpdate(Long classroomId) {

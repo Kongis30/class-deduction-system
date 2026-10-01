@@ -44,6 +44,9 @@ public class ClassGroupEntity extends BaseEntity {
 
     private Long productId;
 
+    /** V2 教学项目；同一项目各报名方案共用本实体及唯一课表。 */
+    private Long groupProjectId;
+
     private String gradeBand;
 
     /** 实际上课班级，例如 G1/G2；gradeBand 只代表收费档位。 */

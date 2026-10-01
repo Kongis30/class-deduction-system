@@ -9,55 +9,6 @@ import type {
   RecurringScheduleRuleItem,
 } from '@/types/domain';
 
-export interface ClassHolidayItem {
-  id: EntityId;
-  holidayName: string;
-  startDate: string;
-  endDate: string;
-}
-
-export interface ClassHolidaySavePayload {
-  holidayName: string;
-  startDate: string;
-  endDate: string;
-}
-
-export interface ClassHolidayPreview {
-  affectedOccurrenceCount: number;
-  affectedSessionEnrollmentCount: number;
-  conflicts: string[];
-}
-
-export function fetchClassHolidays(courseProductId: EntityId, gradeBand: string) {
-  return http.get<ApiResponse<ClassHolidayItem[]>>(`/v1/base/course-products/${courseProductId}/holidays`, {
-    params: { gradeBand },
-  });
-}
-
-export function previewClassHoliday(courseProductId: EntityId, gradeBand: string, data: ClassHolidaySavePayload, holidayId?: EntityId) {
-  return http.post<ApiResponse<ClassHolidayPreview>>(`/v1/base/course-products/${courseProductId}/holidays/preview`, data, {
-    params: { gradeBand, ...(holidayId ? { holidayId } : {}) },
-  });
-}
-
-export function createClassHoliday(courseProductId: EntityId, gradeBand: string, data: ClassHolidaySavePayload) {
-  return http.post<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays`, data, {
-    params: { gradeBand },
-  });
-}
-
-export function updateClassHoliday(courseProductId: EntityId, gradeBand: string, id: EntityId, data: ClassHolidaySavePayload) {
-  return http.put<ApiResponse<ClassHolidayItem>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`, data, {
-    params: { gradeBand },
-  });
-}
-
-export function deleteClassHoliday(courseProductId: EntityId, gradeBand: string, id: EntityId) {
-  return http.delete<ApiResponse<void>>(`/v1/base/course-products/${courseProductId}/holidays/${id}`, {
-    params: { gradeBand },
-  });
-}
-
 export interface ScheduleStudentOption {
   id: EntityId;
   studentName: string;
@@ -318,10 +269,13 @@ export interface ClassScheduleUpdatePayload {
 
 export interface ClassInfoPayload {
   productId?: string | number;
+  groupProjectId?: string | number;
   gradeBand?: string;
   actualClass: string;
   className?: string;
   campusId?: EntityId;
+  startDate?: string;
+  endDate?: string;
 }
 
 export function createActualClass(data: ClassInfoPayload) {

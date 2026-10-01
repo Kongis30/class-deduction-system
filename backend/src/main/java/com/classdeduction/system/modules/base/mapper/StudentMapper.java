@@ -195,9 +195,7 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
             + "</script>")
     List<StudentEntity> selectByIdsIgnoreLogicDelete(@Param("ids") Collection<Long> ids);
 
-    /**
-     * 锁定学生行以串行化对同一学生排课时间段的并发调整，避免冲突检查被并发穿透。
-     */
+    /** 锁定学生主档，串行化同一学生的报名写入与删除级联。 */
     @Select("SELECT * FROM student WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
     StudentEntity selectByIdForUpdate(@Param("id") Long id);
 }

@@ -12,32 +12,21 @@ import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
-import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
-import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
-import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.base.service.CoursePriceOptionService;
 import com.classdeduction.system.modules.base.vo.CoursePriceOptionVO;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
-import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
-import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
-import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
-import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
-import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
-import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
-import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
-import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -47,8 +36,6 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
@@ -67,20 +54,15 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     private static final String DEFAULT_CURRENCY = "USD";
     private static final String DEFAULT_STATUS = "ACTIVE";
     private static final Set<String> VALID_STATUSES = Set.of("ACTIVE", "INACTIVE");
-    private static final Set<String> VALID_PACKAGE_UNITS = Set.of("MONTH", "WEEK", "SESSION", "HOUR");
 
     private final CoursePriceOptionMapper coursePriceOptionMapper;
     private final CourseProductMapper courseProductMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final ClassGroupMapper classGroupMapper;
-    private final ProductGradeConfigMapper productGradeConfigMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
-    private final LessonOccurrenceMapper lessonOccurrenceMapper;
-    private final LessonRecordMapper lessonRecordMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final CampusMapper campusMapper;
-    private final ClassHolidayService classHolidayService;
 
     @Override
     public List<CoursePriceOptionVO> listActiveOptions(String courseType) {
@@ -140,9 +122,6 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         validateRequest(request);
         CoursePriceOptionEntity entity = new CoursePriceOptionEntity();
         applySaveRequest(entity, request);
-        if (!"ONE_ON_ONE".equals(entity.getCourseType()) && "ACTIVE".equals(entity.getStatus())) {
-            ensureGroupClass(entity, request);
-        }
         if (!StringUtils.hasText(entity.getOptionCode())) {
             entity.setOptionCode(generateOptionCode(request));
         }
@@ -154,14 +133,12 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateOption(Long id, CoursePriceOptionSaveRequest request) {
-        validateRequest(request);
         CoursePriceOptionEntity entity = requireEntity(id);
+        ensureLegacyGroupPriceRowIsReadOnly(entity);
+        validateRequest(request);
         protectReferencedOptionCriticalFields(entity, request);
         String existingOptionCode = entity.getOptionCode();
         applySaveRequest(entity, request);
-        if (!"ONE_ON_ONE".equals(entity.getCourseType()) && "ACTIVE".equals(entity.getStatus())) {
-            ensureGroupClass(entity, request);
-        }
         if (!StringUtils.hasText(entity.getOptionCode())) {
             entity.setOptionCode(existingOptionCode);
         }
@@ -173,6 +150,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteOption(Long id) {
         CoursePriceOptionEntity entity = requireEntity(id);
+        ensureLegacyGroupPriceRowIsReadOnly(entity);
         if (isOptionReferenced(id)) {
             throw new BusinessException("COURSE_PRICE_OPTION_REFERENCED",
                     "Course price option has been used by enrollment orders. Set it to INACTIVE instead.");
@@ -209,20 +187,36 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             throw new BusinessException("COURSE_PRODUCT_REQUIRED",
                     "Course price option must link to a course product.");
         }
-        CourseProductEntity product = courseProductMapper.selectById(request.getCourseProductId());
+        CourseProductEntity product = courseProductMapper.selectByIdForUpdate(request.getCourseProductId());
         if (product == null || ("ACTIVE".equals(status) && !"ACTIVE".equals(product.getStatus()))) {
             throw new BusinessException("COURSE_PRODUCT_INVALID",
                     "Active course price option must link to an active course product.");
         }
+        ensureLegacyGroupPriceRowIsReadOnly(product);
         validateProductCompatibility(request, product);
         if ("ACTIVE".equals(status)) {
             validateMatrixRow(request, product);
         }
     }
 
+    /** 班課價格已由 V2 project/plan 維護；舊價格行只供歷史收据读取。 */
+    private void ensureLegacyGroupPriceRowIsReadOnly(CourseProductEntity product) {
+        if (product != null && "GROUP".equals(product.getTeachingMode())) {
+            throw new BusinessException("GROUP_LEGACY_PRICE_READ_ONLY",
+                    "Group-class prices are managed by teaching projects and registration plans.");
+        }
+    }
+
+    private void ensureLegacyGroupPriceRowIsReadOnly(CoursePriceOptionEntity option) {
+        if (!"ONE_ON_ONE".equals(option.getCourseType())) {
+            throw new BusinessException("GROUP_LEGACY_PRICE_READ_ONLY",
+                    "Legacy group-class price rows are read-only; edit the teaching project or registration plan instead.");
+        }
+    }
+
     private void validateProductCompatibility(CoursePriceOptionSaveRequest request, CourseProductEntity product) {
-        String requestMode = StringUtils.hasText(request.getCourseType()) && "ONE_ON_ONE".equals(request.getCourseType())
-                ? "ONE_ON_ONE"
+        String requestMode = StringUtils.hasText(request.getCourseType())
+                ? ("ONE_ON_ONE".equals(request.getCourseType()) ? "ONE_ON_ONE" : "GROUP")
                 : product.getTeachingMode();
         String expectedMode = "ONE_ON_ONE".equals(requestMode) ? "ONE_ON_ONE" : "GROUP";
         if (!expectedMode.equals(product.getTeachingMode())) {
@@ -232,8 +226,12 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     }
 
     private void validateMatrixRow(CoursePriceOptionSaveRequest request, CourseProductEntity product) {
-        String packageUnit = resolveRequestPackageUnit(request, product);
-        BigDecimal packageQuantity = resolveRequestPackageQuantity(request, product, packageUnit);
+        if (!"ONE_ON_ONE".equals(product.getTeachingMode())) {
+            throw new BusinessException("GROUP_LEGACY_PRICE_READ_ONLY",
+                    "Group-class prices are managed by teaching projects and registration plans.");
+        }
+        String packageUnit = resolveRequestPackageUnit(request);
+        BigDecimal packageQuantity = resolveRequestPackageQuantity(request);
         BigDecimal totalPrice = resolveRequestTotalPrice(request);
         if (totalPrice == null || totalPrice.compareTo(BigDecimal.ZERO) < 0) {
             throw new BusinessException("COURSE_PRICE_REQUIRED", "Active course price option requires a non-negative price.");
@@ -242,104 +240,38 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
             throw new BusinessException("PACKAGE_QUANTITY_REQUIRED",
                     "Active course price option requires a package quantity greater than zero.");
         }
-        if ("ONE_ON_ONE".equals(product.getTeachingMode())) {
-            if (!"HOUR".equals(packageUnit)) {
-                throw new BusinessException("INVALID_PACKAGE_UNIT",
-                        "One-on-one packages must use HOUR as the unit.");
-            }
-            if (packageQuantity.compareTo(new BigDecimal("400")) > 0) {
-                throw new BusinessException("ONE_ON_ONE_HOURS_TOO_LARGE",
-                        "One-on-one purchased hours cannot exceed 400 hours.");
-            }
-            if (packageQuantity.multiply(new BigDecimal("2")).stripTrailingZeros().scale() > 0) {
-                throw new BusinessException("ONE_ON_ONE_HOURS_INCREMENT_INVALID",
-                        "One-on-one purchased hours must use 0.5-hour increments.");
-            }
-            if (request.getOneOnOneHours() == null || request.getOneOnOneHours().compareTo(BigDecimal.ZERO) <= 0) {
-                request.setOneOnOneHours(packageQuantity);
-            }
-            return;
-        }
-        requireText(request.getGradeBand(), "Grade band");
-        if ("HOUR".equals(packageUnit)) {
+        if (!"HOUR".equals(packageUnit)) {
             throw new BusinessException("INVALID_PACKAGE_UNIT",
-                    "Group class packages cannot use HOUR as the unit.");
+                    "One-on-one packages must use HOUR as the unit.");
         }
-        if (!VALID_PACKAGE_UNITS.contains(packageUnit)) {
-            throw new BusinessException("INVALID_PACKAGE_UNIT",
-                    "Package unit must be MONTH, WEEK, SESSION, or HOUR.");
+        if (packageQuantity.compareTo(new BigDecimal("400")) > 0) {
+            throw new BusinessException("ONE_ON_ONE_HOURS_TOO_LARGE",
+                    "One-on-one purchased hours cannot exceed 400 hours.");
         }
-        validateGroupScheduleRequest(request);
-    }
-
-    private void validateGroupScheduleRequest(CoursePriceOptionSaveRequest request) {
-        if (request.getGroupScheduleSlots() == null || request.getGroupScheduleSlots().isEmpty()) {
-            return;
+        if (packageQuantity.multiply(new BigDecimal("2")).stripTrailingZeros().scale() > 0) {
+            throw new BusinessException("ONE_ON_ONE_HOURS_INCREMENT_INVALID",
+                    "One-on-one purchased hours must use 0.5-hour increments.");
         }
-        String billingType = request.getPackageUnit();
-        if (isWeekBilling(billingType) || isSessionBilling(billingType)) {
-            if (request.getGroupStartDate() == null || request.getGroupEndDate() == null) {
-                throw new BusinessException("GROUP_DATE_RANGE_REQUIRED",
-                        "Weekly and session classes need a start date and end date.");
-            }
-            if (request.getGroupEndDate().isBefore(request.getGroupStartDate())) {
-                throw new BusinessException("INVALID_GROUP_DATE_RANGE",
-                        "Class end date cannot be earlier than the start date.");
-            }
-            return;
-        }
-        LocalDate startMonth = parseMonth(request.getGroupStartMonth(), "start month");
-        LocalDate endMonth = parseMonth(request.getGroupEndMonth(), "end month");
-        if (startMonth == null || endMonth == null) {
-            throw new BusinessException("GROUP_BILLING_REQUIRED",
-                    "Monthly grade classes need a class start month and class end month.");
-        }
-        if (endMonth.isBefore(startMonth)) {
-            throw new BusinessException("INVALID_GROUP_BILLING", "End month cannot be earlier than start month.");
+        if (request.getOneOnOneHours() == null || request.getOneOnOneHours().compareTo(BigDecimal.ZERO) <= 0) {
+            request.setOneOnOneHours(packageQuantity);
         }
     }
 
-    private boolean hasExistingGradeClass(CoursePriceOptionSaveRequest request) {
-        if (request.getCourseProductId() == null || !StringUtils.hasText(request.getGradeBand())) {
-            return false;
-        }
-        return classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getProductId, request.getCourseProductId())
-                .eq(ClassGroupEntity::getGradeBand, request.getGradeBand().trim())
-                .eq(ClassGroupEntity::getIsDeleted, 0)) > 0;
+    private String resolveRequestPackageUnit(CoursePriceOptionSaveRequest request) {
+        return StringUtils.hasText(request.getPackageUnit())
+                ? request.getPackageUnit().trim().toUpperCase(Locale.ROOT) : "HOUR";
     }
 
-    private String resolveRequestPackageUnit(CoursePriceOptionSaveRequest request, CourseProductEntity product) {
-        if (StringUtils.hasText(request.getPackageUnit())) {
-            return request.getPackageUnit().trim().toUpperCase(Locale.ROOT);
-        }
-        if ("ONE_ON_ONE".equals(product.getTeachingMode())) {
-            return "HOUR";
-        }
-        return "MONTH";
-    }
-
-    private BigDecimal resolveRequestPackageQuantity(CoursePriceOptionSaveRequest request,
-                                                     CourseProductEntity product,
-                                                     String packageUnit) {
+    private BigDecimal resolveRequestPackageQuantity(CoursePriceOptionSaveRequest request) {
         if (request.getPackageQuantity() != null && request.getPackageQuantity().compareTo(BigDecimal.ZERO) > 0) {
             return request.getPackageQuantity();
         }
-        if ("ONE_ON_ONE".equals(product.getTeachingMode())) {
-            return request.getOneOnOneHours();
-        }
-        if ("SESSION".equals(packageUnit) && request.getGroupTotalSessions() != null) {
-            return BigDecimal.valueOf(request.getGroupTotalSessions());
-        }
-        return null;
+        return request.getOneOnOneHours();
     }
 
     private BigDecimal resolveRequestTotalPrice(CoursePriceOptionSaveRequest request) {
         if (request.getTotalPrice() != null) {
             return request.getTotalPrice();
-        }
-        if (request.getGroupTotalPrice() != null) {
-            return request.getGroupTotalPrice();
         }
         return request.getPriceAmount();
     }
@@ -359,13 +291,6 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         return totalPrice.divide(packageQuantity, 2, RoundingMode.HALF_UP);
     }
 
-    private void requireText(String value, String label) {
-        if (!StringUtils.hasText(value)) {
-            throw new BusinessException("COURSE_PRICE_MATRIX_FIELD_REQUIRED",
-                    label + " is required for active group course price options.");
-        }
-    }
-
     private void protectReferencedOptionCriticalFields(CoursePriceOptionEntity existing,
                                                        CoursePriceOptionSaveRequest request) {
         if (!isOptionReferenced(existing.getId())) {
@@ -379,8 +304,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
                 : "ONE_ON_ONE".equals(request.getCourseType());
         BigDecimal requestedTotalPrice = resolveRequestTotalPrice(request);
         BigDecimal requestedPackageQuantity = product == null
-                ? request.getPackageQuantity()
-                : resolveRequestPackageQuantity(request, product, resolveRequestPackageUnit(request, product));
+                ? request.getPackageQuantity() : resolveRequestPackageQuantity(request);
         boolean changed = !safeEquals(existing.getCourseProductId(), request.getCourseProductId())
                 || !safeEquals(existing.getRegisterClass(), request.getRegisterClass())
                 || !safeEquals(existing.getGradeBand(), normalizeBlank(request.getGradeBand()))
@@ -431,13 +355,11 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
     }
 
     private void applySaveRequest(CoursePriceOptionEntity entity, CoursePriceOptionSaveRequest request) {
-        CourseProductEntity product = courseProductMapper.selectById(request.getCourseProductId());
-        boolean oneOnOne = product != null && "ONE_ON_ONE".equals(product.getTeachingMode());
-        String packageUnit = resolveRequestPackageUnit(request, product);
-        BigDecimal packageQuantity = resolveRequestPackageQuantity(request, product, packageUnit);
+        String packageUnit = resolveRequestPackageUnit(request);
+        BigDecimal packageQuantity = resolveRequestPackageQuantity(request);
         BigDecimal totalPrice = resolveRequestTotalPrice(request);
         entity.setOptionCode(normalizeBlank(request.getOptionCode()));
-        entity.setCourseType(oneOnOne ? "ONE_ON_ONE" : firstText(product == null ? null : product.getCourseType(), "GROUP"));
+        entity.setCourseType("ONE_ON_ONE");
         entity.setRegisterClass(request.getRegisterClass());
         entity.setGradeBand(normalizeBlank(request.getGradeBand()));
         entity.setPeriodLabel(normalizeBlank(request.getPeriodLabel()));
@@ -450,430 +372,15 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         entity.setDerivedUnitPrice(calculateDerivedUnitPrice(totalPrice, packageQuantity));
         entity.setFullDayPrice(request.getFullDayPrice());
         entity.setHalfDayPrice(request.getHalfDayPrice());
-        entity.setOneOnOneHours(oneOnOne ? packageQuantity : null);
+        entity.setOneOnOneHours(packageQuantity);
         entity.setPriceAmount(resolveRequestBasePrice(request));
-        if (oneOnOne) {
-            entity.setGroupTotalPrice(null);
-            entity.setGroupSessionPrice(null);
-        } else {
-            entity.setGroupTotalPrice(totalPrice);
-            entity.setGroupSessionPrice(calculateDerivedUnitPrice(totalPrice, packageQuantity));
-        }
+        entity.setGroupTotalPrice(null);
+        entity.setGroupSessionPrice(null);
         entity.setCurrencyCode(StringUtils.hasText(request.getCurrencyCode()) ? request.getCurrencyCode() : DEFAULT_CURRENCY);
         entity.setCourseProductId(request.getCourseProductId());
         entity.setSortOrder(request.getSortOrder() == null ? 0 : request.getSortOrder());
         entity.setStatus(StringUtils.hasText(request.getStatus()) ? request.getStatus() : DEFAULT_STATUS);
         entity.setNotes(normalizeBlank(request.getNotes()));
-    }
-
-    /**
-     * 班课价格行只代表收费档位；实际班级按 actual_class 拆分，供注册和排课选择。
-     */
-    private void ensureGroupClass(CoursePriceOptionEntity option, CoursePriceOptionSaveRequest request) {
-        if ("ONE_ON_ONE".equals(option.getCourseType()) || option.getCourseProductId() == null) {
-            option.setClassId(null);
-            return;
-        }
-        CourseProductEntity product = courseProductMapper.selectById(option.getCourseProductId());
-        if (product == null) {
-            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
-        }
-        String gradeBand = StringUtils.hasText(request.getGradeBand()) ? request.getGradeBand().trim() : "General";
-        List<String> actualClasses = resolveActualClasses(request.getActualClasses(), gradeBand);
-        ProductGradeConfigEntity gradePeriod = findConfiguredGradeClassPeriod(product.getId(), gradeBand);
-        ClassGroupEntity primary = null;
-        for (String actualClass : actualClasses) {
-            ClassGroupEntity classGroup = findClassGroup(product.getId(), gradeBand, actualClass);
-            if (classGroup == null) {
-                classGroup = new ClassGroupEntity();
-                classGroup.setProductId(product.getId());
-                classGroup.setGradeBand(gradeBand);
-                classGroup.setActualClass(actualClass);
-                classGroup.setClassName(actualClass);
-                classGroup.setListPrice(BigDecimal.ZERO);
-                classGroup.setStatus("ACTIVE");
-                classGroupMapper.insert(classGroup);
-            } else {
-                boolean changed = false;
-                if (!safeEquals(classGroup.getActualClass(), actualClass)) {
-                    classGroup.setActualClass(actualClass);
-                    changed = true;
-                }
-                if (!StringUtils.hasText(classGroup.getClassName())) {
-                    classGroup.setClassName(actualClass);
-                    changed = true;
-                }
-                if (changed) {
-                    classGroupMapper.updateById(classGroup);
-                }
-            }
-            applyGroupBillingMetadata(classGroup, request);
-            applyConfiguredGradeClassPeriod(classGroup, gradePeriod);
-            if (primary == null || Objects.equals(classGroup.getId(), request.getClassId())) {
-                primary = classGroup;
-            }
-        }
-        option.setClassId(primary == null ? null : primary.getId());
-        if (primary != null && request.getGroupScheduleSlots() != null && !request.getGroupScheduleSlots().isEmpty()) {
-            applyGroupSchedule(primary, request, gradePeriod);
-        }
-    }
-
-    private void applyGroupBillingMetadata(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request) {
-        classGroup.setBillingType(StringUtils.hasText(request.getPackageUnit())
-                ? request.getPackageUnit().trim().toUpperCase(Locale.ROOT)
-                : "MONTH");
-        if (request.getGroupStartDate() != null) {
-            classGroup.setStartDate(request.getGroupStartDate());
-        }
-        if (request.getGroupEndDate() != null) {
-            classGroup.setEndDate(request.getGroupEndDate());
-            classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
-        }
-        classGroup.setTotalSessions(request.getGroupTotalSessions());
-        classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
-        classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
-        classGroupMapper.updateById(classGroup);
-    }
-
-    /** 年级统一配置优先于旧价格选项载荷，避免编辑某个选项后同年级日期分裂。 */
-    /** 查找该产品 Grade 的唯一共享周期；未显式配置时保留旧 class_group 日期兼容行为。 */
-    private ProductGradeConfigEntity findConfiguredGradeClassPeriod(Long productId, String gradeBand) {
-        return productGradeConfigMapper.selectOne(
-                new LambdaQueryWrapper<ProductGradeConfigEntity>()
-                        .eq(ProductGradeConfigEntity::getCourseProductId, productId)
-                        .eq(ProductGradeConfigEntity::getGradeLabel, gradeBand)
-                        .eq(ProductGradeConfigEntity::getClassPeriodConfigured, true)
-                        .last("LIMIT 1"));
-    }
-
-    private void applyConfiguredGradeClassPeriod(ClassGroupEntity classGroup, ProductGradeConfigEntity config) {
-        if (config == null) {
-            return;
-        }
-        classGroup.setStartDate(config.getClassStartDate());
-        classGroup.setEndDate(config.getClassEndDate());
-        classGroup.setScheduleBaseEndDate(config.getClassEndDate());
-        classGroupMapper.updateById(classGroup);
-    }
-
-    private ClassGroupEntity findClassGroup(Long productId, String gradeBand, String actualClass) {
-        ClassGroupEntity exact = classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getProductId, productId)
-                .eq(ClassGroupEntity::getGradeBand, gradeBand)
-                .eq(ClassGroupEntity::getActualClass, actualClass)
-                .eq(ClassGroupEntity::getIsDeleted, 0)
-                .last("LIMIT 1"));
-        if (exact != null) {
-            return exact;
-        }
-        return classGroupMapper.selectOne(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getProductId, productId)
-                .eq(ClassGroupEntity::getGradeBand, gradeBand)
-                .and(wrapper -> wrapper.isNull(ClassGroupEntity::getActualClass).or().eq(ClassGroupEntity::getActualClass, ""))
-                .eq(ClassGroupEntity::getIsDeleted, 0)
-                .last("LIMIT 1"));
-    }
-
-    private List<String> resolveActualClasses(List<String> requestedClasses, String gradeBand) {
-        List<String> cleaned = requestedClasses == null ? List.of() : requestedClasses.stream()
-                .filter(StringUtils::hasText)
-                .map(String::trim)
-                .distinct()
-                .toList();
-        if (!cleaned.isEmpty()) {
-            return cleaned;
-        }
-        List<String> expanded = expandGradeBand(gradeBand);
-        return expanded.isEmpty() ? List.of(gradeBand) : expanded;
-    }
-
-    private List<String> expandGradeBand(String gradeBand) {
-        if (!StringUtils.hasText(gradeBand)) {
-            return List.of();
-        }
-        String normalized = gradeBand.trim().toUpperCase(Locale.ROOT);
-        java.util.regex.Matcher matcher = java.util.regex.Pattern
-                .compile("^G(\\d{1,2})\\s*-\\s*G?(\\d{1,2})$")
-                .matcher(normalized);
-        if (!matcher.matches()) {
-            return List.of(normalized);
-        }
-        int start = Integer.parseInt(matcher.group(1));
-        int end = Integer.parseInt(matcher.group(2));
-        if (end < start || end - start > 20) {
-            return List.of(normalized);
-        }
-        List<String> classes = new ArrayList<>();
-        for (int grade = start; grade <= end; grade++) {
-            classes.add("G" + grade);
-        }
-        return classes;
-    }
-
-    private void applyGroupSchedule(ClassGroupEntity classGroup, CoursePriceOptionSaveRequest request,
-                                    ProductGradeConfigEntity gradePeriod) {
-        if (request.getGroupScheduleSlots() == null || request.getGroupScheduleSlots().isEmpty()) {
-            return;
-        }
-        classGroup.setTeacherId(request.getGroupTeacherId());
-        classGroup.setClassroomId(request.getGroupClassroomId());
-        classGroup.setBillingType(StringUtils.hasText(request.getPackageUnit())
-                ? request.getPackageUnit().trim().toUpperCase(Locale.ROOT)
-                : "MONTH");
-        if (request.getGroupStartDate() != null) {
-            classGroup.setStartDate(request.getGroupStartDate());
-        }
-        if (request.getGroupEndDate() != null) {
-            classGroup.setEndDate(request.getGroupEndDate());
-            classGroup.setScheduleBaseEndDate(request.getGroupEndDate());
-        }
-        if (gradePeriod != null) {
-            classGroup.setStartDate(gradePeriod.getClassStartDate());
-            classGroup.setEndDate(gradePeriod.getClassEndDate());
-            classGroup.setScheduleBaseEndDate(gradePeriod.getClassEndDate());
-        }
-        classGroup.setTotalSessions(request.getGroupTotalSessions());
-        classGroup.setStartMonth(parseMonth(request.getGroupStartMonth(), "start month"));
-        classGroup.setEndMonth(parseMonth(request.getGroupEndMonth(), "end month"));
-        classGroupMapper.updateById(classGroup);
-        classGroupScheduleSlotMapper.delete(new LambdaQueryWrapper<ClassGroupScheduleSlotEntity>()
-                .eq(ClassGroupScheduleSlotEntity::getClassGroupId, classGroup.getId()));
-        List<ClassGroupScheduleSlotEntity> slots = new ArrayList<>();
-        for (CoursePriceOptionSaveRequest.GroupScheduleSlotDTO slot : request.getGroupScheduleSlots()) {
-            if (slot.getWeekday() == null || slot.getWeekday() < 1 || slot.getWeekday() > 7) {
-                throw new BusinessException("INVALID_GROUP_SCHEDULE", "Weekday must be between 1 and 7.");
-            }
-            LocalTime start = LocalTime.parse(slot.getStartTime());
-            LocalTime end = ScheduleSlotTime.parseEndTime(slot.getEndTime());
-            if (!ScheduleSlotTime.isValidRange(start, end)) {
-                throw new BusinessException("INVALID_GROUP_SCHEDULE", "Schedule end time must be after start time.");
-            }
-            ClassGroupScheduleSlotEntity entity = new ClassGroupScheduleSlotEntity();
-            entity.setClassGroupId(classGroup.getId());
-            entity.setTeacherId(slot.getTeacherId());
-            entity.setSubjectName(StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName().trim() : null);
-            entity.setAlternateTeacherId(slot.getAlternateTeacherId());
-            entity.setAlternateSubjectName(StringUtils.hasText(slot.getAlternateSubjectName())
-                    ? slot.getAlternateSubjectName().trim() : null);
-            entity.setAlternateClassroomId(slot.getAlternateClassroomId());
-            entity.setAlternateDeliveryMode(StringUtils.hasText(slot.getAlternateDeliveryMode())
-                    ? slot.getAlternateDeliveryMode().trim().toUpperCase(Locale.ROOT) : null);
-            entity.setRotationAnchorDate(slot.getRotationAnchorDate());
-            entity.setWeekday(slot.getWeekday());
-            entity.setStartTime(start);
-            entity.setEndTime(end);
-            entity.setMorningEndTime(StringUtils.hasText(slot.getMorningEndTime())
-                    ? LocalTime.parse(slot.getMorningEndTime())
-                    : null);
-            entity.setAfternoonStartTime(StringUtils.hasText(slot.getAfternoonStartTime())
-                    ? LocalTime.parse(slot.getAfternoonStartTime())
-                    : null);
-            entity.setAttendanceOptions(StringUtils.hasText(slot.getAttendanceOptions())
-                    ? slot.getAttendanceOptions().trim().toUpperCase(Locale.ROOT)
-                    : "ALL");
-            classGroupScheduleSlotMapper.insert(entity);
-            slots.add(entity);
-        }
-        rebuildFutureClassOccurrences(classGroup, slots);
-    }
-
-    /**
-     * Grade classes should show their planned lessons before students enroll.
-     * Preserve recorded lessons, but keep future unrecorded rows aligned with
-     * the latest weekly schedule from Price Matrix.
-     */
-    private void rebuildFutureClassOccurrences(ClassGroupEntity classGroup, List<ClassGroupScheduleSlotEntity> slots) {
-        removeFutureUnrecordedClassOccurrences(classGroup.getId());
-        if (slots.isEmpty()) {
-            return;
-        }
-        List<LessonOccurrenceEntity> existingFutureOccurrences = futureClassOccurrences(classGroup.getId());
-        Set<String> existingKeys = existingFutureOccurrences.stream()
-                .map(item -> occurrenceKey(item.getPlannedStartAt(), item.getPlannedEndAt()))
-                .collect(java.util.stream.Collectors.toSet());
-        Set<LocalDate> existingSessionDates = existingFutureOccurrences.stream()
-                .map(LessonOccurrenceEntity::getPlannedStartAt)
-                .filter(Objects::nonNull)
-                .map(LocalDateTime::toLocalDate)
-                .collect(java.util.stream.Collectors.toSet());
-        LocalDate startDate = resolveOccurrenceStartDate(classGroup);
-        LocalDate endDate = resolveOccurrenceEndDate(classGroup, startDate);
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), classGroup.getGradeBand());
-        if (classGroup.getStartDate() != null) {
-            LocalDate baseEndDate = ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate);
-            LocalDate scheduleEnd = ClassScheduleDates.endDateAfterHolidays(classGroup.getStartDate(), baseEndDate,
-                    classGroup.getBillingType(), classGroup.getTotalSessions(), slots,
-                    date -> classHolidayService.isHoliday(date, holidays));
-            boolean needsUpdate = scheduleEnd != null && !scheduleEnd.equals(endDate);
-            if (classGroup.getScheduleBaseEndDate() == null) {
-                classGroup.setScheduleBaseEndDate(baseEndDate);
-                needsUpdate = true;
-            }
-            if (needsUpdate) {
-                if (scheduleEnd != null) {
-                    endDate = scheduleEnd;
-                    classGroup.setEndDate(scheduleEnd);
-                }
-                classGroupMapper.updateById(classGroup);
-            }
-        }
-        if (endDate.isBefore(startDate)) {
-            return;
-        }
-        int remainingSessions = isSessionBilling(classGroup.getBillingType())
-                && classGroup.getTotalSessions() != null
-                ? Math.max(classGroup.getTotalSessions() - existingSessionDates.size(), 0)
-                : Integer.MAX_VALUE;
-        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
-            if (classHolidayService.isHoliday(date, holidays)) {
-                continue;
-            }
-            boolean countsAsNewSessionDay = isSessionBilling(classGroup.getBillingType())
-                    && !existingSessionDates.contains(date);
-            if (countsAsNewSessionDay && remainingSessions <= 0) {
-                continue;
-            }
-            int weekday = date.getDayOfWeek().getValue();
-            boolean createdOnDate = false;
-            for (ClassGroupScheduleSlotEntity slot : slots) {
-                if (!slot.getWeekday().equals(weekday)) {
-                    continue;
-                }
-                LocalDateTime startAt = LocalDateTime.of(date, slot.getStartTime());
-                LocalDateTime endAt = ScheduleSlotTime.endAt(date, slot.getStartTime(), slot.getEndTime());
-                String key = occurrenceKey(startAt, endAt);
-                if (existingKeys.contains(key)) {
-                    continue;
-                }
-                LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
-                occurrence.setLessonNo(BusinessNoGenerator.generateClassLessonOccurrenceNo());
-                occurrence.setClassGroupId(classGroup.getId());
-                occurrence.setScheduleSlotId(slot.getId());
-                occurrence.setOccurrenceType("REGULAR");
-                ClassSlotRotation.Assignment assignment = ClassSlotRotation.resolve(slot, date,
-                        classGroup.getStartDate(), holidayDate -> classHolidayService.isHoliday(holidayDate, holidays));
-                occurrence.setPlannedTeacherId(assignment.teacherId() == null
-                        ? classGroup.getTeacherId() : assignment.teacherId());
-                occurrence.setSubjectName(assignment.subjectName());
-                Long classroomId = assignment.alternate()
-                        ? ("ONLINE".equals(assignment.deliveryMode()) ? null : assignment.classroomId())
-                        : "ONLINE".equals(assignment.deliveryMode()) ? null
-                                : assignment.classroomId() != null ? assignment.classroomId() : classGroup.getClassroomId();
-                occurrence.setDeliveryMode(assignment.deliveryMode() == null && classroomId != null
-                        ? "IN_PERSON" : assignment.deliveryMode());
-                occurrence.setPlannedClassroomId(classroomId);
-                occurrence.setPlannedStartAt(startAt);
-                occurrence.setPlannedEndAt(endAt);
-                occurrence.setPlannedUnits(ScheduleSlotTime.durationMinutes(slot.getStartTime(), slot.getEndTime()) / 30);
-                occurrence.setPlanningStatus("SCHEDULED");
-                occurrence.setConflictChecked(1);
-                lessonOccurrenceMapper.insert(occurrence);
-                existingKeys.add(key);
-                createdOnDate = true;
-            }
-            // 班课 SESSION 代表“上课日”：同一天的上午/下午时段都生成，但只占用 1 个 session 额度。
-            if (countsAsNewSessionDay && createdOnDate) {
-                existingSessionDates.add(date);
-                remainingSessions--;
-            }
-        }
-    }
-
-    private void removeFutureUnrecordedClassOccurrences(Long classId) {
-        LocalDateTime now = AppTime.nowLocalDateTime();
-        List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
-                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now));
-        if (futureOccurrences.isEmpty()) {
-            return;
-        }
-        Set<Long> occurrenceIds = futureOccurrences.stream()
-                .map(LessonOccurrenceEntity::getId)
-                .collect(java.util.stream.Collectors.toSet());
-        Set<Long> recordedIds = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
-                        .eq(LessonRecordEntity::getIsDeleted, 0))
-                .stream()
-                .map(LessonRecordEntity::getOccurrenceId)
-                .collect(java.util.stream.Collectors.toSet());
-        List<Long> removableIds = futureOccurrences.stream()
-                .map(LessonOccurrenceEntity::getId)
-                .filter(id -> !recordedIds.contains(id))
-                .toList();
-        if (!removableIds.isEmpty()) {
-            lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                    .in(LessonOccurrenceEntity::getId, removableIds));
-        }
-    }
-
-    private List<LessonOccurrenceEntity> futureClassOccurrences(Long classId) {
-        LocalDateTime now = AppTime.nowLocalDateTime();
-        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getClassGroupId, classId)
-                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
-                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now));
-    }
-
-    private LocalDate resolveOccurrenceStartDate(ClassGroupEntity classGroup) {
-        LocalDate today = AppTime.nowLocalDateTime().toLocalDate();
-        LocalDate configuredStart = isMonthBilling(classGroup.getBillingType())
-                ? classGroup.getStartMonth()
-                : classGroup.getStartDate();
-        if (configuredStart == null || configuredStart.isBefore(today)) {
-            return today;
-        }
-        return configuredStart;
-    }
-
-    private LocalDate resolveOccurrenceEndDate(ClassGroupEntity classGroup, LocalDate startDate) {
-        if (classGroup.getEndDate() != null) {
-            return classGroup.getEndDate();
-        }
-        if (isSessionBilling(classGroup.getBillingType()) && classGroup.getTotalSessions() != null) {
-            return startDate.plusDays(370);
-        }
-        if (isWeekBilling(classGroup.getBillingType()) && classGroup.getTotalSessions() != null) {
-            return startDate.plusWeeks(classGroup.getTotalSessions()).minusDays(1);
-        }
-        if (isMonthBilling(classGroup.getBillingType()) && classGroup.getEndMonth() != null) {
-            return YearMonth.from(classGroup.getEndMonth()).atEndOfMonth();
-        }
-        if (isMonthBilling(classGroup.getBillingType()) && classGroup.getStartMonth() != null && classGroup.getTotalSessions() != null) {
-            return classGroup.getStartMonth().plusMonths(Math.max(classGroup.getTotalSessions(), 1L) - 1L)
-                    .withDayOfMonth(classGroup.getStartMonth().plusMonths(Math.max(classGroup.getTotalSessions(), 1L) - 1L).lengthOfMonth());
-        }
-        return startDate.plusDays(60);
-    }
-
-    private boolean isMonthBilling(String billingType) {
-        return "MONTH".equals(billingType) || "MONTHLY".equals(billingType);
-    }
-
-    private boolean isWeekBilling(String billingType) {
-        return "WEEK".equals(billingType);
-    }
-
-    private boolean isSessionBilling(String billingType) {
-        return "SESSION".equals(billingType) || "PER_SESSION".equals(billingType);
-    }
-
-    private String occurrenceKey(LocalDateTime startAt, LocalDateTime endAt) {
-        return startAt + "|" + endAt;
-    }
-
-    private LocalDate parseMonth(String value, String fieldName) {
-        if (!StringUtils.hasText(value)) {
-            return null;
-        }
-        try {
-            return YearMonth.parse(value).atDay(1);
-        } catch (RuntimeException ex) {
-            throw new BusinessException("INVALID_GROUP_BILLING",
-                    "Grade class " + fieldName + " must use yyyy-MM format.");
-        }
     }
 
     private void ensureOptionCodeUnique(Long currentId, String optionCode) {
@@ -981,10 +488,7 @@ public class CoursePriceOptionServiceImpl implements CoursePriceOptionService {
         return value == null ? "" : value;
     }
 
-    private String firstText(String first, String fallback) {
-        return StringUtils.hasText(first) ? first : fallback;
-    }
-
+    /** 只读映射历史班课价格记录；新的班课收费和排课不再依赖旧价格行。 */
     private CoursePriceOptionVO toVO(CoursePriceOptionEntity entity) {
         long referenceCount = countOptionReferences(entity.getId());
         List<ClassGroupEntity> gradeClasses = listActualClasses(entity.getCourseProductId(), entity.getGradeBand());

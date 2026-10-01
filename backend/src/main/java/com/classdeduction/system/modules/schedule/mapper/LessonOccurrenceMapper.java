@@ -13,6 +13,10 @@ import java.util.Map;
 @Mapper
 public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntity> {
 
+    /** 调课、确认、撤销和补录共用课次行锁，避免基于旧状态互相覆盖。 */
+    @Select("SELECT * FROM lesson_occurrence WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
+    LessonOccurrenceEntity selectByIdForUpdate(@Param("id") Long id);
+
     /**
      * 按校区统计今日待上课次数（批量GROUP BY JOIN，避免N+1）。
      * 通过 classroom JOIN 推算校区归属，并排除已核销的记录。

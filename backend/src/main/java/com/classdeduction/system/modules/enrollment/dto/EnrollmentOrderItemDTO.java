@@ -34,6 +34,12 @@ public class EnrollmentOrderItemDTO {
     @Schema(description = "Course product ID", example = "1880000000000000002")
     private Long courseProductId;
 
+    /** 新班课模型下的教学项目；与 planId、classId 一起明确业务归属。 */
+    private Long groupProjectId;
+
+    /** 新班课模型下的报名权益方案；私教和历史班课为空。 */
+    private Long groupRegistrationPlanId;
+
     @Schema(description = "Course price option ID", example = "1880000000000000003")
     private Long coursePriceOptionId;
 

@@ -25,7 +25,7 @@
         </button>
       </div>
 
-      <div class="matrix-layout">
+      <div v-if="selectedMode === 'ONE_ON_ONE'" class="matrix-layout">
         <aside class="navigation-sidebar">
           <span class="navigation-sidebar__label">{{ selectedModeLabel }} courses</span>
           <el-tooltip
@@ -94,13 +94,6 @@
                   <small>{{ group.rows.length }} registration option{{ group.rows.length === 1 ? '' : 's' }} for this grade</small>
                 </div>
                 <div class="product-price-group__actions">
-                  <el-button
-                    v-if="selectedMode === 'GROUP' && query.courseProductId && group.gradeLabel !== 'Grade not set'"
-                    size="small"
-                    @click="openClassHolidayDialog(group.gradeLabel)"
-                  >
-                    Manage holidays
-                  </el-button>
                   <small v-if="selectedMode === 'GROUP' && groupHalfDayPriceSummary(group)" class="group-halfday-summary">
                     {{ groupHalfDayPriceSummary(group) }}
                   </small>
@@ -328,6 +321,7 @@
           </template>
         </div>
       </div>
+      <GroupCourseModelPanel v-else :products="productChoices" @reload="loadAll" />
     </section>
 
     <el-dialog
@@ -751,76 +745,6 @@
       </template>
     </el-dialog>
 
-    <el-dialog
-      v-model="classHolidayDialogVisible"
-      width="min(760px, calc(100vw - 40px))"
-      :close-on-click-modal="false"
-      :title="`${selectedProduct?.productName ?? 'Course'} · ${classHolidayGradeBand} holidays`"
-      class="class-holiday-dialog"
-    >
-      <el-alert
-        :title="`These dates apply to every actual class in ${classHolidayGradeBand} under ${selectedProduct?.productName ?? 'this course'}. Other grades, courses, and one-on-one schedules are not affected.`"
-        type="info"
-        :closable="false"
-        show-icon
-      />
-      <el-alert
-        class="class-holiday-schedule-note"
-        title="Lessons that fall during the holiday are skipped. The same weekly schedule continues afterward so this grade keeps its planned number of class days."
-        type="success"
-        :closable="false"
-        show-icon
-      />
-      <el-form label-position="top" class="class-holiday-form">
-        <el-form-item label="Holiday name">
-          <el-input v-model="classHolidayForm.holidayName" maxlength="100" placeholder="e.g. Thanksgiving break" />
-        </el-form-item>
-        <div class="class-holiday-form__dates">
-          <el-form-item label="Start date">
-            <el-date-picker
-              v-model="classHolidayForm.startDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="Select start date"
-              style="width: 100%;"
-            />
-          </el-form-item>
-          <el-form-item label="End date">
-            <el-date-picker
-              v-model="classHolidayForm.endDate"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="Select end date"
-              style="width: 100%;"
-            />
-          </el-form-item>
-        </div>
-        <div class="class-holiday-form__actions">
-          <el-button v-if="editingHolidayId" @click="resetClassHolidayForm">Cancel edit</el-button>
-          <el-button type="primary" :loading="savingClassHoliday" @click="saveClassHoliday">
-            {{ editingHolidayId ? 'Save changes' : 'Add holiday' }}
-          </el-button>
-        </div>
-      </el-form>
-      <el-table v-loading="loadingClassHolidays" :data="classHolidayRows" border>
-        <el-table-column prop="holidayName" label="Holiday" min-width="180" />
-        <el-table-column label="Dates" min-width="220">
-          <template #default="{ row }">{{ row.startDate }} – {{ row.endDate }}</template>
-        </el-table-column>
-        <el-table-column label="Actions" width="150" align="center">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="editClassHoliday(row)">Edit</el-button>
-            <el-button link type="danger" @click="removeClassHoliday(row)">Delete</el-button>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty :image-size="48" description="No class holidays configured." />
-        </template>
-      </el-table>
-      <template #footer>
-        <el-button @click="classHolidayDialogVisible = false">Close</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -849,18 +773,13 @@ import {
 } from '@/api/base-data';
 import {
   createActualClass,
-  createClassHoliday,
   deleteClassGroup,
-  deleteClassHoliday,
   fetchClassGroups,
-  fetchClassHolidays,
-  previewClassHoliday,
   updateClassInfo,
   updateClassSchedule,
-  updateClassHoliday,
-  type ClassHolidayItem,
 } from '@/api/schedule';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
+import GroupCourseModelPanel from '@/views/system/GroupCourseModelPanel.vue';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { scheduleEndTimeForApi, scheduleEndTimeForDisplay, scheduleDurationMinutes } from '@/utils/schedule-time';
 import type { CampusItem, ClassGroupItem, ClassroomItem, CoursePriceOptionItem, CourseProductItem, EntityId, TeacherItem } from '@/types/domain';
@@ -1050,14 +969,6 @@ const actualClassInfoForm = reactive({
   className: '',
   campusId: undefined as EntityId | undefined,
 });
-const classHolidayDialogVisible = ref(false);
-const classHolidayGradeBand = ref('');
-const loadingClassHolidays = ref(false);
-const savingClassHoliday = ref(false);
-const classHolidayRows = ref<ClassHolidayItem[]>([]);
-const editingHolidayId = ref<EntityId | null>(null);
-const classHolidayForm = reactive({ holidayName: '', startDate: '', endDate: '' });
-
 const query = reactive({
   courseType: 'AFTER_SCHOOL' as CourseTypeValue,
   courseProductId: '' as EntityId | '',
@@ -1355,119 +1266,6 @@ async function initializePage() {
 
 async function loadAll() {
   await Promise.all([loadProductsAndClasses(), loadOptions()]);
-}
-
-async function openClassHolidayDialog(gradeBand: string) {
-  if (!query.courseProductId || !gradeBand.trim()) return;
-  classHolidayGradeBand.value = gradeBand.trim();
-  classHolidayDialogVisible.value = true;
-  resetClassHolidayForm();
-  await loadClassHolidays();
-}
-
-async function loadClassHolidays() {
-  if (!query.courseProductId) {
-    classHolidayRows.value = [];
-    return;
-  }
-  loadingClassHolidays.value = true;
-  try {
-    const response = await fetchClassHolidays(query.courseProductId, classHolidayGradeBand.value);
-    classHolidayRows.value = response.data.data ?? [];
-  } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
-  } finally {
-    loadingClassHolidays.value = false;
-  }
-}
-
-function resetClassHolidayForm() {
-  editingHolidayId.value = null;
-  classHolidayForm.holidayName = '';
-  classHolidayForm.startDate = '';
-  classHolidayForm.endDate = '';
-}
-
-function editClassHoliday(holiday: ClassHolidayItem) {
-  editingHolidayId.value = holiday.id;
-  classHolidayForm.holidayName = holiday.holidayName;
-  classHolidayForm.startDate = holiday.startDate;
-  classHolidayForm.endDate = holiday.endDate;
-}
-
-async function saveClassHoliday() {
-  const holidayName = classHolidayForm.holidayName.trim();
-  if (!holidayName || !classHolidayForm.startDate || !classHolidayForm.endDate) {
-    ElMessage.warning('Enter a holiday name and select both dates.');
-    return;
-  }
-  if (classHolidayForm.endDate < classHolidayForm.startDate) {
-    ElMessage.warning('End date cannot be earlier than start date.');
-    return;
-  }
-  const payload = {
-    holidayName,
-    startDate: classHolidayForm.startDate,
-    endDate: classHolidayForm.endDate,
-  };
-  savingClassHoliday.value = true;
-  try {
-    const courseProductId = query.courseProductId;
-    if (!courseProductId) return;
-    const gradeBand = classHolidayGradeBand.value;
-    const previewResponse = await previewClassHoliday(courseProductId, gradeBand, payload, editingHolidayId.value ?? undefined);
-    const preview = previewResponse.data.data;
-    if (preview.conflicts.length) {
-      await ElMessageBox.alert(preview.conflicts.join('\n'), 'Resolve schedule conflicts first', {
-        type: 'warning',
-        confirmButtonText: 'Close',
-      });
-      return;
-    }
-    const courseName = selectedProduct.value?.productName ?? '当前课程';
-    const enrollmentImpact = preview.affectedSessionEnrollmentCount > 0
-      ? `将重新计算 ${preview.affectedSessionEnrollmentCount} 条按课次计费的报名记录有效期`
-      : '没有按课次计费的报名记录需要重算';
-    const impactText = `${courseName} · ${gradeBand}：假期期间将跳过 ${preview.affectedOccurrenceCount} 节排课并顺延补排；${enrollmentImpact}。`;
-    await ElMessageBox.confirm(impactText, '确认设置假期', {
-      type: 'warning',
-      confirmButtonText: editingHolidayId.value ? '保存更改' : '添加假期',
-      cancelButtonText: '取消',
-    });
-    if (editingHolidayId.value) {
-      await updateClassHoliday(courseProductId, gradeBand, editingHolidayId.value, payload);
-      ElMessage.success('Grade holiday updated.');
-    } else {
-      await createClassHoliday(courseProductId, gradeBand, payload);
-      ElMessage.success('Grade holiday added.');
-    }
-    resetClassHolidayForm();
-    await loadClassHolidays();
-  } catch (error: any) {
-    if (error === 'cancel' || error === 'close') return;
-    ElMessage.error(extractErrorMessage(error));
-  } finally {
-    savingClassHoliday.value = false;
-  }
-}
-
-async function removeClassHoliday(holiday: ClassHolidayItem) {
-  try {
-    await ElMessageBox.confirm(
-      `Delete “${holiday.holidayName}” (${holiday.startDate} – ${holiday.endDate})? Class lessons will be restored where no other holiday applies.`,
-      'Delete grade holiday',
-      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
-    );
-    const courseProductId = query.courseProductId;
-    if (!courseProductId) return;
-    await deleteClassHoliday(courseProductId, classHolidayGradeBand.value, holiday.id);
-    if (editingHolidayId.value === holiday.id) resetClassHolidayForm();
-    ElMessage.success('Grade holiday deleted.');
-    await loadClassHolidays();
-  } catch (error: any) {
-    if (error === 'cancel' || error === 'close') return;
-    ElMessage.error(extractErrorMessage(error));
-  }
 }
 
 async function loadCategoryConfig() {
@@ -3081,32 +2879,6 @@ function normalizeSlotAttendance(value?: string) {
   max-height: calc(100vh - 180px);
   overflow: auto;
   padding: 16px 20px;
-}
-
-.class-holiday-dialog :deep(.el-dialog__body) {
-  display: grid;
-  gap: 16px;
-  max-height: calc(100vh - 180px);
-  overflow: auto;
-}
-
-.class-holiday-form {
-  padding: 14px;
-  border: 1px solid #dbe4ee;
-  border-radius: 10px;
-  background: #f8fafc;
-}
-
-.class-holiday-form__dates {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-}
-
-.class-holiday-form__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .registration-option-dialog :deep(.el-dialog__footer) {

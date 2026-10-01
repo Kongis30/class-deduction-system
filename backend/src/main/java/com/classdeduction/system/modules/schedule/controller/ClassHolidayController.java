@@ -21,53 +21,50 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** Prices 页面按 Course + Grade 维护班课假期；同 Grade 下的实际班级共用假期。 */
+/** Prices 页面按教学项目维护假期；项目下所有实际班级共用假期。 */
 @Validated
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/v1/base/course-products/{courseProductId}/holidays")
+@RequestMapping("/v2/group-course-model/projects/{projectId}/holidays")
 @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
 public class ClassHolidayController {
 
     private final ClassHolidayService classHolidayService;
 
     @GetMapping
-    public ApiResponse<List<ClassHolidayVO>> listHolidays(@PathVariable Long courseProductId,
-                                                           @RequestParam String gradeBand) {
-        return ApiResponse.success(classHolidayService.listHolidays(courseProductId, gradeBand));
+    public ApiResponse<List<ClassHolidayVO>> listHolidays(@PathVariable Long projectId) {
+        return ApiResponse.success(classHolidayService.listHolidays(projectId));
     }
 
     @PostMapping("/preview")
     @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<ClassHolidayPreviewVO> previewHoliday(
-            @PathVariable Long courseProductId,
-            @RequestParam String gradeBand,
+            @PathVariable Long projectId,
             @RequestParam(required = false) Long holidayId,
             @Valid @RequestBody ClassHolidaySaveRequest request) {
-        return ApiResponse.success(classHolidayService.previewHoliday(courseProductId, gradeBand, holidayId, request));
+        return ApiResponse.success(classHolidayService.previewHoliday(projectId, holidayId, request));
     }
 
     @PostMapping
     @RequireRoles({"ADMIN", "STAFF"})
-    public ApiResponse<ClassHolidayVO> createHoliday(@PathVariable Long courseProductId,
-                                                      @RequestParam String gradeBand,
+    public ApiResponse<ClassHolidayVO> createHoliday(@PathVariable Long projectId,
                                                       @Valid @RequestBody ClassHolidaySaveRequest request) {
-        return ApiResponse.success("Grade holiday created.", classHolidayService.createHoliday(courseProductId, gradeBand, request));
+        return ApiResponse.success("Project holiday created.", classHolidayService.createHoliday(projectId, request));
     }
 
     @PutMapping("/{id}")
     @RequireRoles({"ADMIN", "STAFF"})
-    public ApiResponse<ClassHolidayVO> updateHoliday(@PathVariable Long courseProductId, @RequestParam String gradeBand,
+    public ApiResponse<ClassHolidayVO> updateHoliday(@PathVariable Long projectId,
                                                      @PathVariable Long id,
                                                      @Valid @RequestBody ClassHolidaySaveRequest request) {
-        return ApiResponse.success("Grade holiday updated.", classHolidayService.updateHoliday(courseProductId, gradeBand, id, request));
+        return ApiResponse.success("Project holiday updated.", classHolidayService.updateHoliday(projectId, id, request));
     }
 
     @DeleteMapping("/{id}")
     @RequireRoles({"ADMIN", "STAFF"})
-    public ApiResponse<Void> deleteHoliday(@PathVariable Long courseProductId, @RequestParam String gradeBand,
+    public ApiResponse<Void> deleteHoliday(@PathVariable Long projectId,
                                            @PathVariable Long id) {
-        classHolidayService.deleteHoliday(courseProductId, gradeBand, id);
-        return ApiResponse.success("Grade holiday deleted.", null);
+        classHolidayService.deleteHoliday(projectId, id);
+        return ApiResponse.success("Project holiday deleted.", null);
     }
 }

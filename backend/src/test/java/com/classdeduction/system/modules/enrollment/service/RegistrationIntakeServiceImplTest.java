@@ -11,10 +11,14 @@ import com.classdeduction.system.modules.auth.mapper.UserRoleMapper;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
+import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
+import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.RegistrationIntakeRequest;
@@ -35,8 +39,6 @@ import com.classdeduction.system.modules.enrollment.mapper.PaymentRecordMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.enrollment.mapper.ReceiptRecordMapper;
-import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
-import com.classdeduction.system.modules.enrollment.service.impl.ClassBillingServiceImpl;
 import com.classdeduction.system.modules.enrollment.service.impl.RegistrationIntakeServiceImpl;
 import com.classdeduction.system.modules.enrollment.vo.RegistrationIntakeResultVO;
 import com.classdeduction.system.modules.finance.service.StudentCreditService;
@@ -73,9 +75,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.inOrder;
 
 @ExtendWith(MockitoExtension.class)
 class RegistrationIntakeServiceImplTest {
+
+    private static final Long GROUP_PROJECT_ID = 6101L;
+    private static final Long GROUP_PLAN_ID = 6102L;
 
     @Mock
     private StudentMapper studentMapper;
@@ -91,6 +97,12 @@ class RegistrationIntakeServiceImplTest {
 
     @Mock
     private CourseProductMapper courseProductMapper;
+
+    @Mock
+    private GroupCourseProjectMapper groupCourseProjectMapper;
+
+    @Mock
+    private GroupRegistrationPlanMapper groupRegistrationPlanMapper;
 
     @Mock
     private TeacherMapper teacherMapper;
@@ -158,9 +170,6 @@ class RegistrationIntakeServiceImplTest {
     @Mock
     private com.classdeduction.system.modules.schedule.service.ClassHolidayService classHolidayService;
 
-    // 直接用真实实现，让测试负载与生产一致的到期日计算逻辑。
-    private ClassBillingServiceImpl classBillingService;
-
     @Captor
     private ArgumentCaptor<CoursePackageEntity> coursePackageCaptor;
 
@@ -177,13 +186,33 @@ class RegistrationIntakeServiceImplTest {
 
     @BeforeEach
     void setUp() {
-        classBillingService = new ClassBillingServiceImpl(classGroupScheduleSlotMapper, classHolidayService);
+        lenient().when(courseProductMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> courseProductMapper.selectById(invocation.getArgument(0)));
+        lenient().when(classGroupMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> classGroupMapper.selectById(invocation.getArgument(0)));
+        lenient().when(groupCourseProjectMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> groupCourseProjectMapper.selectById(invocation.getArgument(0)));
+        lenient().when(groupRegistrationPlanMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> groupRegistrationPlanMapper.selectById(invocation.getArgument(0)));
+        lenient().when(groupCourseProjectMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> groupCourseProjectMapper.selectById(invocation.getArgument(0)));
+        lenient().when(groupRegistrationPlanMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> groupRegistrationPlanMapper.selectById(invocation.getArgument(0)));
+        lenient().when(studentMapper.selectByIdForUpdate(any())).thenAnswer(invocation -> {
+            StudentEntity student = new StudentEntity();
+            student.setId(invocation.getArgument(0));
+            return student;
+        });
+        lenient().when(classHolidayService.listHolidays(any(), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(Collections.emptyList());
         registrationIntakeService = new RegistrationIntakeServiceImpl(
                 studentMapper,
                 studentNoGenerator,
                 campusMapper,
                 coursePriceOptionMapper,
                 courseProductMapper,
+                groupCourseProjectMapper,
+                groupRegistrationPlanMapper,
                 teacherMapper,
                 enrollmentOrderMapper,
                 enrollmentOrderItemMapper,
@@ -199,7 +228,6 @@ class RegistrationIntakeServiceImplTest {
                 paymentRecordMapper,
                 receiptRecordMapper,
                 paymentAllocationService,
-                classBillingService,
                 userAccountMapper,
                 roleMapper,
                 userRoleMapper,
@@ -217,6 +245,7 @@ class RegistrationIntakeServiceImplTest {
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         RegistrationIntakeResultVO result = registrationIntakeService.submitIntake(request);
 
+        verify(courseProductMapper).selectByIdForUpdate(202L);
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
@@ -691,14 +720,6 @@ class RegistrationIntakeServiceImplTest {
             ((UserAccountEntity) invocation.getArgument(0)).setId(6001L);
             return 1;
         }).when(userAccountMapper).insert(any(UserAccountEntity.class));
-        CoursePriceOptionEntity groupOption = buildOption("15:30-17:00");
-        groupOption.setId(301L);
-        groupOption.setCourseProductId(302L);
-        groupOption.setCourseType("GROUP");
-        groupOption.setRegisterClass("Group class");
-        groupOption.setPackageUnit("MONTH");
-        groupOption.setPackageQuantity(BigDecimal.ONE);
-        groupOption.setPriceAmount(new BigDecimal("200.00"));
         CourseProductEntity groupProduct = new CourseProductEntity();
         groupProduct.setId(302L);
         groupProduct.setProductName("Group class");
@@ -708,19 +729,31 @@ class RegistrationIntakeServiceImplTest {
         classGroup.setId(501L);
         classGroup.setCampusId(1L);
         classGroup.setProductId(302L);
+        classGroup.setGroupProjectId(GROUP_PROJECT_ID);
+        classGroup.setIsDeleted(0);
         classGroup.setStatus("ACTIVE");
         classGroup.setBillingType("MONTHLY");
         classGroup.setStartDate(LocalDate.of(2026, 9, 1));
         classGroup.setEndDate(LocalDate.of(2026, 12, 31));
+        ClassGroupScheduleSlotEntity groupSlot = new ClassGroupScheduleSlotEntity();
+        groupSlot.setClassGroupId(501L);
+        groupSlot.setWeekday(2);
+        groupSlot.setStartTime(java.time.LocalTime.of(15, 30));
+        groupSlot.setEndTime(java.time.LocalTime.of(17, 0));
+        stubV2ProjectPlan("MONTH", 1, "ROLLING_MONTHS", new BigDecimal("200.00"), null, null);
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(GROUP_PROJECT_ID);
+        project.setCourseProductId(302L);
+        project.setProjectName("Test group project");
+        project.setStatus("ACTIVE");
+        when(groupCourseProjectMapper.selectById(GROUP_PROJECT_ID)).thenReturn(project);
         CoursePriceOptionEntity privateOption = buildOption("15:30-17:00");
         privateOption.setPriceAmount(new BigDecimal("100.00"));
         when(coursePriceOptionMapper.selectById(201L)).thenReturn(privateOption);
-        when(coursePriceOptionMapper.selectById(301L)).thenReturn(groupOption);
         when(courseProductMapper.selectById(202L)).thenReturn(buildProduct());
         when(courseProductMapper.selectById(302L)).thenReturn(groupProduct);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
-        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(Collections.emptyList());
-        when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
+        lenient().when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(groupSlot));
         when(paymentMethodMapper.selectOne(any())).thenReturn(activePaymentMethod("CASH"));
         when(roleMapper.selectOne(any())).thenReturn(buildRole(1L, "STUDENT"));
         when(userRoleMapper.selectCount(any())).thenReturn(0L);
@@ -759,7 +792,9 @@ class RegistrationIntakeServiceImplTest {
         privateItem.setLineNo(1);
         RegistrationIntakeRequest.CourseItemPayload groupItem = new RegistrationIntakeRequest.CourseItemPayload();
         groupItem.setLineNo(2);
-        groupItem.setCoursePriceOptionId(301L);
+        groupItem.setGroupProjectId(GROUP_PROJECT_ID);
+        groupItem.setGroupRegistrationPlanId(GROUP_PLAN_ID);
+        groupItem.setRegisterClass("G3");
         groupItem.setClassId(501L);
         groupItem.setPackageUnit("MONTH");
         groupItem.setPackageQuantity(BigDecimal.ONE);
@@ -815,6 +850,8 @@ class RegistrationIntakeServiceImplTest {
         otherCampusClass.setId(501L);
         otherCampusClass.setCampusId(2L);
         otherCampusClass.setProductId(202L);
+        otherCampusClass.setGroupProjectId(GROUP_PROJECT_ID);
+        otherCampusClass.setIsDeleted(0);
         otherCampusClass.setStatus("ACTIVE");
         otherCampusClass.setBillingType("MONTHLY");
         when(classGroupMapper.selectById(501L)).thenReturn(otherCampusClass);
@@ -827,27 +864,25 @@ class RegistrationIntakeServiceImplTest {
     }
 
     @Test
-    void shouldAllowGroupClassIntakeAfterStudentScheduleConflictAcknowledgement() {
+    void shouldAllowGroupClassIntakeWhenStudentConflictIsAcknowledged() {
         stubGroupClassStudentConflict();
         RegistrationIntakeRequest request = buildGroupClassRequest();
         request.setIgnoreStudentConflicts(true);
 
         registrationIntakeService.submitIntake(request);
-
-        verify(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
+        verify(classEnrollmentMapper).insert(any(ClassEnrollmentEntity.class));
     }
 
     private void stubGroupClassStudentConflict() {
         stubStudentCreationOnly();
-        CoursePriceOptionEntity option = buildOption("15:30-17:00");
-        option.setCourseType("GROUP");
-        option.setRegisterClass("Group class");
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
+        classGroup.setGroupProjectId(GROUP_PROJECT_ID);
+        classGroup.setIsDeleted(0);
         classGroup.setStatus("ACTIVE");
         classGroup.setTeacherId(301L);
         classGroup.setClassroomId(401L);
@@ -870,14 +905,13 @@ class RegistrationIntakeServiceImplTest {
         existingOccurrence.setPlannedStartAt(LocalDateTime.of(2026, 9, 1, 16, 0));
         existingOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 9, 1, 17, 30));
 
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        stubV2ProjectPlan("MONTH", 2, "ROLLING_MONTHS", new BigDecimal("800.00"), null, null);
         when(courseProductMapper.selectById(202L)).thenReturn(product);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
         when(campusMapper.selectById(1L)).thenReturn(buildCampus());
         when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
         when(lessonOccurrenceMapper.selectList(any()))
-                .thenReturn(Collections.emptyList(), Collections.emptyList(), Collections.emptyList(),
-                        List.of(targetOccurrence), List.of(existingOccurrence));
+                .thenReturn(List.of(targetOccurrence), List.of(existingOccurrence));
         lenient().when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
         lenient().when(studentMapper.selectById(101L)).thenReturn(buildExistingStudent());
         doAnswer(invocation -> {
@@ -890,11 +924,6 @@ class RegistrationIntakeServiceImplTest {
             item.setId(2101L);
             return 1;
         }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
-        doAnswer(invocation -> {
-            LessonOccurrenceEntity occurrence = invocation.getArgument(0);
-            occurrence.setId(4001L);
-            return 1;
-        }).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
     }
 
     @Test
@@ -906,33 +935,32 @@ class RegistrationIntakeServiceImplTest {
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         assertThat(orderItemCaptor.getValue().getOneOnOneUnits()).isZero();
         verify(classEnrollmentMapper).insert(any(com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity.class));
+        verify(classGroupMapper).selectByIdForUpdate(501L);
+        verify(groupCourseProjectMapper).selectByIdForUpdate(GROUP_PROJECT_ID);
+        verify(groupRegistrationPlanMapper).selectByIdForUpdate(GROUP_PLAN_ID);
+        var lockOrder = inOrder(groupCourseProjectMapper, groupRegistrationPlanMapper, classGroupMapper);
+        lockOrder.verify(groupCourseProjectMapper).selectByIdForUpdate(GROUP_PROJECT_ID);
+        lockOrder.verify(groupRegistrationPlanMapper).selectByIdForUpdate(GROUP_PLAN_ID);
+        lockOrder.verify(classGroupMapper).selectByIdForUpdate(501L);
         verify(coursePackageMapper, never()).insert(any(CoursePackageEntity.class));
     }
 
     @Test
-    void shouldAllowGroupClassRegistrationBeforeClassScheduleIsConfigured() {
+    void shouldRejectGroupClassRegistrationBeforeClassScheduleIsConfigured() {
         stubUnscheduledGroupClassIntake();
         RegistrationIntakeRequest request = buildGroupClassRequest();
         request.setSignupDate(LocalDate.of(2026, 9, 3));
-        RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
-        item.setPackageUnit("SESSION");
-        item.setPackageQuantity(new BigDecimal("8"));
 
-        registrationIntakeService.submitIntake(request);
-
-        ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
-                ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
-        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
-        verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
-        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 3));
-        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 12, 31));
-        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(8);
-        assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("SESSION");
+        assertThatThrownBy(() -> registrationIntakeService.submitIntake(request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("GROUP_PLAN_SCHEDULE_INSUFFICIENT");
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
     }
 
     @Test
     void shouldSaveCeiledSessionPriceAndMarkExactWholeDollarPaymentAsPaid() {
-        stubUnscheduledGroupClassIntake(new BigDecimal("1399.00"), 13);
+        stubScheduledSessionGroupClassIntake(new BigDecimal("1399.00"), 13);
         when(paymentMethodMapper.selectOne(any())).thenReturn(activePaymentMethod("CASH"));
         when(paymentRecordMapper.insert(any(PaymentRecordEntity.class))).thenAnswer(invocation -> {
             PaymentRecordEntity record = invocation.getArgument(0);
@@ -1000,7 +1028,7 @@ class RegistrationIntakeServiceImplTest {
 
     @Test
     void shouldChargeAtLeastOneDollarForPositiveSessionPackage() {
-        stubUnscheduledGroupClassIntake(new BigDecimal("1.00"), 2);
+        stubScheduledSessionGroupClassIntake(new BigDecimal("1.00"), 2);
         RegistrationIntakeRequest request = buildGroupClassRequest();
         request.getItems().get(0).setSessions(1);
 
@@ -1016,20 +1044,23 @@ class RegistrationIntakeServiceImplTest {
         RegistrationIntakeRequest request = buildGroupClassRequest();
         request.setSignupDate(LocalDate.of(2026, 5, 15));
         RegistrationIntakeRequest.CourseItemPayload item = request.getItems().get(0);
+        item.setStartDate(LocalDate.of(2026, 5, 15));
         item.setPackageUnit("MONTH");
         item.setPackageQuantity(new BigDecimal("2"));
+        item.setPurchasedMonths(2);
 
         registrationIntakeService.submitIntake(request);
 
         ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
                 ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
+        verify(studentMapper).selectByIdForUpdate(101L);
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
         assertThat(orderItemCaptor.getValue().getPriceAmount()).isEqualByComparingTo("800.00");
         assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(2);
-        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 5, 15));
-        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 6, 30));
-        assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("MONTH");
+        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 5, 19));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 7, 18));
+        assertThat(enrollmentCaptor.getValue().getBillingType()).isEqualTo("MONTHLY");
     }
 
     @Test
@@ -1041,6 +1072,7 @@ class RegistrationIntakeServiceImplTest {
         item.setStartDate(LocalDate.of(2026, 3, 15));
         item.setPackageUnit("MONTH");
         item.setPackageQuantity(new BigDecimal("2"));
+        item.setPurchasedMonths(2);
 
         registrationIntakeService.submitIntake(request);
 
@@ -1048,13 +1080,13 @@ class RegistrationIntakeServiceImplTest {
                 ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
-        assertThat(orderItemCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2026, 3, 15));
-        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 3, 15));
-        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 4, 30));
+        assertThat(orderItemCaptor.getValue().getStartDate()).isEqualTo(LocalDate.of(2026, 3, 17));
+        assertThat(enrollmentCaptor.getValue().getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 3, 17));
+        assertThat(enrollmentCaptor.getValue().getExpiryDate()).isEqualTo(LocalDate.of(2026, 5, 16));
     }
 
     @Test
-    void shouldRenewExistingGroupClassEnrollmentPeriodWithoutCreatingDuplicateEnrollment() {
+    void shouldCreateNewGroupEntitlementWhenRenewing() {
         stubMonthlyGroupClassRenewal();
         StudentEntity student = buildExistingStudent();
         ClassEnrollmentEntity existingEnrollment = new ClassEnrollmentEntity();
@@ -1082,18 +1114,18 @@ class RegistrationIntakeServiceImplTest {
 
         verify(studentMapper).updateById(student);
         verify(studentMapper, never()).insert(any(StudentEntity.class));
-        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
         ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
                 ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
-        verify(classEnrollmentMapper).updateById(enrollmentCaptor.capture());
+        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
         ClassEnrollmentEntity renewedEnrollment = enrollmentCaptor.getValue();
-        assertThat(renewedEnrollment.getId()).isEqualTo(3101L);
-        assertThat(renewedEnrollment.getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(renewedEnrollment.getId()).isEqualTo(3201L);
+        assertThat(renewedEnrollment.getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 11, 3));
         assertThat(renewedEnrollment.getExpiryDate()).isEqualTo(LocalDate.of(2026, 12, 31));
-        assertThat(renewedEnrollment.getPurchasedQuantity()).isEqualTo(4);
+        assertThat(renewedEnrollment.getPurchasedQuantity()).isEqualTo(2);
         assertThat(result.courseArtifacts()).singleElement()
                 .extracting(RegistrationIntakeResultVO.CourseArtifactVO::classEnrollmentId)
-                .isEqualTo(3101L);
+                .isEqualTo(3201L);
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
     }
 
     @Test
@@ -1118,9 +1150,7 @@ class RegistrationIntakeServiceImplTest {
         afternoonOneOnOne.setPlannedStartAt(LocalDateTime.of(2026, 11, 3, 13, 30));
         afternoonOneOnOne.setPlannedEndAt(LocalDateTime.of(2026, 11, 3, 15, 0));
         when(lessonOccurrenceMapper.selectList(any()))
-                .thenReturn(List.of(morningOccurrence, afternoonOccurrence),
-                        List.of(morningOccurrence, afternoonOccurrence),
-                        List.of(afternoonOneOnOne));
+                .thenReturn(List.of(morningOccurrence, afternoonOccurrence), List.of(afternoonOneOnOne));
 
         RegistrationIntakeRequest request = buildGroupClassRequest();
         request.setRenewClassEnrollmentId(3101L);
@@ -1136,9 +1166,9 @@ class RegistrationIntakeServiceImplTest {
 
         ArgumentCaptor<ClassEnrollmentEntity> enrollmentCaptor =
                 ArgumentCaptor.forClass(ClassEnrollmentEntity.class);
-        verify(classEnrollmentMapper).updateById(enrollmentCaptor.capture());
+        verify(classEnrollmentMapper).insert(enrollmentCaptor.capture());
         assertThat(enrollmentCaptor.getValue().getAttendanceOption()).isEqualTo("MORNING");
-        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(4);
+        assertThat(enrollmentCaptor.getValue().getPurchasedQuantity()).isEqualTo(2);
     }
 
     @Test
@@ -1208,19 +1238,15 @@ class RegistrationIntakeServiceImplTest {
 
     private void stubGroupClassIntake() {
         stubStudentCreationOnly();
-        CoursePriceOptionEntity option = buildOption("15:30-17:00");
-        option.setCourseType("GROUP");
-        option.setRegisterClass("Group class");
-        option.setPackageUnit("MONTH");
-        option.setPackageQuantity(new BigDecimal("2"));
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
+        classGroup.setGroupProjectId(GROUP_PROJECT_ID);
+        classGroup.setIsDeleted(0);
         classGroup.setStatus("ACTIVE");
-        classGroup.setBillingType("MONTHLY");
         classGroup.setStartDate(LocalDate.of(2026, 9, 1));
         classGroup.setEndDate(LocalDate.of(2026, 12, 31));
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
@@ -1234,7 +1260,7 @@ class RegistrationIntakeServiceImplTest {
         targetOccurrence.setPlannedStartAt(LocalDateTime.of(2026, 9, 1, 15, 30));
         targetOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 9, 1, 17, 0));
 
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        stubV2ProjectPlan("MONTH", 2, "ROLLING_MONTHS", new BigDecimal("800.00"), null, null);
         when(courseProductMapper.selectById(202L)).thenReturn(product);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
         lenient().when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
@@ -1265,84 +1291,49 @@ class RegistrationIntakeServiceImplTest {
 
     private void stubUnscheduledGroupClassIntake(BigDecimal packagePrice, int totalSessions) {
         stubStudentCreationOnly();
-        CoursePriceOptionEntity option = buildOption("15:30-17:00");
-        option.setCourseType("GROUP");
-        option.setRegisterClass("Group class");
-        option.setPackageUnit("SESSION");
-        option.setPackageQuantity(BigDecimal.valueOf(totalSessions));
-        option.setPriceAmount(packagePrice);
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
-        product.setBillingType("SESSION");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
+        classGroup.setGroupProjectId(GROUP_PROJECT_ID);
+        classGroup.setIsDeleted(0);
         classGroup.setStatus("ACTIVE");
-        classGroup.setBillingType("SESSION");
         classGroup.setStartDate(LocalDate.of(2026, 9, 1));
         classGroup.setEndDate(LocalDate.of(2026, 12, 31));
 
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        stubV2ProjectPlan("SESSION", totalSessions, "SESSION_COUNT", packagePrice, null, null);
         when(courseProductMapper.selectById(202L)).thenReturn(product);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
-        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(Collections.emptyList());
-        when(jsonHelper.toJson(any())).thenReturn("{}");
-        lenient().when(classEnrollmentMapper.selectCount(any())).thenReturn(0L);
-        lenient().when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
-        doAnswer(invocation -> {
-            EnrollmentOrderEntity order = invocation.getArgument(0);
-            order.setId(2001L);
-            return 1;
-        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
-        doAnswer(invocation -> {
-            EnrollmentOrderItemEntity item = invocation.getArgument(0);
-            item.setId(2101L);
-            return 1;
-        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
-        doAnswer(invocation -> {
-            ClassEnrollmentEntity enrollment = invocation.getArgument(0);
-            enrollment.setId(3101L);
-            return 1;
-        }).when(classEnrollmentMapper).insert(any(ClassEnrollmentEntity.class));
+        lenient().when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(Collections.emptyList());
     }
 
     private void stubMonthlyGroupClassIntake() {
         stubGroupClassIntake();
-        CoursePriceOptionEntity option = buildOption("15:30-17:00");
-        option.setCourseType("GROUP");
-        option.setRegisterClass("Group class");
-        CourseProductEntity product = buildProduct();
-        product.setTeachingMode("GROUP");
-        product.setBillingType("MONTHLY");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
+        classGroup.setGroupProjectId(GROUP_PROJECT_ID);
+        classGroup.setIsDeleted(0);
         classGroup.setStatus("ACTIVE");
-        classGroup.setBillingType("MONTHLY");
         classGroup.setStartDate(LocalDate.of(2026, 1, 1));
         classGroup.setEndDate(LocalDate.of(2026, 7, 31));
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
-        when(courseProductMapper.selectById(202L)).thenReturn(product);
+        stubV2ProjectPlan("MONTH", 2, "ROLLING_MONTHS", new BigDecimal("800.00"), null, null);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
     }
 
     private void stubMonthlyGroupClassRenewal() {
-        CoursePriceOptionEntity option = buildOption("15:30-17:00");
-        option.setCourseType("GROUP");
-        option.setRegisterClass("Group class");
-        option.setPackageUnit("MONTH");
-        option.setPackageQuantity(new BigDecimal("2"));
         CourseProductEntity product = buildProduct();
         product.setTeachingMode("GROUP");
-        product.setBillingType("MONTHLY");
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setId(501L);
         classGroup.setCampusId(1L);
         classGroup.setProductId(202L);
+        classGroup.setGroupProjectId(GROUP_PROJECT_ID);
+        classGroup.setIsDeleted(0);
         classGroup.setStatus("ACTIVE");
-        classGroup.setBillingType("MONTHLY");
         classGroup.setStartDate(LocalDate.of(2026, 1, 1));
         classGroup.setEndDate(LocalDate.of(2026, 12, 31));
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
@@ -1356,13 +1347,12 @@ class RegistrationIntakeServiceImplTest {
         targetOccurrence.setPlannedStartAt(LocalDateTime.of(2026, 11, 3, 15, 30));
         targetOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 11, 3, 17, 0));
 
-        when(coursePriceOptionMapper.selectById(201L)).thenReturn(option);
+        stubV2ProjectPlan("MONTH", 2, "ROLLING_MONTHS", new BigDecimal("800.00"), null, null);
         when(courseProductMapper.selectById(202L)).thenReturn(product);
         when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
         when(campusMapper.selectById(1L)).thenReturn(buildCampus());
         when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
         when(jsonHelper.toJson(any())).thenReturn("{}");
-        when(classEnrollmentMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(lessonOccurrenceMapper.selectList(any()))
                 .thenReturn(Collections.emptyList(), List.of(targetOccurrence), Collections.emptyList(), Collections.emptyList());
         doAnswer(invocation -> {
@@ -1375,6 +1365,57 @@ class RegistrationIntakeServiceImplTest {
             item.setId(2101L);
             return 1;
         }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
+        doAnswer(invocation -> {
+            ClassEnrollmentEntity enrollment = invocation.getArgument(0);
+            enrollment.setId(3201L);
+            return 1;
+        }).when(classEnrollmentMapper).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    private void stubScheduledSessionGroupClassIntake(BigDecimal packagePrice, int totalSessions) {
+        stubUnscheduledGroupClassIntake(packagePrice, totalSessions);
+        ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
+        slot.setClassGroupId(501L);
+        slot.setWeekday(2);
+        slot.setStartTime(java.time.LocalTime.of(15, 30));
+        slot.setEndTime(java.time.LocalTime.of(17, 0));
+        when(classGroupScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        doAnswer(invocation -> {
+            ((EnrollmentOrderEntity) invocation.getArgument(0)).setId(2001L);
+            return 1;
+        }).when(enrollmentOrderMapper).insert(any(EnrollmentOrderEntity.class));
+        doAnswer(invocation -> {
+            ((EnrollmentOrderItemEntity) invocation.getArgument(0)).setId(2101L);
+            return 1;
+        }).when(enrollmentOrderItemMapper).insert(any(EnrollmentOrderItemEntity.class));
+        doAnswer(invocation -> {
+            ((ClassEnrollmentEntity) invocation.getArgument(0)).setId(3101L);
+            return 1;
+        }).when(classEnrollmentMapper).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    private void stubV2ProjectPlan(String packageUnit, int quantity, String coverageType,
+                                   BigDecimal price, LocalDate coverageStart, LocalDate coverageEnd) {
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(GROUP_PROJECT_ID);
+        project.setCourseProductId(202L);
+        project.setProjectCode("TEST_PROJECT");
+        project.setProjectName("Test group project");
+        project.setStatus("ACTIVE");
+        GroupRegistrationPlanEntity plan = new GroupRegistrationPlanEntity();
+        plan.setId(GROUP_PLAN_ID);
+        plan.setProjectId(GROUP_PROJECT_ID);
+        plan.setPlanCode("TEST_PLAN");
+        plan.setPlanName("Test registration plan");
+        plan.setCoverageType(coverageType);
+        plan.setCoverageStartDate(coverageStart);
+        plan.setCoverageEndDate(coverageEnd);
+        plan.setPackageUnit(packageUnit);
+        plan.setPackageQuantity(BigDecimal.valueOf(quantity));
+        plan.setFullDayPrice(price);
+        plan.setStatus("ACTIVE");
+        when(groupCourseProjectMapper.selectById(GROUP_PROJECT_ID)).thenReturn(project);
+        when(groupRegistrationPlanMapper.selectById(GROUP_PLAN_ID)).thenReturn(plan);
     }
 
     private ClassEnrollmentEntity buildRenewableClassEnrollment() {
@@ -1450,7 +1491,16 @@ class RegistrationIntakeServiceImplTest {
     private RegistrationIntakeRequest buildGroupClassRequest() {
         RegistrationIntakeRequest request = buildOneOnOneRequest();
         RegistrationIntakeRequest.CourseItemPayload item = buildOneOnOneItem();
+        item.setCoursePriceOptionId(null);
+        item.setCourseType("GROUP");
+        item.setCourseProductId(202L);
+        item.setGroupProjectId(GROUP_PROJECT_ID);
+        item.setGroupRegistrationPlanId(GROUP_PLAN_ID);
         item.setClassId(501L);
+        item.setRegisterClass("G3");
+        item.setStartDate(LocalDate.of(2026, 9, 1));
+        item.setPurchasedMonths(2);
+        item.setAttendanceOption("FULL_DAY");
         item.setOneOnOneUnits(null);
         request.setItems(List.of(item));
         return request;

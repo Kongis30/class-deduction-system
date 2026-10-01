@@ -1,0 +1,12 @@
+spring:
+  datasource:
+    url: ${DB_V2_URL}
+    username: ${DB_V2_USERNAME}
+    password: ${DB_V2_PASSWORD}
+
+server:
+  port: 8085
+
+app:
+  database:
+    required-name: class_deduction_system_v2

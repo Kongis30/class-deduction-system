@@ -300,7 +300,7 @@
       </section>
 
       <el-alert
-        v-if="!isReadOnly && priceOptionsWithProduct.length === 0"
+        v-if="!isReadOnly && productOptionsForLine(courseLines[0]).length === 0"
         type="warning"
         :closable="false"
         show-icon
@@ -401,7 +401,120 @@
                   <p v-if="isOneOnOneLine(line)">Arrange lesson times on the weekly calendar after this registration is saved.</p>
                 </div>
                 <div v-else>
-                  <div class="course-detail-cell screen-only">
+                    <div v-if="isV2GroupLine(line)" class="course-detail-cell screen-only group-v2-registration">
+                      <div class="detail-row detail-row--group">
+                        <label class="course-control">
+                          <span>Teaching project</span>
+                          <el-select
+                            v-model="line.groupProjectId"
+                            class="table-select"
+                            placeholder="Select project"
+                            :disabled="!receiptEditingEnabled || !line.courseProductId || isGroupCourseSetupLoading(line.courseProductId)"
+                            :loading="isGroupCourseSetupLoading(line.courseProductId)"
+                            @change="() => handleGroupProjectChange(line)"
+                          >
+                            <el-option
+                              v-for="project in groupProjectsForLine(line)"
+                              :key="project.id"
+                              :label="project.projectName"
+                              :value="project.id"
+                            />
+                          </el-select>
+                        </label>
+                        <label class="course-control">
+                          <span>Registration plan</span>
+                          <el-select
+                            v-model="line.groupRegistrationPlanId"
+                            class="table-select"
+                            placeholder="Select season or package"
+                            :disabled="!receiptEditingEnabled || !line.groupProjectId"
+                            @change="() => handleGroupPlanChange(line)"
+                          >
+                            <el-option
+                              v-for="plan in groupPlansForLine(line)"
+                              :key="plan.id"
+                              :label="`${plan.planName} · ${formatMoney(groupPlanDisplayPrice(plan, line.attendanceOption))}`"
+                              :value="plan.id"
+                            />
+                          </el-select>
+                        </label>
+        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'SESSION'" class="course-control">
+                          <span>Sessions</span>
+                          <el-select v-model="line.groupSessionCount" class="table-select" :disabled="!receiptEditingEnabled" @change="() => handleGroupSessionCountChange(line)">
+                            <el-option v-for="quantity in availableGroupPlanQuantities(line)" :key="quantity" :label="`${quantity} sessions`" :value="quantity" />
+                          </el-select>
+                        </label>
+                        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'MONTH'" class="course-control">
+                          <span>Months</span>
+                          <el-input-number
+                            v-model="line.groupPurchasedMonths"
+                            class="table-price"
+                            :min="1"
+                            :max="groupPlanQuantity(line)"
+                            :step="1"
+                            :precision="0"
+                            :disabled="!receiptEditingEnabled"
+                            @change="() => handleGroupMonthCountChange(line)"
+                          />
+                        </label>
+                        <label v-if="line.groupRegistrationPlanId" class="course-control">
+                          <span>First lesson date</span>
+                          <el-select
+                            v-model="line.startDate"
+                            class="table-select"
+                            :placeholder="groupPlanStartPlaceholder(line)"
+                            :disabled="!receiptEditingEnabled || !line.classId || line.groupScheduleDatesLoading"
+                            :loading="line.groupScheduleDatesLoading"
+                            @change="() => handleGroupStartDateChange(line)"
+                          >
+                            <el-option v-for="date in availableGroupStartDates(line)" :key="date" :label="formatDateValue(date)" :value="date" />
+                          </el-select>
+                        </label>
+                        <label v-if="line.groupRegistrationPlanId && attendanceOptionsForLine(line).length > 0" class="course-control">
+                          <span>Attendance</span>
+                          <el-select v-model="line.attendanceOption" class="table-select" @change="() => handleAttendanceChange(line)">
+                            <el-option v-for="option in attendanceOptionsForLine(line)" :key="option.value" :label="option.label" :value="option.value" />
+                          </el-select>
+                        </label>
+                      </div>
+                      <div class="teacher-class-line">
+                        <label class="course-control course-control--wide">
+                          <span>Actual class</span>
+                          <el-select
+                            v-model="line.classId"
+                            class="table-select option"
+                            :placeholder="v2ClassSelectPlaceholder(line)"
+                            :disabled="!receiptEditingEnabled || !line.groupProjectId || !selectedCampus"
+                            filterable
+                            @change="() => handleGroupActualClassChange(line)"
+                          >
+                            <template #prefix v-if="selectedCampus">
+                              <el-button
+                                class="registration-class-campus-toggle no-print"
+                                size="small"
+                                text
+                                type="primary"
+                                @click.stop="showAllCampusClasses = !showAllCampusClasses"
+                              >{{ showAllCampusClasses ? 'Selected campus' : 'All campuses' }}</el-button>
+                            </template>
+                            <el-option-group v-for="group in groupActualClassGroupsForLine(line)" :key="group.key" :label="group.campusName">
+                              <el-option v-for="actualClass in group.options" :key="actualClass.id" :label="actualClass.actualClass" :value="actualClass.id">
+                                <span class="registration-class-option">
+                                  <el-tag size="small" effect="plain" :type="campusOptionTagType(actualClass.campusName)">{{ actualClass.campusName || '—' }}</el-tag>
+                                  <span class="registration-class-option__name">{{ actualClass.actualClass }}</span>
+                                </span>
+                              </el-option>
+                            </el-option-group>
+                          </el-select>
+                          <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
+                        </label>
+                      </div>
+                      <span v-if="!line.groupProjectId" class="course-detail-hint">Choose a teaching project for this product.</span>
+                      <span v-else-if="!line.groupRegistrationPlanId" class="course-detail-hint">Choose the season or package the student is registering for.</span>
+                      <span v-else-if="!line.classId" class="course-detail-hint">Choose an actual class at the selected campus.</span>
+                      <span v-else-if="line.groupScheduleDates && line.groupScheduleDates.length === 0" class="course-detail-hint">No scheduled lesson dates are available for this class.</span>
+                    </div>
+                  <div v-else class="course-detail-cell screen-only">
                     <div :class="['detail-row', { 'detail-row--group': !isOneOnOneLine(line) }]">
                     <label class="course-control">
                       <span>Program</span>
@@ -1113,6 +1226,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { fetchActiveCoursePriceOptions, fetchAllStudents, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
 import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
 import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult, type RegistrationParticipantBillingPayload } from '@/api/enrollment';
+import { fetchGroupClassScheduledDates, fetchGroupCourseProductSetup } from '@/api/group-course-model';
+import type { GroupCourseProductSetup, GroupCourseProject, GroupRegistrationPlan } from '@/api/group-course-model';
 import { fetchStudentCreditBalance } from '@/api/student-credit';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
@@ -1147,6 +1262,12 @@ interface RegistrationCourseLine {
   coursePriceOptionId: EntityId | '';
   courseProductId?: EntityId;
   courseProductName?: string;
+  groupProjectId?: EntityId;
+  groupRegistrationPlanId?: EntityId;
+  /** 历史班课缺少 V2 关联时只展示旧快照；新班课报名始终使用项目模型。 */
+  groupCourseModelV2?: boolean;
+  groupScheduleDates?: string[];
+  groupScheduleDatesLoading?: boolean;
   classId?: EntityId;
   className?: string;
   teacherId?: EntityId;
@@ -1320,6 +1441,9 @@ const studentPickerLoading = ref(false);
 const studentPickerQuery = ref('');
 const priceOptions = ref<CoursePriceOptionItem[]>([]);
 const courseProducts = ref<CourseProductItem[]>([]);
+const groupCourseSetups = ref<Record<string, GroupCourseProductSetup>>({});
+const groupCourseSetupLoading = ref<Record<string, boolean>>({});
+const groupClassDateCache = ref<Record<string, string[]>>({});
 const productGradeOrderMaps = ref<Map<string, Map<string, number>>>(new Map());
 const classGroups = ref<ClassGroupItem[]>([]);
 const showAllCampusClasses = ref(false);
@@ -1407,14 +1531,14 @@ const priceOptionsWithProduct = computed(() => {
   const activeProductIds = new Set(courseProducts.value.map((product) => String(product.id)));
   return priceOptions.value.filter((option) => option.courseProductId && activeProductIds.has(String(option.courseProductId)));
 });
-const courseSetupActionLabel = computed(() => courseProducts.value.length === 0 ? 'Create course' : 'Set course prices');
+const courseSetupActionLabel = computed(() => courseProducts.value.length === 0 ? 'Create course' : 'Set course setup');
 const courseSetupHint = computed(() => courseProducts.value.length === 0
   ? (isAdmin.value
     ? 'Create the first course and its price in Back office before using this form.'
     : 'No courses are ready for registration. Ask an administrator to complete Back office setup.')
   : (isAdmin.value
-    ? 'Add an active grade, duration, and price in Back office before registration.'
-    : 'No active price is available for this course. Ask an administrator to update Back office setup.'));
+    ? 'Set up a teaching project, registration plan, actual class, and price in Back office before registration.'
+    : 'No active registration setup is available. Ask an administrator to complete Prices setup.'));
 
 const hasOneOnOneLine = computed(() => courseLines.value.some(isOneOnOneLine));
 const hasSelectedCourse = computed(() => courseLines.value.some((line) => Boolean(line.courseProductId || line.coursePriceOptionId)));
@@ -1918,9 +2042,11 @@ watch(() => form.campusKey, () => {
     form.dropoffFeeAmount = selectedCampus.value?.defaultDropoffFeeAmount ?? 0;
   }
   courseLines.value.forEach((line) => {
-    if (!isOneOnOneLine(line) && line.classId
-        && !classOptionsForLine(line).some((classGroup) => String(classGroup.id) === String(line.classId))) {
-      line.classId = undefined;
+    if (!isOneOnOneLine(line) && line.classId) {
+      const eligibleIds = isV2GroupLine(line)
+        ? groupActualClassGroupsForLine(line).flatMap((group) => group.options.map((item) => String(item.id)))
+        : classOptionsForLine(line).map((item) => String(item.id));
+      if (!eligibleIds.includes(String(line.classId))) line.classId = undefined;
     }
   });
 });
@@ -2107,6 +2233,16 @@ async function startCorrection() {
     if (historicalOrder.value) {
       // 基础选项加载完成后重建一次编辑模型，把已停用课程与价格映射到可编辑表单。
       applyHistoricalOrder(historicalOrder.value);
+      await Promise.all(courseLines.value
+        .filter((line) => line.groupCourseModelV2 && line.courseProductId)
+        .map((line) => loadGroupCourseSetup(line.courseProductId!, true, true)));
+      courseLines.value.forEach((line) => {
+        const actualClass = selectedGroupActualClass(line);
+        if (actualClass) line.className = actualClass.actualClass;
+      });
+      await Promise.all(courseLines.value
+        .filter((line) => line.groupCourseModelV2 && line.classId && line.groupRegistrationPlanId)
+        .map((line) => loadGroupClassDates(line)));
       initializeCorrectionPayments();
     }
     editingCorrection.value = true;
@@ -2767,6 +2903,9 @@ function toHistoricalCourseLine(
     coursePriceOptionId: (getString(fallback, 'coursePriceOptionId') || getString(item, 'coursePriceOptionId')) as EntityId | '',
     courseProductId: getString(fallback, 'courseProductId') || getString(item, 'courseProductId') || undefined,
     courseProductName: getString(item, 'courseProductName') || undefined,
+    groupProjectId: (getString(fallback, 'groupProjectId') || getString(item, 'groupProjectId') || undefined) as EntityId | undefined,
+    groupRegistrationPlanId: (getString(fallback, 'groupRegistrationPlanId') || getString(item, 'groupRegistrationPlanId') || undefined) as EntityId | undefined,
+    groupCourseModelV2: Boolean(getString(fallback, 'groupProjectId') || getString(item, 'groupProjectId')),
     classId: getString(fallback, 'classId') || getString(item, 'classId') || undefined,
     className: getString(item, 'className') || undefined,
     teacherId: getString(fallback, 'teacherId') || getString(item, 'teacherId') || undefined,
@@ -2887,6 +3026,9 @@ function createCourseLine(): RegistrationCourseLine {
     gradeBand: '',
     periodKey: '',
     coursePriceOptionId: '',
+    groupProjectId: undefined,
+    groupRegistrationPlanId: undefined,
+    groupCourseModelV2: false,
     registerClass: '',
     detail: '',
     periodLabel: '',
@@ -3672,7 +3814,7 @@ function syncCourseTransportFee(line: RegistrationCourseLine, type: 'pickup' | '
   }
 }
 
-function handleCourseProductChange(line: RegistrationCourseLine) {
+async function handleCourseProductChange(line: RegistrationCourseLine) {
   const product = courseProducts.value.find((item) => String(item.id) === String(line.courseProductId));
   const firstOption = priceOptionsForLineProduct(line)[0];
   line.gradeBand = '';
@@ -3680,6 +3822,12 @@ function handleCourseProductChange(line: RegistrationCourseLine) {
   clearSelectedOption(line);
   line.courseType = product?.teachingMode === 'ONE_ON_ONE' ? 'ONE_ON_ONE' : (firstOption?.courseType || 'GROUP');
   line.registerClass = product?.registerClass || firstOption?.registerClass || '';
+  line.courseProductName = product?.productName;
+  line.groupCourseModelV2 = product?.teachingMode === 'GROUP';
+  if (line.groupCourseModelV2 && product) {
+    line.courseType = 'GROUP';
+    await loadGroupCourseSetup(product.id);
+  }
   if ((isReadOnly.value || isRenewalMode.value)
       && !line.pickupAddress && !line.dropoffAddress && !line.pickupRequired && !line.dropoffRequired) {
     line.pickupRequired = form.student.pickupRequired;
@@ -3751,6 +3899,232 @@ function handleOptionChange(line: RegistrationCourseLine) {
   }
 }
 
+/** 新班课报名从项目配置加载方案与实际班级，不再用旧的 grade-price 行推断含义。 */
+async function loadGroupCourseSetup(productId: EntityId, includeInactive = false, force = false) {
+  const key = String(productId);
+  if ((!force && groupCourseSetups.value[key]) || groupCourseSetupLoading.value[key]) return;
+  groupCourseSetupLoading.value[key] = true;
+  try {
+    const response = await fetchGroupCourseProductSetup(productId, !includeInactive);
+    groupCourseSetups.value = { ...groupCourseSetups.value, [key]: response.data.data };
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    groupCourseSetupLoading.value[key] = false;
+  }
+}
+
+function groupSetupForLine(line: RegistrationCourseLine) {
+  return line.courseProductId ? groupCourseSetups.value[String(line.courseProductId)] : undefined;
+}
+
+function isGroupCourseSetupLoading(productId?: EntityId) {
+  return productId ? Boolean(groupCourseSetupLoading.value[String(productId)]) : false;
+}
+
+function groupProjectsForLine(line: RegistrationCourseLine) {
+  const projects = groupSetupForLine(line)?.projects ?? [];
+  return editingCorrection.value ? projects : projects.filter((project) => project.status === 'ACTIVE');
+}
+
+function selectedGroupProject(line: RegistrationCourseLine): GroupCourseProject | undefined {
+  return groupProjectsForLine(line).find((project) => String(project.id) === String(line.groupProjectId));
+}
+
+function groupPlansForLine(line: RegistrationCourseLine) {
+  const plans = selectedGroupProject(line)?.plans ?? [];
+  return editingCorrection.value ? plans : plans.filter((plan) => plan.status === 'ACTIVE');
+}
+
+function selectedGroupPlan(line: RegistrationCourseLine): GroupRegistrationPlan | undefined {
+  return groupPlansForLine(line).find((plan) => String(plan.id) === String(line.groupRegistrationPlanId));
+}
+
+function handleGroupProjectChange(line: RegistrationCourseLine) {
+  const project = selectedGroupProject(line);
+  line.groupCourseModelV2 = true;
+  line.groupRegistrationPlanId = undefined;
+  line.classId = undefined;
+  line.className = undefined;
+  line.groupScheduleDates = undefined;
+  line.gradeBand = project?.projectName ?? '';
+  line.periodLabel = '';
+  line.detail = '';
+  line.startDate = undefined;
+  line.packageUnit = undefined;
+  line.packageQuantity = undefined;
+  line.packageTotalPrice = undefined;
+  line.groupSessionCount = undefined;
+  line.groupPurchasedMonths = undefined;
+  line.priceAmount = 0;
+  line.originalPriceAmount = undefined;
+}
+
+async function handleGroupPlanChange(line: RegistrationCourseLine) {
+  const plan = selectedGroupPlan(line);
+  if (!plan) {
+    line.groupRegistrationPlanId = undefined;
+    line.packageUnit = undefined;
+    line.packageQuantity = undefined;
+    line.priceAmount = 0;
+    line.originalPriceAmount = undefined;
+    return;
+  }
+  line.groupCourseModelV2 = true;
+  line.gradeBand = selectedGroupProject(line)?.projectName ?? line.gradeBand;
+  line.periodLabel = plan.planName;
+  line.detail = `${line.gradeBand} · ${plan.planName}`;
+  line.packageUnit = plan.packageUnit;
+  line.packageQuantity = plan.packageQuantity;
+  line.packageTotalPrice = groupPlanDisplayPrice(plan, line.attendanceOption);
+  line.groupSessionCount = plan.packageUnit === 'SESSION' ? plan.packageQuantity : undefined;
+  line.groupPurchasedMonths = plan.packageUnit === 'MONTH' ? plan.packageQuantity : undefined;
+  line.attendanceOption = plan.fullDayPrice != null ? 'FULL_DAY' : plan.halfDayPrice != null ? 'MORNING' : 'NONE';
+  const signupDate = form.signupDate || today;
+  const classStart = selectedGroupActualClass(line)?.startDate;
+  if (plan.coverageType === 'FIXED_DATES') {
+    const termStart = plan.coverageStartDate || classStart || signupDate;
+    line.startDate = termStart < signupDate ? signupDate : termStart;
+  } else {
+    line.startDate = classStart && classStart > signupDate ? classStart : signupDate;
+  }
+  if (line.classId) await loadGroupClassDates(line);
+  recalculateLinePrice(line);
+}
+
+function groupPlanQuantity(line: RegistrationCourseLine) {
+  return Math.max(0, Math.floor(numeric(selectedGroupPlan(line)?.packageQuantity)));
+}
+
+function availableGroupPlanQuantities(line: RegistrationCourseLine) {
+  const total = groupPlanQuantity(line);
+  const plan = selectedGroupPlan(line);
+  const scheduledCount = availableGroupStartDates(line).filter((date) => !line.startDate || date >= line.startDate).length;
+  const maxAvailable = plan?.packageUnit === 'SESSION' && line.groupScheduleDates
+    ? Math.min(total, scheduledCount)
+    : total;
+  return Array.from({ length: maxAvailable }, (_, index) => maxAvailable - index);
+}
+
+function availableGroupStartDates(line: RegistrationCourseLine) {
+  const plan = selectedGroupPlan(line);
+  let dates = line.groupScheduleDates ?? [];
+  if (plan?.coverageType === 'FIXED_DATES') {
+    dates = dates.filter((date) => (!plan.coverageStartDate || date >= plan.coverageStartDate)
+      && (!plan.coverageEndDate || date <= plan.coverageEndDate));
+  }
+  if (!isReadOnly.value || !editingCorrection.value) {
+    const minimumDate = form.signupDate || today;
+    dates = dates.filter((date) => date >= minimumDate);
+  }
+  return dates;
+}
+
+function groupPlanDisplayPrice(plan: GroupRegistrationPlan, attendance?: string) {
+  if (attendance === 'MORNING' || attendance === 'AFTERNOON' || attendance === 'CUSTOM') {
+    return numeric(plan.halfDayPrice ?? plan.fullDayPrice);
+  }
+  return numeric(plan.fullDayPrice);
+}
+
+function selectedGroupActualClass(line: RegistrationCourseLine) {
+  return selectedGroupProject(line)?.classes.find((actualClass) => String(actualClass.id) === String(line.classId));
+}
+
+function groupActualClassGroupsForLine(line: RegistrationCourseLine) {
+  const project = selectedGroupProject(line);
+  if (!project) return [];
+  const campus = selectedCampus.value;
+  const classes = project.classes.filter((actualClass) => {
+    if (!editingCorrection.value && actualClass.status !== 'ACTIVE') return false;
+    if (showAllCampusClasses.value) return true;
+    if (!campus) return false;
+    // A campus-null legacy class represents a shared schedule; it remains selectable from either campus.
+    if (actualClass.campusId == null && !actualClass.campusName) return true;
+    if (campus.campusId != null) return String(actualClass.campusId ?? '') === String(campus.campusId);
+    return (actualClass.campusName || '').toLocaleLowerCase() === campus.campusName.toLocaleLowerCase();
+  });
+  const grouped = new Map<string, { key: string; campusName: string; options: typeof classes }>();
+  for (const actualClass of classes) {
+    const campusName = actualClass.campusName?.trim() || 'Unassigned';
+    const key = campusName.toLocaleLowerCase();
+    const group = grouped.get(key) ?? { key, campusName, options: [] as typeof classes };
+    group.options.push(actualClass);
+    grouped.set(key, group);
+  }
+  return [...grouped.values()].map((group) => ({
+    ...group,
+    options: group.options.sort((left, right) => left.actualClass.localeCompare(right.actualClass, undefined, { numeric: true, sensitivity: 'base' })),
+  }));
+}
+
+function v2ClassSelectPlaceholder(line: RegistrationCourseLine) {
+  if (!selectedCampus.value) return 'Choose campus first';
+  if (!line.groupProjectId) return 'Choose project first';
+  return groupActualClassGroupsForLine(line).some((group) => group.options.length > 0)
+    ? 'Select actual class'
+    : 'No class for this campus';
+}
+
+async function handleGroupActualClassChange(line: RegistrationCourseLine) {
+  const actualClass = selectedGroupActualClass(line);
+  line.className = actualClass?.actualClass;
+  if (actualClass) form.student.studentClass = actualClass.actualClass;
+  const plan = selectedGroupPlan(line);
+  if (actualClass?.startDate && (!line.startDate || line.startDate < actualClass.startDate)) {
+    line.startDate = actualClass.startDate;
+  }
+  if (plan?.coverageType === 'FIXED_DATES' && plan.coverageStartDate
+      && (!line.startDate || line.startDate < plan.coverageStartDate)) {
+    line.startDate = plan.coverageStartDate;
+  }
+  await loadGroupClassDates(line);
+}
+
+async function loadGroupClassDates(line: RegistrationCourseLine) {
+  const actualClass = selectedGroupActualClass(line);
+  const plan = selectedGroupPlan(line);
+  if (!actualClass || !plan) {
+    line.groupScheduleDates = [];
+    return;
+  }
+  const key = String(actualClass.id);
+  if (groupClassDateCache.value[key]) {
+    line.groupScheduleDates = groupClassDateCache.value[key];
+  } else {
+    line.groupScheduleDatesLoading = true;
+    try {
+      const response = await fetchGroupClassScheduledDates(actualClass.id);
+      const dates = response.data.data ?? [];
+      groupClassDateCache.value = { ...groupClassDateCache.value, [key]: dates };
+      line.groupScheduleDates = dates;
+    } catch (error) {
+      line.groupScheduleDates = [];
+      ElMessage.error(extractErrorMessage(error));
+    } finally {
+      line.groupScheduleDatesLoading = false;
+    }
+  }
+  const choices = availableGroupStartDates(line);
+  if (!choices.includes(line.startDate ?? '')) {
+    line.startDate = choices[0];
+  }
+  if (plan.packageUnit === 'SESSION') {
+    const maximum = availableGroupPlanQuantities(line)[0] ?? 0;
+    if (numeric(line.groupSessionCount) > maximum) line.groupSessionCount = maximum || undefined;
+  }
+  recalculateLinePrice(line);
+}
+
+function handleGroupStartDateChange(line: RegistrationCourseLine) {
+  const plan = selectedGroupPlan(line);
+  if (plan?.packageUnit === 'SESSION') {
+    const maximum = availableGroupPlanQuantities(line)[0] ?? 0;
+    if (numeric(line.groupSessionCount) > maximum) line.groupSessionCount = maximum || undefined;
+  }
+  handleRegistrationDurationChange(line);
+}
+
 function handleClassChange(line: RegistrationCourseLine) {
   const classGroup = selectedClassGroup(line);
   if (!classGroup) {
@@ -3770,16 +4144,15 @@ function handleRegistrationDurationChange(line: RegistrationCourseLine) {
     const totalHours = totalOneOnOneHours(line);
     line.oneOnOneUnits = totalHours > 0 ? Math.round(totalHours * 2) : undefined;
     line.durationLabel = totalHours > 0 ? `${formatHours(totalHours)} hours` : '';
+  } else if (isV2GroupLine(line)) {
+    line.durationLabel = printRegistrationDurationLabel(line);
+    recalculateLinePrice(line);
+    return;
   } else {
     syncGroupDurationFromSelectedPackage(line);
     line.durationLabel = printRegistrationDurationLabel(line);
   }
   recalculateLinePrice(line);
-}
-
-/** 开课日期只改变课程时段说明；编辑历史收据时不得因改日期重算已成交价格。 */
-function handleGroupStartDateChange(line: RegistrationCourseLine) {
-  line.durationLabel = printRegistrationDurationLabel(line);
 }
 
 function handleGroupSessionCountChange(line: RegistrationCourseLine) {
@@ -3794,11 +4167,33 @@ function handleGroupMonthCountChange(line: RegistrationCourseLine) {
 }
 
 function selectedClassGroup(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) {
+    const actualClass = selectedGroupActualClass(line);
+    if (!actualClass) return undefined;
+    return {
+      id: actualClass.id,
+      className: actualClass.actualClass,
+      actualClass: actualClass.actualClass,
+      campusId: actualClass.campusId,
+      campusName: actualClass.campusName,
+      startDate: actualClass.startDate,
+      endDate: actualClass.endDate,
+      groupProjectId: line.groupProjectId,
+      productId: line.courseProductId,
+      activeStudentCount: 0,
+    } as ClassGroupItem;
+  }
   return classGroups.value.find((item) => String(item.id) === String(line.classId));
 }
 
 function classStartDatePlaceholder(line: RegistrationCourseLine) {
   return defaultGroupEnrollmentStartDate(line);
+}
+
+function groupPlanStartPlaceholder(line: RegistrationCourseLine) {
+  const plan = selectedGroupPlan(line);
+  if (plan?.coverageType === 'FIXED_DATES') return plan.coverageStartDate || 'Choose first lesson date';
+  return selectedGroupActualClass(line)?.startDate || today;
 }
 
 function defaultGroupEnrollmentStartDate(line: RegistrationCourseLine) {
@@ -3820,7 +4215,7 @@ function configuredGroupPackageMonths(line: RegistrationCourseLine) {
 }
 
 function syncGroupDurationFromSelectedPackage(line: RegistrationCourseLine) {
-  if (isOneOnOneLine(line) || line.packageUnit !== 'MONTH') {
+  if (isOneOnOneLine(line) || isV2GroupLine(line) || line.packageUnit !== 'MONTH') {
     return;
   }
   const option = findOption(line.coursePriceOptionId);
@@ -3836,6 +4231,22 @@ function syncGroupDurationFromSelectedPackage(line: RegistrationCourseLine) {
 }
 
 function recalculateLinePrice(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) {
+    const plan = selectedGroupPlan(line);
+    if (!plan) return;
+    const configuredQuantity = Math.max(1, Math.floor(numeric(plan.packageQuantity)));
+    const selectedQuantity = plan.packageUnit === 'MONTH'
+      ? Math.max(1, Math.floor(numeric(line.groupPurchasedMonths) || configuredQuantity))
+      : Math.max(1, Math.floor(numeric(line.groupSessionCount) || configuredQuantity));
+    const fullPrice = groupPlanDisplayPrice(plan, line.attendanceOption);
+    const price = ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
+    line.packageTotalPrice = fullPrice;
+    line.packageQuantity = configuredQuantity;
+    line.originalPriceAmount = price;
+    if (!line.manualPriceOverride) line.priceAmount = price;
+    line.durationLabel = printRegistrationDurationLabel(line);
+    return;
+  }
   const option = findOption(line.coursePriceOptionId);
   if (!option) return;
   const configuredHours = numeric(option.oneOnOneHours);
@@ -3870,6 +4281,11 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
 
 function clearSelectedOption(line: RegistrationCourseLine) {
   line.coursePriceOptionId = '';
+  line.groupProjectId = undefined;
+  line.groupRegistrationPlanId = undefined;
+  line.groupCourseModelV2 = false;
+  line.groupScheduleDates = undefined;
+  line.groupScheduleDatesLoading = false;
   line.classId = undefined;
   line.teacherId = undefined;
   line.registerClass = '';
@@ -3944,7 +4360,17 @@ function productOptionsForLine(line: RegistrationCourseLine) {
     priceOptionsWithProduct.value
       .map((option) => String(option.courseProductId))
   );
-  return sortCourseProducts(courseProducts.value.filter((product) => linkedProductIds.has(String(product.id))));
+  return sortCourseProducts(courseProducts.value.filter((product) =>
+    product.teachingMode === 'GROUP' || linkedProductIds.has(String(product.id))));
+}
+
+function isV2GroupLine(line: RegistrationCourseLine) {
+  return Boolean(line.groupCourseModelV2
+    || (line.groupProjectId && line.groupRegistrationPlanId));
+}
+
+function isGroupProductLine(line: RegistrationCourseLine) {
+  return courseProducts.value.find((product) => String(product.id) === String(line.courseProductId))?.teachingMode === 'GROUP';
 }
 
 function productOptionGroupsForLine(line: RegistrationCourseLine) {
@@ -3960,6 +4386,7 @@ function productOptionGroupsForLine(line: RegistrationCourseLine) {
 }
 
 function classOptionsForLine(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) return [];
   if (!line.courseProductId || !line.gradeBand) {
     return [];
   }
@@ -4077,6 +4504,14 @@ function detailSelectPlaceholder(line: RegistrationCourseLine) {
 }
 
 function courseLineHint(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) {
+    if (isGroupCourseSetupLoading(line.courseProductId)) return 'Loading projects, plans, and classes…';
+    if (groupProjectsForLine(line).length === 0) return 'No active teaching project is configured for this product.';
+    if (!line.groupProjectId) return 'Select a teaching project.';
+    if (!line.groupRegistrationPlanId) return 'Select the season or package for this student.';
+    if (groupActualClassGroupsForLine(line).length === 0) return 'No actual class is configured at the selected campus.';
+    return 'Choose the actual class and first lesson date.';
+  }
   if (priceOptionsWithProduct.value.length === 0) {
     return isAdmin.value
       ? 'No course prices are set. Complete Back office setup first.'
@@ -4164,6 +4599,7 @@ function privateParticipantLineSharePrice(line: RegistrationCourseLine, particip
 }
 
 function printCourseScheduleLabel(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) return [line.periodLabel, line.startDate].filter(Boolean).join(' · ') || line.detail || '—';
   const option = findOption(line.coursePriceOptionId);
   return [
     option?.periodLabel || line.periodLabel,
@@ -4172,7 +4608,7 @@ function printCourseScheduleLabel(line: RegistrationCourseLine) {
 }
 
 function showDurationInput(line: RegistrationCourseLine) {
-  return Boolean(line.coursePriceOptionId);
+  return isV2GroupLine(line) ? Boolean(line.groupRegistrationPlanId) : Boolean(line.coursePriceOptionId);
 }
 
 function printRegistrationDurationLabel(line: RegistrationCourseLine) {
@@ -4212,6 +4648,7 @@ function availableSessionCounts(line: RegistrationCourseLine) {
 }
 
 function printTuitionOptionLabel(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) return selectedGroupPlan(line)?.planName || '—';
   const option = findOption(line.coursePriceOptionId);
   return option ? durationOptionLabel(option) : '—';
 }
@@ -4220,7 +4657,7 @@ function printScheduleSummaryLabel(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line)) {
     return printTeacherOrClassLabel(line);
   }
-  const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
+  const classGroup = selectedClassGroup(line);
   if (!classGroup) {
     return line.className || line.timeSlotLabel || '—';
   }
@@ -4243,6 +4680,8 @@ function printTeacherOrClassLabel(line: RegistrationCourseLine) {
   if (isOneOnOneLine(line)) {
     return teachers.value.find((teacher) => String(teacher.id) === String(line.teacherId))?.teacherName || '—';
   }
+  const actualClass = isV2GroupLine(line) ? selectedGroupActualClass(line) : undefined;
+  if (actualClass) return actualClass.actualClass;
   const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
   return classGroup ? formatClassLabel(classGroup) : line.className || '—';
 }
@@ -4295,6 +4734,17 @@ function packageBasePrice(option: CoursePriceOptionItem, attendanceOption?: stri
 }
 
 function attendanceOptionsForLine(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) {
+    const plan = selectedGroupPlan(line);
+    if (!plan || isOneOnOneLine(line)) return [];
+    const options: Array<{ label: string; value: RegistrationCourseLine['attendanceOption'] }> = [];
+    if (plan.fullDayPrice != null) options.push({ label: `Full day (${formatMoney(plan.fullDayPrice)})`, value: 'FULL_DAY' });
+    if (plan.halfDayPrice != null) {
+      options.push({ label: `Morning half day (${formatMoney(plan.halfDayPrice)})`, value: 'MORNING' });
+      options.push({ label: `Afternoon half day (${formatMoney(plan.halfDayPrice)})`, value: 'AFTERNOON' });
+    }
+    return options;
+  }
   const option = findOption(line.coursePriceOptionId);
   if (!option || isOneOnOneLine(line)) {
     return [];
@@ -4315,6 +4765,7 @@ function handleAttendanceChange(line: RegistrationCourseLine) {
 }
 
 function classSelectPlaceholder(line: RegistrationCourseLine) {
+  if (isV2GroupLine(line)) return v2ClassSelectPlaceholder(line);
   if (!line.coursePriceOptionId) {
     return 'Select option first';
   }
@@ -4335,7 +4786,7 @@ function hasUnassignedClassForLine(line: RegistrationCourseLine) {
 }
 
 function classScheduleLabel(line: RegistrationCourseLine) {
-  const classGroup = classGroups.value.find((item) => String(item.id) === String(line.classId));
+  const classGroup = selectedClassGroup(line);
   if (!classGroup) {
     return line.coursePriceOptionId ? 'Class schedule will be assigned from this package.' : 'Select a package first';
   }
@@ -4592,7 +5043,10 @@ function validateForm() {
     if (!line.courseProductId) {
       errors.push(`${label}: select a course.`);
     }
-    if (!line.coursePriceOptionId) {
+    if (isV2GroupLine(line)) {
+      if (!line.groupProjectId || !selectedGroupProject(line)) errors.push(`${label}: select an active teaching project.`);
+      if (!line.groupRegistrationPlanId || !selectedGroupPlan(line)) errors.push(`${label}: select an active registration plan.`);
+    } else if (!line.coursePriceOptionId) {
       errors.push(isOneOnOneLine(line)
         ? `${label}: select a program and package.`
         : `${label}: select a package.`);
@@ -4616,7 +5070,9 @@ function validateForm() {
       errors.push(`${label}: drop-off address is required when drop-off is checked.`);
     }
     if (!isOneOnOneLine(line)) {
-      const availableClasses = classOptionsForLine(line);
+      const availableClasses = isV2GroupLine(line)
+        ? groupActualClassGroupsForLine(line).flatMap((group) => group.options)
+        : classOptionsForLine(line);
       const unchangedLegacyClass = isReadOnly.value && editingCorrection.value && Boolean(line.classId);
       if (availableClasses.length === 0 && !unchangedLegacyClass) {
         errors.push(hasUnassignedClassForLine(line)
@@ -4629,7 +5085,7 @@ function validateForm() {
         errors.push(`${label}: select a class for the selected campus.`);
       }
     }
-    if (!isOneOnOneLine(line) && line.coursePriceOptionId && !line.startDate) {
+    if (!isOneOnOneLine(line) && (line.coursePriceOptionId || isV2GroupLine(line)) && !line.startDate) {
       errors.push(`${label}: select the enrollment start date.`);
     }
     if (!isOneOnOneLine(line) && line.startDate) {
@@ -4722,6 +5178,22 @@ function validatePaymentLines(lines: PaymentLine[], label: string, errors: strin
 }
 
 function validateRegistrationDuration(line: RegistrationCourseLine, label: string, errors: string[]) {
+  if (isV2GroupLine(line)) {
+    if (!line.groupProjectId || !line.groupRegistrationPlanId) {
+      errors.push(`${label}: select both a teaching project and registration plan.`);
+      return true;
+    }
+    const plan = selectedGroupPlan(line);
+    const configured = groupPlanQuantity(line);
+    const selected = plan?.packageUnit === 'MONTH'
+      ? numeric(line.groupPurchasedMonths)
+      : numeric(line.groupSessionCount);
+    if (!plan || configured < 1 || !Number.isInteger(selected) || selected < 1 || selected > configured) {
+      errors.push(`${label}: enter a valid quantity within the selected plan limit.`);
+      return true;
+    }
+    return false;
+  }
   if (!line.coursePriceOptionId) {
     return false;
   }
@@ -5072,7 +5544,9 @@ function buildPayload(): RegistrationIntakePayload {
       registerClass: line.registerClass,
       courseType: line.courseType,
       courseProductId: line.courseProductId,
-      coursePriceOptionId: line.coursePriceOptionId || undefined,
+      coursePriceOptionId: isV2GroupLine(line) ? undefined : line.coursePriceOptionId || undefined,
+      groupProjectId: isV2GroupLine(line) ? line.groupProjectId : undefined,
+      groupRegistrationPlanId: isV2GroupLine(line) ? line.groupRegistrationPlanId : undefined,
       classId: isOneOnOneLine(line) ? undefined : line.classId,
       detail: line.detail,
       gradeBand: line.gradeBand || undefined,

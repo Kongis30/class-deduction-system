@@ -66,6 +66,11 @@ public class CoursePriceOptionEntity extends BaseEntity {
 
     private Long courseProductId;
 
+    /** 班课 V2 兼容映射；新班课定价由 group_registration_plan 维护。 */
+    private Long groupProjectId;
+
+    private Long groupRegistrationPlanId;
+
     private Long classId;
 
     private Integer sortOrder;

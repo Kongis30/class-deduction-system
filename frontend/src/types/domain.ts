@@ -332,6 +332,8 @@ export interface EnrollmentOrderLineItem {
   courseType?: string;
   courseProductId?: EntityId;
   coursePriceOptionId?: EntityId;
+  groupProjectId?: EntityId;
+  groupRegistrationPlanId?: EntityId;
   classId?: EntityId;
   detail?: string;
   gradeBand?: string;
@@ -340,6 +342,7 @@ export interface EnrollmentOrderLineItem {
   startDate?: string;
   /** 学生实际购买的 SESSION 次数；packageQuantity 是定价选项上限。 */
   sessions?: number;
+  purchasedMonths?: number;
   packageUnit?: string;
   packageQuantity?: number;
   packageTotalPrice?: number;
@@ -646,6 +649,7 @@ export interface ClassGroupItem {
   className: string;
   description?: string;
   productId?: EntityId;
+  groupProjectId?: EntityId;
   productName?: string;
   registerClass?: string;
   courseType?: string;

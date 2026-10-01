@@ -8,12 +8,14 @@ import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
 import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -78,6 +80,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     private final ClassroomMapper classroomMapper;
     private final CampusMapper campusMapper;
     private final CourseProductMapper courseProductMapper;
+    private final GroupCourseProjectMapper groupCourseProjectMapper;
     private final ProductGradeConfigMapper productGradeConfigMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
@@ -218,6 +221,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
         LocalDate today = LocalDate.now();
         Map<Long, List<LocalDate>> confirmedLessonDatesByStudent = loadConfirmedLessonDatesByStudent(classId);
+        Map<Long, List<LocalDate>> confirmedLessonDatesByEntitlement = loadConfirmedLessonDatesByEntitlement(classId);
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassEnrollmentEntity enrollment : enrollments) {
             StudentEntity student = studentMap.get(enrollment.getStudentId());
@@ -225,7 +229,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             Long usedSessions = null;
             Integer remainingSessions = null;
             if ("PER_SESSION".equals(enrollment.getBillingType()) && enrollment.getPurchasedQuantity() != null) {
-                usedSessions = countUsedSessions(enrollment, confirmedLessonDatesByStudent);
+                List<LocalDate> usedDates = enrollment.getGroupProjectId() == null
+                        ? confirmedLessonDatesByStudent.getOrDefault(enrollment.getStudentId(), Collections.emptyList())
+                        : confirmedLessonDatesByEntitlement.getOrDefault(enrollment.getId(), Collections.emptyList());
+                usedSessions = countUsedSessions(enrollment, usedDates);
                 remainingSessions = Math.max(enrollment.getPurchasedQuantity() - usedSessions.intValue(), 0);
             }
 
@@ -367,15 +374,20 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> confirmLesson(Long classId, Long occurrenceId, Map<String, Object> body, CurrentUserResponse currentUser) {
         currentUser = defaultAdminIfMissing(currentUser);
+        // 报名、退款、假期重排都先锁实际班级；确认也先锁同一行，保证读取到稳定的权益和课次状态。
+        ClassGroupEntity confirmedClass = classGroupMapper.selectByIdForUpdate(classId);
+        if (confirmedClass == null) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found.");
+        }
         // 获取排课记录
-        LessonOccurrenceEntity occ = lessonOccurrenceMapper.selectById(occurrenceId);
+        LessonOccurrenceEntity occ = lessonOccurrenceMapper.selectByIdForUpdate(occurrenceId);
         if (occ == null || !classId.equals(occ.getClassGroupId())) {
             throw new BusinessException("OCCURRENCE_NOT_FOUND", "Lesson occurrence not found for this class.");
         }
         if (occ.getCourseHolidayId() != null || "CANCELLED".equals(occ.getPlanningStatus())) {
             throw new BusinessException("CLASS_LESSON_CANCELLED", "This class lesson is cancelled for a school holiday.");
         }
-        if (occ.getPlanningStatus().equals("CANCELLED")) {
+        if ("CANCELLED".equals(occ.getPlanningStatus())) {
             throw new BusinessException("OCCURRENCE_CANCELLED", "Cannot confirm a cancelled occurrence.");
         }
         // 获取在册学生
@@ -386,10 +398,15 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
         );
         Map<Long, List<LocalDate>> confirmedLessonDatesByStudent = loadConfirmedLessonDatesByStudent(classId);
-        activeEnrollments = activeEnrollments.stream()
-                .filter(enrollment -> isEnrollmentEligibleForOccurrence(
-                        enrollment, occ, confirmedLessonDatesByStudent))
-                .toList();
+        if (confirmedClass != null && confirmedClass.getGroupProjectId() != null) {
+            activeEnrollments = resolveV2EntitlementsForOccurrence(
+                    activeEnrollments, occ, loadConfirmedLessonDatesByEntitlement(classId));
+        } else {
+            activeEnrollments = activeEnrollments.stream()
+                    .filter(enrollment -> isEnrollmentEligibleForOccurrence(
+                            enrollment, occ, confirmedLessonDatesByStudent))
+                    .toList();
+        }
         if (activeEnrollments.isEmpty()) {
             throw new BusinessException("NO_ACTIVE_STUDENTS", "No active eligible students in this class lesson.");
         }
@@ -471,6 +488,9 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 if (teacherConfirm || CONFIRM_STAGE_CONFIRMED.equals(existing.getConfirmStage())) {
                     continue;
                 }
+                if (existing.getClassEnrollmentId() == null) {
+                    existing.setClassEnrollmentId(enrollment.getId());
+                }
                 applyClassActualValues(existing, occ, resultStatus, actualTeacherId, actualClassroomId, actualUnits, actualStartAt, actualEndAt, notes);
                 finalizeClassRecord(existing, currentUser);
                 lessonRecordMapper.updateById(existing);
@@ -480,6 +500,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             LessonRecordEntity record = existing == null ? new LessonRecordEntity() : existing;
             record.setOccurrenceId(occurrenceId);
             record.setStudentId(enrollment.getStudentId());
+            record.setClassEnrollmentId(enrollment.getId());
             record.setPackageId(null); // 班课不关联课包
             record.setResultStatus(resultStatus);
             record.setPlannedTeacherId(occ.getPlannedTeacherId()); // 保存原始安排，供审计
@@ -568,6 +589,46 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 || hasUsedSessionOnDate(enrollment, confirmedLessonDatesByStudent, lessonDate);
     }
 
+    /** V2 班课将一次确认明确绑定到唯一订单权益，避免续费权益相互串用。 */
+    private List<ClassEnrollmentEntity> resolveV2EntitlementsForOccurrence(
+            List<ClassEnrollmentEntity> enrollments,
+            LessonOccurrenceEntity occurrence,
+            Map<Long, List<LocalDate>> confirmedDatesByEntitlement) {
+        if (occurrence.getPlannedStartAt() == null) return Collections.emptyList();
+        LocalDate lessonDate = occurrence.getPlannedStartAt().toLocalDate();
+        Map<Long, List<ClassEnrollmentEntity>> byStudent = enrollments.stream()
+                .filter(enrollment -> enrollment.getGroupProjectId() != null)
+                .filter(enrollment -> enrollmentIncludesOccurrence(enrollment, occurrence))
+                .filter(enrollment -> enrollment.getEnrollmentDate() == null
+                        || !lessonDate.isBefore(enrollment.getEnrollmentDate()))
+                .filter(enrollment -> enrollment.getExpiryDate() == null
+                        || !lessonDate.isAfter(enrollment.getExpiryDate()))
+                .filter(enrollment -> attendanceMatches(enrollment.getAttendanceOption(), occurrence))
+                .filter(enrollment -> {
+                    if (!"PER_SESSION".equals(enrollment.getBillingType())
+                            || enrollment.getPurchasedQuantity() == null) return true;
+                    List<LocalDate> usedDates = confirmedDatesByEntitlement
+                            .getOrDefault(enrollment.getId(), Collections.emptyList());
+                    long used = usedDates.stream()
+                            .filter(date -> enrollment.getEnrollmentDate() == null
+                                    || !date.isBefore(enrollment.getEnrollmentDate()))
+                            .filter(date -> enrollment.getExpiryDate() == null
+                                    || !date.isAfter(enrollment.getExpiryDate()))
+                            .distinct().count();
+                    return used < enrollment.getPurchasedQuantity() || usedDates.contains(lessonDate);
+                })
+                .collect(Collectors.groupingBy(ClassEnrollmentEntity::getStudentId));
+        List<ClassEnrollmentEntity> resolved = new ArrayList<>();
+        for (Map.Entry<Long, List<ClassEnrollmentEntity>> entry : byStudent.entrySet()) {
+            if (entry.getValue().size() != 1) {
+                throw new BusinessException("GROUP_ENTITLEMENT_AMBIGUOUS",
+                        "More than one active registration covers this student and class date. Resolve the overlapping registrations before confirming the lesson.");
+            }
+            resolved.add(entry.getValue().get(0));
+        }
+        return resolved;
+    }
+
     private boolean enrollmentIncludesOccurrence(ClassEnrollmentEntity enrollment, LessonOccurrenceEntity occurrence) {
         if (enrollment == null || occurrence == null || occurrence.getPlannedStartAt() == null) {
             return false;
@@ -630,6 +691,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .count();
     }
 
+    private long countUsedSessions(ClassEnrollmentEntity enrollment, List<LocalDate> dates) {
+        return dates.stream()
+                .filter(date -> enrollment.getEnrollmentDate() == null || !date.isBefore(enrollment.getEnrollmentDate()))
+                .filter(date -> enrollment.getExpiryDate() == null || !date.isAfter(enrollment.getExpiryDate()))
+                .distinct()
+                .count();
+    }
+
     private boolean hasUsedSessionOnDate(ClassEnrollmentEntity enrollment,
                                          Map<Long, List<LocalDate>> confirmedLessonDatesByStudent,
                                          LocalDate lessonDate) {
@@ -671,6 +740,30 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 ));
     }
 
+    private Map<Long, List<LocalDate>> loadConfirmedLessonDatesByEntitlement(Long classGroupId) {
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .select(LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getPlannedStartAt)
+                        .eq(LessonOccurrenceEntity::getClassGroupId, classGroupId));
+        if (occurrences.isEmpty()) return Collections.emptyMap();
+        Map<Long, LocalDate> datesByOccurrence = occurrences.stream()
+                .filter(item -> item.getPlannedStartAt() != null)
+                .collect(Collectors.toMap(LessonOccurrenceEntity::getId,
+                        item -> item.getPlannedStartAt().toLocalDate(), (left, right) -> left));
+        if (datesByOccurrence.isEmpty()) return Collections.emptyMap();
+        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, datesByOccurrence.keySet())
+                        .isNotNull(LessonRecordEntity::getClassEnrollmentId)
+                        .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_CONFIRMED)
+                        .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream()
+                .filter(record -> record.getClassEnrollmentId() != null
+                        && datesByOccurrence.containsKey(record.getOccurrenceId())
+                        && CHARGEABLE_CLASS_RESULT_STATUSES.contains(record.getResultStatus()))
+                .collect(Collectors.groupingBy(LessonRecordEntity::getClassEnrollmentId,
+                        Collectors.mapping(record -> datesByOccurrence.get(record.getOccurrenceId()), Collectors.toList())));
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void rejectLesson(Long classId, Long occurrenceId, String rejectReason, CurrentUserResponse currentUser) {
@@ -678,7 +771,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         if (rejectReason == null || rejectReason.isBlank()) {
             throw new BusinessException("REJECT_REASON_REQUIRED", "Reject reason is required.");
         }
-        LessonOccurrenceEntity occ = lessonOccurrenceMapper.selectById(occurrenceId);
+        // 拒绝教师提交与确认、退款共用实际班级锁，避免同一批待确认记录被并发改写。
+        ClassGroupEntity classGroup = classGroupMapper.selectByIdForUpdate(classId);
+        if (classGroup == null) {
+            throw new BusinessException("CLASS_NOT_FOUND", "Class not found.");
+        }
+        LessonOccurrenceEntity occ = lessonOccurrenceMapper.selectByIdForUpdate(occurrenceId);
         if (occ == null || !classId.equals(occ.getClassGroupId())) {
             throw new BusinessException("OCCURRENCE_NOT_FOUND", "Lesson occurrence not found for this class.");
         }
@@ -701,7 +799,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> updateClassSchedule(Long classId, Map<String, Object> body) {
-        ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
+        ClassGroupEntity classGroup = classGroupMapper.selectByIdForUpdate(classId);
         if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
             throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
         }
@@ -762,24 +860,44 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> createActualClass(Map<String, Object> body) {
         Long productId = parseLongFromBody(body, "productId");
+        Long groupProjectId = parseLongFromBody(body, "groupProjectId");
         String gradeBand = requireTextFromBody(body, "gradeBand", "Grade is required.");
         String actualClass = requireTextFromBody(body, "actualClass", "Actual class is required.");
-        CourseProductEntity product = productId == null ? null : courseProductMapper.selectById(productId);
-        if (product == null || !"GROUP".equals(product.getTeachingMode()) || !"ACTIVE".equals(product.getStatus())) {
-            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Active group course product not found.");
+        if (groupProjectId == null) {
+            throw new BusinessException("GROUP_PROJECT_REQUIRED",
+                    "Create actual classes inside a teaching project so registration plans and schedules stay linked.");
         }
-        ensureActualClassUnique(null, productId, gradeBand, actualClass);
-
+        GroupCourseProjectEntity project = groupCourseProjectMapper.selectByIdForUpdate(groupProjectId);
+        if (project == null || !Objects.equals(productId, project.getCourseProductId())
+                || Integer.valueOf(1).equals(project.getIsDeleted())) {
+            throw new BusinessException("GROUP_PROJECT_INVALID", "Select a teaching project from this product.");
+        }
+        CourseProductEntity product = productId == null ? null : courseProductMapper.selectByIdForUpdate(productId);
+        if (product == null || !"GROUP".equals(product.getTeachingMode())) {
+            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Group course product not found.");
+        }
+        Long campusId = parseLongFromBody(body, "campusId");
+        LocalDate startDate = parseLocalDateBody(body, "startDate");
+        LocalDate endDate = parseLocalDateBody(body, "endDate");
+        if (startDate == null || endDate == null || endDate.isBefore(startDate)) {
+            throw new BusinessException("CLASS_PERIOD_REQUIRED", "Enter a valid start and end date for this actual class.");
+        }
+        ensureV2ActualClassUnique(null, groupProjectId, campusId, actualClass);
+        gradeBand = actualClass;
         ClassGroupEntity classGroup = new ClassGroupEntity();
         classGroup.setProductId(productId);
+        classGroup.setGroupProjectId(groupProjectId);
         classGroup.setGradeBand(gradeBand);
         classGroup.setActualClass(actualClass);
         classGroup.setClassName(resolveClassName(body, actualClass));
         classGroup.setCampusId(parseLongFromBody(body, "campusId"));
         validateCampus(classGroup.getCampusId());
+        classGroup.setStartDate(startDate);
+        classGroup.setEndDate(endDate);
+        classGroup.setScheduleBaseEndDate(endDate);
         classGroup.setListPrice(java.math.BigDecimal.ZERO);
         classGroup.setStatus("ACTIVE");
-        inheritGradeBillingMetadata(classGroup);
+        // 班级日期属于项目下的实际班级；不再从旧 Product/Grade 配置继承。
         classGroupMapper.insert(classGroup);
         return toClassInfoMap(classGroup);
     }
@@ -787,20 +905,65 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> updateClassInfo(Long classId, Map<String, Object> body) {
-        ClassGroupEntity classGroup = classGroupMapper.selectById(classId);
+        ClassGroupEntity classGroup = classGroupMapper.selectByIdForUpdate(classId);
         if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
             throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
         }
         String actualClass = requireTextFromBody(body, "actualClass", "Actual class is required.");
-        ensureActualClassUnique(classId, classGroup.getProductId(), classGroup.getGradeBand(), actualClass);
+        if (classGroup.getGroupProjectId() != null) {
+            Long campusId = body.containsKey("campusId")
+                    ? parseLongFromBody(body, "campusId") : classGroup.getCampusId();
+            ensureV2ActualClassUnique(classId, classGroup.getGroupProjectId(), campusId, actualClass);
+            classGroup.setGradeBand(actualClass);
+        } else {
+            ensureActualClassUnique(classId, classGroup.getProductId(), classGroup.getGradeBand(), actualClass);
+        }
         classGroup.setActualClass(actualClass);
         classGroup.setClassName(resolveClassName(body, actualClass));
         if (body.containsKey("campusId")) {
             classGroup.setCampusId(parseLongFromBody(body, "campusId"));
             validateCampus(classGroup.getCampusId());
         }
+        if (classGroup.getGroupProjectId() != null) {
+            LocalDate startDate = body.containsKey("startDate")
+                    ? parseLocalDateBody(body, "startDate") : classGroup.getStartDate();
+            LocalDate endDate = body.containsKey("endDate")
+                    ? parseLocalDateBody(body, "endDate") : classGroup.getEndDate();
+            if (startDate == null || endDate == null || endDate.isBefore(startDate)) {
+                throw new BusinessException("CLASS_PERIOD_INVALID", "Enter a valid start and end date for this actual class.");
+            }
+            classGroup.setStartDate(startDate);
+            classGroup.setEndDate(endDate);
+            classGroup.setScheduleBaseEndDate(endDate);
+        }
         classGroupMapper.updateById(classGroup);
         return toClassInfoMap(classGroup);
+    }
+
+    private void ensureV2ActualClassUnique(Long currentClassId, Long projectId, Long campusId, String actualClass) {
+        LambdaQueryWrapper<ClassGroupEntity> query = new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getGroupProjectId, projectId)
+                .eq(ClassGroupEntity::getActualClass, actualClass)
+                .eq(ClassGroupEntity::getIsDeleted, 0);
+        if (campusId == null) query.isNull(ClassGroupEntity::getCampusId);
+        else query.eq(ClassGroupEntity::getCampusId, campusId);
+        ClassGroupEntity duplicate = classGroupMapper.selectOne(query.last("LIMIT 1"));
+        if (duplicate != null && !Objects.equals(duplicate.getId(), currentClassId)) {
+            throw new BusinessException("ACTUAL_CLASS_DUPLICATED",
+                    "This project already has an actual class with that name at this campus.");
+        }
+    }
+
+    private LocalDate parseLocalDateBody(Map<String, Object> body, String key) {
+        Object value = body.get(key);
+        if (value instanceof String text && StringUtils.hasText(text)) {
+            try {
+                return LocalDate.parse(text.trim());
+            } catch (RuntimeException exception) {
+                throw new BusinessException("CLASS_PERIOD_INVALID", "Enter dates in YYYY-MM-DD format.");
+            }
+        }
+        return null;
     }
 
     private void ensureActualClassUnique(Long currentClassId, Long productId, String gradeBand, String actualClass) {
@@ -881,6 +1044,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("id", classGroup.getId());
         item.put("className", classGroup.getClassName());
         item.put("productId", classGroup.getProductId());
+        item.put("groupProjectId", classGroup.getGroupProjectId());
         item.put("gradeBand", classGroup.getGradeBand());
         item.put("actualClass", StringUtils.hasText(classGroup.getActualClass())
                 ? classGroup.getActualClass()
@@ -930,6 +1094,13 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         ClassGroupEntity clz = classGroupMapper.selectById(classId);
         if (clz == null || !"ACTIVE".equals(clz.getStatus())) {
             throw new BusinessException("CLASS_NOT_FOUND", "Class not found or not active.");
+        }
+        CourseProductEntity product = clz.getProductId() == null
+                ? null : courseProductMapper.selectById(clz.getProductId());
+        // 班课权益必须由收据订单创建，避免旧项目less班级入口产生无方案或无支付归属的报名。
+        if (clz.getGroupProjectId() != null || product == null || "GROUP".equals(product.getTeachingMode())) {
+            throw new BusinessException("GROUP_V2_REGISTRATION_REQUIRED",
+                    "Register this student through a receipt so the course plan and payment are linked correctly.");
         }
         // 校验学生存在
         StudentEntity student = studentMapper.selectById(studentId);
@@ -1054,8 +1225,8 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteClassGroup(Long classId) {
-        // 1. 校验班课存在（selectById 利用 @TableLogic 自动过滤已删除的）
-        ClassGroupEntity clz = classGroupMapper.selectById(classId);
+        // 1. 与报名和排课编辑共用班级行锁，避免事务并发留下孤立权益或课次。
+        ClassGroupEntity clz = classGroupMapper.selectByIdForUpdate(classId);
         if (clz == null) {
             throw new BusinessException("CLASS_GROUP_NOT_FOUND", "Class group not found or already deleted.");
         }
@@ -1538,7 +1709,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         LocalDate endDate = configuredEnd != null
                 ? configuredEnd
                 : resolveClassScheduleHorizon(classGroup.getId(), startDate);
-        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getProductId(), classGroup.getGradeBand());
+        List<ClassHolidayVO> holidays = classHolidayService.listHolidays(classGroup.getGroupProjectId());
         if (configuredStart != null) {
             LocalDate baseEnd = ClassScheduleDates.resolveBaseEndDate(classGroup.getScheduleBaseEndDate(), endDate);
             LocalDate requiredEnd = ClassScheduleDates.endDateAfterHolidays(configuredStart, baseEnd,
@@ -2093,6 +2264,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         item.put("classroomName", classroomName);
         item.put("listPrice", clz.getListPrice());
         item.put("productId", clz.getProductId());
+        item.put("groupProjectId", clz.getGroupProjectId());
         item.put("status", clz.getStatus());
         item.put("scheduleSlots", toScheduleSlotList(clz.getId(), clz.getScheduleDesc()));
         return item;

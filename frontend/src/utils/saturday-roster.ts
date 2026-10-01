@@ -5,6 +5,11 @@ export type SaturdayRosterView = 'FALL' | 'SPRING' | 'ALL';
 
 /** 根据报名项已存的课程/周期文字分类，不按日期猜季节。 */
 export function getSaturdayRosterSeason(row: DataSummaryRow): SaturdayRosterSeason | undefined {
+  const termCode = row.registrationTermCode?.trim().toUpperCase();
+  if (termCode === 'FALL') return 'FALL';
+  if (termCode === 'SPRING') return 'SPRING';
+  if (termCode === 'FULL_YEAR') return 'FULL_YEAR';
+
   const labels = [row.gradeBand, row.periodLabel, row.className, row.registerClass, row.detail, row.courseProductName]
     .filter(Boolean)
     .join(' ')

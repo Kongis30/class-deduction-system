@@ -3,12 +3,8 @@ package com.classdeduction.system.modules.schedule.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
-import com.classdeduction.system.modules.base.entity.CourseProductEntity;
-import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
-import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
-import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
-import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
-import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
@@ -47,7 +43,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 维护 Course + Grade 级班课假期，并协调该 Grade 下未来课次和 SESSION 报名周期。
+ * 维护教学项目级班课假期，并协调项目下未来课次和 SESSION 报名周期。
  * Prices 页面调用此服务；课次生成、计费和调课也复用其日期查询。
  */
 @Service
@@ -55,9 +51,7 @@ import java.util.stream.Collectors;
 public class ClassHolidayServiceImpl implements ClassHolidayService {
 
     private final ClassHolidayMapper classHolidayMapper;
-    private final CourseProductMapper courseProductMapper;
-    private final CoursePriceOptionMapper coursePriceOptionMapper;
-    private final ProductGradeConfigMapper productGradeConfigMapper;
+    private final GroupCourseProjectMapper projectMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
@@ -67,11 +61,10 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ClassHolidayVO> listHolidays(Long courseProductId, String gradeBand) {
-        if (courseProductId == null || !StringUtils.hasText(gradeBand)) return List.of();
+    public List<ClassHolidayVO> listHolidays(Long groupProjectId) {
+        if (groupProjectId == null) return List.of();
         return classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
-                        .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                        .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                        .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                         .eq(ClassHolidayEntity::getIsDeleted, 0)
                         .orderByAsc(ClassHolidayEntity::getStartDate)
                         .orderByAsc(ClassHolidayEntity::getId))
@@ -80,14 +73,13 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
 
     @Override
     @Transactional(readOnly = true)
-    public List<ClassHolidayVO> listHolidays(Long courseProductId, String gradeBand, LocalDate startDate, LocalDate endDate) {
-        if (courseProductId == null || !StringUtils.hasText(gradeBand)
+    public List<ClassHolidayVO> listHolidays(Long groupProjectId, LocalDate startDate, LocalDate endDate) {
+        if (groupProjectId == null
                 || startDate == null || endDate == null || endDate.isBefore(startDate)) {
             return List.of();
         }
         return classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
-                        .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                        .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                        .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                         .eq(ClassHolidayEntity::getIsDeleted, 0)
                         .le(ClassHolidayEntity::getStartDate, endDate)
                         .ge(ClassHolidayEntity::getEndDate, startDate)
@@ -97,11 +89,10 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
 
     @Override
     @Transactional(readOnly = true)
-    public boolean isHoliday(Long courseProductId, String gradeBand, LocalDate date) {
-        if (courseProductId == null || !StringUtils.hasText(gradeBand) || date == null) return false;
+    public boolean isHoliday(Long groupProjectId, LocalDate date) {
+        if (groupProjectId == null || date == null) return false;
         return classHolidayMapper.selectCount(new LambdaQueryWrapper<ClassHolidayEntity>()
-                .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                 .eq(ClassHolidayEntity::getIsDeleted, 0)
                 .le(ClassHolidayEntity::getStartDate, date)
                 .ge(ClassHolidayEntity::getEndDate, date)) > 0;
@@ -109,20 +100,20 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
 
     @Override
     @Transactional(readOnly = true)
-    public ClassHolidayPreviewVO previewHoliday(Long courseProductId, String gradeBand, Long holidayId, ClassHolidaySaveRequest request) {
-        validateRequest(courseProductId, gradeBand, holidayId, request);
+    public ClassHolidayPreviewVO previewHoliday(Long groupProjectId, Long holidayId, ClassHolidaySaveRequest request) {
+        validateRequest(groupProjectId, holidayId, request);
         LocalDate from = request.getStartDate();
         LocalDate through = request.getEndDate();
-        ClassHolidayEntity existing = holidayId == null ? null : requireHoliday(courseProductId, gradeBand, holidayId);
+        ClassHolidayEntity existing = holidayId == null ? null : requireHoliday(groupProjectId, holidayId);
         if (existing != null) {
             from = from.isBefore(existing.getStartDate()) ? from : existing.getStartDate();
             through = through.isAfter(existing.getEndDate()) ? through : existing.getEndDate();
         }
-        List<ClassHolidayEntity> activeHolidays = holidaysAfterChange(courseProductId, gradeBand, holidayId, request);
+        List<ClassHolidayEntity> activeHolidays = holidaysAfterChange(groupProjectId, holidayId, request);
         List<String> conflicts = new ArrayList<>();
         int affectedOccurrences = 0;
         Set<Long> occurrenceIds = new HashSet<>();
-        for (LessonOccurrenceEntity occurrence : affectedOccurrences(courseProductId, gradeBand, from, through)) {
+        for (LessonOccurrenceEntity occurrence : affectedOccurrences(groupProjectId, from, through)) {
             LocalDate date = occurrence.getPlannedStartAt().toLocalDate();
             ClassHolidayEntity targetHoliday = holidayForDate(activeHolidays, date);
             boolean currentlyOnHoliday = occurrence.getCourseHolidayId() != null;
@@ -145,33 +136,34 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                 conflicts.add(withRecords + " class lesson(s) already have lesson records. Resolve them before applying the holiday.");
             }
         }
-        int affectedEnrollments = countAffectedSessionEnrollments(courseProductId, gradeBand, from, through);
+        int affectedEnrollments = countAffectedSessionEnrollments(groupProjectId, from, through);
         return new ClassHolidayPreviewVO(affectedOccurrences, affectedEnrollments, List.copyOf(conflicts));
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public ClassHolidayVO createHoliday(Long courseProductId, String gradeBand, ClassHolidaySaveRequest request) {
-        assertPreviewHasNoConflicts(courseProductId, gradeBand, null, request);
+    public ClassHolidayVO createHoliday(Long groupProjectId, ClassHolidaySaveRequest request) {
+        lockProjectClasses(groupProjectId);
+        assertPreviewHasNoConflicts(groupProjectId, null, request);
         ClassHolidayEntity entity = new ClassHolidayEntity();
-        entity.setCourseProductId(courseProductId);
-        entity.setGradeBand(normalizeGrade(gradeBand));
+        entity.setGroupProjectId(groupProjectId);
         entity.setHolidayName(request.getHolidayName().trim());
         entity.setStartDate(request.getStartDate());
         entity.setEndDate(request.getEndDate());
         entity.setIsDeleted(0);
         classHolidayMapper.insert(entity);
-        reconcileAffectedDates(courseProductId, gradeBand, request.getStartDate(), request.getEndDate());
-        synchronizeGradeClassSchedules(courseProductId, gradeBand);
-        recalculateSessionEnrollments(courseProductId, gradeBand, request.getStartDate(), request.getEndDate());
+        reconcileAffectedDates(groupProjectId, request.getStartDate(), request.getEndDate());
+        synchronizeProjectClassSchedules(groupProjectId);
+        recalculateSessionEnrollments(groupProjectId, request.getStartDate(), request.getEndDate());
         return toVO(entity);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public ClassHolidayVO updateHoliday(Long courseProductId, String gradeBand, Long id, ClassHolidaySaveRequest request) {
-        ClassHolidayEntity existing = requireHoliday(courseProductId, gradeBand, id);
-        assertPreviewHasNoConflicts(courseProductId, gradeBand, id, request);
+    public ClassHolidayVO updateHoliday(Long groupProjectId, Long id, ClassHolidaySaveRequest request) {
+        lockProjectClasses(groupProjectId);
+        ClassHolidayEntity existing = requireHoliday(groupProjectId, id);
+        assertPreviewHasNoConflicts(groupProjectId, id, request);
         LocalDate from = request.getStartDate().isBefore(existing.getStartDate())
                 ? request.getStartDate() : existing.getStartDate();
         LocalDate through = request.getEndDate().isAfter(existing.getEndDate())
@@ -180,31 +172,46 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         existing.setStartDate(request.getStartDate());
         existing.setEndDate(request.getEndDate());
         classHolidayMapper.updateById(existing);
-        reconcileAffectedDates(courseProductId, gradeBand, from, through);
-        synchronizeGradeClassSchedules(courseProductId, gradeBand);
-        recalculateSessionEnrollments(courseProductId, gradeBand, from, through);
+        reconcileAffectedDates(groupProjectId, from, through);
+        synchronizeProjectClassSchedules(groupProjectId);
+        recalculateSessionEnrollments(groupProjectId, from, through);
         return toVO(existing);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public void deleteHoliday(Long courseProductId, String gradeBand, Long id) {
-        ClassHolidayEntity existing = requireHoliday(courseProductId, gradeBand, id);
+    public void deleteHoliday(Long groupProjectId, Long id) {
+        lockProjectClasses(groupProjectId);
+        ClassHolidayEntity existing = requireHoliday(groupProjectId, id);
         classHolidayMapper.deleteById(id);
-        reconcileAffectedDates(courseProductId, gradeBand, existing.getStartDate(), existing.getEndDate());
-        synchronizeGradeClassSchedules(courseProductId, gradeBand);
-        recalculateSessionEnrollments(courseProductId, gradeBand, existing.getStartDate(), existing.getEndDate());
+        reconcileAffectedDates(groupProjectId, existing.getStartDate(), existing.getEndDate());
+        synchronizeProjectClassSchedules(groupProjectId);
+        recalculateSessionEnrollments(groupProjectId, existing.getStartDate(), existing.getEndDate());
     }
 
-    private void assertPreviewHasNoConflicts(Long courseProductId, String gradeBand, Long holidayId, ClassHolidaySaveRequest request) {
-        ClassHolidayPreviewVO preview = previewHoliday(courseProductId, gradeBand, holidayId, request);
+    /**
+     * 假期修改会重算项目内全部班级；先用锁定读取锁住项目，再按班级 ID 锁其实际班级。
+     * 报名、更正和新建班级也先锁项目，避免普通查询建立旧 RR 快照或形成反向锁顺序。
+     */
+    private void lockProjectClasses(Long groupProjectId) {
+        GroupCourseProjectEntity project = projectMapper.selectByIdForUpdate(groupProjectId);
+        if (project == null || !Objects.equals(project.getIsDeleted(), 0)
+                || !"ACTIVE".equals(project.getStatus())) {
+            throw new BusinessException("CLASS_HOLIDAY_INVALID_PROJECT",
+                    "Holidays can only be configured for an active teaching project.");
+        }
+        classGroupMapper.selectByProjectIdForUpdate(groupProjectId);
+    }
+
+    private void assertPreviewHasNoConflicts(Long groupProjectId, Long holidayId, ClassHolidaySaveRequest request) {
+        ClassHolidayPreviewVO preview = previewHoliday(groupProjectId, holidayId, request);
         if (!preview.conflicts().isEmpty()) {
             throw new BusinessException("CLASS_HOLIDAY_CONFLICT", String.join(" ", preview.conflicts()));
         }
     }
 
-    private void validateRequest(Long courseProductId, String gradeBand, Long holidayId, ClassHolidaySaveRequest request) {
-        requireGroupGrade(courseProductId, gradeBand);
+    private void validateRequest(Long groupProjectId, Long holidayId, ClassHolidaySaveRequest request) {
+        requireActiveProject(groupProjectId);
         if (request == null || !StringUtils.hasText(request.getHolidayName())
                 || request.getStartDate() == null || request.getEndDate() == null) {
             throw new BusinessException("CLASS_HOLIDAY_INVALID", "Enter a holiday name and date range.");
@@ -214,14 +221,13 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         }
         LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
         if (request.getStartDate().isBefore(today)) {
-            ClassHolidayEntity current = holidayId == null ? null : requireHoliday(courseProductId, gradeBand, holidayId);
+            ClassHolidayEntity current = holidayId == null ? null : requireHoliday(groupProjectId, holidayId);
             if (current == null || !request.getStartDate().equals(current.getStartDate())) {
                 throw new BusinessException("CLASS_HOLIDAY_PAST_DATE", "A new class holiday must start today or later.");
             }
         }
         LambdaQueryWrapper<ClassHolidayEntity> overlap = new LambdaQueryWrapper<ClassHolidayEntity>()
-                .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                 .eq(ClassHolidayEntity::getIsDeleted, 0)
                 .le(ClassHolidayEntity::getStartDate, request.getEndDate())
                 .ge(ClassHolidayEntity::getEndDate, request.getStartDate())
@@ -232,12 +238,11 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
     }
 
     /** 保存前后都调用本方法，确保新增、修改、删除采用相同的课次状态规则。 */
-    private void reconcileAffectedDates(Long courseProductId, String gradeBand, LocalDate from, LocalDate through) {
+    private void reconcileAffectedDates(Long groupProjectId, LocalDate from, LocalDate through) {
         List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
-                .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                 .eq(ClassHolidayEntity::getIsDeleted, 0));
-        for (LessonOccurrenceEntity occurrence : affectedOccurrences(courseProductId, gradeBand, from, through)) {
+        for (LessonOccurrenceEntity occurrence : affectedOccurrences(groupProjectId, from, through)) {
             ClassHolidayEntity target = holidayForDate(holidays, occurrence.getPlannedStartAt().toLocalDate());
             if (target != null && occurrence.getCourseHolidayId() == null
                     && !"CANCELLED".equals(occurrence.getPlanningStatus())) {
@@ -304,12 +309,10 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         }
     }
 
-    private List<LessonOccurrenceEntity> affectedOccurrences(Long courseProductId, String gradeBand,
-                                                             LocalDate from, LocalDate through) {
+    private List<LessonOccurrenceEntity> affectedOccurrences(Long groupProjectId, LocalDate from, LocalDate through) {
         List<Long> groupIds = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
                         .select(ClassGroupEntity::getId)
-                        .eq(ClassGroupEntity::getProductId, courseProductId)
-                        .eq(ClassGroupEntity::getGradeBand, normalizeGrade(gradeBand))
+                        .eq(ClassGroupEntity::getGroupProjectId, groupProjectId)
                         .eq(ClassGroupEntity::getIsDeleted, 0))
                 .stream().map(ClassGroupEntity::getId).toList();
         if (groupIds.isEmpty()) return List.of();
@@ -321,18 +324,16 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                 .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
     }
 
-    private List<ClassHolidayEntity> holidaysAfterChange(Long courseProductId, String gradeBand, Long holidayId,
+    private List<ClassHolidayEntity> holidaysAfterChange(Long groupProjectId, Long holidayId,
                                                           ClassHolidaySaveRequest request) {
         List<ClassHolidayEntity> result = new ArrayList<>(classHolidayMapper.selectList(
                 new LambdaQueryWrapper<ClassHolidayEntity>()
-                        .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                        .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                        .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                         .eq(ClassHolidayEntity::getIsDeleted, 0)));
         if (holidayId != null) result.removeIf(item -> Objects.equals(item.getId(), holidayId));
         ClassHolidayEntity updated = new ClassHolidayEntity();
         updated.setId(holidayId);
-        updated.setCourseProductId(courseProductId);
-        updated.setGradeBand(normalizeGrade(gradeBand));
+        updated.setGroupProjectId(groupProjectId);
         updated.setHolidayName(request.getHolidayName());
         updated.setStartDate(request.getStartDate());
         updated.setEndDate(request.getEndDate());
@@ -346,8 +347,8 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                 .findFirst().orElse(null);
     }
 
-    private int countAffectedSessionEnrollments(Long courseProductId, String gradeBand, LocalDate from, LocalDate through) {
-        Set<Long> groupIds = courseGroupIds(courseProductId, gradeBand);
+    private int countAffectedSessionEnrollments(Long groupProjectId, LocalDate from, LocalDate through) {
+        Set<Long> groupIds = projectClassIds(groupProjectId);
         if (groupIds.isEmpty()) return 0;
         return (int) classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .in(ClassEnrollmentEntity::getClassId, groupIds)
@@ -363,14 +364,12 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
      * 假期会减少 Grade 下各班级原周期内可排的上课日，因此按该 Grade 假期重新计算课次终点，
      * 并只补齐未来缺少的周课次。Prices 的假期新增、编辑、删除都在落库后调用本方法。
      */
-    private void synchronizeGradeClassSchedules(Long courseProductId, String gradeBand) {
+    private void synchronizeProjectClassSchedules(Long groupProjectId) {
         List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
-                .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                 .eq(ClassHolidayEntity::getIsDeleted, 0));
         List<ClassGroupEntity> groups = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getProductId, courseProductId)
-                .eq(ClassGroupEntity::getGradeBand, normalizeGrade(gradeBand))
+                .eq(ClassGroupEntity::getGroupProjectId, groupProjectId)
                 .eq(ClassGroupEntity::getIsDeleted, 0));
         LocalDate today = LocalDate.now(AppTime.APP_ZONE_ID);
         LocalDateTime now = AppTime.nowLocalDateTime();
@@ -570,12 +569,11 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
         }
     }
 
-    private void recalculateSessionEnrollments(Long courseProductId, String gradeBand, LocalDate from, LocalDate through) {
+    private void recalculateSessionEnrollments(Long groupProjectId, LocalDate from, LocalDate through) {
         List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(new LambdaQueryWrapper<ClassHolidayEntity>()
-                .eq(ClassHolidayEntity::getCourseProductId, courseProductId)
-                .eq(ClassHolidayEntity::getGradeBand, normalizeGrade(gradeBand))
+                .eq(ClassHolidayEntity::getGroupProjectId, groupProjectId)
                 .eq(ClassHolidayEntity::getIsDeleted, 0));
-        Set<Long> groupIds = courseGroupIds(courseProductId, gradeBand);
+        Set<Long> groupIds = projectClassIds(groupProjectId);
         if (groupIds.isEmpty()) return;
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
                 .in(ClassEnrollmentEntity::getClassId, groupIds)
@@ -621,57 +619,30 @@ public class ClassHolidayServiceImpl implements ClassHolidayService {
                 .eq(ClassGroupScheduleSlotEntity::getIsDeleted, 0));
     }
 
-    private Set<Long> courseGroupIds(Long courseProductId, String gradeBand) {
+    private Set<Long> projectClassIds(Long groupProjectId) {
         return classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
                         .select(ClassGroupEntity::getId)
-                        .eq(ClassGroupEntity::getProductId, courseProductId)
-                        .eq(ClassGroupEntity::getGradeBand, normalizeGrade(gradeBand))
+                        .eq(ClassGroupEntity::getGroupProjectId, groupProjectId)
                         .eq(ClassGroupEntity::getIsDeleted, 0))
                 .stream().map(ClassGroupEntity::getId).collect(java.util.stream.Collectors.toSet());
     }
 
-    private ClassHolidayEntity requireHoliday(Long courseProductId, String gradeBand, Long id) {
+    private ClassHolidayEntity requireHoliday(Long groupProjectId, Long id) {
         ClassHolidayEntity holiday = classHolidayMapper.selectById(id);
         if (holiday == null || !Objects.equals(holiday.getIsDeleted(), 0)
-                || !Objects.equals(holiday.getCourseProductId(), courseProductId)
-                || !Objects.equals(normalizeGrade(holiday.getGradeBand()), normalizeGrade(gradeBand))) {
+                || !Objects.equals(holiday.getGroupProjectId(), groupProjectId)) {
             throw new BusinessException("CLASS_HOLIDAY_NOT_FOUND", "Class holiday not found.");
         }
         return holiday;
     }
 
-    private void requireGroupCourse(Long courseProductId) {
-        CourseProductEntity product = courseProductMapper.selectById(courseProductId);
-        if (product == null || !Objects.equals(product.getTeachingMode(), "GROUP")) {
-            throw new BusinessException("CLASS_HOLIDAY_INVALID_COURSE", "Holidays can only be configured for a group-class course.");
+    private void requireActiveProject(Long groupProjectId) {
+        GroupCourseProjectEntity project = projectMapper.selectById(groupProjectId);
+        if (project == null || !Objects.equals(project.getIsDeleted(), 0)
+                || !"ACTIVE".equals(project.getStatus())) {
+            throw new BusinessException("CLASS_HOLIDAY_INVALID_PROJECT",
+                    "Holidays can only be configured for an active teaching project.");
         }
-    }
-
-    private void requireGroupGrade(Long courseProductId, String gradeBand) {
-        requireGroupCourse(courseProductId);
-        if (!StringUtils.hasText(gradeBand)) {
-            throw new BusinessException("CLASS_HOLIDAY_INVALID_GRADE", "Select a grade configured for this course.");
-        }
-        String normalizedGrade = normalizeGrade(gradeBand);
-        boolean hasClass = classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
-                .eq(ClassGroupEntity::getProductId, courseProductId)
-                .eq(ClassGroupEntity::getGradeBand, normalizedGrade)
-                .eq(ClassGroupEntity::getIsDeleted, 0)) > 0;
-        boolean hasPriceOption = coursePriceOptionMapper.selectCount(new LambdaQueryWrapper<CoursePriceOptionEntity>()
-                .eq(CoursePriceOptionEntity::getCourseProductId, courseProductId)
-                .eq(CoursePriceOptionEntity::getGradeBand, normalizedGrade)
-                .eq(CoursePriceOptionEntity::getIsDeleted, 0)) > 0;
-        boolean hasGradeConfig = productGradeConfigMapper.selectCount(new LambdaQueryWrapper<ProductGradeConfigEntity>()
-                .eq(ProductGradeConfigEntity::getCourseProductId, courseProductId)
-                .eq(ProductGradeConfigEntity::getGradeLabel, normalizedGrade)
-                .eq(ProductGradeConfigEntity::getIsDeleted, 0)) > 0;
-        if (!hasClass && !hasPriceOption && !hasGradeConfig) {
-            throw new BusinessException("CLASS_HOLIDAY_INVALID_GRADE", "Select a grade configured for this course.");
-        }
-    }
-
-    private String normalizeGrade(String gradeBand) {
-        return gradeBand == null ? null : gradeBand.trim();
     }
 
     private ClassHolidayVO toVO(ClassHolidayEntity entity) {

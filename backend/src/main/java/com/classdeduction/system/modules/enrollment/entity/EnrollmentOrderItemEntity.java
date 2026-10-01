@@ -38,6 +38,11 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
 
     private Long courseProductId;
 
+    /** 班课订单的 V2 教学项目和购买方案快照关联；私教报名为空。 */
+    private Long groupProjectId;
+
+    private Long groupRegistrationPlanId;
+
     private Long coursePriceOptionId;
 
     private Long classId;

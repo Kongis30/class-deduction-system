@@ -5,10 +5,12 @@ import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.dto.DataSummaryQuery;
@@ -37,6 +39,8 @@ import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderCourseRefundStateMapper;
 import lombok.RequiredArgsConstructor;
@@ -78,7 +82,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final ClassGroupMapper classGroupMapper;
     private final EnrollmentOrderCourseRefundStateMapper enrollmentOrderCourseRefundStateMapper;
     private final ClassBillingService classBillingService;
+    private final ClassEnrollmentMapper classEnrollmentMapper;
     private final CourseProductMapper courseProductMapper;
+    private final GroupRegistrationPlanMapper groupRegistrationPlanMapper;
     private final TeacherMapper teacherMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final StudentMapper studentMapper;
@@ -408,7 +414,41 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Map<Long, TeacherEntity> teachers = teacherIds.isEmpty() ? Collections.emptyMap()
                 : teacherMapper.selectBatchIds(teacherIds).stream()
                         .collect(Collectors.toMap(TeacherEntity::getId, Function.identity()));
-        return new Context(classGroups, products, primaryAssignments, teachers);
+        Set<Long> planIds = items.stream().map(EnrollmentOrderItemEntity::getGroupRegistrationPlanId)
+                .filter(Objects::nonNull).collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<Long, GroupRegistrationPlanEntity> plans = planIds.isEmpty() ? Collections.emptyMap()
+                : groupRegistrationPlanMapper.selectBatchIds(planIds).stream()
+                        .collect(Collectors.toMap(GroupRegistrationPlanEntity::getId, Function.identity()));
+        Set<Long> v2ItemIds = items.stream()
+                .filter(item -> item.getGroupRegistrationPlanId() != null && item.getId() != null)
+                .map(EnrollmentOrderItemEntity::getId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<EnrollmentItemStudentKey, ClassEnrollmentEntity> classEnrollments = v2ItemIds.isEmpty()
+                ? Collections.emptyMap()
+                : classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, v2ItemIds)
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                    .stream()
+                    .filter(enrollment -> enrollment.getEnrollmentOrderItemId() != null
+                            && enrollment.getStudentId() != null)
+                    // 收据更正会保留旧权益为 CANCELLED 并创建新权益；报表必须稳定展示有效的新权益。
+                    .sorted(classEnrollmentSelectionOrder())
+                    .collect(Collectors.toMap(
+                            enrollment -> new EnrollmentItemStudentKey(
+                                    enrollment.getEnrollmentOrderItemId(), enrollment.getStudentId()),
+                            Function.identity(), (first, ignored) -> first, LinkedHashMap::new));
+        return new Context(classGroups, products, primaryAssignments, teachers, plans, classEnrollments);
+    }
+
+    private Comparator<ClassEnrollmentEntity> classEnrollmentSelectionOrder() {
+        return Comparator.comparing((ClassEnrollmentEntity enrollment) ->
+                        !"ACTIVE".equalsIgnoreCase(enrollment.getStatus()))
+                .thenComparing(ClassEnrollmentEntity::getUpdatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(ClassEnrollmentEntity::getCreatedAt,
+                        Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(ClassEnrollmentEntity::getId,
+                        Comparator.nullsLast(Comparator.reverseOrder()));
     }
 
     private List<DataSummaryResponseVO.RowVO> buildRows(
@@ -605,6 +645,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Long classId = firstNonNull(item == null ? null : item.getClassId(),
                 order.getClassId());
         ClassGroupEntity classGroup = classId == null ? null : context.classGroups().get(classId);
+        GroupRegistrationPlanEntity registrationPlan = item == null || item.getGroupRegistrationPlanId() == null
+                ? null : context.registrationPlans().get(item.getGroupRegistrationPlanId());
+        ClassEnrollmentEntity v2Enrollment = item == null || displayStudentId == null
+                ? null : context.classEnrollments().get(new EnrollmentItemStudentKey(item.getId(), displayStudentId));
         Long productId = firstNonNull(item == null ? null : item.getCourseProductId(),
                 coursePackage == null ? null : coursePackage.getCourseProductId(),
                 classGroup == null ? null : classGroup.getProductId());
@@ -627,8 +671,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 product == null ? null : product.getProductName());
 
         // Data Summary 展示该学生本次报名周期；课程统一周期只作为缺少学生报名日期时的兼容回退。
-        LocalDate periodStartDate = resolvePeriodStartDate(item, classGroup, coursePackage, order);
-        LocalDate periodEndDate = resolvePeriodEndDate(item, coursePackage, classGroup, order);
+        LocalDate periodStartDate = firstNonNull(v2Enrollment == null ? null : v2Enrollment.getEnrollmentDate(),
+                resolvePeriodStartDate(item, classGroup, coursePackage, order));
+        LocalDate periodEndDate = resolveV2PeriodEndDate(registrationPlan, v2Enrollment,
+                item, coursePackage, classGroup, order);
         BigDecimal rowStoppedConsumedAmount = resolveStoppedConsumedAmount(item, refundState);
         Integer rowStoppedSessionCount = resolveStoppedSessionCount(item, refundState);
         LocalDate stoppedStart = refundState != null && refundState.getStoppedAt() != null
@@ -789,6 +835,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 periodStartDate,
                 periodEndDate,
                 item == null ? null : item.getPeriodLabel(),
+                registrationPlan == null ? null : registrationPlan.getTermCode(),
                 resolveAttendanceOption(item),
                 item == null ? null : item.getTimeSlotLabel(),
                 resolvedCampusId,
@@ -1074,6 +1121,22 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         return firstNonNull(classGroup == null ? null : classGroup.getEndDate(), order.getPeriodEndDate());
     }
 
+    /** 班课V2以订单权益快照为准，避免旧计费规则重新推算报名周期。 */
+    private LocalDate resolveV2PeriodEndDate(GroupRegistrationPlanEntity plan,
+                                             ClassEnrollmentEntity enrollment,
+                                             EnrollmentOrderItemEntity item,
+                                             CoursePackageEntity coursePackage,
+                                             ClassGroupEntity classGroup,
+                                             EnrollmentOrderEntity order) {
+        if (plan != null) {
+            if (enrollment != null && enrollment.getExpiryDate() != null) return enrollment.getExpiryDate();
+            if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType()) && plan.getCoverageEndDate() != null) {
+                return plan.getCoverageEndDate();
+            }
+        }
+        return resolvePeriodEndDate(item, coursePackage, classGroup, order);
+    }
+
     /** 缺少有效在册快照时，按订单项购买的计费单位和数量恢复班课周期。 */
     private LocalDate calculateGroupPackageExpiry(EnrollmentOrderItemEntity item,
                                                   ClassGroupEntity classGroup,
@@ -1272,8 +1335,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, ClassGroupEntity> classGroups,
             Map<Long, CourseProductEntity> products,
             Map<Long, PackageTeacherAssignmentEntity> primaryAssignments,
-            Map<Long, TeacherEntity> teachers
+            Map<Long, TeacherEntity> teachers,
+            Map<Long, GroupRegistrationPlanEntity> registrationPlans,
+            Map<EnrollmentItemStudentKey, ClassEnrollmentEntity> classEnrollments
     ) {
+    }
+
+    private record EnrollmentItemStudentKey(Long orderItemId, Long studentId) {
     }
 
     private record PaymentParticipantKey(Long orderId, Integer participantIndex) {

@@ -187,6 +187,8 @@ export interface RegistrationCourseItemPayload {
   courseType?: string;
   courseProductId?: EntityId;
   coursePriceOptionId?: EntityId;
+  groupProjectId?: EntityId;
+  groupRegistrationPlanId?: EntityId;
   classId?: EntityId;
   detail?: string;
   gradeBand?: string;

@@ -26,7 +26,9 @@ import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMap
 import com.classdeduction.system.modules.lesson.service.impl.LessonRecordServiceImpl;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -75,6 +77,9 @@ class LessonRecordServiceImplTest {
 
     @Mock
     private LessonOccurrenceMapper lessonOccurrenceMapper;
+
+    @Mock
+    private ClassGroupMapper classGroupMapper;
 
     @Mock
     private CoursePackageMapper coursePackageMapper;
@@ -128,6 +133,7 @@ class LessonRecordServiceImplTest {
     void setUp() {
         lessonRecordService = new LessonRecordServiceImpl(
                 lessonRecordMapper,
+                classGroupMapper,
                 hourLedgerMapper,
                 packageBalanceSnapshotMapper,
                 lessonStatusRuleMapper,
@@ -803,6 +809,39 @@ class LessonRecordServiceImplTest {
         // 撤销确认必须把课次的老师/教室恢复为确认前的原计划，避免日历与后续冲突检测错误占用。
         assertThat(restoredOccurrence.getPlannedTeacherId()).isEqualTo(701L);
         assertThat(restoredOccurrence.getPlannedClassroomId()).isEqualTo(801L);
+    }
+
+    @Test
+    void shouldLockClassBeforeRevokingGroupClassAttendanceRecord() {
+        LessonRecordEntity classRecord = buildPendingRecord();
+        classRecord.setPackageId(null);
+        classRecord.setClassEnrollmentId(7101L);
+        classRecord.setConfirmStage("CONFIRMED");
+        classRecord.setDeductedUnits(0);
+        LessonOccurrenceEntity classOccurrence = buildOccurrence();
+        classOccurrence.setClassGroupId(7001L);
+        classOccurrence.setPackageId(null);
+        classOccurrence.setPlanningStatus("MERGED");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(7001L);
+        classGroup.setStatus("ACTIVE");
+
+        when(lessonRecordMapper.selectById(2001L)).thenReturn(classRecord);
+        when(lessonRecordMapper.selectByIdForUpdate(2001L)).thenReturn(classRecord);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(classOccurrence);
+        when(lessonOccurrenceMapper.selectByIdForUpdate(1001L)).thenReturn(classOccurrence);
+        when(classGroupMapper.selectByIdForUpdate(7001L)).thenReturn(classGroup);
+        when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
+        when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
+
+        lessonRecordService.revokeLesson(2001L, currentAdminUser());
+
+        var lockOrder = org.mockito.Mockito.inOrder(classGroupMapper, lessonRecordMapper, lessonOccurrenceMapper);
+        lockOrder.verify(classGroupMapper).selectByIdForUpdate(7001L);
+        lockOrder.verify(lessonRecordMapper).selectByIdForUpdate(2001L);
+        lockOrder.verify(lessonOccurrenceMapper).selectByIdForUpdate(1001L);
+        verify(lessonRecordMapper).deleteById(2001L);
+        verify(lessonOccurrenceMapper).updateById(classOccurrence);
     }
 
     @Test

@@ -45,6 +45,8 @@ export interface DataSummaryRow {
   periodStartDate?: string;
   periodEndDate?: string;
   periodLabel?: string;
+  /** V2 班课报名方案的标准季节代码，优先于名称文本用于季节名单筛选。 */
+  registrationTermCode?: string;
   /** 上课形态：FULL_DAY 全天 / MORNING 上午 / AFTERNOON 下午 / CUSTOM 自定义时段；1 对 1 等不适用时为空。 */
   attendanceOption?: string;
   timeSlotLabel?: string;

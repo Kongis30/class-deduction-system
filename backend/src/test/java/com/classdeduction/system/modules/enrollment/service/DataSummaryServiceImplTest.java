@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
+import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -29,6 +31,8 @@ import com.classdeduction.system.modules.enrollment.vo.DataSummaryResponseVO;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -93,7 +97,13 @@ class DataSummaryServiceImplTest {
     private ClassBillingService classBillingService;
 
     @Mock
+    private ClassEnrollmentMapper classEnrollmentMapper;
+
+    @Mock
     private CourseProductMapper courseProductMapper;
+
+    @Mock
+    private GroupRegistrationPlanMapper groupRegistrationPlanMapper;
 
     @Mock
     private TeacherMapper teacherMapper;
@@ -116,6 +126,8 @@ class DataSummaryServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PrivateLessonGroupEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PaymentAllocationEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassEnrollmentEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), GroupRegistrationPlanEntity.class);
     }
 
     @BeforeEach
@@ -132,7 +144,9 @@ class DataSummaryServiceImplTest {
                 classGroupMapper,
                 enrollmentOrderCourseRefundStateMapper,
                 classBillingService,
+                classEnrollmentMapper,
                 courseProductMapper,
+                groupRegistrationPlanMapper,
                 teacherMapper,
                 hourLedgerMapper,
                 studentMapper,
@@ -410,6 +424,61 @@ class DataSummaryServiceImplTest {
                     assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 26));
                     assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 11, 1));
                 });
+    }
+
+    @Test
+    void shouldUseV2PlanTermAndStudentEntitlementDates() {
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        EnrollmentOrderItemEntity item = item(21L, 1, "100.00");
+        item.setClassId(31L);
+        item.setCourseProductId(41L);
+        item.setGroupProjectId(51L);
+        item.setGroupRegistrationPlanId(61L);
+        item.setStartDate(LocalDate.of(2026, 9, 19));
+        item.setPeriodLabel("Fall · 13 sessions");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(31L);
+        classGroup.setClassName("G3");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 12));
+        classGroup.setEndDate(LocalDate.of(2027, 6, 12));
+        GroupRegistrationPlanEntity plan = new GroupRegistrationPlanEntity();
+        plan.setId(61L);
+        plan.setCoverageType("FIXED_DATES");
+        plan.setTermCode("FALL");
+        plan.setCoverageStartDate(LocalDate.of(2026, 9, 12));
+        plan.setCoverageEndDate(LocalDate.of(2026, 12, 12));
+        ClassEnrollmentEntity entitlement = new ClassEnrollmentEntity();
+        entitlement.setId(71L);
+        entitlement.setEnrollmentOrderItemId(21L);
+        entitlement.setStudentId(1L);
+        entitlement.setEnrollmentDate(LocalDate.of(2026, 9, 19));
+        entitlement.setExpiryDate(LocalDate.of(2026, 12, 12));
+        entitlement.setIsDeleted(0);
+        entitlement.setStatus("ACTIVE");
+        ClassEnrollmentEntity replacedEntitlement = new ClassEnrollmentEntity();
+        replacedEntitlement.setId(70L);
+        replacedEntitlement.setEnrollmentOrderItemId(21L);
+        replacedEntitlement.setStudentId(1L);
+        replacedEntitlement.setEnrollmentDate(LocalDate.of(2026, 9, 19));
+        replacedEntitlement.setExpiryDate(LocalDate.of(2026, 11, 1));
+        replacedEntitlement.setIsDeleted(0);
+        replacedEntitlement.setStatus("CANCELLED");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
+        when(groupRegistrationPlanMapper.selectBatchIds(any())).thenReturn(List.of(plan));
+        // Mapper 返回顺序不保证；取消的旧权益即使先返回，也不能覆盖新有效期。
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(replacedEntitlement, entitlement));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.registrationTermCode()).isEqualTo("FALL");
+            assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 19));
+            assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 12));
+        });
     }
 
     @Test

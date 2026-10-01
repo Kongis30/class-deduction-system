@@ -129,7 +129,7 @@ public class ClassBillingServiceImpl implements ClassBillingService {
                 .collect(Collectors.toCollection(java.util.TreeSet::new));
         LocalDate limit = startDate.plusYears(10);
         List<ClassHolidayVO> holidays = classHolidayService.listHolidays(
-                classGroup.getProductId(), classGroup.getGradeBand(), startDate, limit);
+                classGroup.getGroupProjectId(), startDate, limit);
         int count = 0;
         for (LocalDate date = startDate; !date.isAfter(limit); date = date.plusDays(1)) {
             if (weekdays.contains(date.getDayOfWeek().getValue()) && !classHolidayService.isHoliday(date, holidays)) {
@@ -150,7 +150,7 @@ public class ClassBillingServiceImpl implements ClassBillingService {
         Set<Integer> weekdays = slots.stream().map(ClassGroupScheduleSlotEntity::getWeekday)
                 .collect(Collectors.toSet());
         List<ClassHolidayVO> holidays = classHolidayService.listHolidays(
-                classGroup.getProductId(), classGroup.getGradeBand(), startDate, configuredEnd);
+                classGroup.getGroupProjectId(), startDate, configuredEnd);
         int totalSessionDays = 0;
         int availableSessionDays = 0;
         for (LocalDate date = startDate; !date.isAfter(configuredEnd); date = date.plusDays(1)) {

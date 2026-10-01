@@ -6,6 +6,7 @@ import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
 import com.classdeduction.system.modules.base.entity.ProductGradeConfigEntity;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
@@ -14,6 +15,7 @@ import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.mapper.ProductGradeConfigMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -57,6 +59,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -98,6 +101,9 @@ class ClassGroupServiceImplTest {
     private CourseProductMapper courseProductMapper;
 
     @Mock
+    private GroupCourseProjectMapper groupCourseProjectMapper;
+
+    @Mock
     private ProductGradeConfigMapper productGradeConfigMapper;
 
     @Mock
@@ -130,6 +136,22 @@ class ClassGroupServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(courseProductMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> courseProductMapper.selectById(invocation.getArgument(0)));
+        lenient().when(groupCourseProjectMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> groupCourseProjectMapper.selectById(invocation.getArgument(0)));
+        lenient().when(classGroupMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> {
+                    Long id = invocation.getArgument(0);
+                    ClassGroupEntity classGroup = classGroupMapper.selectById(id);
+                    if (classGroup != null) return classGroup;
+                    ClassGroupEntity activeClass = new ClassGroupEntity();
+                    activeClass.setId(id);
+                    activeClass.setStatus("ACTIVE");
+                    return activeClass;
+                });
+        lenient().when(lessonOccurrenceMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> lessonOccurrenceMapper.selectById(invocation.getArgument(0)));
         classGroupService = new ClassGroupServiceImpl(
                 classGroupMapper,
                 classEnrollmentMapper,
@@ -141,6 +163,7 @@ class ClassGroupServiceImplTest {
                 classroomMapper,
                 campusMapper,
                 courseProductMapper,
+                groupCourseProjectMapper,
                 productGradeConfigMapper,
                 coursePackageMapper,
                 privateLessonGroupMemberMapper,
@@ -154,6 +177,44 @@ class ClassGroupServiceImplTest {
         Map<String, Object> request = new HashMap<>(body);
         request.putIfAbsent("classroomId", 801L);
         return classGroupService.updateClassSchedule(classId, request);
+    }
+
+    @Test
+    void shouldRequireReceiptRegistrationForV2ClassEnrollment() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setGroupProjectId(701L);
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+
+        assertThatThrownBy(() -> classGroupService.enrollStudent(
+                501L, 601L, LocalDate.of(2026, 10, 1), LocalDate.of(2027, 6, 30)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("GROUP_V2_REGISTRATION_REQUIRED"));
+
+        verify(studentMapper, never()).selectById(any());
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldRequireReceiptRegistrationForProjectlessGroupClassEnrollment() {
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(501L);
+        classGroup.setProductId(202L);
+        classGroup.setStatus("ACTIVE");
+        CourseProductEntity product = new CourseProductEntity();
+        product.setId(202L);
+        product.setTeachingMode("GROUP");
+        when(classGroupMapper.selectById(501L)).thenReturn(classGroup);
+        when(courseProductMapper.selectById(202L)).thenReturn(product);
+
+        assertThatThrownBy(() -> classGroupService.enrollStudent(
+                501L, 601L, LocalDate.of(2026, 10, 1), LocalDate.of(2027, 6, 30)))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("GROUP_V2_REGISTRATION_REQUIRED"));
+
+        verify(studentMapper, never()).selectById(any());
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
     }
 
     @Test
@@ -215,9 +276,57 @@ class ClassGroupServiceImplTest {
                 "className", "G3 North Campus",
                 "campusId", 701L));
 
+        verify(classGroupMapper).selectByIdForUpdate(501L);
         ArgumentCaptor<ClassGroupEntity> savedClass = ArgumentCaptor.forClass(ClassGroupEntity.class);
         verify(classGroupMapper).updateById(savedClass.capture());
         assertThat(savedClass.getValue().getCampusId()).isEqualTo(701L);
+    }
+
+    @Test
+    void shouldPreserveProjectSpecificDatesWhenCreatingV2ActualClass() {
+        CourseProductEntity product = new CourseProductEntity();
+        product.setId(601L);
+        product.setTeachingMode("GROUP");
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(701L);
+        project.setCourseProductId(601L);
+        project.setIsDeleted(0);
+        when(courseProductMapper.selectById(601L)).thenReturn(product);
+        when(groupCourseProjectMapper.selectById(701L)).thenReturn(project);
+        when(classGroupMapper.selectOne(any())).thenReturn(null);
+
+        classGroupService.createActualClass(Map.of(
+                "productId", 601L,
+                "groupProjectId", 701L,
+                "gradeBand", "G6-G8",
+                "actualClass", "G6",
+                "startDate", "2026-10-01",
+                "endDate", "2027-03-31"));
+
+        ArgumentCaptor<ClassGroupEntity> savedClass = ArgumentCaptor.forClass(ClassGroupEntity.class);
+        verify(classGroupMapper).insert(savedClass.capture());
+        var lockOrder = inOrder(groupCourseProjectMapper, courseProductMapper);
+        lockOrder.verify(groupCourseProjectMapper).selectByIdForUpdate(701L);
+        lockOrder.verify(courseProductMapper).selectByIdForUpdate(601L);
+        assertThat(savedClass.getValue().getGroupProjectId()).isEqualTo(701L);
+        assertThat(savedClass.getValue().getStartDate()).isEqualTo(LocalDate.of(2026, 10, 1));
+        assertThat(savedClass.getValue().getEndDate()).isEqualTo(LocalDate.of(2027, 3, 31));
+        assertThat(savedClass.getValue().getScheduleBaseEndDate()).isEqualTo(LocalDate.of(2027, 3, 31));
+        verify(productGradeConfigMapper, never()).selectOne(any());
+        verify(classGroupMapper, times(1)).selectOne(any());
+    }
+
+    @Test
+    void shouldRejectGroupClassCreationWithoutTeachingProject() {
+        assertThatThrownBy(() -> classGroupService.createActualClass(Map.of(
+                "productId", 601L,
+                "gradeBand", "G6",
+                "actualClass", "G6-A")))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("GROUP_PROJECT_REQUIRED"));
+
+        verify(classGroupMapper, never()).insert(any(ClassGroupEntity.class));
+        verify(productGradeConfigMapper, never()).selectOne(any());
     }
 
     @Test
@@ -247,6 +356,7 @@ class ClassGroupServiceImplTest {
 
         classGroupService.deleteClassGroup(501L);
 
+        verify(classGroupMapper).selectByIdForUpdate(501L);
         verify(lessonOccurrenceMapper).update(any(LessonOccurrenceEntity.class), any());
         verify(classEnrollmentMapper).update(any(ClassEnrollmentEntity.class), any());
         verify(classGroupScheduleSlotMapper).delete(any());
@@ -319,6 +429,11 @@ class ClassGroupServiceImplTest {
                 "actualUnits", 3,
                 "notes", "Admin adjusted actual class details."
         ), adminUser());
+
+        var lockOrder = inOrder(classGroupMapper, lessonOccurrenceMapper, classEnrollmentMapper);
+        lockOrder.verify(classGroupMapper).selectByIdForUpdate(501L);
+        lockOrder.verify(lessonOccurrenceMapper).selectByIdForUpdate(1001L);
+        lockOrder.verify(classEnrollmentMapper).selectList(any());
 
         verify(lessonRecordMapper, times(2)).updateById(recordCaptor.capture());
         verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
@@ -721,6 +836,7 @@ class ClassGroupServiceImplTest {
                         "endTime", "11:30"))
         ));
 
+        verify(classGroupMapper).selectByIdForUpdate(501L);
         ArgumentCaptor<ClassGroupScheduleSlotEntity> slotCaptor = ArgumentCaptor.forClass(ClassGroupScheduleSlotEntity.class);
         verify(classGroupMapper, atLeastOnce()).updateById(classGroup);
         verify(classGroupScheduleSlotMapper).insert(slotCaptor.capture());

@@ -51,6 +51,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.when;
 
 /**
@@ -105,6 +107,10 @@ class LessonOccurrenceServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(lessonOccurrenceMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> lessonOccurrenceMapper.selectById(invocation.getArgument(0)));
+        lenient().when(classGroupMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> classGroupMapper.selectById(invocation.getArgument(0)));
         lessonOccurrenceService = new LessonOccurrenceServiceImpl(
                 lessonOccurrenceMapper,
                 lessonRecordMapper,
@@ -517,6 +523,10 @@ class LessonOccurrenceServiceImplTest {
         request.setClassroomId(601L);
 
         PendingClassroomAssignmentVO result = lessonOccurrenceService.backfillPendingClassroom(request);
+
+        var lockOrder = inOrder(classGroupMapper, classroomMapper);
+        lockOrder.verify(classGroupMapper).selectByIdForUpdate(7001L);
+        lockOrder.verify(classroomMapper).selectByIdForUpdate(601L);
 
         ArgumentCaptor<ClassGroupEntity> classCaptor = ArgumentCaptor.forClass(ClassGroupEntity.class);
         ArgumentCaptor<LessonOccurrenceEntity> occurrenceCaptor = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);

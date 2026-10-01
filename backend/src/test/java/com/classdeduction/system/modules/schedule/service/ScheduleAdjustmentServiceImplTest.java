@@ -7,6 +7,7 @@ import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -17,6 +18,7 @@ import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.schedule.dto.ScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.dto.WeeklyScheduleAdjustmentRequest;
 import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
@@ -45,6 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -69,6 +72,9 @@ class ScheduleAdjustmentServiceImplTest {
 
     @Mock
     private ClassGroupMapper classGroupMapper;
+
+    @Mock
+    private GroupCourseProjectMapper groupCourseProjectMapper;
 
     @Mock
     private CoursePackageMapper coursePackageMapper;
@@ -101,8 +107,21 @@ class ScheduleAdjustmentServiceImplTest {
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(classGroupMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> {
+                    Long id = invocation.getArgument(0);
+                    ClassGroupEntity classGroup = classGroupMapper.selectById(id);
+                    if (classGroup != null) return classGroup;
+                    ClassGroupEntity activeClass = new ClassGroupEntity();
+                    activeClass.setId(id);
+                    activeClass.setStatus("ACTIVE");
+                    return activeClass;
+                });
+        org.mockito.Mockito.lenient().when(lessonOccurrenceMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> lessonOccurrenceMapper.selectById(invocation.getArgument(0)));
         scheduleAdjustmentService = new ScheduleAdjustmentServiceImpl(
                 lessonOccurrenceMapper,
+                groupCourseProjectMapper,
                 lessonAdjustmentLogMapper,
                 lessonRecordMapper,
                 classEnrollmentMapper,
@@ -282,7 +301,16 @@ class ScheduleAdjustmentServiceImplTest {
         source.setPackageId(null);
         source.setStudentId(null);
         source.setClassGroupId(7001L);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(7001L);
+        classGroup.setStatus("ACTIVE");
+        classGroup.setGroupProjectId(8001L);
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
+        when(lessonOccurrenceMapper.selectByIdForUpdate(1001L)).thenReturn(source);
+        when(classGroupMapper.selectById(7001L)).thenReturn(classGroup);
+        when(classGroupMapper.selectByIdForUpdate(7001L)).thenReturn(classGroup);
+        when(groupCourseProjectMapper.selectByIdForUpdate(8001L))
+                .thenReturn(new com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity());
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
@@ -306,6 +334,11 @@ class ScheduleAdjustmentServiceImplTest {
 
         scheduleAdjustmentService.adjust(request);
 
+        var lockOrder = inOrder(groupCourseProjectMapper, classGroupMapper, lessonOccurrenceMapper);
+        lockOrder.verify(groupCourseProjectMapper).selectByIdForUpdate(8001L);
+        lockOrder.verify(classGroupMapper).selectByIdForUpdate(7001L);
+        lockOrder.verify(lessonOccurrenceMapper).selectByIdForUpdate(1001L);
+
         verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
         assertThat(occurrenceCaptor.getValue().getClassGroupId()).isEqualTo(7001L);
         assertThat(occurrenceCaptor.getValue().getPackageId()).isNull();
@@ -318,7 +351,13 @@ class ScheduleAdjustmentServiceImplTest {
         source.setPackageId(null);
         source.setStudentId(null);
         source.setClassGroupId(7001L);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(7001L);
+        classGroup.setStatus("ACTIVE");
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(source);
+        when(lessonOccurrenceMapper.selectByIdForUpdate(1001L)).thenReturn(source);
+        when(classGroupMapper.selectById(7001L)).thenReturn(classGroup);
+        when(classGroupMapper.selectByIdForUpdate(7001L)).thenReturn(classGroup);
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of());
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());

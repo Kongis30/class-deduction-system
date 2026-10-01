@@ -35,10 +35,14 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.same;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -194,12 +198,17 @@ class StudentServiceImplTest {
         UserAccountEntity account = new UserAccountEntity();
         account.setId(101L);
         account.setStudentId(1L);
-        when(studentMapper.selectById(1L)).thenReturn(student);
+        when(studentMapper.selectByIdForUpdate(1L)).thenReturn(student);
         when(userAccountMapper.selectList(any())).thenReturn(List.of(account));
         when(coursePackageMapper.selectList(any())).thenReturn(List.of());
 
         studentService.deleteStudent(1L);
 
+        var order = inOrder(studentMapper, userRoleMapper, authSessionMapper, userAccountMapper,
+                lessonOccurrenceMapper, classEnrollmentMapper, teacherPayRateMapper);
+        order.verify(studentMapper).selectByIdForUpdate(1L);
+        order.verify(classEnrollmentMapper).delete(any());
+        order.verify(studentMapper).deleteById(1L);
         verify(userRoleMapper).delete(any());
         verify(authSessionMapper).delete(any());
         verify(userAccountMapper).delete(any());
@@ -207,6 +216,18 @@ class StudentServiceImplTest {
         verify(classEnrollmentMapper).delete(any());
         verify(teacherPayRateMapper).delete(any());
         verify(studentMapper).deleteById(1L);
+    }
+
+    @Test
+    void shouldNotCascadeDeleteWhenStudentWasAlreadyDeleted() {
+        when(studentMapper.selectByIdForUpdate(1L)).thenReturn(null);
+
+        assertThatThrownBy(() -> studentService.deleteStudent(1L))
+                .isInstanceOf(com.classdeduction.system.common.exception.BusinessException.class)
+                .hasMessage("Student not found.");
+
+        verifyNoInteractions(classEnrollmentMapper, coursePackageMapper);
+        verify(studentMapper, never()).deleteById(1L);
     }
 
     @Test

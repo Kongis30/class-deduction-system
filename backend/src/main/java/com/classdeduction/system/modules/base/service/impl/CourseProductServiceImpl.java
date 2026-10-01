@@ -1,7 +1,6 @@
 package com.classdeduction.system.modules.base.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
@@ -10,16 +9,23 @@ import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
+import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
+import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.service.CourseProductService;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.entity.ClassHolidayEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -46,11 +52,15 @@ public class CourseProductServiceImpl implements CourseProductService {
 
     private final CourseProductMapper courseProductMapper;
     private final CoursePackageMapper coursePackageMapper;
+    private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final ClassGroupMapper classGroupMapper;
     private final com.classdeduction.system.modules.schedule.service.ClassGroupService classGroupService;
     private final PlatformTransactionManager transactionManager;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    private final GroupCourseProjectMapper groupCourseProjectMapper;
+    private final GroupRegistrationPlanMapper groupRegistrationPlanMapper;
+    private final ClassHolidayMapper classHolidayMapper;
 
     @Override
     public PageResponse<CourseProductVO> pageCourseProducts(CourseProductPageQuery query) {
@@ -167,14 +177,88 @@ public class CourseProductServiceImpl implements CourseProductService {
             copy.setEndMonth(shiftDate(copy.getEndMonth(), dateShiftYears));
             courseProductMapper.insert(copy);
 
-            Map<Long, Long> classIdMap = copyProductClasses(sourceId, copy.getId(), dateShiftYears);
-            copyProductOptions(sourceId, copy.getId(), copy.getProductCode(), normalizedName, classIdMap);
+            if ("GROUP".equals(source.getTeachingMode())) {
+                copyV2GroupSetup(sourceId, copy.getId(), dateShiftYears);
+            } else {
+                Map<Long, Long> classIdMap = copyProductClasses(sourceId, copy.getId(), dateShiftYears, Map.of(), false);
+                copyProductOptions(sourceId, copy.getId(), copy.getProductCode(), normalizedName, classIdMap);
+            }
             return copy.getId();
         }
     }
 
-    /** 复制班级和固定周课表，不复制报名、已生成课次或消课记录。 */
-    private Map<Long, Long> copyProductClasses(Long sourceProductId, Long targetProductId, int dateShiftYears) {
+    /** 班课复制只复制项目、报名方案和实际班级模板；不复制学生业务或教师、教室分配。 */
+    private void copyV2GroupSetup(Long sourceProductId, Long targetProductId, int dateShiftYears) {
+        List<ClassGroupEntity> sourceClasses = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, sourceProductId)
+                .eq(ClassGroupEntity::getIsDeleted, 0));
+        List<GroupCourseProjectEntity> projects = groupCourseProjectMapper.selectList(
+                new LambdaQueryWrapper<GroupCourseProjectEntity>()
+                        .eq(GroupCourseProjectEntity::getCourseProductId, sourceProductId)
+                        .eq(GroupCourseProjectEntity::getIsDeleted, 0)
+                        .orderByAsc(GroupCourseProjectEntity::getDisplayOrder)
+                        .orderByAsc(GroupCourseProjectEntity::getId));
+        if (!sourceClasses.isEmpty() && (projects.isEmpty()
+                || sourceClasses.stream().anyMatch(row -> row.getGroupProjectId() == null))) {
+            throw new BusinessException("COURSE_PRODUCT_COPY_GROUP_SETUP_INCOMPLETE",
+                    "This group product must be migrated to the project model before it can be copied.");
+        }
+        Map<Long, Long> projectIdMap = new HashMap<>();
+        for (GroupCourseProjectEntity sourceProject : projects) {
+            GroupCourseProjectEntity targetProject = new GroupCourseProjectEntity();
+            org.springframework.beans.BeanUtils.copyProperties(sourceProject, targetProject);
+            clearAuditFields(targetProject);
+            targetProject.setId(null);
+            targetProject.setCourseProductId(targetProductId);
+            groupCourseProjectMapper.insert(targetProject);
+            projectIdMap.put(sourceProject.getId(), targetProject.getId());
+            copyProjectPlans(sourceProject.getId(), targetProject.getId(), dateShiftYears);
+            copyProjectHolidays(sourceProject.getId(), targetProject.getId(), dateShiftYears);
+        }
+
+        copyProductClasses(sourceProductId, targetProductId, dateShiftYears, projectIdMap, true);
+    }
+
+    private void copyProjectPlans(Long sourceProjectId, Long targetProjectId, int dateShiftYears) {
+        List<GroupRegistrationPlanEntity> plans = groupRegistrationPlanMapper.selectList(
+                new LambdaQueryWrapper<GroupRegistrationPlanEntity>()
+                        .eq(GroupRegistrationPlanEntity::getProjectId, sourceProjectId)
+                        .eq(GroupRegistrationPlanEntity::getIsDeleted, 0)
+                        .orderByAsc(GroupRegistrationPlanEntity::getDisplayOrder)
+                        .orderByAsc(GroupRegistrationPlanEntity::getId));
+        for (GroupRegistrationPlanEntity sourcePlan : plans) {
+            GroupRegistrationPlanEntity targetPlan = new GroupRegistrationPlanEntity();
+            org.springframework.beans.BeanUtils.copyProperties(sourcePlan, targetPlan);
+            clearAuditFields(targetPlan);
+            targetPlan.setId(null);
+            targetPlan.setProjectId(targetProjectId);
+            targetPlan.setCoverageStartDate(shiftDate(sourcePlan.getCoverageStartDate(), dateShiftYears));
+            targetPlan.setCoverageEndDate(shiftDate(sourcePlan.getCoverageEndDate(), dateShiftYears));
+            groupRegistrationPlanMapper.insert(targetPlan);
+        }
+    }
+
+    private void copyProjectHolidays(Long sourceProjectId, Long targetProjectId, int dateShiftYears) {
+        List<ClassHolidayEntity> holidays = classHolidayMapper.selectList(
+                new LambdaQueryWrapper<ClassHolidayEntity>()
+                        .eq(ClassHolidayEntity::getGroupProjectId, sourceProjectId)
+                        .eq(ClassHolidayEntity::getIsDeleted, 0)
+                        .orderByAsc(ClassHolidayEntity::getStartDate));
+        for (ClassHolidayEntity sourceHoliday : holidays) {
+            ClassHolidayEntity targetHoliday = new ClassHolidayEntity();
+            org.springframework.beans.BeanUtils.copyProperties(sourceHoliday, targetHoliday);
+            clearAuditFields(targetHoliday);
+            targetHoliday.setId(null);
+            targetHoliday.setGroupProjectId(targetProjectId);
+            targetHoliday.setStartDate(shiftDate(sourceHoliday.getStartDate(), dateShiftYears));
+            targetHoliday.setEndDate(shiftDate(sourceHoliday.getEndDate(), dateShiftYears));
+            classHolidayMapper.insert(targetHoliday);
+        }
+    }
+
+    /** 班級可按舊關聯 project ID 重映射；複製班課模板時不帶老師和教室。 */
+    private Map<Long, Long> copyProductClasses(Long sourceProductId, Long targetProductId, int dateShiftYears,
+                                                Map<Long, Long> projectIdMap, boolean clearAssignments) {
         List<ClassGroupEntity> sourceClasses = classGroupMapper.selectList(
                 new LambdaQueryWrapper<ClassGroupEntity>()
                         .eq(ClassGroupEntity::getProductId, sourceProductId)
@@ -187,6 +271,18 @@ public class CourseProductServiceImpl implements CourseProductService {
             clearAuditFields(targetClass);
             targetClass.setId(null);
             targetClass.setProductId(targetProductId);
+            if (sourceClass.getGroupProjectId() != null) {
+                Long targetProjectId = projectIdMap.get(sourceClass.getGroupProjectId());
+                if (targetProjectId == null) {
+                    throw new BusinessException("COURSE_PRODUCT_COPY_PROJECT_MISSING",
+                            "A teaching project is missing; the course was not copied.");
+                }
+                targetClass.setGroupProjectId(targetProjectId);
+            }
+            if (clearAssignments) {
+                targetClass.setTeacherId(null);
+                targetClass.setClassroomId(null);
+            }
             targetClass.setStartDate(shiftDate(targetClass.getStartDate(), dateShiftYears));
             targetClass.setEndDate(shiftDate(targetClass.getEndDate(), dateShiftYears));
             targetClass.setScheduleBaseEndDate(shiftDate(targetClass.getScheduleBaseEndDate(), dateShiftYears));
@@ -207,6 +303,12 @@ public class CourseProductServiceImpl implements CourseProductService {
                 clearAuditFields(targetSlot);
                 targetSlot.setId(null);
                 targetSlot.setClassGroupId(targetClass.getId());
+                if (clearAssignments) {
+                    targetSlot.setTeacherId(null);
+                    targetSlot.setClassroomId(null);
+                    targetSlot.setAlternateTeacherId(null);
+                    targetSlot.setAlternateClassroomId(null);
+                }
                 targetSlot.setRotationAnchorDate(shiftDate(sourceSlot.getRotationAnchorDate(), dateShiftYears));
                 classGroupScheduleSlotMapper.insert(targetSlot);
             }
@@ -263,32 +365,23 @@ public class CourseProductServiceImpl implements CourseProductService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void updateCourseProduct(Long id, CourseProductSaveRequest request) {
-        CourseProductEntity entity = requireCourseProduct(id);
+        CourseProductEntity entity = courseProductMapper.selectByIdForUpdate(id);
+        if (entity == null) {
+            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
+        }
         if (!StringUtils.hasText(request.getProductCode())) {
             request.setProductCode(entity.getProductCode());
         }
         ensureProductCodeUnique(id, request.getProductCode());
         ensureProductNameUnique(id, request.getProductName());
         validateByTeachingMode(request);
+        if (!Objects.equals(entity.getTeachingMode(), request.getTeachingMode())
+                && hasAnyTeachingModelReferences(id)) {
+            throw new BusinessException("PRODUCT_TEACHING_MODE_IN_USE",
+                    "Teaching mode cannot be changed after prices, classes, packages, projects, or enrollment history have been created.");
+        }
         applyCourseProduct(entity, request);
         courseProductMapper.updateById(entity);
-        syncGroupOptionCourseType(entity);
-    }
-
-    /**
-     * 编辑课程产品后，把本次写入的 course_type 级联刷到其关联的「班课」价格选项，
-     * 让选项里的描述性 program 标签与产品保持一致（选项创建时是对产品 course_type 的快照）。
-     * 仅同步 derived 的 course_type，不改其它字段；已报名订单报文（enrollment_order_item.course_type）是
-     * 报名时自身的快照，不受影响。只能对非 ONE_ON_ONE 选项生效，避免覆盖 1v1 选项。
-     */
-    private void syncGroupOptionCourseType(CourseProductEntity entity) {
-        String syncedCourseType = "ONE_ON_ONE".equals(entity.getTeachingMode())
-                ? "ONE_ON_ONE"
-                : StringUtils.hasText(entity.getCourseType()) ? entity.getCourseType() : "GROUP";
-        coursePriceOptionMapper.update(null, new LambdaUpdateWrapper<CoursePriceOptionEntity>()
-                .eq(CoursePriceOptionEntity::getCourseProductId, entity.getId())
-                .ne(CoursePriceOptionEntity::getCourseType, "ONE_ON_ONE")
-                .set(CoursePriceOptionEntity::getCourseType, syncedCourseType));
     }
 
     /**
@@ -356,13 +449,12 @@ public class CourseProductServiceImpl implements CourseProductService {
                                 + "Set the product status to INACTIVE instead.");
             }
         } else {
-            // 班课产品是班级的活数据源：slots/计费窗口会被续排任务持续回读，class_group 也与产品 1:1 绑定。
-            // 一旦开过班就不能删，否则会中断在读班级并悬挂排课/报名/财务数据。
+            // V2项目是班课目录和历史订单的外键目标；即使还没有实际班级，也不能删除产品行。
             // 想停止招生改为 INACTIVE，想退役班级请走"删除班级"流程。
-            if (hasAnyClassGroupReference(id)) {
+            if (hasAnyClassGroupReference(id) || hasAnyGroupProjectReference(id)) {
                 throw new BusinessException("PRODUCT_HAS_CLASSES",
-                        "Cannot delete course product: a class has been opened for it. "
-                                + "Set the product status to INACTIVE, or delete the class instead.");
+                        "Cannot delete course product: it has teaching-project setup or class history. "
+                                + "Set the product status to INACTIVE instead.");
             }
         }
         releaseProductCode(product);
@@ -373,6 +465,22 @@ public class CourseProductServiceImpl implements CourseProductService {
     @Transactional(rollbackFor = Exception.class)
     public void forceDeleteCourseProduct(Long id, String reason) {
         CourseProductEntity product = requireCourseProduct(id);
+
+        // 保留项目和方案行供历史收据、退款及 Data Summary 查询，只停止后续招生。
+        List<GroupCourseProjectEntity> projects = groupCourseProjectMapper.selectList(
+                new LambdaQueryWrapper<GroupCourseProjectEntity>()
+                        .eq(GroupCourseProjectEntity::getCourseProductId, id));
+        for (GroupCourseProjectEntity project : projects) {
+            project.setStatus("INACTIVE");
+            groupCourseProjectMapper.updateById(project);
+            List<GroupRegistrationPlanEntity> plans = groupRegistrationPlanMapper.selectList(
+                    new LambdaQueryWrapper<GroupRegistrationPlanEntity>()
+                            .eq(GroupRegistrationPlanEntity::getProjectId, project.getId()));
+            for (GroupRegistrationPlanEntity plan : plans) {
+                plan.setStatus("INACTIVE");
+                groupRegistrationPlanMapper.updateById(plan);
+            }
+        }
 
         // 级联软删除关联班级：取消未来课次、退出报名、软删班级本身。历史消课与流水保留供审计。
         List<ClassGroupEntity> classes = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
@@ -424,6 +532,29 @@ public class CourseProductServiceImpl implements CourseProductService {
         return classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
                 .eq(ClassGroupEntity::getProductId, productId)
                 .eq(ClassGroupEntity::getIsDeleted, 0)) > 0;
+    }
+
+    /** 项目外键和订单历史依赖产品行，即使项目暂时没有实际班级也要阻止删除。 */
+    private boolean hasAnyGroupProjectReference(Long productId) {
+        return groupCourseProjectMapper.selectCount(new LambdaQueryWrapper<GroupCourseProjectEntity>()
+                .eq(GroupCourseProjectEntity::getCourseProductId, productId)) > 0;
+    }
+
+    /** 防止产品切换教学模式后，价格、班级、项目或历史报名落入另一套业务链路。 */
+    private boolean hasAnyTeachingModelReferences(Long productId) {
+        return hasPositiveCount(coursePackageMapper.selectCount(new LambdaQueryWrapper<CoursePackageEntity>()
+                        .eq(CoursePackageEntity::getCourseProductId, productId)))
+                || hasPositiveCount(classGroupMapper.selectCount(new LambdaQueryWrapper<ClassGroupEntity>()
+                        .eq(ClassGroupEntity::getProductId, productId)))
+                || hasPositiveCount(groupCourseProjectMapper.selectCount(new LambdaQueryWrapper<GroupCourseProjectEntity>()
+                        .eq(GroupCourseProjectEntity::getCourseProductId, productId)))
+                || hasPositiveCount(coursePriceOptionMapper.selectCount(new LambdaQueryWrapper<CoursePriceOptionEntity>()
+                        .eq(CoursePriceOptionEntity::getCourseProductId, productId)))
+                || hasPositiveCount(enrollmentOrderItemMapper.countProductHistoryReferences(productId));
+    }
+
+    private boolean hasPositiveCount(Long count) {
+        return count != null && count > 0;
     }
 
     /**

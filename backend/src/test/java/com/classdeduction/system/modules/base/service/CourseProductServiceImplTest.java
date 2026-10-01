@@ -1,21 +1,25 @@
 package com.classdeduction.system.modules.base.service;
 
-import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
-import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
+import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
+import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.mapper.CoursePriceOptionMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.impl.CourseProductServiceImpl;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -44,6 +48,8 @@ class CourseProductServiceImplTest {
     @Mock
     private CoursePackageMapper coursePackageMapper;
     @Mock
+    private EnrollmentOrderItemMapper enrollmentOrderItemMapper;
+    @Mock
     private ClassGroupMapper classGroupMapper;
     @Mock
     private ClassGroupService classGroupService;
@@ -53,6 +59,12 @@ class CourseProductServiceImplTest {
     private CoursePriceOptionMapper coursePriceOptionMapper;
     @Mock
     private ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
+    @Mock
+    private GroupCourseProjectMapper groupCourseProjectMapper;
+    @Mock
+    private GroupRegistrationPlanMapper groupRegistrationPlanMapper;
+    @Mock
+    private ClassHolidayMapper classHolidayMapper;
 
     private CourseProductServiceImpl courseProductService;
 
@@ -62,18 +74,26 @@ class CourseProductServiceImplTest {
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CourseProductEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePriceOptionEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), GroupCourseProjectEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), GroupRegistrationPlanEntity.class);
     }
 
     @BeforeEach
     void setUp() {
+        lenient().when(courseProductMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> courseProductMapper.selectById(invocation.getArgument(0)));
         courseProductService = new CourseProductServiceImpl(
                 courseProductMapper,
                 coursePackageMapper,
+                enrollmentOrderItemMapper,
                 classGroupMapper,
                 classGroupService,
                 transactionManager,
                 coursePriceOptionMapper,
-                classGroupScheduleSlotMapper
+                classGroupScheduleSlotMapper,
+                groupCourseProjectMapper,
+                groupRegistrationPlanMapper,
+                classHolidayMapper
         );
     }
 
@@ -175,7 +195,19 @@ class CourseProductServiceImplTest {
     }
 
     @Test
-    void shouldCascadeCourseTypeToGroupOptionsWhenUpdatingProduct() {
+    void shouldPreventDeletingGroupProductThatStillOwnsTeachingProjects() {
+        when(courseProductMapper.selectById(4L)).thenReturn(product(4L, "Saturday class", 1));
+        when(groupCourseProjectMapper.selectCount(any())).thenReturn(1L);
+
+        assertThatThrownBy(() -> courseProductService.deleteCourseProduct(4L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("teaching-project setup");
+
+        verify(courseProductMapper, never()).deleteById(4L);
+    }
+
+    @Test
+    void updatingGroupProductDoesNotMutateRetiredPriceOptionRows() {
         CourseProductEntity existing = product(1L, "Weekly Class", 5);
         existing.setCourseType("AFTER_SCHOOL");
         when(courseProductMapper.selectById(1L)).thenReturn(existing);
@@ -186,15 +218,40 @@ class CourseProductServiceImplTest {
         courseProductService.updateCourseProduct(1L, request);
 
         verify(courseProductMapper).updateById(any(CourseProductEntity.class));
-        @SuppressWarnings({"unchecked", "rawtypes"})
-        ArgumentCaptor<Wrapper> wrapperCaptor = ArgumentCaptor.forClass((Class) Wrapper.class);
-        verify(coursePriceOptionMapper).update(isNull(), wrapperCaptor.capture());
-        // 级联写入 course_type 为产品当前值（设置值存于 paramNameValuePairs）。
-        assertThat(wrapperSqlContains(wrapperCaptor.getValue(), "AFTER_SCHOOL")).isTrue();
-        // 更新范围：限定到该产品，且只作用于班课选项（ne ONE_ON_ONE）。
-        String wrapperSql = ((AbstractWrapper<?, ?, ?>) wrapperCaptor.getValue()).getSqlSet()
-                + " " + ((AbstractWrapper<?, ?, ?>) wrapperCaptor.getValue()).getSqlSegment();
-        assertThat(wrapperSql).contains("courseType").contains("courseProductId =").contains("courseType <>");
+        verify(coursePriceOptionMapper, never()).update(any(), any());
+    }
+
+    @Test
+    void shouldRejectChangingGroupProductModeAfterProjectSetupExists() {
+        CourseProductEntity existing = product(4L, "Saturday class", 1);
+        when(courseProductMapper.selectById(4L)).thenReturn(existing);
+        when(groupCourseProjectMapper.selectCount(any())).thenReturn(1L);
+        CourseProductSaveRequest request = buildGroupRequest();
+        request.setTeachingMode("ONE_ON_ONE");
+
+        assertThatThrownBy(() -> courseProductService.updateCourseProduct(4L, request))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("PRODUCT_TEACHING_MODE_IN_USE"));
+
+        verify(courseProductMapper, never()).updateById(any(CourseProductEntity.class));
+        verify(coursePriceOptionMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void shouldRejectChangingPrivateProductModeAfterPackageReferenceExists() {
+        CourseProductEntity existing = product(5L, "Private Math", 1);
+        existing.setTeachingMode("ONE_ON_ONE");
+        when(courseProductMapper.selectById(5L)).thenReturn(existing);
+        when(coursePackageMapper.selectCount(any())).thenReturn(1L);
+        CourseProductSaveRequest request = buildGroupRequest();
+        request.setTeachingMode("GROUP");
+
+        assertThatThrownBy(() -> courseProductService.updateCourseProduct(5L, request))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("PRODUCT_TEACHING_MODE_IN_USE"));
+
+        verify(courseProductMapper, never()).updateById(any(CourseProductEntity.class));
+        verify(coursePriceOptionMapper, never()).update(isNull(), any());
     }
 
     private CourseProductEntity product(Long id, String name, int sortOrder) {
@@ -218,8 +275,4 @@ class CourseProductServiceImplTest {
         return request;
     }
 
-    private static boolean wrapperSqlContains(Wrapper<?> wrapper, String keyword) {
-        return ((AbstractWrapper<?, ?, ?>) wrapper).getParamNameValuePairs().values().stream()
-                .anyMatch(value -> String.valueOf(value).contains(keyword));
-    }
 }

@@ -38,11 +38,13 @@ import com.classdeduction.system.modules.lesson.vo.LessonRecordDetailVO;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordListItemVO;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
@@ -69,6 +71,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private static final int MAX_CONFIRM_QUERY_DAYS = 180;
 
     private final LessonRecordMapper lessonRecordMapper;
+    private final ClassGroupMapper classGroupMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
     private final LessonStatusRuleMapper lessonStatusRuleMapper;
@@ -699,11 +702,27 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     }
 
     @Override
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
     public void revokeLesson(Long recordId, CurrentUserResponse currentUser) {
         currentUser = defaultAdminIfMissing(currentUser);
         LessonRecordEntity record = requireRecord(recordId);
         LessonOccurrenceEntity recordOccurrence = lessonOccurrenceMapper.selectById(record.getOccurrenceId());
+        if (recordOccurrence != null && recordOccurrence.getClassGroupId() != null) {
+            // 班课撤销会恢复共享课次，先锁实际班级，再锁记录和课次，与确认/退款保持一致。
+            Long classGroupId = recordOccurrence.getClassGroupId();
+            if (classGroupMapper.selectByIdForUpdate(classGroupId) == null) {
+                throw new BusinessException("CLASS_NOT_FOUND", "Class not found.");
+            }
+            record = lessonRecordMapper.selectByIdForUpdate(recordId);
+            if (record == null) {
+                throw new BusinessException("LESSON_RECORD_NOT_FOUND", "Lesson record not found.");
+            }
+            recordOccurrence = lessonOccurrenceMapper.selectByIdForUpdate(record.getOccurrenceId());
+            if (recordOccurrence == null
+                    || !Objects.equals(classGroupId, recordOccurrence.getClassGroupId())) {
+                throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
+            }
+        }
         if (recordOccurrence != null && recordOccurrence.getPrivateLessonGroupId() != null) {
             revokePrivateLessonGroup(recordOccurrence, currentUser);
             return;

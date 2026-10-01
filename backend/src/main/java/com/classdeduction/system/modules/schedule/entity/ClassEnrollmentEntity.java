@@ -30,6 +30,11 @@ public class ClassEnrollmentEntity extends BaseEntity {
 
     private Long enrollmentOrderItemId;
 
+    /** 每个订单项目独立生成一份班课权益，续费不得覆盖既有权益。 */
+    private Long groupProjectId;
+
+    private Long groupRegistrationPlanId;
+
     private LocalDate enrollmentDate;
 
     private LocalDate expiryDate;

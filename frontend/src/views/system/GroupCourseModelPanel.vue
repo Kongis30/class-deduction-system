@@ -1,0 +1,614 @@
+<template>
+  <div class="group-model-layout">
+    <aside class="group-model-products">
+      <span class="group-model-products__label">Group class products</span>
+      <button
+        v-for="product in products"
+        :key="product.id"
+        type="button"
+        class="group-model-product"
+        :class="{ 'group-model-product--active': String(product.id) === String(selectedProductId) }"
+        @click="selectProduct(product.id)"
+      >
+        <strong>{{ product.productName }}</strong>
+        <small>{{ product.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</small>
+      </button>
+      <el-empty v-if="products.length === 0" :image-size="48" description="No group class products" />
+    </aside>
+
+    <main v-loading="loading" class="group-model-content">
+      <template v-if="setup">
+        <header class="group-model-header">
+          <div>
+            <span class="group-model-eyebrow">Course structure</span>
+            <h2>{{ setup.productName }}</h2>
+            <p>Set up teaching projects, shared class schedules, and the plans families can purchase.</p>
+          </div>
+          <el-button type="primary" @click="openProjectDialog()">Add teaching project</el-button>
+        </header>
+
+        <el-alert
+          title="Each teaching project has one actual class schedule per campus. Seasonal and yearly plans select dates from that schedule; they do not create duplicate classes."
+          type="info"
+          :closable="false"
+          show-icon
+        />
+
+        <el-empty v-if="setup.projects.length === 0" description="Create a teaching project to start setting up this course." />
+        <section v-for="project in setup.projects" :key="project.id" class="group-project-card">
+          <header class="group-project-card__header">
+            <div>
+              <div class="group-project-card__title">
+                <h3>{{ project.projectName }}</h3>
+                <el-tag :type="project.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">{{ project.status }}</el-tag>
+              </div>
+              <p v-if="project.description">{{ project.description }}</p>
+              <small>{{ project.classes.length }} actual classes · {{ project.plans.length }} registration plans</small>
+            </div>
+            <div class="group-project-card__actions">
+              <el-button size="small" @click="openProjectDialog(project)">Edit project</el-button>
+              <el-button size="small" @click="openHolidayDialog(project)">Manage holidays</el-button>
+              <el-button size="small" type="primary" plain @click="openPlanDialog(project)">Add plan</el-button>
+              <el-button size="small" type="primary" plain @click="openClassDialog(project)">Add actual class</el-button>
+              <el-button size="small" type="danger" text @click="removeProject(project)">Delete</el-button>
+            </div>
+          </header>
+
+          <section class="group-project-section">
+            <div class="group-project-section__heading">
+              <h4>Registration plans</h4>
+              <span>Plans control the dates and price a student receives.</span>
+            </div>
+            <el-table v-if="project.plans.length" :data="project.plans" row-key="id" border size="small">
+              <el-table-column prop="planName" label="Plan" min-width="190" />
+              <el-table-column label="Coverage" min-width="200">
+                <template #default="{ row }">
+                  <span>{{ coverageLabel(row) }}</span>
+                  <small v-if="row.coverageStartDate || row.coverageEndDate" class="group-cell-subtitle">
+                    {{ row.coverageStartDate || '—' }} to {{ row.coverageEndDate || '—' }}
+                  </small>
+                </template>
+              </el-table-column>
+              <el-table-column label="Quantity" width="130" align="center">
+                <template #default="{ row }">{{ row.packageQuantity }} {{ row.packageUnit === 'MONTH' ? 'months' : 'sessions' }}</template>
+              </el-table-column>
+              <el-table-column label="Full day" width="120" align="right">
+                <template #default="{ row }">{{ money(row.fullDayPrice) }}</template>
+              </el-table-column>
+              <el-table-column label="Half day" width="120" align="right">
+                <template #default="{ row }">{{ row.halfDayPrice == null ? '—' : money(row.halfDayPrice) }}</template>
+              </el-table-column>
+              <el-table-column label="Status" width="110" align="center">
+                <template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="Actions" width="150" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openPlanDialog(project, row)">Edit</el-button>
+                  <el-button link type="danger" @click="removePlan(row)">Delete</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-else :image-size="38" description="No registration plans yet" />
+          </section>
+
+          <section class="group-project-section">
+            <div class="group-project-section__heading">
+              <h4>Actual class schedules</h4>
+              <span>Set one schedule for each actual class and campus. All plans above use these scheduled dates.</span>
+            </div>
+            <el-table v-if="project.classes.length" :data="project.classes" row-key="id" border size="small">
+              <el-table-column label="Campus" width="170">
+                <template #default="{ row }"><el-tag v-if="row.campusName" effect="plain">{{ row.campusName }}</el-tag><span v-else class="muted">—</span></template>
+              </el-table-column>
+              <el-table-column prop="actualClass" label="Class" min-width="150" />
+              <el-table-column label="Class period" min-width="210">
+                <template #default="{ row }">{{ row.startDate || '—' }} to {{ row.endDate || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="Status" width="120" align="center">
+                <template #default="{ row }"><el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">{{ row.status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column label="Actions" width="210" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openClassDialog(project, row)">Edit info</el-button>
+                  <el-button link type="primary" @click="openSchedule(row)">Schedule</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-else :image-size="38" description="No actual classes yet" />
+          </section>
+        </section>
+      </template>
+      <el-empty v-else-if="!loading" description="Select a group class product." />
+    </main>
+
+    <el-dialog v-model="projectDialogVisible" :title="editingProject ? 'Edit teaching project' : 'Add teaching project'" width="min(520px, calc(100vw - 32px))" :close-on-click-modal="false">
+      <el-form label-position="top">
+        <el-form-item label="Project name" required><el-input v-model="projectForm.projectName" maxlength="128" placeholder="e.g. SHSAT / PSAT / SAT" /></el-form-item>
+        <el-form-item label="Description"><el-input v-model="projectForm.description" type="textarea" :rows="2" maxlength="500" /></el-form-item>
+        <el-form-item label="Status"><el-select v-model="projectForm.status" style="width: 100%"><el-option label="Active" value="ACTIVE" /><el-option label="Inactive" value="INACTIVE" /></el-select></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="projectDialogVisible = false">Cancel</el-button><el-button type="primary" :loading="saving" @click="saveProject">Save project</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="planDialogVisible" :title="editingPlan ? 'Edit registration plan' : 'Add registration plan'" width="min(640px, calc(100vw - 32px))" :close-on-click-modal="false">
+      <el-form label-position="top" class="plan-form">
+        <el-form-item label="Plan name" required><el-input v-model="planForm.planName" maxlength="128" placeholder="e.g. Fall, Spring, Full year, 6 months" /></el-form-item>
+        <div class="plan-form__row">
+          <el-form-item label="Coverage type" required>
+            <el-select v-model="planForm.coverageType" style="width: 100%" @change="normalizePlanFields">
+              <el-option label="Fixed date range" value="FIXED_DATES" />
+              <el-option label="Rolling months" value="ROLLING_MONTHS" />
+              <el-option label="Number of sessions" value="SESSION_COUNT" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="planForm.packageUnit === 'MONTH' ? 'Months' : 'Sessions'" required>
+            <el-input-number v-model="planForm.packageQuantity" :min="1" :precision="0" :controls="false" style="width: 100%" />
+          </el-form-item>
+        </div>
+        <div v-if="planForm.coverageType === 'FIXED_DATES'" class="plan-form__row">
+          <el-form-item label="First scheduled date" required><el-date-picker v-model="planForm.coverageStartDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+          <el-form-item label="Last scheduled date" required><el-date-picker v-model="planForm.coverageEndDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+        </div>
+        <div class="plan-form__row">
+          <el-form-item label="Full-day price" required><el-input-number v-model="planForm.fullDayPrice" :min="0" :precision="0" :controls="false" style="width: 100%" /></el-form-item>
+          <el-form-item label="Half-day price"><el-input-number v-model="planForm.halfDayPrice" :min="0" :precision="0" :controls="false" style="width: 100%" /></el-form-item>
+        </div>
+        <el-form-item label="Status"><el-select v-model="planForm.status" style="width: 100%"><el-option label="Active" value="ACTIVE" /><el-option label="Inactive" value="INACTIVE" /></el-select></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="planDialogVisible = false">Cancel</el-button><el-button type="primary" :loading="saving" @click="savePlan">Save plan</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="classDialogVisible" :title="editingClass ? 'Edit actual class' : 'Add actual class'" width="min(540px, calc(100vw - 32px))" :close-on-click-modal="false">
+      <el-form label-position="top">
+        <el-form-item label="Class name" required><el-input v-model="classForm.actualClass" maxlength="64" placeholder="e.g. G3, SHSAT" /></el-form-item>
+        <el-form-item label="Campus (optional)"><el-select v-model="classForm.campusId" filterable clearable placeholder="Shared across campuses" style="width: 100%"><el-option v-for="campus in campuses" :key="campus.id" :label="campus.campusName" :value="campus.id" /></el-select></el-form-item>
+        <div class="plan-form__row">
+          <el-form-item label="Class start date" required><el-date-picker v-model="classForm.startDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+          <el-form-item label="Class end date" required><el-date-picker v-model="classForm.endDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
+        </div>
+        <el-alert title="After creating the class, set its weekly times, teachers, and rooms on the Schedule page." type="info" :closable="false" />
+      </el-form>
+      <template #footer><el-button @click="classDialogVisible = false">Cancel</el-button><el-button type="primary" :loading="saving" @click="saveClass">Save class</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="holidayDialogVisible" :title="`${holidayProject?.projectName ?? 'Project'} holidays`" width="min(760px, calc(100vw - 32px))" :close-on-click-modal="false">
+      <el-alert
+        title="A project holiday applies to every actual class and campus in this project. Classes skip these dates and continue on their normal weekly schedule afterward."
+        type="info"
+        :closable="false"
+        show-icon
+      />
+      <el-form label-position="top" class="holiday-form">
+        <el-form-item label="Holiday name" required><el-input v-model="holidayForm.holidayName" maxlength="100" placeholder="e.g. Thanksgiving break" /></el-form-item>
+        <div class="plan-form__row">
+          <el-form-item label="Start date" required><el-date-picker v-model="holidayForm.startDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+          <el-form-item label="End date" required><el-date-picker v-model="holidayForm.endDate" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+        </div>
+        <div class="holiday-form__actions">
+          <el-button v-if="editingHoliday" @click="resetHolidayForm">Cancel edit</el-button>
+          <el-button type="primary" :loading="savingHoliday" @click="saveHoliday">{{ editingHoliday ? 'Save changes' : 'Add holiday' }}</el-button>
+        </div>
+      </el-form>
+      <el-table v-loading="loadingHolidays" :data="holidays" border>
+        <el-table-column prop="holidayName" label="Holiday" min-width="180" />
+        <el-table-column label="Dates" min-width="220"><template #default="{ row }">{{ row.startDate }} – {{ row.endDate }}</template></el-table-column>
+        <el-table-column label="Actions" width="140" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="editHoliday(row)">Edit</el-button>
+            <el-button link type="danger" @click="removeHoliday(row)">Delete</el-button>
+          </template>
+        </el-table-column>
+        <template #empty><el-empty :image-size="44" description="No holidays configured for this project." /></template>
+      </el-table>
+      <template #footer><el-button @click="holidayDialogVisible = false">Close</el-button></template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { ElMessage, ElMessageBox } from 'element-plus';
+import { fetchCampuses } from '@/api/base-data';
+import { createActualClass, updateClassInfo } from '@/api/schedule';
+import {
+  createGroupProjectHoliday,
+  createGroupCourseProject,
+  createGroupRegistrationPlan,
+  deleteGroupProjectHoliday,
+  deleteGroupCourseProject,
+  deleteGroupRegistrationPlan,
+  fetchGroupCourseProductSetup,
+  fetchGroupProjectHolidays,
+  previewGroupProjectHoliday,
+  updateGroupCourseProject,
+  updateGroupProjectHoliday,
+  updateGroupRegistrationPlan,
+  type GroupCourseProductSetup,
+  type GroupCourseProject,
+  type GroupProjectClass,
+  type GroupProjectHoliday,
+  type GroupProjectHolidayPayload,
+  type GroupRegistrationPlan,
+  type GroupRegistrationPlanPayload,
+} from '@/api/group-course-model';
+import type { CampusItem, CourseProductItem, EntityId } from '@/types/domain';
+
+const props = defineProps<{ products: CourseProductItem[] }>();
+const emit = defineEmits<{ reload: [] }>();
+const router = useRouter();
+const products = computed(() => props.products.filter((item) => item.teachingMode === 'GROUP'));
+const selectedProductId = ref<EntityId>();
+const setup = ref<GroupCourseProductSetup>();
+const campuses = ref<CampusItem[]>([]);
+const loading = ref(false);
+const saving = ref(false);
+const projectDialogVisible = ref(false);
+const planDialogVisible = ref(false);
+const classDialogVisible = ref(false);
+const holidayDialogVisible = ref(false);
+const loadingHolidays = ref(false);
+const savingHoliday = ref(false);
+const holidayProject = ref<GroupCourseProject>();
+const holidays = ref<GroupProjectHoliday[]>([]);
+const editingHoliday = ref<GroupProjectHoliday>();
+const holidayForm = reactive({ holidayName: '', startDate: '', endDate: '' });
+const editingProject = ref<GroupCourseProject>();
+const editingPlan = ref<GroupRegistrationPlan>();
+const editingClass = ref<GroupProjectClass>();
+const selectedProject = ref<GroupCourseProject>();
+const projectForm = reactive({ projectName: '', description: '', status: 'ACTIVE' });
+const planForm = reactive<GroupRegistrationPlanPayload>({
+  planCode: '', planName: '', coverageType: 'SESSION_COUNT', packageUnit: 'SESSION',
+  packageQuantity: 1, fullDayPrice: 0, halfDayPrice: undefined, currencyCode: 'USD', status: 'ACTIVE',
+});
+const classForm = reactive({ actualClass: '', campusId: undefined as EntityId | undefined, startDate: '', endDate: '' });
+let requestSequence = 0;
+
+watch(products, (items) => {
+  if (items.length === 0) {
+    selectedProductId.value = undefined;
+    setup.value = undefined;
+  } else if (!items.some((item) => String(item.id) === String(selectedProductId.value))) {
+    selectedProductId.value = items[0].id;
+    void loadSetup();
+  }
+}, { immediate: true });
+
+onMounted(async () => {
+  try {
+    const response = await fetchCampuses();
+    campuses.value = response.data.data ?? [];
+  } catch {
+    campuses.value = [];
+  }
+});
+
+async function selectProduct(id: EntityId) {
+  if (String(id) === String(selectedProductId.value)) return;
+  selectedProductId.value = id;
+  await loadSetup();
+}
+
+async function loadSetup() {
+  const productId = selectedProductId.value;
+  if (!productId) return;
+  const sequence = ++requestSequence;
+  loading.value = true;
+  try {
+    const response = await fetchGroupCourseProductSetup(productId);
+    if (sequence === requestSequence) setup.value = response.data.data;
+  } catch (error) {
+    if (sequence === requestSequence) ElMessage.error(errorMessage(error));
+  } finally {
+    if (sequence === requestSequence) loading.value = false;
+  }
+}
+
+function openProjectDialog(project?: GroupCourseProject) {
+  editingProject.value = project;
+  projectForm.projectName = project?.projectName ?? '';
+  projectForm.description = project?.description ?? '';
+  projectForm.status = project?.status ?? 'ACTIVE';
+  projectDialogVisible.value = true;
+}
+
+async function saveProject() {
+  const productId = selectedProductId.value;
+  const projectName = projectForm.projectName.trim();
+  if (!productId || !projectName) return ElMessage.warning('Enter a project name.');
+  saving.value = true;
+  try {
+    const payload = {
+      projectCode: editingProject.value?.projectCode ?? createProjectCode(projectName),
+      projectName,
+      description: projectForm.description.trim() || undefined,
+      status: projectForm.status,
+    };
+    if (editingProject.value) await updateGroupCourseProject(editingProject.value.id, payload);
+    else await createGroupCourseProject(productId, payload);
+    projectDialogVisible.value = false;
+    ElMessage.success(editingProject.value ? 'Project updated.' : 'Project created.');
+    await loadSetup();
+  } catch (error) { ElMessage.error(errorMessage(error)); }
+  finally { saving.value = false; }
+}
+
+function openPlanDialog(project: GroupCourseProject, plan?: GroupRegistrationPlan) {
+  selectedProject.value = project;
+  editingPlan.value = plan;
+  planForm.planCode = plan?.planCode ?? '';
+  planForm.planName = plan?.planName ?? '';
+  planForm.coverageType = plan?.coverageType ?? 'SESSION_COUNT';
+  planForm.termCode = plan?.termCode;
+  planForm.coverageStartDate = plan?.coverageStartDate;
+  planForm.coverageEndDate = plan?.coverageEndDate;
+  planForm.packageUnit = plan?.packageUnit ?? (planForm.coverageType === 'ROLLING_MONTHS' ? 'MONTH' : 'SESSION');
+  planForm.packageQuantity = plan?.packageQuantity ?? 1;
+  planForm.fullDayPrice = plan?.fullDayPrice ?? 0;
+  planForm.halfDayPrice = plan?.halfDayPrice;
+  planForm.currencyCode = plan?.currencyCode ?? 'USD';
+  planForm.status = plan?.status ?? 'ACTIVE';
+  planDialogVisible.value = true;
+}
+
+function normalizePlanFields() {
+  if (planForm.coverageType === 'ROLLING_MONTHS') {
+    planForm.packageUnit = 'MONTH';
+    planForm.coverageStartDate = undefined;
+    planForm.coverageEndDate = undefined;
+  } else {
+    planForm.packageUnit = 'SESSION';
+    if (planForm.coverageType !== 'FIXED_DATES') {
+      planForm.coverageStartDate = undefined;
+      planForm.coverageEndDate = undefined;
+    }
+  }
+}
+
+async function savePlan() {
+  const projectId = selectedProject.value?.id;
+  if (!projectId || !planForm.planName.trim() || planForm.packageQuantity < 1 || planForm.fullDayPrice < 0) {
+    return ElMessage.warning('Complete the required plan fields.');
+  }
+  if (planForm.coverageType === 'FIXED_DATES'
+      && (!planForm.coverageStartDate || !planForm.coverageEndDate || planForm.coverageEndDate < planForm.coverageStartDate)) {
+    return ElMessage.warning('Enter a valid plan date range.');
+  }
+  saving.value = true;
+  try {
+    const payload: GroupRegistrationPlanPayload = {
+      ...planForm,
+      planCode: editingPlan.value?.planCode ?? createPlanCode(planForm.planName),
+      planName: planForm.planName.trim(),
+      halfDayPrice: planForm.halfDayPrice == null ? undefined : planForm.halfDayPrice,
+    };
+    if (editingPlan.value) await updateGroupRegistrationPlan(editingPlan.value.id, payload);
+    else await createGroupRegistrationPlan(projectId, payload);
+    planDialogVisible.value = false;
+    ElMessage.success(editingPlan.value ? 'Plan updated.' : 'Plan created.');
+    await loadSetup();
+  } catch (error) { ElMessage.error(errorMessage(error)); }
+  finally { saving.value = false; }
+}
+
+async function removeProject(project: GroupCourseProject) {
+  try {
+    await ElMessageBox.confirm('Referenced projects are archived so existing enrollment history remains available.', 'Delete teaching project', { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' });
+    await deleteGroupCourseProject(project.id);
+    ElMessage.success('Project removed or archived.');
+    await loadSetup();
+  } catch (error) { if (!isCancel(error)) ElMessage.error(errorMessage(error)); }
+}
+
+async function removePlan(plan: GroupRegistrationPlan) {
+  try {
+    await ElMessageBox.confirm('Plans already used by students are archived; their receipts and course access remain unchanged.', 'Delete registration plan', { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' });
+    await deleteGroupRegistrationPlan(plan.id);
+    ElMessage.success('Plan removed or archived.');
+    await loadSetup();
+  } catch (error) { if (!isCancel(error)) ElMessage.error(errorMessage(error)); }
+}
+
+function openClassDialog(project: GroupCourseProject, classRow?: GroupProjectClass) {
+  selectedProject.value = project;
+  editingClass.value = classRow;
+  classForm.actualClass = classRow?.actualClass ?? '';
+  classForm.campusId = classRow?.campusId;
+  classForm.startDate = classRow?.startDate ?? '';
+  classForm.endDate = classRow?.endDate ?? '';
+  classDialogVisible.value = true;
+}
+
+async function saveClass() {
+  const project = selectedProject.value;
+  if (!setup.value || !project || !classForm.actualClass.trim()
+      || !classForm.startDate || !classForm.endDate || classForm.endDate < classForm.startDate) {
+    return ElMessage.warning('Enter the class and a valid class period.');
+  }
+  saving.value = true;
+  try {
+    const payload = {
+      productId: setup.value.productId,
+      groupProjectId: project.id,
+      gradeBand: classForm.actualClass.trim(),
+      actualClass: classForm.actualClass.trim(),
+      className: classForm.actualClass.trim(),
+      campusId: classForm.campusId || undefined,
+      startDate: classForm.startDate,
+      endDate: classForm.endDate,
+    };
+    if (editingClass.value) await updateClassInfo(editingClass.value.id, payload);
+    else await createActualClass(payload);
+    classDialogVisible.value = false;
+    ElMessage.success(editingClass.value ? 'Class updated.' : 'Class created.');
+    await loadSetup();
+    emit('reload');
+  } catch (error) { ElMessage.error(errorMessage(error)); }
+  finally { saving.value = false; }
+}
+
+async function openHolidayDialog(project: GroupCourseProject) {
+  holidayProject.value = project;
+  holidayDialogVisible.value = true;
+  resetHolidayForm();
+  await loadHolidays();
+}
+
+async function loadHolidays() {
+  const projectId = holidayProject.value?.id;
+  if (!projectId) return;
+  loadingHolidays.value = true;
+  try {
+    const response = await fetchGroupProjectHolidays(projectId);
+    holidays.value = response.data.data ?? [];
+  } catch (error) {
+    ElMessage.error(errorMessage(error));
+  } finally {
+    loadingHolidays.value = false;
+  }
+}
+
+function resetHolidayForm() {
+  editingHoliday.value = undefined;
+  holidayForm.holidayName = '';
+  holidayForm.startDate = '';
+  holidayForm.endDate = '';
+}
+
+function editHoliday(holiday: GroupProjectHoliday) {
+  editingHoliday.value = holiday;
+  holidayForm.holidayName = holiday.holidayName;
+  holidayForm.startDate = holiday.startDate;
+  holidayForm.endDate = holiday.endDate;
+}
+
+async function saveHoliday() {
+  const project = holidayProject.value;
+  const holidayName = holidayForm.holidayName.trim();
+  if (!project || !holidayName || !holidayForm.startDate || !holidayForm.endDate) {
+    return ElMessage.warning('Enter a holiday name and both dates.');
+  }
+  if (holidayForm.endDate < holidayForm.startDate) return ElMessage.warning('End date cannot be earlier than start date.');
+  const payload: GroupProjectHolidayPayload = {
+    holidayName,
+    startDate: holidayForm.startDate,
+    endDate: holidayForm.endDate,
+  };
+  savingHoliday.value = true;
+  try {
+    const previewResponse = await previewGroupProjectHoliday(project.id, payload, editingHoliday.value?.id);
+    const preview = previewResponse.data.data;
+    if (preview.conflicts.length) {
+      await ElMessageBox.alert(preview.conflicts.join('\n'), 'Cannot apply project holiday', {
+        type: 'warning',
+        confirmButtonText: 'Close',
+      });
+      return;
+    }
+    const lessonWord = preview.affectedOccurrenceCount === 1 ? 'lesson' : 'lessons';
+    const enrollmentWord = preview.affectedSessionEnrollmentCount === 1 ? 'enrollment' : 'enrollments';
+    const summary = `${project.projectName}: ${preview.affectedOccurrenceCount} ${lessonWord} will be skipped. ${preview.affectedSessionEnrollmentCount} session-based ${enrollmentWord} will have their end dates recalculated.`;
+    await ElMessageBox.confirm(summary, 'Confirm project holiday', {
+      type: 'warning',
+      confirmButtonText: editingHoliday.value ? 'Save changes' : 'Add holiday',
+      cancelButtonText: 'Cancel',
+    });
+    if (editingHoliday.value) await updateGroupProjectHoliday(project.id, editingHoliday.value.id, payload);
+    else await createGroupProjectHoliday(project.id, payload);
+    resetHolidayForm();
+    ElMessage.success('Project holiday saved. Schedules and eligible enrollment dates were updated.');
+    await loadHolidays();
+    await loadSetup();
+  } catch (error) {
+    if (!isCancel(error)) ElMessage.error(errorMessage(error));
+  } finally {
+    savingHoliday.value = false;
+  }
+}
+
+async function removeHoliday(holiday: GroupProjectHoliday) {
+  const projectId = holidayProject.value?.id;
+  if (!projectId) return;
+  try {
+    await ElMessageBox.confirm(
+      `Delete “${holiday.holidayName}”? Future class dates that are no longer covered by another holiday will be restored.`,
+      'Delete project holiday',
+      { type: 'warning', confirmButtonText: 'Delete', cancelButtonText: 'Cancel' },
+    );
+    await deleteGroupProjectHoliday(projectId, holiday.id);
+    if (editingHoliday.value?.id === holiday.id) resetHolidayForm();
+    ElMessage.success('Project holiday deleted.');
+    await loadHolidays();
+    await loadSetup();
+  } catch (error) {
+    if (!isCancel(error)) ElMessage.error(errorMessage(error));
+  }
+}
+
+async function openSchedule(classRow: GroupProjectClass) {
+  try {
+    const name = classRow.className || classRow.actualClass;
+    await ElMessageBox.confirm(`Open the Schedule page to set weekly times, teachers, and classrooms for ${name}.`, 'Edit class schedule', { confirmButtonText: 'Open Schedule', cancelButtonText: 'Cancel', type: 'info' });
+    await router.push('/group-class-lessons');
+  } catch { /* user closed the prompt */ }
+}
+
+function coverageLabel(plan: GroupRegistrationPlan) {
+  if (plan.coverageType === 'FIXED_DATES') return plan.termCode || 'Fixed date range';
+  if (plan.coverageType === 'ROLLING_MONTHS') return 'Starts on selected date';
+  return 'Selected number of scheduled class dates';
+}
+
+function money(value: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(value || 0);
+}
+
+function createProjectCode(name: string) {
+  return `PROJECT-${slug(name)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 64);
+}
+
+function createPlanCode(name: string) {
+  return `PLAN-${slug(name)}-${Date.now().toString(36).toUpperCase()}`.slice(0, 64);
+}
+
+function slug(value: string) {
+  return value.normalize('NFKD').replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-|-$/g, '').toUpperCase().slice(0, 24) || 'NEW';
+}
+
+function isCancel(error: unknown) {
+  return error === 'cancel' || error === 'close';
+}
+
+function errorMessage(error: any) {
+  return error?.response?.data?.message ?? error?.message ?? 'Operation failed.';
+}
+</script>
+
+<style scoped>
+.group-model-layout { display:grid; grid-template-columns:240px minmax(0,1fr); gap:20px; min-height:460px; }
+.group-model-products { align-self:start; display:flex; flex-direction:column; gap:8px; padding:14px; border:1px solid var(--el-border-color); border-radius:12px; background:#fbfcfe; }
+.group-model-products__label,.group-model-eyebrow { color:var(--el-text-color-secondary); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.group-model-product { display:flex; flex-direction:column; gap:4px; padding:12px; border:1px solid transparent; border-radius:8px; color:var(--el-text-color-primary); background:transparent; text-align:left; cursor:pointer; }
+.group-model-product:hover { background:#f2f6fc; }
+.group-model-product--active { border-color:var(--el-color-primary-light-5); background:var(--el-color-primary-light-9); }
+.group-model-product small,.group-project-card__header small,.group-project-section__heading span,.group-cell-subtitle { color:var(--el-text-color-secondary); font-size:12px; }
+.group-model-content { min-width:0; }
+.group-model-header { display:flex; justify-content:space-between; align-items:center; gap:20px; margin:2px 0 16px; }
+.group-model-header h2 { margin:4px 0; font-size:22px; }
+.group-model-header p,.group-project-card__header p { margin:4px 0; color:var(--el-text-color-secondary); }
+.group-project-card { margin-top:16px; padding:18px; border:1px solid var(--el-border-color); border-radius:12px; background:#fff; }
+.group-project-card__header { display:flex; align-items:center; justify-content:space-between; gap:16px; padding-bottom:14px; border-bottom:1px solid var(--el-border-color-lighter); }
+.group-project-card__title { display:flex; align-items:center; gap:10px; }
+.group-project-card__title h3 { margin:0; font-size:18px; }
+.group-project-card__actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:4px; }
+.group-project-section { padding-top:16px; }
+.group-project-section__heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; margin-bottom:10px; }
+.group-project-section__heading h4 { margin:0; font-size:15px; }
+.group-cell-subtitle { display:block; margin-top:3px; }
+.muted { color:var(--el-text-color-placeholder); }
+.plan-form__row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.holiday-form { margin-top:16px; }
+.holiday-form__actions { display:flex; justify-content:flex-end; gap:8px; margin-bottom:16px; }
+@media (max-width:900px) { .group-model-layout { grid-template-columns:1fr; } .group-model-products { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); } .group-model-products__label { grid-column:1/-1; } .group-model-header,.group-project-card__header { align-items:flex-start; flex-direction:column; } .group-project-card__actions { justify-content:flex-start; } }
+</style>
