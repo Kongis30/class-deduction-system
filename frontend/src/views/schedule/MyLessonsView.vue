@@ -27,13 +27,21 @@
         max-height="520"
         class="my-lessons-table"
         :empty-text="emptyText"
+        :span-method="lessonType === 'one-on-one' ? oneOnOneStudentSpan : undefined"
+        :row-class-name="lessonType === 'one-on-one' ? oneOnOneLessonRowClass : undefined"
       >
         <el-table-column label="Course / Class" min-width="180" align="center" header-align="center">
           <template #default="{ row }">
             {{ row.className || row.packageName || '—' }}
           </template>
         </el-table-column>
-        <el-table-column label="Student" min-width="160" align="center" header-align="center">
+        <el-table-column
+          label="Student"
+          min-width="160"
+          align="center"
+          header-align="center"
+          :class-name="lessonType === 'one-on-one' ? 'my-lessons-student-column' : ''"
+        >
           <template #default="{ row }">
             {{ row.participantNames?.length ? row.participantNames.join(' / ') : row.studentName || 'Group lesson' }}
           </template>
@@ -206,9 +214,19 @@ const confirmForm = reactive({
   notes: '',
 });
 
-const visibleLessons = computed(() => lessons.value.filter(lesson =>
-  lessonType.value === 'group' ? Boolean(lesson.classGroupId) : !lesson.classGroupId
-));
+const visibleLessons = computed(() => {
+  const filtered = lessons.value.filter(lesson =>
+    lessonType.value === 'group' ? Boolean(lesson.classGroupId) : !lesson.classGroupId
+  );
+  if (lessonType.value === 'group') return filtered;
+
+  // 1-on-1 先按学生分组，再按上课时间排序；1-on-2 的共享课次作为一组显示。
+  return filtered.sort((left, right) =>
+    lessonStudentGroupLabel(left).localeCompare(lessonStudentGroupLabel(right), undefined, { sensitivity: 'base' })
+    || lessonStudentGroupKey(left).localeCompare(lessonStudentGroupKey(right))
+    || left.plannedStartAt.localeCompare(right.plannedStartAt)
+  );
+});
 
 const emptyText = computed(() =>
   `No ${lessonType.value === 'group' ? 'group class' : '1-on-1'} lessons found in this date range.`
@@ -219,6 +237,50 @@ const adjustedEndAt = computed(() => {
   const durationMinutes = dayjs(selectedLesson.value.plannedEndAt).diff(dayjs(selectedLesson.value.plannedStartAt), 'minute');
   return dayjs(adjustForm.plannedStartAt).add(durationMinutes, 'minute').format('YYYY-MM-DDTHH:mm:ss');
 });
+
+// 表格按学生排序后合并连续学生单元格，让 1-on-1 记录形成清晰分组。
+function oneOnOneStudentSpan({ rowIndex, columnIndex }: { rowIndex: number; columnIndex: number }) {
+  if (columnIndex !== 1) return [1, 1];
+
+  const row = visibleLessons.value[rowIndex];
+  if (!row) return [1, 1];
+
+  if (rowIndex > 0 && lessonStudentGroupKey(visibleLessons.value[rowIndex - 1]) === lessonStudentGroupKey(row)) {
+    return [0, 0];
+  }
+
+  let rowSpan = 1;
+  while (
+    rowIndex + rowSpan < visibleLessons.value.length
+    && lessonStudentGroupKey(visibleLessons.value[rowIndex + rowSpan]) === lessonStudentGroupKey(row)
+  ) {
+    rowSpan += 1;
+  }
+  return [rowSpan, 1];
+}
+
+// 学生组切换时增加分隔线；Group class 表格仍保持时间顺序和原样式。
+function oneOnOneLessonRowClass({ rowIndex }: { rowIndex: number }) {
+  const row = visibleLessons.value[rowIndex];
+  const previous = visibleLessons.value[rowIndex - 1];
+  return !previous || lessonStudentGroupKey(previous) !== lessonStudentGroupKey(row)
+    ? 'my-lessons-student-group-start'
+    : '';
+}
+
+// 按学生业务 ID 分组；1-on-2 使用共享组 ID，避免共享课次被拆成两组。
+function lessonStudentGroupKey(lesson?: LessonOccurrenceItem) {
+  if (!lesson) return '';
+  return lesson.privateLessonGroupId != null
+    ? `private-group:${String(lesson.privateLessonGroupId)}`
+    : `student:${String(lesson.studentId)}`;
+}
+
+function lessonStudentGroupLabel(lesson: LessonOccurrenceItem) {
+  return lesson.participantNames?.length
+    ? lesson.participantNames.join(' / ')
+    : lesson.studentName || 'Student';
+}
 
 onMounted(loadLessons);
 
@@ -440,6 +502,16 @@ function formatTimeRange(startAt: string, endAt: string) {
 
 .my-lessons-type-tabs :deep(.el-tabs__content) {
   display: none;
+}
+
+.my-lessons-table :deep(.my-lessons-student-group-start > td) {
+  border-top: 2px solid var(--surface-border);
+}
+
+.my-lessons-table :deep(.my-lessons-student-column) {
+  color: var(--text-primary);
+  font-weight: 600;
+  vertical-align: middle;
 }
 
 .my-lessons-empty {
