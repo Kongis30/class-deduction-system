@@ -1242,18 +1242,19 @@ async function searchStudents() {
 }
 
 function keepOrSelectFirstPackage() {
-  if (activePackage.value && findPackage(activePackage.value.packageId)) {
-    const found = findPackage(activePackage.value.packageId);
+  if (activePackage.value && findPackage(activePackage.value.packageId, activeTeacher.value ?? undefined)) {
+    const found = findPackage(activePackage.value.packageId, activeTeacher.value ?? undefined);
     if (found) selectPackage(found.teacher, found.student, found.pkg);
     return;
   }
   clearSelection();
 }
 
-function findPackage(packageId: EntityId) {
+function findPackage(packageId: EntityId, selectedTeacher?: OneOnOneTeacher) {
   for (const teacher of teachers.value) {
+    if (selectedTeacher && teacherKey(teacher) !== teacherKey(selectedTeacher)) continue;
     for (const student of teacher.students) {
-      const pkg = student.packages.find(item => item.packageId === packageId);
+      const pkg = student.packages.find(item => sameId(item.packageId, packageId));
       if (pkg) return { teacher, student, pkg };
     }
   }

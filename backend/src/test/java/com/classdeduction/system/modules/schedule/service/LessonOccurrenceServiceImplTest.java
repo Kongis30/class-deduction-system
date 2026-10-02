@@ -364,6 +364,41 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldListSameStudentUnderEachAssignedTeacherWithTeacherSpecificLessons() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity firstTeacherLesson = buildOneOnOneOccurrence();
+        LessonOccurrenceEntity secondTeacherLesson = buildOneOnOneOccurrence();
+        secondTeacherLesson.setId(4002L);
+        secondTeacherLesson.setLessonNo("O2O202609010002");
+        secondTeacherLesson.setPlannedTeacherId(302L);
+
+        TeacherEntity secondTeacher = new TeacherEntity();
+        secondTeacher.setId(302L);
+        secondTeacher.setTeacherNo("T302");
+        secondTeacher.setTeacherName("Ms Sophia");
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(firstTeacherLesson, secondTeacherLesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher(), secondTeacher));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).hasSize(2);
+        assertThat(result).extracting(OneOnOneTeacherVO::teacherId).containsExactly(301L, 302L);
+        assertThat(result).allSatisfy(teacher -> {
+            assertThat(teacher.students()).singleElement()
+                    .satisfies(student -> assertThat(student.studentName()).isEqualTo("Jin Tang"));
+            assertThat(teacher.students().get(0).packages()).singleElement()
+                    .satisfies(pkg -> assertThat(pkg.lessons())
+                            .singleElement()
+                            .satisfies(lesson -> assertThat(lesson.plannedTeacherId()).isEqualTo(teacher.teacherId())));
+        });
+    }
+
+    @Test
     void shouldKeepCompletedPackageLessonHistoryInDeductionQuery() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         coursePackage.setPackageStatus("COMPLETED");
