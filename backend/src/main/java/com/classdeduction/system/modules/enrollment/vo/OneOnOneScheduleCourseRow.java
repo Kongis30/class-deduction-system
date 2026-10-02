@@ -12,10 +12,20 @@ public record OneOnOneScheduleCourseRow(
         Long privateLessonGroupId,
         Integer participantCount,
         String participantNames,
-        String participantStudentIds
+        String participantStudentIds,
+        String studentGrade
 ) {
     public OneOnOneScheduleCourseRow(Long studentId, String studentName, String courseName,
-                                               String gradeBand, boolean hasSchedule) {
-        this(studentId, studentName, courseName, gradeBand, hasSchedule, null, "ACTIVE", null, 1, null, null);
+                                     String gradeBand, boolean hasSchedule, Long packageId,
+                                     String packageStatus, Long privateLessonGroupId,
+                                     Integer participantCount, String participantNames,
+                                     String participantStudentIds) {
+        this(studentId, studentName, courseName, gradeBand, hasSchedule, packageId, packageStatus,
+                privateLessonGroupId, participantCount, participantNames, participantStudentIds, null);
+    }
+
+    public OneOnOneScheduleCourseRow(Long studentId, String studentName, String courseName,
+                                     String gradeBand, boolean hasSchedule) {
+        this(studentId, studentName, courseName, gradeBand, hasSchedule, null, "ACTIVE", null, 1, null, null, null);
     }
 }

@@ -20,19 +20,50 @@
             <div v-if="studentsLoading" class="student-list-panel__empty">
               Loading students...
             </div>
-            <div v-else-if="filteredStudents.length === 0" class="student-list-panel__empty">
+            <div v-else-if="filteredStudentGroups.length === 0" class="student-list-panel__empty">
               {{ students.length === 0 ? 'No active 1-on-1 students' : 'No students found' }}
             </div>
-            <div
-              v-for="s in filteredStudents"
-              :key="s.id"
-              class="student-item"
-              :class="{ 'student-item--active': selectedStudentId === s.id }"
-              @click="onStudentSelect(s.id)"
-            >
-              <span class="student-item__name">{{ s.studentName }}</span>
-              <el-icon v-if="selectedStudentId === s.id" color="#409eff"><Check /></el-icon>
-            </div>
+            <section v-for="product in filteredStudentGroups" :key="product.key" class="student-product-group">
+              <button
+                type="button"
+                class="student-group__header student-product-group__header"
+                :class="{ 'student-group__header--collapsed': collapsedStudentGroupKeys.has(product.key) }"
+                :aria-expanded="!collapsedStudentGroupKeys.has(product.key)"
+                @click="toggleStudentGroup(product.key)"
+              >
+                <el-icon class="student-group__caret"><ArrowRight /></el-icon>
+                <span class="student-group__name">{{ product.name }}</span>
+                <span class="student-group__count">{{ product.studentCount }}</span>
+              </button>
+              <div v-if="!collapsedStudentGroupKeys.has(product.key)">
+                <section v-for="grade in product.grades" :key="grade.key" class="student-grade-group">
+                  <button
+                    type="button"
+                    class="student-group__header student-grade-group__header"
+                    :class="{ 'student-group__header--collapsed': collapsedStudentGroupKeys.has(grade.key) }"
+                    :aria-expanded="!collapsedStudentGroupKeys.has(grade.key)"
+                    @click="toggleStudentGroup(grade.key)"
+                  >
+                    <el-icon class="student-group__caret"><ArrowRight /></el-icon>
+                    <span class="student-group__name">{{ grade.name }}</span>
+                    <span class="student-group__count">{{ grade.students.length }}</span>
+                  </button>
+                  <div v-if="!collapsedStudentGroupKeys.has(grade.key)">
+                    <button
+                      v-for="s in grade.students"
+                      :key="s.id"
+                      type="button"
+                      class="student-item"
+                      :class="{ 'student-item--active': selectedStudentId === s.id }"
+                      @click="onStudentSelect(s.id)"
+                    >
+                      <span class="student-item__name">{{ s.studentName }}</span>
+                      <el-icon v-if="selectedStudentId === s.id" color="#409eff"><Check /></el-icon>
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </section>
           </el-scrollbar>
         </aside>
 
@@ -272,7 +303,7 @@ const isStudent = computed(() => isStudentUser(authStore.currentUser));
 
 const loading = ref(false);
 const studentsLoading = ref(false);
-const students = ref<{ id: EntityId; studentName: string }[]>([]);
+const students = ref<StudentRosterItem[]>([]);
 const searchText = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
 const weekOffset = ref(0);
@@ -289,13 +320,103 @@ let scheduleRequestSeq = 0;
 let packageRequestSeq = 0;
 
 // ─── Student list ──────────────────────────────
-const filteredStudents = computed(() => {
+interface StudentCourseGrade {
+  courseName: string;
+  gradeBand: string;
+}
+
+interface StudentRosterItem {
+  id: EntityId;
+  studentName: string;
+  studentGrade?: string | null;
+  courseGrades: StudentCourseGrade[];
+}
+
+interface StudentGradeGroup {
+  key: string;
+  name: string;
+  students: StudentRosterItem[];
+}
+
+interface StudentProductGroup {
+  key: string;
+  name: string;
+  studentCount: number;
+  grades: StudentGradeGroup[];
+}
+
+const gradeBandOrder = ['G1-G5', 'G6-G8', 'G9-12', 'AP LEVEL', 'OTHER'];
+
+function gradeBandRank(name: string) {
+  const rank = gradeBandOrder.indexOf(name.trim().toUpperCase());
+  return rank === -1 ? gradeBandOrder.length : rank;
+}
+
+function compareRosterNames(left: string, right: string) {
+  return left.localeCompare(right, 'en', { sensitivity: 'base', numeric: true });
+}
+
+const filteredStudentGroups = computed<StudentProductGroup[]>(() => {
   const q = searchText.value.trim().toLowerCase();
-  return students.value
-    .filter(student => !q || student.studentName.toLowerCase().includes(q))
-    .slice()
-    .sort((left, right) => left.studentName.localeCompare(right.studentName, 'en', { sensitivity: 'base' }));
+  const products = new Map<string, {
+    key: string;
+    name: string;
+    studentIds: Set<string>;
+    grades: Map<string, StudentGradeGroup>;
+  }>();
+
+  for (const student of students.value) {
+    if (q && !student.studentName.toLowerCase().includes(q)) continue;
+    const courseGrades = student.courseGrades.length > 0
+      ? student.courseGrades
+      : [{ courseName: 'Other', gradeBand: student.studentGrade || 'Other' }];
+    for (const course of courseGrades) {
+      const productName = course.courseName?.trim() || 'Other';
+      const gradeName = course.gradeBand?.trim() || 'Other';
+      const productKey = `product:${productName.toLowerCase()}`;
+      let product = products.get(productKey);
+      if (!product) {
+        product = { key: productKey, name: productName, studentIds: new Set(), grades: new Map() };
+        products.set(productKey, product);
+      }
+      product.studentIds.add(String(student.id));
+
+      const gradeKey = `grade:${productKey}:${gradeName.toLowerCase()}`;
+      let grade = product.grades.get(gradeKey);
+      if (!grade) {
+        grade = { key: gradeKey, name: gradeName, students: [] };
+        product.grades.set(gradeKey, grade);
+      }
+      grade.students.push(student);
+    }
+  }
+
+  return [...products.values()]
+    .sort((left, right) => compareRosterNames(left.name, right.name))
+    .map(product => ({
+      key: product.key,
+      name: product.name,
+      studentCount: product.studentIds.size,
+      grades: [...product.grades.values()]
+        .sort((left, right) =>
+          gradeBandRank(left.name) - gradeBandRank(right.name) || compareRosterNames(left.name, right.name))
+        .map(grade => ({
+          ...grade,
+          students: grade.students
+            .slice()
+            .sort((left, right) => compareRosterNames(left.studentName, right.studentName)),
+        })),
+    }));
 });
+
+const collapsedStudentGroupKeys = ref(new Set<string>());
+
+function toggleStudentGroup(key: string) {
+  const next = new Set(collapsedStudentGroupKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsedStudentGroupKeys.value = next;
+}
 
 const selectedStudentName = computed(() => {
   const s = students.value.find(s => s.id === selectedStudentId.value);
@@ -550,7 +671,12 @@ onMounted(async () => {
   studentsLoading.value = true;
   try {
     const res = await fetchOneOnOneScheduleStudents();
-    students.value = res.data.data.map(({ id, studentName }) => ({ id, studentName }));
+    students.value = res.data.data.map(({ id, studentName, studentGrade, courseGrades }) => ({
+      id,
+      studentName,
+      studentGrade,
+      courseGrades: courseGrades ?? [],
+    }));
   } catch {
     ElMessage.error('Failed to load student list.');
   } finally {
@@ -619,11 +745,75 @@ onMounted(async () => {
   font-size: 13px;
 }
 
+.student-product-group + .student-product-group {
+  border-top: 1px solid #dfe6ee;
+}
+
+.student-group__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: #f5f7fa;
+  color: #34465b;
+  cursor: pointer;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.student-group__header:hover {
+  background: #eef3f9;
+}
+
+.student-group__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-group__caret {
+  flex-shrink: 0;
+  color: #718096;
+  transition: transform 0.15s ease;
+}
+
+.student-group__header:not(.student-group__header--collapsed) .student-group__caret {
+  transform: rotate(90deg);
+}
+
+.student-group__count {
+  flex-shrink: 0;
+  color: #909399;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.student-grade-group__header {
+  padding-left: 24px;
+  background: #f8fafc;
+  font-size: 14px;
+}
+
+.student-grade-group + .student-grade-group {
+  border-top: 1px solid #eef2f6;
+}
+
 .student-item {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
+  color: inherit;
+  text-align: left;
+  background: #fff;
+  border: 0;
   cursor: pointer;
   border-bottom: 1px solid #f5f7fa;
   transition: background 0.15s;
@@ -631,6 +821,12 @@ onMounted(async () => {
 
 .student-item:hover {
   background: #f5f7fa;
+}
+
+.student-item:focus-visible {
+  position: relative;
+  outline: 2px solid #409eff;
+  outline-offset: -2px;
 }
 
 .student-item--active {

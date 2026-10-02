@@ -17,20 +17,38 @@
             />
           </div>
           <el-scrollbar always class="teacher-list-panel__body calendar-roster-scroll">
-            <div v-if="filteredTeachers.length === 0" class="teacher-list-panel__empty">
-              {{ teachers.length === 0 ? 'Loading...' : 'No teachers found' }}
+            <div v-if="teacherRosterLoading" class="teacher-list-panel__empty">
+              Loading teachers...
             </div>
-            <div
-              v-for="t in filteredTeachers"
-              :key="t.id"
-              class="teacher-item"
-              :class="{ 'teacher-item--active': selectedTeacherId === t.id }"
-              @click="onTeacherSelect(t.id)"
-            >
-              <span class="teacher-item__name">{{ t.teacherName }}</span>
-              <el-tag v-if="t.status !== 'ACTIVE'" size="small" type="warning" effect="plain">Inactive</el-tag>
-              <el-icon v-if="selectedTeacherId === t.id" color="#409eff"><Check /></el-icon>
+            <div v-else-if="filteredTeacherGroups.length === 0" class="teacher-list-panel__empty">
+              No teachers found
             </div>
+            <section v-for="group in filteredTeacherGroups" :key="group.key" class="teacher-group">
+              <button
+                type="button"
+                class="teacher-group__header"
+                :class="{ 'teacher-group__header--collapsed': collapsedTeacherGroupKeys.has(group.key) }"
+                :aria-expanded="!collapsedTeacherGroupKeys.has(group.key)"
+                @click="toggleTeacherGroup(group.key)"
+              >
+                <el-icon class="teacher-group__caret"><ArrowRight /></el-icon>
+                <span class="teacher-group__name">{{ group.name }}</span>
+                <span class="teacher-group__count">{{ group.teachers.length }}</span>
+              </button>
+              <div v-if="!collapsedTeacherGroupKeys.has(group.key)">
+                <div
+                  v-for="t in group.teachers"
+                  :key="t.id"
+                  class="teacher-item"
+                  :class="{ 'teacher-item--active': selectedTeacherId === t.id }"
+                  @click="onTeacherSelect(t.id)"
+                >
+                  <span class="teacher-item__name">{{ t.teacherName }}</span>
+                  <el-tag v-if="t.status !== 'ACTIVE'" size="small" type="warning" effect="plain">Inactive</el-tag>
+                  <el-icon v-if="selectedTeacherId === t.id" color="#409eff"><Check /></el-icon>
+                </div>
+              </div>
+            </section>
           </el-scrollbar>
         </aside>
 
@@ -185,6 +203,7 @@ import { fetchTeachers } from '@/api/base-data';
 import {
   fetchLessonOccurrence,
   fetchLessonOccurrences,
+  fetchTeacherCalendarCategories,
 } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { isTeacherUser } from '@/types/auth';
@@ -198,21 +217,72 @@ const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 
 // ─── Teachers ───────────────────────────────────
 const teachers = ref<Array<Pick<TeacherItem, 'id' | 'teacherName' | 'status'>>>([]);
+const teacherCategories = ref<Array<{ teacherId: EntityId; categoryKey: string; categoryName: string }>>([]);
+const teacherRosterLoading = ref(false);
+const teacherCategoryLoadFailed = ref(false);
 const searchText = ref('');
 const selectedTeacherId = ref<EntityId | null>(null);
 
 // Monotonic token guarding against stale responses when switching teachers/weeks quickly.
 let scheduleRequestSeq = 0;
 
-const filteredTeachers = computed(() => {
+const collapsedTeacherGroupKeys = ref(new Set<string>());
+
+function toggleTeacherGroup(key: string) {
+  const next = new Set(collapsedTeacherGroupKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  collapsedTeacherGroupKeys.value = next;
+}
+
+const sortedTeachers = computed(() => [...teachers.value].sort((left, right) =>
+  left.teacherName.localeCompare(right.teacherName, undefined, { sensitivity: 'base' })
+    || String(left.id).localeCompare(String(right.id), undefined, { numeric: true }),
+));
+
+const filteredTeacherGroups = computed(() => {
   const q = searchText.value.trim().toLowerCase();
-  const sorted = [...teachers.value].sort((left, right) =>
-    left.teacherName.localeCompare(right.teacherName, undefined, { sensitivity: 'base' })
-      || String(left.id).localeCompare(String(right.id), undefined, { numeric: true }),
+  const categoriesByTeacher = new Map<string, Map<string, string>>();
+  for (const item of teacherCategories.value) {
+    const teacherKey = String(item.teacherId);
+    const teacherCategories = categoriesByTeacher.get(teacherKey) ?? new Map<string, string>();
+    teacherCategories.set(item.categoryKey, item.categoryName);
+    categoriesByTeacher.set(teacherKey, teacherCategories);
+  }
+
+  const groups = new Map<string, { key: string; name: string; teachers: typeof sortedTeachers.value }>();
+  for (const teacher of sortedTeachers.value) {
+    if (q && !teacher.teacherName.toLowerCase().includes(q)) continue;
+    const categories = categoriesByTeacher.get(String(teacher.id));
+    const memberships = teacherCategoryLoadFailed.value
+      ? [['ALL', 'All teachers'] as [string, string]]
+      : categories?.size
+      ? [...categories.entries()]
+      : [['UNASSIGNED', 'Other / no course assignment'] as [string, string]];
+    for (const [key, name] of memberships) {
+      const group = groups.get(key) ?? { key, name, teachers: [] };
+      group.teachers.push(teacher);
+      groups.set(key, group);
+    }
+  }
+
+  return [...groups.values()].sort((left, right) =>
+    categoryOrder(left.key, left.name) - categoryOrder(right.key, right.name)
+      || left.name.localeCompare(right.name, undefined, { sensitivity: 'base' }),
   );
-  if (!q) return sorted;
-  return sorted.filter(t => t.teacherName.toLowerCase().includes(q));
 });
+
+function categoryOrder(key: string, name: string) {
+  const normalizedName = name.toLowerCase().replace(/[\s_-]/g, '');
+  if (normalizedName.includes('afterschool') || name.includes('课后')) return 10;
+  if (normalizedName.includes('saturday') || name.includes('周六')) return 20;
+  if (key === 'ONE_ON_ONE:IN_PERSON') return 30;
+  if (key === 'ONE_ON_ONE:ONLINE') return 40;
+  if (key === 'ONE_ON_ONE:UNSPECIFIED') return 50;
+  if (key === 'ALL') return 0;
+  if (key === 'UNASSIGNED') return 100;
+  return 60;
+}
 
 const selectedTeacherName = computed(() => {
   const t = teachers.value.find(t => t.id === selectedTeacherId.value);
@@ -400,20 +470,39 @@ onMounted(async () => {
     }
     return;
   }
+  teacherRosterLoading.value = true;
   try {
     const firstPage = await fetchTeachers({ pageNum: 1, pageSize: 200 });
     const activeAndInactive = [...firstPage.data.data.records];
+    teachers.value = activeAndInactive.map(teacher => ({
+      id: teacher.id,
+      teacherName: teacher.teacherName,
+      status: teacher.status,
+    }));
     const totalPages = Math.ceil(firstPage.data.data.total / 200);
-    for (let pageNum = 2; pageNum <= totalPages; pageNum += 1) {
-      const page = await fetchTeachers({ pageNum, pageSize: 200 });
-      activeAndInactive.push(...page.data.data.records);
+    const [remainingPagesResult, categoryResult] = await Promise.allSettled([
+      Promise.all(Array.from({ length: Math.max(totalPages - 1, 0) }, (_, index) =>
+        fetchTeachers({ pageNum: index + 2, pageSize: 200 }),
+      )),
+      fetchTeacherCalendarCategories(),
+    ]);
+    if (remainingPagesResult.status === 'fulfilled') {
+      for (const page of remainingPagesResult.value) activeAndInactive.push(...page.data.data.records);
     }
     teachers.value = activeAndInactive.map(teacher => ({
       id: teacher.id,
       teacherName: teacher.teacherName,
       status: teacher.status,
     }));
-  } catch { /* silent */ }
+    if (categoryResult.status === 'fulfilled') {
+      teacherCategories.value = categoryResult.value.data.data;
+    } else {
+      teacherCategoryLoadFailed.value = true;
+    }
+  } catch { /* Keep the calendar usable if the roster request fails. */ }
+  finally {
+    teacherRosterLoading.value = false;
+  }
 });
 </script>
 
@@ -466,6 +555,55 @@ onMounted(async () => {
   padding: 10px;
   border-bottom: 1px solid #ebeef5;
   flex-shrink: 0;
+}
+
+.teacher-group + .teacher-group {
+  border-top: 1px solid #e8edf2;
+}
+
+.teacher-group__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  background: #f7f9fc;
+  color: #34465b;
+  cursor: pointer;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.teacher-group__header:hover {
+  background: #eef3f9;
+}
+
+.teacher-group__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teacher-group__caret {
+  flex-shrink: 0;
+  color: #718096;
+  transition: transform 0.15s ease;
+}
+
+.teacher-group__header:not(.teacher-group__header--collapsed) .teacher-group__caret {
+  transform: rotate(90deg);
+}
+
+.teacher-group__count {
+  flex-shrink: 0;
+  color: #909399;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .teacher-list-panel__empty {

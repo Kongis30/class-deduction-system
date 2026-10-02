@@ -12,6 +12,7 @@ import type {
 export interface ScheduleStudentOption {
   id: EntityId;
   studentName: string;
+  studentGrade?: string | null;
   courseGrades: Array<{
     courseName: string;
     gradeBand: string;
@@ -28,6 +29,16 @@ export interface ScheduleStudentOption {
 
 export function fetchOneOnOneScheduleStudents() {
   return http.get<ApiResponse<ScheduleStudentOption[]>>('/v1/schedule/students/one-on-one');
+}
+
+export interface TeacherCalendarCategoryItem {
+  teacherId: EntityId;
+  categoryKey: string;
+  categoryName: string;
+}
+
+export function fetchTeacherCalendarCategories() {
+  return http.get<ApiResponse<TeacherCalendarCategoryItem[]>>('/v1/schedule/teachers/calendar-categories');
 }
 
 // ─── Recurring Schedule Rules ─────────────────────────

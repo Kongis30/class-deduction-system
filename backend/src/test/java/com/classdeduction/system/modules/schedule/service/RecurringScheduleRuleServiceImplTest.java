@@ -172,7 +172,8 @@ class RecurringScheduleRuleServiceImplTest {
     @Test
     void shouldGroupActiveOneOnOneStudentCoursesByCourseAndGrade() {
         when(coursePackageMapper.selectSchedulableOneOnOneStudentCourseGrades()).thenReturn(List.of(
-                new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", true),
+                new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", true,
+                        null, "ACTIVE", null, 1, null, null, "6"),
                 new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", true),
                 new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "English", "G7", false),
                 new OneOnOneScheduleCourseRow(2002L, "Ben Li", "Math", "G6", false),
@@ -184,6 +185,7 @@ class RecurringScheduleRuleServiceImplTest {
 
         assertThat(result).hasSize(3);
         assertThat(result.get(0).id()).isEqualTo(2001L);
+        assertThat(result.get(0).studentGrade()).isEqualTo("6");
         assertThat(result.get(0).courseGrades()).containsExactly(
                 new ScheduleStudentOptionVO.CourseGradeOption("Math", "G6", true),
                 new ScheduleStudentOptionVO.CourseGradeOption("English", "G7", false)

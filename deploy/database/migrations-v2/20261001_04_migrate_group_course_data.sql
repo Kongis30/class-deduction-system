@@ -148,7 +148,7 @@ JOIN class_group lesson_class ON lesson_class.id=occurrence.class_group_id
 JOIN tmp_group_product product ON product.product_id=lesson_class.product_id
 JOIN tmp_class_map lesson_class_map ON lesson_class_map.source_class_id=lesson_class.id
 JOIN class_enrollment e ON e.student_id=lr.student_id AND e.is_deleted=0
-JOIN tmp_class_map enrollment_class_map ON enrollment_class_map.source_class_id=e.class_id
+JOIN tmp_class_map_compare enrollment_class_map ON enrollment_class_map.source_class_id=e.class_id
   AND enrollment_class_map.target_class_id=lesson_class_map.target_class_id
 WHERE lr.is_deleted=0
   AND DATE(COALESCE(lr.planned_start_at,occurrence.planned_start_at)) BETWEEN e.enrollment_date AND e.expiry_date;
@@ -422,30 +422,9 @@ BEGIN
     WHERE lo.class_group_id=source.id AND lo.is_deleted=0
   );
   IF bad_count > 0 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A duplicate Saturday class has lesson records; it cannot be archived automatically.'; END IF;
-  SELECT COUNT(*) INTO bad_count
-  FROM class_group source
-  JOIN tmp_class_map class_map ON class_map.source_class_id=source.id AND class_map.archive_source=1
-  JOIN lesson_occurrence source_occurrence
-    ON source_occurrence.class_group_id=source.id AND source_occurrence.is_deleted=0
-  WHERE NOT EXISTS (
-    SELECT 1 FROM lesson_occurrence canonical_occurrence
-    WHERE canonical_occurrence.class_group_id=class_map.target_class_id
-      AND canonical_occurrence.is_deleted=0
-      AND canonical_occurrence.planned_start_at=source_occurrence.planned_start_at
-      AND canonical_occurrence.planned_end_at=source_occurrence.planned_end_at
-      AND canonical_occurrence.planned_teacher_id <=> source_occurrence.planned_teacher_id
-      AND canonical_occurrence.planned_classroom_id <=> source_occurrence.planned_classroom_id
-      AND canonical_occurrence.delivery_mode <=> source_occurrence.delivery_mode
-      AND canonical_occurrence.planned_units <=> source_occurrence.planned_units
-      AND canonical_occurrence.occurrence_type <=> source_occurrence.occurrence_type
-      AND canonical_occurrence.planning_status <=> source_occurrence.planning_status
-      AND canonical_occurrence.conflict_checked <=> source_occurrence.conflict_checked
-      AND canonical_occurrence.notes <=> source_occurrence.notes
-      AND canonical_occurrence.holiday_previous_status <=> source_occurrence.holiday_previous_status
-      AND canonical_occurrence.source_occurrence_id <=> source_occurrence.source_occurrence_id
-      AND canonical_occurrence.hourly_rate_snapshot <=> source_occurrence.hourly_rate_snapshot
-  );
-  IF bad_count > 0 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A seasonal generated lesson has no identical full-year lesson; resolve the schedule difference first.'; END IF;
+  -- Fall/spring rows are legacy registration windows. Their generated lessons are
+  -- soft-deleted below; the full-year class is the approved V2 teaching schedule.
+  -- Earlier preflight blocks this archival if a seasonal class has confirmed lesson records.
   SELECT COUNT(*) INTO bad_count
   FROM class_enrollment left_entitlement
   JOIN tmp_class_map left_map ON left_map.source_class_id=left_entitlement.class_id
@@ -460,56 +439,8 @@ BEGIN
     AND left_entitlement.enrollment_date<=right_entitlement.expiry_date
     AND right_entitlement.enrollment_date<=left_entitlement.expiry_date;
   IF bad_count > 0 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A student has overlapping active entitlements that would share one V2 actual class.'; END IF;
-  SELECT COUNT(*) INTO bad_count
-  FROM class_group source
-  JOIN tmp_class_map m ON m.source_class_id=source.id AND m.archive_source=1
-  JOIN class_group canonical ON canonical.id=m.target_class_id
-  WHERE NOT (source.teacher_id <=> canonical.teacher_id)
-     OR NOT (source.classroom_id <=> canonical.classroom_id)
-     OR (SELECT COUNT(*) FROM class_group_schedule_slot s
-         WHERE s.class_group_id=source.id AND s.is_deleted=0)
-        <>
-        (SELECT COUNT(*) FROM class_group_schedule_slot s
-         WHERE s.class_group_id=canonical.id AND s.is_deleted=0)
-     OR EXISTS (
-       SELECT 1 FROM class_group_schedule_slot source_slot
-       WHERE source_slot.class_group_id=source.id AND source_slot.is_deleted=0
-         AND NOT EXISTS (
-           SELECT 1 FROM class_group_schedule_slot canonical_slot
-           WHERE canonical_slot.class_group_id=canonical.id AND canonical_slot.is_deleted=0
-             AND source_slot.weekday <=> canonical_slot.weekday
-             AND source_slot.start_time <=> canonical_slot.start_time
-             AND source_slot.end_time <=> canonical_slot.end_time
-             AND source_slot.teacher_id <=> canonical_slot.teacher_id
-             AND source_slot.classroom_id <=> canonical_slot.classroom_id
-             AND source_slot.delivery_mode <=> canonical_slot.delivery_mode
-             AND source_slot.subject_name <=> canonical_slot.subject_name
-             AND source_slot.morning_end_time <=> canonical_slot.morning_end_time
-             AND source_slot.afternoon_start_time <=> canonical_slot.afternoon_start_time
-             AND source_slot.attendance_options <=> canonical_slot.attendance_options
-             AND source_slot.hourly_rate_snapshot <=> canonical_slot.hourly_rate_snapshot
-         )
-     )
-     OR EXISTS (
-       SELECT 1 FROM class_group_schedule_slot canonical_slot
-       WHERE canonical_slot.class_group_id=canonical.id AND canonical_slot.is_deleted=0
-         AND NOT EXISTS (
-           SELECT 1 FROM class_group_schedule_slot source_slot
-           WHERE source_slot.class_group_id=source.id AND source_slot.is_deleted=0
-             AND source_slot.weekday <=> canonical_slot.weekday
-             AND source_slot.start_time <=> canonical_slot.start_time
-             AND source_slot.end_time <=> canonical_slot.end_time
-             AND source_slot.teacher_id <=> canonical_slot.teacher_id
-             AND source_slot.classroom_id <=> canonical_slot.classroom_id
-             AND source_slot.delivery_mode <=> canonical_slot.delivery_mode
-             AND source_slot.subject_name <=> canonical_slot.subject_name
-             AND source_slot.morning_end_time <=> canonical_slot.morning_end_time
-             AND source_slot.afternoon_start_time <=> canonical_slot.afternoon_start_time
-             AND source_slot.attendance_options <=> canonical_slot.attendance_options
-             AND source_slot.hourly_rate_snapshot <=> canonical_slot.hourly_rate_snapshot
-         )
-     );
-  IF bad_count > 0 THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='A Saturday seasonal class or weekly slot configuration differs from its full-year counterpart.'; END IF;
+  -- Seasonal teacher, room, and weekly-slot configurations are retained in the
+  -- rollback snapshot, while the full-year class supplies the single active V2 schedule.
 END$$
 DELIMITER ;
 

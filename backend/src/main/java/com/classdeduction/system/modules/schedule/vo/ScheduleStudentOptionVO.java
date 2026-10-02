@@ -9,6 +9,7 @@ import java.util.List;
 public record ScheduleStudentOptionVO(
         Long id,
         String studentName,
+        String studentGrade,
         List<CourseGradeOption> courseGrades
 ) {
     /** 左侧栏的一条可排课单位；共享课组以主课包为入口并携带全部成员。 */

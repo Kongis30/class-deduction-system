@@ -33,7 +33,8 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
                         ELSE COUNT(DISTINCT group_member.student_id)
                    END AS participantCount,
                    COALESCE(GROUP_CONCAT(participant.student_name ORDER BY group_member.participant_index SEPARATOR ' / '), s.student_name) AS participantNames,
-                   COALESCE(GROUP_CONCAT(DISTINCT CAST(group_member.student_id AS CHAR) ORDER BY group_member.participant_index SEPARATOR ','), CAST(s.id AS CHAR)) AS participantStudentIds
+                   COALESCE(GROUP_CONCAT(DISTINCT CAST(group_member.student_id AS CHAR) ORDER BY group_member.participant_index SEPARATOR ','), CAST(s.id AS CHAR)) AS participantStudentIds,
+                   s.grade AS studentGrade
             FROM course_package pkg
             JOIN student s ON s.id = pkg.student_id
             LEFT JOIN course_product cp ON cp.id = pkg.course_product_id
@@ -54,7 +55,7 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
               AND pkg.package_status IN ('ACTIVE', 'PAUSED')
               AND pkg.is_deleted = 0
               AND (primary_member.id IS NULL OR primary_member.participant_index = 1)
-            GROUP BY s.id, s.student_name, courseName, gradeBand, pkg.id, primary_member.id, primary_member.private_lesson_group_id
+            GROUP BY s.id, s.student_name, s.grade, courseName, gradeBand, pkg.id, primary_member.id, primary_member.private_lesson_group_id
             ORDER BY s.student_no, s.id, courseName, gradeBand, pkg.id
             """)
     List<OneOnOneScheduleCourseRow> selectSchedulableOneOnOneStudentCourseGrades();

@@ -94,7 +94,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         Map<Long, ScheduleStudentOptionBuilder> students = new LinkedHashMap<>();
         for (OneOnOneScheduleCourseRow row : coursePackageMapper.selectSchedulableOneOnOneStudentCourseGrades()) {
             ScheduleStudentOptionBuilder student = students.computeIfAbsent(
-                    row.studentId(), id -> new ScheduleStudentOptionBuilder(id, row.studentName()));
+                    row.studentId(), id -> new ScheduleStudentOptionBuilder(id, row.studentName(), row.studentGrade()));
             student.addCourseGrade(row);
         }
         return students.values().stream()
@@ -105,11 +105,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private static final class ScheduleStudentOptionBuilder {
         private final Long id;
         private final String studentName;
+        private final String studentGrade;
         private final Map<String, ScheduleStudentOptionVO.CourseGradeOption> courseGrades = new LinkedHashMap<>();
 
-        private ScheduleStudentOptionBuilder(Long id, String studentName) {
+        private ScheduleStudentOptionBuilder(Long id, String studentName, String studentGrade) {
             this.id = id;
             this.studentName = studentName;
+            this.studentGrade = studentGrade;
         }
 
         private void addCourseGrade(OneOnOneScheduleCourseRow row) {
@@ -130,7 +132,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
 
         private ScheduleStudentOptionVO build() {
-            return new ScheduleStudentOptionVO(id, studentName, List.copyOf(courseGrades.values()));
+            return new ScheduleStudentOptionVO(id, studentName, studentGrade, List.copyOf(courseGrades.values()));
         }
     }
 
