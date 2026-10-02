@@ -899,6 +899,7 @@ export interface UnpaidLessonItem {
   occurrenceType?: string;
   className?: string;
   participantNames?: string[];
+  participantCount?: number;
 }
 
 export interface TeacherPaymentItem {
@@ -934,4 +935,5 @@ export interface TeacherPaymentItemDetail {
   amount: number;
   occurrenceType?: string;
   className?: string;
+  participantCount?: number;
 }

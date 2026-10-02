@@ -86,10 +86,10 @@
           </el-button>
         </el-alert>
 
-        <!-- ─── 2. Unpaid 1:1 Lessons ────────────────── -->
+        <!-- ─── 2. Unpaid private lessons ────────────── -->
         <section v-if="individualLessons.length > 0" class="tp-section tp-section--card">
           <div class="tp-section__header">
-            <span class="tp-section__title">1:1 Lessons</span>
+            <span class="tp-section__title">Private Lessons</span>
             <span v-if="individualTotal" class="tp-section__subtitle">
               {{ individualLessons.length }} lesson(s) · {{ individualTotal }}
             </span>
@@ -108,7 +108,7 @@
             </el-table-column>
             <el-table-column label="Type" width="80" align="center" header-class-name="tp-table__nowrap">
               <template #default="{ row }">
-                <el-tag size="small" type="primary">1:1</el-tag>
+                <el-tag size="small" type="primary">1:{{ row.participantCount || 1 }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="Student" min-width="150">
@@ -335,7 +335,7 @@
           <el-table-column label="Type" width="60" align="center">
             <template #default="{ row }">
               <el-tag v-if="row.className" size="small" type="warning">G</el-tag>
-              <el-tag v-else size="small" type="primary">1</el-tag>
+              <el-tag v-else size="small" type="primary">1:{{ row.participantCount || 1 }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="Package" min-width="130" prop="packageName" />
