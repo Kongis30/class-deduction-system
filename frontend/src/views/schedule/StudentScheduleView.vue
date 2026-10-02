@@ -760,7 +760,7 @@ onMounted(async () => {
   color: #34465b;
   cursor: pointer;
   text-align: left;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1.35;
 }
@@ -797,7 +797,6 @@ onMounted(async () => {
 .student-grade-group__header {
   padding-left: 24px;
   background: #f8fafc;
-  font-size: 14px;
 }
 
 .student-grade-group + .student-grade-group {

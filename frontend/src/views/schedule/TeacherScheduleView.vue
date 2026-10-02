@@ -572,7 +572,7 @@ onMounted(async () => {
   color: #34465b;
   cursor: pointer;
   text-align: left;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   line-height: 1.35;
 }
