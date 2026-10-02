@@ -1958,7 +1958,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
   gap: 12px;
-  min-height: 620px;
+  min-height: max(680px, calc(100vh - 380px));
 }
 
 .oo-split-workspace--collapsed {
@@ -2045,7 +2045,6 @@ onMounted(async () => {
   flex-direction: column;
   gap: 6px;
   min-height: 0;
-  max-height: 620px;
   overflow-y: scroll;
   padding: 8px;
   scrollbar-gutter: stable;
