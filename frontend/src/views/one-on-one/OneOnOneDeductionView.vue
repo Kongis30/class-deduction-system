@@ -1600,8 +1600,10 @@ async function submitConfirm() {
     const payload = {
       occurrenceId: row.occurrenceId,
       resultStatus: confirmForm.resultStatus,
-      actualTeacherId: nonAttendance ? undefined : row.actualTeacherId || row.plannedTeacherId,
-      actualClassroomId: nonAttendance ? undefined : row.actualClassroomId || row.plannedClassroomId,
+      // 消课窗口没有“实际老师/教室”的手动选择；直接传列表快照会覆盖服务端当前课次或老师提交时保存的资源。
+      // 管理员直接确认时由服务端使用当前排课，复核老师提交时由服务端保留提交记录里的实际资源。
+      actualTeacherId: undefined,
+      actualClassroomId: undefined,
       actualStartAt: nonAttendance ? undefined : confirmForm.actualStartAt || undefined,
       actualEndAt: nonAttendance ? undefined : actualEndAt,
       actualUnits: nonAttendance ? 0 : Math.round((confirmForm.actualHours || 0) * 2),

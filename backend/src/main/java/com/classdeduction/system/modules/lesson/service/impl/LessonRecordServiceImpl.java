@@ -42,6 +42,7 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -57,6 +58,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class LessonRecordServiceImpl implements LessonRecordService {
 
     private static final Set<String> COMPLETED_STATUSES = Set.of("COMPLETED", "MAKEUP_COMPLETED", "SUBSTITUTED");
@@ -1322,16 +1324,79 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
     private void ensureNoConflictForOccurrence(LessonOccurrenceEntity occurrence, String conflictContext) {
         if (hasStudentOccurrenceConflict(occurrence, occurrence.getStudentId())) {
+            log.warn("Lesson confirmation blocked by student conflict: occurrenceId={}, studentId={}, interval=[{}, {}), context={}",
+                    occurrence.getId(), occurrence.getStudentId(), occurrence.getPlannedStartAt(),
+                    occurrence.getPlannedEndAt(), conflictContext);
             throw new BusinessException("SCHEDULE_CONFLICT", "Student conflict detected " + conflictContext + ".");
         }
-        if (occurrence.getPlannedTeacherId() != null
-                && hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId())) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Teacher conflict detected " + conflictContext + ".");
+        if (occurrence.getPlannedTeacherId() != null) {
+            if (hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getPlannedTeacherId,
+                    occurrence.getPlannedTeacherId())) {
+                List<LessonOccurrenceEntity> conflicts = findAdjustedOccurrenceConflicts(
+                        occurrence, LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId());
+                throwConflictWithDetails("teacher", occurrence, occurrence.getPlannedTeacherId(), conflicts, conflictContext);
+            }
         }
-        if (occurrence.getPlannedClassroomId() != null
-                && hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId())) {
-            throw new BusinessException("SCHEDULE_CONFLICT", "Classroom conflict detected " + conflictContext + ".");
+        if (occurrence.getPlannedClassroomId() != null) {
+            if (hasAdjustedOccurrenceConflict(occurrence, LessonOccurrenceEntity::getPlannedClassroomId,
+                    occurrence.getPlannedClassroomId())) {
+                List<LessonOccurrenceEntity> conflicts = findAdjustedOccurrenceConflicts(
+                        occurrence, LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId());
+                throwConflictWithDetails("classroom", occurrence, occurrence.getPlannedClassroomId(), conflicts, conflictContext);
+            }
         }
+    }
+
+    /** 查询并描述实际重叠的课次；调用方据此返回具体冲突对象，同时记录可关联的服务端诊断信息。 */
+    private List<LessonOccurrenceEntity> findAdjustedOccurrenceConflicts(
+            LessonOccurrenceEntity occurrence,
+            com.baomidou.mybatisplus.core.toolkit.support.SFunction<LessonOccurrenceEntity, Long> field,
+            Long fieldValue) {
+        List<LessonOccurrenceEntity> conflicts = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(field, fieldValue)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                .ne(occurrence.getId() != null, LessonOccurrenceEntity::getId, occurrence.getId())
+                .lt(LessonOccurrenceEntity::getPlannedStartAt, occurrence.getPlannedEndAt())
+                .gt(LessonOccurrenceEntity::getPlannedEndAt, occurrence.getPlannedStartAt())
+                .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
+        return conflicts == null ? Collections.emptyList() : conflicts;
+    }
+
+    private void throwConflictWithDetails(String resourceType,
+                                          LessonOccurrenceEntity incoming,
+                                          Long resourceId,
+                                          List<LessonOccurrenceEntity> conflicts,
+                                          String conflictContext) {
+        String resourceName = resourceType.equals("teacher")
+                ? Optional.ofNullable(teacherMapper.selectById(resourceId)).map(TeacherEntity::getTeacherName).orElse("unknown")
+                : Optional.ofNullable(classroomMapper.selectById(resourceId)).map(ClassroomEntity::getRoomName).orElse("unknown");
+        List<String> descriptions = conflicts.stream().limit(5)
+                .map(conflict -> describeConflictOccurrence(incoming, conflict))
+                .toList();
+        String details = descriptions.isEmpty()
+                ? "overlapping occurrence details could not be loaded (check the occurrence query and request time range)"
+                : String.join("; ", descriptions);
+        log.warn("Lesson confirmation blocked by {} conflict: occurrenceId={}, resourceId={}, resourceName={}, "
+                        + "requestedInterval=[{}, {}), conflictingOccurrences={}, context={}",
+                resourceType, incoming.getId(), resourceId, resourceName, incoming.getPlannedStartAt(),
+                incoming.getPlannedEndAt(), details, conflictContext);
+        String displayType = resourceType.equals("teacher") ? "Teacher" : "Classroom";
+        throw new BusinessException("SCHEDULE_CONFLICT", displayType + " conflict detected " + conflictContext
+                + " for " + resourceName + ": " + details + ".");
+    }
+
+    private String describeConflictOccurrence(LessonOccurrenceEntity incoming, LessonOccurrenceEntity conflict) {
+        StudentEntity student = conflict.getStudentId() == null ? null : studentMapper.selectById(conflict.getStudentId());
+        CoursePackageEntity coursePackage = conflict.getPackageId() == null ? null : coursePackageMapper.selectById(conflict.getPackageId());
+        LocalDateTime overlapStart = incoming.getPlannedStartAt().isAfter(conflict.getPlannedStartAt())
+                ? incoming.getPlannedStartAt() : conflict.getPlannedStartAt();
+        LocalDateTime overlapEnd = incoming.getPlannedEndAt().isBefore(conflict.getPlannedEndAt())
+                ? incoming.getPlannedEndAt() : conflict.getPlannedEndAt();
+        return "occurrence " + conflict.getId()
+                + " (" + (student == null ? "student " + conflict.getStudentId() : student.getStudentName())
+                + (coursePackage == null ? "" : ", " + coursePackage.getPackageName())
+                + ", " + conflict.getPlannedStartAt() + "–" + conflict.getPlannedEndAt()
+                + ", overlap " + overlapStart + "–" + overlapEnd + ")";
     }
 
     private boolean hasAnyAdjustedOccurrenceConflict(LessonOccurrenceEntity occurrence) {

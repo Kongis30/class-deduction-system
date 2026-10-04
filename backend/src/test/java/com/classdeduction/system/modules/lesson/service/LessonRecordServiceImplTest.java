@@ -582,6 +582,35 @@ class LessonRecordServiceImplTest {
     }
 
     @Test
+    void shouldExplainWhichTeacherLessonOverlapsWhenConfirmationIsBlocked() {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(1001L);
+        request.setResultStatus("COMPLETED");
+        LessonOccurrenceEntity conflictingOccurrence = buildFutureOccurrence(1002L, LocalDate.of(2026, 4, 12), 2);
+        conflictingOccurrence.setStudentId(602L);
+        conflictingOccurrence.setPlannedTeacherId(701L);
+        conflictingOccurrence.setPlannedStartAt(LocalDateTime.of(2026, 4, 12, 19, 0));
+        conflictingOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 20, 0));
+
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
+        when(studentMapper.selectById(601L)).thenReturn(buildStudent());
+        when(lessonStatusRuleMapper.selectOne(any())).thenReturn(buildCompletedRule());
+        when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L, 1L);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(conflictingOccurrence));
+        when(teacherMapper.selectById(701L)).thenReturn(buildTeacher());
+
+        assertThatThrownBy(() -> lessonRecordService.confirmLesson(request, currentAdminUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Teacher conflict detected")
+                .hasMessageContaining("occurrence 1002")
+                .hasMessageContaining("overlap 2026-04-12T19:00–2026-04-12T20:00");
+
+        verify(hourLedgerMapper, never()).insert(any(HourLedgerEntity.class));
+    }
+
+    @Test
     void shouldDeductPlannedHoursForNoShowWithoutChangingFutureSchedule() {
         LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
         request.setOccurrenceId(1001L);
