@@ -25,7 +25,7 @@
 
             <el-collapse-transition>
               <div v-show="lowBalanceExpanded" class="event-group__body">
-                <el-table v-loading="eventsLoading" :data="lowBalanceRows" row-key="key" class="data-table">
+                <el-table v-if="!appStore.isMobileViewport" v-loading="eventsLoading" :data="lowBalanceRows" row-key="key" class="data-table">
                   <el-table-column label="Event" min-width="240">
                     <template #default="{ row }">
                       <div class="event-cell">
@@ -84,6 +84,33 @@
                     </template>
                   </el-table-column>
                 </el-table>
+
+                <div v-else v-loading="eventsLoading" class="mobile-notification-rules">
+                  <article v-for="row in lowBalanceRows" :key="row.key" class="mobile-notification-rule">
+                    <header class="mobile-notification-rule__heading">
+                      <div><strong>{{ row.eventName }}</strong><span>{{ row.scene }}</span></div>
+                      <el-tag size="small" :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? 'Enabled' : 'Disabled' }}</el-tag>
+                    </header>
+                    <div class="mobile-notification-rule__template">
+                      <span>Email template</span>
+                      <strong>{{ row.templateName }}</strong>
+                      <small>{{ row.templateHint }}</small>
+                    </div>
+                    <div class="mobile-notification-rule__threshold">
+                      <div><span>Threshold</span><strong>{{ thresholdInputs[row.triggerType] }} {{ row.unit }}</strong></div>
+                      <small>{{ row.thresholdHint }}</small>
+                      <el-button text type="primary" @click="openThresholdDialog(row)">Edit threshold</el-button>
+                    </div>
+                    <div class="mobile-notification-rule__actions">
+                      <el-switch
+                        :model-value="row.enabled"
+                        :loading="togglingType === row.triggerType"
+                        @change="(val: boolean) => handleToggle(row, val)"
+                      />
+                      <el-button type="primary" plain @click="openTemplateDialog(row)">Set email template</el-button>
+                    </div>
+                  </article>
+                </div>
 
                 <el-empty
                   v-if="!eventsLoading && lowBalanceRows.length === 0"
@@ -373,6 +400,7 @@
 import { ArrowRight, EditPen } from '@element-plus/icons-vue';
 import { ElMessage, type InputInstance } from 'element-plus';
 import { computed, nextTick, reactive, ref } from 'vue';
+import { useAppStore } from '@/stores/app';
 
 import {
   fetchNotificationConfig,
@@ -386,6 +414,7 @@ import {
 import type { EntityId, NotificationConfigItem, NotificationTemplateItem, NotificationTriggerRuleItem } from '@/types/domain';
 
 const activeTab = ref('events');
+const appStore = useAppStore();
 
 
 interface PlaceholderItem {
@@ -856,6 +885,22 @@ async function handleTestEmail() {
 </script>
 
 <style scoped>
+.mobile-notification-rules { display: grid; gap: 10px; }
+.mobile-notification-rule { padding: 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.mobile-notification-rule__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mobile-notification-rule__heading > div { display: grid; min-width: 0; gap: 4px; }
+.mobile-notification-rule__heading strong { color: #26384c; font-size: 15px; }
+.mobile-notification-rule__heading span,
+.mobile-notification-rule__template > span,
+.mobile-notification-rule__template small,
+.mobile-notification-rule__threshold > span,
+.mobile-notification-rule__threshold small { color: #718096; font-size: 12px; line-height: 1.4; }
+.mobile-notification-rule__template,
+.mobile-notification-rule__threshold { display: grid; gap: 5px; margin-top: 12px; padding: 10px; border-radius: 9px; background: #f6f8fb; }
+.mobile-notification-rule__template strong,
+.mobile-notification-rule__threshold strong { color: #334155; font-size: 14px; overflow-wrap: anywhere; }
+.mobile-notification-rule__actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
+
 .settings-page {
   padding: 0;
 }
@@ -1325,5 +1370,18 @@ async function handleTestEmail() {
   font-size: 12px;
   color: #909399;
   line-height: 1.5;
+}
+
+@media (max-width: 920px) {
+  .config-grid { grid-template-columns: minmax(0, 1fr); }
+  .config-col--side { min-width: 0; }
+}
+
+@media (max-width: 640px) {
+  .preview-panel { padding: 12px; }
+  .preview-panel__header { flex-direction: column; }
+  .preview-panel__chips { flex-wrap: wrap; }
+  .config-actions { display: grid; grid-template-columns: 1fr; gap: 8px; }
+  .config-actions > .el-button { width: 100%; margin-left: 0; }
 }
 </style>

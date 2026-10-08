@@ -12,18 +12,40 @@
     <el-row class="receipt-workspace" :gutter="16">
       <el-col :xs="24" :sm="8" :md="6" :lg="6" :xl="5">
         <section class="panel-card receipt-sidebar">
-          <el-input
-            v-model="studentQuery.keyword"
-            class="student-search"
-            placeholder="Search student"
-            clearable
-            @clear="handleStudentSearch"
-            @keyup.enter="handleStudentSearch"
+          <div v-if="appStore.isMobileViewport" class="mobile-search-toggle-row">
+            <button
+              type="button"
+              class="mobile-search-trigger"
+              :aria-expanded="mobileSearchExpanded"
+              aria-label="Search students"
+              @click="mobileSearchExpanded = !mobileSearchExpanded"
+            >
+              <el-icon><Search /></el-icon>
+            </button>
+          </div>
+          <section
+            v-show="!appStore.isMobileViewport || mobileSearchExpanded"
+            :class="{ 'mobile-search-panel': appStore.isMobileViewport }"
           >
-            <template #append>
-              <el-button type="primary" @click="handleStudentSearch">Search</el-button>
-            </template>
-          </el-input>
+            <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+              <span>Find a student</span>
+              <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+                <el-icon><Close /></el-icon>
+              </button>
+            </div>
+            <el-input
+              v-model="studentQuery.keyword"
+              class="student-search"
+              placeholder="Search student"
+              clearable
+              @clear="handleStudentSearch"
+              @keyup.enter="handleStudentSearch"
+            >
+              <template #append>
+                <el-button type="primary" @click="handleStudentSearch">Search</el-button>
+              </template>
+            </el-input>
+          </section>
 
           <el-scrollbar v-loading="studentLoading" always class="student-scroll">
             <el-menu
@@ -63,6 +85,7 @@
           </div>
 
           <el-table
+            v-if="!appStore.isMobileViewport"
             v-loading="receiptLoading"
             :data="receipts"
             row-key="id"
@@ -124,6 +147,51 @@
             </el-table-column>
           </el-table>
 
+          <div v-else v-loading="receiptLoading" class="mobile-receipt-list">
+            <article v-for="receipt in receipts" :key="receipt.id" class="mobile-receipt-card">
+              <header class="mobile-receipt-card__heading">
+                <div>
+                  <strong>{{ receipt.receiptNo }}</strong>
+                  <span>{{ formatDateTime(receipt.issuedAt) }}</span>
+                </div>
+                <el-tag size="small" effect="plain">{{ receiptType === 'refund' ? 'Refund' : 'Registration' }}</el-tag>
+              </header>
+              <strong class="mobile-receipt-card__student">{{ receipt.studentName }}</strong>
+              <div v-if="receiptType === 'registration'" class="mobile-receipt-card__courses">
+                <span v-for="course in receiptSummary(receipt).courses" :key="course.key">{{ course.label }}</span>
+                <span v-if="receiptSummary(receipt).courses.length === 0" class="muted-value">Credit top-up</span>
+              </div>
+              <dl class="mobile-receipt-card__amounts">
+                <template v-if="receiptType === 'registration'">
+                  <div><dt>Amount due</dt><dd>{{ formatMoney(receiptSummary(receipt).amountDue) }}</dd></div>
+                  <div><dt>Paid</dt><dd>{{ formatMoney(receiptSummary(receipt).paidAmount) }}</dd></div>
+                  <div><dt>Balance</dt><dd>{{ formatMoney(receiptSummary(receipt).balanceAmount) }}</dd></div>
+                </template>
+                <template v-else>
+                  <div><dt>Method</dt><dd>{{ receiptSummary(receipt).paymentMethod || '—' }}</dd></div>
+                  <div><dt>{{ receiptType === 'refund' ? 'Refund amount' : 'Payment amount' }}</dt><dd>{{ formatMoney(Math.abs(receiptSummary(receipt).paymentAmount)) }}</dd></div>
+                  <div><dt>Balance after</dt><dd>{{ formatMoney(receiptSummary(receipt).balanceAmount) }}</dd></div>
+                </template>
+              </dl>
+              <div class="mobile-receipt-card__actions">
+                <el-button type="primary" plain @click="openReceipt(receipt)">View receipt</el-button>
+                <el-button
+                  v-if="canDeleteCourse(receipt)"
+                  type="danger"
+                  plain
+                  @click="openDeleteCourseDialog(receipt)"
+                >
+                  Delete course
+                </el-button>
+                <span
+                  v-else-if="receiptType === 'registration' && hasReceiptCourses(receipt)"
+                  class="muted-value"
+                >View only</span>
+              </div>
+            </article>
+            <el-empty v-if="!receiptLoading && receipts.length === 0" :description="`No ${receiptType} receipts for this student.`" />
+          </div>
+
           <el-dialog
             v-model="deleteCourseDialogVisible"
             title="Delete a course from this receipt"
@@ -180,9 +248,11 @@
 </template>
 
 <script setup lang="ts">
+import { Close, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAppStore } from '@/stores/app';
 
 import { fetchStudents } from '@/api/base-data';
 import { deleteEnrollmentOrderItem, fetchReceipts } from '@/api/enrollment';
@@ -191,6 +261,8 @@ import type { ReceiptRecordItem, StudentItem } from '@/types/domain';
 import { formatRoundedUsd } from '@/utils/money-display';
 
 const router = useRouter();
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 
 const studentLoading = ref(false);
 const receiptLoading = ref(false);
@@ -507,6 +579,28 @@ function formatMoney(value?: number) {
 </script>
 
 <style scoped>
+.mobile-receipt-list { display: grid; gap: 10px; }
+.mobile-receipt-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.mobile-receipt-card__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mobile-receipt-card__heading > div { display: grid; min-width: 0; gap: 4px; }
+.mobile-receipt-card__heading strong, .mobile-receipt-card__student { overflow-wrap: anywhere; color: #26384c; }
+.mobile-receipt-card__heading strong { font-size: 14px; }
+.mobile-receipt-card__heading span { color: #718096; font-size: 12px; }
+.mobile-receipt-card__student { display: block; margin-top: 10px; font-size: 15px; }
+.mobile-receipt-card__courses { display: grid; gap: 4px; margin-top: 8px; color: #475569; font-size: 13px; }
+.mobile-receipt-card__amounts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 12px 0 0; }
+.mobile-receipt-card__amounts > div { display: grid; min-width: 0; gap: 4px; }
+.mobile-receipt-card__amounts dt { color: #718096; font-size: 11px; }
+.mobile-receipt-card__amounts dd { margin: 0; color: #334155; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.mobile-receipt-card__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.mobile-receipt-card__actions .el-button { margin: 0; }
+
 .receipt-workspace {
   align-items: stretch;
 }

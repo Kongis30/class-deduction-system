@@ -1,10 +1,29 @@
 <template>
   <div class="pr-page">
 
-    <aside class="pr-sidebar">
-      <div class="pr-sidebar__search">
-        <el-input v-model="teacherKeyword" placeholder="Search teacher..." clearable size="small" />
+    <aside class="pr-sidebar" :class="{ 'pr-sidebar--mobile-hidden': appStore.isMobileViewport && selectedTeacherId }">
+      <div v-if="appStore.isMobileViewport" class="mobile-search-toggle-row">
+        <button
+          type="button"
+          class="mobile-search-trigger"
+          :aria-expanded="mobileSearchExpanded"
+          aria-label="Search teachers"
+          @click="mobileSearchExpanded = !mobileSearchExpanded"
+        >
+          <el-icon><Search /></el-icon>
+        </button>
       </div>
+      <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" :class="{ 'mobile-search-panel': appStore.isMobileViewport }">
+        <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+          <span>Find a teacher</span>
+          <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+        <div class="pr-sidebar__search">
+          <el-input v-model="teacherKeyword" placeholder="Search teacher..." clearable size="small" />
+        </div>
+      </section>
       <div class="pr-sidebar__list" v-loading="teachersLoading">
         <div
           v-for="t in filteredTeachers"
@@ -23,7 +42,11 @@
     </aside>
 
 
-    <main class="pr-content">
+    <main class="pr-content" :class="{ 'pr-content--mobile-hidden': appStore.isMobileViewport && !selectedTeacherId }">
+      <div v-if="appStore.isMobileViewport && selectedTeacher" class="pr-mobile-selection">
+        <el-button text @click="selectedTeacherId = null">← Teacher list</el-button>
+        <strong>{{ selectedTeacher.teacherName }}</strong>
+      </div>
       <div v-if="!selectedTeacherId" class="pr-content__placeholder">
         Select a teacher from the left panel to set their hourly rates.
       </div>
@@ -275,13 +298,17 @@
 </template>
 
 <script setup lang="ts">
+import { Close, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 
 import { fetchPayRates, savePayRate, deletePayRate, type TeacherPayRateSavePayload } from '@/api/finance';
 import { fetchAllStudents, fetchAllTeachers, fetchCourseProducts } from '@/api/base-data';
 import type { EntityId } from '@/types/domain';
+import { useAppStore } from '@/stores/app';
 
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 const teacherKeyword = ref('');
 const teachersLoading = ref(false);
 const loading = ref(false);
@@ -959,5 +986,17 @@ onMounted(async () => {
   .pr-scope-grid {
     grid-template-columns: 1fr;
   }
+}
+
+@media (max-width: 920px) {
+  .pr-page { gap: 10px; }
+  .pr-sidebar { min-height: min(55dvh, 480px); max-height: none; }
+  .pr-sidebar--mobile-hidden,
+  .pr-content--mobile-hidden { display: none; }
+  .pr-sidebar__list { max-height: min(55dvh, 480px); overflow-y: auto; }
+  .pr-sidebar__item { min-height: 48px; border-bottom: 1px solid #edf0f4; }
+  .pr-content { width: 100%; min-width: 0; overflow: visible; }
+  .pr-mobile-selection { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0 0 10px; padding: 4px 8px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; }
+  .pr-mobile-selection strong { overflow: hidden; color: #1f2937; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 }
 </style>

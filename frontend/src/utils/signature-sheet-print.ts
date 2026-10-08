@@ -48,6 +48,9 @@ export function renderSignatureSheetDocument(
   .teacher-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 24px; margin-bottom: 28px; }
   .teacher-meta p { margin: 0; font-size: 15px; font-weight: 600; }
   .teacher-meta p:first-child { grid-column: 1 / -1; }
+  .teacher-lessons { page-break-inside: auto; break-inside: auto; }
+  .teacher-lessons thead { display: table-header-group; }
+  .teacher-lessons tr { page-break-inside: avoid; break-inside: avoid; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
   th, td { height: 28px; padding: 4px 6px; border: 1px solid #111; text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
   th { font-weight: 700; }
@@ -114,8 +117,8 @@ function renderTeacherSheets(student: OneOnOneStudent, coursePackage: OneOnOnePa
       <p><strong>Allocated Hours:</strong> ${formatHours(group.hours)}</p>
       <p><strong>Starting Date:</strong> ${escapeHtml(group.startDate)}</p>
     </div>
-    <table><thead><tr><th>Lesson name</th><th>Teacher</th><th>Date</th><th>Signature</th></tr></thead><tbody>
-      ${group.rows.map(row => `<tr><td>${escapeHtml(group.subject)}</td><td>${escapeHtml(group.teacher)}</td><td>${escapeHtml(formatDate(row.plannedStartAt))}</td><td></td></tr>`).join('')}
+    <table class="teacher-lessons"><thead><tr><th>Lesson name</th><th>Teacher</th><th>Date</th><th>Signature</th></tr></thead><tbody>
+      ${group.rows.map(row => `<tr><td>${escapeHtml(subjectLabel(row, coursePackage))}</td><td>${escapeHtml(teacherName(row))}</td><td>${escapeHtml(formatDate(row.plannedStartAt))}</td><td></td></tr>`).join('')}
     </tbody></table>
   </main>`).join('');
 }
@@ -150,24 +153,29 @@ function groupBySubjectAndTeacher(lessons: OneOnOneLesson[]): SheetGroup[] {
 }
 
 function groupByTeacherSchedule(lessons: OneOnOneLesson[], coursePackage: OneOnOnePackage): SheetGroup[] {
-  const groups = new Map<string, SheetGroup>();
+  const groups = new Map<string, { teacher: string; teacherKey: string; rows: OneOnOneLesson[] }>();
   for (const row of lessons) {
-    const subject = subjectLabel(row, coursePackage);
     const teacher = teacherName(row);
     const teacherKey = normalizeKey(row.plannedTeacherId ?? row.actualTeacherId ?? teacher);
-    const timeKey = timeOfDay(row) || 'To be scheduled';
-    const key = `${normalizeKey(subject)}::${teacherKey}::${timeKey}`;
-    const existing = groups.get(key);
+    const existing = groups.get(teacherKey);
     if (existing) {
       existing.rows.push(row);
-      existing.hours += Number(row.plannedUnits ?? 0);
     } else {
-      groups.set(key, { subject, teacher, teacherKey, classTime: timeKey, hours: Number(row.plannedUnits ?? 0), startDate: formatDate(row.plannedStartAt), rows: [row] });
+      groups.set(teacherKey, { teacher, teacherKey, rows: [row] });
     }
   }
   return Array.from(groups.values()).map(group => {
     const rows = [...group.rows].sort((left, right) => Date.parse(left.plannedStartAt) - Date.parse(right.plannedStartAt));
-    return { ...group, rows, classTime: summarizeClassTime(rows), startDate: formatDate(rows[0]?.plannedStartAt) };
+    const subjects = Array.from(new Set(rows.map(row => subjectLabel(row, coursePackage))));
+    return {
+      subject: subjects.join(', '),
+      teacher: group.teacher,
+      teacherKey: group.teacherKey,
+      classTime: summarizeClassTime(rows),
+      hours: rows.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0),
+      startDate: formatDate(rows[0]?.plannedStartAt),
+      rows,
+    };
   });
 }
 

@@ -123,6 +123,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -431,6 +432,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         EnrollmentOrderEntity order = requireOrder(id);
         StudentEntity student = requireStudent(order.getStudentId());
         List<EnrollmentOrderItemEntity> orderItems = listOrderItemsByOrderId(id);
+        Set<Long> itemClassIds = orderItems.stream()
+                .map(EnrollmentOrderItemEntity::getClassId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, ClassGroupEntity> itemClassesById = itemClassIds.isEmpty()
+                ? Map.of()
+                : Optional.ofNullable(classGroupMapper.selectBatchIds(itemClassIds)).orElse(List.of()).stream()
+                        .collect(Collectors.toMap(ClassGroupEntity::getId, Function.identity(), (first, ignored) -> first));
         List<Long> sessionItemIds = orderItems.stream()
                 .filter(item -> "SESSION".equalsIgnoreCase(item.getPackageUnit()))
                 .map(EnrollmentOrderItemEntity::getId).toList();
@@ -516,8 +525,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .balanceAmount(order.getBalanceAmount())
                 .paymentStatus(order.getPaymentStatus())
                 .remark(order.getRemark())
-                .items(orderItems.stream().map(item -> toOrderItemVO(item,
-                        selectedSessionsByItemId.get(item.getId()))).toList())
+                .items(orderItems.stream().map(item -> {
+                    ClassGroupEntity itemClass = itemClassesById.get(item.getClassId());
+                    return toOrderItemVO(item, selectedSessionsByItemId.get(item.getId()),
+                            itemClass == null ? null : itemClass.getClassName());
+                }).toList())
                 .participants(participants.stream().map(this::toParticipantVO).toList())
                 .payments(payments.stream().map(this::toPaymentVO).toList())
                 .packages(packages.stream().map(item -> toPackageListItem(item, student, primaryTeacherNameMap.get(item.getId()), productMap.get(item.getCourseProductId()))).toList())
@@ -1128,6 +1140,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, Integer selectedSessions) {
+        return toOrderItemVO(item, selectedSessions, null);
+    }
+
+    /** 将迁移后的项目、方案和逐课程班级名称返回给收据还原流程。 */
+    private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, Integer selectedSessions,
+                                                String className) {
         return EnrollmentOrderItemVO.builder()
                 .id(item.getId())
                 .enrollmentOrderId(item.getEnrollmentOrderId())
@@ -1135,8 +1153,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .registerClass(item.getRegisterClass())
                 .courseType(item.getCourseType())
                 .courseProductId(item.getCourseProductId())
+                .groupProjectId(item.getGroupProjectId())
+                .groupRegistrationPlanId(item.getGroupRegistrationPlanId())
                 .coursePriceOptionId(item.getCoursePriceOptionId())
                 .classId(item.getClassId())
+                .className(className)
                 .detail(item.getDetail())
                 .gradeBand(item.getGradeBand())
                 .periodLabel(item.getPeriodLabel())

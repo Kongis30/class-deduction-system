@@ -20,19 +20,20 @@
       <template v-if="setup">
         <header class="group-model-header">
           <div>
-            <span class="group-model-eyebrow">Course structure</span>
+            <div class="group-model-eyebrow group-model-eyebrow--with-help">
+              <span>Course structure</span>
+              <el-tooltip
+                content="Set one schedule per campus for each project. Fall, spring, and full-year plans choose which class dates a student attends."
+                placement="top"
+              >
+                <button class="group-model-help" type="button" aria-label="About this course structure">i</button>
+              </el-tooltip>
+            </div>
             <h2>{{ setup.productName }}</h2>
             <p>Set up teaching projects, shared class schedules, and the plans families can purchase.</p>
           </div>
           <el-button type="primary" @click="openProjectDialog()">Add teaching project</el-button>
         </header>
-
-        <el-alert
-          title="Each teaching project has one actual class schedule per campus. Seasonal and yearly plans select dates from that schedule; they do not create duplicate classes."
-          type="info"
-          :closable="false"
-          show-icon
-        />
 
         <el-empty v-if="setup.projects.length === 0" description="Create a teaching project to start setting up this course." />
         <section v-for="project in setup.projects" :key="project.id" class="group-project-card">
@@ -40,7 +41,7 @@
             <div>
               <div class="group-project-card__title">
                 <h3>{{ project.projectName }}</h3>
-                <el-tag :type="project.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">{{ project.status }}</el-tag>
+                <el-tag v-if="project.status !== 'ACTIVE'" type="info" effect="plain">Inactive</el-tag>
               </div>
               <p v-if="project.description">{{ project.description }}</p>
               <small>{{ project.classes.length }} actual classes · {{ project.plans.length }} registration plans</small>
@@ -66,7 +67,7 @@
               <h4>Registration plans</h4>
               <span>Plans control the dates and price a student receives.</span>
             </div>
-            <el-table v-if="project.plans.length" :data="project.plans" row-key="id" border size="small">
+            <el-table v-if="!appStore.isMobileViewport && project.plans.length" :data="project.plans" row-key="id" border size="small">
               <el-table-column prop="planName" label="Plan" min-width="190" />
               <el-table-column label="Coverage" min-width="200">
                 <template #default="{ row }">
@@ -95,15 +96,23 @@
                 </template>
               </el-table-column>
             </el-table>
-            <el-empty v-else :image-size="38" description="No registration plans yet" />
+            <div v-if="appStore.isMobileViewport && project.plans.length" class="mobile-plan-list">
+              <article v-for="plan in project.plans" :key="plan.id" class="mobile-model-card">
+                <header><strong>{{ plan.planName }}</strong><el-tag size="small" :type="plan.status === 'ACTIVE' ? 'success' : 'info'">{{ plan.status }}</el-tag></header>
+                <span>{{ coverageLabel(plan) }}</span>
+                <small v-if="plan.coverageStartDate || plan.coverageEndDate">{{ plan.coverageStartDate || '—' }} to {{ plan.coverageEndDate || '—' }}</small>
+                <dl><div><dt>Quantity</dt><dd>{{ plan.packageQuantity }} {{ plan.packageUnit === 'MONTH' ? 'months' : 'sessions' }}</dd></div><div><dt>Full day</dt><dd>{{ money(plan.fullDayPrice) }}</dd></div><div><dt>Half day</dt><dd>{{ plan.halfDayPrice == null ? '—' : money(plan.halfDayPrice) }}</dd></div></dl>
+                <div class="mobile-model-card__actions"><el-button type="primary" plain @click="openPlanDialog(project, plan)">Edit plan</el-button><el-button text type="danger" @click="removePlan(plan)">Delete</el-button></div>
+              </article>
+            </div>
+            <el-empty v-if="!project.plans.length" :image-size="38" description="No registration plans yet" />
           </section>
 
           <section class="group-project-section">
             <div class="group-project-section__heading">
               <h4>Actual class schedules</h4>
-              <span>Set one schedule for each actual class and campus. All plans above use these scheduled dates.</span>
             </div>
-            <el-table v-if="project.classes.length" :data="project.classes" row-key="id" border size="small">
+            <el-table v-if="!appStore.isMobileViewport && project.classes.length" :data="project.classes" row-key="id" border size="small">
               <el-table-column label="Campus" width="170">
                 <template #default="{ row }"><el-tag v-if="row.campusName" effect="plain">{{ row.campusName }}</el-tag><span v-else class="muted">—</span></template>
               </el-table-column>
@@ -121,7 +130,15 @@
                 </template>
               </el-table-column>
             </el-table>
-            <el-empty v-else :image-size="38" description="No actual classes yet" />
+            <div v-if="appStore.isMobileViewport && project.classes.length" class="mobile-class-list">
+              <article v-for="actualClass in project.classes" :key="actualClass.id" class="mobile-model-card">
+                <header><strong>{{ actualClass.actualClass }}</strong><el-tag size="small" :type="actualClass.status === 'ACTIVE' ? 'success' : 'info'">{{ actualClass.status }}</el-tag></header>
+                <span>{{ actualClass.campusName || 'Campus not set' }}</span>
+                <small>Class period: {{ actualClass.startDate || '—' }} to {{ actualClass.endDate || '—' }}</small>
+                <div class="mobile-model-card__actions"><el-button @click="openClassDialog(project, actualClass)">Edit info</el-button><el-button type="primary" plain :disabled="actualClass.status !== 'ACTIVE'" @click="openSchedule(actualClass)">Edit schedule</el-button></div>
+              </article>
+            </div>
+            <el-empty v-if="!project.classes.length" :image-size="38" description="No actual classes yet" />
           </section>
         </section>
       </template>
@@ -303,6 +320,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { useAppStore } from '@/stores/app';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { fetchAllClassrooms, fetchAllTeachers, fetchCampuses } from '@/api/base-data';
 import { createActualClass, fetchClassGroups, updateClassInfo, updateClassSchedule, type ClassScheduleUpdatePayload } from '@/api/schedule';
@@ -346,6 +364,7 @@ interface EditableClassScheduleSlot extends SlotDef {
 const PROJECT_DELETE_COOLDOWN_SECONDS = 10;
 const PROJECT_DELETE_COOLDOWN_MS = PROJECT_DELETE_COOLDOWN_SECONDS * 1000;
 const props = defineProps<{ products: CourseProductItem[] }>();
+const appStore = useAppStore();
 const emit = defineEmits<{ reload: [] }>();
 const products = computed(() => props.products
   .filter((item) => item.teachingMode === 'GROUP')
@@ -869,9 +888,25 @@ function errorMessage(error: any) {
 </script>
 
 <style scoped>
+.mobile-plan-list,.mobile-class-list { display:grid; gap:8px; }
+.mobile-model-card { min-width:0; padding:12px; border:1px solid var(--el-border-color); border-radius:10px; background:#fff; }
+.mobile-model-card header { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+.mobile-model-card header strong { color:var(--el-text-color-primary); font-size:14px; overflow-wrap:anywhere; }
+.mobile-model-card > span,.mobile-model-card > small { display:block; margin-top:5px; color:var(--el-text-color-secondary); font-size:12px; }
+.mobile-model-card dl { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; margin:10px 0 0; }
+.mobile-model-card dl > div { display:grid; min-width:0; gap:3px; }
+.mobile-model-card dt { color:var(--el-text-color-secondary); font-size:11px; }
+.mobile-model-card dd { margin:0; color:var(--el-text-color-primary); font-size:13px; font-weight:600; overflow-wrap:anywhere; }
+.mobile-model-card__actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:11px; }
+.mobile-model-card__actions .el-button { margin:0; }
+
 .group-model-layout { display:grid; grid-template-columns:240px minmax(0,1fr); gap:20px; min-height:460px; }
 .group-model-products { align-self:start; display:flex; flex-direction:column; gap:8px; padding:14px; border:1px solid var(--el-border-color); border-radius:12px; background:#fbfcfe; }
 .group-model-products__label,.group-model-eyebrow { color:var(--el-text-color-secondary); font-size:12px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+.group-model-eyebrow--with-help { display:flex; align-items:center; gap:6px; }
+.group-model-help { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; padding:0; border:1px solid var(--el-border-color); border-radius:50%; color:var(--el-text-color-secondary); background:#fff; font:inherit; font-size:10px; font-weight:700; line-height:1; letter-spacing:0; cursor:help; }
+.group-model-help:hover { border-color:var(--el-color-primary); color:var(--el-color-primary); }
+.group-model-help:focus-visible { border-color:var(--el-color-primary); color:var(--el-color-primary); outline:2px solid var(--el-color-primary-light-7); outline-offset:2px; }
 .group-model-product { display:flex; flex-direction:column; gap:4px; padding:12px; border:1px solid transparent; border-radius:8px; color:var(--el-text-color-primary); background:transparent; text-align:left; cursor:pointer; }
 .group-model-product:hover { background:#f2f6fc; }
 .group-model-product--active { border-color:var(--el-color-primary-light-5); background:var(--el-color-primary-light-9); }

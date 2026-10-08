@@ -522,10 +522,20 @@ onUnmounted(() => {
     grid-template-columns: repeat(2, 1fr);
   }
   .stat-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .content-grid {
     grid-template-columns: 1fr;
+  }
+
+  .stat-card {
+    min-width: 0;
+    padding: 12px;
+  }
+
+  .stat-card strong {
+    font-size: clamp(20px, 6vw, 24px);
+    overflow-wrap: anywhere;
   }
 }
 </style>

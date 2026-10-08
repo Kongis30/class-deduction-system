@@ -14,10 +14,26 @@
 
       <el-form ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="submitLogin">
         <el-form-item label="Account" prop="username">
-          <el-input v-model="form.username" placeholder="Enter your username" @keyup.enter="submitLogin" />
+          <el-input
+            v-model="form.username"
+            placeholder="Enter your username"
+            autocomplete="username"
+            autocapitalize="none"
+            autocorrect="off"
+            spellcheck="false"
+            @keyup.enter="submitLogin"
+          />
         </el-form-item>
         <el-form-item label="Password" prop="password">
-          <el-input v-model="form.password" placeholder="Enter password" show-password @keyup.enter="submitLogin" />
+          <el-input
+            v-model="form.password"
+            placeholder="Enter password"
+            autocomplete="current-password"
+            autocapitalize="none"
+            autocorrect="off"
+            show-password
+            @keyup.enter="submitLogin"
+          />
         </el-form-item>
         <el-button type="primary" class="login-card__submit" :loading="authStore.loading" @click="submitLogin">
           Sign in
@@ -80,7 +96,13 @@ async function submitLogin() {
     await router.push(redirectPath);
   } catch (error) {
     const apiError = error as AxiosError<ApiResponse<null>>;
-    ElMessage.error(apiError.response?.data?.message ?? 'Unable to sign in right now.');
+    const message = apiError.response?.data?.message
+      ?? (apiError.response
+        ? `Sign-in request failed (HTTP ${apiError.response.status}).`
+        : apiError.request
+          ? 'Cannot reach the sign-in service. Check this device’s Wi-Fi connection and try again.'
+          : 'Unable to sign in right now.');
+    ElMessage.error(message);
   }
 }
 </script>

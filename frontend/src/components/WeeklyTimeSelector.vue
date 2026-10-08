@@ -1,6 +1,22 @@
 <template>
   <div class="weekly-time-selector">
-    <div class="wts-grid-scroll">
+    <div v-if="pinchZoomEnabled" class="wts-mobile-zoom-controls" aria-label="Calendar zoom controls">
+      <span>Pinch to zoom</span>
+      <button type="button" aria-label="Zoom out" :disabled="mobileZoom <= MIN_MOBILE_ZOOM" @click="adjustMobileZoom(-ZOOM_STEP)">−</button>
+      <output>{{ Math.round(mobileZoom * 100) }}%</output>
+      <button type="button" aria-label="Zoom in" :disabled="mobileZoom >= MAX_MOBILE_ZOOM" @click="adjustMobileZoom(ZOOM_STEP)">+</button>
+      <button v-if="mobileZoom !== 1" type="button" class="wts-mobile-zoom-controls__reset" @click="mobileZoom = 1">Reset</button>
+    </div>
+    <div
+      ref="gridScroll"
+      class="wts-grid-scroll"
+      :class="{ 'wts-grid-scroll--pinch': pinchZoomEnabled }"
+      :style="pinchZoomEnabled ? mobileZoomStyle : undefined"
+      @touchstart="onTouchStart"
+      @touchmove="onTouchMove"
+      @touchend="onTouchEnd"
+      @touchcancel="onTouchEnd"
+    >
       <div class="wts-header">
         <span class="wts-header__spacer"></span>
         <span class="wts-header__cell" v-for="(label, idx) in dayLabelsWithDates" :key="idx">
@@ -44,8 +60,11 @@
               <div
                 v-if="occupiedEvent(day, time.hour, time.minute)"
                 class="wts-event"
-                :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
-                :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
+                :class="{
+                  'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict,
+                  'wts-event--online': occupiedEvent(day, time.hour, time.minute)?.isOnline && !occupiedEvent(day, time.hour, time.minute)?.isConflict,
+                }"
+                :style="occupiedEventStyle(occupiedEvent(day, time.hour, time.minute)!)"
               >
                 <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
                 <span
@@ -67,8 +86,11 @@
               <div
                 v-if="occupiedEvent(day, time.hour, time.minute)"
                 class="wts-event"
-                :class="{ 'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict }"
-                :style="{ height: `${occupiedEventHeight(occupiedEvent(day, time.hour, time.minute)!) }px` }"
+                :class="{
+                  'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict,
+                  'wts-event--online': occupiedEvent(day, time.hour, time.minute)?.isOnline && !occupiedEvent(day, time.hour, time.minute)?.isConflict,
+                }"
+                :style="occupiedEventStyle(occupiedEvent(day, time.hour, time.minute)!)"
               >
                 <strong class="wts-event__title">{{ occupiedEvent(day, time.hour, time.minute)?.title }}</strong>
                 <span
@@ -113,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onUnmounted, ref } from 'vue';
 import { scheduleEndTimeForDisplay, scheduleTimeMinutes } from '@/utils/schedule-time';
 
 export interface SlotDef {
@@ -136,6 +158,7 @@ export interface OccupiedSlotDef {
   classroomName?: string;
   productName?: string;
   showTimeInEvent?: boolean;
+  isOnline?: boolean;
   /** When true, renders as a blue highlight instead of gray striped — used to mark the "current" package's own slots. */
   isCurrent?: boolean;
 }
@@ -146,15 +169,90 @@ const props = withDefaults(defineProps<{
   weekStartDate?: string;  // ISO date of the Monday for the displayed week
   readonly?: boolean;
   hideHint?: boolean;
+  pinchZoomEnabled?: boolean;
 }>(), {
   readonly: false,
   hideHint: false,
+  pinchZoomEnabled: false,
 });
 
 const emit = defineEmits<{
   (e: 'update:modelValue', val: SlotDef[]): void;
   (e: 'cell-click', weekday: number, hour: number, minute: number): void;
 }>();
+
+const MIN_MOBILE_ZOOM = 0.8;
+const MAX_MOBILE_ZOOM = 2.5;
+const ZOOM_STEP = 0.15;
+const mobileZoom = ref(1);
+const gridScroll = ref<HTMLElement | null>(null);
+let pinchStartDistance = 0;
+let pinchStartZoom = 1;
+let pinchAnchorX = 0;
+let pinchAnchorY = 0;
+
+const mobileZoomStyle = computed(() => ({
+  '--wts-mobile-grid-width': `${(38 + 7 * 31) * mobileZoom.value}px`,
+  '--wts-mobile-time-width': `${38 * mobileZoom.value}px`,
+  '--wts-mobile-day-width': `${31 * mobileZoom.value}px`,
+  '--wts-mobile-row-height': `${26 * mobileZoom.value}px`,
+  '--wts-mobile-font-small': `${10 * mobileZoom.value}px`,
+  '--wts-mobile-font-medium': `${11 * mobileZoom.value}px`,
+  '--wts-mobile-font-large': `${12 * mobileZoom.value}px`,
+  '--wts-mobile-padding': `${4 * mobileZoom.value}px`,
+}) as Record<string, string>);
+
+function adjustMobileZoom(delta: number) {
+  mobileZoom.value = clampMobileZoom(mobileZoom.value + delta);
+}
+
+function clampMobileZoom(value: number) {
+  return Math.min(MAX_MOBILE_ZOOM, Math.max(MIN_MOBILE_ZOOM, value));
+}
+
+function touchDistance(first: Touch, second: Touch) {
+  return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+}
+
+// 双指缩放只改变手机日历网格密度，并围绕手势中心保留当前查看位置。
+function onTouchStart(event: TouchEvent) {
+  if (!props.pinchZoomEnabled || event.touches.length !== 2) return;
+  const scroller = gridScroll.value;
+  if (!scroller) return;
+
+  const [first, second] = Array.from(event.touches);
+  const rect = scroller.getBoundingClientRect();
+  const centerX = (first.clientX + second.clientX) / 2 - rect.left;
+  const centerY = (first.clientY + second.clientY) / 2 - rect.top;
+  pinchStartDistance = touchDistance(first, second);
+  pinchStartZoom = mobileZoom.value;
+  pinchAnchorX = (scroller.scrollLeft + centerX) / pinchStartZoom;
+  pinchAnchorY = (scroller.scrollTop + centerY) / pinchStartZoom;
+}
+
+function onTouchMove(event: TouchEvent) {
+  if (!props.pinchZoomEnabled || !pinchStartDistance || event.touches.length !== 2) return;
+  if (event.cancelable) event.preventDefault();
+
+  const scroller = gridScroll.value;
+  if (!scroller) return;
+  const [first, second] = Array.from(event.touches);
+  const rect = scroller.getBoundingClientRect();
+  const centerX = (first.clientX + second.clientX) / 2 - rect.left;
+  const centerY = (first.clientY + second.clientY) / 2 - rect.top;
+  const nextZoom = clampMobileZoom(pinchStartZoom * touchDistance(first, second) / pinchStartDistance);
+  mobileZoom.value = nextZoom;
+
+  void nextTick(() => {
+    if (!gridScroll.value) return;
+    gridScroll.value.scrollLeft = Math.max(0, pinchAnchorX * nextZoom - centerX);
+    gridScroll.value.scrollTop = Math.max(0, pinchAnchorY * nextZoom - centerY);
+  });
+}
+
+function onTouchEnd(event: TouchEvent) {
+  if (event.touches.length < 2) pinchStartDistance = 0;
+}
 
 // ─── Day labels with optional dates ─────────
 const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -246,6 +344,7 @@ interface OccupiedEvent {
   timeLabel?: string;
   coveredCells: number;
   isConflict?: boolean;
+  isOnline?: boolean;
   showTime: boolean;
 }
 
@@ -274,6 +373,7 @@ function occupiedEvent(day: number, hour: number, minute: number): OccupiedEvent
       context: slot.contextLabel,
       timeLabel: `${slot.startTime}–${scheduleEndTimeForDisplay(slot.startTime, slot.endTime)}`,
       coveredCells,
+      isOnline: slot.isOnline,
       showTime: slot.showTimeInEvent ?? durationMinutes >= 60,
     };
   }
@@ -282,6 +382,11 @@ function occupiedEvent(day: number, hour: number, minute: number): OccupiedEvent
 
 function occupiedEventHeight(event: OccupiedEvent): number {
   return event.coveredCells * 27 - 1;
+}
+
+function occupiedEventStyle(event: OccupiedEvent) {
+  const zoom = props.pinchZoomEnabled ? mobileZoom.value : 1;
+  return { height: `${occupiedEventHeight(event) * zoom}px` };
 }
 
 function occupiedSlotTooltip(slot: OccupiedSlotDef): string {
@@ -482,12 +587,70 @@ function weekdayName(d: number) {
   width: 100%;
 }
 
+.wts-mobile-zoom-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  min-height: 34px;
+  margin-bottom: 6px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.wts-mobile-zoom-controls button {
+  display: grid;
+  place-items: center;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid #d7e0ea;
+  border-radius: 6px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 15px;
+}
+
+.wts-mobile-zoom-controls button:disabled { color: #b7c0cb; }
+.wts-mobile-zoom-controls output { min-width: 38px; color: #334155; font-variant-numeric: tabular-nums; text-align: center; }
+.wts-mobile-zoom-controls .wts-mobile-zoom-controls__reset { min-width: 46px; font-size: 11px; }
+
 .wts-grid-scroll {
   max-height: min(85vh, 900px);
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
+
+.wts-grid-scroll--pinch {
+  max-height: min(62vh, 620px);
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+.wts-grid-scroll--pinch .wts-header,
+.wts-grid-scroll--pinch .wts-row {
+  grid-template-columns: var(--wts-mobile-time-width) repeat(7, minmax(var(--wts-mobile-day-width), 1fr));
+  min-width: var(--wts-mobile-grid-width);
+}
+
+.wts-grid-scroll--pinch .wts-header { z-index: 20; }
+.wts-grid-scroll--pinch .wts-body { min-width: var(--wts-mobile-grid-width); }
+.wts-grid-scroll--pinch .wts-row,
+.wts-grid-scroll--pinch .wts-row__label,
+.wts-grid-scroll--pinch .wts-cell { height: var(--wts-mobile-row-height); }
+.wts-grid-scroll--pinch .wts-row__label { font-size: var(--wts-mobile-font-small); line-height: var(--wts-mobile-row-height); }
+.wts-grid-scroll--pinch .wts-row--last-slot .wts-row__label { line-height: var(--wts-mobile-font-small); }
+.wts-grid-scroll--pinch .wts-header__day { font-size: var(--wts-mobile-font-large); }
+.wts-grid-scroll--pinch .wts-header__date { font-size: var(--wts-mobile-font-small); }
+.wts-grid-scroll--pinch .wts-event { padding: var(--wts-mobile-padding); }
+.wts-grid-scroll--pinch .wts-event__title { font-size: var(--wts-mobile-font-medium); }
+.wts-grid-scroll--pinch .wts-event__context,
+.wts-grid-scroll--pinch .wts-event__time { font-size: var(--wts-mobile-font-small); }
 
 /* ─── Header ─────────── */
 .wts-header {
@@ -696,6 +859,15 @@ function weekdayName(d: number) {
   font-size: 10px;
   color: #9a6b6b;
   font-variant-numeric: tabular-nums;
+}
+.wts-event--online {
+  border-left-color: #7db7f7;
+  background: rgba(232, 243, 255, 0.96);
+  color: #285b8f;
+}
+.wts-event--online .wts-event__context,
+.wts-event--online .wts-event__time {
+  color: #52769b;
 }
 .wts-event--conflict {
   border-left-color: #f56c6c;

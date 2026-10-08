@@ -13,7 +13,7 @@
         </el-button>
       </div>
 
-      <el-table v-loading="loading" :data="methods" row-key="id" class="config-table">
+      <el-table v-if="!appStore.isMobileViewport" v-loading="loading" :data="methods" row-key="id" class="config-table">
         <el-table-column prop="methodCode" label="Code" min-width="150" />
         <el-table-column prop="methodName" label="Name" min-width="180" />
         <el-table-column prop="sortOrder" label="Sort" width="90" align="center" />
@@ -39,6 +39,22 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-else v-loading="loading" class="mobile-method-list">
+        <article v-for="method in methods" :key="method.id" class="mobile-method-card">
+          <header class="mobile-method-card__heading">
+            <div><strong>{{ method.methodName }}</strong><span>{{ method.methodCode }}</span></div>
+            <el-tag size="small" :type="method.status === 'ACTIVE' ? 'success' : 'info'">{{ method.status }}</el-tag>
+          </header>
+          <div class="mobile-method-card__meta">Display order · {{ method.sortOrder }}</div>
+          <div class="mobile-method-card__actions">
+            <el-button type="primary" plain @click="openDialog(method)">Edit</el-button>
+            <el-button v-if="method.status === 'ACTIVE'" type="warning" plain @click="deactivateMethod(method)">Deactivate</el-button>
+            <el-button text type="danger" @click="deleteMethod(method.id)">Delete</el-button>
+          </div>
+        </article>
+        <el-empty v-if="!loading && methods.length === 0" description="No payment methods configured." />
+      </div>
     </section>
 
     <el-dialog
@@ -78,6 +94,7 @@
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { onMounted, reactive, ref } from 'vue';
+import { useAppStore } from '@/stores/app';
 
 import {
   createPaymentMethod,
@@ -89,6 +106,7 @@ import {
 import type { EntityId, PaymentMethodItem } from '@/types/domain';
 
 const loading = ref(false);
+const appStore = useAppStore();
 const saving = ref(false);
 const methods = ref<PaymentMethodItem[]>([]);
 const dialogVisible = ref(false);
@@ -213,6 +231,16 @@ async function deleteMethod(id: EntityId) {
 </script>
 
 <style scoped>
+.mobile-method-list { display: grid; gap: 10px; }
+.mobile-method-card { padding: 14px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+.mobile-method-card__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mobile-method-card__heading > div { display: grid; gap: 3px; }
+.mobile-method-card__heading strong { color: #26384c; font-size: 15px; }
+.mobile-method-card__heading span, .mobile-method-card__meta { color: #718096; font-size: 12px; }
+.mobile-method-card__meta { margin-top: 9px; }
+.mobile-method-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.mobile-method-card__actions .el-button { margin: 0; }
+
 .config-panel {
   padding: 18px 20px;
   border: 1px solid #e8edf2;
@@ -254,5 +282,11 @@ async function deleteMethod(id: EntityId) {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
+}
+
+@media (max-width: 640px) {
+  .config-panel { padding: 12px; }
+  .form-grid { grid-template-columns: 1fr; gap: 0; }
+  .config-panel__header { align-items: stretch; flex-direction: column; gap: 8px; }
 }
 </style>

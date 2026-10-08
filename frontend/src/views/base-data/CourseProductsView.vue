@@ -29,19 +29,30 @@
       </section>
 
       <div class="product-toolbar">
-        <div class="product-toolbar__filters">
-          <el-input
-            v-model="filters.productName"
-            placeholder="Search course"
-            clearable
-            @input="handleFilterChange"
-          />
-          <el-select
-            v-model="filters.status"
-            placeholder="All status"
-            clearable
-            @change="handleFilterChange"
+        <div v-if="appStore.isMobileViewport" class="mobile-search-toggle-row">
+          <button
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileSearchExpanded"
+            aria-label="Open course search and filters"
+            @click="mobileSearchExpanded = !mobileSearchExpanded"
           >
+            <el-icon><Search /></el-icon>
+          </button>
+        </div>
+        <div
+          v-show="!appStore.isMobileViewport || mobileSearchExpanded"
+          class="product-toolbar__filters"
+          :class="{ 'mobile-search-panel': appStore.isMobileViewport, 'product-toolbar__filters--mobile': appStore.isMobileViewport }"
+        >
+          <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+            <span>Search courses</span>
+            <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+              <el-icon><Close /></el-icon>
+            </button>
+          </div>
+          <el-input v-model="filters.productName" placeholder="Search course" clearable @input="handleFilterChange" />
+          <el-select v-model="filters.status" placeholder="All statuses" clearable @change="handleFilterChange">
             <el-option label="Active" value="ACTIVE" />
             <el-option label="Inactive" value="INACTIVE" />
           </el-select>
@@ -63,6 +74,7 @@
       <div class="product-tab-content">
         <template v-if="activeTab === 'ONE_ON_ONE'">
           <el-table
+            v-if="!appStore.isMobileViewport"
             v-loading="loading"
             :data="oneOnOneData"
             row-key="id"
@@ -108,6 +120,7 @@
 
         <template v-else>
           <el-table
+            v-if="!appStore.isMobileViewport"
             v-loading="loading"
             :data="groupData"
             row-key="id"
@@ -162,6 +175,63 @@
             </el-table-column>
           </el-table>
         </template>
+
+        <div v-if="appStore.isMobileViewport" v-loading="loading" class="mobile-product-list">
+          <template v-if="activeTab === 'ONE_ON_ONE'">
+            <article v-for="product in oneOnOneData" :key="product.id" class="mobile-product-card">
+              <header class="mobile-product-card__heading">
+                <strong>{{ product.productName }}</strong>
+                <el-tag size="small" :type="product.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
+                  {{ product.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+                </el-tag>
+              </header>
+              <div class="mobile-product-card__actions">
+                <el-button type="primary" plain @click="openProductPrices(product)">Set packages &amp; prices</el-button>
+                <el-dropdown trigger="click" @command="command => handleProductRowAction(String(command), product)">
+                  <el-button>More <el-icon><ArrowDown /></el-icon></el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="copy">Copy</el-dropdown-item>
+                      <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                      <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </article>
+          </template>
+          <template v-else>
+            <article v-for="product in groupData" :key="product.id" class="mobile-product-card">
+              <header class="mobile-product-card__heading">
+                <strong>{{ product.productName }}</strong>
+                <el-tag size="small" :type="product.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
+                  {{ product.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+                </el-tag>
+              </header>
+              <div class="mobile-product-card__setup">
+                <span>Setup status</span>
+                <el-tag size="small" :type="groupClassCount(product) > 0 ? 'success' : 'warning'" effect="plain">
+                  {{ groupSetupLabel(product) }}
+                </el-tag>
+                <small>{{ groupClassCount(product) > 0 ? 'Ready for registration' : 'Add grades, prices, and schedule first' }}</small>
+              </div>
+              <div class="mobile-product-card__actions">
+                <el-button type="primary" plain @click="openProductPrices(product)">Set grades &amp; schedule</el-button>
+                <el-dropdown trigger="click" @command="command => handleProductRowAction(String(command), product)">
+                  <el-button>More <el-icon><ArrowDown /></el-icon></el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="copy">Copy</el-dropdown-item>
+                      <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                      <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </article>
+          </template>
+          <el-empty v-if="!loading && (activeTab === 'ONE_ON_ONE' ? oneOnOneData.length === 0 : groupData.length === 0)" description="No courses found." />
+        </div>
       </div>
     </section>
 
@@ -285,7 +355,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown, Plus, QuestionFilled } from '@element-plus/icons-vue';
+import { ArrowDown, Close, Plus, QuestionFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -302,10 +372,12 @@ import {
 } from '@/api/base-data';
 import { fetchClassGroups } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
+import { useAppStore } from '@/stores/app';
 import { isAdminUser } from '@/types/auth';
 import type { ClassGroupItem, CourseProductItem, EntityId } from '@/types/domain';
 
 const authStore = useAuthStore();
+const appStore = useAppStore();
 const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 
 const router = useRouter();
@@ -320,6 +392,7 @@ const copyDateShiftYears = ref(1);
 const copySource = ref<CourseProductItem | null>(null);
 const editingId = ref<EntityId | null>(null);
 const formRef = ref();
+const mobileSearchExpanded = ref(false);
 
 const classGroups = ref<ClassGroupItem[]>([]);
 const createdNextStep = ref<{
@@ -707,6 +780,22 @@ loadData();
 </script>
 
 <style scoped>
+.mobile-product-list { display: grid; gap: 10px; }
+.mobile-product-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.mobile-product-card__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.mobile-product-card__heading strong { overflow-wrap: anywhere; color: #26384c; font-size: 15px; }
+.mobile-product-card__setup { display: grid; justify-items: start; gap: 6px; margin-top: 12px; padding: 10px; border-radius: 9px; background: #f5f8fc; }
+.mobile-product-card__setup > span, .mobile-product-card__setup small { color: #64748b; font-size: 12px; }
+.mobile-product-card__setup small { line-height: 1.4; }
+.mobile-product-card__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.mobile-product-card__actions .el-button { min-height: 42px; margin: 0; }
+
 .course-product-panel {
   border: 1px solid #e8edf2;
   border-radius: 8px;
@@ -1150,6 +1239,28 @@ loadData();
   flex: none;
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
+}
+
+@media (max-width: 920px) {
+  .product-toolbar { align-items: stretch; flex-direction: column; }
+  .product-toolbar__filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .product-toolbar__filters > * { min-width: 0; width: 100% !important; }
+  .product-toolbar__filters--mobile { grid-template-columns: 1fr; }
+  .mobile-search-toggle-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+}
+
+@media (max-width: 640px) {
+  .course-product-panel { padding: 12px; }
+  .product-toolbar__filters { grid-template-columns: 1fr; }
+  .product-toolbar__filters :deep(.el-input__wrapper),
+  .product-toolbar__filters :deep(.el-select__wrapper) { min-height: 42px; }
+  .product-toolbar__filters :deep(.el-input__inner),
+  .product-toolbar__filters :deep(.el-select__placeholder),
+  .product-toolbar__filters :deep(.el-select__selected-item) { font-size: 13px; }
+  .product-step__head { align-items: flex-start; }
+  .product-form__row { grid-template-columns: 1fr; gap: 0; }
+  .product-form__full { grid-column: auto; }
+  .product-dialog :deep(.el-dialog__header), .product-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
 }
 
 </style>

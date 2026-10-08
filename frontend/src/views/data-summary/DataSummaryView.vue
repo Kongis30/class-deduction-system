@@ -17,6 +17,22 @@
             :value="month.value"
           />
         </el-select>
+        <el-dropdown v-if="isMobileViewport" trigger="click" @command="handleMobileOverflowCommand">
+          <el-button class="workbook-mobile-more" aria-label="More actions">
+            <el-icon><MoreFilled /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="export-excel" :disabled="sortedRows.length === 0">Export Excel</el-dropdown-item>
+              <el-dropdown-item command="print-roster" :disabled="rosterPrintGroups.length === 0">Print class roster</el-dropdown-item>
+              <template v-if="isSaturdayProductTab">
+                <el-dropdown-item command="roster-fall">Fall roster</el-dropdown-item>
+                <el-dropdown-item command="roster-spring">Spring roster</el-dropdown-item>
+                <el-dropdown-item command="roster-all">All roster</el-dropdown-item>
+              </template>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
       <div class="workbook-toolbar__stats">
         <span class="workbook-toolbar__stat">
@@ -36,7 +52,7 @@
           </template>
         </span>
       </div>
-      <div class="workbook-toolbar__export">
+      <div v-if="!isMobileViewport" class="workbook-toolbar__export">
         <div v-if="isSaturdayProductTab" class="saturday-roster-control">
           <el-button-group aria-label="Saturday class roster">
             <el-button
@@ -60,6 +76,13 @@
         </div>
         <el-button
           size="small"
+          :disabled="rosterPrintGroups.length === 0"
+          @click="printClassRoster"
+        >
+          Print class roster
+        </el-button>
+        <el-button
+          size="small"
           type="primary"
           :disabled="sortedRows.length === 0"
           @click="exportExcel"
@@ -68,8 +91,65 @@
         </el-button>
       </div>
     </div>
-    <div class="workbook-scroll" data-testid="data-summary-workbook">
-      <table class="workbook-table">
+    <el-dialog
+      v-model="rosterPrintDialogVisible"
+      title="Print class roster"
+      width="min(480px, calc(100vw - 32px))"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="roster-print-picker">
+        <p>Choose a class to print its student list.</p>
+        <el-select
+          v-model="selectedRosterPrintKey"
+          class="roster-print-picker__select"
+          filterable
+          clearable
+          placeholder="Select a class"
+        >
+          <el-option
+            v-for="group in rosterPrintGroups"
+            :key="group.key"
+            :label="rosterPrintOptionLabel(group)"
+            :value="group.key"
+          >
+            <div class="roster-print-picker__option">
+              <strong>{{ group.className }}</strong>
+              <span>{{ group.projectName }} · {{ group.campusName }}</span>
+            </div>
+          </el-option>
+        </el-select>
+        <span v-if="selectedRosterPrintGroup" class="roster-print-picker__count">
+          {{ selectedRosterPrintGroup.students.length }} students will be printed
+        </span>
+      </div>
+      <template #footer>
+        <el-button @click="rosterPrintDialogVisible = false">Cancel</el-button>
+        <el-button type="primary" :disabled="!selectedRosterPrintGroup" @click="confirmPrintClassRoster">
+          Print
+        </el-button>
+      </template>
+    </el-dialog>
+    <div class="roster-print" aria-hidden="true">
+      <section v-for="group in selectedRosterPrintGroups" :key="group.key" class="roster-print__page">
+        <h1>{{ group.projectName }}</h1>
+        <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
+        <p class="roster-print__campus">{{ group.campusName }}</p>
+        <table>
+          <thead>
+            <tr><th>Student</th><th>School</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="student in group.students" :key="student.key">
+              <td>{{ student.name }}</td>
+              <td>{{ student.school }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+    <div ref="workbookScrollRef" class="workbook-scroll" :class="{ 'workbook-scroll--pinch-zoom': isMobileViewport }" data-testid="data-summary-workbook">
+      <table class="workbook-table" :style="{ zoom: isMobileViewport ? mobileTableScale : undefined }">
         <colgroup>
           <col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }" />
         </colgroup>
@@ -382,13 +462,15 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
+import { MoreFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import * as XLSX from 'xlsx';
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import { fetchDataSummary, type DataSummaryRow } from '@/api/data-summary';
 import { fetchAllCourseProducts, saveCourseProductTabOrder } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
+import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminUser, isManagerUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
@@ -456,6 +538,15 @@ interface WorkbookCampusGroup {
   classGroups: WorkbookClassGroup[];
 }
 
+interface RosterPrintGroup {
+  key: string;
+  projectName: string;
+  className: string;
+  campusName: string;
+  teacherNames: string[];
+  students: Array<{ key: string; name: string; school: string }>;
+}
+
 /** 每个 Product Tab 独立保留的视图状态（月份、筛选、排序）。 */
 interface ProductViewState {
   selectedMonth: string;
@@ -477,6 +568,8 @@ type SaturdayRosterView = 'FALL' | 'SPRING' | 'ALL';
 type DataSummaryDisplayRow = DataSummaryRow;
 
 const authStore = useAuthStore();
+const appStore = useAppStore();
+const isMobileViewport = computed(() => appStore.isMobileViewport);
 const isManager = isManagerUser(authStore.currentUser);
 
 const saturdayRosterOptions: Array<{ value: SaturdayRosterView; label: string }> = [
@@ -490,7 +583,26 @@ const ALL_TAB_ID = '__ALL__';
 /** 未关联到当前有效产品的历史行兜底页签，固定在末尾且不可拖拽。 */
 const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
 const ORDER_SAVE_DEBOUNCE_MS = 300;
+const MIN_MOBILE_TABLE_SCALE = 0.3;
+const MAX_MOBILE_TABLE_SCALE = 1.6;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
+
+interface PinchZoomGesture {
+  startDistance: number;
+  startScale: number;
+  contentX: number;
+  contentY: number;
+}
+
+let pinchZoomGesture: PinchZoomGesture | null = null;
+let pinchZoomFrame = 0;
+let pendingPinchPosition: {
+  scale: number;
+  contentX: number;
+  contentY: number;
+  viewportX: number;
+  viewportY: number;
+} | null = null;
 
 const allColumns: WorkbookColumn[] = [
   { key: 'campus', label: 'Campus', width: 112, filterType: 'select' },
@@ -523,10 +635,14 @@ const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 
 const loading = ref(false);
+const workbookScrollRef = ref<HTMLDivElement | null>(null);
+const mobileTableScale = ref(1);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
 const activeTabId = ref<string>('');
+const rosterPrintDialogVisible = ref(false);
+const selectedRosterPrintKey = ref('');
 const selectedMonth = ref<string>('ALL');
 const saturdayRosterView = ref<SaturdayRosterView>('ALL');
 const sortState = reactive<SortState>({
@@ -751,6 +867,77 @@ const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
   });
   return [...groups.values()];
 });
+
+/** 打印名单沿用当前产品、月份和表格筛选结果，并按实际班级汇总。 */
+const rosterPrintGroups = computed<RosterPrintGroup[]>(() => {
+  const groups = new Map<string, {
+    key: string;
+    projectName: string;
+    className: string;
+    campusName: string;
+    teacherNames: Set<string>;
+    students: Map<string, { key: string; name: string; school: string }>;
+  }>();
+
+  uniqueSourceRows(sortedRows.value).forEach((row) => {
+    const projectName = row.courseProductName?.trim() || activeProduct.value?.productName || 'Class roster';
+    const className = displayText(displayClassName(row));
+    const campusName = displayText(row.campusName);
+    const classIdentity = row.classId == null ? className : String(row.classId);
+    const key = [row.courseProductId ?? projectName, row.campusId ?? campusName, classIdentity].join('::');
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, projectName, className, campusName, teacherNames: new Set(), students: new Map() };
+      groups.set(key, group);
+    }
+
+    const teacherName = row.teacherName?.trim();
+    if (teacherName) group.teacherNames.add(teacherName);
+    const studentKey = String(row.studentId ?? `${row.studentName ?? ''}:${row.school ?? ''}`);
+    if (!group.students.has(studentKey)) {
+      group.students.set(studentKey, {
+        key: studentKey,
+        name: displayText(row.studentName),
+        school: displayText(row.school),
+      });
+    }
+  });
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      teacherNames: [...group.teacherNames].sort(naturalCompare),
+      students: [...group.students.values()].sort((left, right) => naturalCompare(left.name, right.name)),
+    }))
+    .sort((left, right) => naturalCompare(left.projectName, right.projectName)
+      || naturalCompare(left.className, right.className)
+      || naturalCompare(left.campusName, right.campusName));
+});
+
+function printClassRoster() {
+  if (!rosterPrintGroups.value.length) return;
+  selectedRosterPrintKey.value = '';
+  rosterPrintDialogVisible.value = true;
+}
+
+const selectedRosterPrintGroup = computed(() =>
+  rosterPrintGroups.value.find(group => group.key === selectedRosterPrintKey.value) ?? null,
+);
+
+const selectedRosterPrintGroups = computed(() =>
+  selectedRosterPrintGroup.value ? [selectedRosterPrintGroup.value] : [],
+);
+
+function rosterPrintOptionLabel(group: RosterPrintGroup) {
+  return [group.projectName, group.className, group.campusName].join(' · ');
+}
+
+async function confirmPrintClassRoster() {
+  if (!selectedRosterPrintGroup.value) return;
+  rosterPrintDialogVisible.value = false;
+  await nextTick();
+  window.print();
+}
 
 const hasAnyFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
 
@@ -1032,6 +1219,12 @@ async function persistTabOrder() {
 onBeforeUnmount(() => {
   window.clearTimeout(orderSaveTimer);
   window.removeEventListener('keydown', handleStudentContextMenuKeydown);
+  const scroll = workbookScrollRef.value;
+  scroll?.removeEventListener('touchstart', handleWorkbookTouchStart);
+  scroll?.removeEventListener('touchmove', handleWorkbookTouchMove);
+  scroll?.removeEventListener('touchend', handleWorkbookTouchEnd);
+  scroll?.removeEventListener('touchcancel', handleWorkbookTouchEnd);
+  if (pinchZoomFrame) cancelAnimationFrame(pinchZoomFrame);
 });
 
 function matchesColumnFilter(row: DataSummaryDisplayRow, column: WorkbookColumn) {
@@ -1483,6 +1676,103 @@ function paymentMethodClass(value?: string) {
   return 'workbook-pill--method';
 }
 
+function touchDistance(touches: TouchList) {
+  return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+}
+
+// 移动端两指缩放只作用于工作表，并将手指中心对应的单元格固定在视口中。
+function handleWorkbookTouchStart(event: TouchEvent) {
+  const scroll = workbookScrollRef.value;
+  if (!isMobileViewport.value || !scroll || event.touches.length !== 2) {
+    pinchZoomGesture = null;
+    return;
+  }
+
+  const startDistance = touchDistance(event.touches);
+  if (startDistance < 1) {
+    pinchZoomGesture = null;
+    return;
+  }
+  const rect = scroll.getBoundingClientRect();
+  const viewportX = (event.touches[0].clientX + event.touches[1].clientX) / 2 - rect.left;
+  const viewportY = (event.touches[0].clientY + event.touches[1].clientY) / 2 - rect.top;
+  pinchZoomGesture = {
+    startDistance,
+    startScale: mobileTableScale.value,
+    contentX: (scroll.scrollLeft + viewportX) / mobileTableScale.value,
+    contentY: (scroll.scrollTop + viewportY) / mobileTableScale.value,
+  };
+}
+
+function scheduleMobileTableScroll() {
+  if (pinchZoomFrame) return;
+  pinchZoomFrame = requestAnimationFrame(() => {
+    const scroll = workbookScrollRef.value;
+    const position = pendingPinchPosition;
+    if (scroll && position) {
+      scroll.scrollLeft = position.contentX * position.scale - position.viewportX;
+      scroll.scrollTop = position.contentY * position.scale - position.viewportY;
+    }
+    pendingPinchPosition = null;
+    pinchZoomFrame = 0;
+  });
+}
+
+function handleWorkbookTouchMove(event: TouchEvent) {
+  const scroll = workbookScrollRef.value;
+  const gesture = pinchZoomGesture;
+  if (!isMobileViewport.value || !scroll || !gesture || event.touches.length !== 2) return;
+
+  event.preventDefault();
+  const rect = scroll.getBoundingClientRect();
+  const scale = Math.min(
+    MAX_MOBILE_TABLE_SCALE,
+    Math.max(MIN_MOBILE_TABLE_SCALE, gesture.startScale * touchDistance(event.touches) / gesture.startDistance),
+  );
+  pendingPinchPosition = {
+    scale,
+    contentX: gesture.contentX,
+    contentY: gesture.contentY,
+    viewportX: (event.touches[0].clientX + event.touches[1].clientX) / 2 - rect.left,
+    viewportY: (event.touches[0].clientY + event.touches[1].clientY) / 2 - rect.top,
+  };
+  mobileTableScale.value = scale;
+  scheduleMobileTableScroll();
+}
+
+function handleWorkbookTouchEnd(event: TouchEvent) {
+  if (event.touches.length < 2) pinchZoomGesture = null;
+}
+
+function setMobileTableScale(scale: number) {
+  const scroll = workbookScrollRef.value;
+  const nextScale = Math.min(MAX_MOBILE_TABLE_SCALE, Math.max(MIN_MOBILE_TABLE_SCALE, scale));
+  if (!scroll || nextScale === mobileTableScale.value) {
+    mobileTableScale.value = nextScale;
+    return;
+  }
+
+  const viewportX = scroll.clientWidth / 2;
+  const viewportY = scroll.clientHeight / 2;
+  pendingPinchPosition = {
+    scale: nextScale,
+    contentX: (scroll.scrollLeft + viewportX) / mobileTableScale.value,
+    contentY: (scroll.scrollTop + viewportY) / mobileTableScale.value,
+    viewportX,
+    viewportY,
+  };
+  mobileTableScale.value = nextScale;
+  scheduleMobileTableScroll();
+}
+
+function handleMobileOverflowCommand(command: string) {
+  if (command === 'export-excel') exportExcel();
+  if (command === 'print-roster') printClassRoster();
+  if (command === 'roster-fall') setSaturdayRosterView('FALL');
+  if (command === 'roster-spring') setSaturdayRosterView('SPRING');
+  if (command === 'roster-all') setSaturdayRosterView('ALL');
+}
+
 function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
 }
@@ -1495,6 +1785,11 @@ watch(tabs, () => {
 onMounted(() => {
   void loadPage();
   window.addEventListener('keydown', handleStudentContextMenuKeydown);
+  const scroll = workbookScrollRef.value;
+  scroll?.addEventListener('touchstart', handleWorkbookTouchStart, { passive: true });
+  scroll?.addEventListener('touchmove', handleWorkbookTouchMove, { passive: false });
+  scroll?.addEventListener('touchend', handleWorkbookTouchEnd, { passive: true });
+  scroll?.addEventListener('touchcancel', handleWorkbookTouchEnd, { passive: true });
 });
 </script>
 
@@ -1517,6 +1812,30 @@ onMounted(() => {
   border: 1px solid #9eafa7;
   border-bottom: 0;
   background: #f4f8f5;
+}
+
+.data-summary-page .workbook-mobile-more {
+  width: 40px;
+  height: 32px;
+  min-height: 32px;
+  flex: 0 0 40px;
+  padding: 0;
+  border: 1px solid #dce5e0;
+  border-radius: 10px;
+  background: #fff;
+  color: #48695b;
+  box-shadow: none;
+}
+
+.data-summary-page .workbook-mobile-more .el-icon {
+  font-size: 17px;
+}
+
+.data-summary-page .workbook-mobile-more:hover,
+.data-summary-page .workbook-mobile-more:focus-visible {
+  border-color: #9cb8aa;
+  background: #f3f8f5;
+  color: #285b43;
 }
 
 .workbook-toolbar__month {
@@ -1549,6 +1868,46 @@ onMounted(() => {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+.roster-print {
+  display: none;
+}
+
+.roster-print-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.roster-print-picker p {
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.roster-print-picker__select {
+  width: 100%;
+}
+
+.roster-print-picker__option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.roster-print-picker__option strong {
+  overflow: hidden;
+  color: #243447;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.roster-print-picker__option span,
+.roster-print-picker__count {
+  color: #7b8794;
+  font-size: 12px;
 }
 
 .saturday-roster-control {
@@ -1588,6 +1947,11 @@ onMounted(() => {
   overflow: auto;
   border: 1px solid #9eafa7;
   background: #fff;
+}
+
+.workbook-scroll--pinch-zoom {
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .stopped-records {
@@ -1903,9 +2267,142 @@ th.workbook-column--studentName {
   margin-right: 8px;
 }
 
-@media (max-width: 720px) {
+@media (max-width: 920px) {
   .data-summary-page {
-    height: calc(100vh - 76px);
+    height: calc(100dvh - 114px);
+    min-height: 360px;
+  }
+
+  .data-summary-page .workbook-toolbar {
+    align-items: center;
+    flex-direction: row;
+    gap: 6px 10px;
+    padding: 6px 8px;
+  }
+
+  .data-summary-page .workbook-toolbar__month {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .data-summary-page .workbook-toolbar__label {
+    font-size: 11px;
+  }
+
+  .data-summary-page .workbook-toolbar__select {
+    width: 150px;
+    min-width: 0;
+    flex: 0 1 150px;
+  }
+
+  .data-summary-page .workbook-toolbar__stats {
+    display: flex;
+    flex: 1 1 100%;
+    justify-content: space-between;
+    gap: 4px;
+    width: 100%;
+  }
+
+  .data-summary-page .workbook-toolbar__stat {
+    gap: 3px;
+    font-size: 10px;
+  }
+
+  .data-summary-page .workbook-toolbar__stat strong {
+    font-size: 11px;
+  }
+
+  .data-summary-page .workbook-toolbar__export {
+    display: none;
+  }
+}
+
+@media print {
+  @page {
+    size: portrait;
+    margin: 16mm;
+  }
+
+  :global(body *) {
+    visibility: hidden !important;
+  }
+
+  .roster-print,
+  .roster-print * {
+    visibility: visible !important;
+  }
+
+  .roster-print {
+    display: block !important;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    color: #111;
+    font-family: Arial, sans-serif;
+  }
+
+  .roster-print__page {
+    min-height: 250mm;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .roster-print__page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  .roster-print h1,
+  .roster-print h2 {
+    margin: 0;
+    text-align: center;
+    font-weight: 700;
+  }
+
+  .roster-print h1 {
+    padding-top: 8mm;
+    font-size: 32pt;
+  }
+
+  .roster-print h2 {
+    margin-top: 12mm;
+    font-size: 25pt;
+  }
+
+  .roster-print__campus {
+    margin: 5mm 0 3mm;
+    text-align: center;
+    font-size: 12pt;
+    color: #555;
+  }
+
+  .roster-print table {
+    width: 84%;
+    margin: 10mm auto 0;
+    border-collapse: collapse;
+    font-size: 16pt;
+  }
+
+  .roster-print th {
+    padding: 4mm;
+    border: 1px solid #b8c7d4;
+    background: #e9f1f8;
+    text-align: left;
+    font-size: 12pt;
+  }
+
+  .roster-print td {
+    padding: 4mm;
+    border: 1px solid #b8c7d4;
+    background: #d2e4f4;
+    vertical-align: middle;
+  }
+
+  .roster-print td:first-child {
+    width: 68%;
   }
 }
 </style>

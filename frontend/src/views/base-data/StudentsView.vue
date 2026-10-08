@@ -4,53 +4,78 @@
       <div class="panel-header">
         <span class="panel-header__title">Students</span>
         <div class="panel-header__actions">
-          <el-button text size="small" @click="openDeletedDialog">
+          <button
+            v-if="appStore.isMobileViewport"
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileSearchExpanded"
+            aria-label="Open student search and filters"
+            @click="mobileSearchExpanded = !mobileSearchExpanded"
+          >
+            <el-icon><Search /></el-icon>
+            <span v-if="activeAdvancedFilterCount" class="mobile-search-trigger__count">{{ activeAdvancedFilterCount }}</span>
+          </button>
+          <el-button text size="small" aria-label="View deleted students" @click="openDeletedDialog">
             <el-icon><Delete /></el-icon>
             Deleted
           </el-button>
         </div>
       </div>
 
-      <div class="student-search-bar">
-        <el-input
-          v-model="filters.keyword"
-          clearable
-          placeholder="Search student, guardian, phone, or student number"
-          @keyup.enter="handleFilterChange"
-          @clear="handleFilterChange"
-        />
-        <el-button class="student-search-bar__button" type="primary" @click="handleFilterChange">Search</el-button>
-        <el-button class="student-search-bar__filters" text @click="advancedFiltersVisible = !advancedFiltersVisible">
-          <el-icon><Filter /></el-icon>
-          Filters
-          <span v-if="activeAdvancedFilterCount" class="student-search-bar__filter-count">
-            {{ activeAdvancedFilterCount }}
-          </span>
-        </el-button>
+      <div v-show="!appStore.isMobileViewport || mobileSearchExpanded" class="mobile-search-panel">
+        <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+          <span>Search students</span>
+          <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+        <div class="student-search-bar">
+          <el-input
+            v-model="filters.keyword"
+            clearable
+            placeholder="Search name, guardian, phone, or ID"
+            @keyup.enter="handleFilterChange"
+            @clear="handleFilterChange"
+          />
+          <el-button class="student-search-bar__button" type="primary" @click="handleFilterChange">Search</el-button>
+          <el-button
+            v-if="!appStore.isMobileViewport"
+            class="student-search-bar__filters"
+            text
+            @click="advancedFiltersVisible = !advancedFiltersVisible"
+          >
+            <el-icon><Filter /></el-icon>
+            <span>Filters</span>
+            <span v-if="activeAdvancedFilterCount" class="student-search-bar__filter-count">
+              {{ activeAdvancedFilterCount }}
+            </span>
+          </el-button>
+        </div>
+
+        <div v-if="advancedFiltersVisible || (appStore.isMobileViewport && mobileSearchExpanded)" class="student-advanced-filters">
+          <el-select
+            v-model="filters.campusId"
+            clearable
+            placeholder="All campuses"
+            @change="handleFilterChange"
+          >
+            <el-option v-for="campus in campusOptions" :key="campus.id" :label="campus.campusName" :value="campus.id" />
+          </el-select>
+          <el-select
+            v-model="filters.paymentStatus"
+            clearable
+            placeholder="Payment status"
+            @change="handleFilterChange"
+          >
+            <el-option label="Unpaid" value="UNPAID" />
+            <el-option label="Partial payment" value="PARTIAL" />
+            <el-option label="Paid in full" value="PAID" />
+          </el-select>
+          <el-button v-if="activeAdvancedFilterCount" text @click="clearAdvancedFilters">Clear filters</el-button>
+        </div>
       </div>
 
-      <div v-if="advancedFiltersVisible" class="student-advanced-filters">
-        <el-select
-          v-model="filters.campusId"
-          clearable
-          placeholder="All campuses"
-          @change="handleFilterChange"
-        >
-          <el-option v-for="campus in campusOptions" :key="campus.id" :label="campus.campusName" :value="campus.id" />
-        </el-select>
-        <el-select
-          v-model="filters.paymentStatus"
-          clearable
-          placeholder="All payment statuses"
-          @change="handleFilterChange"
-        >
-          <el-option label="Unpaid" value="UNPAID" />
-          <el-option label="Partial payment" value="PARTIAL" />
-          <el-option label="Paid in full" value="PAID" />
-        </el-select>
-        <el-button v-if="activeAdvancedFilterCount" text @click="clearAdvancedFilters">Clear filters</el-button>
-      </div>
-
+      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe horizontally to see more columns</p>
       <el-table
         v-loading="loading"
         :data="tableData"
@@ -105,9 +130,36 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" width="320" fixed="right">
+        <el-table-column
+          :label="appStore.isMobileViewport ? 'More' : 'Actions'"
+          :width="appStore.isMobileViewport ? 72 : 320"
+          fixed="right"
+          align="center"
+        >
           <template #default="{ row }">
-            <div class="table-actions">
+            <el-dropdown
+              v-if="appStore.isMobileViewport"
+              class="mobile-table-actions"
+              trigger="click"
+              placement="bottom-end"
+              @click.stop
+            >
+              <el-button text circle aria-label="More student actions" @click.stop>
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="openStudentDetail(row)">Student details</el-dropdown-item>
+                  <el-dropdown-item @click="startRegistrationForStudent(row)">Register</el-dropdown-item>
+                  <el-dropdown-item @click="openStudentAccountDialog(row)">
+                    {{ accountForStudent(row) ? 'Edit login' : 'Create login' }}
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="openStudentDialog(row)">Edit student</el-dropdown-item>
+                  <el-dropdown-item divided @click="handleDeleteStudent(row)">Delete student</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <div v-else class="table-actions">
               <el-button text type="primary" @click.stop="openStudentDetail(row)">Details</el-button>
               <el-button text type="primary" @click.stop="startRegistrationForStudent(row)">Register</el-button>
               <el-button text type="primary" @click.stop="openStudentAccountDialog(row)">
@@ -126,7 +178,7 @@
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
           background
-          layout="prev, pager, next, sizes"
+          :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
           :page-sizes="[10, 20, 50]"
           :total="pagination.total"
           @current-change="loadData"
@@ -329,7 +381,7 @@
     <!-- Student operation drawer -->
     <el-drawer
       v-model="detailDrawerVisible"
-      size="72%"
+      :size="appStore.isMobileViewport ? '100%' : '72%'"
       :with-header="false"
       class="student-detail-drawer"
     >
@@ -759,7 +811,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete, Filter } from '@element-plus/icons-vue';
+import { Close, Delete, Filter, MoreFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -790,6 +842,7 @@ import {
   refundEnrollmentOrder,
 } from '@/api/enrollment';
 import { extractErrorMessage } from '@/api/http';
+import { useAppStore } from '@/stores/app';
 import type { CampusItem, EnrollmentOrderDetailItem, EnrollmentOrderItem, PaymentMethodItem, PaymentRecordItem, StudentAccountItem, StudentItem } from '@/types/domain';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
@@ -801,6 +854,7 @@ const editingId = ref<string | null>(null);
 const studentFormRef = ref();
 const router = useRouter();
 const route = useRoute();
+const appStore = useAppStore();
 
 // ─── Campus options for dropdown ────────────────────
 const campusOptions = ref<CampusItem[]>([]);
@@ -836,6 +890,7 @@ const filters = reactive({
   paymentStatus: '',
 });
 const advancedFiltersVisible = ref(false);
+const mobileSearchExpanded = ref(false);
 const activeAdvancedFilterCount = computed(() =>
   Number(Boolean(filters.campusId)) + Number(Boolean(filters.paymentStatus))
 );
@@ -1692,21 +1747,86 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 640px) {
-  .student-search-bar,
-  .student-advanced-filters {
-    align-items: stretch;
-    flex-direction: column;
+  .course-product-panel { padding: 12px; }
+
+  .panel-header {
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+    margin-bottom: 10px;
   }
 
-  .student-search-bar :deep(.el-input),
+  .panel-header__title { display: none; }
+
+  .panel-header__actions {
+    justify-content: flex-end;
+    width: auto;
+    margin-left: auto;
+  }
+
+  .panel-header__actions > .el-button {
+    min-height: 36px;
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .student-search-bar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 76px;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .student-search-bar :deep(.el-input) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .student-search-bar :deep(.el-input__wrapper),
+  .student-search-bar__button {
+    min-height: 44px;
+    margin: 0;
+  }
+
+  .student-search-bar :deep(.el-input__inner) {
+    font-size: 13px;
+  }
+
+  .student-search-bar__button {
+    width: 76px;
+    padding: 0 12px;
+    font-size: 12px;
+  }
+
+  .student-advanced-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 10px 0 0;
+    padding: 10px 0 0;
+    border: 0;
+    border-top: 1px solid #edf1f6;
+    border-radius: 0;
+    background: transparent;
+  }
+
   .student-advanced-filters :deep(.el-select) {
     width: 100%;
   }
 
-  .student-search-bar__button,
-  .student-search-bar__filters {
-    align-self: flex-start;
+  .student-advanced-filters > .el-button {
+    grid-column: 1 / -1;
+    justify-self: start;
+    min-height: 32px;
+    margin: 0;
+    padding: 0 4px;
+    color: #64748b;
+    font-size: 12px;
   }
+
 }
 
 .product-table {
@@ -1745,6 +1865,19 @@ onBeforeUnmount(() => {
   margin-top: 10px;
   font-size: 12px;
   color: #909399;
+}
+
+@media (max-width: 640px) {
+  .table-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .table-footer :deep(.el-pagination) {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 .dialog-footer {

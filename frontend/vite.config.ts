@@ -39,8 +39,24 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://localhost:8084',
+        target: process.env.VITE_API_PROXY_TARGET ?? 'http://localhost:8085',
         changeOrigin: true,
+        configure(proxy) {
+          proxy.on('proxyReq', (proxyRequest, request) => {
+            const origin = request.headers.origin;
+            const host = request.headers.host;
+            if (!origin || !host) return;
+            try {
+              const browserOrigin = new URL(origin);
+              // 仅转换浏览器对当前 Vite 站点发出的同源请求，供本地后端的 CORS 白名单识别。
+              if (browserOrigin.protocol === 'http:' && browserOrigin.host === host) {
+                proxyRequest.setHeader('Origin', 'http://localhost:5173');
+              }
+            } catch {
+              // 非法或外站 Origin 保持原样，让后端按既有 CORS 规则拒绝。
+            }
+          });
+        },
       },
     },
   },

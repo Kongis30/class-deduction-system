@@ -1,5 +1,8 @@
 <template>
-  <div class="registration-page">
+  <div
+    class="registration-page"
+    :data-mobile-step="appStore.isMobileViewport && (!isReadOnly || editingCorrection) ? mobileRegistrationStep : 'readonly'"
+  >
     <el-alert
       v-if="receiptEditingEnabled && validationErrors.length"
       type="error"
@@ -13,7 +16,7 @@
       </ul>
     </el-alert>
 
-    <section class="registration-desk no-print">
+    <section v-if="!appStore.isMobileViewport || isReadOnly" class="registration-desk no-print">
       <div>
         <strong>{{ isReadOnly ? 'Saved receipt' : 'Registration desk' }}</strong>
         <p>{{ isReadOnly && !editingCorrection
@@ -33,7 +36,7 @@
       </div>
     </section>
 
-    <section v-if="!isReadOnly" class="registration-flow no-print" aria-label="Registration workflow">
+    <section v-if="!appStore.isMobileViewport && !isReadOnly" class="registration-flow no-print" aria-label="Registration workflow">
       <article>
         <span>1</span>
         <strong>Student</strong>
@@ -61,7 +64,27 @@
       </article>
     </section>
 
-    <section v-if="hasOneOnOneLine" class="private-lesson-switcher no-print">
+    <section
+      v-if="appStore.isMobileViewport && (!isReadOnly || editingCorrection)"
+      class="mobile-registration-progress no-print"
+      aria-label="Registration progress"
+      role="progressbar"
+      :aria-valuenow="mobileRegistrationStep"
+      aria-valuemin="1"
+      aria-valuemax="5"
+      :aria-valuetext="`Step ${mobileRegistrationStep} of 5: ${mobileRegistrationStepTitle}`"
+    >
+      <div class="mobile-registration-progress__track">
+        <span :style="{ width: `${mobileRegistrationStep * 20}%` }" />
+      </div>
+      <div class="mobile-registration-progress__copy">
+        <span>STEP {{ mobileRegistrationStep }} OF 5</span>
+        <strong>{{ mobileRegistrationStepTitle }}</strong>
+      </div>
+      <p>{{ mobileRegistrationStepDescription }}</p>
+    </section>
+
+    <section v-if="hasOneOnOneLine" class="private-lesson-switcher no-print" data-mobile-steps="2 5">
       <div class="private-lesson-switcher__header">
         <div>
           <span class="section-kicker">Private lesson</span>
@@ -96,7 +119,7 @@
       </template>
     </section>
 
-    <section v-if="studentPickerVisible" class="registration-student-picker no-print">
+    <section v-if="studentPickerVisible" class="registration-student-picker no-print" data-mobile-steps="1 5">
       <div class="registration-student-picker__heading">
         <strong>{{ activeStudentName || 'Existing student' }}</strong>
         <span>Select an existing student or search by name. Leave blank for a new student.</span>
@@ -132,7 +155,7 @@
     </section>
 
     <section class="paper-form" :class="{ 'paper-form--readonly': isReadOnly && !editingCorrection }">
-      <header class="form-header">
+      <header class="form-header" data-mobile-steps="1 5">
         <div class="form-title-block">
           <h1>Registration &amp; Receipt</h1>
           <h2>JIN BEST TUTORING · 专业、负责、懂考试</h2>
@@ -144,7 +167,7 @@
         <img class="form-logo" src="/logo.jpg" alt="JIN BEST TUTORING" />
       </header>
 
-      <section class="contact-block">
+      <section class="contact-block" data-mobile-steps="1 5">
         <strong>不止提分，更帮助孩子建立自信，掌握方法</strong>
         <div class="phone-line">☎ Ms. Jin (929) 528-1060 / 办公室 (929) 701-9872</div>
 
@@ -162,7 +185,7 @@
         </label>
       </section>
 
-      <section v-if="isPrivateAllReceiptView" class="private-receipt-student-summary" aria-label="Students on this receipt">
+      <section v-if="isPrivateAllReceiptView" class="private-receipt-student-summary" aria-label="Students on this receipt" data-mobile-steps="1 5">
         <div class="private-receipt-student-summary__header">
           <span class="private-receipt-student-summary__label">Students on this receipt</span>
           <strong>{{ privateParticipantCount }} students</strong>
@@ -190,7 +213,7 @@
         </div>
       </section>
 
-      <section v-else-if="!privateWorkspaceVisible || typeof activePrivateWorkspaceTab === 'number'" class="student-lines">
+      <section v-else-if="!privateWorkspaceVisible || typeof activePrivateWorkspaceTab === 'number'" class="student-lines" data-mobile-steps="1 5">
         <div class="full-line">
           <span class="field-label-with-help">
             Student name:
@@ -269,7 +292,7 @@
 
       </section>
 
-      <section class="payment-line">
+      <section class="payment-line" data-mobile-steps="4 5">
         <span>Pay method:</span>
         <div class="payment-method-block">
           <strong class="paper-payment-summary">{{ activePaymentMethodSummary }}</strong>
@@ -286,7 +309,7 @@
         <strong class="paper-payment-summary paper-payment-summary--amount">{{ formatMoney(activePaidAmount) }}</strong>
       </section>
 
-      <section v-if="isReadOnly && !editingCorrection && !isPrivateAllReceiptView && receiptPaymentRows.length > 0" class="payment-history">
+      <section v-if="isReadOnly && !editingCorrection && !isPrivateAllReceiptView && receiptPaymentRows.length > 0" class="payment-history" data-mobile-steps="5">
         <div
           v-for="payment in receiptPaymentRows"
           :key="payment.rowKey"
@@ -305,6 +328,7 @@
         :closable="false"
         show-icon
         class="course-pricing-alert no-print"
+        data-mobile-steps="2"
       >
         <template #title>Course pricing is missing</template>
         <div class="course-pricing-alert__body">
@@ -318,7 +342,7 @@
         </div>
       </el-alert>
 
-      <section class="course-table-wrap">
+      <section class="course-table-wrap" data-mobile-steps="2 5">
         <el-alert
           v-if="!isReadOnly && !isPrivateAllReceiptView && courseLines.some(isOneOnOneLine)"
           type="info"
@@ -438,53 +462,13 @@
                             />
                           </el-select>
                         </label>
-        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'SESSION'" class="course-control">
-                          <span>Sessions</span>
-                          <el-select v-model="line.groupSessionCount" class="table-select" :disabled="!receiptEditingEnabled" @change="() => handleGroupSessionCountChange(line)">
-                            <el-option v-for="quantity in availableGroupPlanQuantities(line)" :key="quantity" :label="`${quantity} sessions`" :value="quantity" />
-                          </el-select>
-                        </label>
-                        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'MONTH'" class="course-control">
-                          <span>Months</span>
-                          <el-input-number
-                            v-model="line.groupPurchasedMonths"
-                            class="table-price"
-                            :min="1"
-                            :max="groupPlanQuantity(line)"
-                            :step="1"
-                            :precision="0"
-                            :disabled="!receiptEditingEnabled"
-                            @change="() => handleGroupMonthCountChange(line)"
-                          />
-                        </label>
-                        <label v-if="line.groupRegistrationPlanId" class="course-control">
-                          <span>First lesson date</span>
-                          <el-select
-                            v-model="line.startDate"
-                            class="table-select"
-                            :placeholder="groupPlanStartPlaceholder(line)"
-                            :disabled="!receiptEditingEnabled || !line.classId || line.groupScheduleDatesLoading"
-                            :loading="line.groupScheduleDatesLoading"
-                            @change="() => handleGroupStartDateChange(line)"
-                          >
-                            <el-option v-for="date in availableGroupStartDates(line)" :key="date" :label="formatDateValue(date)" :value="date" />
-                          </el-select>
-                        </label>
-                        <label v-if="line.groupRegistrationPlanId && attendanceOptionsForLine(line).length > 0" class="course-control">
-                          <span>Attendance</span>
-                          <el-select v-model="line.attendanceOption" class="table-select" @change="() => handleAttendanceChange(line)">
-                            <el-option v-for="option in attendanceOptionsForLine(line)" :key="option.value" :label="option.label" :value="option.value" />
-                          </el-select>
-                        </label>
-                      </div>
-                      <div class="teacher-class-line">
-                        <label class="course-control course-control--wide">
+                        <label class="course-control course-control--wide group-v2-registration__full-row">
                           <span>Actual class</span>
                           <el-select
                             v-model="line.classId"
                             class="table-select option"
                             :placeholder="v2ClassSelectPlaceholder(line)"
-                            :disabled="!receiptEditingEnabled || !line.groupProjectId || !selectedCampus"
+                            :disabled="!receiptEditingEnabled || !line.groupRegistrationPlanId || groupActualClassGroupsForLine(line).length === 0"
                             filterable
                             @change="() => handleGroupActualClassChange(line)"
                           >
@@ -508,10 +492,48 @@
                           </el-select>
                           <strong class="print-only print-course-value">{{ printTeacherOrClassLabel(line) }}</strong>
                         </label>
+                        <label v-if="line.groupRegistrationPlanId" class="course-control">
+                          <span>First lesson date</span>
+                          <el-select
+                            v-model="line.startDate"
+                            class="table-select"
+                            :placeholder="groupPlanStartPlaceholder(line)"
+                            :disabled="!receiptEditingEnabled || !line.classId || line.groupScheduleDatesLoading"
+                            :loading="line.groupScheduleDatesLoading"
+                            @change="() => handleGroupStartDateChange(line)"
+                          >
+                            <el-option v-for="date in availableGroupStartDates(line)" :key="date" :label="formatDateValue(date)" :value="date" />
+                          </el-select>
+                        </label>
+                        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'SESSION'" class="course-control">
+                          <span>Sessions</span>
+                          <el-select v-model="line.groupSessionCount" class="table-select" :disabled="!receiptEditingEnabled || !line.classId || !line.startDate || line.groupScheduleDatesLoading" @change="() => handleGroupSessionCountChange(line)">
+                            <el-option v-for="quantity in availableGroupPlanQuantities(line)" :key="quantity" :label="`${quantity} sessions`" :value="quantity" />
+                          </el-select>
+                        </label>
+                        <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'MONTH'" class="course-control">
+                          <span>Months</span>
+                          <el-input-number
+                            v-model="line.groupPurchasedMonths"
+                            class="table-price"
+                            :min="1"
+                            :max="groupPlanQuantity(line)"
+                            :step="1"
+                            :precision="0"
+                            :disabled="!receiptEditingEnabled || !line.classId || !line.startDate || line.groupScheduleDatesLoading"
+                            @change="() => handleGroupMonthCountChange(line)"
+                          />
+                        </label>
+                        <label v-if="line.groupRegistrationPlanId && attendanceOptionsForLine(line).length > 0" class="course-control">
+                          <span>Attendance</span>
+                          <el-select v-model="line.attendanceOption" class="table-select" @change="() => handleAttendanceChange(line)">
+                            <el-option v-for="option in attendanceOptionsForLine(line)" :key="option.value" :label="option.label" :value="option.value" />
+                          </el-select>
+                        </label>
                       </div>
                       <span v-if="!line.groupProjectId" class="course-detail-hint">Choose a teaching project for this product.</span>
                       <span v-else-if="!line.groupRegistrationPlanId" class="course-detail-hint">Choose the season or package the student is registering for.</span>
-                      <span v-else-if="!line.classId" class="course-detail-hint">Choose an actual class at the selected campus.</span>
+                      <span v-else-if="!line.classId" class="course-detail-hint">{{ selectedCampus ? 'Choose an actual class at the selected campus.' : 'Choose an actual class; available classes are grouped by campus.' }}</span>
                       <span v-else-if="line.groupScheduleDates && line.groupScheduleDates.length === 0" class="course-detail-hint">No scheduled lesson dates are available for this class.</span>
                     </div>
                   <div v-else class="course-detail-cell screen-only">
@@ -797,12 +819,12 @@
         </article>
       </section>
 
-      <section v-if="!isReadOnly && !isPrivateAllReceiptView" class="paper-actions no-print">
+      <section v-if="!isReadOnly && !isPrivateAllReceiptView" class="paper-actions no-print" data-mobile-steps="2">
         <el-button v-if="!isRenewalMode" class="action-secondary" @click="addCourseLine">Add course row</el-button>
       </section>
 
-      <section v-if="receiptEditingEnabled && !isPrivateAllReceiptView" class="intake-adjustment-panel no-print">
-        <div class="adjustment-column adjustment-column--fees">
+      <section v-if="receiptEditingEnabled && !isPrivateAllReceiptView" class="intake-adjustment-panel no-print" data-mobile-steps="3 4">
+        <div class="adjustment-column adjustment-column--fees" data-mobile-steps="3">
           <div class="adjustment-heading">
             <strong>Service & other fees</strong>
             <span>Use the registration address by default, or override it for a specific course.</span>
@@ -862,7 +884,7 @@
           </div>
         </div>
 
-        <div class="adjustment-column adjustment-column--discounts">
+        <div class="adjustment-column adjustment-column--discounts" data-mobile-steps="3">
           <div class="adjustment-heading">
             <strong>Discounts</strong>
             <div class="adjustment-heading__actions">
@@ -921,7 +943,7 @@
           </div>
         </div>
 
-        <div class="adjustment-column adjustment-column--payments">
+        <div class="adjustment-column adjustment-column--payments" data-mobile-steps="4">
           <div class="adjustment-heading">
             <strong>Payments</strong>
             <span>{{ activeBillingScopeLabel }}</span>
@@ -1057,6 +1079,26 @@
 
       </section>
 
+      <section v-if="appStore.isMobileViewport" class="mobile-registration-review" data-mobile-steps="5" aria-label="Registration review">
+        <header>
+          <span>Review before saving</span>
+          <strong>{{ activeStudentName || 'Student name needed' }}</strong>
+          <small>{{ selectedCampus?.campusName || 'Campus not selected' }}</small>
+        </header>
+        <article v-for="(line, index) in courseLines" :key="line.rowKey">
+          <div>
+            <strong>{{ courseLineOptionLabel(line, index) }}</strong>
+            <span>{{ line.courseType || 'Course' }} · {{ line.gradeBand || 'Grade not set' }}</span>
+          </div>
+          <strong>{{ formatCourseLinePrice(line) }}</strong>
+        </article>
+        <footer>
+          <span>Amount due <strong>{{ formatMoney(amountDue) }}</strong></span>
+          <span>Paid <strong>{{ formatMoney(paidAmount) }}</strong></span>
+          <span>Balance <strong>{{ balanceLabel }}</strong></span>
+        </footer>
+      </section>
+
       <section class="receipt-financial-summary print-only">
         <div class="receipt-financial-summary__column">
           <strong>Fees</strong>
@@ -1137,9 +1179,9 @@
         <p>{{ form.remark.trim() }}</p>
       </section>
 
-      <section class="policies">
+      <section class="policies" data-mobile-steps="4 5">
         <div class="policies-layout">
-          <div class="policy-copy">
+          <div class="policy-copy" data-mobile-steps="5">
             <p><strong>退款政策 / Refund Policy</strong></p>
             <p>开课前退还50%，其余转为学费抵用金；开课后不退，剩余学费转为抵用金。</p>
             <p>Before class starts: 50% refund; remaining becomes tuition credit.</p>
@@ -1154,7 +1196,7 @@
             <p>学生须遵守校规。如有三次以上严重违纪（如扰乱课堂、霸凌等），将被劝退。</p>
             <p>Students must follow rules. 3 serious violations may lead to dismissal.</p>
           </div>
-          <section v-if="receiptEditingEnabled && !isPrivateAllReceiptView" class="credit-top-up-compact no-print">
+          <section v-if="receiptEditingEnabled && !isPrivateAllReceiptView" class="credit-top-up-compact no-print" data-mobile-steps="4 5">
             <div class="credit-top-up-compact__header">
               <div>
                 <span class="section-kicker">Stored balance</span>
@@ -1178,7 +1220,7 @@
       </section>
     </section>
 
-    <section class="submit-bar no-print">
+    <section v-if="!appStore.isMobileViewport" class="submit-bar no-print">
       <div class="fee-totals">
         <span>
           <small>Amount due</small>
@@ -1214,6 +1256,43 @@
       <el-button class="action-print" size="large" @click="printForm">Print</el-button>
     </section>
 
+    <nav v-if="appStore.isMobileViewport" class="mobile-registration-actions no-print" aria-label="Registration actions">
+      <div v-if="!isReadOnly || editingCorrection" v-show="!isKeyboardOpen" class="mobile-registration-actions__amounts">
+        <span><small>Amount due</small><strong>{{ formatMoney(amountDue) }}</strong></span>
+        <span :class="['mobile-registration-actions__balance', { 'is-due': hasOutstandingBalance, 'is-paid': isPaidInFull }]">
+          <small>Balance</small><strong>{{ balanceLabel }}</strong>
+        </span>
+      </div>
+      <div class="mobile-registration-actions__buttons">
+        <el-button
+          v-if="mobileRegistrationStep > 1 && (!isReadOnly || editingCorrection)"
+          @click="mobileRegistrationStep -= 1"
+        >Back</el-button>
+        <el-button
+          v-if="mobileRegistrationStep < 5 && (!isReadOnly || editingCorrection)"
+          type="primary"
+          @click="mobileRegistrationStep += 1"
+        >Continue</el-button>
+        <el-button
+          v-if="!isReadOnly && mobileRegistrationStep === 5"
+          type="primary"
+          :loading="submitting"
+          @click="submitForm"
+        >Save registration</el-button>
+        <el-button
+          v-else-if="editingCorrection && mobileRegistrationStep === 5"
+          type="primary"
+          :loading="savingCorrection"
+          @click="saveCorrection"
+        >Save changes</el-button>
+        <el-button
+          v-if="isReadOnly && !editingCorrection"
+          class="action-print"
+          @click="printForm"
+        >Print receipt</el-button>
+      </div>
+    </nav>
+
   </div>
 </template>
 
@@ -1237,6 +1316,8 @@ import { isAdminUser, isManagerUser, isStaffUser } from '@/types/auth';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 import { exceedsMoney, formatExactUsd, formatRoundedUsd } from '@/utils/money-display';
 import { calculateProratedSessionPrice } from '@/utils/session-price';
+import { useAppStore } from '@/stores/app';
+import { useMobileKeyboardState } from '@/composables/useMobileKeyboardState';
 import MoneyAmountInput from '@/components/MoneyAmountInput.vue';
 import { paymentDraftAmount, sumPaymentAllocations } from './payment-draft';
 
@@ -1405,6 +1486,18 @@ const campusFallbacks: CampusChoice[] = [
 const currentUser = getStoredAuthUser();
 const route = useRoute();
 const router = useRouter();
+const appStore = useAppStore();
+const { isKeyboardOpen } = useMobileKeyboardState();
+const mobileRegistrationSteps = [
+  { title: 'Student', description: 'Choose an existing student or enter student details.' },
+  { title: 'Course', description: 'Choose course products, schedule options, and class.' },
+  { title: 'Fees', description: 'Add pickup, drop-off, and discount details.' },
+  { title: 'Payment', description: 'Record each payment and review the remaining balance.' },
+  { title: 'Review', description: 'Review the receipt and save the registration.' },
+] as const;
+const mobileRegistrationStep = ref(1);
+const mobileRegistrationStepTitle = computed(() => mobileRegistrationSteps[mobileRegistrationStep.value - 1]?.title ?? 'Student');
+const mobileRegistrationStepDescription = computed(() => mobileRegistrationSteps[mobileRegistrationStep.value - 1]?.description ?? '');
 const today = formatDate(new Date());
 
 const form = reactive<RegistrationForm>({
@@ -2227,6 +2320,7 @@ async function loadHistoricalOrder() {
 
 async function startCorrection() {
   if (!canCorrectReceipt.value) return;
+  mobileRegistrationStep.value = 1;
   correctionSetupLoading.value = true;
   try {
     await loadInitialData();
@@ -2907,7 +3001,7 @@ function toHistoricalCourseLine(
     groupRegistrationPlanId: (getString(fallback, 'groupRegistrationPlanId') || getString(item, 'groupRegistrationPlanId') || undefined) as EntityId | undefined,
     groupCourseModelV2: Boolean(getString(fallback, 'groupProjectId') || getString(item, 'groupProjectId')),
     classId: getString(fallback, 'classId') || getString(item, 'classId') || undefined,
-    className: getString(item, 'className') || undefined,
+    className: getString(item, 'className') || getString(fallback, 'className') || undefined,
     teacherId: getString(fallback, 'teacherId') || getString(item, 'teacherId') || undefined,
     registerClass: getString(item, 'registerClass') || getString(fallback, 'registerClass'),
     detail: getString(item, 'detail') || getString(fallback, 'detail'),
@@ -3982,7 +4076,9 @@ async function handleGroupPlanChange(line: RegistrationCourseLine) {
   line.attendanceOption = plan.fullDayPrice != null ? 'FULL_DAY' : plan.halfDayPrice != null ? 'MORNING' : 'NONE';
   const signupDate = form.signupDate || today;
   const classStart = selectedGroupActualClass(line)?.startDate;
-  if (plan.coverageType === 'FIXED_DATES') {
+  if (!line.classId) {
+    line.startDate = undefined;
+  } else if (plan.coverageType === 'FIXED_DATES') {
     const termStart = plan.coverageStartDate || classStart || signupDate;
     line.startDate = termStart < signupDate ? signupDate : termStart;
   } else {
@@ -4037,8 +4133,7 @@ function groupActualClassGroupsForLine(line: RegistrationCourseLine) {
   const campus = selectedCampus.value;
   const classes = project.classes.filter((actualClass) => {
     if (!editingCorrection.value && actualClass.status !== 'ACTIVE') return false;
-    if (showAllCampusClasses.value) return true;
-    if (!campus) return false;
+    if (showAllCampusClasses.value || !campus) return true;
     // A campus-null legacy class represents a shared schedule; it remains selectable from either campus.
     if (actualClass.campusId == null && !actualClass.campusName) return true;
     if (campus.campusId != null) return String(actualClass.campusId ?? '') === String(campus.campusId);
@@ -4059,15 +4154,26 @@ function groupActualClassGroupsForLine(line: RegistrationCourseLine) {
 }
 
 function v2ClassSelectPlaceholder(line: RegistrationCourseLine) {
-  if (!selectedCampus.value) return 'Choose campus first';
   if (!line.groupProjectId) return 'Choose project first';
+  if (!line.groupRegistrationPlanId) return 'Choose registration plan first';
   return groupActualClassGroupsForLine(line).some((group) => group.options.length > 0)
     ? 'Select actual class'
-    : 'No class for this campus';
+    : selectedCampus.value ? 'No class for this campus' : 'No active classes available';
 }
 
 async function handleGroupActualClassChange(line: RegistrationCourseLine) {
   const actualClass = selectedGroupActualClass(line);
+  // 未先选校区时允许从分组后的完整班级列表选择，并用班级归属补齐收据校区。
+  if (!selectedCampus.value && actualClass) {
+    const actualCampusName = actualClass.campusName?.trim().toLocaleLowerCase();
+    const actualCampus = campusChoices.value.find((campus) =>
+      (actualClass.campusId != null
+        && campus.campusId != null
+        && String(campus.campusId) === String(actualClass.campusId))
+      || (actualCampusName && campus.campusName.trim().toLocaleLowerCase() === actualCampusName),
+    );
+    if (actualCampus) form.campusKey = actualCampus.key;
+  }
   line.className = actualClass?.actualClass;
   if (actualClass) form.student.studentClass = actualClass.actualClass;
   const plan = selectedGroupPlan(line);
@@ -4191,6 +4297,7 @@ function classStartDatePlaceholder(line: RegistrationCourseLine) {
 }
 
 function groupPlanStartPlaceholder(line: RegistrationCourseLine) {
+  if (!line.classId) return 'Choose actual class first';
   const plan = selectedGroupPlan(line);
   if (plan?.coverageType === 'FIXED_DATES') return plan.coverageStartDate || 'Choose first lesson date';
   return selectedGroupActualClass(line)?.startDate || today;
@@ -5698,6 +5805,7 @@ async function startNewRegistration() {
     }
   }
   editingCorrection.value = false;
+  mobileRegistrationStep.value = 1;
   await router.replace({ name: 'registration' });
   resetForNextRegistration();
   await loadInitialData();
@@ -5718,6 +5826,7 @@ function formHasUnsavedContent() {
 }
 
 function resetForNextRegistration() {
+  mobileRegistrationStep.value = 1;
   validationErrors.value = [];
   form.campusKey = '';
   form.signupDate = formatDate(new Date());
@@ -7088,6 +7197,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   grid-template-columns: minmax(120px, 0.8fr) minmax(150px, 1fr);
 }
 
+.group-v2-registration__full-row {
+  grid-column: 1 / -1;
+}
+
 .teacher-class-line {
   display: grid;
   gap: 4px;
@@ -8188,14 +8301,385 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   .registration-flow,
   .registration-student-picker,
   .submit-bar {
-    width: 920px;
-    max-width: none;
+    width: 100%;
+    max-width: 920px;
   }
 
   .paper-form {
-    width: 920px;
-    max-width: none;
+    width: 100%;
+    max-width: 920px;
     overflow-x: auto;
+  }
+}
+
+@media (max-width: 720px) {
+  .registration-page {
+    align-items: stretch;
+    gap: 10px;
+    padding: 10px 0 calc(24px + env(safe-area-inset-bottom));
+    overflow: visible;
+  }
+
+  .registration-desk {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .registration-desk__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    justify-content: stretch;
+  }
+
+  .registration-desk__actions > .el-button {
+    min-width: 0;
+    min-height: 42px;
+    margin: 0;
+    white-space: normal;
+  }
+
+  .registration-flow {
+    grid-template-columns: repeat(5, minmax(94px, 1fr));
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .registration-flow article {
+    padding: 8px;
+  }
+
+  .registration-flow small {
+    display: none;
+  }
+
+  .registration-student-picker {
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .paper-form {
+    min-height: 0;
+    padding: 18px 12px 16px;
+    overflow-x: hidden;
+    box-shadow: 0 8px 24px rgb(15 23 42 / 10%);
+  }
+
+  .form-header {
+    gap: 10px;
+    min-height: 64px;
+    padding-right: 62px;
+  }
+
+  .form-header h1 {
+    font-size: 19px;
+  }
+
+  .form-logo {
+    top: 18px;
+    right: 12px;
+    width: 48px;
+    height: 48px;
+  }
+
+  .two-col-line {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .two-col-line label,
+  .full-line {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .full-line > span,
+  .two-col-line label > span:first-child {
+    flex: 0 0 100%;
+    white-space: normal;
+  }
+
+  .two-col-line label > .el-input,
+  .two-col-line label > .el-date-editor,
+  .full-line .line-input {
+    width: 100%;
+  }
+
+  .payment-line {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .payment-method-block {
+    min-width: 0;
+    flex: 1 1 calc(100% - 90px);
+  }
+
+  .submit-bar {
+    position: static;
+    flex-wrap: wrap;
+    padding: 10px;
+    box-shadow: 0 4px 18px rgb(15 23 42 / 18%);
+  }
+
+  .submit-bar > .el-button {
+    flex: 1 1 100%;
+    min-height: 42px;
+    margin: 0;
+  }
+}
+
+@media screen and (max-width: 920px) {
+  .registration-page {
+    padding-bottom: calc(158px + env(safe-area-inset-bottom));
+  }
+
+  .registration-page[data-mobile-step="1"] [data-mobile-steps]:not([data-mobile-steps~="1"]),
+  .registration-page[data-mobile-step="2"] [data-mobile-steps]:not([data-mobile-steps~="2"]),
+  .registration-page[data-mobile-step="3"] [data-mobile-steps]:not([data-mobile-steps~="3"]),
+  .registration-page[data-mobile-step="4"] [data-mobile-steps]:not([data-mobile-steps~="4"]),
+  .registration-page[data-mobile-step="5"] [data-mobile-steps]:not([data-mobile-steps~="5"]) {
+    display: none !important;
+  }
+
+  .registration-desk p {
+    display: none;
+  }
+
+  .mobile-registration-progress {
+    display: grid;
+    gap: 8px;
+    padding: 14px 16px;
+    border: 1px solid #d8e7ff;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 6px 18px rgb(15 23 42 / 6%);
+  }
+
+  .mobile-registration-progress__track {
+    height: 4px;
+    overflow: hidden;
+    border-radius: 99px;
+    background: #e8eef6;
+  }
+
+  .mobile-registration-progress__track span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: #3478d4;
+    transition: width 180ms ease;
+  }
+
+  .mobile-registration-progress__copy {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .mobile-registration-progress__copy span {
+    color: #63728a;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .06em;
+  }
+
+  .mobile-registration-progress__copy strong {
+    color: #18345a;
+    font-size: 20px;
+    line-height: 1.2;
+  }
+
+  .mobile-registration-progress p {
+    margin: 0;
+    color: #667085;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .paper-form {
+    min-height: 0;
+    padding: 18px 14px;
+    border: 1px solid #e5eaf1;
+    border-radius: 14px;
+    box-shadow: 0 6px 20px rgb(15 23 42 / 6%);
+  }
+
+  .form-header,
+  .contact-block,
+  .student-lines,
+  .course-table-wrap,
+  .policies {
+    margin-bottom: 14px;
+  }
+
+  .contact-block {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 10px;
+    background: #f6f8fb;
+  }
+
+  .contact-block > strong,
+  .contact-block .phone-line,
+  .contact-block .campus-line {
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  .contact-block .campus-line input,
+  .service-charge-toggle input {
+    width: 20px;
+    height: 20px;
+    flex: 0 0 20px;
+  }
+
+  .student-lines .full-line,
+  .student-lines .two-col-line {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .student-lines .full-line > span,
+  .student-lines .two-col-line label > span:first-child {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .student-name-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    width: 100%;
+  }
+
+  .registration-student-picker__heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+  }
+
+  .registration-student-picker__heading > span:not(.student-credit-balance) {
+    grid-column: 1 / -1;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .mobile-registration-review {
+    display: grid;
+    gap: 10px;
+    margin: 12px 0 18px;
+    padding: 14px;
+    border: 1px solid #dbe5f1;
+    border-radius: 12px;
+    background: #f8fafc;
+  }
+
+  .mobile-registration-review header,
+  .mobile-registration-review article,
+  .mobile-registration-review footer {
+    display: grid;
+    gap: 5px;
+  }
+
+  .mobile-registration-review header span,
+  .mobile-registration-review article span,
+  .mobile-registration-review small {
+    color: #667085;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .mobile-registration-review header strong {
+    font-size: 18px;
+  }
+
+  .mobile-registration-review article {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-top: 9px;
+    border-top: 1px solid #e1e7ef;
+  }
+
+  .mobile-registration-review article > div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .mobile-registration-review footer {
+    padding-top: 8px;
+    border-top: 1px solid #d8e0ea;
+  }
+
+  .mobile-registration-review footer span {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 14px;
+  }
+
+  .mobile-registration-actions {
+    position: fixed;
+    z-index: 850;
+    right: 0;
+    bottom: calc(60px + env(safe-area-inset-bottom));
+    left: 0;
+    display: grid;
+    gap: 8px;
+    padding: 10px 12px;
+    border-top: 1px solid #e5eaf1;
+    background: rgb(255 255 255 / 97%);
+    box-shadow: 0 -8px 24px rgb(16 42 67 / 8%);
+    backdrop-filter: blur(14px);
+  }
+
+  .mobile-registration-actions__amounts {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .mobile-registration-actions__amounts span {
+    display: grid;
+    gap: 1px;
+  }
+
+  .mobile-registration-actions__amounts small {
+    color: #667085;
+    font-size: 12px;
+  }
+
+  .mobile-registration-actions__amounts strong {
+    color: #182b49;
+    font-size: 16px;
+  }
+
+  .mobile-registration-actions__balance.is-due strong {
+    color: #b54708;
+  }
+
+  .mobile-registration-actions__balance.is-paid strong {
+    color: #067647;
+  }
+
+  .mobile-registration-actions__buttons {
+    display: flex;
+    gap: 8px;
+  }
+
+  .mobile-registration-actions__buttons > .el-button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 46px;
+    margin: 0;
+    font-size: 15px;
+  }
+
+  .mobile-registration-actions__buttons > .el-button:only-child {
+    width: 100%;
   }
 }
 

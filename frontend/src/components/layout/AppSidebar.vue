@@ -1,5 +1,5 @@
 <template>
-  <aside class="sidebar" :class="{ 'sidebar--collapsed': appStore.sidebarCollapsed }">
+  <aside id="app-mobile-navigation" class="sidebar" :class="{ 'sidebar--collapsed': appStore.sidebarCollapsed }">
     <div class="sidebar__brand">
       <img v-if="!appStore.sidebarCollapsed" :src="logoUrl" alt="logo" class="sidebar__logo-img" />
       <div v-else class="sidebar__logo sidebar__logo--collapsed">J</div>
@@ -55,8 +55,22 @@
         <div class="sidebar__settings-panel">
           <div class="sidebar__settings-heading">
             <strong>Display settings</strong>
-            <span>Adjust the text size across the system.</span>
+            <span>Choose the layout and text size for this device.</span>
           </div>
+          <div class="sidebar__layout-setting">
+            <strong>Layout</strong>
+            <el-radio-group
+              :model-value="appStore.layoutPreference"
+              class="sidebar__font-size-options"
+              @update:model-value="appStore.setLayoutPreference"
+            >
+              <el-radio-button value="auto">Auto</el-radio-button>
+              <el-radio-button value="mobile">Mobile</el-radio-button>
+              <el-radio-button value="desktop">Desktop</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="sidebar__layout-setting">
+            <strong>Text size</strong>
           <el-radio-group
             :model-value="appStore.fontSize"
             class="sidebar__font-size-options"
@@ -66,6 +80,7 @@
             <el-radio-button value="medium">Default</el-radio-button>
             <el-radio-button value="large">Large</el-radio-button>
           </el-radio-group>
+          </div>
         </div>
       </el-popover>
     </div>
@@ -174,6 +189,14 @@ function resolveIcon(icon?: keyof typeof iconMap) {
 .sidebar__font-size-options {
   display: flex;
   width: 100%;
+}
+
+.sidebar__layout-setting {
+  display: grid;
+  gap: 7px;
+  color: #344054;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .sidebar__font-size-options :deep(.el-radio-button) {

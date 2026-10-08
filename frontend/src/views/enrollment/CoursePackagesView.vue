@@ -3,8 +3,26 @@
     <section class="course-product-panel">
       <div class="panel-header">
         <span class="panel-header__title">Course Packages</span>
+        <div v-if="appStore.isMobileViewport" class="panel-header__actions">
+          <button
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileSearchExpanded"
+            aria-label="Open package search and filters"
+            @click="mobileSearchExpanded = !mobileSearchExpanded"
+          >
+            <el-icon><Search /></el-icon>
+          </button>
+        </div>
       </div>
 
+      <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" class="mobile-search-panel">
+      <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+        <span>Search packages</span>
+        <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+          <el-icon><Close /></el-icon>
+        </button>
+      </div>
       <el-form class="filters" :model="filters" inline>
         <el-form-item label="Name / No." class="filters__item">
           <el-input
@@ -51,6 +69,7 @@
           </el-button>
         </el-form-item>
       </el-form>
+      </section>
 
       <div v-loading="loading" class="package-group-list">
         <section v-for="group in groupedTableData" :key="group.key" class="package-group">
@@ -63,6 +82,7 @@
             <small>{{ group.packages.length }} packages</small>
           </header>
           <el-table
+            v-if="!appStore.isMobileViewport"
             :data="group.packages"
             row-key="id"
             class="product-table"
@@ -158,6 +178,50 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <div v-else class="mobile-package-list">
+            <article
+              v-for="pkg in group.packages"
+              :key="pkg.id"
+              class="mobile-package-card"
+              :class="{ 'mobile-package-card--low-balance': isLowBalanceRenewalDue(pkg) }"
+            >
+              <header class="mobile-package-card__heading">
+                <div>
+                  <strong>{{ pkg.studentName }}</strong>
+                  <span>{{ packageDisplayName(pkg) }}</span>
+                </div>
+                <el-tag size="small" :type="packageStatusType(pkg.packageStatus)">
+                  {{ packageStatusLabel(pkg.packageStatus) }}
+                </el-tag>
+              </header>
+              <div class="mobile-package-card__balance">
+                <div>
+                  <span>Available hours</span>
+                  <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(pkg) }">
+                    {{ formatHours(pkg.remainingUnits) }} <small>/ {{ formatHours(pkg.totalUnits) }} hours</small>
+                  </strong>
+                </div>
+                <el-progress :percentage="progressPercent(pkg)" :stroke-width="8" :show-text="false" />
+                <el-tag v-if="isLowBalanceRenewalDue(pkg)" size="small" type="danger">Renewal needed</el-tag>
+              </div>
+              <dl class="mobile-package-card__details">
+                <div>
+                  <dt>Schedule</dt>
+                  <dd><el-tag size="small" :type="scheduleStatusType(pkg.scheduleStatus)">{{ pkg.scheduleStatus }}</el-tag></dd>
+                </div>
+                <div>
+                  <dt>Next lesson</dt>
+                  <dd>{{ pkg.nextLessonStartAt ? formatScheduleDate(pkg.nextLessonStartAt) : 'Not scheduled' }}</dd>
+                </div>
+              </dl>
+              <div class="mobile-package-card__actions">
+                <el-button type="primary" plain @click="openOneOnOneRenewal(pkg)">Renew</el-button>
+                <el-button @click="openDetailDialog(pkg)">Package details</el-button>
+              </div>
+            </article>
+            <el-empty v-if="group.packages.length === 0" description="No packages in this group." />
+          </div>
         </section>
         <el-empty v-if="!loading && groupedTableData.length === 0" description="No course packages found." />
       </div>
@@ -168,7 +232,7 @@
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
           background
-          layout="prev, pager, next, sizes"
+          :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
           :page-sizes="[10, 20, 50, 100]"
           :total="pagination.total"
           @current-change="loadData"
@@ -619,6 +683,7 @@
 </template>
 
 <script setup lang="ts">
+import { Close, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -640,6 +705,7 @@ import { fetchRecurringScheduleRule, fetchRecurringScheduleRules } from '@/api/s
 import { scheduleEndTimeForDisplay } from '@/utils/schedule-time';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
+import { useAppStore } from '@/stores/app';
 import type { OccupiedSlotDef } from '@/components/WeeklyTimeSelector.vue';
 import type {
   CoursePackageItem,
@@ -652,6 +718,8 @@ import type {
 } from '@/types/domain';
 
 const router = useRouter();
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 const RENEWAL_DUE_DAYS = 15;
 const LOW_BALANCE_RENEWAL_HOURS = 10;
 const loading = ref(false);
@@ -714,7 +782,7 @@ const filters = reactive({
 
 const pagination = reactive({
   page: 1,
-  size: 100,
+  size: appStore.isMobileViewport ? 20 : 100,
   total: 0,
   get start() {
     return this.total === 0 ? 0 : (this.page - 1) * this.size + 1;
@@ -1251,6 +1319,14 @@ watch(detailTab, (tab) => {
   }
 });
 
+watch(() => appStore.isMobileViewport, (isMobile) => {
+  const nextSize = isMobile ? 20 : 100;
+  if (pagination.size === nextSize) return;
+  pagination.size = nextSize;
+  pagination.page = 1;
+  loadData();
+});
+
 // ─── Lesson Detail Dialog ─────────────────────────────
 async function openLessonDetailDialog(row: LessonRecordItem) {
   try {
@@ -1387,6 +1463,124 @@ loadTeachers();
 
 .product-table :deep(.low-balance-renewal-row:hover > td) {
   background: #ffe1e1 !important;
+}
+
+.mobile-package-list {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+}
+
+.mobile-package-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e1e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.mobile-package-card--low-balance {
+  border-color: #f1b7b7;
+  background: #fffafa;
+}
+
+.mobile-package-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mobile-package-card__heading > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.mobile-package-card__heading strong,
+.mobile-package-card__heading span {
+  overflow-wrap: anywhere;
+}
+
+.mobile-package-card__heading strong {
+  color: #26384c;
+  font-size: 15px;
+}
+
+.mobile-package-card__heading span {
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mobile-package-card__balance {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 9px;
+  background: #f5f8fc;
+}
+
+.mobile-package-card__balance > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mobile-package-card__balance > div > span,
+.mobile-package-card__details dt {
+  color: #718096;
+  font-size: 12px;
+}
+
+.mobile-package-card__balance strong {
+  color: #253b53;
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.mobile-package-card__balance strong small {
+  color: #718096;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.mobile-package-card__details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 12px 0 0;
+}
+
+.mobile-package-card__details > div {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 5px;
+}
+
+.mobile-package-card__details dd {
+  min-width: 0;
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.mobile-package-card__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.mobile-package-card__actions .el-button {
+  width: 100%;
+  min-height: 42px;
+  margin: 0;
 }
 
 .low-balance-renewal-text {
@@ -1554,4 +1748,34 @@ loadTeachers();
 .lesson-detail { display: flex; flex-direction: column; gap: 16px; }
 .detail-notes { margin: 0; color: #606266; font-size: 13px; line-height: 1.5; }
 .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 920px) {
+  .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+  .filters__item, .filters__item :deep(.el-input), .filters__item :deep(.el-select) { width: 100% !important; }
+  .package-group__header { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+  .detail-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 640px) {
+  .course-product-panel { padding: 12px; }
+  .filters { grid-template-columns: minmax(0, 1fr); }
+  .filters :deep(.el-form-item) { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .filters :deep(.el-form-item__label) {
+    display: block;
+    width: auto;
+    float: none;
+    padding: 0;
+    line-height: 1.3;
+    text-align: left;
+  }
+  .filters :deep(.el-form-item__content) { width: 100%; margin-left: 0 !important; }
+  .package-group__header { flex-direction: column; }
+  .package-group__header > * { max-width: 100%; }
+  .detail-grid { grid-template-columns: 1fr; }
+  .dialog-footer { flex-wrap: wrap; }
+  .table-footer { align-items: stretch; flex-direction: column; gap: 8px; }
+  .table-footer :deep(.el-pagination) { width: 100%; min-width: 0; }
+  .lesson-dialog :deep(.el-dialog__body) { max-height: none; padding: 12px 14px; }
+  .lesson-dialog :deep(.el-dialog__header), .lesson-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
+}
 </style>

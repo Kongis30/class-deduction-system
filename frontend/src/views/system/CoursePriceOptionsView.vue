@@ -12,12 +12,14 @@
         </div>
       </div>
 
-      <div class="pricing-mode-tabs">
+      <div class="pricing-mode-tabs mobile-segmented-tabs" role="tablist" aria-label="Course pricing mode">
         <button
           v-for="mode in courseModes"
           :key="mode.value"
           class="pricing-mode-tab"
           :class="{ 'pricing-mode-tab--active': selectedMode === mode.value }"
+          role="tab"
+          :aria-selected="selectedMode === mode.value"
           type="button"
           @click="switchCourseMode(mode.value)"
         >
@@ -112,6 +114,7 @@
                 </div>
 
                 <el-table
+                  v-if="!appStore.isMobileViewport"
                   :data="group.rows"
                   row-key="id"
                   class="config-table price-matrix-table payment-option-table"
@@ -209,6 +212,46 @@
                     </template>
                   </el-table-column>
                 </el-table>
+
+                <div v-else class="mobile-price-option-list">
+                  <article v-for="row in group.rows" :key="row.id" class="mobile-price-option-card">
+                    <header class="mobile-price-option-card__heading">
+                      <div><strong>{{ paymentOptionName(row) }}</strong><span>{{ packageLengthLabel(row) || 'Package length not set' }}</span></div>
+                      <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">{{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</el-tag>
+                    </header>
+                    <dl class="mobile-price-option-card__prices">
+                      <div>
+                        <dt>{{ selectedMode === 'GROUP' ? 'Full-day price' : 'Price' }}</dt>
+                        <dd>{{ formatMoney(row.totalPrice ?? row.priceAmount) }}</dd>
+                        <small>{{ priceUnitLabel(row) }}</small>
+                      </div>
+                      <div v-if="selectedMode === 'GROUP'">
+                        <dt>Half-day price</dt>
+                        <dd>{{ row.halfDayPrice ? formatMoney(row.halfDayPrice) : '—' }}</dd>
+                        <small v-if="row.halfDayPrice && halfDayUnitPrice(row)">{{ formatMoney(halfDayUnitPrice(row)) }} / {{ packageUnitText(row.packageUnit || row.groupBillingType || 'package').toLowerCase() }}</small>
+                      </div>
+                    </dl>
+                    <div class="mobile-price-option-card__meta">
+                      <el-tag size="small" :type="row.referenced ? 'warning' : 'info'" effect="plain">
+                        {{ row.referenced ? `Used ${row.referenceCount ?? 0}` : 'Not used' }}
+                      </el-tag>
+                      <el-tag v-if="hasRowIssue(row)" size="small" type="danger" effect="plain">Needs setup</el-tag>
+                    </div>
+                    <div class="mobile-price-option-card__actions">
+                      <el-button type="primary" plain @click="openDialog(row)">Edit option</el-button>
+                      <el-dropdown trigger="click">
+                        <el-button>More <el-icon><ArrowDown /></el-icon></el-button>
+                        <template #dropdown>
+                          <el-dropdown-menu>
+                            <el-dropdown-item v-if="row.status === 'ACTIVE'" @click="deactivateOption(row)">Deactivate</el-dropdown-item>
+                            <el-dropdown-item divided class="danger-menu-item" @click="removeOption(row.id)">Delete</el-dropdown-item>
+                          </el-dropdown-menu>
+                        </template>
+                      </el-dropdown>
+                    </div>
+                  </article>
+                  <el-empty v-if="group.rows.length === 0" description="No registration options yet." :image-size="48" />
+                </div>
 
                 <section v-if="selectedMode === 'GROUP'" class="actual-class-schedules">
                   <div class="actual-class-schedules__head">
@@ -311,7 +354,7 @@
               <el-pagination
                 v-model:current-page="query.pageNum"
                 v-model:page-size="query.pageSize"
-                layout="total, sizes, prev, pager, next"
+                :layout="appStore.isMobileViewport ? 'total, prev, pager, next' : 'total, sizes, prev, pager, next'"
                 :total="total"
                 :page-sizes="[20, 50, 100, 200]"
                 @current-change="loadOptions"
@@ -753,6 +796,7 @@ import { ArrowDown, ArrowLeft, InfoFilled } from '@element-plus/icons-vue';
 import { ElIcon, ElMessage, ElMessageBox, ElTooltip } from 'element-plus';
 import { computed, defineComponent, h, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useAppStore } from '@/stores/app';
 
 import { extractErrorMessage } from '@/api/http';
 import {
@@ -893,6 +937,7 @@ const courseModes: CourseModeDef[] = [
 
 const route = useRoute();
 const router = useRouter();
+const appStore = useAppStore();
 const oneOnOneHourChoices = [20, 40, 60, 80, 100, 120];
 const groupPackageUnits: Array<{ value: Exclude<PackageUnit, 'HOUR'>; label: string }> = [
   { value: 'MONTH', label: 'By month' },
@@ -2287,6 +2332,21 @@ function normalizeSlotAttendance(value?: string) {
 </script>
 
 <style scoped>
+.mobile-price-option-list { display: grid; gap: 8px; padding: 10px; }
+.mobile-price-option-card { min-width: 0; padding: 13px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+.mobile-price-option-card__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; }
+.mobile-price-option-card__heading > div { display: grid; min-width: 0; gap: 4px; }
+.mobile-price-option-card__heading strong { color: #26384c; font-size: 14px; overflow-wrap: anywhere; }
+.mobile-price-option-card__heading span { color: #718096; font-size: 12px; }
+.mobile-price-option-card__prices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 12px 0 0; }
+.mobile-price-option-card__prices > div { display: grid; gap: 4px; }
+.mobile-price-option-card__prices dt { color: #718096; font-size: 11px; }
+.mobile-price-option-card__prices dd { margin: 0; color: #1f3855; font-size: 16px; font-weight: 700; }
+.mobile-price-option-card__prices small { color: #718096; font-size: 11px; }
+.mobile-price-option-card__meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+.mobile-price-option-card__actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.mobile-price-option-card__actions .el-button { min-height: 40px; margin: 0; }
+
 .category-dialog__hint {
   margin: 0 0 12px;
   font-size: 13px;
@@ -2371,6 +2431,32 @@ function normalizeSlotAttendance(value?: string) {
 .pricing-mode-tab--active {
   border-bottom-color: #18b58a;
   color: #18b58a;
+}
+
+@media (max-width: 920px) {
+  .pricing-mode-tabs {
+    gap: 4px;
+    padding: 4px;
+    border-bottom: 0;
+  }
+
+  .pricing-mode-tab,
+  .pricing-mode-tab--active {
+    height: 36px;
+    padding: 0 10px;
+    margin-bottom: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #53657d;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  .pricing-mode-tab--active {
+    background: #fff;
+    color: #3478df;
+  }
 }
 
 .matrix-layout {

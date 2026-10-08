@@ -8,7 +8,7 @@ import {
   assertRegistrationDbState,
   cleanupAcceptanceData,
   createClassroomByApi,
-  createGroupProductAndPriceByApi,
+  createGroupProductAndPlanByApi,
   createOneOnOneProductAndPriceByApi,
   createTeacherAccountByApi,
   ensureTransferPaymentMethod,
@@ -98,7 +98,7 @@ test.describe.serial('Acceptance - Registration intake', () => {
     await ensureTransferPaymentMethod(request, token);
     const teacher = await createTeacherAccountByApi(request, token, suffix);
     const classroom = await createClassroomByApi(request, token, suffix);
-    const { product, option, classId } = await createGroupProductAndPriceByApi(
+    const { product, option, classId } = await createGroupProductAndPlanByApi(
       request,
       token,
       suffix,
@@ -152,7 +152,7 @@ test.describe.serial('Acceptance - Registration intake', () => {
       expect(enrollment).toBeTruthy();
       expect(String(enrollment!.class_id)).toBe(String(classId));
       expect(String(enrollment!.student_id)).toBe(String(order!.student_id));
-      expect(enrollment!.billing_type).toBe('SESSION');
+      expect(enrollment!.billing_type).toBe('PER_SESSION');
       expect(Number(enrollment!.purchased_quantity)).toBe(8);
       expect(enrollment!.status).toBe('ACTIVE');
 
@@ -211,12 +211,12 @@ test.describe.serial('Acceptance - Registration intake', () => {
     expect(classList.records.some((item) => String(item.classId) === String(classId))).toBe(true);
   });
 
-  test('班课 actual class 未排课时也应允许先报名', async ({ request }) => {
+  test('班课课次数超过可排日期时阻止报名，不静默减少权益', async ({ request }) => {
     const token = await apiLogin(request);
     const suffix = `unscheduled-group-${Date.now().toString(36)}`;
     const teacher = await createTeacherAccountByApi(request, token, suffix);
     const classroom = await createClassroomByApi(request, token, suffix);
-    const { product, option, classId } = await createGroupProductAndPriceByApi(
+    const { product, option, classId } = await createGroupProductAndPlanByApi(
       request,
       token,
       suffix,
@@ -225,26 +225,20 @@ test.describe.serial('Acceptance - Registration intake', () => {
       { withSchedule: false },
     );
 
-    const result = await submitGroupRegistrationByApi(request, token, {
+    await expect(submitGroupRegistrationByApi(request, token, {
       suffix,
       productId: product.id,
       option,
       classId,
       sessionCount: 8,
-    });
-
-    expect(result.courseArtifacts).toHaveLength(1);
-    expect(result.courseArtifacts[0].classEnrollmentId).toBeTruthy();
+    })).rejects.toThrow('GROUP_PLAN_SCHEDULE_INSUFFICIENT');
     await withAcceptanceDb(async (db) => {
-      const enrollment = await queryOne<Record<string, any>>(
+      const enrollments = await queryAll<Record<string, any>>(
         db,
-        'SELECT * FROM class_enrollment WHERE id = ?',
-        [result.courseArtifacts[0].classEnrollmentId],
+        'SELECT id FROM class_enrollment WHERE class_id = ?',
+        [classId],
       );
-      expect(enrollment).toBeTruthy();
-      expect(String(enrollment!.class_id)).toBe(String(classId));
-      expect(enrollment!.billing_type).toBe('SESSION');
-      expect(Number(enrollment!.purchased_quantity)).toBe(8);
+      expect(enrollments).toHaveLength(0);
 
       const occurrenceRows = await queryAll<Record<string, any>>(
         db,

@@ -370,6 +370,73 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldListPackageUnderEachAssignedTeacherWithOnlyTheirLessons() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity firstTeacherLesson = buildOneOnOneOccurrence();
+        LessonOccurrenceEntity secondTeacherLesson = buildOneOnOneOccurrence();
+        secondTeacherLesson.setId(4002L);
+        secondTeacherLesson.setLessonNo("O2O202609010002");
+        secondTeacherLesson.setPlannedTeacherId(302L);
+
+        TeacherEntity secondTeacher = new TeacherEntity();
+        secondTeacher.setId(302L);
+        secondTeacher.setTeacherNo("T302");
+        secondTeacher.setTeacherName("Ms Sophia");
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(firstTeacherLesson, secondTeacherLesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher(), secondTeacher));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).hasSize(2);
+        assertThat(result).extracting(OneOnOneTeacherVO::teacherId).containsExactly(301L, 302L);
+        assertThat(result).allSatisfy(teacher -> {
+            assertThat(teacher.students()).singleElement()
+                    .satisfies(student -> assertThat(student.studentName()).isEqualTo("Jin Tang"));
+            assertThat(teacher.students().get(0).packages()).singleElement()
+                    .satisfies(pkg -> assertThat(pkg.lessons())
+                            .singleElement()
+                            .satisfies(lesson -> assertThat(lesson.plannedTeacherId()).isEqualTo(teacher.teacherId())));
+        });
+    }
+
+    @Test
+    void shouldLimitTeacherDeductionViewToCurrentTeachersLessons() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity ownLesson = buildOneOnOneOccurrence();
+        LessonOccurrenceEntity otherTeacherLesson = buildOneOnOneOccurrence();
+        otherTeacherLesson.setId(4002L);
+        otherTeacherLesson.setLessonNo("O2O202609010002");
+        otherTeacherLesson.setPlannedTeacherId(302L);
+
+        OneOnOneDeductionQuery query = new OneOnOneDeductionQuery();
+        query.setTeacherId(302L);
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        // 首次查询用于限定老师课包；随后加载共享课包中的完整课次，再由返回组别隔离。
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(List.of(ownLesson), List.of(ownLesson, otherTeacherLesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(query, teacherUser());
+
+        assertThat(result).singleElement().satisfies(teacher -> {
+            assertThat(teacher.teacherId()).isEqualTo(301L);
+            assertThat(teacher.students()).singleElement()
+                    .satisfies(student -> assertThat(student.packages()).singleElement()
+                            .satisfies(pkg -> assertThat(pkg.lessons()).singleElement()
+                                    .satisfies(lesson -> {
+                                        assertThat(lesson.occurrenceId()).isEqualTo(ownLesson.getId());
+                                        assertThat(lesson.plannedTeacherId()).isEqualTo(301L);
+                                    })));
+        });
+    }
+
+    @Test
     void shouldKeepCompletedPackageLessonHistoryInDeductionQuery() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         coursePackage.setPackageStatus("COMPLETED");

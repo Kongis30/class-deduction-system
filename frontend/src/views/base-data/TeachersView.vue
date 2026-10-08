@@ -4,46 +4,75 @@
       <div class="panel-header">
         <span class="panel-header__title">Teachers</span>
         <div class="panel-header__actions">
-          <el-button text size="small" @click="openDeletedDialog">
+          <button
+            v-if="appStore.isMobileViewport"
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileSearchExpanded"
+            aria-label="Open teacher search and filters"
+            @click="mobileSearchExpanded = !mobileSearchExpanded"
+          >
+            <el-icon><Search /></el-icon>
+          </button>
+          <el-button text size="small" aria-label="View deleted teachers" @click="openDeletedDialog">
             <el-icon><Delete /></el-icon>
             Deleted
           </el-button>
         </div>
       </div>
 
-      <el-form class="filters" :model="filters" inline>
-        <el-form-item label="Name" class="filters__item">
-          <el-input
-            v-model="filters.keyword"
-            placeholder="Search by name"
-            clearable
-            style="width: 180px;"
-            @input="handleFilterChange"
-          />
-        </el-form-item>
-        <el-form-item label="Subject" class="filters__item">
-          <el-input
-            v-model="filters.subject"
-            placeholder="Search by subject"
-            clearable
-            style="width: 140px;"
-            @input="handleFilterChange"
-          />
-        </el-form-item>
-        <el-form-item label="Status" class="filters__item">
-          <el-select
-            v-model="filters.status"
-            placeholder="All"
-            clearable
-            style="width: 140px;"
-            @change="handleFilterChange"
+      <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" class="mobile-search-panel">
+        <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+          <span>Search teachers</span>
+          <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+        <el-form class="filters" :model="filters" inline>
+          <el-form-item label="Name" class="filters__item">
+            <el-input
+              v-model="filters.keyword"
+              placeholder="Search by name"
+              clearable
+              style="width: 180px;"
+              @input="handleFilterInput"
+              @keyup.enter="handleFilterEnter"
+            />
+          </el-form-item>
+          <el-form-item label="Subject" class="filters__item">
+            <el-input
+              v-model="filters.subject"
+              placeholder="Search by subject"
+              clearable
+              style="width: 140px;"
+              @input="handleFilterInput"
+              @keyup.enter="handleFilterEnter"
+            />
+          </el-form-item>
+          <el-form-item label="Status" class="filters__item">
+            <el-select
+              v-model="filters.status"
+              placeholder="All"
+              clearable
+              style="width: 140px;"
+              @change="handleFilterChange"
+            >
+              <el-option label="Active" value="ACTIVE" />
+              <el-option label="Inactive" value="INACTIVE" />
+            </el-select>
+          </el-form-item>
+          <el-button
+            v-if="appStore.isMobileViewport"
+            class="teacher-filter-submit"
+            type="primary"
+            @click="handleFilterChange"
           >
-            <el-option label="Active" value="ACTIVE" />
-            <el-option label="Inactive" value="INACTIVE" />
-          </el-select>
-        </el-form-item>
-      </el-form>
+            Search
+          </el-button>
+        </el-form>
+      </section>
 
+      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe horizontally to see more columns</p>
       <el-table
         v-loading="loading"
         :data="tableData"
@@ -86,9 +115,34 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Actions" min-width="220" fixed="right">
+        <el-table-column
+          :label="appStore.isMobileViewport ? 'More' : 'Actions'"
+          :width="appStore.isMobileViewport ? 72 : 220"
+          fixed="right"
+          align="center"
+        >
           <template #default="{ row }">
-            <div class="table-actions">
+            <el-dropdown
+              v-if="appStore.isMobileViewport"
+              class="mobile-table-actions"
+              trigger="click"
+              placement="bottom-end"
+              @click.stop
+            >
+              <el-button text circle aria-label="More teacher actions" @click.stop>
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="openTeacherAccountDialog(row)">
+                    {{ accountForTeacher(row) ? 'Edit login' : 'Create login' }}
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="openTeacherDialog(row)">Edit teacher</el-dropdown-item>
+                  <el-dropdown-item divided @click="handleDeleteTeacher(row)">Delete teacher</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+            <div v-else class="table-actions">
               <el-button text type="primary" @click="openTeacherAccountDialog(row)">
                 {{ accountForTeacher(row) ? 'Edit login' : 'Create login' }}
               </el-button>
@@ -105,7 +159,7 @@
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
           background
-          layout="prev, pager, next, sizes"
+          :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
           :page-sizes="[10, 20, 50]"
           :total="pagination.total"
           @current-change="loadData"
@@ -363,7 +417,7 @@
 </template>
 
 <script setup lang="ts">
-import { Delete } from '@element-plus/icons-vue';
+import { Close, Delete, MoreFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
@@ -393,7 +447,10 @@ import { fetchClassGroupsByTeacher } from '@/api/schedule';
 import type { SubjectItem, TeacherAccountItem, TeacherItem } from '@/types/domain';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
+import { useAppStore } from '@/stores/app';
 
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 const loading = ref(false);
 const submitting = ref(false);
 const teacherDialogVisible = ref(false);
@@ -450,12 +507,21 @@ function handleFilterChange() {
   loadData();
 }
 
+function handleFilterInput() {
+  if (!appStore.isMobileViewport) handleFilterChange();
+}
+
+function handleFilterEnter() {
+  if (appStore.isMobileViewport) handleFilterChange();
+}
+
 
 async function loadData() {
   loading.value = true;
   try {
     const params: TeacherQuery = {
       keyword: filters.keyword || undefined,
+      subject: filters.subject || undefined,
       status: filters.status || undefined,
       pageNum: pagination.page,
       pageSize: pagination.size,
@@ -565,7 +631,9 @@ async function submitTeacherAccount() {
   }
 }
 
-watch(() => filters.status, handleFilterChange);
+watch(() => filters.status, () => {
+  if (!appStore.isMobileViewport) handleFilterChange();
+});
 
 
 const subjectItems = ref<SubjectItem[]>([]);
@@ -920,6 +988,19 @@ onBeforeUnmount(() => {
   color: #909399;
 }
 
+@media (max-width: 640px) {
+  .table-footer {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .table-footer :deep(.el-pagination) {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
@@ -1005,5 +1086,86 @@ onBeforeUnmount(() => {
 
 .teacher-form__full {
   grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .course-product-panel { padding: 12px; }
+
+  .panel-header {
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .panel-header__title { display: none; }
+
+  .panel-header__actions {
+    justify-content: flex-end;
+    width: auto;
+    margin-left: auto;
+  }
+
+  .panel-header__actions > .el-button {
+    min-height: 36px;
+    flex: 0 0 auto;
+    margin: 0;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .filters :deep(.el-form-item) {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: stretch;
+    margin: 0;
+  }
+
+  .filters__item,
+  .filters__item :deep(.el-form-item__content),
+  .filters__item :deep(.el-input),
+  .filters__item :deep(.el-select) {
+    width: 100% !important;
+    min-width: 0;
+  }
+
+  .filters__item :deep(.el-form-item__label) {
+    padding: 0 0 4px;
+    line-height: 1.2;
+    font-size: 11px;
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .filters__item :deep(.el-input__wrapper),
+  .filters__item :deep(.el-select__wrapper) {
+    min-height: 42px;
+  }
+
+  .filters__item :deep(.el-input__inner),
+  .filters__item :deep(.el-select__placeholder),
+  .filters__item :deep(.el-select__selected-item) {
+    font-size: 13px;
+  }
+
+  .teacher-filter-submit {
+    width: 100%;
+    min-height: 42px;
+    align-self: end;
+    margin: 0;
+    font-size: 12px;
+  }
+
+  .teacher-form__row { grid-template-columns: 1fr; gap: 0; }
+  .teacher-dialog :deep(.el-dialog__body) { max-height: none; padding: 12px 14px; }
+  .teacher-dialog :deep(.el-dialog__header), .teacher-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
 }
 </style>

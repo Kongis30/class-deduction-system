@@ -69,6 +69,69 @@
 
         <!-- Right: Calendar -->
         <main class="calendar-panel">
+          <div v-if="!isStudent && appStore.isMobileViewport" class="calendar-mobile-roster">
+            <button
+              type="button"
+              class="calendar-mobile-roster__trigger"
+              :aria-expanded="mobileRosterOpen"
+              @click="toggleMobileRoster"
+            >
+              <span>{{ selectedStudentName || 'Select a student' }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </button>
+            <div v-if="mobileRosterOpen" class="calendar-mobile-roster__panel">
+              <div class="calendar-mobile-roster__search">
+                <el-input v-model="searchText" placeholder="Search students..." clearable :prefix-icon="Search" />
+              </div>
+              <div v-loading="studentsLoading" class="calendar-mobile-roster__groups">
+                <div v-if="!studentsLoading && filteredStudentGroups.length === 0" class="student-list-panel__empty">
+                  {{ students.length === 0 ? 'No active 1-on-1 students' : 'No students found' }}
+                </div>
+                <section v-for="product in filteredStudentGroups" :key="product.key" class="student-product-group">
+                  <button
+                    type="button"
+                    class="student-group__header student-product-group__header"
+                    :class="{ 'student-group__header--collapsed': mobileCollapsedStudentGroupKeys.has(product.key) }"
+                    :aria-expanded="!mobileCollapsedStudentGroupKeys.has(product.key)"
+                    @click="toggleMobileStudentGroup(product.key)"
+                  >
+                    <el-icon class="student-group__caret"><ArrowRight /></el-icon>
+                    <span class="student-group__name">{{ product.name }}</span>
+                    <span class="student-group__count">{{ product.studentCount }}</span>
+                  </button>
+                  <div v-if="!mobileCollapsedStudentGroupKeys.has(product.key)">
+                    <section v-for="grade in product.grades" :key="grade.key" class="student-grade-group">
+                      <button
+                        type="button"
+                        class="student-group__header student-grade-group__header"
+                        :class="{ 'student-group__header--collapsed': mobileCollapsedStudentGroupKeys.has(grade.key) }"
+                        :aria-expanded="!mobileCollapsedStudentGroupKeys.has(grade.key)"
+                        @click="toggleMobileStudentGroup(grade.key)"
+                      >
+                        <el-icon class="student-group__caret"><ArrowRight /></el-icon>
+                        <span class="student-group__name">{{ grade.name }}</span>
+                        <span class="student-group__count">{{ grade.students.length }}</span>
+                      </button>
+                      <div v-if="!mobileCollapsedStudentGroupKeys.has(grade.key)">
+                        <button
+                          v-for="student in grade.students"
+                          :key="student.id"
+                          type="button"
+                          class="student-item calendar-mobile-roster__item"
+                          :class="{ 'student-item--active': selectedStudentId === student.id }"
+                          @click="selectMobileStudent(student.id)"
+                        >
+                          <span class="student-item__name">{{ student.studentName }}</span>
+                          <el-icon v-if="selectedStudentId === student.id" color="#409eff"><Check /></el-icon>
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+
           <!-- No student selected -->
           <div v-if="!selectedStudentId" class="calendar-empty">
             <el-icon :size="40" color="#c0c4cc"><Calendar /></el-icon>
@@ -130,6 +193,7 @@
                 :week-start-date="weekMonday"
                 :readonly="true"
                 :hide-hint="true"
+                :pinch-zoom-enabled="appStore.isMobileViewport"
                 @cell-click="onCellClick"
               />
             </template>
@@ -199,6 +263,7 @@
                 :week-start-date="weekMonday"
                 :readonly="true"
                 :hide-hint="true"
+                :pinch-zoom-enabled="appStore.isMobileViewport"
                 @cell-click="onCellClick"
               />
             </template>
@@ -212,6 +277,7 @@
       v-model="detailDialogVisible"
       title="Lesson Detail"
       width="540px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
       class="schedule-dialog"
     >
@@ -281,7 +347,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@element-plus/icons-vue';
+import { ArrowDown, ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import dayjs from 'dayjs';
@@ -297,8 +363,10 @@ import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.v
 import { useAuthStore } from '@/stores/auth';
 import { isStudentUser } from '@/types/auth';
 import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
+import { useAppStore } from '@/stores/app';
 
 const authStore = useAuthStore();
+const appStore = useAppStore();
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
 
 const loading = ref(false);
@@ -306,6 +374,8 @@ const studentsLoading = ref(false);
 const students = ref<StudentRosterItem[]>([]);
 const searchText = ref('');
 const selectedStudentId = ref<EntityId | null>(null);
+const mobileRosterOpen = ref(false);
+const mobileCollapsedStudentGroupKeys = ref(new Set<string>());
 const weekOffset = ref(0);
 const occurrences = ref<LessonOccurrenceItem[]>([]);
 const emptySlots = ref<SlotDef[]>([]);
@@ -418,6 +488,26 @@ function toggleStudentGroup(key: string) {
   collapsedStudentGroupKeys.value = next;
 }
 
+function toggleMobileRoster() {
+  if (mobileRosterOpen.value) {
+    mobileRosterOpen.value = false;
+    searchText.value = '';
+    return;
+  }
+  searchText.value = '';
+  mobileCollapsedStudentGroupKeys.value = new Set(
+    filteredStudentGroups.value.flatMap(product => [product.key, ...product.grades.map(grade => grade.key)]),
+  );
+  mobileRosterOpen.value = true;
+}
+
+function toggleMobileStudentGroup(key: string) {
+  const next = new Set(mobileCollapsedStudentGroupKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  mobileCollapsedStudentGroupKeys.value = next;
+}
+
 const selectedStudentName = computed(() => {
   const s = students.value.find(s => s.id === selectedStudentId.value);
   return s?.studentName ?? '';
@@ -430,6 +520,11 @@ async function onStudentSelect(id: EntityId) {
   packageLastDates.value = {};
   loadSchedule();
   loadPackageInfo();
+}
+
+function selectMobileStudent(id: EntityId) {
+  void onStudentSelect(id);
+  mobileRosterOpen.value = false;
 }
 
 async function loadPackageInfo() {
@@ -549,6 +644,7 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
       startTime: start.format('HH:mm'),
       endTime: dayjs(o.plannedEndAt).format('HH:mm'),
       courseLabel: o.className || o.packageName || o.lessonNo || 'Lesson',
+      isOnline: o.deliveryMode === 'ONLINE',
       displayTitle: lessonTitle,
       subjectName: o.subjectName,
       studentName: o.studentName,
@@ -1136,6 +1232,105 @@ button.student-conflict-card:hover {
 
   .student-lesson-card__detail {
     grid-column: 1 / -1;
+  }
+}
+
+.calendar-mobile-roster {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .student-calendar {
+    height: auto;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .student-calendar .student-calendar__body {
+    display: block;
+  }
+
+  .student-list-panel {
+    display: none;
+  }
+
+  .calendar-mobile-roster {
+    position: relative;
+    z-index: 30;
+    display: block;
+    margin-bottom: 10px;
+  }
+
+  .calendar-mobile-roster__trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 42px;
+    padding: 0 12px;
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    background: #fff;
+    color: #606266;
+    font: inherit;
+    text-align: left;
+  }
+
+  .calendar-mobile-roster__trigger .el-icon { color: #909399; }
+
+  .calendar-mobile-roster__panel {
+    position: absolute;
+    z-index: 31;
+    top: calc(100% + 5px);
+    right: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: min(55vh, 440px);
+    overflow: hidden;
+    border: 1px solid #dce4ed;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 12px 28px rgba(31, 42, 68, 0.18);
+  }
+
+  .calendar-mobile-roster__search { padding: 8px; border-bottom: 1px solid #e8edf2; }
+  .calendar-mobile-roster__groups { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .calendar-mobile-roster__item { width: 100%; border: 0; background: #fff; font: inherit; text-align: left; }
+
+  .calendar-controls {
+    align-items: flex-start;
+  }
+
+  .calendar-controls__nav {
+    display: grid;
+    width: 100%;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .calendar-controls__nav :deep(.el-button) { height: 34px; padding: 0 8px; font-size: 12px; }
+  .calendar-controls__nav :deep(.el-button-group .el-button) { width: 34px; min-width: 34px; }
+  .calendar-controls__nav :deep(.el-date-editor) { width: 100% !important; height: 34px; }
+  .calendar-controls__nav :deep(.el-date-editor .el-input__wrapper) { min-height: 34px; padding: 0 8px; }
+  .calendar-controls__nav :deep(.el-date-editor .el-input__inner) { font-size: 12px; }
+  .calendar-controls__nav :deep(.el-tag) { font-size: 11px; }
+
+  .calendar-controls__label {
+    flex: 1 1 auto;
+    text-align: center;
+    font-size: 12px;
+  }
+
+  .calendar-controls__student { display: none; }
+
+  :deep(.el-dialog.is-fullscreen) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  :deep(.el-dialog.is-fullscreen .el-dialog__body) {
+    flex: 1;
   }
 }
 </style>

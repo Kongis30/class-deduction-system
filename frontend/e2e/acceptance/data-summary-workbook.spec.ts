@@ -210,6 +210,31 @@ test('Data Summary 应在表格底部显示 Product Tab 并按产品过滤数据
   await expect(workbook.getByText('-$2,000')).toBeVisible();
 });
 
+test('打印班级名单前必须选择一个班级，且只打印所选班级', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.print = () => { document.body.dataset.printCalled = 'true'; };
+  });
+  await loginAsAdmin(page);
+  await mockProducts(page);
+  await mockSummary(page, baseRows);
+
+  await page.goto('/data-summary');
+  await page.getByRole('button', { name: 'Print class roster' }).click();
+
+  const printButton = page.getByRole('button', { name: 'Print', exact: true });
+  await expect(printButton).toBeDisabled();
+  await page.getByPlaceholder('Select a class').click();
+  await page.locator('.el-select-dropdown__item').first().click();
+  await expect(page.getByText('2 students will be printed')).toBeVisible();
+  await expect(printButton).toBeEnabled();
+  await printButton.click();
+
+  await expect.poll(() => page.locator('body').getAttribute('data-print-called')).toBe('true');
+  await expect(page.locator('.roster-print__page')).toHaveCount(1);
+  await expect(page.locator('.roster-print__page')).toContainText('Summer Liu');
+  await expect(page.locator('.roster-print__page')).toContainText('Hong Xuan Zheng');
+});
+
 test('切换 Product Tab 应保留每个产品的筛选排序与分页状态', async ({ page }) => {
   await loginAsAdmin(page);
   await mockProducts(page);

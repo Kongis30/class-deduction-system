@@ -8,8 +8,19 @@
       <div class="schedule-panel__body">
         <!-- Column 1: Students -->
         <aside class="col-panel col-students">
-          <div class="col-panel__header">
+          <div class="col-panel__header schedule-student-search">
+            <button
+              v-if="appStore.isMobileViewport"
+              type="button"
+              class="mobile-search-trigger"
+              :aria-expanded="mobileStudentSearchExpanded"
+              aria-label="Search students"
+              @click="mobileStudentSearchExpanded = !mobileStudentSearchExpanded"
+            >
+              <el-icon><Search /></el-icon>
+            </button>
             <el-input
+              v-show="!appStore.isMobileViewport || mobileStudentSearchExpanded"
               v-model="studentSearch"
               placeholder="Search students..."
               clearable
@@ -63,7 +74,7 @@
         </aside>
 
         <!-- Column 2: Packages -->
-        <aside class="col-panel col-packages">
+        <aside class="col-panel col-packages" :class="{ 'col-panel--mobile-hidden': !selectedStudentId }">
           <div class="col-panel__body">
             <div v-if="!selectedStudentId" class="col-panel__hint">
               <el-icon :size="28" color="#c0c4cc"><ArrowLeft /></el-icon>
@@ -95,7 +106,7 @@
         </aside>
 
         <!-- Column 3: Weekly Schedule -->
-        <main class="col-panel col-schedule">
+        <main class="col-panel col-schedule" :class="{ 'col-panel--mobile-hidden': !selectedPackageId }">
           <div class="col-panel__body">
             <!-- No package selected -->
             <div v-if="!selectedPackageId" class="col-panel__hint">
@@ -109,18 +120,6 @@
                 <div class="schedule-info__header">
                   <span class="schedule-info__title">{{ selectedPackageName }}</span>
                   <div class="schedule-info__actions">
-                    <el-button v-if="selectedPackage?.packageStatus === 'ACTIVE'" size="small" @click="packageHoursDialogVisible = true">
-                      Package hours
-                    </el-button>
-                    <el-dropdown trigger="click" :disabled="!selectedStudentId || !selectedPackageId" @command="openPrintSheet">
-                      <el-button size="small">Print Sheet</el-button>
-                      <template #dropdown>
-                        <el-dropdown-menu>
-                          <el-dropdown-item command="parent">Student sheet</el-dropdown-item>
-                          <el-dropdown-item command="teacher">Teacher sheets</el-dropdown-item>
-                        </el-dropdown-menu>
-                      </template>
-                    </el-dropdown>
                     <el-button
                       v-if="selectedPackage?.packageStatus === 'ACTIVE' && currentRule"
                       type="primary"
@@ -141,31 +140,12 @@
                       Adjust This Week
                     </el-button>
                     <el-button
-                      v-else-if="selectedPackage?.packageStatus === 'ACTIVE'"
+                      v-if="selectedPackage?.packageStatus === 'ACTIVE' && !currentRule"
                       type="primary"
                       size="small"
                       @click="openCreateDialog"
                     >
                       Create Schedule
-                    </el-button>
-                    <el-button
-                      v-if="currentRule"
-                      size="small"
-                      plain
-                      @click="openDetailDialog(currentRule)"
-                    >
-                      Detail
-                    </el-button>
-                    <el-button
-                      v-if="selectedPackage?.packageStatus === 'ACTIVE'"
-                      type="danger"
-                      plain
-                      size="small"
-                      :loading="pausingPackageId === selectedPackageId"
-                      :disabled="pausingPackageId !== null"
-                      @click="pauseSelectedPackage"
-                    >
-                      Pause Course
                     </el-button>
                     <el-button
                       v-if="selectedPackage?.packageStatus === 'PAUSED'"
@@ -177,6 +157,31 @@
                     >
                       Resume Course
                     </el-button>
+                    <el-dropdown trigger="click" @command="handleScheduleMoreAction">
+                      <el-button size="small">More</el-button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item
+                            v-if="selectedPackage?.packageStatus === 'ACTIVE'"
+                            command="package-hours"
+                          >
+                            Package hours
+                          </el-dropdown-item>
+                          <el-dropdown-item command="print-parent">Print student sheet</el-dropdown-item>
+                          <el-dropdown-item command="print-teacher">Print teacher sheets</el-dropdown-item>
+                          <el-dropdown-item v-if="currentRule" command="detail">Schedule details</el-dropdown-item>
+                          <el-dropdown-item
+                            v-if="selectedPackage?.packageStatus === 'ACTIVE'"
+                            command="pause"
+                            :disabled="pausingPackageId !== null"
+                            divided
+                            type="danger"
+                          >
+                            Pause course
+                          </el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
                   </div>
                 </div>
                 <div v-if="isPrivateGroupCourseSelected" class="schedule-info__participants">
@@ -877,6 +882,7 @@ import { useRoute, useRouter } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
 import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
+import { useAppStore } from '@/stores/app';
 import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import { fetchOneOnOneDeductions, type OneOnOneLesson } from '@/api/one-on-one';
@@ -1032,6 +1038,8 @@ const currentWeekOccurrences = ref<LessonOccurrenceItem[]>([]);
 
 // ─── Selection state ────────────────────────────
 const studentSearch = ref('');
+const appStore = useAppStore();
+const mobileStudentSearchExpanded = ref(false);
 const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
 const pausingPackageId = ref<EntityId | null>(null);
@@ -1649,6 +1657,30 @@ function pauseSelectedPackage() {
   const studentId = selectedStudentId.value;
   if (!packageToPause || packageToPause.packageStatus !== 'ACTIVE' || !studentId) return;
   pauseConfirmationVisible.value = true;
+}
+
+// 次级操作统一从 More 菜单分发，保留原有课时、打印、详情和停课流程。
+function handleScheduleMoreAction(command: string | number | object) {
+  if (typeof command !== 'string') return;
+  switch (command) {
+    case 'package-hours':
+      if (selectedPackage.value?.packageStatus === 'ACTIVE') packageHoursDialogVisible.value = true;
+      break;
+    case 'print-parent':
+      void openPrintSheet('parent');
+      break;
+    case 'print-teacher':
+      void openPrintSheet('teacher');
+      break;
+    case 'detail':
+      if (currentRule.value) void openDetailDialog(currentRule.value);
+      break;
+    case 'pause':
+      pauseSelectedPackage();
+      break;
+    default:
+      break;
+  }
 }
 
 // 点击 Edit Schedule 时先核对当前课包已开始的课次；只有未消课课次需要额外提示。
@@ -2740,6 +2772,8 @@ function disabledPastDate(date: Date) {
 }
 
 .schedule-info__title {
+  flex: 1 1 auto;
+  min-width: 160px;
   font-size: 14px;
   font-weight: 600;
   color: #303133;
@@ -2756,7 +2790,8 @@ function disabledPastDate(date: Date) {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  max-width: 70%;
 }
 
 .schedule-summary {
@@ -3363,7 +3398,79 @@ function disabledPastDate(date: Date) {
   }
 }
 
-@media (max-width: 620px) {
+@media (max-width: 920px) {
+  .schedule-panel {
+    min-height: 0;
+    padding: 12px;
+    overflow: visible;
+  }
+
+  .schedule-panel__body {
+    display: flex;
+    flex: initial;
+    flex-direction: column;
+    gap: 8px;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .col-panel {
+    width: 100%;
+    flex: none;
+    max-height: min(45vh, 340px);
+    border: 1px solid #e8edf2;
+    border-radius: 6px;
+  }
+
+  .col-panel--mobile-hidden {
+    display: none;
+  }
+
+  .col-students,
+  .col-packages {
+    width: 100%;
+  }
+
+  .schedule-student-search {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px;
+  }
+
+  .schedule-student-search .el-input { width: 100%; }
+
+  .col-schedule {
+    min-height: 280px;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .col-schedule .col-panel__body {
+    overflow: visible;
+  }
+
+  .schedule-info__header {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .schedule-info__actions {
+    width: 100%;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .schedule-info__actions > .el-button,
+  .schedule-info__actions > .el-dropdown {
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+
+  .schedule-info__actions > .el-dropdown > .el-button {
+    width: auto;
+  }
+
   .schedule-dialog :deep(.el-dialog__body) {
     padding: 12px;
   }

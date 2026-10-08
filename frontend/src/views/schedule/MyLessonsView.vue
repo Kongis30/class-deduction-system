@@ -19,6 +19,7 @@
       </el-tabs>
 
       <el-table
+        v-if="!appStore.isMobileViewport"
         v-loading="loading"
         :data="visibleLessons"
         border
@@ -83,12 +84,35 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-else v-loading="loading" class="my-lessons-cards">
+        <article v-for="lesson in visibleLessons" :key="lesson.id" class="my-lesson-card">
+          <div class="my-lesson-card__heading">
+            <div>
+              <strong>{{ lesson.className || lesson.packageName || 'Lesson' }}</strong>
+              <span>{{ lesson.participantNames?.length ? lesson.participantNames.join(' / ') : lesson.studentName || 'Group lesson' }}</span>
+            </div>
+            <el-tag size="small" :type="statusTag(lesson)">{{ statusLabel(lesson) }}</el-tag>
+          </div>
+          <div class="my-lesson-card__details">
+            <span><strong>When</strong>{{ formatDate(lesson.plannedStartAt) }} · {{ formatTimeRange(lesson.plannedStartAt, lesson.plannedEndAt) }}</span>
+            <span><strong>Room</strong>{{ lesson.actualClassroomName || lesson.plannedClassroomName || 'Not assigned' }}</span>
+          </div>
+          <div class="my-lesson-card__actions">
+            <el-button v-if="canAdjustTime(lesson)" @click="openAdjustDialog(lesson)">Adjust time</el-button>
+            <el-button v-if="canSubmitAttendance(lesson)" type="primary" @click="openConfirmDialog(lesson)">Confirm lesson</el-button>
+            <span v-if="!canSubmitAttendance(lesson)" class="my-lessons-no-action">{{ actionLabel(lesson) }}</span>
+          </div>
+        </article>
+        <el-empty v-if="!loading && visibleLessons.length === 0" :description="emptyText" />
+      </div>
     </template>
 
     <el-dialog
       v-model="confirmDialogVisible"
       title="Confirm Lesson"
       width="520px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
     >
       <el-alert type="info" :closable="false" show-icon class="my-lessons-confirm-alert">
@@ -98,7 +122,7 @@
           <p>Hours are deducted only after the administrator confirms the result.</p>
         </div>
       </el-alert>
-      <el-form label-width="130px">
+      <el-form :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '130px'">
         <el-form-item label="Result status">
           <el-select v-model="confirmForm.resultStatus" style="width: 100%">
             <el-option label="Completed" value="COMPLETED" />
@@ -139,6 +163,7 @@
       v-model="adjustDialogVisible"
       title="Adjust Lesson Time"
       width="520px"
+      :fullscreen="appStore.isMobileViewport"
       :close-on-click-modal="false"
     >
       <el-alert type="info" :closable="false" show-icon class="my-lessons-confirm-alert">
@@ -148,7 +173,7 @@
           <p>The lesson duration stays the same. Save the time that should be recorded for this lesson.</p>
         </div>
       </el-alert>
-      <el-form label-width="130px">
+      <el-form :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '130px'">
         <el-form-item label="New start time">
           <el-date-picker
             v-model="adjustForm.plannedStartAt"
@@ -182,12 +207,14 @@ import { scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { extractErrorMessage } from '@/api/http';
 import { confirmLesson } from '@/api/lesson';
 import { confirmClassLesson, createScheduleAdjustment, fetchLessonOccurrences } from '@/api/schedule';
+import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import type { LessonOccurrenceItem } from '@/types/domain';
 
 type LessonType = 'one-on-one' | 'group';
 
 const authStore = useAuthStore();
+const appStore = useAppStore();
 const teacherId = computed(() => authStore.currentUser?.teacherId);
 const lessonType = ref<LessonType>('one-on-one');
 const loading = ref(false);
@@ -419,6 +446,81 @@ function formatTimeRange(startAt: string, endAt: string) {
   font-size: 22px;
 }
 
+.my-lessons-cards {
+  display: grid;
+  gap: 10px;
+}
+
+.my-lesson-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 4%);
+}
+
+.my-lesson-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.my-lesson-card__heading > div,
+.my-lesson-card__details > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.my-lesson-card__heading strong {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.my-lesson-card__heading span {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.my-lesson-card__details {
+  display: grid;
+  gap: 8px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.my-lesson-card__details strong {
+  color: #64748b;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.my-lesson-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid #edf2f7;
+}
+
+.my-lesson-card__actions .el-button {
+  flex: 1 1 132px;
+  min-height: 44px;
+  margin: 0;
+}
+
+.my-lesson-card__actions .my-lessons-no-action {
+  max-width: none;
+  color: #64748b;
+  font-size: 12px;
+}
+
 .my-lessons-page__header p,
 .my-lessons-form-hint,
 .my-lessons-no-action {
@@ -498,6 +600,39 @@ function formatTimeRange(startAt: string, endAt: string) {
   .my-lessons-page__header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .my-lessons-page {
+    gap: 12px;
+  }
+
+  .my-lessons-page__header h2 {
+    font-size: 20px;
+  }
+
+  .my-lessons-page__header > .el-button {
+    align-self: stretch;
+  }
+
+  :deep(.el-dialog.is-fullscreen) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  :deep(.el-dialog.is-fullscreen .el-dialog__body) {
+    flex: 1;
+  }
+
+  :deep(.el-dialog.is-fullscreen .el-dialog__footer) {
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+
+  :deep(.el-form-item__label) {
+    line-height: 1.35;
+  }
+
+  :deep(.el-form-item__content > .el-input-number) {
+    width: 100%;
   }
 }
 </style>

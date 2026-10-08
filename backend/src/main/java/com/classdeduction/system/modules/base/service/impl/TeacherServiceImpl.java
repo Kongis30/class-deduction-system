@@ -83,6 +83,7 @@ public class TeacherServiceImpl implements TeacherService {
                         .like(TeacherEntity::getTeacherNo, query.getKeyword())
                         .or()
                         .like(TeacherEntity::getTeacherName, query.getKeyword()))
+                .like(StringUtils.hasText(query.getSubject()), TeacherEntity::getSubjectTags, query.getSubject())
                 .eq(StringUtils.hasText(query.getStatus()), TeacherEntity::getStatus, query.getStatus())
                 .eq(TeacherEntity::getIsDeleted, 0)
                 .orderByAsc(TeacherEntity::getTeacherName)

@@ -335,6 +335,7 @@ export interface EnrollmentOrderLineItem {
   groupProjectId?: EntityId;
   groupRegistrationPlanId?: EntityId;
   classId?: EntityId;
+  className?: string;
   detail?: string;
   gradeBand?: string;
   periodLabel?: string;
@@ -650,6 +651,7 @@ export interface ClassGroupItem {
   description?: string;
   productId?: EntityId;
   groupProjectId?: EntityId;
+  groupProjectName?: string;
   productName?: string;
   registerClass?: string;
   courseType?: string;

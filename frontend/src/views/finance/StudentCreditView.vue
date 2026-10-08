@@ -2,9 +2,37 @@
   <div class="data-summary-page" v-loading="loading">
     <div class="workbook-toolbar">
       <div class="workbook-toolbar__month">
-        <span class="workbook-toolbar__label">Student Credit</span>
-        <el-input v-model="keyword" class="workbook-toolbar__select" clearable placeholder="Search student or phone" @keyup.enter="loadBalances" />
-        <el-button type="primary" size="small" @click="loadBalances">Search</el-button>
+        <template v-if="appStore.isMobileViewport">
+          <div class="mobile-search-heading">
+            <span class="workbook-toolbar__label">Student Credit</span>
+            <button
+              type="button"
+              class="mobile-search-trigger"
+              :aria-expanded="mobileSearchExpanded"
+              aria-label="Search students"
+              @click="mobileSearchExpanded = !mobileSearchExpanded"
+            >
+              <el-icon><Search /></el-icon>
+            </button>
+          </div>
+          <section v-show="mobileSearchExpanded" class="mobile-search-panel">
+            <div class="mobile-search-panel__header">
+              <span>Search students</span>
+              <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+                <el-icon><Close /></el-icon>
+              </button>
+            </div>
+            <div class="student-credit-search-form">
+              <el-input v-model="keyword" clearable placeholder="Search student or phone" @keyup.enter="loadBalances" />
+              <el-button type="primary" @click="loadBalances">Search</el-button>
+            </div>
+          </section>
+        </template>
+        <template v-else>
+          <span class="workbook-toolbar__label">Student Credit</span>
+          <el-input v-model="keyword" class="workbook-toolbar__select" clearable placeholder="Search student or phone" @keyup.enter="loadBalances" />
+          <el-button type="primary" size="small" @click="loadBalances">Search</el-button>
+        </template>
       </div>
       <div class="workbook-toolbar__stats">
         <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ studentGroups.length }}</strong></span>
@@ -108,11 +136,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import * as XLSX from 'xlsx';
-import { EditPen } from '@element-plus/icons-vue';
+import { Close, EditPen, Search } from '@element-plus/icons-vue';
 import { adjustStudentCredit, fetchStudentCreditBalances, type StudentCreditBalanceItem } from '@/api/student-credit';
 import { extractErrorMessage } from '@/api/http';
 import { ElMessage } from 'element-plus';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
+import { useAppStore } from '@/stores/app';
 
 type StudentCreditGroup = Omit<StudentCreditBalanceItem, 'studentNo' | 'grade' | 'studentClass'>;
 type CreditColumnKey = 'student' | 'phone' | 'balance' | 'activity';
@@ -132,6 +161,8 @@ const creditColumns: CreditColumn[] = [
 ];
 
 const studentGroups = ref<StudentCreditGroup[]>([]);
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 const keyword = ref('');
 const loading = ref(false);
 const editDialogVisible = ref(false);
@@ -315,8 +346,20 @@ onMounted(loadBalances);
   border-radius: 5px;
 }
 
+.student-credit-search-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 76px;
+  gap: 8px;
+}
+
 .credit-edit-amount {
   width: 100%;
+}
+
+@media (max-width: 640px) {
+  .data-summary-page { gap: 10px; }
+  .credit-edit-student { padding: 12px; border-radius: 6px; background: #f8fafc; }
+  .student-credit-search-form .el-button { min-height: 42px; margin: 0; }
 }
 
 </style>

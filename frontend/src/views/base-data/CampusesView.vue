@@ -12,6 +12,7 @@
       </div>
 
       <el-table
+        v-if="!appStore.isMobileViewport"
         v-loading="loading"
         :data="tableData"
         row-key="id"
@@ -46,6 +47,27 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-else v-loading="loading" class="mobile-campus-list">
+        <article v-for="campus in tableData" :key="campus.id" class="mobile-campus-card">
+          <header class="mobile-campus-card__heading">
+            <strong>{{ campus.campusName }}</strong>
+            <el-tag size="small" :type="campus.status === 'ACTIVE' ? 'success' : 'info'">
+              {{ campus.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+            </el-tag>
+          </header>
+          <dl class="mobile-campus-card__details">
+            <div><dt>Pickup fee</dt><dd>${{ (campus.defaultPickupFeeAmount ?? 0).toFixed(2) }}</dd></div>
+            <div><dt>Drop-off fee</dt><dd>${{ (campus.defaultDropoffFeeAmount ?? 0).toFixed(2) }}</dd></div>
+          </dl>
+          <p v-if="campus.notes" class="mobile-campus-card__notes">{{ campus.notes }}</p>
+          <div class="mobile-campus-card__actions">
+            <el-button type="primary" plain @click="openCampusDialog(campus)">Edit campus</el-button>
+            <el-button text type="danger" @click="handleDelete(campus)">Delete</el-button>
+          </div>
+        </article>
+        <el-empty v-if="!loading && tableData.length === 0" description="No campuses configured." />
+      </div>
     </section>
 
     <!-- Campus dialog -->
@@ -97,6 +119,7 @@
 import { Plus } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { reactive, ref } from 'vue';
+import { useAppStore } from '@/stores/app';
 
 import {
   createCampus,
@@ -108,6 +131,7 @@ import {
 import type { CampusItem } from '@/types/domain';
 
 const loading = ref(false);
+const appStore = useAppStore();
 const submitting = ref(false);
 const campusDialogVisible = ref(false);
 const editingId = ref<number | null>(null);
@@ -210,6 +234,24 @@ loadData();
 </script>
 
 <style scoped>
+.mobile-campus-list { display: grid; gap: 10px; }
+.mobile-campus-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.mobile-campus-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mobile-campus-card__heading strong { overflow-wrap: anywhere; color: #26384c; font-size: 15px; }
+.mobile-campus-card__details { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 0; }
+.mobile-campus-card__details > div { display: grid; gap: 4px; }
+.mobile-campus-card__details dt { color: #718096; font-size: 12px; }
+.mobile-campus-card__details dd { margin: 0; color: #334155; font-size: 14px; }
+.mobile-campus-card__notes { margin: 12px 0 0; color: #64748b; font-size: 13px; overflow-wrap: anywhere; }
+.mobile-campus-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.mobile-campus-card__actions .el-button { margin: 0; }
+
 .course-product-panel {
   border: 1px solid #e8edf2;
   border-radius: 8px;
@@ -266,5 +308,13 @@ loadData();
 .campus-dialog :deep(.el-dialog__footer) {
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
+}
+
+@media (max-width: 640px) {
+  .course-product-panel { padding: 12px; }
+  .campus-dialog :deep(.el-dialog__header),
+  .campus-dialog :deep(.el-dialog__body),
+  .campus-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
+  .dialog-footer { width: 100%; }
 }
 </style>

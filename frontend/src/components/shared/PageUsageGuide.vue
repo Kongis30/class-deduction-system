@@ -8,9 +8,9 @@
       popper-class="page-usage-guide__popover"
     >
       <template #reference>
-        <el-button class="page-usage-guide__trigger">
+        <el-button class="page-usage-guide__trigger" aria-label="How to use this page">
           <el-icon><QuestionFilled /></el-icon>
-          How to use
+          <span class="page-usage-guide__label">How to use</span>
         </el-button>
       </template>
 
@@ -124,6 +124,18 @@ function go(to: RouteLocationRaw) {
 @media (max-width: 720px) {
   .page-usage-guide__trigger {
     padding: 8px 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .page-usage-guide__trigger {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .page-usage-guide__label {
+    display: none;
   }
 }
 </style>

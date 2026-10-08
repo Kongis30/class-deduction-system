@@ -1680,7 +1680,7 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldExposePurchasedSessionsInOrderDetailForLegacyReceiptFallback() {
+    void shouldExposeV2GroupLinksAndClassNameInOrderDetailForReceiptRecovery() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setStudentId(101L);
@@ -1688,6 +1688,10 @@ class EnrollmentOrderServiceImplTest {
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
         item.setId(8001L);
         item.setEnrollmentOrderId(2001L);
+        item.setCourseType("GROUP");
+        item.setClassId(801L);
+        item.setGroupProjectId(9101L);
+        item.setGroupRegistrationPlanId(9201L);
         item.setPackageUnit("SESSION");
         item.setPackageQuantity(new BigDecimal("13"));
         ClassEnrollmentEntity enrollment = new ClassEnrollmentEntity();
@@ -1699,14 +1703,20 @@ class EnrollmentOrderServiceImplTest {
         when(studentMapper.selectById(101L)).thenReturn(buildStudent());
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
-        when(classGroupMapper.selectById(801L)).thenReturn(buildClassGroup(202L));
+        ClassGroupEntity actualClass = buildClassGroup(202L);
+        when(classGroupMapper.selectById(801L)).thenReturn(actualClass);
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(actualClass));
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of());
         when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
 
         EnrollmentOrderDetailVO detail = enrollmentOrderService.getOrder(2001L);
 
-        assertThat(detail.items()).singleElement().satisfies(line ->
-                assertThat(line.sessions()).isEqualTo(4));
+        assertThat(detail.items()).singleElement().satisfies(line -> {
+            assertThat(line.sessions()).isEqualTo(4);
+            assertThat(line.groupProjectId()).isEqualTo(9101L);
+            assertThat(line.groupRegistrationPlanId()).isEqualTo(9201L);
+            assertThat(line.className()).isEqualTo("SHSAT Group");
+        });
     }
 
     private void stubGeneratedIds(boolean includePaymentInsert) {

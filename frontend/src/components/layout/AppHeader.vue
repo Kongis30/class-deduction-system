@@ -1,7 +1,7 @@
 <template>
   <header class="app-header">
     <div class="app-header__left">
-      <el-button text class="app-header__toggle" aria-label="Toggle navigation" @click="appStore.toggleSidebar">
+      <el-button v-if="!appStore.isMobileViewport" text class="app-header__toggle" aria-label="Toggle navigation" @click="appStore.toggleSidebar">
         <el-icon><Fold /></el-icon>
       </el-button>
       <el-button

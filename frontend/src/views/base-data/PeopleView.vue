@@ -7,7 +7,7 @@
           {{ headerHint }}
         </p>
       </div>
-      <div class="people-header__actions">
+      <div class="people-header__actions" :class="{ 'people-header__actions--single': activeTab !== 'teachers' }">
         <template v-if="activeTab === 'students'">
           <el-button type="primary" @click="openStudentCreate">Add student</el-button>
         </template>
@@ -155,5 +155,35 @@ async function syncTabAndRender(tab: PeopleTab) {
 
 .people-tabs :deep(.el-tabs__content) {
   overflow: visible;
+}
+
+@media (max-width: 640px) {
+  .people-header {
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .people-header > div:first-child { display: none; }
+
+  .people-header__actions {
+    display: flex;
+    justify-content: flex-end;
+    width: 100%;
+    gap: 8px;
+  }
+
+  .people-header__actions--single { justify-content: flex-end; }
+
+  .people-header__actions > .el-button {
+    width: auto;
+    min-height: 44px;
+    flex: 0 1 auto;
+    margin: 0;
+    padding: 0 14px;
+    font-size: 13px;
+  }
+
 }
 </style>

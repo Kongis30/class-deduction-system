@@ -789,10 +789,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
         LinkedHashMap<Long, LinkedHashMap<Long, List<CoursePackageEntity>>> grouped = new LinkedHashMap<>();
         for (CoursePackageEntity coursePackage : packages) {
-            Long groupTeacherId = resolveOneOnOneGroupTeacherId(coursePackage, occurrenceMap, teacherId);
-            grouped.computeIfAbsent(groupTeacherId, key -> new LinkedHashMap<>())
-                    .computeIfAbsent(coursePackage.getStudentId(), key -> new ArrayList<>())
-                    .add(coursePackage);
+            for (Long groupTeacherId : resolveOneOnOneGroupTeacherIds(coursePackage, occurrenceMap, teacherId)) {
+                grouped.computeIfAbsent(groupTeacherId, key -> new LinkedHashMap<>())
+                        .computeIfAbsent(coursePackage.getStudentId(), key -> new ArrayList<>())
+                        .add(coursePackage);
+            }
         }
 
         List<CoursePackageEntity> resolvedPackages = packagesForParticipantContext;
@@ -1355,17 +1356,21 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toMap(LessonStatusRuleEntity::getStatusCode, LessonStatusRuleEntity::getStatusName, (a, b) -> a));
     }
 
-    private Long resolveOneOnOneGroupTeacherId(CoursePackageEntity coursePackage,
-                                               Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
-                                               Long requestedTeacherId) {
+    /** 管理员按课包内实际排课的老师分别建立入口；老师账号查询时只保留本人入口。 */
+    private Set<Long> resolveOneOnOneGroupTeacherIds(CoursePackageEntity coursePackage,
+                                                     Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
+                                                     Long requestedTeacherId) {
         if (requestedTeacherId != null) {
-            return requestedTeacherId;
+            return Set.of(requestedTeacherId);
         }
-        return occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList()).stream()
+        List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(
+                coursePackage.getId(), Collections.emptyList());
+        if (occurrences.isEmpty()) {
+            return Collections.singleton(null);
+        }
+        return occurrences.stream()
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
-                .filter(Objects::nonNull)
-                .findFirst()
-                .orElse(null);
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     private OneOnOneTeacherVO toOneOnOneTeacherVO(Long teacherId,
@@ -1383,7 +1388,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         List<OneOnOneStudentVO> students = studentPackages.entrySet().stream()
                 .map(entry -> toOneOnOneStudentVO(entry.getKey(), entry.getValue(), studentMap, teacherMap,
                         classroomMap, courseProductMap, orderItemMap, occurrenceMap, recordMap, statusNameMap,
-                        groupMembersByPackage, allPackages))
+                        groupMembersByPackage, allPackages, teacherId))
                 .toList();
         TeacherEntity teacher = teacherId == null ? null : teacherMap.get(teacherId);
         int packageCount = studentPackages.values().stream().mapToInt(List::size).sum();
@@ -1415,12 +1420,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, LessonRecordEntity> recordMap,
                                                   Map<String, String> statusNameMap,
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
-                                                  List<CoursePackageEntity> allPackages) {
+                                                  List<CoursePackageEntity> allPackages,
+                                                  Long teacherId) {
         StudentEntity student = studentMap.get(studentId);
         List<OneOnOnePackageVO> packageVOs = packages.stream()
                 .map(item -> toOneOnOnePackageVO(item, teacherMap, classroomMap, courseProductMap,
                         orderItemMap, occurrenceMap, recordMap, statusNameMap, groupMembersByPackage, allPackages,
-                        studentMap))
+                        studentMap, teacherId))
                 .toList();
         UnitSummary units = summarizeUnits(packages);
         return OneOnOneStudentVO.builder()
@@ -1447,8 +1453,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<String, String> statusNameMap,
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
                                                   List<CoursePackageEntity> allPackages,
-                                                  Map<Long, StudentEntity> studentMap) {
-        List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList());
+                                                  Map<Long, StudentEntity> studentMap,
+                                                  Long teacherId) {
+        // 课包可由多位老师轮流授课；详情只返回当前老师负责的排课记录，避免跨老师混在一起。
+        List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList())
+                .stream()
+                .filter(item -> Objects.equals(item.getPlannedTeacherId(), teacherId))
+                .toList();
         Map<Long, RecurringScheduleSlotEntity> recurringSlotMap = loadRecurringSlotMap(occurrences);
         List<OneOnOneLessonVO> lessons = occurrences.stream()
                 .map(item -> toOneOnOneLessonVO(item, recordMap.get(item.getId()), teacherMap, classroomMap,

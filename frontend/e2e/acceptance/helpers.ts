@@ -139,7 +139,8 @@ export async function createOneOnOneProductAndPriceByApi(
   return { product: { id: productId, productName }, option };
 }
 
-export async function createGroupProductAndPriceByApi(
+/** 按 V2 关系创建教学项目、报名方案和实际班，供完整报名链路验收。 */
+export async function createGroupProductAndPlanByApi(
   request: APIRequestContext,
   token: string,
   suffix: string,
@@ -168,31 +169,47 @@ export async function createGroupProductAndPriceByApi(
     status: 'ACTIVE',
     notes: ACCEPTANCE_MARKER,
   });
-  const optionCode = `ACC_GROUP_${suffix}`.toUpperCase().replace(/[^A-Z0-9_]/g, '_');
-  const optionId = await apiPost<string>(request, token, '/v1/base/course-price-options', {
-    optionCode,
-    courseType: 'SATURDAY',
-    registerClass: 'Saturday Class',
-    gradeBand: 'G3-G6',
+  const projectId = await apiPost<string>(request, token, `/v2/group-course-model/products/${productId}/projects`, {
+    projectCode: `ACC_${suffix}`.toUpperCase().replace(/[^A-Z0-9_]/g, '_'),
+    projectName: `${ACCEPTANCE_MARKER} Math ${suffix}`,
+    status: 'ACTIVE',
+  });
+  const planId = await apiPost<string>(request, token, `/v2/group-course-model/projects/${projectId}/plans`, {
+    planCode: 'EIGHT_SESSIONS',
+    planName: '8 sessions',
+    coverageType: 'SESSION_COUNT',
     packageUnit: 'SESSION',
     packageQuantity: 8,
-    detailText: 'G3-G6 | 8 sessions | 9am-10am',
-    priceAmount: 800,
+    fullDayPrice: 800,
     currencyCode: 'USD',
-    courseProductId: productId,
-    groupTeacherId: teacherId,
-    groupClassroomId: classroomId,
-    groupScheduleSlots: withSchedule ? [{ weekday, startTime: '09:00', endTime: '10:00' }] : [],
-    groupBillingType: 'PER_SESSION',
-    groupStartDate: today,
-    groupEndDate: endDate,
-    groupTotalSessions: 8,
     status: 'ACTIVE',
-    notes: ACCEPTANCE_MARKER,
   });
-  const option = await findCoursePriceOption(request, token, productId, optionId);
-  expect(option.classId, 'group price option should create a grade class').toBeTruthy();
-  return { product: { id: productId, productName }, option, classId: option.classId };
+  const actualClass = await apiPost<ApiRecord>(request, token, '/v1/classes/actual-classes', {
+    productId,
+    groupProjectId: projectId,
+    gradeBand: 'G3-G6',
+    actualClass: `G5 ${suffix}`,
+    campusId: '9000002',
+    startDate: today,
+    endDate,
+  });
+  if (withSchedule) {
+    await apiPut<ApiRecord>(request, token, `/v1/classes/${actualClass.id}/schedule`, {
+      slots: [{ weekday, startTime: '09:00', endTime: '10:00', teacherId }],
+    });
+  }
+  const option = {
+    id: planId,
+    groupProjectId: projectId,
+    groupRegistrationPlanId: planId,
+    className: actualClass.className,
+    detailText: 'G5 · 8 sessions',
+    gradeBand: 'G5',
+    packageUnit: 'SESSION',
+    packageQuantity: 8,
+    priceAmount: 800,
+  };
+  return { product: { id: productId, productName }, option, classId: actualClass.id };
 }
 
 export async function submitOneOnOneRegistrationByApi(
@@ -269,7 +286,7 @@ export async function submitGroupRegistrationByApi(
       guardianName: `${ACCEPTANCE_MARKER} Group Guardian`,
       guardianPhone: `626556${String(Date.now()).slice(-4)}`,
     },
-    campusName: 'Online Class',
+    campusId: '9000002',
     signupDate: todayInNewYork(),
     periodStartDate: todayInNewYork(),
     periodEndDate: todayInNewYork(),
@@ -279,7 +296,8 @@ export async function submitGroupRegistrationByApi(
       registerClass: 'Saturday Class',
       courseType: 'SATURDAY',
       courseProductId: data.productId,
-      coursePriceOptionId: data.option.id,
+      groupProjectId: data.option.groupProjectId,
+      groupRegistrationPlanId: data.option.groupRegistrationPlanId,
       classId: data.classId,
       className: data.option.className,
       detail: data.option.detailText,

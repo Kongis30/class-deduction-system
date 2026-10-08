@@ -16,6 +16,9 @@ public class TeacherPageQuery extends PageQuery {
     @Schema(description = "Keyword for instructor ID or instructor name", example = "Ethan")
     private String keyword;
 
+    @Schema(description = "Subject tag to filter instructors by", example = "Math")
+    private String subject;
+
     @Schema(description = "Instructor status", example = "ACTIVE")
     private String status;
 }

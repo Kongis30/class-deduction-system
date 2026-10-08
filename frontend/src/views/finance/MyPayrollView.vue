@@ -17,7 +17,7 @@
         <el-button :loading="loading" @click="loadPayroll()">Refresh</el-button>
       </div>
 
-      <el-table :data="payrollRows" border stripe v-loading="loading" empty-text="No payroll records found.">
+      <el-table v-if="!appStore.isMobileViewport" :data="payrollRows" border stripe v-loading="loading" empty-text="No payroll records found.">
         <el-table-column prop="paymentNo" label="Payment #" min-width="160" />
         <el-table-column label="Period" min-width="190">
           <template #default="{ row }">
@@ -47,6 +47,23 @@
         </el-table-column>
       </el-table>
 
+      <div v-else v-loading="loading" class="mp-cards">
+        <article v-for="row in payrollRows" :key="row.id" class="mp-card">
+          <div class="mp-card__heading">
+            <strong>{{ row.paymentNo }}</strong>
+            <el-tag :type="row.status === 'PAID' ? 'success' : 'warning'" effect="light">{{ statusLabel(row.status) }}</el-tag>
+          </div>
+          <dl class="mp-card__details">
+            <div><dt>Period</dt><dd>{{ formatDate(row.periodStart) }} – {{ formatDate(row.periodEnd) }}</dd></div>
+            <div><dt>Hours</dt><dd>{{ formatHours(row.totalHours) }}</dd></div>
+            <div><dt>Amount</dt><dd>{{ formatMoney(row.totalAmount) }}</dd></div>
+            <div><dt>Paid at</dt><dd>{{ formatDateTime(row.paidAt) }}</dd></div>
+          </dl>
+          <el-button class="mp-card__action" type="primary" plain @click="openDetail(row)">View details</el-button>
+        </article>
+        <el-empty v-if="!loading && payrollRows.length === 0" description="No payroll records found." />
+      </div>
+
       <el-pagination
         v-if="pagination.total > pagination.size"
         v-model:current-page="pagination.page"
@@ -58,7 +75,7 @@
       />
     </section>
 
-    <el-dialog v-model="detailVisible" title="Payment details" width="780px">
+    <el-dialog v-model="detailVisible" title="Payment details" width="780px" :fullscreen="appStore.isMobileViewport">
       <div v-if="detailData" class="mp-detail">
         <div class="mp-detail__summary">
           <span><strong>Payment #:</strong> {{ detailData.paymentNo }}</span>
@@ -67,7 +84,7 @@
           <span><strong>Status:</strong> {{ statusLabel(detailData.status) }}</span>
         </div>
 
-        <el-table :data="detailData.items || []" border size="small" empty-text="No lesson details.">
+        <el-table v-if="!appStore.isMobileViewport" :data="detailData.items || []" border size="small" empty-text="No lesson details.">
           <el-table-column label="Course" min-width="180">
             <template #default="{ row }">
               {{ row.className || row.packageName || row.productName || 'Course' }}
@@ -87,6 +104,18 @@
             <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
           </el-table-column>
         </el-table>
+        <div v-else class="mp-detail-cards">
+          <article v-for="item in detailData.items || []" :key="item.id" class="mp-detail-card">
+            <strong>{{ item.className || item.packageName || item.productName || 'Course' }}</strong>
+            <span>{{ item.subjectName || '—' }} · {{ occurrenceTypeLabel(item.occurrenceType) }}</span>
+            <dl>
+              <div><dt>Hours</dt><dd>{{ formatHours(item.hours) }}</dd></div>
+              <div><dt>Rate</dt><dd>{{ formatMoney(item.hourlyRate) }}</dd></div>
+              <div><dt>Amount</dt><dd>{{ formatMoney(item.amount) }}</dd></div>
+            </dl>
+          </article>
+          <el-empty v-if="!(detailData.items || []).length" description="No lesson details." />
+        </div>
       </div>
     </el-dialog>
   </div>
@@ -96,8 +125,10 @@
 import { onMounted, reactive, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { fetchMyPayroll, fetchMyPayrollDetail } from '@/api/finance';
+import { useAppStore } from '@/stores/app';
 import type { TeacherPaymentItem } from '@/types/domain';
 
+const appStore = useAppStore();
 const loading = ref(false);
 const statusFilter = ref<string>();
 const payrollRows = ref<TeacherPaymentItem[]>([]);
@@ -184,6 +215,63 @@ onMounted(() => {
   background: #fff;
 }
 
+.mp-cards {
+  display: grid;
+  gap: 10px;
+}
+
+.mp-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d9e2ec;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.mp-card__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mp-card__heading strong {
+  min-width: 0;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.mp-card__details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.mp-card__details > div {
+  min-width: 0;
+}
+
+.mp-card__details dt {
+  margin-bottom: 3px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.mp-card__details dd {
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.mp-card__action {
+  min-height: 42px;
+}
+
 .mp-toolbar {
   display: flex;
   justify-content: flex-end;
@@ -216,6 +304,49 @@ onMounted(() => {
   font-size: 13px;
 }
 
+.mp-detail-cards {
+  display: grid;
+  gap: 8px;
+}
+
+.mp-detail-card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.mp-detail-card > strong {
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.mp-detail-card > span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.mp-detail-card dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 4px 0 0;
+}
+
+.mp-detail-card dt {
+  color: #64748b;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.mp-detail-card dd {
+  margin: 2px 0 0;
+  color: #334155;
+  font-size: 12px;
+}
+
 @media (max-width: 760px) {
   .mp-toolbar {
     justify-content: stretch;
@@ -223,6 +354,31 @@ onMounted(() => {
 
   .mp-status-filter {
     width: 100%;
+  }
+
+  .mp-panel {
+    padding: 10px;
+  }
+
+  .mp-toolbar {
+    flex-direction: column;
+  }
+
+  .mp-pagination {
+    justify-content: center;
+  }
+
+  .mp-card__details {
+    grid-template-columns: 1fr;
+  }
+
+  :deep(.el-dialog.is-fullscreen) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  :deep(.el-dialog.is-fullscreen .el-dialog__body) {
+    flex: 1;
   }
 
   .mp-detail__summary {

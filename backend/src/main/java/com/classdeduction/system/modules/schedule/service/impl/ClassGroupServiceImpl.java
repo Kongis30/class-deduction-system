@@ -134,6 +134,12 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 .filter(Objects::nonNull).collect(Collectors.toSet());
         Map<Long, CampusEntity> campusMap = campusIds.isEmpty() ? Map.of() : campusMapper.selectBatchIds(campusIds).stream()
                 .collect(Collectors.toMap(CampusEntity::getId, item -> item));
+        // Enrollment 等列表按 V2 教学项目分组；批量读取名称，避免逐班查询。
+        Set<Long> projectIds = classes.stream().map(ClassGroupEntity::getGroupProjectId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, GroupCourseProjectEntity> projectMap = projectIds.isEmpty() ? Map.of()
+                : groupCourseProjectMapper.selectBatchIds(projectIds).stream()
+                .collect(Collectors.toMap(GroupCourseProjectEntity::getId, item -> item));
         List<Map<String, Object>> result = new ArrayList<>();
         for (ClassGroupEntity clz : classes) {
             String teacherName = resolveTeacherName(clz.getTeacherId(), teacherMap);
@@ -154,6 +160,10 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             item.put("listPrice", clz.getListPrice());
             item.put("productId", clz.getProductId());
             item.put("productName", product == null ? null : product.getProductName());
+            item.put("groupProjectId", clz.getGroupProjectId());
+            GroupCourseProjectEntity project = clz.getGroupProjectId() == null
+                    ? null : projectMap.get(clz.getGroupProjectId());
+            item.put("groupProjectName", project == null ? null : project.getProjectName());
             item.put("registerClass", product == null ? null : product.getRegisterClass());
             item.put("courseType", product == null ? null : product.getCourseType());
             item.put("gradeBand", clz.getGradeBand());

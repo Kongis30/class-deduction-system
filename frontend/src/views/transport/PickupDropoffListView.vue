@@ -2,11 +2,39 @@
   <div class="data-summary-page transport-page" v-loading="loading">
     <div class="workbook-toolbar">
       <div class="workbook-toolbar__month">
-        <span class="workbook-toolbar__label">Transport roster</span>
-        <el-input v-model="keyword" class="workbook-toolbar__select" clearable placeholder="Search course, class, or student" />
-        <el-select v-model="classFilter" class="workbook-toolbar__select" size="small" clearable filterable placeholder="Class">
-          <el-option v-for="className in classOptions" :key="className" :label="className" :value="className" />
-        </el-select>
+        <template v-if="appStore.isMobileViewport">
+          <div class="mobile-search-heading">
+            <span class="workbook-toolbar__label">Transport roster</span>
+            <button
+              type="button"
+              class="mobile-search-trigger"
+              :aria-expanded="mobileSearchExpanded"
+              aria-label="Search the transport roster"
+              @click="mobileSearchExpanded = !mobileSearchExpanded"
+            >
+              <el-icon><Search /></el-icon>
+            </button>
+          </div>
+          <section v-show="mobileSearchExpanded" class="mobile-search-panel">
+            <div class="mobile-search-panel__header">
+              <span>Find a class or student</span>
+              <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+                <el-icon><Close /></el-icon>
+              </button>
+            </div>
+            <el-input v-model="keyword" clearable placeholder="Search course, class, or student" />
+            <el-select v-model="classFilter" clearable filterable placeholder="All classes">
+              <el-option v-for="className in classOptions" :key="className" :label="className" :value="className" />
+            </el-select>
+          </section>
+        </template>
+        <template v-else>
+          <span class="workbook-toolbar__label">Transport roster</span>
+          <el-input v-model="keyword" class="workbook-toolbar__select" clearable placeholder="Search course, class, or student" />
+          <el-select v-model="classFilter" class="workbook-toolbar__select" size="small" clearable filterable placeholder="Class">
+            <el-option v-for="className in classOptions" :key="className" :label="className" :value="className" />
+          </el-select>
+        </template>
       </div>
       <div class="workbook-toolbar__stats">
         <span class="workbook-toolbar__stat"><em>Courses</em><strong>{{ courseTabs.length }}</strong></span>
@@ -261,12 +289,13 @@ import {
   type TransportDriver,
 } from '@/api/transport';
 import { extractErrorMessage } from '@/api/http';
-import { Delete, EditPen } from '@element-plus/icons-vue';
+import { Close, Delete, EditPen, Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
 import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
+import { useAppStore } from '@/stores/app';
 
 type TransportTable = 'pickup' | 'dropoff';
 type TransportColumnKey = 'period' | 'campus' | 'student' | 'grade' | 'class' | 'phone' | 'driver' | 'pickupAddress' | 'dropoffAddress';
@@ -311,6 +340,8 @@ const drivers = ref<TransportDriver[]>([]);
 const driverAssignments = reactive<Record<string, string>>({});
 const keyword = ref('');
 const classFilter = ref('');
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 const activeCourseKey = ref('');
 const loading = ref(false);
 const savingOrder = ref(false);
@@ -907,4 +938,15 @@ onBeforeUnmount(() => {
 .transport-page .transport-detail-table .workbook-data-row:hover td { background: #fff; }
 .transport-page .transport-detail-table td:last-child { white-space: normal; line-height: 1.4; }
 .transport-empty { margin-top: 12px; padding: 40px; border: 1px solid #b8c5cb; border-radius: 6px; color: #52636c; text-align: center; }
+
+@media (max-width: 640px) {
+  .transport-page { min-height: 0; }
+  .transport-scroll { padding-bottom: 12px; }
+  .transport-roster-section { min-width: 0; }
+  .transport-roster-section__heading { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .transport-table-scroll { border-radius: 4px; }
+  .transport-detail-table { min-width: 760px; }
+  .transport-page .transport-driver-select { width: 150px; }
+  .transport-empty { padding: 24px 14px; }
+}
 </style>

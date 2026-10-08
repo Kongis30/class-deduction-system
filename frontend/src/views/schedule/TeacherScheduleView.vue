@@ -54,6 +54,55 @@
 
         <!-- Right: Calendar -->
         <main class="calendar-panel">
+          <div v-if="!isTeacher && appStore.isMobileViewport" class="calendar-mobile-roster">
+            <button
+              type="button"
+              class="calendar-mobile-roster__trigger"
+              :aria-expanded="mobileRosterOpen"
+              @click="toggleMobileRoster"
+            >
+              <span>{{ selectedTeacherId ? selectedTeacherName : 'Select a teacher' }}</span>
+              <el-icon><ArrowDown /></el-icon>
+            </button>
+            <div v-if="mobileRosterOpen" class="calendar-mobile-roster__panel">
+              <div class="calendar-mobile-roster__search">
+                <el-input v-model="searchText" placeholder="Search teachers..." clearable :prefix-icon="Search" />
+              </div>
+              <div v-loading="teacherRosterLoading" class="calendar-mobile-roster__groups">
+                <div v-if="!teacherRosterLoading && filteredTeacherGroups.length === 0" class="teacher-list-panel__empty">
+                  No teachers found
+                </div>
+                <section v-for="group in filteredTeacherGroups" :key="group.key" class="teacher-group">
+                  <button
+                    type="button"
+                    class="teacher-group__header"
+                    :class="{ 'teacher-group__header--collapsed': mobileCollapsedTeacherGroupKeys.has(group.key) }"
+                    :aria-expanded="!mobileCollapsedTeacherGroupKeys.has(group.key)"
+                    @click="toggleMobileTeacherGroup(group.key)"
+                  >
+                    <el-icon class="teacher-group__caret"><ArrowRight /></el-icon>
+                    <span class="teacher-group__name">{{ group.name }}</span>
+                    <span class="teacher-group__count">{{ group.teachers.length }}</span>
+                  </button>
+                  <div v-if="!mobileCollapsedTeacherGroupKeys.has(group.key)">
+                    <button
+                      v-for="teacher in group.teachers"
+                      :key="teacher.id"
+                      type="button"
+                      class="teacher-item calendar-mobile-roster__item"
+                      :class="{ 'teacher-item--active': selectedTeacherId === teacher.id }"
+                      @click="selectMobileTeacher(teacher.id)"
+                    >
+                      <span class="teacher-item__name">{{ teacher.teacherName }}</span>
+                      <el-tag v-if="teacher.status !== 'ACTIVE'" size="small" type="warning" effect="plain">Inactive</el-tag>
+                      <el-icon v-if="selectedTeacherId === teacher.id" color="#409eff"><Check /></el-icon>
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </div>
+          </div>
+
           <!-- No teacher selected -->
           <div v-if="!selectedTeacherId" class="calendar-empty">
             <el-icon :size="40" color="#c0c4cc"><Calendar /></el-icon>
@@ -114,6 +163,7 @@
               :week-start-date="weekMonday"
               :readonly="true"
               :hide-hint="true"
+              :pinch-zoom-enabled="appStore.isMobileViewport"
               @cell-click="onCellClick"
             />
           </template>
@@ -195,7 +245,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@element-plus/icons-vue';
+import { ArrowDown, ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import dayjs from 'dayjs';
@@ -206,6 +256,7 @@ import {
   fetchTeacherCalendarCategories,
 } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
+import { useAppStore } from '@/stores/app';
 import { isTeacherUser } from '@/types/auth';
 import type { EntityId, LessonOccurrenceItem, TeacherItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
@@ -213,6 +264,7 @@ import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.v
 import { findScheduleConflictGroups } from '@/utils/schedule-conflicts';
 
 const authStore = useAuthStore();
+const appStore = useAppStore();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 
 // ─── Teachers ───────────────────────────────────
@@ -222,6 +274,8 @@ const teacherRosterLoading = ref(false);
 const teacherCategoryLoadFailed = ref(false);
 const searchText = ref('');
 const selectedTeacherId = ref<EntityId | null>(null);
+const mobileRosterOpen = ref(false);
+const mobileCollapsedTeacherGroupKeys = ref(new Set<string>());
 
 // Monotonic token guarding against stale responses when switching teachers/weeks quickly.
 let scheduleRequestSeq = 0;
@@ -233,6 +287,24 @@ function toggleTeacherGroup(key: string) {
   if (next.has(key)) next.delete(key);
   else next.add(key);
   collapsedTeacherGroupKeys.value = next;
+}
+
+function toggleMobileRoster() {
+  if (mobileRosterOpen.value) {
+    mobileRosterOpen.value = false;
+    searchText.value = '';
+    return;
+  }
+  searchText.value = '';
+  mobileCollapsedTeacherGroupKeys.value = new Set(filteredTeacherGroups.value.map(group => group.key));
+  mobileRosterOpen.value = true;
+}
+
+function toggleMobileTeacherGroup(key: string) {
+  const next = new Set(mobileCollapsedTeacherGroupKeys.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  mobileCollapsedTeacherGroupKeys.value = next;
 }
 
 const sortedTeachers = computed(() => [...teachers.value].sort((left, right) =>
@@ -295,6 +367,11 @@ function onTeacherSelect(id: EntityId) {
   loadSchedule();
 }
 
+function selectMobileTeacher(id: EntityId) {
+  onTeacherSelect(id);
+  mobileRosterOpen.value = false;
+}
+
 // ─── Week navigation ───────────────────────────
 const weekOffset = ref(0);
 
@@ -354,6 +431,7 @@ const occupiedSlots = computed<OccupiedSlotDef[]>(() => {
       startTime: start.format('HH:mm'),
       endTime: dayjs(o.plannedEndAt).format('HH:mm'),
       courseLabel: o.className || o.packageName || o.lessonNo || '',
+      isOnline: o.deliveryMode === 'ONLINE',
       subjectName: o.subjectName,
       contextLabel: [o.studentName, o.plannedClassroomName].filter(Boolean).join(' · '),
       studentName: o.studentName,
@@ -472,6 +550,11 @@ onMounted(async () => {
   }
   teacherRosterLoading.value = true;
   try {
+    // 教师名单和产品分类互不依赖，并行加载，避免首屏被串行请求拉长。
+    const categoryPromise = fetchTeacherCalendarCategories().then(
+      response => response.data.data,
+      () => null,
+    );
     const firstPage = await fetchTeachers({ pageNum: 1, pageSize: 200 });
     const activeAndInactive = [...firstPage.data.data.records];
     teachers.value = activeAndInactive.map(teacher => ({
@@ -484,7 +567,7 @@ onMounted(async () => {
       Promise.all(Array.from({ length: Math.max(totalPages - 1, 0) }, (_, index) =>
         fetchTeachers({ pageNum: index + 2, pageSize: 200 }),
       )),
-      fetchTeacherCalendarCategories(),
+      categoryPromise,
     ]);
     if (remainingPagesResult.status === 'fulfilled') {
       for (const page of remainingPagesResult.value) activeAndInactive.push(...page.data.data.records);
@@ -494,14 +577,15 @@ onMounted(async () => {
       teacherName: teacher.teacherName,
       status: teacher.status,
     }));
-    if (categoryResult.status === 'fulfilled') {
-      teacherCategories.value = categoryResult.value.data.data;
+    if (categoryResult.status === 'fulfilled' && categoryResult.value) {
+      teacherCategories.value = categoryResult.value;
     } else {
       teacherCategoryLoadFailed.value = true;
     }
   } catch { /* Keep the calendar usable if the roster request fails. */ }
   finally {
     teacherRosterLoading.value = false;
+    collapsedTeacherGroupKeys.value = new Set(filteredTeacherGroups.value.map(group => group.key));
   }
 });
 </script>
@@ -538,6 +622,10 @@ onMounted(async () => {
   gap: 16px;
   flex: 1;
   min-height: 0;
+}
+
+.calendar-mobile-roster {
+  display: none;
 }
 
 /* ── Left panel: Teacher list ─────────────── */
@@ -676,6 +764,78 @@ onMounted(async () => {
   margin-bottom: 10px;
   flex-wrap: wrap;
 }
+
+@media (max-width: 920px) {
+  .teacher-calendar {
+    height: auto;
+    min-height: 0;
+    padding: 12px;
+  }
+
+  .teacher-calendar__body {
+    display: block;
+  }
+
+  .teacher-list-panel {
+    display: none;
+  }
+
+  .calendar-mobile-roster {
+    position: relative;
+    z-index: 30;
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .calendar-mobile-roster__trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    min-height: 36px;
+    padding: 0 10px;
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    background: #fff;
+    color: #606266;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+  }
+
+  .calendar-mobile-roster__trigger .el-icon { color: #909399; }
+
+  .calendar-mobile-roster__panel {
+    position: absolute;
+    z-index: 31;
+    top: calc(100% + 5px);
+    right: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    max-height: min(55vh, 440px);
+    overflow: hidden;
+    border: 1px solid #dce4ed;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 12px 28px rgba(31, 42, 68, 0.18);
+  }
+
+  .calendar-mobile-roster__search { padding: 8px; border-bottom: 1px solid #e8edf2; }
+  .calendar-mobile-roster__groups { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+  .calendar-mobile-roster__item { width: 100%; border: 0; background: #fff; font: inherit; text-align: left; }
+
+  .calendar-controls {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .calendar-controls__label {
+    flex: 1 1 auto;
+    text-align: center;
+  }
+}
+
 
 .calendar-controls__nav {
   display: flex;
@@ -829,5 +989,23 @@ onMounted(async () => {
   color: #606266;
   font-size: 13px;
   line-height: 1.5;
+}
+
+@media (max-width: 920px) {
+  .calendar-panel .calendar-controls__nav {
+    display: grid;
+    width: 100%;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .calendar-panel .calendar-controls__nav :deep(.el-button) { height: 34px; padding: 0 8px; font-size: 12px; }
+  .calendar-panel .calendar-controls__nav :deep(.el-button-group .el-button) { width: 34px; min-width: 34px; }
+  .calendar-panel .calendar-controls__nav :deep(.el-date-editor) { width: 100% !important; height: 34px; }
+  .calendar-panel .calendar-controls__nav :deep(.el-date-editor .el-input__wrapper) { min-height: 34px; padding: 0 8px; }
+  .calendar-panel .calendar-controls__nav :deep(.el-date-editor .el-input__inner) { font-size: 12px; }
+  .calendar-panel .calendar-controls__nav :deep(.el-tag) { font-size: 11px; }
+  .calendar-controls__label { grid-column: 1 / -1; font-size: 12px; }
+  .calendar-controls__teacher { display: none; }
 }
 </style>

@@ -1,14 +1,15 @@
 <template>
   <div class="oo-page">
     <section class="oo-toolbar no-print">
-      <div>
+      <div class="oo-toolbar__title">
         <h2>{{ pageTitle }}</h2>
         <p>Find a student, choose their course, then confirm each lesson.</p>
       </div>
       <div class="oo-actions">
-        <el-button class="action-primary" type="primary" :loading="loading" @click="loadData">Refresh</el-button>
-        <el-button class="action-print" :disabled="!activePackage" @click="printCurrentPackage('parent')">Print Parent Sheet</el-button>
+        <el-button v-if="!appStore.isMobileViewport" class="action-primary oo-refresh" type="primary" :loading="loading" @click="loadData">Refresh</el-button>
+        <el-button v-if="!appStore.isMobileViewport" class="action-print" :disabled="!activePackage" @click="printCurrentPackage('parent')">Print Parent Sheet</el-button>
         <el-dropdown
+          v-if="!appStore.isMobileViewport"
           trigger="click"
           :disabled="!activePackage || teacherPrintOptions.length === 0"
           @command="printTeacherSheet"
@@ -43,7 +44,27 @@
       </div>
     </details>
 
-    <section class="oo-selector-bar no-print" v-loading="loading">
+    <section
+      v-if="!appStore.isMobileViewport || mobileFiltersExpanded"
+      class="oo-selector-bar no-print"
+      v-loading="loading"
+    >
+      <div v-if="appStore.isMobileViewport" class="oo-selector-bar__mobile-heading">
+        <strong>Search &amp; filters</strong>
+        <div class="oo-selector-bar__mobile-actions">
+          <button
+            v-if="hasActiveFilters"
+            type="button"
+            class="oo-clear-filters--mobile"
+            @click="clearFilters"
+          >
+            Clear
+          </button>
+          <el-button text aria-label="Close search and filters" @click="mobileFiltersExpanded = false">
+            <el-icon><Close /></el-icon>
+          </el-button>
+        </div>
+      </div>
       <div class="oo-student-search">
         <label class="oo-field oo-field--student">
           <span>Find student</span>
@@ -55,7 +76,16 @@
             @clear="clearStudentSearch"
           />
         </label>
-        <el-button type="primary" :loading="studentSearchLoading" @click="searchStudents">Search</el-button>
+        <el-button
+          class="oo-student-search__submit"
+          type="primary"
+          :loading="studentSearchLoading"
+          aria-label="Search students"
+          @click="searchStudents"
+        >
+          <span class="oo-student-search__label">Search</span>
+          <el-icon><Search /></el-icon>
+        </el-button>
       </div>
 
       <label class="oo-field oo-scope-select">
@@ -113,20 +143,31 @@
         </el-select>
       </label>
 
-      <el-button v-if="hasActiveFilters" class="oo-clear-filters" text @click="clearFilters">Clear</el-button>
+      <el-button v-if="hasActiveFilters && !appStore.isMobileViewport" class="oo-clear-filters" text @click="clearFilters">Clear</el-button>
 
     </section>
 
     <main class="oo-workspace" v-loading="loading">
       <div class="oo-split-workspace" :class="{ 'oo-split-workspace--collapsed': packagePanelCollapsed }">
-        <aside v-if="!packagePanelCollapsed" class="oo-package-panel">
+        <aside v-if="!packagePanelCollapsed" ref="packagePanelRef" class="oo-package-panel">
           <div class="oo-package-panel__heading">
             <div>
               <strong>Student courses</strong>
               <span>{{ candidateScopeLabel }}</span>
             </div>
             <div class="oo-package-panel__tools">
+              <button
+                v-if="appStore.isMobileViewport"
+                type="button"
+                class="oo-filter-toggle"
+                :aria-label="mobileFiltersExpanded ? 'Search and filters are open' : 'Open search and filters'"
+                :aria-expanded="mobileFiltersExpanded"
+                @click="mobileFiltersExpanded = !mobileFiltersExpanded"
+              >
+                <el-icon><Search /></el-icon>
+              </button>
               <el-button
+                class="oo-panel-toggle"
                 text
                 size="small"
                 title="Hide course list"
@@ -244,16 +285,32 @@
           </div>
         </aside>
 
-        <el-button
-          v-if="packagePanelCollapsed"
-          class="oo-package-toggle no-print"
-          text
-          title="Show course list"
-          aria-label="Show course list"
-          @click="packagePanelCollapsed = false"
-        >
-          ›
-        </el-button>
+        <div v-if="packagePanelCollapsed" class="oo-collapsed-tools no-print">
+          <template v-if="appStore.isMobileViewport">
+            <button
+              type="button"
+              class="oo-filter-toggle"
+              :aria-label="mobileFiltersExpanded ? 'Search and filters are open' : 'Open search and filters'"
+              :aria-expanded="mobileFiltersExpanded"
+              @click="mobileFiltersExpanded = !mobileFiltersExpanded"
+            >
+              <el-icon><Search /></el-icon>
+            </button>
+            <button type="button" class="oo-mobile-course-toggle" @click="showCourseList">
+              Change course
+            </button>
+          </template>
+          <el-button
+            v-else
+            class="oo-package-toggle"
+            text
+            title="Show course list"
+            aria-label="Show course list"
+            @click="packagePanelCollapsed = false"
+          >
+            ›
+          </el-button>
+        </div>
 
         <section
           v-if="activePackage && activeStudent"
@@ -368,7 +425,11 @@
             </table>
           </section>
 
-          <div class="oo-action-line no-print" :class="{ 'oo-action-line--done': workflowComplete }">
+          <div
+            v-if="!appStore.isMobileViewport || nextArrangementLesson"
+            class="oo-action-line no-print"
+            :class="{ 'oo-action-line--done': workflowComplete }"
+          >
             <span class="oo-action-line__marker" aria-hidden="true"></span>
             <div>
               <strong>{{ nextActionTitle }}</strong>
@@ -414,8 +475,8 @@
           </div>
 
           <el-table
+            v-if="!appStore.isMobileViewport"
             :data="activePackage.lessons"
-            :max-height="520"
             border
             stripe
             size="small"
@@ -503,6 +564,30 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <div v-else class="oo-mobile-lessons no-print">
+            <article v-for="row in activePackage.lessons" :key="`mobile-${row.occurrenceId}`" class="oo-mobile-lesson">
+              <div class="oo-mobile-lesson__heading">
+                <div class="oo-simple-cell">
+                  <strong>{{ signatureCourseLabel(row) }}</strong>
+                  <span>{{ displayResourceName(row.actualTeacherName || row.plannedTeacherName) }}</span>
+                </div>
+                <el-tag class="status-pill" :class="statusPillClass(row)" size="small" :type="statusTag(row)">
+                  {{ statusLabel(row) }}
+                </el-tag>
+              </div>
+              <div class="oo-mobile-lesson__time">
+                <strong>{{ formatDate(row.plannedStartAt) }}</strong>
+                <span>{{ formatTimeRange(row.plannedStartAt, row.plannedEndAt) }}</span>
+              </div>
+              <div v-if="canConfirmLessons || canManageLessonResources" class="oo-mobile-lesson__actions">
+                <el-button v-if="canAdjustLesson(row)" size="small" plain @click="openAdjustDialog(row)">Adjust</el-button>
+                <el-button v-if="!needsLessonResources(row) && canAdminConfirm(row)" class="action-primary" type="warning" @click="openConfirm(row, 'admin')">Review &amp; deduct</el-button>
+                <el-button v-else-if="!needsLessonResources(row) && canInitialConfirm(row)" class="action-primary" type="success" plain @click="openConfirm(row, 'normal')">Submit attendance</el-button>
+                <span v-else-if="!canAdjustLesson(row)" class="oo-no-action">{{ needsLessonResources(row) ? 'Set a teacher before deduction.' : taskLabel(row) }}</span>
+              </div>
+            </article>
+          </div>
         </section>
 
         <section v-else class="oo-record-panel oo-record-panel--empty">
@@ -513,8 +598,8 @@
       </div>
     </main>
 
-    <el-dialog v-model="confirmDialogVisible" :title="confirmDialogTitle" width="520px" :close-on-click-modal="false" class="no-print">
-      <el-form :model="confirmForm" label-width="130px">
+    <el-dialog v-model="confirmDialogVisible" :title="confirmDialogTitle" width="520px" :fullscreen="appStore.isMobileViewport" :close-on-click-modal="false" class="no-print">
+      <el-form :model="confirmForm" :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '130px'">
         <el-alert
           v-if="showAdminDirectConfirmWarning"
           title="Teacher has not submitted attendance for this lesson. If you continue, admin will finally confirm and deduct it directly."
@@ -562,13 +647,13 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="adjustDialogVisible" title="Adjust Lesson" width="560px" :close-on-click-modal="false" class="no-print">
+    <el-dialog v-model="adjustDialogVisible" title="Adjust Lesson" width="560px" :fullscreen="appStore.isMobileViewport" :close-on-click-modal="false" class="no-print">
       <p class="oo-form-hint">
         {{ isTeacher
           ? "Change this lesson's time. Only your own unconfirmed lesson can be adjusted."
           : "Change only this lesson's time or teacher. The recurring schedule will not be changed." }}
       </p>
-      <el-form label-width="110px">
+      <el-form :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '110px'">
         <el-form-item v-if="!isTeacher" label="Teacher">
           <el-select
             v-model="adjustForm.teacherId"
@@ -611,11 +696,11 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="assignmentDialogVisible" title="Assign Teacher" width="480px" :close-on-click-modal="false" class="no-print">
+    <el-dialog v-model="assignmentDialogVisible" title="Assign Teacher" width="480px" :fullscreen="appStore.isMobileViewport" :close-on-click-modal="false" class="no-print">
       <p class="oo-form-hint">
         A teacher is required. The classroom is optional.
       </p>
-      <el-form label-width="100px">
+      <el-form :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '100px'">
         <el-form-item label="Teacher" required>
           <el-select v-model="assignmentForm.teacherId" filterable placeholder="Select teacher" style="width: 100%">
             <el-option v-for="teacher in teacherOptions" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
@@ -637,7 +722,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
-import { WarningFilled } from '@element-plus/icons-vue';
+import { Close, Search, WarningFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
@@ -647,6 +732,7 @@ import { adminConfirmLessonRecord, confirmLesson } from '@/api/lesson';
 import { fetchOneOnOneDeductions, type OneOnOneLesson, type OneOnOnePackage, type OneOnOneStudent, type OneOnOneTeacher } from '@/api/one-on-one';
 import { createScheduleAdjustment } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
+import { useAppStore } from '@/stores/app';
 import { isAdminOrStaffUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
 import type { EntityId } from '@/types/domain';
 
@@ -696,6 +782,7 @@ interface SignatureSubjectSummary {
 }
 
 const authStore = useAuthStore();
+const appStore = useAppStore();
 const route = useRoute();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
@@ -713,6 +800,7 @@ const activeTeacher = ref<OneOnOneTeacher | null>(null);
 const activeStudent = ref<OneOnOneStudent | null>(null);
 const activePackage = ref<OneOnOnePackage | null>(null);
 const printAreaRef = ref<HTMLElement>();
+const packagePanelRef = ref<HTMLElement>();
 const printMode = ref<'parent' | 'teacher'>('parent');
 const selectedTeacherPrintKey = ref<string>('__all__');
 const selectedTeacherId = ref<EntityId>();
@@ -721,12 +809,14 @@ const selectedGradeBand = ref<string>();
 const studentSearchKeyword = ref('');
 const studentSearchLoading = ref(false);
 const appliedStudentSearch = ref('');
+const mobileFiltersExpanded = ref(false);
 const studentSearchResults = ref<StudentEntry[]>([]);
 const matchedSearchStudentIds = ref<Set<string>>(new Set());
 const packagePanelCollapsed = ref(false);
 const collapsedTeacherKeys = ref(new Set<string>());
 const collapsedGradeBandKeys = ref(new Set<string>());
 const expandedStudentGroupKeys = ref(new Set<string>());
+let initializedTeacherList = false;
 
 const studentEntries = computed<StudentEntry[]>(() => teachers.value.flatMap(teacher =>
   teacher.students.map(student => ({ teacher, student })),
@@ -888,9 +978,10 @@ const teacherStudentGroups = computed<StudentPackageGroup[]>(() => {
       return {
         ...group,
         candidates: visiblePackages.sort((left, right) =>
-        courseTypeLabel(left.pkg).localeCompare(courseTypeLabel(right.pkg), undefined, { sensitivity: 'base' })
-        || normalizedGradeBand(left.pkg.gradeBand).localeCompare(normalizedGradeBand(right.pkg.gradeBand), undefined, { numeric: true, sensitivity: 'base' })
-        || left.pkg.packageName.localeCompare(right.pkg.packageName, undefined, { sensitivity: 'base' })),
+          candidatePackageLabel(left.pkg).localeCompare(candidatePackageLabel(right.pkg), undefined, {
+            sensitivity: 'base',
+            numeric: true,
+          })),
       };
     })
     .sort((left, right) => left.studentName.localeCompare(right.studentName, undefined, { sensitivity: 'base' }));
@@ -1146,6 +1237,10 @@ async function loadData() {
       ? { studentId: printTarget.studentId, packageId: printTarget.packageId }
       : {});
     teachers.value = res.data.data;
+    if (!initializedTeacherList) {
+      collapsedTeacherKeys.value = new Set(teacherGradeGroups.value.map(group => group.key));
+      initializedTeacherList = true;
+    }
     keepOrSelectFirstPackage();
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
@@ -1231,6 +1326,11 @@ async function searchStudents() {
     studentSearchResults.value = [...matchedEntries.values()];
     if (isTeacher.value) {
       expandedStudentGroupKeys.value = new Set(teacherStudentGroups.value.map(group => group.key));
+    } else {
+      const matchingTeacherKeys = new Set(teacherGradeGroups.value.map(group => group.key));
+      collapsedTeacherKeys.value = new Set(
+        [...collapsedTeacherKeys.value].filter(groupKey => !matchingTeacherKeys.has(groupKey)),
+      );
     }
   } catch (err) {
     studentSearchResults.value = [];
@@ -1338,6 +1438,21 @@ function onCourseTypeChanged() {
 
 function selectCandidatePackage(candidate: PackageCandidate) {
   selectPackage(candidate.teacher, candidate.student, candidate.pkg);
+  if (!appStore.isMobileViewport) return;
+
+  packagePanelCollapsed.value = true;
+  // 等课次明细渲染完成后滚动到选中信息，用户进入列表时仍能确认当前学生和课程。
+  void nextTick(() => {
+    printAreaRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+}
+
+/** 移动端从课次记录返回课程名单，并将新展开的名单滚入视口。 */
+function showCourseList() {
+  packagePanelCollapsed.value = false;
+  void nextTick(() => {
+    packagePanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 }
 
 function toggleTeacherGroup(groupKey: string) {
@@ -1599,8 +1714,10 @@ async function submitConfirm() {
     const payload = {
       occurrenceId: row.occurrenceId,
       resultStatus: confirmForm.resultStatus,
-      actualTeacherId: nonAttendance ? undefined : row.actualTeacherId || row.plannedTeacherId,
-      actualClassroomId: nonAttendance ? undefined : row.actualClassroomId || row.plannedClassroomId,
+      // 此窗口不允许选择实际老师或教室，避免把列表中的旧快照覆盖到当前课次或老师提交记录。
+      // 管理员直接确认由后端读取当前排课；审核老师提交则由后端读取待审核记录。
+      actualTeacherId: undefined,
+      actualClassroomId: undefined,
       actualStartAt: nonAttendance ? undefined : confirmForm.actualStartAt || undefined,
       actualEndAt: nonAttendance ? undefined : actualEndAt,
       actualUnits: nonAttendance ? 0 : Math.round((confirmForm.actualHours || 0) * 2),
@@ -1757,6 +1874,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  height: calc(100vh - 92px);
+  min-height: 0;
+  overflow: hidden;
 }
 
 .oo-toolbar {
@@ -1777,6 +1897,31 @@ onMounted(async () => {
   margin: 2px 0 0;
   color: #6b7280;
   font-size: 12px;
+}
+
+.oo-filter-toggle {
+  display: inline-flex;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  flex: 0 0 36px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #486581;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.oo-filter-toggle:hover,
+.oo-filter-toggle:focus-visible {
+  border-color: #60a5fa;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .oo-actions {
@@ -1870,8 +2015,16 @@ onMounted(async () => {
   flex: 1;
 }
 
+.oo-student-search__submit :deep(.el-icon) {
+  display: none;
+}
+
 .oo-workspace {
-  min-height: calc(100vh - 176px);
+  display: flex;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow: hidden;
   padding: 12px;
   border: 1px solid #d9e2ec;
   border-radius: 6px;
@@ -1957,7 +2110,9 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
   gap: 12px;
-  min-height: 620px;
+  flex: 1 1 0;
+  height: 100%;
+  min-height: 0;
 }
 
 .oo-split-workspace--collapsed {
@@ -1967,6 +2122,8 @@ onMounted(async () => {
 .oo-package-panel,
 .oo-record-panel {
   min-width: 0;
+  height: 100%;
+  min-height: 0;
   border: 1px solid #d9e2ec;
   border-radius: 6px;
   background: #fff;
@@ -1975,6 +2132,7 @@ onMounted(async () => {
 .oo-package-panel {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .oo-package-panel__heading {
@@ -2010,8 +2168,42 @@ onMounted(async () => {
   gap: 4px;
 }
 
-.oo-package-toggle,
-.oo-package-panel__tools :deep(.el-button) {
+.oo-package-panel__tools .oo-filter-toggle,
+.oo-package-panel__tools :deep(.oo-panel-toggle) {
+  box-sizing: border-box;
+  display: inline-flex;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #486581;
+  line-height: 1;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.oo-package-panel__tools :deep(.oo-panel-toggle) {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.oo-package-panel__tools .oo-filter-toggle:hover,
+.oo-package-panel__tools .oo-filter-toggle:focus-visible,
+.oo-package-panel__tools :deep(.oo-panel-toggle:hover),
+.oo-package-panel__tools :deep(.oo-panel-toggle:focus-visible) {
+  border-color: #60a5fa;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.oo-package-toggle {
   width: 36px;
   min-width: 36px;
   height: 36px;
@@ -2026,8 +2218,14 @@ onMounted(async () => {
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
+.oo-collapsed-tools {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
 .oo-package-toggle:hover,
-.oo-package-panel__tools :deep(.el-button:hover) {
+.oo-package-panel__tools :deep(.oo-panel-toggle:hover) {
   border-color: #60a5fa;
   background: #eff6ff;
   color: #1d4ed8;
@@ -2040,16 +2238,71 @@ onMounted(async () => {
 
 .oo-package-list {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 6px;
   min-height: 0;
-  max-height: 620px;
+  max-height: none;
   overflow-y: scroll;
   padding: 8px;
   scrollbar-gutter: stable;
   scrollbar-color: #94a3b8 #edf2f7;
   scrollbar-width: thin;
+}
+
+.oo-package-list--students {
+  min-height: 0;
+}
+
+.oo-mobile-lessons {
+  display: grid;
+  gap: 8px;
+}
+
+.oo-mobile-lesson {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #d9e2ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.oo-mobile-lesson__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.oo-mobile-lesson__heading .oo-simple-cell {
+  min-width: 0;
+}
+
+.oo-mobile-lesson__heading .status-pill {
+  flex-shrink: 0;
+}
+
+.oo-mobile-lesson__time {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.oo-mobile-lesson__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #edf2f7;
+}
+
+.oo-mobile-lesson__actions .el-button {
+  flex: 1 1 140px;
+  min-height: 44px;
+  margin: 0;
 }
 
 .oo-package-list::-webkit-scrollbar {
@@ -2282,7 +2535,29 @@ onMounted(async () => {
 }
 
 .oo-record-panel {
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 12px;
+  scrollbar-color: #94a3b8 #edf2f7;
+  scrollbar-width: thin;
+}
+
+.oo-record-panel::-webkit-scrollbar {
+  width: 10px;
+}
+
+.oo-record-panel::-webkit-scrollbar-track {
+  background: #edf2f7;
+}
+
+.oo-record-panel::-webkit-scrollbar-thumb {
+  border: 2px solid #edf2f7;
+  border-radius: 8px;
+  background: #94a3b8;
+}
+
+.oo-record-panel::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
 }
 
 .oo-signature-sheet {
@@ -2640,37 +2915,153 @@ onMounted(async () => {
 
 }
 
-@media (max-width: 760px) {
+@media (max-width: 920px) {
   .oo-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
+    display: none;
   }
 
-  .oo-actions {
-    justify-content: flex-start;
+  .oo-help {
+    display: none;
+  }
+
+  .oo-selector-bar__mobile-heading {
+    display: flex;
+    grid-column: 1 / -1;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1px;
+    color: #334155;
+    font-size: 12px;
+  }
+
+  .oo-selector-bar__mobile-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .oo-clear-filters--mobile {
+    min-height: 32px;
+    padding: 0 9px;
+    border: 1px solid #dbe4ee;
+    border-radius: 999px;
+    background: #f8fafc;
+    color: #64748b;
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  .oo-clear-filters--mobile:hover,
+  .oo-clear-filters--mobile:focus-visible {
+    border-color: #b8c7d8;
+    background: #f1f5f9;
+    color: #334155;
+  }
+
+  .oo-selector-bar__mobile-heading .el-button {
+    width: 28px;
+    height: 28px;
+    min-height: 28px;
+    margin: -4px -4px -4px 0;
+    padding: 0;
   }
 
   .oo-selector-bar {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: end;
+    gap: 7px 8px;
+    padding: 8px;
   }
 
-  .oo-student-search,
-  .oo-split-workspace {
+  .oo-selector-bar .oo-field > span {
+    font-size: 9px;
+  }
+
+  .oo-selector-bar .oo-field :deep(.el-input__inner),
+  .oo-selector-bar .oo-field :deep(.el-select__selected-item),
+  .oo-selector-bar .oo-field :deep(.el-select__placeholder) {
+    font-size: 12px;
+  }
+
+  .oo-student-search {
+    grid-column: 1 / -1;
+    display: flex;
     align-items: stretch;
-    flex-direction: column;
+    flex-direction: row;
+    gap: 6px;
+  }
+
+  .oo-student-search .oo-field {
+    min-width: 0;
+  }
+
+  .oo-student-search > .el-button {
+    align-self: flex-end;
+    width: 40px;
+    min-width: 40px;
+    height: 34px;
+    min-height: 34px;
+    margin-bottom: 0;
+    padding: 0;
+  }
+
+  .oo-student-search__submit .oo-student-search__label {
+    display: none;
+  }
+
+  .oo-student-search__submit :deep(.el-icon) {
+    display: inline-flex;
+    font-size: 16px;
+  }
+
+  .oo-selector-bar .oo-field :deep(.el-input__wrapper),
+  .oo-selector-bar .oo-field :deep(.el-select__wrapper) {
+    min-height: 34px;
   }
 
   .oo-clear-filters {
-    justify-self: stretch;
+    grid-column: 2;
+    min-height: 32px;
+    justify-self: end;
   }
 
   .oo-split-workspace {
     display: flex;
+    align-items: stretch;
+    flex-direction: column;
+    height: auto;
     min-height: 0;
   }
 
+  .oo-page {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .oo-workspace {
+    display: block;
+    flex: initial;
+    overflow: visible;
+  }
+
+  .oo-package-panel,
+  .oo-record-panel {
+    height: auto;
+  }
+
+  .oo-package-panel {
+    max-height: none;
+  }
+
   .oo-package-list {
+    flex: 0 1 auto;
     max-height: 260px;
+  }
+
+  .oo-record-panel {
+    overflow: visible;
   }
 
   .oo-workspace {
@@ -2678,8 +3069,173 @@ onMounted(async () => {
   }
 
   .oo-action-line {
-    align-items: flex-start;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 6px;
+    min-height: 0;
+    margin-bottom: 8px;
+    padding: 10px;
+  }
+
+  .oo-action-line__marker {
+    display: none;
+  }
+
+  .oo-action-line strong {
+    font-size: 14px;
+    line-height: 1.3;
+  }
+
+  .oo-action-line div span {
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .oo-action-line > .el-button {
+    width: 100%;
+    min-height: 40px;
+    margin: 0;
+    padding: 0 10px;
+    font-size: 14px;
+  }
+
+  .oo-student-context {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    margin-bottom: 8px;
+    padding: 2px 0 10px;
+  }
+
+  .oo-collapsed-tools {
+    width: 100%;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    margin: 0 0 2px;
+  }
+
+  .oo-collapsed-tools .oo-filter-toggle {
+    width: 36px;
+    min-width: 36px;
+    height: 36px;
+    min-height: 36px;
+    flex: 0 0 36px;
+  }
+
+  .oo-mobile-course-toggle {
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid #d9e2ec;
+    border-radius: 9px;
+    background: #fff;
+    color: #36516f;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .oo-mobile-course-toggle:active {
+    border-color: #93c5fd;
+    background: #eff6ff;
+  }
+
+  .oo-student-context > div:first-child > strong {
+    font-size: 16px;
+    line-height: 1.3;
+  }
+
+  .oo-student-context > div:first-child > span {
+    margin-top: 2px;
+    font-size: 12px;
+  }
+
+  .oo-student-context__metrics {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+    gap: 8px 6px;
+    margin-top: 10px;
+  }
+
+  .oo-student-context__metrics > span {
+    min-width: 0;
+    font-size: 13px;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .oo-student-context__metrics small {
+    margin-bottom: 1px;
+    font-size: 9px;
+    line-height: 1.2;
+  }
+
+  .oo-table-title {
+    margin: 10px 0 6px;
+  }
+
+  .oo-table-title strong {
+    font-size: 15px;
+  }
+
+  .oo-table-title span {
+    margin-top: 2px;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .oo-table-title small {
+    display: none;
+  }
+
+  .oo-mobile-lessons {
+    gap: 7px;
+  }
+
+  .oo-mobile-lesson {
+    gap: 7px;
+    padding: 10px;
+  }
+
+  .oo-mobile-lesson__heading .oo-simple-cell strong {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+
+  .oo-mobile-lesson__heading .oo-simple-cell span,
+  .oo-mobile-lesson__time {
+    font-size: 11px;
+  }
+
+  .oo-mobile-lesson__actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+    gap: 6px;
+    padding-top: 6px;
+  }
+
+  .oo-mobile-lesson__actions .el-button {
+    width: 100%;
+    min-width: 0;
+    min-height: 38px;
+    margin: 0;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+
+  :deep(.el-dialog.is-fullscreen) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  :deep(.el-dialog.is-fullscreen .el-dialog__body) {
+    flex: 1;
+  }
+
+  :deep(.el-dialog.is-fullscreen .el-dialog__footer) {
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
   }
 }
 
@@ -2695,7 +3251,9 @@ onMounted(async () => {
     display: block;
     border: 0;
     padding: 0;
+    height: auto;
     min-height: auto;
+    overflow: visible;
   }
 
   .oo-package-panel,
@@ -2752,6 +3310,8 @@ onMounted(async () => {
   .oo-record-panel {
     border: 0;
     padding: 0;
+    height: auto;
+    overflow: visible;
   }
 
   .oo-signature-sheet {

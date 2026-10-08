@@ -667,4 +667,12 @@ async function handleCreate() {
   color: #e6a23c;
   font-weight: 500;
 }
+
+@media (max-width: 640px) {
+  .settings-panel { padding: 12px; }
+  .form-row { grid-template-columns: 1fr; gap: 0; }
+  .settings-panel__header-actions { display: flex; flex-wrap: wrap; width: 100%; }
+  .settings-panel__header-actions > .el-button { flex: 1 1 auto; margin-left: 0; }
+  .account-dialog :deep(.el-dialog__body), .account-dialog :deep(.el-dialog__header), .account-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
+}
 </style>

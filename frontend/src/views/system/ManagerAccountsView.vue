@@ -1,21 +1,41 @@
 <template>
   <div class="manager-accounts-page" v-loading="loading">
-    <div class="manager-accounts-toolbar">
-      <el-input
-        v-model="filters.keyword"
-        clearable
-        placeholder="Search name or username"
-        style="max-width: 320px"
-        @keyup.enter="handleFilterChange"
-        @clear="handleFilterChange"
-      />
-      <el-select v-model="filters.status" clearable placeholder="All statuses" style="width: 160px" @change="handleFilterChange">
-        <el-option label="Active" value="ACTIVE" />
-        <el-option label="Inactive" value="INACTIVE" />
-      </el-select>
-      <el-button @click="handleFilterChange">Search</el-button>
+    <div v-if="appStore.isMobileViewport" class="mobile-search-toggle-row">
+      <button
+        type="button"
+        class="mobile-search-trigger"
+        :aria-expanded="mobileSearchExpanded"
+        aria-label="Search manager accounts"
+        @click="mobileSearchExpanded = !mobileSearchExpanded"
+      >
+        <el-icon><Search /></el-icon>
+      </button>
     </div>
-    <el-table :data="accounts" row-key="userId" empty-text="No manager accounts">
+    <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" :class="{ 'mobile-search-panel': appStore.isMobileViewport }">
+      <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+        <span>Search manager accounts</span>
+        <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+          <el-icon><Close /></el-icon>
+        </button>
+      </div>
+      <div class="manager-accounts-toolbar">
+        <el-input
+          v-model="filters.keyword"
+          clearable
+          placeholder="Search name or username"
+          style="max-width: 320px"
+          @keyup.enter="handleFilterChange"
+          @clear="handleFilterChange"
+        />
+        <el-select v-model="filters.status" clearable placeholder="All statuses" style="width: 160px" @change="handleFilterChange">
+          <el-option label="Active" value="ACTIVE" />
+          <el-option label="Inactive" value="INACTIVE" />
+        </el-select>
+        <el-button @click="handleFilterChange">Search</el-button>
+      </div>
+    </section>
+    <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe horizontally to see more columns</p>
+    <el-table :data="accounts" row-key="userId" empty-text="No manager accounts" class="manager-accounts-table">
       <el-table-column prop="displayName" label="Name" min-width="180" />
       <el-table-column prop="username" label="Username" min-width="170" />
       <el-table-column prop="mobile" label="Phone" min-width="140" />
@@ -30,10 +50,21 @@
       <el-table-column label="Last login" min-width="180">
         <template #default="{ row }">{{ dateTime(row.lastLoginAt) }}</template>
       </el-table-column>
-      <el-table-column label="Actions" width="150" fixed="right">
+      <el-table-column :label="appStore.isMobileViewport ? 'More' : 'Actions'" :width="appStore.isMobileViewport ? 72 : 150" fixed="right" align="center">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">Edit</el-button>
-          <el-button link type="danger" @click="handleDelete(row)">Delete</el-button>
+          <el-dropdown v-if="appStore.isMobileViewport" class="mobile-table-actions" trigger="click" placement="bottom-end" @click.stop>
+            <el-button text circle aria-label="More manager actions" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="openEdit(row)">Edit manager</el-dropdown-item>
+                <el-dropdown-item divided @click="handleDelete(row)">Delete manager</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <template v-else>
+            <el-button link type="primary" @click="openEdit(row)">Edit</el-button>
+            <el-button link type="danger" @click="handleDelete(row)">Delete</el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>
@@ -108,6 +139,7 @@
 </template>
 
 <script setup lang="ts">
+import { Close, MoreFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus';
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
@@ -121,6 +153,7 @@ import {
 import { extractErrorMessage } from '@/api/http';
 import type { EntityId } from '@/types/domain';
 import { DEFAULT_INITIAL_PASSWORD, usernameFromName } from '@/utils/account-credentials';
+import { useAppStore } from '@/stores/app';
 
 interface AccountForm {
   username: string;
@@ -133,6 +166,8 @@ interface AccountForm {
 }
 
 const formRef = ref<FormInstance>();
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 const accounts = ref<ManagerAccount[]>([]);
 const loading = ref(false);
 const saving = ref(false);
@@ -310,9 +345,12 @@ defineExpose({ openCreateDialog: openCreate });
 .manager-accounts-toolbar { display: flex; align-items: center; gap: 10px; }
 .manager-accounts-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #64748b; font-size: 13px; }
 .form-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
-@media (max-width: 720px) {
+@media (max-width: 920px) {
   .manager-accounts-toolbar,
   .manager-accounts-footer { flex-wrap: wrap; }
   .manager-accounts-footer :deep(.el-pagination) { margin-left: auto; }
+  .manager-accounts-toolbar :deep(.el-input),
+  .manager-accounts-toolbar :deep(.el-select) { width: 100% !important; }
+  .manager-accounts-toolbar > .el-button { width: 100%; }
 }
 </style>

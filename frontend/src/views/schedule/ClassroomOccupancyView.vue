@@ -63,6 +63,19 @@
 
         <!-- Right: Calendar -->
         <main class="calendar-panel">
+          <el-select
+            v-if="appStore.isMobileViewport"
+            :model-value="selectedClassroomId"
+            class="classroom-mobile-select"
+            placeholder="Select a classroom"
+            filterable
+            @change="onClassroomSelect"
+          >
+            <el-option-group v-for="group in classroomGroups" :key="group.campus" :label="group.campus">
+              <el-option v-for="room in group.rooms" :key="room.id" :label="room.roomName" :value="room.id" />
+            </el-option-group>
+          </el-select>
+
           <!-- No classroom selected -->
           <div v-if="!selectedClassroomId" class="calendar-empty">
             <el-icon :size="40" color="#c0c4cc"><Calendar /></el-icon>
@@ -137,6 +150,7 @@
                 :week-start-date="weekMonday"
                 :readonly="true"
                 :hide-hint="true"
+                :pinch-zoom-enabled="appStore.isMobileViewport"
                 @cell-click="onCellClick"
               />
               <div v-if="occupancyRows.length === 0 && !occupancyError" class="calendar-empty-state empty-state">
@@ -144,6 +158,7 @@
                 <span>This is expected when no lessons use this room this week. Check the room assignment queue for lessons that still need a room.</span>
               </div>
               <el-table
+                v-if="!appStore.isMobileViewport"
                 :data="occupancyRows"
                 size="small"
                 class="occupancy-table"
@@ -200,6 +215,7 @@
             :title="pendingError"
           />
           <el-table
+            v-if="!appStore.isMobileViewport"
             v-loading="pendingLoading"
             :data="pendingTreeRows"
             size="small"
@@ -279,6 +295,26 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-else v-loading="pendingLoading" class="mobile-pending-list">
+            <article v-for="row in pendingAssignmentRows" :key="row.rowKey" class="mobile-pending-card">
+              <header><strong>{{ row.classLabel || pendingMainLabel(row) }}</strong><el-tag size="small" effect="plain" :type="pendingTypeTag(row)">{{ pendingTypeLabel(row) }}</el-tag></header>
+              <span class="mobile-pending-card__context">{{ [row.productLabel, row.gradeLabel, row.studentName].filter(Boolean).join(' · ') }}</span>
+              <dl><div><dt>Next time</dt><dd>{{ row.timeLabel }}</dd></div><div><dt>Teacher</dt><dd>{{ row.teacherName }}</dd></div></dl>
+              <el-select v-model="pendingClassroomSelections[row.rowKey]" placeholder="Select a room" filterable>
+                <el-option-group v-for="group in classroomGroups" :key="group.campus" :label="group.campus">
+                  <el-option v-for="room in group.rooms" :key="room.id" :label="room.roomName" :value="room.id" />
+                </el-option-group>
+              </el-select>
+              <el-button
+                class="mobile-pending-card__save"
+                type="primary"
+                :loading="savingPendingKey === row.rowKey"
+                :disabled="!pendingClassroomSelections[row.rowKey]"
+                @click="savePendingAssignment(row)"
+              >Assign room</el-button>
+            </article>
+            <el-empty v-if="pendingLoaded && pendingAssignmentRows.length === 0" description="No pending classroom assignments." :image-size="64" />
+          </div>
         </div>
       </details>
     </section>
@@ -351,6 +387,7 @@ import { ArrowLeft, ArrowRight, Calendar, Check, Loading, Search } from '@elemen
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useAppStore } from '@/stores/app';
 import dayjs from 'dayjs';
 import { scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { extractErrorMessage } from '@/api/http';
@@ -367,6 +404,7 @@ import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.v
 
 const route = useRoute();
 const router = useRouter();
+const appStore = useAppStore();
 
 // ─── Classrooms ────────────────────────────────
 type ClassroomOption = Pick<ClassroomItem, 'id' | 'roomName' | 'campus' | 'campusId'>;
@@ -967,10 +1005,14 @@ onMounted(async () => {
 
 function selectInitialClassroom() {
   const queryId = resolveQueryId(route.query.classroomId);
-  if (!queryId) return;
-  const match = classrooms.value.find(c => c.id === queryId);
-  if (!match) return;
-  selectedClassroomId.value = match.id;
+  const match = queryId ? classrooms.value.find(c => c.id === queryId) : undefined;
+  const defaultMobileRoom = appStore.isMobileViewport ? classrooms.value[0] : undefined;
+  const initialRoom = match ?? defaultMobileRoom;
+  if (!initialRoom) return;
+  selectedClassroomId.value = initialRoom.id;
+  if (!queryId && appStore.isMobileViewport) {
+    router.replace({ path: route.path, query: { ...route.query, classroomId: initialRoom.id } });
+  }
   loadData();
 }
 
@@ -1120,6 +1162,35 @@ function resolveQueryId(value: unknown): EntityId | null {
   padding: 14px 16px 16px;
   background: #ffffff;
   overflow-x: auto;
+}
+
+.mobile-pending-list { display: grid; gap: 9px; }
+.mobile-pending-card { min-width: 0; padding: 12px; border: 1px solid #dce5ef; border-radius: 10px; background: #fff; }
+.mobile-pending-card header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.mobile-pending-card header strong { color: #26384c; font-size: 14px; overflow-wrap: anywhere; }
+.mobile-pending-card dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin: 10px 0 0; }
+.mobile-pending-card dl > div { display: grid; min-width: 0; gap: 3px; }
+.mobile-pending-card dt { color: #718096; font-size: 11px; }
+.mobile-pending-card dd { margin: 0; color: #334155; font-size: 12px; overflow-wrap: anywhere; }
+.mobile-pending-card__context { display: block; margin-top: 5px; color: #64748b; font-size: 12px; line-height: 1.4; }
+.mobile-pending-card .el-select { width: 100%; margin-top: 10px; }
+.mobile-pending-card__save { width: 100%; margin: 8px 0 0; }
+
+@media (max-width: 920px) {
+  .page-stack { overflow-x: visible; }
+  .classroom-calendar { width: 100%; min-width: 0; min-height: 0; height: auto; overflow: visible; padding: 12px; }
+  .classroom-calendar__header { align-items: flex-start; flex-direction: column; }
+  .classroom-calendar__body { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; overflow: visible; }
+  .classroom-mobile-select { display: block; width: 100%; margin-bottom: 10px; }
+  .calendar-panel { overflow: visible; }
+  .calendar-controls { align-items: stretch; }
+  .calendar-controls__nav { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
+  .calendar-controls__nav > .el-date-editor { width: 100% !important; }
+  .calendar-controls__label { grid-column: 1 / -1; }
+  .room-occupancy-scroll { overflow: visible; padding: 0; }
+  .calendar-help { display: none; }
+  .pending-panel__content { padding: 10px; overflow: visible; }
+  .pending-panel__summary { align-items: flex-start; flex-direction: column; padding: 12px; }
 }
 
 .pending-panel__toolbar {
@@ -1716,5 +1787,32 @@ function resolveQueryId(value: unknown): EntityId | null {
 .detail-field span {
   color: #303133;
   font-size: 13px;
+}
+
+@media (max-width: 920px) {
+  .page-stack { overflow-x: visible; }
+  .classroom-calendar { width: 100%; min-width: 0; min-height: 0; height: auto; overflow: visible; padding: 12px; }
+  .classroom-calendar__body { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; overflow: visible; }
+  .classroom-list-panel { display: none; }
+  .calendar-help { display: none; }
+  .calendar-panel { overflow: visible; }
+  .classroom-calendar__actions :deep(.el-button) { height: 34px; padding: 0 10px; font-size: 12px; }
+  .classroom-mobile-select :deep(.el-select__wrapper) { min-height: 36px; padding: 0 10px; }
+  .classroom-mobile-select :deep(.el-select__placeholder),
+  .classroom-mobile-select :deep(.el-select__selected-item) { font-size: 13px; }
+  .calendar-controls__nav { display: grid; width: 100%; min-width: 0; grid-template-columns: max-content minmax(0, 1fr); }
+  .calendar-controls__nav > * { min-width: 0; max-width: 100%; }
+  .calendar-controls__nav :deep(.el-button) { height: 34px; padding: 0 8px; font-size: 12px; }
+  .calendar-controls__nav :deep(.el-button-group .el-button) { width: 34px; min-width: 34px; }
+  .calendar-controls__nav :deep(.el-date-editor) { height: 34px; }
+  .calendar-controls__nav :deep(.el-date-editor .el-input__wrapper) { min-height: 34px; padding: 0 8px; }
+  .calendar-controls__nav :deep(.el-date-editor .el-input__inner) { font-size: 12px; }
+  .calendar-controls__nav :deep(.el-tag) { font-size: 11px; }
+  .calendar-controls__nav .el-tag { grid-column: 1 / -1; justify-self: start; }
+  .calendar-controls__nav > .el-date-editor { width: 100% !important; }
+  .calendar-controls__label { grid-column: 1 / -1; font-size: 12px; }
+  .room-occupancy-scroll { overflow: visible; padding: 0; }
+  .room-occupancy-scroll :deep(.weekly-time-selector) { min-width: 0; }
+  .pending-panel__content { overflow: visible; }
 }
 </style>

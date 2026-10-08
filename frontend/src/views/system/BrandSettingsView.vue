@@ -130,4 +130,10 @@ async function handleSave() {
   grid-template-columns: 1fr 1fr;
   gap: 12px 20px;
 }
+
+@media (max-width: 640px) {
+  .settings-panel { padding: 12px; }
+  .form-row { grid-template-columns: 1fr; gap: 0; }
+  .brand-form { max-width: none; }
+}
 </style>

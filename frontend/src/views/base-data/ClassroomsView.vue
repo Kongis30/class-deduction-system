@@ -4,16 +4,34 @@
       <div class="panel-header">
         <span class="panel-header__title">Classrooms</span>
         <div class="panel-header__actions">
-          <el-button @click="openBackfillSchedule()">
-            Assign rooms
-          </el-button>
-          <el-button @click="openRoomCalendar()">
-            Room calendar
-          </el-button>
-          <el-button type="primary" @click="openClassroomDialog()">
-            <el-icon><Plus /></el-icon>
-            Add classroom
-          </el-button>
+          <button
+            v-if="appStore.isMobileViewport"
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileSearchExpanded"
+            aria-label="Open classroom search and filters"
+            @click="mobileSearchExpanded = !mobileSearchExpanded"
+          >
+            <el-icon><Search /></el-icon>
+          </button>
+          <el-dropdown v-if="appStore.isMobileViewport" trigger="click" placement="bottom-end">
+            <el-button aria-label="More classroom actions"><el-icon><MoreFilled /></el-icon></el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="openBackfillSchedule()">Assign rooms</el-dropdown-item>
+                <el-dropdown-item @click="openRoomCalendar()">Room calendar</el-dropdown-item>
+                <el-dropdown-item divided @click="openClassroomDialog()">Add classroom</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <template v-else>
+            <el-button @click="openBackfillSchedule()">Assign rooms</el-button>
+            <el-button @click="openRoomCalendar()">Room calendar</el-button>
+            <el-button type="primary" @click="openClassroomDialog()">
+              <el-icon><Plus /></el-icon>
+              Add classroom
+            </el-button>
+          </template>
         </div>
       </div>
 
@@ -26,6 +44,13 @@
         description="Use Room calendar to assign pending rooms and verify occupancy in one place."
       />
 
+      <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" class="mobile-search-panel">
+      <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+        <span>Search classrooms</span>
+        <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+          <el-icon><Close /></el-icon>
+        </button>
+      </div>
       <el-form class="filters" :model="filters" inline>
         <el-form-item label="Name" class="filters__item">
           <el-input
@@ -60,8 +85,10 @@
           </el-select>
         </el-form-item>
       </el-form>
+      </section>
 
       <el-table
+        v-if="!appStore.isMobileViewport"
         v-loading="loading"
         :data="tableData"
         row-key="id"
@@ -102,13 +129,35 @@
         </el-table-column>
       </el-table>
 
+      <div v-else v-loading="loading" class="mobile-classroom-list">
+        <article v-for="room in tableData" :key="room.id" class="mobile-classroom-card">
+          <header class="mobile-classroom-card__heading">
+            <strong>{{ room.roomName }}</strong>
+            <el-tag size="small" :type="room.status === 'ACTIVE' ? 'success' : 'info'">
+              {{ room.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
+            </el-tag>
+          </header>
+          <dl class="mobile-classroom-card__details">
+            <div><dt>Campus</dt><dd>{{ room.campus }}</dd></div>
+            <div><dt>Capacity</dt><dd>{{ room.capacity }} students</dd></div>
+          </dl>
+          <div class="mobile-classroom-card__actions">
+            <el-button @click="openRoomCalendar(room)">Calendar</el-button>
+            <el-button type="primary" plain @click="openBackfillSchedule(room)">Assign room</el-button>
+            <el-button @click="openClassroomDialog(room)">Edit</el-button>
+            <el-button text type="danger" @click="handleDelete(room)">Delete</el-button>
+          </div>
+        </article>
+        <el-empty v-if="!loading && tableData.length === 0" :description="filters.keyword || filters.campus || filters.status ? 'No classrooms match the current filters.' : 'No classrooms yet.'" />
+      </div>
+
       <div class="table-footer">
         <span>Showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }}</span>
         <el-pagination
           v-model:current-page="pagination.page"
           v-model:page-size="pagination.size"
           background
-          layout="prev, pager, next, sizes"
+          :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
           :page-sizes="[10, 20, 50]"
           :total="pagination.total"
           @current-change="loadData"
@@ -163,10 +212,11 @@
 
 <script setup lang="ts">
 import axios from 'axios';
-import { Plus } from '@element-plus/icons-vue';
+import { Close, MoreFilled, Plus, Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAppStore } from '@/stores/app';
 
 import { extractErrorMessage } from '@/api/http';
 import {
@@ -188,6 +238,8 @@ const classroomFormRef = ref();
 const campuses = ref<CampusItem[]>([]);
 const CLASSROOM_IN_USE_MESSAGE = 'This classroom is still in use. Please reassign related classes or schedules first.';
 const router = useRouter();
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 
 // ─── Filters & Pagination ───────────────────────────────
 const filters = reactive({
@@ -455,6 +507,23 @@ loadData();
   color: #909399;
 }
 
+.mobile-classroom-list { display: grid; gap: 10px; }
+.mobile-classroom-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+.mobile-classroom-card__heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mobile-classroom-card__heading strong { overflow-wrap: anywhere; color: #26384c; font-size: 15px; }
+.mobile-classroom-card__details { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 12px 0 0; }
+.mobile-classroom-card__details > div { display: grid; gap: 4px; }
+.mobile-classroom-card__details dt { color: #718096; font-size: 12px; }
+.mobile-classroom-card__details dd { margin: 0; color: #334155; font-size: 14px; }
+.mobile-classroom-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.mobile-classroom-card__actions .el-button { margin: 0; }
+
 .dialog-footer {
   display: flex;
   justify-content: flex-end;
@@ -477,5 +546,21 @@ loadData();
 .classroom-dialog :deep(.el-dialog__footer) {
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
+}
+
+@media (max-width: 640px) {
+  .course-product-panel { padding: 12px; }
+  .panel-header { align-items: center; margin-bottom: 10px; }
+  .panel-header__title { display: none; }
+  .panel-header__actions { margin-left: auto; gap: 6px; }
+  .panel-header__actions > .el-dropdown > .el-button { width: 36px; height: 36px; min-height: 36px; padding: 0; }
+  .workflow-note :deep(.el-alert__description) { display: none; }
+  .filters { display: grid; grid-template-columns: 1fr; gap: 4px; }
+  .filters__item, .filters__item :deep(.el-input), .filters__item :deep(.el-select) { width: 100% !important; }
+  .table-footer { align-items: stretch; flex-direction: column; gap: 8px; }
+  .table-footer :deep(.el-pagination) { width: 100%; min-width: 0; }
+  .classroom-dialog :deep(.el-dialog__header),
+  .classroom-dialog :deep(.el-dialog__body),
+  .classroom-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
 }
 </style>

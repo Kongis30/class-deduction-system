@@ -513,4 +513,11 @@ function rowKey(row: DailyRegistrationRow) {
   .daily-workbook-toolbar__actions { margin-left: 0; }
   .daily-sheet__scroll--compact { max-height: 220px; }
 }
+
+@media (max-width: 640px) {
+  .daily-workbook-toolbar__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .daily-workbook-toolbar__stat { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0; }
+  .daily-workbook-toolbar__stat em { white-space: normal; }
+  .daily-workbook-toolbar__stat strong { flex: 0 0 auto; }
+}
 </style>

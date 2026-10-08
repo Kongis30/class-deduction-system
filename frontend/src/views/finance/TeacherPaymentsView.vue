@@ -9,10 +9,29 @@
     </section>
 
     <div class="tp-page">
-      <aside class="tp-sidebar">
-      <div class="tp-sidebar__search">
-        <el-input v-model="teacherKeyword" placeholder="Search teacher..." clearable size="small" />
+      <aside class="tp-sidebar" :class="{ 'tp-sidebar--mobile-hidden': appStore.isMobileViewport && selectedTeacherId }">
+      <div v-if="appStore.isMobileViewport" class="mobile-search-toggle-row">
+        <button
+          type="button"
+          class="mobile-search-trigger"
+          :aria-expanded="mobileSearchExpanded"
+          aria-label="Search teachers"
+          @click="mobileSearchExpanded = !mobileSearchExpanded"
+        >
+          <el-icon><Search /></el-icon>
+        </button>
       </div>
+      <section v-show="!appStore.isMobileViewport || mobileSearchExpanded" :class="{ 'mobile-search-panel': appStore.isMobileViewport }">
+        <div v-if="appStore.isMobileViewport" class="mobile-search-panel__header">
+          <span>Find a teacher</span>
+          <button type="button" aria-label="Close search" @click="mobileSearchExpanded = false">
+            <el-icon><Close /></el-icon>
+          </button>
+        </div>
+        <div class="tp-sidebar__search">
+          <el-input v-model="teacherKeyword" placeholder="Search teacher..." clearable size="small" />
+        </div>
+      </section>
       <div class="tp-sidebar__list" v-loading="teachersLoading">
         <div
           v-for="t in filteredTeachers"
@@ -31,7 +50,11 @@
       </aside>
 
 
-      <main class="tp-content">
+      <main class="tp-content" :class="{ 'tp-content--mobile-hidden': appStore.isMobileViewport && !selectedTeacherId }">
+      <div v-if="appStore.isMobileViewport && selectedTeacher" class="tp-mobile-selection">
+        <el-button text @click="selectedTeacherId = null">← Teacher list</el-button>
+        <strong>{{ selectedTeacher.teacherName }}</strong>
+      </div>
       <div v-if="!selectedTeacherId" class="tp-content__placeholder">
         Select a teacher from the left panel to view their payment records.
       </div>
@@ -361,9 +384,11 @@
 </template>
 
 <script setup lang="ts">
+import { Close, Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
+import { useAppStore } from '@/stores/app';
 
 import {
   confirmPayment,
@@ -376,6 +401,8 @@ import { fetchAllTeachers } from '@/api/base-data';
 import type { EntityId, TeacherPaymentItem, UnpaidLessonItem } from '@/types/domain';
 
 const router = useRouter();
+const appStore = useAppStore();
+const mobileSearchExpanded = ref(false);
 
 const teacherKeyword = ref('');
 const teachersLoading = ref(false);
@@ -930,5 +957,33 @@ onMounted(async () => {
   font-size: 14px;
   font-weight: 500;
   color: #303133;
+}
+
+@media (max-width: 920px) {
+  .tp-page { flex-direction: column; }
+  .tp-sidebar { width: 100%; height: auto; min-height: min(55dvh, 480px); max-height: none; }
+  .tp-sidebar--mobile-hidden,
+  .tp-content--mobile-hidden { display: none; }
+  .tp-sidebar__list { display: block; max-height: min(55dvh, 480px); overflow-y: auto; padding: 4px 0; }
+  .tp-sidebar__item { min-height: 48px; border-left: 3px solid transparent; border-bottom: 1px solid #edf0f4; }
+  .tp-sidebar__item--active { border-left-color: #409eff; border-bottom-color: #edf0f4; }
+  .tp-content { width: 100%; overflow: visible; }
+  .tp-mobile-selection { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0 0 10px; padding: 4px 8px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; }
+  .tp-mobile-selection strong { overflow: hidden; color: #1f2937; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+@media (max-width: 640px) {
+  .tp-view { gap: 10px; }
+  .tp-section, .tp-section--card, .tp-section--filters { padding: 12px; }
+  .tp-content__header { padding: 12px 14px; }
+  .tp-filters { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .tp-filters__group, .tp-filters__group > * { width: 100%; }
+  .tp-filters__actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .tp-section__header { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .tp-section__header-left { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .tp-summary { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .tp-pagination { justify-content: center; }
+  .tp-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tp-dialog :deep(.el-dialog__body) { padding: 12px; }
 }
 </style>

@@ -9,13 +9,25 @@
     </section>
 
     <el-tabs v-if="canViewAllCalendars" v-model="activeTab" class="calendar-tabs">
-      <el-tab-pane label="Teacher Calendar" name="teacher">
+      <el-tab-pane name="teacher">
+        <template #label>
+          <span class="calendar-tab-label calendar-tab-label--desktop">Teacher Calendar</span>
+          <span class="calendar-tab-label calendar-tab-label--mobile">Teachers</span>
+        </template>
         <TeacherScheduleView />
       </el-tab-pane>
-      <el-tab-pane label="Student Calendar" name="student">
+      <el-tab-pane name="student">
+        <template #label>
+          <span class="calendar-tab-label calendar-tab-label--desktop">Student Calendar</span>
+          <span class="calendar-tab-label calendar-tab-label--mobile">Students</span>
+        </template>
         <StudentScheduleView />
       </el-tab-pane>
-      <el-tab-pane label="Room Calendar" name="room">
+      <el-tab-pane name="room">
+        <template #label>
+          <span class="calendar-tab-label calendar-tab-label--desktop">Room Calendar</span>
+          <span class="calendar-tab-label calendar-tab-label--mobile">Rooms</span>
+        </template>
         <ClassroomOccupancyView />
       </el-tab-pane>
     </el-tabs>
@@ -44,9 +56,12 @@ const workspace = computed(() => getUserWorkspace(authStore.currentUser));
 const canViewAllCalendars = computed(() => workspace.value === 'STAFF');
 
 watch(
-  () => route.query.tab,
-  (tab) => {
-    if (tab === 'room' && canViewAllCalendars.value) {
+  () => [route.query.tab, route.query.classroomId, canViewAllCalendars.value] as const,
+  ([tab, classroomId, canViewAll]) => {
+    if (!canViewAll) return;
+    if (tab === 'teacher' || tab === 'student' || tab === 'room') {
+      activeTab.value = tab;
+    } else if (classroomId) {
       activeTab.value = 'room';
     }
   },
@@ -140,5 +155,23 @@ const description = computed(() => {
 
 .calendar-tabs :deep(.classroom-calendar) {
   min-height: 760px;
+}
+
+.calendar-tab-label--mobile {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .calendar-home { min-height: 0; height: auto; overflow: visible; gap: 6px; }
+  .calendar-hero { display: none; }
+  .calendar-tabs { min-height: 0; padding: 6px 8px; border-radius: 12px; }
+  .calendar-tab-label--desktop { display: none; }
+  .calendar-tab-label--mobile { display: inline; }
+  .calendar-tabs :deep(.teacher-calendar__header),
+  .calendar-tabs :deep(.student-calendar__header) { display: none; }
+  .calendar-tabs :deep(.classroom-calendar__title),
+  .calendar-tabs :deep(.classroom-calendar__note),
+  .calendar-tabs :deep(.classroom-help) { display: none; }
+  .calendar-tabs :deep(.classroom-calendar) { min-height: 0; }
 }
 </style>

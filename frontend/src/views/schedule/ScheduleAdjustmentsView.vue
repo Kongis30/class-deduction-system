@@ -7,13 +7,19 @@
       </div>
     </section>
 
-    <div v-if="!isGroupClassLessonsPage" class="adj-tabs">
+    <div v-if="!isGroupClassLessonsPage" class="adj-tabs mobile-segmented-tabs" role="tablist" aria-label="Lesson type">
       <button
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === 'one-on-one'"
         class="adj-tab"
         :class="{ 'adj-tab--active': activeTab === 'one-on-one' }"
         @click="activeTab = 'one-on-one'"
       >1-on-1 Lessons</button>
       <button
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === 'class'"
         class="adj-tab"
         :class="{ 'adj-tab--active': activeTab === 'class' }"
         @click="activeTab = 'class'"
@@ -21,11 +27,21 @@
     </div>
 
     <!-- ====== 1v1 Tab ====== -->
-    <div v-if="activeTab === 'one-on-one'" class="adj-workspace">
+    <div v-if="activeTab === 'one-on-one'" class="adj-workspace" :class="{ 'adj-workspace--mobile-selected': appStore.isMobileViewport && selectedStudentId }">
 
-      <aside class="adj-sidebar">
+      <aside class="adj-sidebar" :class="{ 'adj-sidebar--mobile-hidden': appStore.isMobileViewport && selectedStudentId }">
         <div class="adj-sidebar__search">
-          <el-input v-model="studentKeyword" placeholder="Search student..." clearable size="small" />
+          <button
+            v-if="appStore.isMobileViewport"
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileStudentSearchExpanded"
+            aria-label="Search students"
+            @click="mobileStudentSearchExpanded = !mobileStudentSearchExpanded"
+          >
+            <el-icon><Search /></el-icon>
+          </button>
+          <el-input v-show="!appStore.isMobileViewport || mobileStudentSearchExpanded" v-model="studentKeyword" placeholder="Search student..." clearable size="small" />
         </div>
         <div class="adj-sidebar__list" v-loading="studentsLoading">
           <div
@@ -44,7 +60,11 @@
       </aside>
 
 
-      <main class="adj-content">
+      <main class="adj-content" :class="{ 'adj-content--mobile-hidden': appStore.isMobileViewport && !selectedStudentId }">
+        <div v-if="appStore.isMobileViewport && selectedStudentId" class="adj-mobile-selection">
+          <el-button text @click="selectedStudentId = null; selectedPackageId = null; packages = []; occurrences = []">← Student list</el-button>
+          <strong>{{ students.find(student => student.id === selectedStudentId)?.studentName }}</strong>
+        </div>
         <div v-if="!selectedStudentId" class="adj-content__placeholder">
           Select a student from the left panel to view their packages.
         </div>
@@ -176,11 +196,21 @@
     </div>
 
     <!-- ====== Class Tab ====== -->
-    <div v-if="activeTab === 'class'" class="adj-workspace">
+    <div v-if="activeTab === 'class'" class="adj-workspace" :class="{ 'adj-workspace--mobile-selected': appStore.isMobileViewport && selectedClassId }">
 
-      <aside class="adj-sidebar">
+        <aside class="adj-sidebar" :class="{ 'adj-sidebar--mobile-hidden': appStore.isMobileViewport && selectedClassId }">
         <div class="adj-sidebar__search">
-          <el-input v-model="classKeyword" placeholder="Search course, grade, class..." clearable size="small" />
+          <button
+            v-if="appStore.isMobileViewport"
+            type="button"
+            class="mobile-search-trigger"
+            :aria-expanded="mobileClassSearchExpanded"
+            aria-label="Search classes"
+            @click="mobileClassSearchExpanded = !mobileClassSearchExpanded"
+          >
+            <el-icon><Search /></el-icon>
+          </button>
+          <el-input v-show="!appStore.isMobileViewport || mobileClassSearchExpanded" v-model="classKeyword" placeholder="Search course, grade, class..." clearable size="small" />
         </div>
         <div class="adj-sidebar__list" v-loading="classesLoading">
           <div class="class-drill-header">
@@ -255,7 +285,11 @@
       </aside>
 
 
-      <main class="adj-content">
+      <main class="adj-content" :class="{ 'adj-content--mobile-hidden': appStore.isMobileViewport && !selectedClassId }">
+        <div v-if="appStore.isMobileViewport && selectedClassId" class="adj-mobile-selection">
+          <el-button text @click="selectedClassId = null; classOccurrences = []; enrolledStudents = []">← Class list</el-button>
+          <strong>{{ selectedClass?.className || classDrillTitle }}</strong>
+        </div>
         <div v-if="!selectedClassId" class="adj-content__placeholder">
           Select a class from the left panel to manage.
         </div>
@@ -731,7 +765,7 @@
 </template>
 
 <script setup lang="ts">
-import { ArrowDown } from '@element-plus/icons-vue';
+import { ArrowDown, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -747,6 +781,7 @@ import { useAuthStore } from '@/stores/auth';
 import { isAdminOrStaffUser, isTeacherUser } from '@/types/auth';
 import type { CoursePackageItem, EntityId, LessonOccurrenceItem, ClassGroupItem, ClassEnrolledStudentItem, ClassOccurrenceItem, ClassroomItem, LessonRecordItem } from '@/types/domain';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
+import { useAppStore } from '@/stores/app';
 import type { SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { scheduleEndTimeForApi, scheduleEndTimeForDisplay, scheduleDurationMinutes, scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { ElMessageBox } from 'element-plus';
@@ -762,6 +797,7 @@ const props = withDefaults(defineProps<{
 // ─── State ──────────────────────────────────────────────
 const router = useRouter();
 const route = useRoute();
+const appStore = useAppStore();
 const embedded = computed(() => props.embedded);
 const isGroupClassLessonsPage = computed(() => props.mode === 'class' || route.path === '/group-class-lessons');
 const activeTab = ref<'one-on-one' | 'class'>(
@@ -772,6 +808,7 @@ const activeTab = ref<'one-on-one' | 'class'>(
 const studentsLoading = ref(false);
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const studentKeyword = ref('');
+const mobileStudentSearchExpanded = ref(false);
 const selectedStudentId = ref<EntityId | null>(null);
 
 
@@ -790,6 +827,7 @@ const occurrenceCounts = reactive<Record<string, number>>({});
 
 
 const classKeyword = ref('');
+const mobileClassSearchExpanded = ref(false);
 const classesLoading = ref(false);
 const classes = ref<ClassGroupItem[]>([]);
 const selectedClassId = ref<EntityId | null>(null);
@@ -2697,5 +2735,102 @@ onMounted(async () => {
   color: #606266;
   font-size: 13px;
   line-height: 1.5;
+}
+
+@media (max-width: 920px) {
+  .adj-page {
+    height: auto;
+    min-height: calc(100dvh - 150px);
+  }
+
+  .adj-workspace {
+    display: block;
+    min-height: 0;
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .adj-sidebar {
+    width: 100%;
+    min-height: min(62dvh, 560px);
+    max-height: none;
+    border: 1px solid #e1e8f0;
+    border-radius: 12px;
+    background: #fff;
+    overflow: hidden;
+  }
+
+  .adj-sidebar--mobile-hidden,
+  .adj-content--mobile-hidden {
+    display: none;
+  }
+
+  .adj-sidebar__search {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    min-height: 52px;
+    padding: 8px 12px;
+    background: #fff;
+  }
+
+  .adj-sidebar__search .mobile-search-trigger {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+  }
+
+  .adj-sidebar__search > .el-input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .adj-sidebar__list {
+    max-height: min(62dvh, 560px);
+    padding: 4px 0;
+  }
+
+  .adj-sidebar__item {
+    min-height: 46px;
+    padding: 12px 16px;
+  }
+
+  .adj-content {
+    width: 100%;
+    min-height: 0;
+    padding: 12px 0 calc(24px + env(safe-area-inset-bottom));
+    overflow: visible;
+  }
+
+  .adj-mobile-selection {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 44px;
+    margin-bottom: 10px;
+    padding: 4px 8px;
+    border: 1px solid #e1e8f0;
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .adj-mobile-selection strong {
+    overflow: hidden;
+    color: #1f2937;
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .adj-content__placeholder {
+    min-height: 120px;
+    padding: 20px;
+    border: 1px solid #e1e8f0;
+    border-radius: 12px;
+    background: #fff;
+    text-align: center;
+  }
 }
 </style>

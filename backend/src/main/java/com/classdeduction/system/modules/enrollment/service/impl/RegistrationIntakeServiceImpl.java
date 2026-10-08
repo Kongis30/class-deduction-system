@@ -2777,6 +2777,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         item.put("oneOnOneUnits", resolveLineOneOnOneUnits(line));
         item.put("classId", line.classId);
         item.put("className", line.classGroup == null ? null : line.classGroup.getClassName());
+        item.put("groupProjectId", line.groupProjectId);
+        item.put("groupRegistrationPlanId", line.groupRegistrationPlanId);
         item.put("pickupRequiredSnapshot", line.pickupRequired);
         item.put("pickupAddressSnapshot", line.pickupAddress);
         item.put("dropoffRequiredSnapshot", line.dropoffRequired);

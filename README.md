@@ -25,9 +25,19 @@ npm run dev
 
 ### Backend
 
+The V2 frontend proxies `/api` to port `8085` by default. Start the backend with
+the `group-course-v2` profile and point it at the V2 database:
+
 ```bash
 cd backend
+export DB_V2_URL='jdbc:mysql://127.0.0.1:3306/class_deduction_system_v2?useUnicode=true&characterEncoding=utf8&serverTimezone=America/New_York'
+export DB_V2_USERNAME='<database user>'
+export DB_V2_PASSWORD='<database password>'
 JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
 PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH \
-mvn spring-boot:run
+SPRING_PROFILES_ACTIVE=group-course-v2 mvn spring-boot:run
 ```
+
+To open the local site on a phone, connect it to the same Wi-Fi network and use
+`http://<computer LAN IP>:5173`. Browser API requests go through the Vite proxy
+on the computer; the phone does not need to reach the backend port directly.
