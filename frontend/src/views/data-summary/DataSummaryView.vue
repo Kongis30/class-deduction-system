@@ -408,6 +408,9 @@
       title="Drag to adjust the height of both tables"
       tabindex="0"
       @pointerdown.stop.prevent="startRefundTableResize"
+      @pointermove.stop.prevent="updateRefundTableResize"
+      @pointerup.stop.prevent="stopRefundTableResize"
+      @pointercancel.stop.prevent="stopRefundTableResize"
       @keydown.stop.prevent="resizeRefundTableWithKeyboard"
     >
       <span />
@@ -726,6 +729,7 @@ const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>(
 const tabStates = new Map<string, ProductViewState>();
 let refundResizeStartY = 0;
 let refundResizeStartHeight = DEFAULT_REFUND_TABLE_HEIGHT;
+let activeRefundResizePointerId: number | null = null;
 
 const dragState = reactive<{ fromId: string | null; overId: string | null }>({
   fromId: null,
@@ -1304,9 +1308,6 @@ async function persistTabOrder() {
 onBeforeUnmount(() => {
   window.clearTimeout(orderSaveTimer);
   window.removeEventListener('keydown', handleStudentContextMenuKeydown);
-  window.removeEventListener('pointermove', updateRefundTableResize);
-  window.removeEventListener('pointerup', stopRefundTableResize);
-  window.removeEventListener('pointercancel', stopRefundTableResize);
   const scroll = workbookScrollRef.value;
   scroll?.removeEventListener('touchstart', handleWorkbookTouchStart);
   scroll?.removeEventListener('touchmove', handleWorkbookTouchMove);
@@ -1320,22 +1321,24 @@ const maxRefundTableHeight = MAX_REFUND_TABLE_HEIGHT;
 /** 退款名单底部拖动条调整表格视口；行数较多时由表格区域独立滚动。 */
 function startRefundTableResize(event: PointerEvent) {
   if (event.button !== 0) return;
+  const handle = event.currentTarget as HTMLElement;
+  activeRefundResizePointerId = event.pointerId;
   refundResizeStartY = event.clientY;
   refundResizeStartHeight = refundTableHeight.value;
-  window.addEventListener('pointermove', updateRefundTableResize);
-  window.addEventListener('pointerup', stopRefundTableResize);
-  window.addEventListener('pointercancel', stopRefundTableResize);
+  handle.setPointerCapture(event.pointerId);
 }
 
 function updateRefundTableResize(event: PointerEvent) {
+  if (activeRefundResizePointerId !== event.pointerId) return;
   const nextHeight = refundResizeStartHeight + event.clientY - refundResizeStartY;
   refundTableHeight.value = Math.min(maxRefundTableHeight.value, Math.max(MIN_REFUND_TABLE_HEIGHT, nextHeight));
 }
 
-function stopRefundTableResize() {
-  window.removeEventListener('pointermove', updateRefundTableResize);
-  window.removeEventListener('pointerup', stopRefundTableResize);
-  window.removeEventListener('pointercancel', stopRefundTableResize);
+function stopRefundTableResize(event: PointerEvent) {
+  if (activeRefundResizePointerId !== event.pointerId) return;
+  const handle = event.currentTarget as HTMLElement;
+  if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+  activeRefundResizePointerId = null;
 }
 
 function resizeRefundTableWithKeyboard(event: KeyboardEvent) {
@@ -2070,8 +2073,7 @@ onMounted(() => {
 
 .workbook-scroll {
   width: 100%;
-  height: 100%;
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   overflow: auto;
   border: 1px solid #9eafa7;
@@ -2223,8 +2225,8 @@ onMounted(() => {
 
 .refund-records__resize-handle {
   display: flex;
-  height: 14px;
-  flex: 0 0 14px;
+  height: 20px;
+  flex: 0 0 20px;
   align-items: center;
   justify-content: center;
   cursor: ns-resize;
