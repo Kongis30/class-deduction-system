@@ -107,17 +107,23 @@
           clearable
           placeholder="Select a class"
         >
-          <el-option
-            v-for="group in rosterPrintGroups"
-            :key="group.key"
-            :label="rosterPrintOptionLabel(group)"
-            :value="group.key"
+          <el-option-group
+            v-for="campusGroup in rosterPrintCampusGroups"
+            :key="campusGroup.campusName"
+            :label="campusGroup.campusName"
           >
-            <div class="roster-print-picker__option">
-              <strong>{{ group.className }}</strong>
-              <span>{{ group.projectName }} · {{ group.campusName }}</span>
-            </div>
-          </el-option>
+            <el-option
+              v-for="group in campusGroup.classes"
+              :key="group.key"
+              :label="rosterPrintOptionLabel(group)"
+              :value="group.key"
+            >
+              <div class="roster-print-picker__option">
+                <strong>{{ group.className }}</strong>
+                <span>{{ group.projectName }} · {{ group.students.length }} students</span>
+              </div>
+            </el-option>
+          </el-option-group>
         </el-select>
         <span v-if="selectedRosterPrintGroup" class="roster-print-picker__count">
           {{ selectedRosterPrintGroup.students.length }} students will be printed
@@ -621,6 +627,11 @@ interface RosterPrintGroup {
   students: Array<{ key: string; name: string; school: string }>;
 }
 
+interface RosterPrintCampusGroup {
+  campusName: string;
+  classes: RosterPrintGroup[];
+}
+
 /** 每个 Product Tab 独立保留的视图状态（月份、筛选、排序）。 */
 interface ProductViewState {
   selectedMonth: string;
@@ -1009,9 +1020,24 @@ const rosterPrintGroups = computed<RosterPrintGroup[]>(() => {
       teacherNames: [...group.teacherNames].sort(naturalCompare),
       students: [...group.students.values()].sort((left, right) => naturalCompare(left.name, right.name)),
     }))
-    .sort((left, right) => naturalCompare(left.projectName, right.projectName)
+    .sort((left, right) => naturalCompare(left.campusName, right.campusName)
       || naturalCompare(left.className, right.className)
-      || naturalCompare(left.campusName, right.campusName));
+      || naturalCompare(left.projectName, right.projectName));
+});
+
+/** 打印选择器先按校区归组，组内按班级和产品名称排序。 */
+const rosterPrintCampusGroups = computed<RosterPrintCampusGroup[]>(() => {
+  const groups = new Map<string, RosterPrintGroup[]>();
+  rosterPrintGroups.value.forEach((group) => {
+    const campusName = group.campusName === '—' ? 'Campus not set' : group.campusName;
+    const classes = groups.get(campusName) ?? [];
+    classes.push(group);
+    groups.set(campusName, classes);
+  });
+
+  return [...groups.entries()]
+    .map(([campusName, classes]) => ({ campusName, classes }))
+    .sort((left, right) => naturalCompare(left.campusName, right.campusName));
 });
 
 function printClassRoster() {
@@ -1029,7 +1055,7 @@ const selectedRosterPrintGroups = computed(() =>
 );
 
 function rosterPrintOptionLabel(group: RosterPrintGroup) {
-  return [group.projectName, group.className, group.campusName].join(' · ');
+  return [group.className, group.projectName].join(' · ');
 }
 
 async function confirmPrintClassRoster() {
