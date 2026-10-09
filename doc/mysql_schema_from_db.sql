@@ -226,6 +226,7 @@ CREATE TABLE `course_package` (
   `subject_name` varchar(64) DEFAULT NULL COMMENT 'Subject name snapshot',
   `teaching_mode` varchar(32) NOT NULL COMMENT 'Teaching mode snapshot',
   `total_units` int NOT NULL COMMENT 'Total units, 1=0.5 hours',
+  `bonus_units` int NOT NULL DEFAULT '0' COMMENT 'Explicit bonus hours granted, in half-hour units',
   `default_lesson_units` int NOT NULL COMMENT 'Default lesson units',
   `consumed_units` int NOT NULL DEFAULT '0' COMMENT 'Consumed units',
   `opening_used_units` int NOT NULL DEFAULT '0' COMMENT 'Hours consumed before lesson tracking, in half-hour units',

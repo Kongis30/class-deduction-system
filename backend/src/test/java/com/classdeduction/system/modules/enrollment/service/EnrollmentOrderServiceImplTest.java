@@ -1680,6 +1680,39 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldLoadOneOnOneOrderDetailWhenItemHasNoClassId() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setClassId(null);
+        order.setOrderStatus("CONFIRMED");
+        order.setCurrencyCode("USD");
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setEnrollmentOrderId(2001L);
+        item.setCourseType("ONE_ON_ONE");
+        item.setClassId(null);
+        item.setDetail("G1-G5 | 60 hours");
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of());
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of());
+        when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        EnrollmentOrderDetailVO detail = enrollmentOrderService.getOrder(2001L);
+
+        assertThat(detail.items()).singleElement().satisfies(line -> {
+            assertThat(line.id()).isEqualTo(8001L);
+            assertThat(line.courseType()).isEqualTo("ONE_ON_ONE");
+            assertThat(line.classId()).isNull();
+            assertThat(line.className()).isNull();
+        });
+    }
+
+    @Test
     void shouldExposeV2GroupLinksAndClassNameInOrderDetailForReceiptRecovery() {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);

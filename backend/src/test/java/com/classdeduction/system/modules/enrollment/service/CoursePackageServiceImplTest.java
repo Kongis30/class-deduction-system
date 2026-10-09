@@ -320,6 +320,7 @@ class CoursePackageServiceImplTest {
         coursePackage.setId(101L);
         coursePackage.setTeachingMode("ONE_ON_ONE");
         coursePackage.setTotalUnits(120);
+        coursePackage.setBonusUnits(10);
         coursePackage.setConsumedUnits(20);
         coursePackage.setRemainingUnits(100);
         coursePackage.setPackageStatus("ACTIVE");
@@ -336,6 +337,7 @@ class CoursePackageServiceImplTest {
         coursePackageService.adjustPackageHours(101L, request, 9L);
 
         assertThat(coursePackage.getTotalUnits()).isEqualTo(124);
+        assertThat(coursePackage.getBonusUnits()).isEqualTo(14);
         assertThat(coursePackage.getConsumedUnits()).isEqualTo(20);
         assertThat(coursePackage.getRemainingUnits()).isEqualTo(104);
         ArgumentCaptor<com.classdeduction.system.modules.lesson.entity.HourLedgerEntity> ledgerCaptor =

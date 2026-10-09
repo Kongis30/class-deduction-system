@@ -1467,9 +1467,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .toList();
         EnrollmentOrderItemEntity orderItem = orderItemMap.get(coursePackage.getEnrollmentOrderItemId());
         int totalUnitsRaw = safeUnits(coursePackage.getTotalUnits());
-        Integer purchasedUnitsRaw = orderItem == null ? null : orderItem.getOneOnOneUnits();
-        int purchasedUnits = purchasedUnitsRaw == null ? totalUnitsRaw : purchasedUnitsRaw;
-        int bonusUnits = Math.max(0, totalUnitsRaw - purchasedUnits);
+        // 课包可累计多笔续费；赠课只从明确记录的 bonus_units 读取，不能减去最新一笔订单反推。
+        int bonusUnits = safeUnits(coursePackage.getBonusUnits());
+        int purchasedUnits = Math.max(0, totalUnitsRaw - bonusUnits);
         List<PrivateLessonGroupMemberEntity> groupMembers = groupMembersByPackage.getOrDefault(
                 coursePackage.getId(), Collections.emptyList()).stream()
                 .sorted(Comparator.comparing(PrivateLessonGroupMemberEntity::getParticipantIndex,

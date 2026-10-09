@@ -526,7 +526,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .paymentStatus(order.getPaymentStatus())
                 .remark(order.getRemark())
                 .items(orderItems.stream().map(item -> {
-                    ClassGroupEntity itemClass = itemClassesById.get(item.getClassId());
+                    ClassGroupEntity itemClass = item.getClassId() == null
+                            ? null
+                            : itemClassesById.get(item.getClassId());
                     return toOrderItemVO(item, selectedSessionsByItemId.get(item.getId()),
                             itemClass == null ? null : itemClass.getClassName());
                 }).toList())
@@ -670,6 +672,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         coursePackage.setPackageName(StringUtils.hasText(request.getPackageName()) ? request.getPackageName() : product.getProductName());
         coursePackage.setTeachingMode(product.getTeachingMode());
         coursePackage.setTotalUnits(halfHourUnits);
+        coursePackage.setBonusUnits(0);
         coursePackage.setConsumedUnits(0);
         coursePackage.setRemainingUnits(halfHourUnits);
         coursePackage.setOriginalAmount(order.getOriginalAmount());
@@ -2315,10 +2318,21 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         coursePackage.setCourseProductId(item.getCourseProductId());
         coursePackage.setPackageName(StringUtils.hasText(item.getDetail()) ? item.getDetail() : coursePackage.getPackageName());
         coursePackage.setTotalUnits(requested);
+        coursePackage.setBonusUnits(resolveExplicitOneOnOneBonusUnits(item));
         coursePackage.setRemainingUnits(requested - consumed);
         coursePackage.setOriginalAmount(defaultAmount(item.getPriceAmount()));
         coursePackage.setStartDate(item.getStartDate() == null ? coursePackage.getStartDate() : item.getStartDate());
         coursePackageMapper.updateById(coursePackage);
+    }
+
+    /** 订单更正后从该订单行的购买课时与总发放课时差额还原其明确赠课。 */
+    private int resolveExplicitOneOnOneBonusUnits(EnrollmentOrderItemEntity item) {
+        if (item.getOneOnOneUnits() == null || item.getOneOnOneHours() == null) {
+            return 0;
+        }
+        int purchasedUnits = item.getOneOnOneHours().multiply(BigDecimal.valueOf(2))
+                .setScale(0, RoundingMode.HALF_UP).intValue();
+        return Math.max(0, item.getOneOnOneUnits() - purchasedUnits);
     }
 
     private Long resolveCorrectedOrderClassId(List<EnrollmentOrderItemEntity> items) {

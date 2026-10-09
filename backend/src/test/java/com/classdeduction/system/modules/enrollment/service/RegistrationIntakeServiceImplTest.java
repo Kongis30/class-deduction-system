@@ -303,8 +303,9 @@ class RegistrationIntakeServiceImplTest {
         verify(enrollmentOrderItemMapper).insert(orderItemCaptor.capture());
         verify(coursePackageMapper).insert(coursePackageCaptor.capture());
         assertThat(coursePackageCaptor.getValue().getTotalUnits()).isEqualTo(26);
+        assertThat(coursePackageCaptor.getValue().getBonusUnits()).isEqualTo(6);
         assertThat(coursePackageCaptor.getValue().getRemainingUnits()).isEqualTo(26);
-        // bonus hours are baked into totalUnits, not stored on the item
+        // 订单行和课包分别保留购买课时快照及累计赠课数。
         assertThat(orderItemCaptor.getValue().getOneOnOneUnits()).isEqualTo(26);
     }
 
@@ -363,6 +364,7 @@ class RegistrationIntakeServiceImplTest {
         existingPackage.setTeachingMode("ONE_ON_ONE");
         existingPackage.setPackageStatus("COMPLETED");
         existingPackage.setTotalUnits(20);
+        existingPackage.setBonusUnits(8);
         existingPackage.setConsumedUnits(3);
         existingPackage.setRemainingUnits(17);
         existingPackage.setOriginalAmount(new BigDecimal("1000.00"));
@@ -403,6 +405,7 @@ class RegistrationIntakeServiceImplTest {
         CoursePackageEntity renewedPackage = coursePackageCaptor.getValue();
         assertThat(renewedPackage.getId()).isEqualTo(3001L);
         assertThat(renewedPackage.getTotalUnits()).isEqualTo(33);
+        assertThat(renewedPackage.getBonusUnits()).isEqualTo(13);
         assertThat(renewedPackage.getRemainingUnits()).isEqualTo(30);
         assertThat(renewedPackage.getConsumedUnits()).isEqualTo(3);
         assertThat(renewedPackage.getPackageStatus()).isEqualTo("ACTIVE");
