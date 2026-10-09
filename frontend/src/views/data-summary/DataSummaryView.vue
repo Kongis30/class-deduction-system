@@ -396,12 +396,40 @@
       </div>
     </section>
 
+    <div
+      v-if="visibleRefundRows.length && refundTableExpanded"
+      class="refund-records__resize-handle"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize space between tables"
+      :aria-valuemin="MIN_REFUND_TABLE_HEIGHT"
+      :aria-valuemax="maxRefundTableHeight"
+      :aria-valuenow="refundTableHeight"
+      title="Drag to adjust the height of both tables"
+      tabindex="0"
+      @pointerdown.stop.prevent="startRefundTableResize"
+      @keydown.stop.prevent="resizeRefundTableWithKeyboard"
+    >
+      <span />
+    </div>
     <section v-if="visibleRefundRows.length" class="refund-records">
       <div class="refund-records__heading">
         <h3>Refund Student</h3>
-        <span>{{ visibleRefundRows.length }} record(s)</span>
+        <div class="refund-records__heading-actions">
+          <span>{{ visibleRefundRows.length }} record(s)</span>
+          <button
+            type="button"
+            class="refund-records__toggle"
+            :aria-expanded="refundTableExpanded"
+            :aria-label="refundTableExpanded ? 'Collapse refund student table' : 'Expand refund student table'"
+            :title="refundTableExpanded ? 'Collapse table' : 'Expand table'"
+            @click.stop="refundTableExpanded = !refundTableExpanded"
+          >
+            <el-icon><ArrowUp v-if="refundTableExpanded" /><ArrowDown v-else /></el-icon>
+          </button>
+        </div>
       </div>
-      <div class="refund-records__scroll" :style="{ height: `${refundTableHeight}px` }">
+      <div v-if="refundTableExpanded" class="refund-records__scroll" :style="{ height: `${refundTableHeight}px` }">
         <table class="refund-records__table workbook-table">
           <thead>
             <tr>
@@ -429,21 +457,6 @@
             </tr>
           </tbody>
         </table>
-      </div>
-      <div
-        class="refund-records__resize-handle"
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="Resize refund table height"
-        :aria-valuemin="MIN_REFUND_TABLE_HEIGHT"
-        :aria-valuemax="maxRefundTableHeight"
-        :aria-valuenow="refundTableHeight"
-        title="Drag to adjust table height"
-        tabindex="0"
-        @pointerdown.stop.prevent="startRefundTableResize"
-        @keydown.stop.prevent="resizeRefundTableWithKeyboard"
-      >
-        <span />
       </div>
     </section>
 
@@ -513,7 +526,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
-import { MoreFilled } from '@element-plus/icons-vue';
+import { ArrowDown, ArrowUp, MoreFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import * as XLSX from 'xlsx';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
@@ -692,6 +705,7 @@ const loading = ref(false);
 const workbookScrollRef = ref<HTMLDivElement | null>(null);
 const mobileTableScale = ref(1);
 const refundTableHeight = ref(DEFAULT_REFUND_TABLE_HEIGHT);
+const refundTableExpanded = ref(true);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
@@ -2131,8 +2145,9 @@ onMounted(() => {
 
 .refund-records__heading {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 10px 12px 6px;
 }
 
@@ -2142,9 +2157,37 @@ onMounted(() => {
   font-size: 13px;
 }
 
-.refund-records__heading span {
+.refund-records__heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.refund-records__heading-actions > span {
   color: #738398;
   font-size: 11px;
+}
+
+.refund-records__toggle {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #d5dfea;
+  border-radius: 6px;
+  background: #fff;
+  color: #526b84;
+  cursor: pointer;
+}
+
+.refund-records__toggle:hover,
+.refund-records__toggle:focus-visible {
+  border-color: #8eabc8;
+  background: #edf4fb;
+  color: #315e89;
+  outline: none;
 }
 
 .refund-records__scroll {
@@ -2180,12 +2223,17 @@ onMounted(() => {
 
 .refund-records__resize-handle {
   display: flex;
-  height: 12px;
+  height: 14px;
+  flex: 0 0 14px;
   align-items: center;
   justify-content: center;
   cursor: ns-resize;
   touch-action: none;
   user-select: none;
+  border: 1px solid #d5dfea;
+  border-bottom: 0;
+  border-radius: 5px 5px 0 0;
+  background: #f4f8fc;
 }
 
 .refund-records__resize-handle span {
