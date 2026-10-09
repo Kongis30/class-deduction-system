@@ -71,6 +71,8 @@ export interface DataSummaryRow {
   paymentMethod?: string;
   orderStatus?: string;
   itemStatus?: string;
+  /** 该订单或课程项目是否有退款流水。 */
+  refunded?: boolean;
   stoppedConsumedAmount?: number;
   stoppedSessionCount?: number;
   registrationSavedAt?: string;

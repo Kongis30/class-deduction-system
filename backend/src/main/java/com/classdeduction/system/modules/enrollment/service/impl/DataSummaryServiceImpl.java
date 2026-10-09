@@ -228,9 +228,35 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         .in(PaymentAllocationEntity::getEnrollmentOrderItemId, itemIds));
         Map<PaymentParticipantItemKey, BigDecimal> paidAmountByParticipantAndItem = new LinkedHashMap<>();
         Set<PaymentParticipantKey> participantsWithCourseAllocations = new LinkedHashSet<>();
+        Set<ParticipantCourseKey> refundedParticipantCourses = new LinkedHashSet<>();
+        // 退款分摊标记到学生和课程，供 toRow 保留原报名行并单独归入退款区。
+        Map<PaymentParticipantKey, Long> studentIdByPaymentParticipant = orderParticipants.stream()
+                .filter(participant -> participant.getParticipantIndex() != null && participant.getStudentId() != null)
+                .collect(Collectors.toMap(
+                        participant -> new PaymentParticipantKey(participant.getEnrollmentOrderId(), participant.getParticipantIndex()),
+                        EnrollmentOrderParticipantEntity::getStudentId,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
         for (PaymentAllocationEntity allocation : paymentAllocations) {
             PaymentRecordEntity payment = paymentRecordsById.get(allocation.getPaymentRecordId());
-            if (payment == null || payment.getParticipantIndex() == null || allocation.getEnrollmentOrderItemId() == null) {
+            if (payment == null || allocation.getEnrollmentOrderItemId() == null) {
+                continue;
+            }
+            if ("REFUND".equalsIgnoreCase(payment.getPaymentType())
+                    && !"VOIDED".equalsIgnoreCase(payment.getPaymentStatus())
+                    && amount(allocation.getAmount()).signum() < 0) {
+                PaymentParticipantKey participantKey = payment.getParticipantIndex() == null ? null
+                        : new PaymentParticipantKey(payment.getEnrollmentOrderId(), payment.getParticipantIndex());
+                Long studentId = participantKey == null ? null : studentIdByPaymentParticipant.get(participantKey);
+                EnrollmentOrderEntity order = orderMap.get(payment.getEnrollmentOrderId());
+                if (studentId == null && (payment.getParticipantIndex() == null || payment.getParticipantIndex() == 1)) {
+                    studentId = order == null ? null : order.getStudentId();
+                }
+                if (studentId != null) {
+                    refundedParticipantCourses.add(new ParticipantCourseKey(allocation.getEnrollmentOrderItemId(), studentId));
+                }
+            }
+            if (payment.getParticipantIndex() == null) {
                 continue;
             }
             PaymentParticipantKey participantKey = new PaymentParticipantKey(
@@ -274,6 +300,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         reviewIssuesByOrderId,
                         latestPaymentMethodByOrderId, latestPaymentMethodByParticipant, paidAmountByParticipant,
                         paidAmountByParticipantAndItem, participantsWithCourseAllocations,
+                        refundedParticipantCourses,
                         allocationByOrderId,
                         studentById, campusById, context)
                 .stream()
@@ -289,7 +316,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Set<Long> visibleOrderIds = rows.stream().map(DataSummaryResponseVO.RowVO::orderId).collect(Collectors.toCollection(LinkedHashSet::new));
         Set<Long> visibleStudentIds = rows.stream().map(DataSummaryResponseVO.RowVO::studentId).filter(Objects::nonNull).collect(Collectors.toSet());
         BigDecimal totalIncome = sumOrders(visibleOrderIds, orderMap, EnrollmentOrderEntity::getReceivedAmount);
-        BigDecimal totalOutstanding = sumOutstandingOrders(visibleOrderIds, orderMap);
+        BigDecimal totalOutstanding = sumOutstandingRows(rows);
 
         return new DataSummaryResponseVO(
                 (long) visibleStudentIds.size(),
@@ -315,8 +342,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 .eq(StringUtils.hasText(query.getPaymentStatus()), EnrollmentOrderEntity::getPaymentStatus, query.getPaymentStatus())
                 .ge(query.getPeriodStartDate() != null, EnrollmentOrderEntity::getPeriodStartDate, query.getPeriodStartDate())
                 .le(query.getPeriodEndDate() != null, EnrollmentOrderEntity::getPeriodEndDate, query.getPeriodEndDate())
-                .ne(!Boolean.TRUE.equals(query.getIncludeInactiveOrders()), EnrollmentOrderEntity::getOrderStatus, "CANCELLED")
-                .ne(!Boolean.TRUE.equals(query.getIncludeInactiveOrders()), EnrollmentOrderEntity::getPaymentStatus, "REFUNDED")
+                .and(!Boolean.TRUE.equals(query.getIncludeInactiveOrders()), wrapper -> wrapper
+                        .ne(EnrollmentOrderEntity::getOrderStatus, "CANCELLED")
+                        .or()
+                        .eq(EnrollmentOrderEntity::getPaymentStatus, "REFUNDED"))
                 .orderByDesc(EnrollmentOrderEntity::getSignupDate)
                 .orderByDesc(EnrollmentOrderEntity::getCreatedAt));
     }
@@ -468,6 +497,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
             Map<PaymentParticipantItemKey, BigDecimal> paidAmountByParticipantAndItem,
             Set<PaymentParticipantKey> participantsWithCourseAllocations,
+            Set<ParticipantCourseKey> refundedParticipantCourses,
             Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId,
             Map<Long, StudentEntity> studentById,
             Map<Long, CampusEntity> campusById,
@@ -498,6 +528,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
                             paidAmountByParticipant, paidAmountByParticipantAndItem,
                             participantsWithCourseAllocations,
+                            refundedParticipantCourses,
                             allocationByOrderId,
                             studentById, campusById, context, today, soonLimit));
                 }
@@ -534,6 +565,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             latestPaymentMethodByOrderId.get(order.getId()), latestPaymentMethodByParticipant,
                             paidAmountByParticipant, paidAmountByParticipantAndItem,
                             participantsWithCourseAllocations,
+                            refundedParticipantCourses,
                             allocationByOrderId,
                             studentById, campusById, context, today, soonLimit));
                 }
@@ -632,6 +664,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                               Map<PaymentParticipantKey, BigDecimal> paidAmountByParticipant,
                                               Map<PaymentParticipantItemKey, BigDecimal> paidAmountByParticipantAndItem,
                                               Set<PaymentParticipantKey> participantsWithCourseAllocations,
+                                              Set<ParticipantCourseKey> refundedParticipantCourses,
                                               Map<Long, Map<AllocationKey, AllocatedAmounts>> allocationByOrderId,
                                               Map<Long, StudentEntity> studentById,
                                               Map<Long, CampusEntity> campusById,
@@ -682,6 +715,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         LocalDate stoppedEnd = refundState != null && refundState.getStoppedAt() != null
                 ? refundState.getStoppedPeriodEndDate() : item == null ? null : item.getStoppedPeriodEndDate();
         boolean stoppedRecord = "STOPPED".equals(resolveDisplayItemStatus(item, refundState));
+        boolean refundedRecord = "REFUNDED".equalsIgnoreCase(order.getPaymentStatus())
+                || item != null && refundedParticipantCourses.contains(new ParticipantCourseKey(item.getId(), displayStudentId));
         if (stoppedRecord && item != null) {
             periodStartDate = firstNonNull(stoppedStart, periodStartDate);
             periodEndDate = firstNonNull(stoppedEnd, periodEndDate);
@@ -788,6 +823,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             rowAmountDue = amount(rowStoppedConsumedAmount);
             rowBalanceAmount = rowAmountDue.subtract(rowPaidAmount).setScale(2, RoundingMode.HALF_UP);
         }
+        // 退款报名保留原始课程与付款信息，但退款后的余额不再作为学生欠款展示。
+        if (refundedRecord) {
+            rowBalanceAmount = ZERO_AMOUNT;
+        }
         boolean overdue = positive(rowBalanceAmount);
         boolean lowOneOnOneHours = oneOnOne && coursePackage != null
                 && safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage);
@@ -880,6 +919,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 oneOnOne ? privateLessonGroupId : null,
                 oneOnOne ? privateLessonParticipantCount : null,
                 resolveDisplayItemStatus(item, refundState),
+                refundedRecord,
                 rowStoppedConsumedAmount,
                 rowStoppedSessionCount,
                 order.getCreatedAt(),
@@ -1226,16 +1266,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 .setScale(2, RoundingMode.HALF_UP);
     }
 
-    private BigDecimal sumOutstandingOrders(Set<Long> orderIds, Map<Long, EnrollmentOrderEntity> orderMap) {
-        return orderIds.stream()
-                .map(orderMap::get)
+    /** 汇总行级欠款，排除退款导致的余额变化并沿用负数表示欠款的报表口径。 */
+    private BigDecimal sumOutstandingRows(List<DataSummaryResponseVO.RowVO> rows) {
+        return rows.stream()
+                .map(DataSummaryResponseVO.RowVO::balanceAmount)
                 .filter(Objects::nonNull)
-                .map(EnrollmentOrderEntity::getBalanceAmount)
-                .filter(this::positive)
-                .map(this::amount)
+                .map(value -> value.min(ZERO_AMOUNT))
                 .reduce(ZERO_AMOUNT, BigDecimal::add)
-                // The operational workbook uses negative values for unpaid balances.
-                .negate()
                 .setScale(2, RoundingMode.HALF_UP);
     }
 
@@ -1647,7 +1684,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                     (long) rows.size(),
                     (long) studentIds.size(),
                     sumOrders(orderIds, orderMap, EnrollmentOrderEntity::getReceivedAmount),
-                    sumOutstandingOrders(orderIds, orderMap)
+                    sumOutstandingRows(rows)
             );
         }
     }

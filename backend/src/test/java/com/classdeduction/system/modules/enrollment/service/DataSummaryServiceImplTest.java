@@ -162,7 +162,7 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
-    void shouldExcludeCancelledAndRefundedOrdersBeforeBuildingSummary() {
+    void shouldIncludeRefundedOrdersButExcludeOtherCancelledOrdersByDefault() {
         when(enrollmentOrderMapper.selectList(any())).thenReturn(Collections.emptyList());
 
         dataSummaryService.getSummary(new DataSummaryQuery());
@@ -173,7 +173,58 @@ class DataSummaryServiceImplTest {
         verify(enrollmentOrderMapper).selectList(wrapperCaptor.capture());
 
         String sqlSegment = wrapperCaptor.getValue().getSqlSegment();
-        assertThat(sqlSegment).contains("orderStatus <>").contains("paymentStatus <>");
+        assertThat(sqlSegment).contains("orderStatus <>").contains("paymentStatus =");
+        assertThat(sqlSegment).doesNotContain("paymentStatus <>");
+    }
+
+    @Test
+    void shouldKeepFullyRefundedOrderInSummaryWithZeroBalance() {
+        EnrollmentOrderEntity order = order(1L, "430.00", "0.00", "0.00");
+        order.setOrderStatus("CANCELLED");
+        order.setPaymentStatus("REFUNDED");
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.refunded()).isTrue();
+            assertThat(row.balanceAmount()).isEqualByComparingTo("0.00");
+        });
+        assertThat(response.totalIncomeAmount()).isEqualByComparingTo("0.00");
+        assertThat(response.totalOutstandingAmount()).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void shouldMarkCourseAsRefundedFromItsRefundAllocationAndKeepNetPaidAmount() {
+        EnrollmentOrderEntity order = order(1L, "400.00", "250.00", "150.00");
+        EnrollmentOrderItemEntity item = item(11L, 1, "400.00");
+        item.setAmountDue(new BigDecimal("400.00"));
+        EnrollmentOrderParticipantEntity participant = participant(1L, 1, "Student 1");
+        PaymentRecordEntity originalPayment = payment(1L, "400.00");
+        originalPayment.setId(101L);
+        originalPayment.setParticipantIndex(1);
+        originalPayment.setPaymentType("PAYMENT");
+        PaymentRecordEntity refund = payment(1L, "-150.00");
+        refund.setId(102L);
+        refund.setParticipantIndex(1);
+        refund.setPaymentType("REFUND");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(participant));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(originalPayment, refund));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(List.of(
+                paymentAllocation(101L, 11L, "400.00"),
+                paymentAllocation(102L, 11L, "-150.00")));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(student(1L, "Student 1")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.refunded()).isTrue();
+            assertThat(row.paidAmount()).isEqualByComparingTo("250.00");
+            assertThat(row.balanceAmount()).isEqualByComparingTo("0.00");
+        });
     }
 
     @Test

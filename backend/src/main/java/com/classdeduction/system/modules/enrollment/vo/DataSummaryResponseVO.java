@@ -112,6 +112,7 @@ public record DataSummaryResponseVO(
             Long privateLessonGroupId,
             Integer privateLessonParticipantCount,
             String itemStatus,
+            Boolean refunded,
             BigDecimal stoppedConsumedAmount,
             Integer stoppedSessionCount,
             java.time.LocalDateTime registrationSavedAt,
@@ -127,7 +128,7 @@ public record DataSummaryResponseVO(
                     pickupDropoffLabel, paymentMethod, paymentStatus, orderPaymentStatus, null, null, null, null, null,
                     null, null, null, totalHours, usedHours, remainingHours, teacherId, teacherName,
                     expiryDate, overdue, expiringSoon, lowOneOnOneHours, alertTypes, orderStatus,
-                    reviewIssueCodes, privateLessonGroupId, privateLessonParticipantCount, itemStatus,
+                    reviewIssueCodes, privateLessonGroupId, privateLessonParticipantCount, itemStatus, refunded,
                     null, stoppedSessionCount, registrationSavedAt, registrationOperatorUserId,
                     registrationOperatorName);
         }
