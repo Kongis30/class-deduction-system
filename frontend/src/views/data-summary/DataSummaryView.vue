@@ -403,7 +403,7 @@
       aria-orientation="horizontal"
       aria-label="Resize space between tables"
       :aria-valuemin="MIN_REFUND_TABLE_HEIGHT"
-      :aria-valuemax="maxRefundTableHeight"
+      :aria-valuemax="MAX_REFUND_TABLE_HEIGHT"
       :aria-valuenow="refundTableHeight"
       title="Drag to adjust the height of both tables"
       tabindex="0"
@@ -411,7 +411,7 @@
       @pointermove.stop.prevent="updateRefundTableResize"
       @pointerup.stop.prevent="stopRefundTableResize"
       @pointercancel.stop.prevent="stopRefundTableResize"
-      @keydown.stop.prevent="resizeRefundTableWithKeyboard"
+      @keydown="resizeRefundTableWithKeyboard"
     >
       <span />
     </div>
@@ -1316,9 +1316,7 @@ onBeforeUnmount(() => {
   if (pinchZoomFrame) cancelAnimationFrame(pinchZoomFrame);
 });
 
-const maxRefundTableHeight = MAX_REFUND_TABLE_HEIGHT;
-
-/** 退款名单底部拖动条调整表格视口；行数较多时由表格区域独立滚动。 */
+/** 退款名单上方拖动条调整表格视口；行数较多时由表格区域独立滚动。 */
 function startRefundTableResize(event: PointerEvent) {
   if (event.button !== 0) return;
   const handle = event.currentTarget as HTMLElement;
@@ -1331,7 +1329,7 @@ function startRefundTableResize(event: PointerEvent) {
 function updateRefundTableResize(event: PointerEvent) {
   if (activeRefundResizePointerId !== event.pointerId) return;
   const nextHeight = refundResizeStartHeight + event.clientY - refundResizeStartY;
-  refundTableHeight.value = Math.min(maxRefundTableHeight.value, Math.max(MIN_REFUND_TABLE_HEIGHT, nextHeight));
+  refundTableHeight.value = Math.min(MAX_REFUND_TABLE_HEIGHT, Math.max(MIN_REFUND_TABLE_HEIGHT, nextHeight));
 }
 
 function stopRefundTableResize(event: PointerEvent) {
@@ -1342,11 +1340,14 @@ function stopRefundTableResize(event: PointerEvent) {
 }
 
 function resizeRefundTableWithKeyboard(event: KeyboardEvent) {
+  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  event.stopPropagation();
   const step = event.shiftKey ? 60 : 20;
-  if (event.key === 'ArrowDown') refundTableHeight.value = Math.min(maxRefundTableHeight.value, refundTableHeight.value + step);
+  if (event.key === 'ArrowDown') refundTableHeight.value = Math.min(MAX_REFUND_TABLE_HEIGHT, refundTableHeight.value + step);
   else if (event.key === 'ArrowUp') refundTableHeight.value = Math.max(MIN_REFUND_TABLE_HEIGHT, refundTableHeight.value - step);
   else if (event.key === 'Home') refundTableHeight.value = MIN_REFUND_TABLE_HEIGHT;
-  else if (event.key === 'End') refundTableHeight.value = maxRefundTableHeight.value;
+  else if (event.key === 'End') refundTableHeight.value = MAX_REFUND_TABLE_HEIGHT;
 }
 
 function matchesColumnFilter(row: DataSummaryDisplayRow, column: WorkbookColumn) {
@@ -2073,6 +2074,7 @@ onMounted(() => {
 
 .workbook-scroll {
   width: 100%;
+  height: auto;
   flex: 1 1 0;
   min-height: 0;
   overflow: auto;
