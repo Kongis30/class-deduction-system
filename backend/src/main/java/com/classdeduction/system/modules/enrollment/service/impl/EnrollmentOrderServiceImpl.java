@@ -2078,7 +2078,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                                             ClassBillingService.ClassBilling billing) {
     }
 
-    /** 班级关系真正变化时才校验当前班级状态；旧收据金额更正不受后续停用影响。 */
+    /**
+     * 班级关系真正变化时校验班级状态和课程归属。
+     *
+     * <p>V2 班课的归属链是 project -> registration plan -> actual class，
+     * 已由 {@link #validateCorrectedV2GroupSelection} 校验；旧的 gradeBand
+     * 字符串比较只适用于尚未迁移的 legacy 课程，不能再约束 V2 实际班级。</p>
+     */
     private void validateCorrectedClassTarget(ClassGroupEntity targetClass, EnrollmentOrderItemEntity item) {
         if (targetClass == null || Integer.valueOf(1).equals(targetClass.getIsDeleted())
                 || !"ACTIVE".equals(targetClass.getStatus())) {
@@ -2089,7 +2095,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("CORRECTION_CLASS_PRODUCT_MISMATCH",
                     "The selected class does not belong to the selected course.");
         }
-        if (StringUtils.hasText(item.getGradeBand()) && StringUtils.hasText(targetClass.getGradeBand())
+        if (item.getGroupProjectId() == null
+                && StringUtils.hasText(item.getGradeBand()) && StringUtils.hasText(targetClass.getGradeBand())
                 && !item.getGradeBand().trim().equalsIgnoreCase(targetClass.getGradeBand().trim())) {
             throw new BusinessException("CORRECTION_CLASS_GRADE_MISMATCH",
                     "The selected class does not belong to the selected grade.");

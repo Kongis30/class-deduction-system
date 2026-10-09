@@ -520,8 +520,8 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldCorrectGroupReceiptGradeChangeAndRecomputeExpiryDate() {
-        // 回归：Edit Receipt 换实际班时沿用 V2 project/plan，并根据课表计算权益边界。
+    void shouldCorrectV2ReceiptWhenProjectGradeDiffersFromActualClass() {
+        // 回归：V2 以 project/plan/actual class 归属链为准，不再比较项目档位与实际班级名称。
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setOrderStatus("CONFIRMED");
@@ -537,7 +537,8 @@ class EnrollmentOrderServiceImplTest {
         oldClass.setGradeBand("G1-G5");
         ClassGroupEntity newClass = buildClassGroup(202L);
         newClass.setId(802L);
-        newClass.setGradeBand("G1-G5");
+        newClass.setGradeBand("G2");
+        newClass.setActualClass("G2");
         newClass.setGroupProjectId(910L);
         newClass.setStartDate(LocalDate.of(2026, 9, 1));
         newClass.setEndDate(LocalDate.of(2026, 12, 31));
@@ -550,7 +551,7 @@ class EnrollmentOrderServiceImplTest {
         plan.setId(920L);
         plan.setProjectId(910L);
         plan.setPackageUnit("MONTH");
-        plan.setPackageQuantity(new BigDecimal("10"));
+        plan.setPackageQuantity(new BigDecimal("12"));
         plan.setCoverageType("ROLLING_MONTHS");
         plan.setStatus("ACTIVE");
 
@@ -606,8 +607,8 @@ class EnrollmentOrderServiceImplTest {
         payload.setCourseType("GROUP");
         payload.setCourseProductId(202L);
         payload.setPackageUnit("MONTH");
-        payload.setPackageQuantity(new BigDecimal("2"));
-        payload.setPurchasedMonths(2);
+        payload.setPackageQuantity(new BigDecimal("12"));
+        payload.setPurchasedMonths(12);
         payload.setStartDate(LocalDate.of(2026, 10, 15));
         request.setItems(List.of(payload));
 
@@ -624,10 +625,10 @@ class EnrollmentOrderServiceImplTest {
 
         verify(classEnrollmentMapper).insert(classEnrollmentCaptor.capture());
         ClassEnrollmentEntity replacement = classEnrollmentCaptor.getValue();
-        assertThat(replacement.getExpiryDate()).isEqualTo(LocalDate.of(2026, 12, 20));
+        assertThat(replacement.getExpiryDate()).isEqualTo(LocalDate.of(2026, 12, 31));
         assertThat(replacement.getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 10, 21));
         assertThat(replacement.getBillingType()).isEqualTo("MONTHLY");
-        assertThat(replacement.getPurchasedQuantity()).isEqualTo(2);
+        assertThat(replacement.getPurchasedQuantity()).isEqualTo(12);
         assertThat(replacement.getGroupProjectId()).isEqualTo(910L);
         assertThat(replacement.getGroupRegistrationPlanId()).isEqualTo(920L);
 
