@@ -305,6 +305,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         studentById, campusById, context)
                 .stream()
                 .filter(this::hasDisplayableStudent)
+                // 接送名单只保留仍有效的课程权益；同一收据的其他未退款课程继续保留。
+                .filter(row -> !Boolean.TRUE.equals(query.getTransportOnly())
+                        || !Boolean.TRUE.equals(row.refunded()))
                 .filter(row -> matchesQuery(row, query))
                 .filter(row -> !Boolean.TRUE.equals(query.getOnlyAlerts()) || hasAlerts(row))
                 .filter(row -> !Boolean.TRUE.equals(query.getOnlyNeedsReview()) || hasReviewIssues(row))

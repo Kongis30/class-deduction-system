@@ -17,6 +17,17 @@
             :value="month.value"
           />
         </el-select>
+        <el-button
+          class="student-find-trigger"
+          size="small"
+          :type="studentFindOpen ? 'primary' : 'default'"
+          aria-label="Find student (Ctrl+F)"
+          title="Find student (Ctrl+F)"
+          @click="openStudentFind"
+        >
+          <el-icon><Search /></el-icon>
+          <span>Find</span>
+        </el-button>
         <el-dropdown v-if="isMobileViewport" trigger="click" @command="handleMobileOverflowCommand">
           <el-button class="workbook-mobile-more" aria-label="More actions">
             <el-icon><MoreFilled /></el-icon>
@@ -33,6 +44,33 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+      </div>
+      <div v-if="studentFindOpen" class="student-find" role="search" aria-label="Find student in Data Summary">
+        <el-input
+          ref="studentFindInputRef"
+          v-model="studentFindQuery"
+          class="student-find__input"
+          size="small"
+          clearable
+          placeholder="Find student in this course"
+          aria-label="Find student name"
+          @keydown.enter.prevent="stepStudentFind($event.shiftKey ? -1 : 1)"
+          @keydown.esc.stop.prevent="closeStudentFind"
+        />
+        <span class="student-find__count" aria-live="polite">
+          {{ studentFindQuery.trim() ? `${studentFindMatches.length ? studentFindIndex + 1 : 0} / ${studentFindMatches.length}` : 'Type a name' }}
+        </span>
+        <el-button-group class="student-find__navigation">
+          <el-button size="small" :disabled="!studentFindMatches.length" aria-label="Previous match" title="Previous match (Shift+Enter)" @click="stepStudentFind(-1)">
+            <el-icon><ArrowUp /></el-icon>
+          </el-button>
+          <el-button size="small" :disabled="!studentFindMatches.length" aria-label="Next match" title="Next match (Enter)" @click="stepStudentFind(1)">
+            <el-icon><ArrowDown /></el-icon>
+          </el-button>
+        </el-button-group>
+        <el-button text size="small" aria-label="Close find" title="Close find (Esc)" @click="closeStudentFind">
+          <el-icon><Close /></el-icon>
+        </el-button>
       </div>
       <div class="workbook-toolbar__stats">
         <span class="workbook-toolbar__stat">
@@ -289,6 +327,11 @@
                 v-for="(row, rowIndex) in classGroup.rows"
                 :key="rowKey(row)"
                 class="workbook-data-row"
+                :class="{
+                  'workbook-data-row--find-match': isStudentFindMatch(row),
+                  'workbook-data-row--find-current': isCurrentStudentFindMatch(row),
+                }"
+                :data-student-find-key="rowKey(row)"
               >
                 <td
                   v-if="classGroup.firstRowIndex + rowIndex === 0"
@@ -495,7 +538,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
-import { MoreFilled } from '@element-plus/icons-vue';
+import { ArrowDown, ArrowUp, Close, MoreFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import * as XLSX from 'xlsx';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
@@ -683,6 +726,10 @@ const rosterPrintDialogVisible = ref(false);
 const selectedRosterPrintKey = ref('');
 const selectedMonth = ref<string>('ALL');
 const saturdayRosterView = ref<SaturdayRosterView>('ALL');
+const studentFindOpen = ref(false);
+const studentFindQuery = ref('');
+const studentFindIndex = ref(0);
+const studentFindInputRef = ref<{ focus: () => void } | null>(null);
 const sortState = reactive<SortState>({
   key: null,
   direction: 'asc',
@@ -858,6 +905,30 @@ const monthStats = computed(() => {
 
 const sortedRows = computed<DataSummaryDisplayRow[]>(() => {
   return sortDataRows(filteredRows.value);
+});
+
+const studentFindMatches = computed(() => {
+  const query = studentFindQuery.value.trim().toLocaleLowerCase();
+  if (!query) return [];
+  return sortedRows.value.filter((row) => (row.studentName ?? '').toLocaleLowerCase().includes(query));
+});
+
+const currentStudentFindMatch = computed(() => studentFindMatches.value[studentFindIndex.value] ?? null);
+const studentFindMatchKeys = computed(() => new Set(studentFindMatches.value.map(rowKey)));
+const currentStudentFindMatchKey = computed(() => currentStudentFindMatch.value ? rowKey(currentStudentFindMatch.value) : null);
+
+watch(studentFindQuery, () => {
+  studentFindIndex.value = 0;
+  void nextTick(scrollToCurrentStudentFindMatch);
+});
+
+watch(studentFindMatches, (matches) => {
+  if (!matches.length) {
+    studentFindIndex.value = 0;
+    return;
+  }
+  studentFindIndex.value = Math.min(studentFindIndex.value, matches.length - 1);
+  void nextTick(scrollToCurrentStudentFindMatch);
 });
 
 function sortDataRows(rows: DataSummaryDisplayRow[]): DataSummaryDisplayRow[] {
@@ -1190,9 +1261,58 @@ function openOrderAction(action: 'pay' | 'refund') {
   });
 }
 
+function openStudentFind() {
+  studentFindOpen.value = true;
+  void nextTick(() => {
+    studentFindInputRef.value?.focus();
+  });
+}
+
+function closeStudentFind() {
+  studentFindOpen.value = false;
+  studentFindQuery.value = '';
+  studentFindIndex.value = 0;
+}
+
+function stepStudentFind(direction: -1 | 1) {
+  const count = studentFindMatches.value.length;
+  if (!count) return;
+  studentFindIndex.value = (studentFindIndex.value + direction + count) % count;
+  void nextTick(scrollToCurrentStudentFindMatch);
+}
+
+function isStudentFindMatch(row: DataSummaryDisplayRow) {
+  return studentFindMatchKeys.value.has(rowKey(row));
+}
+
+function isCurrentStudentFindMatch(row: DataSummaryDisplayRow) {
+  return currentStudentFindMatchKey.value === rowKey(row);
+}
+
+function scrollToCurrentStudentFindMatch() {
+  const row = currentStudentFindMatch.value;
+  const container = workbookScrollRef.value;
+  if (!row || !container) return;
+  const key = rowKey(row);
+  const target = [...container.querySelectorAll<HTMLElement>('[data-student-find-key]')]
+    .find((element) => element.dataset.studentFindKey === key);
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+}
+
 function handleStudentContextMenuKeydown(event: KeyboardEvent) {
+  const target = event.target;
+  const isTextEntry = target instanceof HTMLElement
+    && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+  const isStudentFindEntry = target instanceof HTMLElement && Boolean(target.closest('.student-find'));
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f'
+      && (!isTextEntry || isStudentFindEntry)) {
+    event.preventDefault();
+    openStudentFind();
+    return;
+  }
   if (event.key === 'Escape') {
     closeStudentContextMenu();
+    if (studentFindOpen.value && !isTextEntry) closeStudentFind();
   }
 }
 
@@ -1921,6 +2041,37 @@ onMounted(() => {
   gap: 8px;
 }
 
+.student-find-trigger {
+  gap: 4px;
+}
+
+.student-find {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid #c7d7cd;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.student-find__input {
+  width: 220px;
+}
+
+.student-find__count {
+  min-width: 38px;
+  color: #64756c;
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.student-find__navigation :deep(.el-button) {
+  padding: 6px 8px;
+}
+
 .workbook-toolbar__label {
   font-size: 12px;
   font-weight: 700;
@@ -2223,6 +2374,16 @@ onMounted(() => {
   background: #d1e5f6;
 }
 
+.workbook-data-row--find-match td {
+  background: #fff4c2;
+}
+
+.workbook-data-row--find-current td,
+.workbook-data-row--find-current:hover td {
+  background: #ffe18a;
+  box-shadow: inset 0 1px 0 #d59d20, inset 0 -1px 0 #d59d20;
+}
+
 .workbook-group-spacer td {
   height: 18px;
   padding: 0;
@@ -2401,6 +2562,17 @@ th.workbook-column--studentName {
     align-items: center;
     gap: 6px;
     min-width: 0;
+  }
+
+  .data-summary-page .student-find {
+    order: 3;
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .data-summary-page .student-find__input {
+    flex: 1 1 auto;
+    width: auto;
   }
 
   .data-summary-page .workbook-toolbar__label {
