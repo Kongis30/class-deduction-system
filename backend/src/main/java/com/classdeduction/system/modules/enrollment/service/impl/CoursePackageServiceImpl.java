@@ -883,6 +883,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
             throw new BusinessException("INSUFFICIENT_PACKAGE_HOURS", "The adjustment cannot reduce hours below the consumed balance.");
         }
         coursePackage.setTotalUnits(newTotalUnits);
+        if ("BONUS_HOURS".equals(request.getAdjustmentType())) {
+            coursePackage.setBonusUnits(safeUnits(coursePackage.getBonusUnits()) + changeUnits);
+        }
         coursePackage.setRemainingUnits(newRemainingUnits);
         if (newRemainingUnits == 0) {
             // 课时被调整为 0 → 课时耗尽，即时转 COMPLETED（避免课包停留在 ACTIVE 而不在列表收敛）

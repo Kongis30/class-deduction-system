@@ -526,7 +526,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .paymentStatus(order.getPaymentStatus())
                 .remark(order.getRemark())
                 .items(orderItems.stream().map(item -> {
-                    ClassGroupEntity itemClass = itemClassesById.get(item.getClassId());
+                    ClassGroupEntity itemClass = item.getClassId() == null
+                            ? null
+                            : itemClassesById.get(item.getClassId());
                     return toOrderItemVO(item, selectedSessionsByItemId.get(item.getId()),
                             itemClass == null ? null : itemClass.getClassName());
                 }).toList())
@@ -670,6 +672,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         coursePackage.setPackageName(StringUtils.hasText(request.getPackageName()) ? request.getPackageName() : product.getProductName());
         coursePackage.setTeachingMode(product.getTeachingMode());
         coursePackage.setTotalUnits(halfHourUnits);
+        coursePackage.setBonusUnits(0);
         coursePackage.setConsumedUnits(0);
         coursePackage.setRemainingUnits(halfHourUnits);
         coursePackage.setOriginalAmount(order.getOriginalAmount());
@@ -2075,7 +2078,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                                             ClassBillingService.ClassBilling billing) {
     }
 
-    /** 班级关系真正变化时才校验当前班级状态；旧收据金额更正不受后续停用影响。 */
+    /**
+     * 班级关系真正变化时校验班级状态和课程归属。
+     *
+     * <p>V2 班课的归属链是 project -> registration plan -> actual class，
+     * 已由 {@link #validateCorrectedV2GroupSelection} 校验；旧的 gradeBand
+     * 字符串比较只适用于尚未迁移的 legacy 课程，不能再约束 V2 实际班级。</p>
+     */
     private void validateCorrectedClassTarget(ClassGroupEntity targetClass, EnrollmentOrderItemEntity item) {
         if (targetClass == null || Integer.valueOf(1).equals(targetClass.getIsDeleted())
                 || !"ACTIVE".equals(targetClass.getStatus())) {
@@ -2086,7 +2095,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("CORRECTION_CLASS_PRODUCT_MISMATCH",
                     "The selected class does not belong to the selected course.");
         }
-        if (StringUtils.hasText(item.getGradeBand()) && StringUtils.hasText(targetClass.getGradeBand())
+        if (item.getGroupProjectId() == null
+                && StringUtils.hasText(item.getGradeBand()) && StringUtils.hasText(targetClass.getGradeBand())
                 && !item.getGradeBand().trim().equalsIgnoreCase(targetClass.getGradeBand().trim())) {
             throw new BusinessException("CORRECTION_CLASS_GRADE_MISMATCH",
                     "The selected class does not belong to the selected grade.");
@@ -2315,10 +2325,21 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         coursePackage.setCourseProductId(item.getCourseProductId());
         coursePackage.setPackageName(StringUtils.hasText(item.getDetail()) ? item.getDetail() : coursePackage.getPackageName());
         coursePackage.setTotalUnits(requested);
+        coursePackage.setBonusUnits(resolveExplicitOneOnOneBonusUnits(item));
         coursePackage.setRemainingUnits(requested - consumed);
         coursePackage.setOriginalAmount(defaultAmount(item.getPriceAmount()));
         coursePackage.setStartDate(item.getStartDate() == null ? coursePackage.getStartDate() : item.getStartDate());
         coursePackageMapper.updateById(coursePackage);
+    }
+
+    /** 订单更正后从该订单行的购买课时与总发放课时差额还原其明确赠课。 */
+    private int resolveExplicitOneOnOneBonusUnits(EnrollmentOrderItemEntity item) {
+        if (item.getOneOnOneUnits() == null || item.getOneOnOneHours() == null) {
+            return 0;
+        }
+        int purchasedUnits = item.getOneOnOneHours().multiply(BigDecimal.valueOf(2))
+                .setScale(0, RoundingMode.HALF_UP).intValue();
+        return Math.max(0, item.getOneOnOneUnits() - purchasedUnits);
     }
 
     private Long resolveCorrectedOrderClassId(List<EnrollmentOrderItemEntity> items) {

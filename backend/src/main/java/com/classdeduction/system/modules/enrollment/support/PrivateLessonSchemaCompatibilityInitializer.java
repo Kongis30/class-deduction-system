@@ -86,6 +86,32 @@ public class PrivateLessonSchemaCompatibilityInitializer {
                       AND item.opening_used_hours > 0
                     """);
         }
+        boolean bonusUnitsColumnMissing = !columnExists("course_package", "bonus_units");
+        addColumnIfMissing("course_package", "bonus_units",
+                "int NOT NULL DEFAULT 0 COMMENT 'Explicit bonus hours granted, in half-hour units' AFTER total_units",
+                "explicit one-on-one bonus hour tracking");
+        if (bonusUnitsColumnMissing) {
+            // 旧数据仅能可靠确认最新关联订单行的赠课差额及独立赠课调整；不能把累计课时与最新订单差额当赠课。
+            jdbcTemplate.update("""
+                    UPDATE course_package cp
+                    LEFT JOIN enrollment_order_item item ON item.id = cp.enrollment_order_item_id
+                    LEFT JOIN (
+                        SELECT package_id, SUM(GREATEST(change_units, 0)) AS bonus_units
+                        FROM hour_ledger
+                        WHERE is_deleted = 0 AND reason_code = 'BONUS_HOURS'
+                        GROUP BY package_id
+                    ) ledger_bonus ON ledger_bonus.package_id = cp.id
+                    SET cp.bonus_units = GREATEST(COALESCE(ledger_bonus.bonus_units, 0), 0)
+                        + CASE
+                            WHEN cp.teaching_mode = 'ONE_ON_ONE'
+                              AND item.one_on_one_units IS NOT NULL
+                              AND item.one_on_one_hours IS NOT NULL
+                            THEN GREATEST(item.one_on_one_units - ROUND(item.one_on_one_hours * 2), 0)
+                            ELSE 0
+                          END
+                    WHERE cp.teaching_mode = 'ONE_ON_ONE'
+                    """);
+        }
         // 课程级付款分摊（见 doc/migrations/20260919_payment_allocation.sql）
         createPaymentAllocationTableIfMissing();
         addColumnIfMissing("enrollment_order_item", "discount_amount",

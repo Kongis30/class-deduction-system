@@ -12,6 +12,7 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
@@ -455,6 +456,35 @@ class LessonOccurrenceServiceImplTest {
                         .satisfies(student -> assertThat(student.packages()).singleElement()
                                 .satisfies(pkg -> assertThat(pkg.lessons()).singleElement()
                                         .satisfies(lesson -> assertThat(lesson.occurrenceId()).isEqualTo(4001L)))));
+    }
+
+    @Test
+    void shouldUseExplicitPackageBonusInsteadOfSubtractingLatestOrderFromAccumulatedTotal() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        coursePackage.setEnrollmentOrderItemId(9001L);
+        coursePackage.setTotalUnits(324); // 162h accumulated across multiple purchases.
+        coursePackage.setBonusUnits(4); // 2h explicit bonus.
+        EnrollmentOrderItemEntity latestOrderItem = new EnrollmentOrderItemEntity();
+        latestOrderItem.setId(9001L);
+        latestOrderItem.setOneOnOneHours(new java.math.BigDecimal("40.0"));
+        latestOrderItem.setOneOnOneUnits(84); // 42h for latest order, including its 2h bonus.
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(enrollmentOrderItemMapper.selectBatchIds(any())).thenReturn(List.of(latestOrderItem));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).singleElement()
+                .satisfies(teacher -> assertThat(teacher.students()).singleElement()
+                        .satisfies(student -> assertThat(student.packages()).singleElement().satisfies(pkg -> {
+                            assertThat(pkg.totalUnits()).isEqualTo(162.0);
+                            assertThat(pkg.purchasedUnits()).isEqualTo(160.0);
+                            assertThat(pkg.bonusUnits()).isEqualTo(2.0);
+                        })));
     }
 
     @Test

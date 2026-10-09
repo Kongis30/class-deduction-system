@@ -1950,9 +1950,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 : allowExistingPackage ? resolveExistingOneOnOnePackageForLine(student.getId(), line, null) : null;
         if (coursePackage != null) {
             int addedUnits = resolveOneOnOneUnits(line);
+            int addedBonusUnits = resolveOneOnOneBonusUnits(line);
             coursePackage.setEnrollmentOrderId(order.getId());
             coursePackage.setEnrollmentOrderItemId(line.orderItemId);
             coursePackage.setTotalUnits(safeUnits(coursePackage.getTotalUnits()) + addedUnits);
+            coursePackage.setBonusUnits(safeUnits(coursePackage.getBonusUnits()) + addedBonusUnits);
             coursePackage.setRemainingUnits(safeUnits(coursePackage.getRemainingUnits()) + addedUnits);
             coursePackage.setOriginalAmount(defaultAmount(coursePackage.getOriginalAmount()).add(packagePriceAmount));
             coursePackage.setReceivedAmount(defaultAmount(coursePackage.getReceivedAmount()).add(allocatedPaid));
@@ -1984,9 +1986,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         coursePackage.setPackageName(StringUtils.hasText(line.detail) ? line.detail : line.product.getProductName());
         coursePackage.setTeachingMode("ONE_ON_ONE");
         int totalUnits = resolveOneOnOneUnits(line);
+        int bonusUnits = resolveOneOnOneBonusUnits(line);
         // Already-used hours are maintained on the scheduling page; a new receipt starts with no tracked consumption.
         int openingUsedUnits = 0;
         coursePackage.setTotalUnits(totalUnits);
+        coursePackage.setBonusUnits(bonusUnits);
         coursePackage.setConsumedUnits(openingUsedUnits);
         coursePackage.setRemainingUnits(totalUnits - openingUsedUnits);
         coursePackage.setOriginalAmount(packagePriceAmount);
@@ -2093,6 +2097,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                             "Every existing shared private lesson participant must be renewed together."));
             CoursePackageEntity coursePackage = requireRenewableOneOnOnePackage(member.getPackageId());
             int addedUnits = resolveOneOnOneUnits(line);
+            int addedBonusUnits = resolveOneOnOneBonusUnits(line);
             BigDecimal memberPrice = splitSharedTuition(line.priceAmount, members.size(),
                     member.getParticipantIndex() - 1);
             BigDecimal multiplier = defaultAmount(line.basePriceAmount).compareTo(ZERO_AMOUNT) == 0
@@ -2103,6 +2108,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             coursePackage.setEnrollmentOrderId(order.getId());
             coursePackage.setEnrollmentOrderItemId(orderItem.getId());
             coursePackage.setTotalUnits(safeUnits(coursePackage.getTotalUnits()) + addedUnits);
+            coursePackage.setBonusUnits(safeUnits(coursePackage.getBonusUnits()) + addedBonusUnits);
             coursePackage.setRemainingUnits(safeUnits(coursePackage.getRemainingUnits()) + addedUnits);
             coursePackage.setOriginalAmount(defaultAmount(coursePackage.getOriginalAmount()).add(memberPrice));
             coursePackage.setReceivedAmount(defaultAmount(coursePackage.getReceivedAmount()).add(memberPaid));
