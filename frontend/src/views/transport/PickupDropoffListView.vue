@@ -42,6 +42,9 @@
         <span class="workbook-toolbar__stat"><em>Drop-off</em><strong>{{ selectedCourse?.dropoffRows.length ?? 0 }}</strong></span>
       </div>
       <div class="workbook-toolbar__export">
+        <el-button size="small" :type="driverAssignmentsEditable ? 'primary' : 'default'" @click="driverAssignmentsEditable = !driverAssignmentsEditable">
+          {{ driverAssignmentsEditable ? 'Done' : 'Edit drivers' }}
+        </el-button>
         <el-button size="small" @click="openDriverDialog">Manage drivers</el-button>
         <el-button type="primary" size="small" :disabled="!selectedCourse" @click="exportExcel">Export Excel</el-button>
       </div>
@@ -115,7 +118,7 @@
             <tr v-for="row in filteredPickupRows" :key="`pickup-${rowKey(row)}`" class="workbook-data-row">
               <td v-for="column in tableColumns('pickup')" :key="column.key">
                 <el-select
-                  v-if="column.key === 'driver'"
+                  v-if="column.key === 'driver' && driverAssignmentsEditable"
                   :model-value="driverIdForRow(row, 'pickup')"
                   class="transport-driver-select"
                   size="small"
@@ -126,6 +129,7 @@
                 >
                   <el-option v-for="driver in drivers" :key="String(driver.id)" :label="driver.driverName" :value="String(driver.id)" />
                 </el-select>
+                <span v-else-if="column.key === 'driver'">{{ driverNameForRow(row, 'pickup') }}</span>
                 <span v-else>{{ transportCellValue(row, column.key, 'pickup') }}</span>
               </td>
             </tr>
@@ -203,7 +207,7 @@
             <tr v-for="row in filteredDropoffRows" :key="`dropoff-${rowKey(row)}`" class="workbook-data-row">
               <td v-for="column in tableColumns('dropoff')" :key="column.key">
                 <el-select
-                  v-if="column.key === 'driver'"
+                  v-if="column.key === 'driver' && driverAssignmentsEditable"
                   :model-value="driverIdForRow(row, 'dropoff')"
                   class="transport-driver-select"
                   size="small"
@@ -214,6 +218,7 @@
                 >
                   <el-option v-for="driver in drivers" :key="String(driver.id)" :label="driver.driverName" :value="String(driver.id)" />
                 </el-select>
+                <span v-else-if="column.key === 'driver'">{{ driverNameForRow(row, 'dropoff') }}</span>
                 <span v-else>{{ transportCellValue(row, column.key, 'dropoff') }}</span>
               </td>
             </tr>
@@ -347,6 +352,7 @@ const loading = ref(false);
 const savingOrder = ref(false);
 const driverDialogVisible = ref(false);
 const driverSaving = ref(false);
+const driverAssignmentsEditable = ref(false);
 const editingDriverId = ref<string | null>(null);
 const driverForm = reactive({ driverName: '' });
 const authStore = useAuthStore();

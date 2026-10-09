@@ -401,19 +401,21 @@
       class="refund-records__resize-handle"
       role="separator"
       aria-orientation="horizontal"
-      aria-label="Resize space between tables"
+      aria-label="Refund student table height"
       :aria-valuemin="MIN_REFUND_TABLE_HEIGHT"
       :aria-valuemax="MAX_REFUND_TABLE_HEIGHT"
       :aria-valuenow="refundTableHeight"
-      title="Drag to adjust the height of both tables"
+      title="Drag up to show more refund rows; drag down to show fewer"
       tabindex="0"
+      ref="refundTableResizeHandleRef"
       @pointerdown.stop.prevent="startRefundTableResize"
       @pointermove.stop.prevent="updateRefundTableResize"
       @pointerup.stop.prevent="stopRefundTableResize"
       @pointercancel.stop.prevent="stopRefundTableResize"
       @keydown="resizeRefundTableWithKeyboard"
     >
-      <span />
+      <span class="refund-records__resize-grip" aria-hidden="true" />
+      <span class="refund-records__resize-hint">Drag up to show more refund rows</span>
     </div>
     <section v-if="visibleRefundRows.length" class="refund-records">
       <div class="refund-records__heading">
@@ -432,7 +434,12 @@
           </button>
         </div>
       </div>
-      <div v-if="refundTableExpanded" class="refund-records__scroll" :style="{ height: `${refundTableHeight}px` }">
+      <div
+        v-if="refundTableExpanded"
+        ref="refundTableScrollRef"
+        class="refund-records__scroll"
+        :style="{ height: `${refundTableHeight}px` }"
+      >
         <table class="refund-records__table workbook-table">
           <thead>
             <tr>
@@ -706,6 +713,8 @@ const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 
 const loading = ref(false);
 const workbookScrollRef = ref<HTMLDivElement | null>(null);
+const refundTableScrollRef = ref<HTMLDivElement | null>(null);
+const refundTableResizeHandleRef = ref<HTMLDivElement | null>(null);
 const mobileTableScale = ref(1);
 const refundTableHeight = ref(DEFAULT_REFUND_TABLE_HEIGHT);
 const refundTableExpanded = ref(true);
@@ -729,6 +738,8 @@ const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>(
 const tabStates = new Map<string, ProductViewState>();
 let refundResizeStartY = 0;
 let refundResizeStartHeight = DEFAULT_REFUND_TABLE_HEIGHT;
+let refundResizePendingHeight = DEFAULT_REFUND_TABLE_HEIGHT;
+let refundResizeFrame = 0;
 let activeRefundResizePointerId: number | null = null;
 
 const dragState = reactive<{ fromId: string | null; overId: string | null }>({
@@ -1307,6 +1318,7 @@ async function persistTabOrder() {
 
 onBeforeUnmount(() => {
   window.clearTimeout(orderSaveTimer);
+  if (refundResizeFrame) cancelAnimationFrame(refundResizeFrame);
   window.removeEventListener('keydown', handleStudentContextMenuKeydown);
   const scroll = workbookScrollRef.value;
   scroll?.removeEventListener('touchstart', handleWorkbookTouchStart);
@@ -1316,27 +1328,52 @@ onBeforeUnmount(() => {
   if (pinchZoomFrame) cancelAnimationFrame(pinchZoomFrame);
 });
 
-/** 退款名单上方拖动条调整表格视口；行数较多时由表格区域独立滚动。 */
+/** 退款名单上方拖动条调整下方表格高度；向上拖会扩大退款名单视口。 */
 function startRefundTableResize(event: PointerEvent) {
   if (event.button !== 0) return;
   const handle = event.currentTarget as HTMLElement;
   activeRefundResizePointerId = event.pointerId;
   refundResizeStartY = event.clientY;
   refundResizeStartHeight = refundTableHeight.value;
+  refundResizePendingHeight = refundTableHeight.value;
   handle.setPointerCapture(event.pointerId);
 }
 
 function updateRefundTableResize(event: PointerEvent) {
   if (activeRefundResizePointerId !== event.pointerId) return;
-  const nextHeight = refundResizeStartHeight + event.clientY - refundResizeStartY;
-  refundTableHeight.value = Math.min(MAX_REFUND_TABLE_HEIGHT, Math.max(MIN_REFUND_TABLE_HEIGHT, nextHeight));
+  // 手柄位于下表上方，因此向上移动时增加下表高度。动画帧合并高频指针事件，避免反复触发整页 Vue 更新。
+  const deltaY = event.clientY - refundResizeStartY;
+  refundResizePendingHeight = clampRefundTableHeight(refundResizeStartHeight - deltaY);
+  if (!refundResizeFrame) {
+    refundResizeFrame = requestAnimationFrame(() => {
+      refundResizeFrame = 0;
+      applyRefundTableHeight(refundResizePendingHeight);
+    });
+  }
 }
 
 function stopRefundTableResize(event: PointerEvent) {
   if (activeRefundResizePointerId !== event.pointerId) return;
   const handle = event.currentTarget as HTMLElement;
+  // 使用 pointerup 的最终坐标结算，避免最后一帧尚未绘制时高度回跳。
+  if (event.type === 'pointerup') {
+    refundResizePendingHeight = clampRefundTableHeight(refundResizeStartHeight - (event.clientY - refundResizeStartY));
+  }
+  if (refundResizeFrame) cancelAnimationFrame(refundResizeFrame);
+  refundResizeFrame = 0;
+  refundTableHeight.value = refundResizePendingHeight;
+  applyRefundTableHeight(refundResizePendingHeight);
   if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
   activeRefundResizePointerId = null;
+}
+
+function clampRefundTableHeight(height: number) {
+  return Math.min(MAX_REFUND_TABLE_HEIGHT, Math.max(MIN_REFUND_TABLE_HEIGHT, height));
+}
+
+function applyRefundTableHeight(height: number) {
+  refundTableScrollRef.value?.style.setProperty('height', `${height}px`);
+  refundTableResizeHandleRef.value?.setAttribute('aria-valuenow', String(height));
 }
 
 function resizeRefundTableWithKeyboard(event: KeyboardEvent) {
@@ -1344,8 +1381,8 @@ function resizeRefundTableWithKeyboard(event: KeyboardEvent) {
   event.preventDefault();
   event.stopPropagation();
   const step = event.shiftKey ? 60 : 20;
-  if (event.key === 'ArrowDown') refundTableHeight.value = Math.min(MAX_REFUND_TABLE_HEIGHT, refundTableHeight.value + step);
-  else if (event.key === 'ArrowUp') refundTableHeight.value = Math.max(MIN_REFUND_TABLE_HEIGHT, refundTableHeight.value - step);
+  if (event.key === 'ArrowUp') refundTableHeight.value = Math.min(MAX_REFUND_TABLE_HEIGHT, refundTableHeight.value + step);
+  else if (event.key === 'ArrowDown') refundTableHeight.value = Math.max(MIN_REFUND_TABLE_HEIGHT, refundTableHeight.value - step);
   else if (event.key === 'Home') refundTableHeight.value = MIN_REFUND_TABLE_HEIGHT;
   else if (event.key === 'End') refundTableHeight.value = MAX_REFUND_TABLE_HEIGHT;
 }
@@ -2227,10 +2264,11 @@ onMounted(() => {
 
 .refund-records__resize-handle {
   display: flex;
-  height: 20px;
-  flex: 0 0 20px;
+  height: 28px;
+  flex: 0 0 28px;
   align-items: center;
   justify-content: center;
+  gap: 10px;
   cursor: ns-resize;
   touch-action: none;
   user-select: none;
@@ -2238,20 +2276,39 @@ onMounted(() => {
   border-bottom: 0;
   border-radius: 5px 5px 0 0;
   background: #f4f8fc;
+  transition: background-color 120ms ease;
 }
 
-.refund-records__resize-handle span {
+.refund-records__resize-grip {
+  display: block;
   width: 42px;
-  height: 3px;
+  height: 4px;
+  flex: 0 0 auto;
   border-radius: 2px;
   background: #bdcddd;
   transition: background-color 120ms ease, width 120ms ease;
 }
 
-.refund-records__resize-handle:hover span,
-.refund-records__resize-handle:focus-visible span {
+.refund-records__resize-hint {
+  color: #718398;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.refund-records__resize-handle:hover,
+.refund-records__resize-handle:focus-visible {
+  background: #edf4fb;
+}
+
+.refund-records__resize-handle:hover .refund-records__resize-grip,
+.refund-records__resize-handle:focus-visible .refund-records__resize-grip {
   width: 56px;
   background: #5f8fbd;
+}
+
+.refund-records__resize-handle:hover .refund-records__resize-hint,
+.refund-records__resize-handle:focus-visible .refund-records__resize-hint {
+  color: #315e89;
 }
 
 .refund-records__resize-handle:focus-visible {
@@ -2635,10 +2692,12 @@ th.workbook-column--studentName {
     width: 84%;
     margin: 10mm auto 0;
     border-collapse: collapse;
+    table-layout: fixed;
     font-size: 16pt;
   }
 
   .roster-print th {
+    width: 50%;
     padding: 4mm;
     border: 1px solid #b8c7d4;
     background: #e9f1f8;
@@ -2647,14 +2706,12 @@ th.workbook-column--studentName {
   }
 
   .roster-print td {
+    width: 50%;
     padding: 4mm;
     border: 1px solid #b8c7d4;
     background: #d2e4f4;
     vertical-align: middle;
   }
 
-  .roster-print td:first-child {
-    width: 68%;
-  }
 }
 </style>
