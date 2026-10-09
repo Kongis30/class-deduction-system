@@ -103,6 +103,7 @@
         <el-select
           v-model="selectedRosterPrintKey"
           class="roster-print-picker__select"
+          popper-class="roster-print-campus-popper"
           filterable
           clearable
           placeholder="Select a class"
@@ -2083,6 +2084,26 @@ onMounted(() => {
 
 .roster-print-picker__select {
   width: 100%;
+}
+
+:global(.roster-print-campus-popper .el-select-group__title) {
+  height: 30px;
+  margin: 4px 8px;
+  padding: 0 10px;
+  border: 1px solid #d3dfec;
+  border-left: 3px solid #648bb5;
+  border-radius: 4px;
+  background: #edf4fb;
+  color: #34465d;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 28px;
+}
+
+:global(.roster-print-campus-popper .el-select-group__wrap:not(:last-of-type)) {
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #dce5ef;
 }
 
 .roster-print-picker__option {
