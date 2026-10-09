@@ -401,7 +401,7 @@
         <h3>Refund Student</h3>
         <span>{{ visibleRefundRows.length }} record(s)</span>
       </div>
-      <div class="refund-records__scroll">
+      <div class="refund-records__scroll" :style="{ height: `${refundTableHeight}px` }">
         <table class="refund-records__table workbook-table">
           <thead>
             <tr>
@@ -429,6 +429,21 @@
             </tr>
           </tbody>
         </table>
+      </div>
+      <div
+        class="refund-records__resize-handle"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize refund table height"
+        :aria-valuemin="MIN_REFUND_TABLE_HEIGHT"
+        :aria-valuemax="maxRefundTableHeight"
+        :aria-valuenow="refundTableHeight"
+        title="Drag to adjust table height"
+        tabindex="0"
+        @pointerdown.stop.prevent="startRefundTableResize"
+        @keydown.stop.prevent="resizeRefundTableWithKeyboard"
+      >
+        <span />
       </div>
     </section>
 
@@ -621,6 +636,9 @@ const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
 const ORDER_SAVE_DEBOUNCE_MS = 300;
 const MIN_MOBILE_TABLE_SCALE = 0.3;
 const MAX_MOBILE_TABLE_SCALE = 1.6;
+const MIN_REFUND_TABLE_HEIGHT = 96;
+const DEFAULT_REFUND_TABLE_HEIGHT = 180;
+const MAX_REFUND_TABLE_HEIGHT = 540;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
 
 interface PinchZoomGesture {
@@ -673,6 +691,7 @@ const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 const loading = ref(false);
 const workbookScrollRef = ref<HTMLDivElement | null>(null);
 const mobileTableScale = ref(1);
+const refundTableHeight = ref(DEFAULT_REFUND_TABLE_HEIGHT);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
@@ -691,6 +710,8 @@ const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>(
 
 /** Tab 视图状态快照池：切换 Product 时存入/恢复，仅存活于当前页面会话。 */
 const tabStates = new Map<string, ProductViewState>();
+let refundResizeStartY = 0;
+let refundResizeStartHeight = DEFAULT_REFUND_TABLE_HEIGHT;
 
 const dragState = reactive<{ fromId: string | null; overId: string | null }>({
   fromId: null,
@@ -1269,6 +1290,9 @@ async function persistTabOrder() {
 onBeforeUnmount(() => {
   window.clearTimeout(orderSaveTimer);
   window.removeEventListener('keydown', handleStudentContextMenuKeydown);
+  window.removeEventListener('pointermove', updateRefundTableResize);
+  window.removeEventListener('pointerup', stopRefundTableResize);
+  window.removeEventListener('pointercancel', stopRefundTableResize);
   const scroll = workbookScrollRef.value;
   scroll?.removeEventListener('touchstart', handleWorkbookTouchStart);
   scroll?.removeEventListener('touchmove', handleWorkbookTouchMove);
@@ -1276,6 +1300,37 @@ onBeforeUnmount(() => {
   scroll?.removeEventListener('touchcancel', handleWorkbookTouchEnd);
   if (pinchZoomFrame) cancelAnimationFrame(pinchZoomFrame);
 });
+
+const maxRefundTableHeight = MAX_REFUND_TABLE_HEIGHT;
+
+/** 退款名单底部拖动条调整表格视口；行数较多时由表格区域独立滚动。 */
+function startRefundTableResize(event: PointerEvent) {
+  if (event.button !== 0) return;
+  refundResizeStartY = event.clientY;
+  refundResizeStartHeight = refundTableHeight.value;
+  window.addEventListener('pointermove', updateRefundTableResize);
+  window.addEventListener('pointerup', stopRefundTableResize);
+  window.addEventListener('pointercancel', stopRefundTableResize);
+}
+
+function updateRefundTableResize(event: PointerEvent) {
+  const nextHeight = refundResizeStartHeight + event.clientY - refundResizeStartY;
+  refundTableHeight.value = Math.min(maxRefundTableHeight.value, Math.max(MIN_REFUND_TABLE_HEIGHT, nextHeight));
+}
+
+function stopRefundTableResize() {
+  window.removeEventListener('pointermove', updateRefundTableResize);
+  window.removeEventListener('pointerup', stopRefundTableResize);
+  window.removeEventListener('pointercancel', stopRefundTableResize);
+}
+
+function resizeRefundTableWithKeyboard(event: KeyboardEvent) {
+  const step = event.shiftKey ? 60 : 20;
+  if (event.key === 'ArrowDown') refundTableHeight.value = Math.min(maxRefundTableHeight.value, refundTableHeight.value + step);
+  else if (event.key === 'ArrowUp') refundTableHeight.value = Math.max(MIN_REFUND_TABLE_HEIGHT, refundTableHeight.value - step);
+  else if (event.key === 'Home') refundTableHeight.value = MIN_REFUND_TABLE_HEIGHT;
+  else if (event.key === 'End') refundTableHeight.value = maxRefundTableHeight.value;
+}
 
 function matchesColumnFilter(row: DataSummaryDisplayRow, column: WorkbookColumn) {
   const filter = columnFilters[column.key];
@@ -1855,6 +1910,8 @@ onMounted(() => {
 .data-summary-page {
   min-width: 0;
   height: calc(100vh - 88px);
+  overflow-x: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   background: #fff;
@@ -2067,7 +2124,6 @@ onMounted(() => {
 
 .refund-records {
   flex: 0 0 auto;
-  max-height: 300px;
   border: 1px solid #d5dfea;
   border-top: 0;
   background: #f8fbff;
@@ -2092,8 +2148,11 @@ onMounted(() => {
 }
 
 .refund-records__scroll {
-  max-height: 255px;
   overflow: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
 }
 
 .refund-records__table {
@@ -2116,6 +2175,36 @@ onMounted(() => {
   top: 0;
   background: #edf4fb;
   font-weight: 700;
+  text-align: center;
+}
+
+.refund-records__resize-handle {
+  display: flex;
+  height: 12px;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+.refund-records__resize-handle span {
+  width: 42px;
+  height: 3px;
+  border-radius: 2px;
+  background: #bdcddd;
+  transition: background-color 120ms ease, width 120ms ease;
+}
+
+.refund-records__resize-handle:hover span,
+.refund-records__resize-handle:focus-visible span {
+  width: 56px;
+  background: #5f8fbd;
+}
+
+.refund-records__resize-handle:focus-visible {
+  outline: 2px solid #5f8fbd;
+  outline-offset: -2px;
 }
 
 .workbook-table {
