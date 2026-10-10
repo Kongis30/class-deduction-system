@@ -355,7 +355,33 @@
           </template>
         </tbody>
 
-        <tbody v-else-if="!loading && !visibleRefundRows.length">
+        <tbody v-if="visibleRefundRows.length">
+          <tr class="workbook-section-row" data-testid="refund-section-row">
+            <td :colspan="columns.length">Refund Student</td>
+          </tr>
+          <tr
+            v-for="row in visibleRefundRows"
+            :key="rowKey(row)"
+            class="workbook-data-row workbook-data-row--refund"
+          >
+            <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
+              <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+              <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
+              <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
+              <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
+              <span v-else-if="column.key === 'pickup' || column.key === 'dropoff'" :class="['workbook-pill', columnValue(row, column.key) === 'Yes' ? 'workbook-pill--yes' : 'workbook-pill--no']">
+                {{ columnValue(row, column.key) }}
+              </span>
+              <span v-else-if="column.key === 'paymentMethod'" :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
+                {{ displayText(row.paymentMethod) }}
+              </span>
+              <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(columnValue(row, column.key)) }}</span>
+              <span v-else>{{ displayText(columnValue(row, column.key)) }}</span>
+            </td>
+          </tr>
+        </tbody>
+
+        <tbody v-if="!loading && !groupedCampusRows.length && !visibleRefundRows.length">
           <tr class="workbook-empty-row">
             <td :colspan="columns.length">
               <span>{{ emptyMessage }}</span>
@@ -396,80 +422,6 @@
                 </span>
                 <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(stoppedColumnValue(row, column.key)) }}</span>
                 <span v-else>{{ displayText(stoppedColumnValue(row, column.key)) }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <div
-      v-if="visibleRefundRows.length && refundTableExpanded"
-      class="refund-records__resize-handle"
-      role="separator"
-      aria-orientation="horizontal"
-      aria-label="Refund student table height"
-      :aria-valuemin="MIN_REFUND_TABLE_HEIGHT"
-      :aria-valuemax="MAX_REFUND_TABLE_HEIGHT"
-      :aria-valuenow="refundTableHeight"
-      title="Drag up to show more refund rows; drag down to show fewer"
-      tabindex="0"
-      ref="refundTableResizeHandleRef"
-      @pointerdown.stop.prevent="startRefundTableResize"
-      @pointermove.stop.prevent="updateRefundTableResize"
-      @pointerup.stop.prevent="stopRefundTableResize"
-      @pointercancel.stop.prevent="stopRefundTableResize"
-      @keydown="resizeRefundTableWithKeyboard"
-    >
-      <span class="refund-records__resize-grip" aria-hidden="true" />
-      <span class="refund-records__resize-hint">Drag up to show more refund rows</span>
-    </div>
-    <section v-if="visibleRefundRows.length" class="refund-records">
-      <div class="refund-records__heading">
-        <h3>Refund Student</h3>
-        <div class="refund-records__heading-actions">
-          <span>{{ visibleRefundRows.length }} record(s)</span>
-          <button
-            type="button"
-            class="refund-records__toggle"
-            :aria-expanded="refundTableExpanded"
-            :aria-label="refundTableExpanded ? 'Collapse refund student table' : 'Expand refund student table'"
-            :title="refundTableExpanded ? 'Collapse table' : 'Expand table'"
-            @click.stop="refundTableExpanded = !refundTableExpanded"
-          >
-            <el-icon><ArrowUp v-if="refundTableExpanded" /><ArrowDown v-else /></el-icon>
-          </button>
-        </div>
-      </div>
-      <div
-        v-if="refundTableExpanded"
-        ref="refundTableScrollRef"
-        class="refund-records__scroll"
-        :style="{ height: `${refundTableHeight}px` }"
-      >
-        <table class="refund-records__table workbook-table">
-          <thead>
-            <tr>
-              <th v-for="column in columns" :key="column.key" :style="{ minWidth: `${column.width}px` }">
-                {{ column.label }}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in visibleRefundRows" :key="rowKey(row)">
-              <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
-                <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
-                <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
-                <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
-                <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
-                <span v-else-if="column.key === 'pickup' || column.key === 'dropoff'" :class="['workbook-pill', columnValue(row, column.key) === 'Yes' ? 'workbook-pill--yes' : 'workbook-pill--no']">
-                  {{ columnValue(row, column.key) }}
-                </span>
-                <span v-else-if="column.key === 'paymentMethod'" :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
-                  {{ displayText(row.paymentMethod) }}
-                </span>
-                <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(columnValue(row, column.key)) }}</span>
-                <span v-else>{{ displayText(columnValue(row, column.key)) }}</span>
               </td>
             </tr>
           </tbody>
@@ -543,7 +495,7 @@
 
 <script setup lang="ts">
 import dayjs from 'dayjs';
-import { ArrowDown, ArrowUp, MoreFilled } from '@element-plus/icons-vue';
+import { MoreFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import * as XLSX from 'xlsx';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
@@ -671,9 +623,6 @@ const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
 const ORDER_SAVE_DEBOUNCE_MS = 300;
 const MIN_MOBILE_TABLE_SCALE = 0.3;
 const MAX_MOBILE_TABLE_SCALE = 1.6;
-const MIN_REFUND_TABLE_HEIGHT = 96;
-const DEFAULT_REFUND_TABLE_HEIGHT = 180;
-const MAX_REFUND_TABLE_HEIGHT = 540;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
 
 interface PinchZoomGesture {
@@ -725,11 +674,7 @@ const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 
 const loading = ref(false);
 const workbookScrollRef = ref<HTMLDivElement | null>(null);
-const refundTableScrollRef = ref<HTMLDivElement | null>(null);
-const refundTableResizeHandleRef = ref<HTMLDivElement | null>(null);
 const mobileTableScale = ref(1);
-const refundTableHeight = ref(DEFAULT_REFUND_TABLE_HEIGHT);
-const refundTableExpanded = ref(true);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
@@ -748,11 +693,6 @@ const columnFilters = reactive<Record<ColumnKey, ColumnFilter>>(
 
 /** Tab 视图状态快照池：切换 Product 时存入/恢复，仅存活于当前页面会话。 */
 const tabStates = new Map<string, ProductViewState>();
-let refundResizeStartY = 0;
-let refundResizeStartHeight = DEFAULT_REFUND_TABLE_HEIGHT;
-let refundResizePendingHeight = DEFAULT_REFUND_TABLE_HEIGHT;
-let refundResizeFrame = 0;
-let activeRefundResizePointerId: number | null = null;
 
 const dragState = reactive<{ fromId: string | null; overId: string | null }>({
   fromId: null,
@@ -1345,7 +1285,6 @@ async function persistTabOrder() {
 
 onBeforeUnmount(() => {
   window.clearTimeout(orderSaveTimer);
-  if (refundResizeFrame) cancelAnimationFrame(refundResizeFrame);
   window.removeEventListener('keydown', handleStudentContextMenuKeydown);
   const scroll = workbookScrollRef.value;
   scroll?.removeEventListener('touchstart', handleWorkbookTouchStart);
@@ -1354,65 +1293,6 @@ onBeforeUnmount(() => {
   scroll?.removeEventListener('touchcancel', handleWorkbookTouchEnd);
   if (pinchZoomFrame) cancelAnimationFrame(pinchZoomFrame);
 });
-
-/** 退款名单上方拖动条调整下方表格高度；向上拖会扩大退款名单视口。 */
-function startRefundTableResize(event: PointerEvent) {
-  if (event.button !== 0) return;
-  const handle = event.currentTarget as HTMLElement;
-  activeRefundResizePointerId = event.pointerId;
-  refundResizeStartY = event.clientY;
-  refundResizeStartHeight = refundTableHeight.value;
-  refundResizePendingHeight = refundTableHeight.value;
-  handle.setPointerCapture(event.pointerId);
-}
-
-function updateRefundTableResize(event: PointerEvent) {
-  if (activeRefundResizePointerId !== event.pointerId) return;
-  // 手柄位于下表上方，因此向上移动时增加下表高度。动画帧合并高频指针事件，避免反复触发整页 Vue 更新。
-  const deltaY = event.clientY - refundResizeStartY;
-  refundResizePendingHeight = clampRefundTableHeight(refundResizeStartHeight - deltaY);
-  if (!refundResizeFrame) {
-    refundResizeFrame = requestAnimationFrame(() => {
-      refundResizeFrame = 0;
-      applyRefundTableHeight(refundResizePendingHeight);
-    });
-  }
-}
-
-function stopRefundTableResize(event: PointerEvent) {
-  if (activeRefundResizePointerId !== event.pointerId) return;
-  const handle = event.currentTarget as HTMLElement;
-  // 使用 pointerup 的最终坐标结算，避免最后一帧尚未绘制时高度回跳。
-  if (event.type === 'pointerup') {
-    refundResizePendingHeight = clampRefundTableHeight(refundResizeStartHeight - (event.clientY - refundResizeStartY));
-  }
-  if (refundResizeFrame) cancelAnimationFrame(refundResizeFrame);
-  refundResizeFrame = 0;
-  refundTableHeight.value = refundResizePendingHeight;
-  applyRefundTableHeight(refundResizePendingHeight);
-  if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
-  activeRefundResizePointerId = null;
-}
-
-function clampRefundTableHeight(height: number) {
-  return Math.min(MAX_REFUND_TABLE_HEIGHT, Math.max(MIN_REFUND_TABLE_HEIGHT, height));
-}
-
-function applyRefundTableHeight(height: number) {
-  refundTableScrollRef.value?.style.setProperty('height', `${height}px`);
-  refundTableResizeHandleRef.value?.setAttribute('aria-valuenow', String(height));
-}
-
-function resizeRefundTableWithKeyboard(event: KeyboardEvent) {
-  if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const step = event.shiftKey ? 60 : 20;
-  if (event.key === 'ArrowUp') refundTableHeight.value = Math.min(MAX_REFUND_TABLE_HEIGHT, refundTableHeight.value + step);
-  else if (event.key === 'ArrowDown') refundTableHeight.value = Math.max(MIN_REFUND_TABLE_HEIGHT, refundTableHeight.value - step);
-  else if (event.key === 'Home') refundTableHeight.value = MIN_REFUND_TABLE_HEIGHT;
-  else if (event.key === 'End') refundTableHeight.value = MAX_REFUND_TABLE_HEIGHT;
-}
 
 function matchesColumnFilter(row: DataSummaryDisplayRow, column: WorkbookColumn) {
   const filter = columnFilters[column.key];
@@ -2224,143 +2104,22 @@ onMounted(() => {
   font-weight: 700;
 }
 
-.refund-records {
-  flex: 0 0 auto;
-  border: 1px solid #d5dfea;
-  border-top: 0;
-  background: #f8fbff;
-}
-
-.refund-records__heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px 6px;
-}
-
-.refund-records__heading h3 {
-  margin: 0;
-  color: #3d5d80;
-  font-size: 13px;
-}
-
-.refund-records__heading-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.refund-records__heading-actions > span {
-  color: #738398;
-  font-size: 11px;
-}
-
-.refund-records__toggle {
-  display: inline-flex;
-  width: 26px;
+.workbook-section-row td {
   height: 26px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 1px solid #d5dfea;
-  border-radius: 6px;
-  background: #fff;
-  color: #526b84;
-  cursor: pointer;
-}
-
-.refund-records__toggle:hover,
-.refund-records__toggle:focus-visible {
-  border-color: #8eabc8;
-  background: #edf4fb;
-  color: #315e89;
-  outline: none;
-}
-
-.refund-records__scroll {
-  overflow: auto;
-  min-height: 0;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  -webkit-overflow-scrolling: touch;
-}
-
-.refund-records__table {
-  width: 100%;
-  border-collapse: collapse;
-  color: #405267;
-  font-size: 12px;
-}
-
-.refund-records__table th,
-.refund-records__table td {
-  padding: 7px 10px;
-  border-top: 1px solid #dce5ef;
-  text-align: left;
-  white-space: nowrap;
-}
-
-.refund-records__table th {
-  position: sticky;
-  top: 0;
-  background: #edf4fb;
-  font-weight: 700;
-  text-align: center;
-}
-
-.refund-records__resize-handle {
-  display: flex;
-  height: 28px;
-  flex: 0 0 28px;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  cursor: ns-resize;
-  touch-action: none;
-  user-select: none;
-  border: 1px solid #d5dfea;
-  border-bottom: 0;
-  border-radius: 5px 5px 0 0;
-  background: #f4f8fc;
-  transition: background-color 120ms ease;
-}
-
-.refund-records__resize-grip {
-  display: block;
-  width: 42px;
-  height: 4px;
-  flex: 0 0 auto;
-  border-radius: 2px;
-  background: #bdcddd;
-  transition: background-color 120ms ease, width 120ms ease;
-}
-
-.refund-records__resize-hint {
-  color: #718398;
+  border-top: 2px solid #9eafa7;
+  border-right: 0;
+  background: #eef4fb;
+  color: #3d5d80;
   font-size: 11px;
-  line-height: 1;
+  font-weight: 700;
 }
 
-.refund-records__resize-handle:hover,
-.refund-records__resize-handle:focus-visible {
-  background: #edf4fb;
+.workbook-data-row.workbook-data-row--refund td {
+  background: #fdf6ec;
 }
 
-.refund-records__resize-handle:hover .refund-records__resize-grip,
-.refund-records__resize-handle:focus-visible .refund-records__resize-grip {
-  width: 56px;
-  background: #5f8fbd;
-}
-
-.refund-records__resize-handle:hover .refund-records__resize-hint,
-.refund-records__resize-handle:focus-visible .refund-records__resize-hint {
-  color: #315e89;
-}
-
-.refund-records__resize-handle:focus-visible {
-  outline: 2px solid #5f8fbd;
-  outline-offset: -2px;
+.workbook-data-row.workbook-data-row--refund:hover td {
+  background: #f8ecd9;
 }
 
 .workbook-table {
