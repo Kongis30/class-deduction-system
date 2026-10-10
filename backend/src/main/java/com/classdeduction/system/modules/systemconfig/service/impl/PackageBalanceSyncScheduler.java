@@ -7,13 +7,14 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
+import com.classdeduction.system.modules.lesson.support.PackageBalanceCalculator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -62,37 +63,46 @@ public class PackageBalanceSyncScheduler {
     }
 
     private boolean syncOnePackage(CoursePackageEntity pkg) {
-        // 从账本获取最后一笔记录的实际余额
-        HourLedgerEntity lastLedger = hourLedgerMapper.selectOne(
+        // 账本可能缺少"只增加总量、不写流水"的续费记录，因此不能用最后一笔的 balance_after 作为当前余额，
+        // 必须以 total_units 为基准、结合消课流水重新推导。
+        List<HourLedgerEntity> ledgers = hourLedgerMapper.selectList(
                 new LambdaQueryWrapper<HourLedgerEntity>()
-                        .eq(HourLedgerEntity::getPackageId, pkg.getId())
-                        .orderByDesc(HourLedgerEntity::getId)
-                        .last("LIMIT 1"));
+                        .eq(HourLedgerEntity::getPackageId, pkg.getId()));
 
-        if (lastLedger == null) {
+        if (ledgers.isEmpty()) {
             // 无账本记录，跳过（新建课包可能还没上过课）
             return false;
         }
 
-        int ledgerBalance = lastLedger.getBalanceAfterUnits();
-        int packageBalance = pkg.getRemainingUnits();
+        HourLedgerEntity lastLedger = ledgers.stream()
+                .max(Comparator.comparing(HourLedgerEntity::getId))
+                .orElse(null);
+        Long lastLedgerId = lastLedger == null ? null : lastLedger.getId();
 
-        if (ledgerBalance == packageBalance) {
+        int expectedConsumed = PackageBalanceCalculator.expectedConsumedUnits(pkg, ledgers);
+        int expectedRemaining = PackageBalanceCalculator.expectedRemainingUnits(pkg, ledgers);
+        int packageConsumed = safeUnits(pkg.getConsumedUnits());
+        int packageRemaining = safeUnits(pkg.getRemainingUnits());
+
+        if (expectedConsumed == packageConsumed && expectedRemaining == packageRemaining) {
             // 余额一致，仅更新 snapshot（确保快照新鲜）
-            upsertSnapshot(pkg, lastLedger.getId());
+            upsertSnapshot(pkg, lastLedgerId);
             return false;
         }
 
-        // 余额不一致，以账本为准进行校正
-        log.warn("Balance discrepancy detected: packageId={}, ledgerBalance={}, packageBalance={}. Correcting to ledger value.",
-                pkg.getId(), ledgerBalance, packageBalance);
+        // 余额不一致，以权威口径进行校正（续费/赠课只影响总量，不消耗余额）
+        log.warn("Balance discrepancy detected: packageId={}, expectedConsumed={}, packageConsumed={}, expectedRemaining={}, packageRemaining={}. Correcting.",
+                pkg.getId(), expectedConsumed, packageConsumed, expectedRemaining, packageRemaining);
 
-        int consumed = pkg.getTotalUnits() - ledgerBalance;
-        pkg.setConsumedUnits(consumed);
-        pkg.setRemainingUnits(ledgerBalance);
+        pkg.setConsumedUnits(expectedConsumed);
+        pkg.setRemainingUnits(expectedRemaining);
         coursePackageMapper.updateById(pkg);
-        upsertSnapshot(pkg, lastLedger.getId());
+        upsertSnapshot(pkg, lastLedgerId);
         return true;
+    }
+
+    private int safeUnits(Integer value) {
+        return value == null ? 0 : value;
     }
 
     private void upsertSnapshot(CoursePackageEntity pkg, Long lastLedgerId) {
