@@ -982,6 +982,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 occurrence.setScheduleSlotId(slot.getId());
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(slot.getTeacherId());
+                // 课次保存课程名称快照，后续改排课或删除旧时段也能还原历史签字表。
+                occurrence.setSubjectName(slot.getSubjectName());
                 boolean legacySlot = slot.getDeliveryMode() == null;
                 Long classroomId = slot.getClassroomId() != null ? slot.getClassroomId()
                         : (legacySlot ? rule.getDefaultClassroomId() : null);
@@ -1056,7 +1058,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         // 已被"计划中但尚未消课"的课次占用的课时（已消课的课次已计入课包 consumedUnits，不能重复扣）。
         int reservedPlannedUnits = preservedOccurrences.stream()
                 .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
-                .filter(occurrence -> !isConsumedOccurrence(recordByOccurrenceId.get(occurrence.getId())))
+                .filter(occurrence -> reservesPackageUnits(recordByOccurrenceId.get(occurrence.getId())))
                 .mapToInt(occurrence -> occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits())
                 .sum();
         // 可分配基数用课包剩余课时（已扣报名时录入的已用课时与历史消课），再扣掉计划中未消课的占用。
@@ -1087,10 +1089,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     }
 
     /** 该课次是否已消课（已计入课包 consumedUnits，不能在排课时重复扣减）。 */
-    private boolean isConsumedOccurrence(LessonRecordEntity record) {
-        return record != null
-                && record.getShouldDeduct() != null && record.getShouldDeduct() == 1
-                && record.getDeductedUnits() != null && record.getDeductedUnits() > 0;
+    /** 待确认课次占用额度；已确认的扣课已进入课包余额，请假等零扣课也不再占额度。 */
+    private boolean reservesPackageUnits(LessonRecordEntity record) {
+        return record == null || !"CONFIRMED".equals(record.getConfirmStage());
     }
 
     private void updateCandidatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {

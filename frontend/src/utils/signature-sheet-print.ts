@@ -1,4 +1,5 @@
 import type { OneOnOneLesson, OneOnOnePackage, OneOnOneStudent } from '@/api/one-on-one';
+import { isSignatureLesson } from '@/utils/one-on-one-signature-data';
 
 type SheetMode = 'parent' | 'teacher';
 
@@ -21,7 +22,7 @@ export function renderSignatureSheetDocument(
   coursePackage: OneOnOnePackage,
   mode: SheetMode,
 ): string {
-  const lessons = coursePackage.lessons.filter(lesson => lesson.planningStatus !== 'CANCELLED');
+  const lessons = coursePackage.lessons.filter(isSignatureLesson);
   const title = mode === 'parent' ? 'Student Signature Sheet' : 'Teacher Signature Sheets';
   const content = mode === 'parent'
     ? renderParentSheet(student, coursePackage, lessons)
@@ -84,14 +85,15 @@ function renderParentSheet(student: OneOnOneStudent, coursePackage: OneOnOnePack
   const rows = lessons.map(row => `<tr>
     <td>${escapeHtml(subjectLabel(row, coursePackage))}</td>
     <td>${escapeHtml(teacherName(row))}</td>
-    <td>${escapeHtml(formatDate(row.plannedStartAt))}</td><td></td>
+    <td>${escapeHtml(formatDate(row.plannedStartAt))}</td><td>${escapeHtml(row.historicalSignatureText ?? '')}</td>
   </tr>`).join('');
 
   return `<main class="sheet">
     <h1>Student Signature Sheet</h1>
     <div class="meta"><p><strong>Student:</strong> ${escapeHtml(participants)}</p>${groupTag}
       <div class="hours"><section>
-        <p><strong>Total hours:</strong> ${formatHours(coursePackage.totalUnits)}</p>
+        <p><strong>Lessons on this sheet:</strong> ${formatHours(lessons.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0))}</p>
+        <p><strong>Package hours:</strong> ${formatHours(coursePackage.totalUnits)}</p>
         <p><strong>Purchased Hours:</strong> ${formatHours(coursePackage.purchasedUnits ?? coursePackage.totalUnits)}</p>
         <p><strong>Bonus Hours:</strong> ${formatHours(coursePackage.bonusUnits ?? 0)}</p>
       </section><section>
@@ -118,7 +120,7 @@ function renderTeacherSheets(student: OneOnOneStudent, coursePackage: OneOnOnePa
       <p><strong>Starting Date:</strong> ${escapeHtml(group.startDate)}</p>
     </div>
     <table class="teacher-lessons"><thead><tr><th>Lesson name</th><th>Teacher</th><th>Date</th><th>Signature</th></tr></thead><tbody>
-      ${group.rows.map(row => `<tr><td>${escapeHtml(subjectLabel(row, coursePackage))}</td><td>${escapeHtml(teacherName(row))}</td><td>${escapeHtml(formatDate(row.plannedStartAt))}</td><td></td></tr>`).join('')}
+      ${group.rows.map(row => `<tr><td>${escapeHtml(subjectLabel(row, coursePackage))}</td><td>${escapeHtml(teacherName(row))}</td><td>${escapeHtml(formatDate(row.plannedStartAt))}</td><td>${escapeHtml(row.historicalSignatureText ?? '')}</td></tr>`).join('')}
     </tbody></table>
   </main>`).join('');
 }
@@ -135,7 +137,9 @@ function groupBySubjectAndTeacher(lessons: OneOnOneLesson[]): SheetGroup[] {
   for (const row of lessons) {
     const subject = subjectLabel(row);
     const teacher = teacherName(row);
-    const teacherKey = normalizeKey(row.plannedTeacherId ?? row.actualTeacherId ?? teacher);
+    const teacherKey = normalizeKey(row.confirmStage === 'CONFIRMED'
+      ? row.actualTeacherId ?? row.plannedTeacherId ?? teacher
+      : row.plannedTeacherId ?? teacher);
     const key = `${normalizeKey(subject)}::${teacherKey}`;
     const existing = groups.get(key);
     if (existing) {
@@ -156,7 +160,9 @@ function groupByTeacherSchedule(lessons: OneOnOneLesson[], coursePackage: OneOnO
   const groups = new Map<string, { teacher: string; teacherKey: string; rows: OneOnOneLesson[] }>();
   for (const row of lessons) {
     const teacher = teacherName(row);
-    const teacherKey = normalizeKey(row.plannedTeacherId ?? row.actualTeacherId ?? teacher);
+    const teacherKey = normalizeKey(row.confirmStage === 'CONFIRMED'
+      ? row.actualTeacherId ?? row.plannedTeacherId ?? teacher
+      : row.plannedTeacherId ?? teacher);
     const existing = groups.get(teacherKey);
     if (existing) {
       existing.rows.push(row);
@@ -200,7 +206,8 @@ function subjectLabel(row: OneOnOneLesson, coursePackage?: OneOnOnePackage) {
 }
 
 function teacherName(row: OneOnOneLesson) {
-  return (row.plannedTeacherName || row.actualTeacherName)?.split(/\r?\n/)[0]?.trim() || 'To be assigned';
+  return (row.confirmStage === 'CONFIRMED' ? row.actualTeacherName || row.plannedTeacherName : row.plannedTeacherName)
+    ?.split(/\r?\n/)[0]?.trim() || 'To be assigned';
 }
 
 function formatHours(value?: number) {
@@ -215,6 +222,7 @@ function formatDate(value?: string) {
 }
 
 function timeOfDay(row: OneOnOneLesson) {
+  if (row.signatureHistory) return '';
   if (!row.plannedStartAt || !row.plannedEndAt) return '';
   return `${formatTime(row.plannedStartAt)}-${formatTime(row.plannedEndAt)}`;
 }

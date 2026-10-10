@@ -346,13 +346,14 @@
               <p><strong>Student:</strong> {{ activePackageStudentNames || activeStudent.studentName }}</p>
               <div class="oo-signature-hours">
                 <div class="oo-signature-hours__group">
-                  <p><strong>Total hours:</strong> {{ formatHours(activePackage.totalUnits) }}</p>
-                  <p><strong>Purchased Hours:</strong> {{ formatHours(activePackage.purchasedUnits ?? activePackage.totalUnits) }}</p>
-                  <p><strong>Bonus Hours:</strong> {{ formatHours(activePackage.bonusUnits ?? 0) }}</p>
+                  <p><strong>Lessons on this sheet:</strong> {{ formatHours(signatureAllocatedHours) }}</p>
+                  <p><strong>Package hours:</strong> {{ formatHours(signaturePackage?.totalUnits) }}</p>
+                  <p><strong>Purchased Hours:</strong> {{ formatHours(signaturePackage?.purchasedUnits ?? signaturePackage?.totalUnits) }}</p>
+                  <p><strong>Bonus Hours:</strong> {{ formatHours(signaturePackage?.bonusUnits ?? 0) }}</p>
                 </div>
                 <div class="oo-signature-hours__group oo-signature-hours__group--balance">
-                  <p><strong>Already deducted:</strong> {{ formatHours(activePackage.consumedUnits) }}</p>
-                  <p><strong>Remaining:</strong> {{ formatHours(activePackage.remainingUnits) }}</p>
+                  <p><strong>Already deducted:</strong> {{ formatHours(signaturePackage?.consumedUnits) }}</p>
+                  <p><strong>Remaining:</strong> {{ formatHours(signaturePackage?.remainingUnits) }}</p>
                 </div>
               </div>
             </div>
@@ -385,7 +386,7 @@
                   <td>{{ signatureSubjectLabel(row) }}</td>
                   <td>{{ signatureLessonTeacher(row) }}</td>
                   <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
-                  <td></td>
+                  <td>{{ row.historicalSignatureText ?? '' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -394,7 +395,7 @@
           <section class="oo-signature-sheet oo-teacher-signature-sheet print-only">
             <div class="oo-teacher-sheet__meta">
               <p><strong>Student:</strong> {{ activePackageStudentNames || activeStudent.studentName }}</p>
-              <p><strong>Course:</strong> {{ activePackage.packageName }}</p>
+              <p><strong>Course:</strong> {{ signaturePackage?.packageName }}</p>
               <p><strong>Teacher(s):</strong> {{ teacherPrintTeacherNames.join(', ') || '—' }}</p>
               <p><strong>Classtime:</strong> {{ subjectClassTime(teacherPrintRows) }}</p>
               <p><strong>Allocated Hours:</strong> {{ formatHours(teacherPrintAllocatedHours) }}</p>
@@ -419,7 +420,7 @@
                   <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
                   <td>{{ signatureTimeOfDayKey(row) || '—' }}</td>
                   <td>{{ formatHours(row.plannedUnits) }}</td>
-                  <td></td>
+                  <td>{{ row.historicalSignatureText ?? '' }}</td>
                 </tr>
               </tbody>
             </table>
@@ -729,12 +730,13 @@ import { useRoute } from 'vue-router';
 import { fetchAllClassrooms, fetchAllTeachers, fetchStudents } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { adminConfirmLessonRecord, confirmLesson } from '@/api/lesson';
-import { fetchOneOnOneDeductions, type OneOnOneLesson, type OneOnOnePackage, type OneOnOneStudent, type OneOnOneTeacher } from '@/api/one-on-one';
+import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory, type OneOnOneLesson, type OneOnOnePackage, type OneOnOneStudent, type OneOnOneTeacher, type PrivateSignatureHistory } from '@/api/one-on-one';
 import { createScheduleAdjustment } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { useAppStore } from '@/stores/app';
 import { isAdminOrStaffUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
 import type { EntityId } from '@/types/domain';
+import { findSignaturePackage, isSignatureLesson, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 
 interface PackageCandidate {
   teacher: OneOnOneTeacher;
@@ -799,6 +801,8 @@ const teachers = ref<OneOnOneTeacher[]>([]);
 const activeTeacher = ref<OneOnOneTeacher | null>(null);
 const activeStudent = ref<OneOnOneStudent | null>(null);
 const activePackage = ref<OneOnOnePackage | null>(null);
+const signatureHistory = ref<PrivateSignatureHistory[]>([]);
+const signatureHistoryPackageId = ref('');
 const printAreaRef = ref<HTMLElement>();
 const packagePanelRef = ref<HTMLElement>();
 const printMode = ref<'parent' | 'teacher'>('parent');
@@ -1009,9 +1013,16 @@ const pendingTeacherCount = computed(() =>
 const pendingAdminCount = computed(() =>
   activePackage.value?.lessons.filter(row => row.confirmStage === 'PENDING_ADMIN').length ?? 0
 );
-const signatureSheetRows = computed(() =>
-  activePackage.value?.lessons.filter(row => row.planningStatus !== 'CANCELLED') ?? []
-);
+const signaturePackage = computed(() => {
+  if (!activeStudent.value || !activePackage.value) return null;
+  const coursePackage = findSignaturePackage(
+    teachers.value, activeStudent.value.studentId, activePackage.value.packageId,
+  )?.coursePackage ?? activePackage.value;
+  return signatureHistoryPackageId.value === String(coursePackage.packageId)
+    ? withSignatureHistory(coursePackage, signatureHistory.value)
+    : coursePackage;
+});
+const signatureSheetRows = computed(() => signaturePackage.value?.lessons.filter(isSignatureLesson) ?? []);
 const signatureAllocatedHours = computed(() =>
   signatureSheetRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
 );
@@ -1746,6 +1757,7 @@ async function submitConfirm() {
 
 async function printCurrentPackage(mode: 'parent' | 'teacher') {
   if (!activePackage.value) return;
+  if (!(await loadSignatureHistory(activePackage.value.packageId))) return;
   printMode.value = mode;
   selectedTeacherPrintKey.value = '__all__';
   // 先等 Vue 把 printMode/selectedTeacherPrintKey 反映到 DOM（@media print 靠绑定类切换显示），
@@ -1756,14 +1768,32 @@ async function printCurrentPackage(mode: 'parent' | 'teacher') {
 
 async function printTeacherSheet(command: string | number | object) {
   if (!activePackage.value) return;
+  if (!(await loadSignatureHistory(activePackage.value.packageId))) return;
   printMode.value = 'teacher';
   selectedTeacherPrintKey.value = String(command || '__all__');
   await nextTick();
   window.print();
 }
 
+/** 打印前补充有凭据的历史签字行；老师账户仍只看到自己可见的正式课次。 */
+async function loadSignatureHistory(packageId: EntityId): Promise<boolean> {
+  if (!isAdmin.value || signatureHistoryPackageId.value === String(packageId)) return true;
+  try {
+    const response = await fetchPrivateSignatureHistory(packageId);
+    if (String(activePackage.value?.packageId) !== String(packageId)) return false;
+    signatureHistory.value = response.data.data;
+    signatureHistoryPackageId.value = String(packageId);
+    return true;
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+    return false;
+  }
+}
+
 function signatureTeacherKey(row: OneOnOneLesson, teacherName: string) {
-  return entityKey(row.plannedTeacherId || row.actualTeacherId) || optionKey(teacherName);
+  return entityKey(row.confirmStage === 'CONFIRMED'
+    ? row.actualTeacherId || row.plannedTeacherId
+    : row.plannedTeacherId) || optionKey(teacherName);
 }
 
 function statusTag(row: OneOnOneLesson) {
@@ -1834,6 +1864,7 @@ function signatureWeeklyTime(row: OneOnOneLesson) {
 }
 
 function signatureTimeOfDayKey(row: OneOnOneLesson) {
+  if (row.signatureHistory) return '';
   if (!row.plannedStartAt || !row.plannedEndAt) return '';
   const start = dayjs(row.plannedStartAt).format('h:mma').toLowerCase();
   const end = dayjs(row.plannedEndAt).format('h:mma').toLowerCase().replace(':00', '');
@@ -1845,7 +1876,9 @@ function signatureWeekdayLabel(day: number) {
 }
 
 function signatureLessonTeacher(row: OneOnOneLesson) {
-  return displayResourceName(row.plannedTeacherName || row.actualTeacherName);
+  return displayResourceName(row.confirmStage === 'CONFIRMED'
+    ? row.actualTeacherName || row.plannedTeacherName
+    : row.plannedTeacherName);
 }
 
 function formatDateTime(value: string) {

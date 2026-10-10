@@ -41,6 +41,19 @@ export interface OneOnOneLesson {
   adminConfirmedAt?: string;
   rejectReason?: string;
   notes?: string;
+  historicalSignatureText?: string;
+  signatureHistory?: boolean;
+}
+
+export interface PrivateSignatureHistory {
+  id: EntityId;
+  packageId: EntityId;
+  lessonDate: string;
+  teacherId?: EntityId;
+  teacherName: string;
+  subjectName?: string;
+  plannedHours: number;
+  signatureText?: string;
 }
 
 export interface OneOnOneParticipant {
@@ -103,4 +116,8 @@ export interface OneOnOneTeacher {
 
 export function fetchOneOnOneDeductions(params: OneOnOneDeductionQuery = {}) {
   return http.get<ApiResponse<OneOnOneTeacher[]>>('/v1/schedule/occurrences/one-on-one-deductions', { params });
+}
+
+export function fetchPrivateSignatureHistory(packageId: EntityId) {
+  return http.get<ApiResponse<PrivateSignatureHistory[]>>(`/v1/schedule/occurrences/private-signature-history/${packageId}`);
 }

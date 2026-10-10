@@ -789,6 +789,27 @@ CREATE TABLE `lesson_occurrence` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `private_signature_history`
+--
+
+DROP TABLE IF EXISTS `private_signature_history`;
+CREATE TABLE `private_signature_history` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `package_id` bigint NOT NULL,
+  `lesson_date` date NOT NULL,
+  `teacher_id` bigint DEFAULT NULL,
+  `teacher_name` varchar(128) NOT NULL,
+  `subject_name` varchar(128) DEFAULT NULL,
+  `planned_units` int NOT NULL,
+  `signature_text` varchar(128) DEFAULT NULL,
+  `source_reference` varchar(255) NOT NULL,
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_private_signature_history` (`package_id`,`lesson_date`,`teacher_name`),
+  CONSTRAINT `fk_private_signature_history_package` FOREIGN KEY (`package_id`) REFERENCES `course_package` (`id`),
+  CONSTRAINT `chk_private_signature_history_units` CHECK ((`planned_units` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 -- Table structure for table `lesson_record`
 --
 

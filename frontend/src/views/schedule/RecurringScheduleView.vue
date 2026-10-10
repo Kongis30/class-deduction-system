@@ -885,7 +885,7 @@ import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
 import { useAppStore } from '@/stores/app';
 import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
-import { fetchOneOnOneDeductions, type OneOnOneLesson } from '@/api/one-on-one';
+import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory, type OneOnOneLesson } from '@/api/one-on-one';
 import {
   createRecurringScheduleRule,
   updateRecurringScheduleRule,
@@ -903,6 +903,7 @@ import { APP_TIMEZONE } from '@/config/app-config';
 import { calendarWeekRange } from '@/utils/calendar-week';
 import { scheduleEndTimeForDisplay, scheduleEndTimeForApi, scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
 import { renderSignatureSheetDocument } from '@/utils/signature-sheet-print';
+import { findSignaturePackage, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 
 interface WeeklyAdjustmentRow {
 
@@ -1813,17 +1814,14 @@ async function openPrintSheet(command: string | number | object) {
       studentId: selectedStudentId.value,
       packageId: selectedPackageId.value,
     });
-    const match = response.data.data
-      .flatMap(teacher => teacher.students)
-      .flatMap(student => student.packages.map(coursePackage => ({ student, coursePackage })))
-      .find(({ student, coursePackage }) =>
-        String(student.studentId) === String(selectedStudentId.value)
-        && String(coursePackage.packageId) === String(selectedPackageId.value));
+    const match = findSignaturePackage(response.data.data, selectedStudentId.value, selectedPackageId.value);
 
     if (!match) throw new Error('No signature sheet is available for the selected course.');
+    const history = await fetchPrivateSignatureHistory(selectedPackageId.value);
     if (preview.closed) return;
     preview.document.open();
-    preview.document.write(renderSignatureSheetDocument(match.student, match.coursePackage, mode));
+    preview.document.write(renderSignatureSheetDocument(
+      match.student, withSignatureHistory(match.coursePackage, history.data.data), mode));
     preview.document.close();
     preview.focus();
   } catch (err) {

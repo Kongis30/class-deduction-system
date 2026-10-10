@@ -691,6 +691,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         makeup.setScheduleSlotId(lastOccurrence.getScheduleSlotId());
         makeup.setOccurrenceType("MAKEUP");
         makeup.setPlannedTeacherId(lastOccurrence.getPlannedTeacherId());
+        makeup.setSubjectName(lastOccurrence.getSubjectName());
         makeup.setPlannedClassroomId(lastOccurrence.getPlannedClassroomId());
         makeup.setPlannedStartAt(lastOccurrence.getPlannedStartAt().plusWeeks(1));
         makeup.setPlannedEndAt(lastOccurrence.getPlannedEndAt().plusWeeks(1));

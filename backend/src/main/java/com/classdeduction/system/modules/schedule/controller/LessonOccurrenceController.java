@@ -8,8 +8,10 @@ import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.schedule.dto.LessonOccurrencePageQuery;
 import com.classdeduction.system.modules.schedule.dto.OneOnOneDeductionQuery;
 import com.classdeduction.system.modules.schedule.service.LessonOccurrenceService;
+import com.classdeduction.system.modules.schedule.service.PrivateSignatureHistoryService;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
+import com.classdeduction.system.modules.schedule.vo.PrivateSignatureHistoryVO;
 import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -36,6 +38,7 @@ import java.util.List;
 public class LessonOccurrenceController {
 
     private final LessonOccurrenceService lessonOccurrenceService;
+    private final PrivateSignatureHistoryService privateSignatureHistoryService;
 
     @GetMapping
     @Operation(summary = "Page lesson occurrences")
@@ -54,6 +57,13 @@ public class LessonOccurrenceController {
             @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser
     ) {
         return ApiResponse.success(lessonOccurrenceService.listOneOnOneDeductions(query, currentUser));
+    }
+
+    @GetMapping("/private-signature-history/{packageId}")
+    @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
+    @Operation(summary = "List verified legacy signature rows for a private lesson package")
+    public ApiResponse<List<PrivateSignatureHistoryVO>> listPrivateSignatureHistory(@PathVariable Long packageId) {
+        return ApiResponse.success(privateSignatureHistoryService.listByPackage(packageId));
     }
 
     @GetMapping("/{id}")
