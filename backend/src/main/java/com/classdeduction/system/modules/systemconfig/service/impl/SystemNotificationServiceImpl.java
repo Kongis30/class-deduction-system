@@ -43,6 +43,7 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
+import com.classdeduction.system.modules.lesson.support.PackageBalanceCalculator;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.auth.entity.UserAccountEntity;
@@ -237,31 +238,30 @@ public class SystemNotificationServiceImpl implements SystemNotificationService 
         List<BalanceConsistencyVO.PackageDiscrepancy> discrepancies = new java.util.ArrayList<>();
 
         for (CoursePackageEntity pkg : activePackages) {
-            HourLedgerEntity lastLedger = hourLedgerMapper.selectOne(
+            List<HourLedgerEntity> ledgers = hourLedgerMapper.selectList(
                     new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<HourLedgerEntity>()
-                            .eq(HourLedgerEntity::getPackageId, pkg.getId())
-                            .orderByDesc(HourLedgerEntity::getId)
-                            .last("LIMIT 1"));
+                            .eq(HourLedgerEntity::getPackageId, pkg.getId()));
 
-            if (lastLedger == null) {
+            if (ledgers.isEmpty()) {
                 continue;
             }
 
-            int ledgerBalance = lastLedger.getBalanceAfterUnits();
+            // 续费/赠课只影响 total_units 而不写账本，不能用最后一笔 balance_after 当作当前余额。
+            int expectedRemaining = PackageBalanceCalculator.expectedRemainingUnits(pkg, ledgers);
             int packageBalance = pkg.getRemainingUnits() != null ? pkg.getRemainingUnits() : 0;
 
-            if (ledgerBalance != packageBalance) {
-                String discrepancyType = ledgerBalance > packageBalance ? "UNDER_DEBIT" : "OVER_DEBIT";
+            if (expectedRemaining != packageBalance) {
+                String discrepancyType = expectedRemaining > packageBalance ? "UNDER_DEBIT" : "OVER_DEBIT";
                 discrepancies.add(new BalanceConsistencyVO.PackageDiscrepancy(
                         pkg.getId(),
                         pkg.getPackageNo(),
                         pkg.getStudentId(),
                         packageBalance,
-                        ledgerBalance,
-                        ledgerBalance,
+                        expectedRemaining,
+                        expectedRemaining,
                         discrepancyType,
-                        String.format("Package balance (%d) does not match ledger balance (%d). Recommended package balance: %d.",
-                                packageBalance, ledgerBalance, ledgerBalance)
+                        String.format("Package balance (%d) does not match expected balance (%d). Recommended package balance: %d.",
+                                packageBalance, expectedRemaining, expectedRemaining)
                 ));
             }
         }
