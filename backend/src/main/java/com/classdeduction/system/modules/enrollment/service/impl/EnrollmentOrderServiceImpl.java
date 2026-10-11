@@ -1891,6 +1891,39 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .toList();
         boolean v2GroupItem = item.getGroupProjectId() != null;
         if (currentEnrollments.isEmpty()) {
+            // 条件自愈：订单行仍持有未删除的（已被作废的）权益，且该班不存在其它重叠的 ACTIVE 权益时，
+            // 判定为历史遗留的孤儿权益，按 item+plan 重建一条 ACTIVE。
+            // 若存在重叠 ACTIVE（如续报已把在册记录转挂到新订单项），则不自愈，走下方原"detached"报错。
+            if (v2GroupItem && targetClass != null && !enrollments.isEmpty()) {
+                ClassBillingService.ClassBilling orphanBilling = null;
+                try {
+                    orphanBilling = resolvePlanEntitlementBilling(item, targetClass);
+                    GroupClassEntitlementRules.requireNoOverlappingActiveEntitlement(classEnrollmentMapper,
+                            order.getStudentId(), targetClass.getId(),
+                            orphanBilling.enrollmentDate(), orphanBilling.expiryDate(), null);
+                } catch (BusinessException overlap) {
+                    if (!"GROUP_ENTITLEMENT_DATE_OVERLAP".equals(overlap.getCode())) {
+                        throw overlap;
+                    }
+                    orphanBilling = null;
+                }
+                if (orphanBilling != null) {
+                    ClassEnrollmentEntity rebuilt = new ClassEnrollmentEntity();
+                    rebuilt.setClassId(targetClass.getId());
+                    rebuilt.setStudentId(order.getStudentId());
+                    rebuilt.setEnrollmentOrderItemId(item.getId());
+                    rebuilt.setEnrollmentDate(orphanBilling.enrollmentDate());
+                    rebuilt.setExpiryDate(orphanBilling.expiryDate());
+                    rebuilt.setBillingType(v2GroupBillingType(item));
+                    rebuilt.setPurchasedQuantity(orphanBilling.purchasedQuantity());
+                    rebuilt.setAttendanceOption(item.getAttendanceOption());
+                    rebuilt.setGroupProjectId(item.getGroupProjectId());
+                    rebuilt.setGroupRegistrationPlanId(item.getGroupRegistrationPlanId());
+                    rebuilt.setStatus("ACTIVE");
+                    classEnrollmentMapper.insert(rebuilt);
+                    return;
+                }
+            }
             // 续报会把在册记录转挂到新订单项；已停课的记录也不应因编辑旧收据而重新入班。
             Integer oldSessions = "SESSION".equalsIgnoreCase(previous.packageUnit())
                     ? originalReceiptSessions(order.getId(), previous.lineNo()) : null;
@@ -2213,6 +2246,51 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     private String v2GroupBillingType(EnrollmentOrderItemEntity item) {
         return "MONTH".equalsIgnoreCase(item.getPackageUnit()) ? "MONTHLY" : "PER_SESSION";
+    }
+
+    /**
+     * 孤儿权益自愈的周期推导：与报名口径一致，按方案覆盖期（FIXED_DATES）或滚动月推算，
+     * 不做课表排期校验（自愈只是恢复已有方案下的在册权益）。
+     */
+    private ClassBillingService.ClassBilling resolvePlanEntitlementBilling(EnrollmentOrderItemEntity item,
+                                                                           ClassGroupEntity targetClass) {
+        GroupRegistrationPlanEntity plan = item.getGroupRegistrationPlanId() == null
+                ? null : groupRegistrationPlanMapper.selectById(item.getGroupRegistrationPlanId());
+        if (plan == null || !Objects.equals(plan.getProjectId(), item.getGroupProjectId())) {
+            throw new BusinessException("GROUP_V2_SELECTION_MISMATCH",
+                    "The registration plan no longer belongs to the selected teaching project.");
+        }
+        int quantity = item.getPackageQuantity() == null ? 0 : item.getPackageQuantity().intValue();
+        String unit = plan.getPackageUnit() == null ? "" : plan.getPackageUnit().toUpperCase(java.util.Locale.ROOT);
+        LocalDate start;
+        if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType()) && plan.getCoverageStartDate() != null) {
+            // 固定日期方案：权益周期与报名口径一致，取方案覆盖期。
+            start = plan.getCoverageStartDate();
+        } else if (item.getStartDate() != null) {
+            start = item.getStartDate();
+        } else if (plan.getCoverageStartDate() != null) {
+            start = plan.getCoverageStartDate();
+        } else {
+            start = targetClass.getStartDate();
+        }
+        if (start == null) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID", "The registration plan has no valid start date.");
+        }
+        if (plan.getCoverageStartDate() != null && start.isBefore(plan.getCoverageStartDate())) {
+            start = plan.getCoverageStartDate();
+        }
+        LocalDate end;
+        if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType())) {
+            end = plan.getCoverageEndDate();
+        } else if ("MONTH".equals(unit)) {
+            end = GroupRegistrationCoverage.rollingMonthEnd(start, quantity);
+        } else {
+            end = targetClass.getEndDate() != null ? targetClass.getEndDate() : start.plusYears(3);
+        }
+        if (end == null || end.isBefore(start)) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID", "The registration plan has an invalid date range.");
+        }
+        return new ClassBillingService.ClassBilling(start, end, quantity);
     }
 
     /** 收据编辑的 SESSION 数量来自学生选购次数，价格选项的 packageQuantity 只是上限。 */

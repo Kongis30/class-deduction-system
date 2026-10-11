@@ -640,6 +640,195 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldSelfHealOrphanedV2EnrollmentWhenNoOverlappingActiveExists() {
+        // 回归：订单行只剩 CANCELLED 权益（历史孤儿），且该班无其它重叠 ACTIVE 时，更正应重建 ACTIVE 权益。
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PARTIAL");
+        order.setStudentId(101L);
+        order.setClassId(801L);
+        order.setSignupDate(LocalDate.of(2026, 9, 19));
+
+        ClassGroupEntity clazz = buildClassGroup(202L);
+        clazz.setId(801L);
+        clazz.setGradeBand("G1-G5");
+        clazz.setGroupProjectId(910L);
+        clazz.setStartDate(LocalDate.of(2026, 9, 12));
+        clazz.setEndDate(LocalDate.of(2027, 6, 12));
+
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(910L);
+        project.setCourseProductId(202L);
+        project.setStatus("ACTIVE");
+        GroupRegistrationPlanEntity plan = new GroupRegistrationPlanEntity();
+        plan.setId(920L);
+        plan.setProjectId(910L);
+        plan.setPackageUnit("SESSION");
+        plan.setPackageQuantity(new BigDecimal("33"));
+        plan.setCoverageType("FIXED_DATES");
+        plan.setCoverageStartDate(LocalDate.of(2026, 9, 12));
+        plan.setCoverageEndDate(LocalDate.of(2027, 6, 12));
+        plan.setStatus("ACTIVE");
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setEnrollmentOrderId(2001L);
+        item.setCourseType("GROUP");
+        item.setCourseProductId(202L);
+        item.setClassId(801L);
+        item.setGroupProjectId(910L);
+        item.setGroupRegistrationPlanId(920L);
+        item.setGradeBand("G1-G5");
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("33"));
+        item.setStartDate(LocalDate.of(2026, 9, 19));
+        item.setAttendanceOption("MORNING");
+
+        ClassEnrollmentEntity orphan = new ClassEnrollmentEntity();
+        orphan.setId(9001L);
+        orphan.setClassId(801L);
+        orphan.setStudentId(101L);
+        orphan.setEnrollmentOrderItemId(8001L);
+        orphan.setEnrollmentDate(LocalDate.of(2026, 9, 26));
+        orphan.setExpiryDate(LocalDate.of(2026, 9, 30));
+        orphan.setBillingType("SESSION");
+        orphan.setPurchasedQuantity(1);
+        orphan.setStatus("CANCELLED");
+        orphan.setIsDeleted(0);
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectById(801L)).thenReturn(clazz);
+        when(groupCourseProjectMapper.selectById(910L)).thenReturn(project);
+        when(groupRegistrationPlanMapper.selectById(920L)).thenReturn(plan);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(orphan));
+        when(classEnrollmentMapper.selectActiveOverlappingForUpdate(any(), any(), any(), any()))
+                .thenReturn(List.of());
+        lenient().when(classHolidayMapper.selectList(any())).thenReturn(List.of());
+        lenient().when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        RegistrationIntakeRequest.CourseItemPayload payload = new RegistrationIntakeRequest.CourseItemPayload();
+        payload.setOrderItemId(8001L);
+        payload.setClassId(801L);
+        payload.setGroupProjectId(910L);
+        payload.setGroupRegistrationPlanId(920L);
+        payload.setGradeBand("G1-G5");
+        payload.setCourseType("GROUP");
+        payload.setCourseProductId(202L);
+        payload.setPackageUnit("SESSION");
+        payload.setPackageQuantity(new BigDecimal("33"));
+        payload.setSessions(33);
+        payload.setStartDate(LocalDate.of(2026, 9, 19));
+        payload.setAttendanceOption("MORNING");
+        request.setItems(List.of(payload));
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classEnrollmentMapper).insert(classEnrollmentCaptor.capture());
+        ClassEnrollmentEntity healed = classEnrollmentCaptor.getValue();
+        assertThat(healed.getStatus()).isEqualTo("ACTIVE");
+        assertThat(healed.getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 12));
+        assertThat(healed.getExpiryDate()).isEqualTo(LocalDate.of(2027, 6, 12));
+        assertThat(healed.getPurchasedQuantity()).isEqualTo(33);
+        assertThat(healed.getBillingType()).isEqualTo("PER_SESSION");
+        assertThat(healed.getEnrollmentOrderItemId()).isEqualTo(8001L);
+    }
+
+    @Test
+    void shouldNotSelfHealOrphanWhenOverlappingActiveEntitlementExists() {
+        // 回归：若该班已存在重叠 ACTIVE 权益（如续报转挂），不得重建，避免把旧时段重新入册。
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setOrderStatus("CONFIRMED");
+        order.setPaymentStatus("PARTIAL");
+        order.setStudentId(101L);
+        order.setClassId(801L);
+        order.setSignupDate(LocalDate.of(2026, 9, 19));
+
+        ClassGroupEntity clazz = buildClassGroup(202L);
+        clazz.setId(801L);
+        clazz.setGradeBand("G1-G5");
+        clazz.setGroupProjectId(910L);
+        clazz.setStartDate(LocalDate.of(2026, 9, 12));
+        clazz.setEndDate(LocalDate.of(2027, 6, 12));
+
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(910L);
+        project.setCourseProductId(202L);
+        project.setStatus("ACTIVE");
+        GroupRegistrationPlanEntity plan = new GroupRegistrationPlanEntity();
+        plan.setId(920L);
+        plan.setProjectId(910L);
+        plan.setPackageUnit("SESSION");
+        plan.setPackageQuantity(new BigDecimal("33"));
+        plan.setCoverageType("FIXED_DATES");
+        plan.setCoverageStartDate(LocalDate.of(2026, 9, 12));
+        plan.setCoverageEndDate(LocalDate.of(2027, 6, 12));
+        plan.setStatus("ACTIVE");
+
+        EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();
+        item.setId(8001L);
+        item.setEnrollmentOrderId(2001L);
+        item.setCourseType("GROUP");
+        item.setCourseProductId(202L);
+        item.setClassId(801L);
+        item.setGroupProjectId(910L);
+        item.setGroupRegistrationPlanId(920L);
+        item.setGradeBand("G1-G5");
+        item.setPackageUnit("SESSION");
+        item.setPackageQuantity(new BigDecimal("33"));
+        item.setStartDate(LocalDate.of(2026, 9, 19));
+        item.setAttendanceOption("MORNING");
+
+        ClassEnrollmentEntity orphan = new ClassEnrollmentEntity();
+        orphan.setId(9001L);
+        orphan.setClassId(801L);
+        orphan.setStudentId(101L);
+        orphan.setEnrollmentOrderItemId(8001L);
+        orphan.setEnrollmentDate(LocalDate.of(2026, 9, 26));
+        orphan.setExpiryDate(LocalDate.of(2026, 9, 30));
+        orphan.setBillingType("SESSION");
+        orphan.setPurchasedQuantity(1);
+        orphan.setStatus("CANCELLED");
+        orphan.setIsDeleted(0);
+
+        when(enrollmentOrderMapper.selectById(2001L)).thenReturn(order);
+        when(studentMapper.selectById(101L)).thenReturn(buildStudent());
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectById(801L)).thenReturn(clazz);
+        when(groupCourseProjectMapper.selectById(910L)).thenReturn(project);
+        when(groupRegistrationPlanMapper.selectById(920L)).thenReturn(plan);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(orphan));
+        when(classEnrollmentMapper.selectActiveOverlappingForUpdate(any(), any(), any(), any()))
+                .thenReturn(List.of(9999L));
+        lenient().when(classHolidayMapper.selectList(any())).thenReturn(List.of());
+        lenient().when(receiptRecordMapper.selectList(any())).thenReturn(List.of());
+
+        EnrollmentOrderCorrectionRequest request = new EnrollmentOrderCorrectionRequest();
+        RegistrationIntakeRequest.CourseItemPayload payload = new RegistrationIntakeRequest.CourseItemPayload();
+        payload.setOrderItemId(8001L);
+        payload.setClassId(801L);
+        payload.setGroupProjectId(910L);
+        payload.setGroupRegistrationPlanId(920L);
+        payload.setGradeBand("G1-G5");
+        payload.setCourseType("GROUP");
+        payload.setCourseProductId(202L);
+        payload.setPackageUnit("SESSION");
+        payload.setPackageQuantity(new BigDecimal("33"));
+        payload.setSessions(33);
+        payload.setStartDate(LocalDate.of(2026, 9, 19));
+        payload.setAttendanceOption("MORNING");
+        request.setItems(List.of(payload));
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
     void shouldPreserveExistingSessionEnrollmentWhenOnlyReceiptPriceChanges() {
         // 旧订单只购买 4 次，定价选项上限为 13 次；收据改金额不应按 13 次重算或重验新假期。
         EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 4);
