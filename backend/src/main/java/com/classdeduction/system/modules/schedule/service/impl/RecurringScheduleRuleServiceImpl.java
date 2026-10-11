@@ -38,6 +38,7 @@ import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMa
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
+import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleDetailVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleListItemVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleSlotVO;
@@ -1056,11 +1057,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return candidates;
         }
         // 已被"计划中但尚未消课"的课次占用的课时（已消课的课次已计入课包 consumedUnits，不能重复扣）。
-        int reservedPlannedUnits = preservedOccurrences.stream()
-                .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
-                .filter(occurrence -> reservesPackageUnits(recordByOccurrenceId.get(occurrence.getId())))
-                .mapToInt(occurrence -> occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits())
-                .sum();
+        int reservedPlannedUnits = PrivateLessonAllocation.reservedUnits(
+                preservedOccurrences, recordByOccurrenceId);
         // 可分配基数用课包剩余课时（已扣报名时录入的已用课时与历史消课），再扣掉计划中未消课的占用。
         int remainingUnits = Math.max(0, allocatableUnits(coursePackage) - reservedPlannedUnits);
         if (remainingUnits == 0) {
@@ -1086,12 +1084,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             break;
         }
         return capped;
-    }
-
-    /** 该课次是否已消课（已计入课包 consumedUnits，不能在排课时重复扣减）。 */
-    /** 待确认课次占用额度；已确认的扣课已进入课包余额，请假等零扣课也不再占额度。 */
-    private boolean reservesPackageUnits(LessonRecordEntity record) {
-        return record == null || !"CONFIRMED".equals(record.getConfirmStage());
     }
 
     private void updateCandidatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {

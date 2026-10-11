@@ -18,6 +18,7 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.schedule.dto.LessonOccurrencePageQuery;
 import com.classdeduction.system.modules.schedule.dto.OneOnOneDeductionQuery;
@@ -371,6 +372,33 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldKeepAllocatedHoursPackageWideWhenLessonListHasDateFilter() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity visibleLesson = buildOneOnOneOccurrence();
+        LessonOccurrenceEntity laterLesson = buildOneOnOneOccurrence();
+        laterLesson.setId(4002L);
+        laterLesson.setLessonNo("O2O202609080001");
+        laterLesson.setPlannedStartAt(LocalDateTime.of(2026, 9, 8, 15, 30));
+        laterLesson.setPlannedEndAt(LocalDateTime.of(2026, 9, 8, 17, 0));
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(List.of(visibleLesson), List.of(visibleLesson, laterLesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        OneOnOneDeductionQuery query = new OneOnOneDeductionQuery();
+        query.setStartAt(LocalDateTime.of(2026, 9, 1, 0, 0));
+        query.setEndAt(LocalDateTime.of(2026, 9, 2, 0, 0));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(query, null).get(0);
+        assertThat(teacher.students().get(0).packages()).singleElement().satisfies(pkg -> {
+            assertThat(pkg.lessons()).hasSize(1);
+            assertThat(pkg.allocatedUnits()).isEqualTo(3.0);
+        });
+    }
+
+    @Test
     void shouldListPackageUnderEachAssignedTeacherWithOnlyTheirLessons() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         LessonOccurrenceEntity firstTeacherLesson = buildOneOnOneOccurrence();
@@ -401,7 +429,94 @@ class LessonOccurrenceServiceImplTest {
                     .satisfies(pkg -> assertThat(pkg.lessons())
                             .singleElement()
                             .satisfies(lesson -> assertThat(lesson.plannedTeacherId()).isEqualTo(teacher.teacherId())));
+            assertThat(teacher.students().get(0).packages().get(0).allocatedUnits()).isEqualTo(3.0);
         });
+    }
+
+    @Test
+    void shouldKeepAllocatedHoursPackageWideAndExcludeConfirmedLessons() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        coursePackage.setConsumedUnits(4);
+        coursePackage.setRemainingUnits(16);
+        LessonOccurrenceEntity completed = buildOneOnOneOccurrence();
+        completed.setPlannedUnits(4);
+        completed.setPlanningStatus("MERGED");
+        LessonOccurrenceEntity scheduled = buildOneOnOneOccurrence();
+        scheduled.setId(4002L);
+        scheduled.setLessonNo("O2O202609010002");
+        scheduled.setPlannedUnits(4);
+        scheduled.setPlannedTeacherId(302L);
+        LessonOccurrenceEntity cancelled = buildOneOnOneOccurrence();
+        cancelled.setId(4003L);
+        cancelled.setLessonNo("O2O202609010003");
+        cancelled.setPlannedUnits(4);
+        cancelled.setPlanningStatus("CANCELLED");
+        LessonRecordEntity completedRecord = new LessonRecordEntity();
+        completedRecord.setId(5001L);
+        completedRecord.setOccurrenceId(4001L);
+        completedRecord.setConfirmStage("CONFIRMED");
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(completed, scheduled, cancelled));
+        when(lessonRecordMapper.selectList(any())).thenReturn(new java.util.ArrayList<>(List.of(completedRecord)));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).allSatisfy(teacher -> assertThat(teacher.students()).singleElement()
+                .satisfies(student -> assertThat(student.packages()).singleElement()
+                        .satisfies(pkg -> {
+                            assertThat(pkg.remainingUnits()).isEqualTo(8.0);
+                            assertThat(pkg.allocatedUnits()).isEqualTo(2.0);
+                        })));
+    }
+
+    @Test
+    void shouldUseEachParticipantsOwnConfirmationForSharedLessonAllocation() {
+        CoursePackageEntity primaryPackage = buildOneOnOnePackage();
+        CoursePackageEntity otherPackage = buildOneOnOnePackage();
+        otherPackage.setId(3002L);
+        otherPackage.setStudentId(102L);
+        LessonOccurrenceEntity sharedLesson = buildOneOnOneOccurrence();
+        sharedLesson.setPrivateLessonGroupId(7001L);
+        sharedLesson.setPackageId(null);
+        PrivateLessonGroupMemberEntity primary = buildPrivateGroupMember(1, 101L);
+        primary.setPackageId(3001L);
+        PrivateLessonGroupMemberEntity other = buildPrivateGroupMember(2, 102L);
+        other.setPackageId(3002L);
+        LessonRecordEntity primaryRecord = new LessonRecordEntity();
+        primaryRecord.setId(5001L);
+        primaryRecord.setOccurrenceId(4001L);
+        primaryRecord.setPackageId(3001L);
+        primaryRecord.setConfirmStage("CONFIRMED");
+        LessonRecordEntity otherRecord = new LessonRecordEntity();
+        otherRecord.setId(5002L);
+        otherRecord.setOccurrenceId(4001L);
+        otherRecord.setPackageId(3002L);
+        otherRecord.setConfirmStage("PENDING_ADMIN");
+        StudentEntity otherStudent = buildStudent();
+        otherStudent.setId(102L);
+        otherStudent.setStudentName("Other Student");
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(primaryPackage, otherPackage));
+        when(coursePackageMapper.selectBatchIds(any())).thenReturn(List.of(otherPackage));
+        when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(List.of(primary, other));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(sharedLesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(primaryRecord, otherRecord));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent(), otherStudent));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null).get(0);
+
+        assertThat(teacher.students()).singleElement().satisfies(student ->
+                assertThat(student.packages()).singleElement().satisfies(pkg -> {
+                    assertThat(pkg.allocatedUnits()).isZero();
+                    assertThat(pkg.lessons()).singleElement()
+                            .satisfies(lesson -> assertThat(lesson.confirmStage()).isEqualTo("CONFIRMED"));
+                }));
     }
 
     @Test

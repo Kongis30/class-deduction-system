@@ -79,7 +79,7 @@ function renderParentSheet(student: OneOnOneStudent, coursePackage: OneOnOnePack
     <span><strong>Lesson name:</strong> ${escapeHtml(group.subject)}</span>
     <span><strong>Teacher:</strong> ${escapeHtml(group.teacher)}</span>
     <span><strong>Classtime:</strong> ${escapeHtml(group.classTime)}</span>
-    <span><strong>Allocated Hours:</strong> ${formatHours(group.hours)}</span>
+    <span><strong>Hours on sheet:</strong> ${formatHours(group.hours)}</span>
     <span><strong>Starting Date:</strong> ${escapeHtml(group.startDate)}</span>
   </div>`).join('');
   const rows = lessons.map(row => `<tr>
@@ -116,7 +116,7 @@ function renderTeacherSheets(student: OneOnOneStudent, coursePackage: OneOnOnePa
       <p><strong>Lesson name:</strong> ${escapeHtml(group.subject)}</p>
       <p><strong>Teacher:</strong> ${escapeHtml(group.teacher)}</p>
       <p><strong>Classtime:</strong> ${escapeHtml(group.classTime)}</p>
-      <p><strong>Allocated Hours:</strong> ${formatHours(group.hours)}</p>
+      <p><strong>Hours on sheet:</strong> ${formatHours(group.hours)}</p>
       <p><strong>Starting Date:</strong> ${escapeHtml(group.startDate)}</p>
     </div>
     <table class="teacher-lessons"><thead><tr><th>Lesson name</th><th>Teacher</th><th>Date</th><th>Signature</th></tr></thead><tbody>

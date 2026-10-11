@@ -20,6 +20,7 @@ public record OneOnOnePackageVO(
         Double bonusUnits,
         Double consumedUnits,
         Double remainingUnits,
+        Double allocatedUnits,
         Boolean renewalReminder,
         String packageStatus,
         LocalDate startDate,

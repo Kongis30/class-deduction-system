@@ -78,6 +78,7 @@ export interface OneOnOnePackage {
   bonusUnits?: number;
   consumedUnits: number;
   remainingUnits: number;
+  allocatedUnits?: number;
   renewalReminder: boolean;
   packageStatus: string;
   startDate?: string;

@@ -337,16 +337,26 @@
               <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
               <span v-if="(activePackage.bonusUnits ?? 0) > 0"><small>Bonus</small>{{ formatHours(activePackage.bonusUnits ?? 0) }}h</span>
               <span><small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h</span>
-              <span><small>Allocated</small>{{ formatHours(signatureAllocatedHours) }}h</span>
+              <span
+                :class="{ 'oo-metric--overallocated': (activePackage.allocatedUnits ?? 0) > activePackage.remainingUnits }"
+                title="Scheduled hours and lessons awaiting confirmation that still occupy the remaining balance. Confirmed lessons are excluded."
+              ><small>Allocated</small>{{ activePackage.allocatedUnits == null ? '—' : `${formatHours(activePackage.allocatedUnits)}h` }}</span>
             </div>
           </div>
+          <el-alert
+            v-if="(activePackage.allocatedUnits ?? 0) > activePackage.remainingUnits"
+            type="warning"
+            :closable="false"
+            show-icon
+            :title="`Scheduled hours exceed the remaining balance by ${formatHours((activePackage.allocatedUnits ?? 0) - activePackage.remainingUnits)}h. Review this package's schedule.`"
+          />
 
           <section class="oo-signature-sheet oo-parent-signature-sheet print-only">
             <div class="oo-signature-sheet__meta">
               <p><strong>Student:</strong> {{ activePackageStudentNames || activeStudent.studentName }}</p>
               <div class="oo-signature-hours">
                 <div class="oo-signature-hours__group">
-                  <p><strong>Lessons on this sheet:</strong> {{ formatHours(signatureAllocatedHours) }}</p>
+                  <p><strong>Lessons on this sheet:</strong> {{ formatHours(signatureSheetHours) }}</p>
                   <p><strong>Package hours:</strong> {{ formatHours(signaturePackage?.totalUnits) }}</p>
                   <p><strong>Purchased Hours:</strong> {{ formatHours(signaturePackage?.purchasedUnits ?? signaturePackage?.totalUnits) }}</p>
                   <p><strong>Bonus Hours:</strong> {{ formatHours(signaturePackage?.bonusUnits ?? 0) }}</p>
@@ -367,7 +377,7 @@
                 <span><strong>Lesson name:</strong> {{ summary.subject }}</span>
                 <span><strong>Teacher:</strong> {{ summary.teacher }}</span>
                 <span><strong>Classtime:</strong> {{ summary.classTime }}</span>
-                <span><strong>Allocated Hours:</strong> {{ formatHours(summary.hours) }}</span>
+                <span><strong>Hours on sheet:</strong> {{ formatHours(summary.hours) }}</span>
                 <span><strong>Starting Date:</strong> {{ summary.startDate }}</span>
               </div>
             </div>
@@ -398,7 +408,7 @@
               <p><strong>Course:</strong> {{ signaturePackage?.packageName }}</p>
               <p><strong>Teacher(s):</strong> {{ teacherPrintTeacherNames.join(', ') || '—' }}</p>
               <p><strong>Classtime:</strong> {{ subjectClassTime(teacherPrintRows) }}</p>
-              <p><strong>Allocated Hours:</strong> {{ formatHours(teacherPrintAllocatedHours) }}</p>
+              <p><strong>Hours on sheet:</strong> {{ formatHours(teacherPrintSheetHours) }}</p>
               <p><strong>Starting Date:</strong> {{ teacherPrintStartDate }}</p>
             </div>
 
@@ -1023,7 +1033,7 @@ const signaturePackage = computed(() => {
     : coursePackage;
 });
 const signatureSheetRows = computed(() => signaturePackage.value?.lessons.filter(isSignatureLesson) ?? []);
-const signatureAllocatedHours = computed(() =>
+const signatureSheetHours = computed(() =>
   signatureSheetRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
 );
 const teacherPrintRows = computed(() => {
@@ -1038,7 +1048,7 @@ const teacherPrintRows = computed(() => {
 const teacherPrintTeacherNames = computed(() => Array.from(new Set(
   teacherPrintRows.value.map(signatureLessonTeacher)
 )));
-const teacherPrintAllocatedHours = computed(() =>
+const teacherPrintSheetHours = computed(() =>
   teacherPrintRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
 );
 const teacherPrintStartDate = computed(() =>
@@ -2122,6 +2132,10 @@ onMounted(async () => {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.oo-student-context__metrics .oo-metric--overallocated {
+  color: #c2410c;
 }
 
 .oo-empty {
