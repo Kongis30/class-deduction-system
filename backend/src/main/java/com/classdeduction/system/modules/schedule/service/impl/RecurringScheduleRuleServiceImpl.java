@@ -994,6 +994,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 occurrence.setStudentId(studentId);
                 occurrence.setScheduleRuleId(rule.getId());
                 occurrence.setScheduleSlotId(slot.getId());
+                occurrence.setSubjectName(slot.getSubjectName());
                 occurrence.setOccurrenceType("REGULAR");
                 occurrence.setPlannedTeacherId(slot.getTeacherId());
                 // 课次保存课程名称快照，后续改排课或删除旧时段也能还原历史签字表。

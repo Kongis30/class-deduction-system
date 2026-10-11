@@ -162,8 +162,10 @@ class RecurringScheduleRuleServiceImplTest {
         assertThat(slotCaptor.getValue().getWeekday()).isEqualTo(1);
         assertThat(slotCaptor.getValue().getTeacherId()).isEqualTo(3001L);
         assertThat(occurrenceCaptor.getAllValues()).hasSize(2);
-        assertThat(occurrenceCaptor.getAllValues())
-                .allSatisfy(occurrence -> assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3001L));
+        assertThat(occurrenceCaptor.getAllValues()).allSatisfy(occurrence -> {
+            assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3001L);
+            assertThat(occurrence.getSubjectName()).isEqualTo("Math");
+        });
         assertThat(result.ruleId()).isEqualTo(5001L);
         assertThat(result.generatedOccurrenceCount()).isEqualTo(2);
         assertThat(result.firstGeneratedStartAt()).isBefore(result.lastGeneratedEndAt());

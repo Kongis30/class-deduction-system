@@ -47,6 +47,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
@@ -392,7 +393,7 @@ class LessonOccurrenceServiceImplTest {
 
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(completedLesson), List.of(completedLesson));
-        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
+        when(lessonRecordMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(record)));
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
         when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
         when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
