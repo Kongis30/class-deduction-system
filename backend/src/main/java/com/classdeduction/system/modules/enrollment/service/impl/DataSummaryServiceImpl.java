@@ -703,9 +703,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 coursePackage == null ? null : coursePackage.getPackageName(),
                 product == null ? null : product.getProductName());
 
-        // Data Summary 展示该学生本次报名周期；课程统一周期只作为缺少学生报名日期时的兼容回退。
-        LocalDate periodStartDate = firstNonNull(v2Enrollment == null ? null : v2Enrollment.getEnrollmentDate(),
-                resolvePeriodStartDate(item, classGroup, coursePackage, order));
+        // Data Summary 展示该学生本次报名周期；仅当学生权益有效(ACTIVE/EXPIRED)时信任其日期，
+        // 否则回退方案覆盖期/订单数据，避免显示已作废权益(CANCELLED)的过期日期。
+        LocalDate periodStartDate = resolveV2PeriodStartDate(registrationPlan, v2Enrollment,
+                item, classGroup, coursePackage, order);
         LocalDate periodEndDate = resolveV2PeriodEndDate(registrationPlan, v2Enrollment,
                 item, coursePackage, classGroup, order);
         BigDecimal rowStoppedConsumedAmount = resolveStoppedConsumedAmount(item, refundState);
@@ -1169,12 +1170,35 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                                              ClassGroupEntity classGroup,
                                              EnrollmentOrderEntity order) {
         if (plan != null) {
-            if (enrollment != null && enrollment.getExpiryDate() != null) return enrollment.getExpiryDate();
+            if (isActiveEnrollment(enrollment) && enrollment.getExpiryDate() != null) return enrollment.getExpiryDate();
             if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType()) && plan.getCoverageEndDate() != null) {
                 return plan.getCoverageEndDate();
             }
         }
         return resolvePeriodEndDate(item, coursePackage, classGroup, order);
+    }
+
+    /** 报名周期起点：仅信任有效权益(ACTIVE/EXPIRED)的日期；否则回退方案覆盖期/订单数据。 */
+    private LocalDate resolveV2PeriodStartDate(GroupRegistrationPlanEntity plan,
+                                               ClassEnrollmentEntity enrollment,
+                                               EnrollmentOrderItemEntity item,
+                                               ClassGroupEntity classGroup,
+                                               CoursePackageEntity coursePackage,
+                                               EnrollmentOrderEntity order) {
+        if (isActiveEnrollment(enrollment) && enrollment.getEnrollmentDate() != null) {
+            return enrollment.getEnrollmentDate();
+        }
+        if (plan != null && "FIXED_DATES".equalsIgnoreCase(plan.getCoverageType())
+                && plan.getCoverageStartDate() != null) {
+            return plan.getCoverageStartDate();
+        }
+        return resolvePeriodStartDate(item, classGroup, coursePackage, order);
+    }
+
+    /** 权益是否为有效在册（ACTIVE）或历史有效（EXPIRED）；CANCELLED 等作废状态不予信任。 */
+    private boolean isActiveEnrollment(ClassEnrollmentEntity enrollment) {
+        return enrollment != null && ("ACTIVE".equalsIgnoreCase(enrollment.getStatus())
+                || "EXPIRED".equalsIgnoreCase(enrollment.getStatus()));
     }
 
     /** 缺少有效在册快照时，按订单项购买的计费单位和数量恢复班课周期。 */

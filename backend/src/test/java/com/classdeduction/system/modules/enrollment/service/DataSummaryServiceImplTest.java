@@ -533,6 +533,53 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldFallBackToPlanCoverageWhenOnlyCancelledEntitlementExists() {
+        // 回归：仅剩 CANCELLED 权益（孤儿）时，不能显示作废权益的过期日期，
+        // 应回退到 FIXED_DATES 方案的覆盖期。
+        EnrollmentOrderEntity order = order(1L, "100.00", "100.00", "0.00");
+        EnrollmentOrderItemEntity item = item(21L, 1, "100.00");
+        item.setClassId(31L);
+        item.setCourseProductId(41L);
+        item.setGroupProjectId(51L);
+        item.setGroupRegistrationPlanId(61L);
+        item.setStartDate(LocalDate.of(2026, 9, 26));
+        item.setPeriodLabel("Full year · 33 sessions");
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        classGroup.setId(31L);
+        classGroup.setClassName("G5");
+        classGroup.setStartDate(LocalDate.of(2026, 9, 12));
+        classGroup.setEndDate(LocalDate.of(2027, 6, 12));
+        GroupRegistrationPlanEntity plan = new GroupRegistrationPlanEntity();
+        plan.setId(61L);
+        plan.setCoverageType("FIXED_DATES");
+        plan.setTermCode("FULL_YEAR");
+        plan.setCoverageStartDate(LocalDate.of(2026, 9, 12));
+        plan.setCoverageEndDate(LocalDate.of(2027, 6, 12));
+        ClassEnrollmentEntity cancelled = new ClassEnrollmentEntity();
+        cancelled.setId(72L);
+        cancelled.setEnrollmentOrderItemId(21L);
+        cancelled.setStudentId(1L);
+        cancelled.setEnrollmentDate(LocalDate.of(2026, 9, 26));
+        cancelled.setExpiryDate(LocalDate.of(2026, 9, 30));
+        cancelled.setIsDeleted(0);
+        cancelled.setStatus("CANCELLED");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(order));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
+        when(groupRegistrationPlanMapper.selectBatchIds(any())).thenReturn(List.of(plan));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(cancelled));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.rows()).singleElement().satisfies(row -> {
+            assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 12));
+            assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2027, 6, 12));
+        });
+    }
+
+    @Test
     void shouldCalculateRegistrationPeriodFromItsOwnPurchasedPackage() {
         LocalDate signupDate = LocalDate.of(2026, 9, 19);
         LocalDate expectedExpiry = LocalDate.of(2027, 5, 1);
