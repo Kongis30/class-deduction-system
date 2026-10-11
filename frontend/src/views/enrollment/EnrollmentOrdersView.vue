@@ -933,7 +933,6 @@
               <el-select
                 v-model="split.paymentMethod"
                 placeholder="Method"
-                style="flex: 1;"
               >
                 <el-option
                   v-for="m in paymentMethods"
@@ -947,7 +946,6 @@
                 :min="payOrder?.billingPolicy === 'WHOLE_DOLLAR_V1' ? 1 : 0.01"
                 :precision="payOrder?.billingPolicy === 'WHOLE_DOLLAR_V1' ? 0 : 2"
                 :controls="false"
-                style="flex: 1;"
                 placeholder="Amount"
                 @change="handlePaySplitAmountChange(split)"
               />
@@ -956,10 +954,9 @@
                 type="date"
                 value-format="YYYY-MM-DD"
                 placeholder="Date"
-                style="flex: 1;"
               />
-              <el-input v-model="split.handledByName" placeholder="Handler" style="flex: 1;" :disabled="isManager" />
-              <el-input v-model="split.remark" placeholder="Notes" style="flex: 1;" />
+              <el-input v-model="split.handledByName" placeholder="Handler" :disabled="isManager" />
+              <el-input v-model="split.remark" placeholder="Notes" />
               <el-button
                 v-if="payForm.splits.length > 1"
                 type="danger"
@@ -3876,6 +3873,24 @@ void initializePage();
 }
 .payment-split-row > * {
   min-width: 0;
+}
+/* 该行是 grid 布局：控件自带宽高（el-input-number 150px、el-date-picker 220px）会
+   溢出固定列宽并互相重叠，这里统一铺满所在列。 */
+.payment-split-row :deep(.el-select),
+.payment-split-row :deep(.el-input),
+.payment-split-row :deep(.el-input-number),
+.payment-split-row :deep(.el-date-editor) {
+  width: 100%;
+}
+/* 日期框被 Element Plus 写死为 32px 高，而其它控件在触屏设备上会因全局 min-height
+   变高；改为跟随内部 wrapper，保证同一行高度一致。 */
+.payment-split-row :deep(.el-date-editor.el-input) {
+  height: auto;
+}
+/* el-input 的 wrapper 默认 content-box，会让全局 min-height 比 el-select 多出 2px；
+   统一盒模型后同一行控件高度完全一致。 */
+.payment-split-row :deep(.el-input__wrapper) {
+  box-sizing: border-box;
 }
 .payment-split-total {
   display: flex;
