@@ -2024,7 +2024,8 @@ function removePaySplit(index: number) {
 
 function createPaySplit(amount = 0, allocations: Record<string, number> = {}): PaySplit {
   return {
-    paymentMethod: paymentMethods.value[0]?.methodCode ?? 'CASH',
+    // 付款方式不预置默认值，强制用户自行选择。
+    paymentMethod: '',
     amount,
     paidAt: dayjs().format('YYYY-MM-DD'),
     handledByName: isManager.value ? managerDisplayName.value : '',
