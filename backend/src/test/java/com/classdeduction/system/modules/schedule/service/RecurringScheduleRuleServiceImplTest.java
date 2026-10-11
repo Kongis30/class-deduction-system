@@ -605,6 +605,44 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
+    void updatingSchedulePreservesSubjectOfConfirmedLegacyLesson() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        rule.setRuleStatus("PAUSED");
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setPackageStatus("PAUSED");
+        coursePackage.setTotalUnits(80);
+        coursePackage.setRemainingUnits(72);
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        request.setRuleStatus("PAUSED");
+
+        RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
+        oldSlot.setId(6001L);
+        oldSlot.setSubjectName("Vocabulary");
+        LessonOccurrenceEntity completedLesson = buildRuleOccurrence(9001L,
+                AppTime.nowLocalDateTime().toLocalDate().minusDays(1), 4, "MERGED");
+        completedLesson.setScheduleSlotId(oldSlot.getId());
+        LessonRecordEntity confirmedRecord = buildRecord(completedLesson.getId(), 4);
+        confirmedRecord.setConfirmStage("CONFIRMED");
+
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(), List.of(confirmedRecord));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(completedLesson));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
+
+        recurringScheduleRuleService.updateRule(5001L, request);
+
+        ArgumentCaptor<LessonOccurrenceEntity> preservedLesson = ArgumentCaptor.forClass(LessonOccurrenceEntity.class);
+        verify(lessonOccurrenceMapper).updateById(preservedLesson.capture());
+        assertThat(preservedLesson.getValue().getId()).isEqualTo(completedLesson.getId());
+        assertThat(preservedLesson.getValue().getSubjectName()).isEqualTo("Vocabulary");
+        assertThat(completedLesson.getScheduleSlotId()).isEqualTo(oldSlot.getId());
+    }
+
+    @Test
     private void stubGeneratedIds(boolean includeOccurrenceInsert) {
         doAnswer(invocation -> {
             RecurringScheduleRuleEntity entity = invocation.getArgument(0);

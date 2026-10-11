@@ -448,15 +448,28 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     .in(LessonOccurrenceEntity::getId, toDelete.stream().map(LessonOccurrenceEntity::getId).toList()));
         }
 
-        // h) Nullify slot references on preserved occurrences, then replace slots
-        if (!toPreserve.isEmpty()) {
-            List<LessonOccurrenceEntity> updates = toPreserve.stream().map(occ -> {
-                LessonOccurrenceEntity u = new LessonOccurrenceEntity();
-                u.setId(occ.getId());
-                u.setScheduleSlotId(null);
-                return u;
-            }).toList();
-            updates.forEach(lessonOccurrenceMapper::updateById);
+        // 旧课次可能只保存 slot ID。软删除旧时段前补齐科目快照，并保留历史关联供旧数据读取。
+        Set<Long> legacySlotIds = toPreserve.stream()
+                .filter(occ -> !StringUtils.hasText(occ.getSubjectName()))
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, RecurringScheduleSlotEntity> legacySlots = legacySlotIds.isEmpty()
+                ? Collections.emptyMap()
+                : recurringScheduleSlotMapper.selectIncludingDeletedByIds(legacySlotIds).stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        for (LessonOccurrenceEntity occurrence : toPreserve) {
+            if (StringUtils.hasText(occurrence.getSubjectName())) {
+                continue;
+            }
+            RecurringScheduleSlotEntity oldSlot = legacySlots.get(occurrence.getScheduleSlotId());
+            if (oldSlot == null || !StringUtils.hasText(oldSlot.getSubjectName())) {
+                continue;
+            }
+            LessonOccurrenceEntity update = new LessonOccurrenceEntity();
+            update.setId(occurrence.getId());
+            update.setSubjectName(oldSlot.getSubjectName());
+            lessonOccurrenceMapper.updateById(update);
         }
 
         recurringScheduleSlotMapper.delete(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()

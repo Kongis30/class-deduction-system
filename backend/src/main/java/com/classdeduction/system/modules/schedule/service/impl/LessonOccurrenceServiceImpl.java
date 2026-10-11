@@ -1643,8 +1643,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             return Collections.emptyMap();
         }
         try {
-            return recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
-                            .in(RecurringScheduleSlotEntity::getId, slotIds))
+            return recurringScheduleSlotMapper.selectIncludingDeletedByIds(slotIds)
                     .stream()
                     .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, Function.identity()));
         } catch (RuntimeException ex) {

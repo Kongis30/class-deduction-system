@@ -27,6 +27,7 @@ import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
@@ -368,6 +369,43 @@ class LessonOccurrenceServiceImplTest {
                     assertThat(lesson.packageId()).isEqualTo(3001L);
                     assertThat(lesson.planningStatus()).isEqualTo("SCHEDULED");
                     assertThat(lesson.plannedTeacherName()).isEqualTo("Ms Lee");
+                });
+    }
+
+    @Test
+    void shouldShowOriginalSubjectForConfirmedLessonWithDeletedScheduleSlot() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity completedLesson = buildOneOnOneOccurrence();
+        completedLesson.setPlanningStatus("MERGED");
+        completedLesson.setScheduleSlotId(6001L);
+        LessonRecordEntity record = new LessonRecordEntity();
+        record.setId(8001L);
+        record.setOccurrenceId(completedLesson.getId());
+        record.setPackageId(coursePackage.getId());
+        record.setConfirmStage("CONFIRMED");
+        record.setResultStatus("COMPLETED");
+        RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
+        oldSlot.setId(6001L);
+        oldSlot.setSubjectName("Vocabulary");
+        oldSlot.setTeacherId(301L);
+        oldSlot.setIsDeleted(1);
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(completedLesson), List.of(completedLesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
+
+        OneOnOneDeductionQuery query = new OneOnOneDeductionQuery();
+        query.setTeacherId(301L);
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(query, null);
+
+        assertThat(result.get(0).students().get(0).packages().get(0).lessons())
+                .singleElement()
+                .satisfies(lesson -> {
+                    assertThat(lesson.confirmStage()).isEqualTo("CONFIRMED");
+                    assertThat(lesson.subjectName()).isEqualTo("Vocabulary");
                 });
     }
 

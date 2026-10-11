@@ -154,7 +154,10 @@ class LessonRecordServiceImplTest {
         LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
         request.setOccurrenceId(1001L);
         request.setResultStatus("COMPLETED");
-        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence());
+        LessonOccurrenceEntity scheduledLesson = buildOccurrence();
+        scheduledLesson.setSubjectName("Vocabulary");
+        scheduledLesson.setScheduleSlotId(9001L);
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(scheduledLesson);
         when(lessonRecordMapper.selectOne(any())).thenReturn(null);
         when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
         when(studentMapper.selectById(601L)).thenReturn(buildStudent());
@@ -181,6 +184,13 @@ class LessonRecordServiceImplTest {
         assertThat(result.ledgerId()).isEqualTo(3001L);
         assertThat(result.remainingUnits()).isEqualTo(3.0);
         assertThat(result.packageCompleted()).isFalse();
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
+        LessonOccurrenceEntity confirmedLesson = occurrenceCaptor.getAllValues().stream()
+                .filter(item -> Objects.equals(item.getId(), 1001L))
+                .findFirst()
+                .orElseThrow();
+        assertThat(confirmedLesson.getSubjectName()).isEqualTo("Vocabulary");
+        assertThat(confirmedLesson.getScheduleSlotId()).isEqualTo(9001L);
     }
 
     @Test
