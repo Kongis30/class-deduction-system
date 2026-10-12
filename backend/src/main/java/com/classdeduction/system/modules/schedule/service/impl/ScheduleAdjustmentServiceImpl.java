@@ -363,6 +363,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         updated.setNotes(source.getNotes());
         updated.setConflictChecked(1);
         updated.setPlanningStatus("ADJUSTED");
+        updated.setClassroomOverridden(source.getClassroomOverridden());
         applyRequestedPlanningFields(updated, source, request);
         validatePlannedWindow(updated.getPlannedStartAt(), updated.getPlannedEndAt(), updated.getPlannedUnits());
         validateTeacher(updated.getPlannedTeacherId());
@@ -374,6 +375,9 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private void applyRequestedPlanningFields(LessonOccurrenceEntity target, LessonOccurrenceEntity source, ScheduleAdjustmentRequest request) {
         target.setPlannedTeacherId(request.getPlannedTeacherId() != null ? request.getPlannedTeacherId() : source.getPlannedTeacherId());
         target.setPlannedClassroomId(request.getPlannedClassroomId() != null ? request.getPlannedClassroomId() : source.getPlannedClassroomId());
+        if (request.getPlannedClassroomId() != null) {
+            target.setClassroomOverridden(1);
+        }
         target.setDeliveryMode(target.getPlannedClassroomId() == null
                 ? source.getDeliveryMode() : "IN_PERSON");
         target.setPlannedStartAt(request.getPlannedStartAt() != null ? request.getPlannedStartAt() : source.getPlannedStartAt());
@@ -604,6 +608,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         adjusted.setPlanningStatus("ADJUSTED");
         adjusted.setPlannedTeacherId(item.getPlannedTeacherId());
         adjusted.setPlannedClassroomId(resolveClassroomId(item));
+        adjusted.setClassroomOverridden(1);
         adjusted.setDeliveryMode(resolveDeliveryMode(item, source.getDeliveryMode()));
         adjusted.setPlannedStartAt(item.getPlannedStartAt());
         adjusted.setPlannedEndAt(item.getPlannedEndAt());

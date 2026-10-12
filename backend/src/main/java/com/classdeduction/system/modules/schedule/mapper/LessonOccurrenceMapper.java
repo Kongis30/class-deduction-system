@@ -5,6 +5,7 @@ import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -16,6 +17,12 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
     /** 调课、确认、撤销和补录共用课次行锁，避免基于旧状态互相覆盖。 */
     @Select("SELECT * FROM lesson_occurrence WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
     LessonOccurrenceEntity selectByIdForUpdate(@Param("id") Long id);
+
+    /** 周期排课教室变更时允许显式清空旧教室，同时保留课次的其他单次调整字段。 */
+    @Update("UPDATE lesson_occurrence SET planned_classroom_id = #{classroomId}, delivery_mode = #{deliveryMode}, updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0")
+    int updateInheritedClassroom(@Param("id") Long id,
+                                 @Param("classroomId") Long classroomId,
+                                 @Param("deliveryMode") String deliveryMode);
 
     /**
      * 按校区统计今日待上课次数（批量GROUP BY JOIN，避免N+1）。

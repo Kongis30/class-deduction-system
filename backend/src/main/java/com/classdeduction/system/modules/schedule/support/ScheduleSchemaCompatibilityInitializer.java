@@ -66,6 +66,12 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE' AFTER planned_teacher_id");
         addScheduleColumnIfMissing("lesson_occurrence", "subject_name",
                 "varchar(128) DEFAULT NULL COMMENT 'Subject snapshot copied from the weekly class slot' AFTER planned_teacher_id");
+        boolean classroomOverrideAdded = addScheduleColumnIfMissing("lesson_occurrence", "classroom_overridden",
+                "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Whether this occurrence has an explicit one-off classroom override' AFTER planned_classroom_id");
+        if (classroomOverrideAdded) {
+            // 旧版 ADJUSTED 课次可能保存了单独教室；初始化为例外，避免规则更新覆盖它们。
+            jdbcTemplate.update("UPDATE lesson_occurrence SET classroom_overridden = 1 WHERE planning_status = 'ADJUSTED'");
+        }
         jdbcTemplate.update("UPDATE recurring_schedule_slot SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND classroom_id IS NOT NULL");
         jdbcTemplate.update("UPDATE class_group_schedule_slot SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND classroom_id IS NOT NULL");
         jdbcTemplate.update("UPDATE lesson_occurrence SET delivery_mode = 'IN_PERSON' WHERE delivery_mode IS NULL AND planned_classroom_id IS NOT NULL");
@@ -142,7 +148,7 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         addScheduleColumnIfMissing("recurring_schedule_slot", columnName, columnDefinition);
     }
 
-    private void addScheduleColumnIfMissing(String tableName, String columnName, String columnDefinition) {
+    private boolean addScheduleColumnIfMissing(String tableName, String columnName, String columnDefinition) {
         Integer count = jdbcTemplate.queryForObject("""
                 SELECT COUNT(*)
                 FROM information_schema.COLUMNS
@@ -151,10 +157,11 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                   AND COLUMN_NAME = ?
                 """, Integer.class, tableName, columnName);
         if (count != null && count > 0) {
-            return;
+            return false;
         }
         jdbcTemplate.execute("ALTER TABLE " + tableName + " ADD COLUMN `" + columnName + "` " + columnDefinition);
         log.info("Added {}.{} for per-slot delivery mode and classroom support.", tableName, columnName);
+        return true;
     }
 
     private void addTeacherPayRateColumnIfMissing(String columnName, String columnDefinition) {

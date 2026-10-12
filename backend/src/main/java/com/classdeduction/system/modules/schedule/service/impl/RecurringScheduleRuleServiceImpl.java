@@ -424,6 +424,20 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         List<LessonOccurrenceEntity> allOccurrences = lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .eq(LessonOccurrenceEntity::getScheduleRuleId, id));
+        List<RecurringScheduleSlotEntity> existingSlots = recurringScheduleSlotMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .eq(RecurringScheduleSlotEntity::getRuleId, id));
+        Map<Long, RecurringScheduleSlotEntity> existingSlotsById = existingSlots.stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        Set<Long> preservedSlotIds = allOccurrences.stream()
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull)
+                .filter(slotId -> !existingSlotsById.containsKey(slotId))
+                .collect(Collectors.toSet());
+        if (!preservedSlotIds.isEmpty()) {
+            recurringScheduleSlotMapper.selectIncludingDeletedByIds(preservedSlotIds)
+                    .forEach(slot -> existingSlotsById.put(slot.getId(), slot));
+        }
         Set<Long> occIds = allOccurrences.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
         Map<Long, LessonRecordEntity> recordByOccurrenceId =
                 latestRecordsForPackage(occIds, coursePackage.getId());
@@ -497,10 +511,17 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             newOccurrences = capGeneratedOccurrencesToPackageBalance(newOccurrences, toPreserve, recordByOccurrenceId, coursePackage);
         }
 
+        // 普通未来课次会随规则重建；保留的未来例外若仍继承规则教室，也要同步到新槽位配置。
+        List<LessonOccurrenceEntity> classroomUpdates = buildInheritedClassroomUpdates(
+                toPreserve, recordByOccurrenceId, existingSlotsById, newSlots);
+        ensureNoClassroomConflicts(classroomUpdates, toPreserve, newOccurrences, id);
+
         // j) Conflict check excluding this rule's preserved occurrences
         ensureNoConflictsExcludingPrivateLessonGroup(newOccurrences, student.getId(),
                 id, existingRule.getPrivateLessonGroupId());
 
+        classroomUpdates.forEach(update -> lessonOccurrenceMapper.updateInheritedClassroom(
+                update.getId(), update.getPlannedClassroomId(), update.getDeliveryMode()));
         newOccurrences.forEach(lessonOccurrenceMapper::insert);
 
         // k) Return result
@@ -556,6 +577,123 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         request.setPlannedUnits(slot.getPlannedUnits());
         request.setAllocatedUnits(slot.getAllocatedUnits());
         return request;
+    }
+
+    /**
+     * 找出需随规则更新教室的保留课次。已产生消课记录、已取消及明确单次改教室的课次不在此列。
+     */
+    private List<LessonOccurrenceEntity> buildInheritedClassroomUpdates(
+            List<LessonOccurrenceEntity> preservedOccurrences,
+            Map<Long, LessonRecordEntity> recordByOccurrenceId,
+            Map<Long, RecurringScheduleSlotEntity> oldSlotsById,
+            List<RecurringScheduleSlotEntity> newSlots) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> updates = new ArrayList<>();
+        for (LessonOccurrenceEntity occurrence : preservedOccurrences) {
+            if (occurrence.getPlannedStartAt() == null || occurrence.getPlannedStartAt().isBefore(now)
+                    || "CANCELLED".equals(occurrence.getPlanningStatus())
+                    || recordByOccurrenceId.containsKey(occurrence.getId())
+                    || Objects.equals(occurrence.getClassroomOverridden(), 1)) {
+                continue;
+            }
+            RecurringScheduleSlotEntity oldSlot = oldSlotsById.get(occurrence.getScheduleSlotId());
+            RecurringScheduleSlotEntity newSlot = findMatchingUpdatedSlot(oldSlot, newSlots);
+            if (newSlot == null || (Objects.equals(occurrence.getPlannedClassroomId(), newSlot.getClassroomId())
+                    && Objects.equals(occurrence.getDeliveryMode(), newSlot.getDeliveryMode()))) {
+                continue;
+            }
+            LessonOccurrenceEntity update = new LessonOccurrenceEntity();
+            update.setId(occurrence.getId());
+            update.setPlannedClassroomId(newSlot.getClassroomId());
+            update.setDeliveryMode(newSlot.getDeliveryMode());
+            update.setPlannedStartAt(occurrence.getPlannedStartAt());
+            update.setPlannedEndAt(occurrence.getPlannedEndAt());
+            updates.add(update);
+        }
+        return updates;
+    }
+
+    /** 仅在旧槽位与新槽位存在唯一业务匹配时同步，避免把重复时段误配到错误教室。 */
+    private RecurringScheduleSlotEntity findMatchingUpdatedSlot(RecurringScheduleSlotEntity oldSlot,
+                                                                 List<RecurringScheduleSlotEntity> newSlots) {
+        if (oldSlot == null) {
+            return null;
+        }
+        List<RecurringScheduleSlotEntity> matches = newSlots.stream()
+                .filter(slot -> Objects.equals(slot.getTeacherId(), oldSlot.getTeacherId())
+                        && Objects.equals(slot.getSubjectName(), oldSlot.getSubjectName())
+                        && Objects.equals(slot.getWeekday(), oldSlot.getWeekday())
+                        && Objects.equals(slot.getStartTime(), oldSlot.getStartTime())
+                        && Objects.equals(slot.getEndTime(), oldSlot.getEndTime()))
+                .toList();
+        return matches.size() == 1 ? matches.get(0) : null;
+    }
+
+    /** 更新教室前检查外部占用和本次规则内的新增/保留课次，避免同步制造教室冲突。 */
+    private void ensureNoClassroomConflicts(List<LessonOccurrenceEntity> updates,
+                                            List<LessonOccurrenceEntity> preservedOccurrences,
+                                            List<LessonOccurrenceEntity> newOccurrences,
+                                            Long ruleId) {
+        if (updates.isEmpty()) {
+            return;
+        }
+        Set<Long> classroomIds = updates.stream().map(LessonOccurrenceEntity::getPlannedClassroomId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        if (!classroomIds.isEmpty()) {
+            LocalDateTime windowStart = updates.stream().map(LessonOccurrenceEntity::getPlannedStartAt)
+                    .filter(Objects::nonNull).min(LocalDateTime::compareTo).orElseThrow();
+            LocalDateTime windowEnd = updates.stream().map(LessonOccurrenceEntity::getPlannedEndAt)
+                    .filter(Objects::nonNull).max(LocalDateTime::compareTo).orElseThrow();
+            List<LessonOccurrenceEntity> external = lessonOccurrenceMapper.selectList(
+                    new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                            .in(LessonOccurrenceEntity::getPlannedClassroomId, classroomIds)
+                            .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                            .and(wrapper -> wrapper.isNull(LessonOccurrenceEntity::getScheduleRuleId)
+                                    .or().ne(LessonOccurrenceEntity::getScheduleRuleId, ruleId))
+                            .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
+                            .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+            for (LessonOccurrenceEntity update : updates) {
+                if (update.getPlannedClassroomId() == null) {
+                    continue;
+                }
+                LessonOccurrenceEntity conflict = firstOverlap(update, external.stream()
+                        .filter(item -> Objects.equals(item.getPlannedClassroomId(), update.getPlannedClassroomId()))
+                        .toList());
+                if (conflict != null) {
+                    throw new BusinessException("SCHEDULE_CONFLICT",
+                            "Classroom conflict at " + update.getPlannedStartAt());
+                }
+            }
+        }
+
+        Set<Long> updateIds = updates.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
+        List<LessonOccurrenceEntity> sameRuleOccurrences = new ArrayList<>();
+        sameRuleOccurrences.addAll(updates);
+        sameRuleOccurrences.addAll(newOccurrences);
+        sameRuleOccurrences.addAll(preservedOccurrences.stream()
+                .filter(item -> !updateIds.contains(item.getId())
+                        && !"CANCELLED".equals(item.getPlanningStatus()))
+                .toList());
+        for (int i = 0; i < sameRuleOccurrences.size(); i++) {
+            LessonOccurrenceEntity left = sameRuleOccurrences.get(i);
+            if (left.getPlannedClassroomId() == null || left.getPlannedStartAt() == null
+                    || left.getPlannedEndAt() == null) {
+                continue;
+            }
+            for (int j = i + 1; j < sameRuleOccurrences.size(); j++) {
+                LessonOccurrenceEntity right = sameRuleOccurrences.get(j);
+                if ((!updateIds.contains(left.getId()) && !updateIds.contains(right.getId()))
+                        || !Objects.equals(left.getPlannedClassroomId(), right.getPlannedClassroomId())
+                        || right.getPlannedStartAt() == null || right.getPlannedEndAt() == null) {
+                    continue;
+                }
+                if (left.getPlannedStartAt().isBefore(right.getPlannedEndAt())
+                        && left.getPlannedEndAt().isAfter(right.getPlannedStartAt())) {
+                    throw new BusinessException("SCHEDULE_CONFLICT",
+                            "Classroom conflict at " + left.getPlannedStartAt());
+                }
+            }
+        }
     }
 
     private void validateUpdateRuleDates(RecurringScheduleRuleUpdateRequest request) {

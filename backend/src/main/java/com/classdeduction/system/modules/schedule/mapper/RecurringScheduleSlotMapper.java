@@ -12,10 +12,10 @@ import java.util.List;
 @Mapper
 public interface RecurringScheduleSlotMapper extends BaseMapper<RecurringScheduleSlotEntity> {
 
-    /** 历史课次仍可能引用已软删除的排课时段，读取其原科目用于签字表和消课列表。 */
+    /** 读取已软删除的旧时段，供保留课次继续匹配原周期配置。 */
     @Select("""
             <script>
-            SELECT id, teacher_id, subject_name
+            SELECT id, teacher_id, subject_name, weekday, start_time, end_time
             FROM recurring_schedule_slot
             WHERE id IN
             <foreach collection="ids" item="slotId" open="(" separator="," close=")">

@@ -55,6 +55,10 @@ public class LessonOccurrenceEntity extends BaseEntity {
 
     private Long plannedClassroomId;
 
+    /** 是否由单次调课明确指定教室；为 false 时教室跟随周期排课槽。 */
+    @TableField("classroom_overridden")
+    private Integer classroomOverridden;
+
     private LocalDateTime plannedStartAt;
 
     private LocalDateTime plannedEndAt;
