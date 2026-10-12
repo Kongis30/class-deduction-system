@@ -1795,8 +1795,10 @@ async function loadSignatureHistory(packageId: EntityId): Promise<boolean> {
     signatureHistoryPackageId.value = String(packageId);
     return true;
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
-    return false;
+    if (String(activePackage.value?.packageId) !== String(packageId)) return false;
+    // 历史签字接口不可用时仍打印已加载的正式排课，避免辅助数据服务故障阻断整张课表。
+    ElMessage.warning('Historical signature entries could not be loaded. The sheet will include scheduled lessons only.');
+    return true;
   }
 }
 
