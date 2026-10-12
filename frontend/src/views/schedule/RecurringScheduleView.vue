@@ -273,9 +273,9 @@
             <el-input-number v-model="deductedHoursDraft" :min="confirmedDeductionHours" :max="deductedHoursMax" :step="0.5" :precision="1" controls-position="right" />
           </label>
           <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
-          <div><span>Package available</span><strong>{{ projectedRemainingHours }}h</strong></div>
+          <div><span>Remaining</span><strong>{{ projectedRemainingHours }}h</strong></div>
         </div>
-        <p class="package-hours-card__hint">Total is the current package entitlement, including added or bonus hours. Package available excludes confirmed and pending deductions.</p>
+        <p class="package-hours-card__hint">Total includes added and bonus hours. Remaining excludes already deducted and pending deduction hours.</p>
       </section>
 
       <template #footer>
@@ -341,8 +341,8 @@
         <el-divider content-position="left">Weekly Time Slots</el-divider>
         <p class="edit-schedule__hint">
           Click and drag on the calendar to select class time slots. For each slot, assign a teacher,
-          lesson name, and the total hours allocated to it. Each slot is scheduled independently until
-          its allocated hours run out (the last class takes the remainder if it does not divide evenly).
+          lesson name, and its schedule total, including deducted and pending lessons. Each slot is scheduled independently until
+          its schedule total runs out (the last class takes the remainder if it does not divide evenly).
           Other lessons for every student are shown for the week of the start date. Saving checks the full schedule.
         </p>
         <el-alert v-if="editBusyError" :title="editBusyError" type="error" :closable="false" show-icon />
@@ -409,10 +409,10 @@
                 />
               </label>
               <label class="slot-teacher-row__field slot-teacher-row__field--hours">
-                <span>Allocated hours</span>
+                <span>Schedule total</span>
                 <span class="slot-teacher-row__hours-control">
                   <el-input-number
-                    v-model="slot.allocatedHours"
+                    v-model="slot.scheduleTotalHours"
                     :min="0.5"
                     :step="0.5"
                     :precision="1"
@@ -431,10 +431,12 @@
             class="edit-schedule__allocation"
             :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
-            · Allocated {{ allocatedTotalHours.toFixed(1) }}h
-            <template v-if="usedScheduleHours > 0"> · Used {{ usedScheduleHours.toFixed(1) }}h</template>
-            · Available {{ availableScheduledHours.toFixed(1) }}h
-            · Package balance {{ (selectedPackage ? projectedRemainingForPackage(selectedPackage) : 0).toFixed(1) }}h
+            · Scheduled total {{ scheduledTotalHours.toFixed(1) }}h
+            <template v-if="scheduleDeductedHours > 0"> · Deducted {{ scheduleDeductedHours.toFixed(1) }}h</template>
+            <template v-if="schedulePendingHours > 0"> · Pending {{ schedulePendingHours.toFixed(1) }}h</template>
+            · Allocated {{ allocatedRemainingHours.toFixed(1) }}h
+            <template v-if="otherScheduleAllocatedHours > 0"> · Other schedules {{ otherScheduleAllocatedHours.toFixed(1) }}h</template>
+            · Remaining {{ remainingPackageHours.toFixed(1) }}h
           </span>
         </div>
       </div>
@@ -1064,13 +1066,14 @@ const deductedHoursMax = computed(() => Math.max(0,
   packageHours(selectedPackage.value?.totalUnits) - pendingDeductionHours.value,
 ));
 const projectedRemainingHours = computed(() => Number(Math.max(0,
-  packageHours(selectedPackage.value?.totalUnits) - deductedHoursDraft.value - pendingDeductionHours.value,
+  packageHours(selectedPackage.value?.remainingUnits) + packageHours(selectedPackage.value?.consumedUnits)
+    - deductedHoursDraft.value - pendingDeductionHours.value,
 ).toFixed(1)));
 watch(selectedPackage, pkg => {
   deductedHoursDraft.value = pkg?.consumedUnits ?? 0;
 }, { immediate: true });
 function projectedRemainingForPackage(pkg: CoursePackageItem): number {
-  return packageHours(Math.max(0, pkg.totalUnits - pkg.consumedUnits - (pkg.pendingDeductionUnits ?? 0)));
+  return packageHours(Math.max(0, pkg.remainingUnits - (pkg.pendingDeductionUnits ?? 0)));
 }
 const emptySlots = ref<SlotDef[]>([]);
 const weeklyRows = ref<WeeklyAdjustmentRow[]>([]);
@@ -1397,7 +1400,7 @@ const editForm = reactive({
   ruleStatus: undefined as string | undefined,
   startDate: '',
   notes: '',
-  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string; subjectName?: string; allocatedHours?: number }>,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string; subjectName?: string; scheduleTotalHours?: number }>,
 });
 
 const editFormRules: FormRules = {
@@ -1890,28 +1893,28 @@ const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
 );
 
-// 编辑的是累计分配额：把本规则已消课和待确认的课时加回可分配上限。
-const allocatablePackageHours = computed(() => {
-  const balance = selectedPackage.value ? projectedRemainingForPackage(selectedPackage.value) : 0;
-  return balance + (isEditing.value ? (currentRule.value?.deductedHours ?? 0)
-    + (currentRule.value?.pendingHours ?? 0)
-    - (currentRule.value?.otherReservedHours ?? 0) : 0);
-});
-
-// 已在各时段分配的课时合计（小时）。
-const allocatedTotalHours = computed(() =>
-  editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
+// 输入值是含历史已消课的累计排课额；展示给用户的 Allocated 只计剩余课时中的排课额。
+const scheduledTotalHours = computed(() =>
+  editForm.slots.reduce((sum, s) => sum + (s.scheduleTotalHours || 0), 0)
 );
 
-const usedScheduleHours = computed(() => isEditing.value
-  ? (currentRule.value?.deductedHours ?? 0) + (currentRule.value?.pendingHours ?? 0) : 0);
+const scheduleDeductedHours = computed(() => isEditing.value ? (currentRule.value?.deductedHours ?? 0) : 0);
+const schedulePendingHours = computed(() => isEditing.value ? (currentRule.value?.pendingHours ?? 0) : 0);
+const usedScheduleHours = computed(() => scheduleDeductedHours.value + schedulePendingHours.value);
 
-const availableScheduledHours = computed(() => Math.max(0, Number((
-  allocatedTotalHours.value - usedScheduleHours.value
+const allocatedRemainingHours = computed(() => Math.max(0, Number((
+  scheduledTotalHours.value - usedScheduleHours.value
 ).toFixed(1))));
 
+const remainingPackageHours = computed(() => selectedPackage.value
+  ? projectedRemainingForPackage(selectedPackage.value) : 0);
+const otherScheduleAllocatedHours = computed(() => isEditing.value
+  ? (currentRule.value?.otherReservedHours ?? 0) : 0);
+
+// 其他仍生效排课占用同一课包的余额；已消课和待确认课时不再计入当前 Allocated。
 const allocationExceedsRemaining = computed(() =>
-  allocatedTotalHours.value > allocatablePackageHours.value || allocatedTotalHours.value < usedScheduleHours.value);
+  scheduledTotalHours.value < usedScheduleHours.value
+  || allocatedRemainingHours.value + otherScheduleAllocatedHours.value > remainingPackageHours.value);
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
@@ -1949,7 +1952,7 @@ async function openEditDialog() {
       startTime: s.startTime,
       endTime: scheduleEndTimeForDisplay(s.startTime, s.endTime),
       plannedUnits: s.plannedUnits,
-      allocatedHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
+      scheduleTotalHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
     })),
   });
   editDialogVisible.value = true;
@@ -1969,10 +1972,10 @@ function submitForm() {
 
 function validateSlotAllocations(): boolean {
   const incompleteSlot = editForm.slots.find(slot =>
-    !slot.teacherId || !slot.subjectName?.trim() || !slot.allocatedHours || slot.allocatedHours <= 0
+    !slot.teacherId || !slot.subjectName?.trim() || !slot.scheduleTotalHours || slot.scheduleTotalHours <= 0
   );
   if (!incompleteSlot) return true;
-    ElMessage.warning('Each time slot requires a teacher, lesson name, and allocated hours.');
+  ElMessage.warning('Each time slot requires a teacher, lesson name, and schedule total hours.');
   return false;
 }
 
@@ -1989,7 +1992,7 @@ async function submitCreateForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours must cover lessons already used and stay within the package balance.');
+      ElMessage.warning('Schedule total must cover deducted and pending lessons; Allocated must fit within Remaining.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2008,7 +2011,7 @@ async function submitCreateForm() {
           startTime: s.startTime,
           endTime: scheduleEndTimeForApi(s.endTime),
           plannedUnits: s.plannedUnits,
-          allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
+          allocatedUnits: s.scheduleTotalHours != null ? Math.round(s.scheduleTotalHours * 2) : undefined,
         })),
       });
       ElMessage.success('Schedule created and lessons generated.');
@@ -2036,7 +2039,7 @@ async function submitEditForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours must cover lessons already used and stay within the package balance.');
+      ElMessage.warning('Schedule total must cover deducted and pending lessons; Allocated must fit within Remaining.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2055,7 +2058,7 @@ async function submitEditForm() {
           startTime: s.startTime,
           endTime: scheduleEndTimeForApi(s.endTime),
           plannedUnits: s.plannedUnits,
-          allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
+          allocatedUnits: s.scheduleTotalHours != null ? Math.round(s.scheduleTotalHours * 2) : undefined,
         })),
       });
       const data = result.data.data;
@@ -2398,12 +2401,12 @@ function formatSlotHours(units?: number) {
   return units == null ? '—' : `${(units * 0.5).toFixed(1)}h`;
 }
 
-function slotLessonPlan(slot: SlotDef & { allocatedHours?: number }) {
+function slotLessonPlan(slot: SlotDef & { scheduleTotalHours?: number }) {
   const lessonHours = Number(slot.plannedUnits || 0) * 0.5;
-  const allocatedHours = Number(slot.allocatedHours || 0);
-  if (lessonHours <= 0 || allocatedHours <= 0) return 'Set allocated hours';
-  const fullLessons = Math.floor((allocatedHours + 0.0001) / lessonHours);
-  const remainder = Number((allocatedHours - fullLessons * lessonHours).toFixed(1));
+  const scheduleTotalHours = Number(slot.scheduleTotalHours || 0);
+  if (lessonHours <= 0 || scheduleTotalHours <= 0) return 'Set schedule total';
+  const fullLessons = Math.floor((scheduleTotalHours + 0.0001) / lessonHours);
+  const remainder = Number((scheduleTotalHours - fullLessons * lessonHours).toFixed(1));
   if (remainder <= 0) {
     return `${fullLessons} lesson${fullLessons === 1 ? '' : 's'}`;
   }

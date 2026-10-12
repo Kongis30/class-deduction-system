@@ -872,7 +872,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             if (slot.getTeacherId() == null || !StringUtils.hasText(slot.getSubjectName())
                     || slot.getAllocatedUnits() == null || slot.getAllocatedUnits() <= 0) {
                 throw new BusinessException("INCOMPLETE_SLOT_ALLOCATION",
-                        "Each schedule slot requires a teacher, course/subject, and allocated hours.");
+                        "Each schedule slot requires a teacher, course/subject, and schedule total hours.");
             }
             allocatedSum += slot.getAllocatedUnits();
         }
@@ -884,11 +884,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 + existing.confirmed() + existing.pending());
         if (allocatedSum > availableUnits) {
             throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
-                    "Total allocated hours exceed the package balance plus this schedule's already used hours.");
+                    "Allocated hours exceed the package's remaining hours after other schedules are accounted for.");
         }
         if (allocatedSum < existing.confirmed() + existing.pending()) {
             throw new BusinessException("SLOT_ALLOCATION_BELOW_USED",
-                    "Allocated hours cannot be less than lessons already deducted or pending for this schedule.");
+                    "Schedule total hours cannot be less than lessons already deducted or pending for this schedule.");
         }
     }
 
@@ -1089,7 +1089,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         if (slot.getTeacherId() == null || !StringUtils.hasText(slot.getSubjectName())
                 || slot.getAllocatedUnits() == null || slot.getAllocatedUnits() <= 0) {
             throw new BusinessException("INCOMPLETE_SLOT_ALLOCATION",
-                    "Each schedule slot requires a teacher, course/subject, and allocated hours. Update this schedule before generating more lessons.");
+                    "Each schedule slot requires a teacher, course/subject, and schedule total hours. Update this schedule before generating more lessons.");
         }
     }
 
