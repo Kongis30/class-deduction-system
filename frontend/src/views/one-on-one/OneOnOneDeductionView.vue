@@ -335,14 +335,16 @@
             </div>
             <div class="oo-student-context__metrics">
               <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
+              <span
+                v-if="activePackage.availableAllocatedUnits != null"
+                title="Hours assigned to the active schedule from the package's remaining balance."
+              >
+                <small>Allocated</small>{{ formatHours(activePackage.availableAllocatedUnits) }}h
+              </span>
+              <span title="Package balance after confirmed and pending deductions.">
+                <small>Remaining</small>{{ formatHours(activePackage.availablePackageUnits ?? activePackage.remainingUnits) }}h
+              </span>
               <span v-if="(activePackage.bonusUnits ?? 0) > 0"><small>Bonus</small>{{ formatHours(activePackage.bonusUnits ?? 0) }}h</span>
-              <span><small>Package available</small>{{ formatHours(activePackage.availablePackageUnits ?? activePackage.remainingUnits) }}h</span>
-              <span v-if="activePackage.allocatedUnits != null" title="Total hours assigned to the active weekly schedule, including lessons already deducted.">
-                <small>Allocated</small>{{ formatHours(activePackage.allocatedUnits) }}h
-              </span>
-              <span v-if="activePackage.availableAllocatedUnits != null" title="Allocated hours left after confirmed and pending deductions.">
-                <small>Available</small>{{ formatHours(activePackage.availableAllocatedUnits) }}h
-              </span>
             </div>
           </div>
           <el-alert
