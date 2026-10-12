@@ -427,8 +427,13 @@
         </div>
         <div v-if="editForm.slots.length > 0" class="edit-schedule__summary">
           {{ editForm.slots.length }} slot(s) · {{ (totalSlotUnits * 0.5).toFixed(1) }}h scheduled each week
-          <span class="edit-schedule__allocation">
-            · Remaining hours: {{ remainingPackageHours.toFixed(1) }}h
+          <span
+            class="edit-schedule__allocation"
+            :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
+          >
+            · Remaining {{ remainingPackageHours.toFixed(1) }}h
+            · Allocated {{ allocatedRemainingHours.toFixed(1) }}h
+            · Unallocated {{ unallocatedHours.toFixed(1) }}h
           </span>
         </div>
       </div>
