@@ -436,7 +436,7 @@
             <template v-if="schedulePendingHours > 0"> · Pending {{ schedulePendingHours.toFixed(1) }}h</template>
             · Allocated {{ allocatedRemainingHours.toFixed(1) }}h
             <template v-if="otherScheduleAllocatedHours > 0"> · Other schedules {{ otherScheduleAllocatedHours.toFixed(1) }}h</template>
-            · Remaining {{ remainingPackageHours.toFixed(1) }}h
+            · Unallocated {{ unallocatedHours.toFixed(1) }}h
           </span>
         </div>
       </div>
@@ -1912,6 +1912,11 @@ const otherScheduleAllocatedHours = computed(() => isEditing.value
   ? (currentRule.value?.otherReservedHours ?? 0) : 0);
 
 // 其他仍生效排课占用同一课包的余额；已消课和待确认课时不再计入当前 Allocated。
+// Unallocated 从课包当前可用余额中扣除本规则和其他规则已占用的剩余课时。
+const unallocatedHours = computed(() => Math.max(0, Number((
+  remainingPackageHours.value - allocatedRemainingHours.value - otherScheduleAllocatedHours.value
+).toFixed(1))));
+
 const allocationExceedsRemaining = computed(() =>
   scheduledTotalHours.value < usedScheduleHours.value
   || allocatedRemainingHours.value + otherScheduleAllocatedHours.value > remainingPackageHours.value);
