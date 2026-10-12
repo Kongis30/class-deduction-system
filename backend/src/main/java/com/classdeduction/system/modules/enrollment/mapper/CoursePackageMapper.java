@@ -60,6 +60,23 @@ public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
             """)
     List<OneOnOneScheduleCourseRow> selectSchedulableOneOnOneStudentCourseGrades();
 
+    /** 仅在该课包所有有效排课时段科目一致时返回科目，用于无时段关联的临时课次快照。 */
+    @Select("""
+            SELECT CASE WHEN COUNT(DISTINCT TRIM(slot.subject_name)) = 1
+                        THEN MIN(TRIM(slot.subject_name))
+                        ELSE NULL
+                   END
+            FROM recurring_schedule_rule rule
+            JOIN recurring_schedule_slot slot ON slot.rule_id = rule.id
+            WHERE rule.package_id = #{packageId}
+              AND rule.rule_status = 'ACTIVE'
+              AND rule.is_deleted = 0
+              AND slot.slot_status = 'ACTIVE'
+              AND slot.is_deleted = 0
+              AND TRIM(COALESCE(slot.subject_name, '')) <> ''
+            """)
+    String selectUniqueActiveOneOnOneSubjectName(@Param("packageId") Long packageId);
+
     /**
      * 按校区统计低余量课包数（通过 student JOIN 推算校区归属，批量GROUP BY，避免N+1）
      */
