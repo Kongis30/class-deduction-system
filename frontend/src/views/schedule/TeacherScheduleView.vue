@@ -312,6 +312,13 @@ const sortedTeachers = computed(() => [...teachers.value].sort((left, right) =>
     || String(left.id).localeCompare(String(right.id), undefined, { numeric: true }),
 ));
 
+const oneOnOneCategoryKeys = new Set([
+  'ONE_ON_ONE:IN_PERSON',
+  'ONE_ON_ONE:ONLINE',
+  'ONE_ON_ONE:UNSPECIFIED',
+]);
+
+// 教师可同时属于多个课程分组；仅将 1-on-1 的授课方式归并成同一分组。
 const filteredTeacherGroups = computed(() => {
   const q = searchText.value.trim().toLowerCase();
   const categoriesByTeacher = new Map<string, Map<string, string>>();
@@ -332,9 +339,12 @@ const filteredTeacherGroups = computed(() => {
       ? [...categories.entries()]
       : [['UNASSIGNED', 'Other / no course assignment'] as [string, string]];
     for (const [key, name] of memberships) {
-      const group = groups.get(key) ?? { key, name, teachers: [] };
-      group.teachers.push(teacher);
-      groups.set(key, group);
+      const normalizedKey = oneOnOneCategoryKeys.has(key) ? 'ONE_ON_ONE' : key;
+      const normalizedName = normalizedKey === 'ONE_ON_ONE' ? '1-on-1' : name;
+      const group = groups.get(normalizedKey) ?? { key: normalizedKey, name: normalizedName, teachers: [] };
+      // 同一位老师可能同时承担线上、线下课程，合并后只在 1-on-1 分组中显示一次。
+      if (!group.teachers.some(item => item.id === teacher.id)) group.teachers.push(teacher);
+      groups.set(normalizedKey, group);
     }
   }
 
@@ -346,14 +356,12 @@ const filteredTeacherGroups = computed(() => {
 
 function categoryOrder(key: string, name: string) {
   const normalizedName = name.toLowerCase().replace(/[\s_-]/g, '');
+  if (key === 'ONE_ON_ONE') return 0;
+  if (key === 'ALL') return 1;
   if (normalizedName.includes('afterschool') || name.includes('课后')) return 10;
   if (normalizedName.includes('saturday') || name.includes('周六')) return 20;
-  if (key === 'ONE_ON_ONE:IN_PERSON') return 30;
-  if (key === 'ONE_ON_ONE:ONLINE') return 40;
-  if (key === 'ONE_ON_ONE:UNSPECIFIED') return 50;
-  if (key === 'ALL') return 0;
   if (key === 'UNASSIGNED') return 100;
-  return 60;
+  return 30;
 }
 
 const selectedTeacherName = computed(() => {
