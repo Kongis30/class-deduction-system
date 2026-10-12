@@ -59,6 +59,9 @@ public interface EnrollmentOrderService {
     /** 删除报名单中的一门课程及其个人排课，保留同单其他课程与收据。 */
     void deleteOrderItem(Long orderId, Long itemId);
 
+    /** 删除独立 Credit 充值收据；只追加负向账本冲回，不删除原充值流水。 */
+    void deleteCreditTopUpReceipt(Long orderId, Long receiptId, CurrentUserResponse operator);
+
     /**
      * 管理员强制作废报名订单（软删除）：用于清理系统改造前遗留、已付款或已消课而无法走常规删除的历史脏数据。
      * 会关闭关联课包、取消未来课次、停用排课，但保留历史流水与消课记录以供审计。

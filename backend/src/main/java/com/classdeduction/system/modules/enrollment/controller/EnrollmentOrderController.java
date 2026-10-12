@@ -142,6 +142,17 @@ public class EnrollmentOrderController {
         return ApiResponse.success("Course deleted successfully.", null);
     }
 
+    @DeleteMapping("/{id}/credit-top-up-receipt")
+    @Operation(summary = "Delete a standalone Credit top-up receipt and reverse its unused Credit")
+    @RequireRoles({"ADMIN", "STAFF"})
+    public ApiResponse<Void> deleteCreditTopUpReceipt(
+            @PathVariable Long id,
+            @RequestParam Long receiptId,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        enrollmentOrderService.deleteCreditTopUpReceipt(id, receiptId, currentUser);
+        return ApiResponse.success("Credit top-up receipt deleted successfully.", null);
+    }
+
     @PostMapping("/{id}/force-void")
     @Operation(summary = "管理员强制作废报名单（清理历史脏数据，软删除）")
     @RequireRoles({"ADMIN"})

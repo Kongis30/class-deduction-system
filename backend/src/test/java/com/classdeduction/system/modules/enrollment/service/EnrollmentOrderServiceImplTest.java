@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.enrollment.service;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.core.conditions.AbstractWrapper;
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
@@ -41,6 +42,7 @@ import com.classdeduction.system.modules.enrollment.service.impl.EnrollmentOrder
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentCreateResultVO;
 import com.classdeduction.system.modules.enrollment.vo.EnrollmentOrderDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
+import com.classdeduction.system.modules.finance.service.StudentCreditService;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
@@ -70,6 +72,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -144,6 +147,9 @@ class EnrollmentOrderServiceImplTest {
     @Mock
     private JsonHelper jsonHelper;
 
+    @Mock
+    private StudentCreditService studentCreditService;
+
     // 直接用真实实现，让测试负载与生产一致的到期日计算逻辑。
     private ClassBillingServiceImpl classBillingService;
 
@@ -217,6 +223,7 @@ class EnrollmentOrderServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ClassEnrollmentEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PaymentAllocationEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""),
                 com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderItemEntity.class);
@@ -290,6 +297,7 @@ class EnrollmentOrderServiceImplTest {
                 paymentMethodMapper,
                 classHolidayService
         );
+        ReflectionTestUtils.setField(enrollmentOrderService, "studentCreditService", studentCreditService);
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(privateLessonGroupMemberMapper.selectList(any())).thenReturn(Collections.emptyList());
@@ -1066,6 +1074,91 @@ class EnrollmentOrderServiceImplTest {
                 .isEqualTo("COURSE_REFUND_REQUIRED");
         verify(paymentRecordMapper, never()).delete(any());
         verify(receiptRecordMapper, never()).delete(any());
+        verify(enrollmentOrderMapper, never()).deleteById(2001L);
+    }
+
+    @Test
+    void shouldReverseCreditAndDeleteStandaloneTopUpReceipt() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setAmountDue(new BigDecimal("100.00"));
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setId(3001L);
+        receipt.setEnrollmentOrderId(2001L);
+        receipt.setStudentId(101L);
+        receipt.setReceiptNo("RCP202610120001");
+        receipt.setTemplateCode("DEFAULT_RECEIPT");
+        receipt.setReceiptPayload("top-up snapshot");
+        EnrollmentOrderParticipantEntity participant = new EnrollmentOrderParticipantEntity();
+        participant.setStudentId(101L);
+        PaymentRecordEntity payment = new PaymentRecordEntity();
+        payment.setPaymentType("PAYMENT");
+        payment.setPaymentMethod("ZELLE");
+        payment.setPaymentStatus("COMPLETED");
+        payment.setAmount(new BigDecimal("100.00"));
+
+        when(enrollmentOrderMapper.selectByIdForUpdate(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(receiptRecordMapper.selectById(3001L)).thenReturn(receipt);
+        when(jsonHelper.fromJson(any(), any())).thenReturn(Map.of(
+                "creditTopUpAmount", new BigDecimal("100.00"),
+                "amountDue", new BigDecimal("100.00"),
+                "items", Collections.emptyList()));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(participant));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(enrollmentOrderMapper.updateById(order)).thenReturn(1);
+
+        enrollmentOrderService.deleteCreditTopUpReceipt(2001L, 3001L,
+                new CurrentUserResponse(9L, "admin", "Admin", "STAFF", null, null, List.of("STAFF")));
+
+        verify(studentCreditService).reverseTopUp(101L, 2001L, new BigDecimal("100.00"),
+                9L, "Admin", "Deleted Credit top-up receipt RCP202610120001");
+        verify(paymentRecordMapper).delete(any());
+        verify(receiptRecordMapper).delete(any());
+        verify(enrollmentOrderParticipantMapper).delete(any());
+        verify(enrollmentOrderMapper).deleteById(2001L);
+    }
+
+    @Test
+    void shouldRejectTopUpReceiptWhenPaymentTotalDoesNotMatchBeforeReversingCredit() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setAmountDue(new BigDecimal("100.00"));
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setId(3001L);
+        receipt.setEnrollmentOrderId(2001L);
+        receipt.setStudentId(101L);
+        receipt.setTemplateCode("DEFAULT_RECEIPT");
+        receipt.setReceiptPayload("top-up snapshot");
+        EnrollmentOrderParticipantEntity participant = new EnrollmentOrderParticipantEntity();
+        participant.setStudentId(101L);
+        PaymentRecordEntity payment = new PaymentRecordEntity();
+        payment.setPaymentType("PAYMENT");
+        payment.setPaymentMethod("ZELLE");
+        payment.setAmount(new BigDecimal("90.00"));
+
+        when(enrollmentOrderMapper.selectByIdForUpdate(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(receiptRecordMapper.selectById(3001L)).thenReturn(receipt);
+        when(jsonHelper.fromJson(any(), any())).thenReturn(Map.of(
+                "creditTopUpAmount", new BigDecimal("100.00"),
+                "amountDue", new BigDecimal("100.00"),
+                "items", Collections.emptyList()));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(participant));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
+
+        assertThatThrownBy(() -> enrollmentOrderService.deleteCreditTopUpReceipt(2001L, 3001L, null))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo("CREDIT_TOP_UP_PAYMENT_MISMATCH");
+        verify(studentCreditService, never()).reverseTopUp(any(), any(), any(), any(), any(), any());
         verify(enrollmentOrderMapper, never()).deleteById(2001L);
     }
 

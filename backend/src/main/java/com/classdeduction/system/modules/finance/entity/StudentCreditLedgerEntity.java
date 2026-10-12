@@ -13,7 +13,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 学生 Credit 不可变流水。正数增加余额，负数表示报名抵扣或人工扣减。
+ * 学生 Credit 不可变流水。正数增加余额，负数表示报名抵扣、充值冲回或人工扣减。
  */
 @Getter
 @Setter

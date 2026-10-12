@@ -123,7 +123,7 @@
             <el-table-column label="Date" min-width="150">
               <template #default="{ row }">{{ formatDateTime(row.issuedAt) }}</template>
             </el-table-column>
-            <el-table-column label="Actions" :width="receiptType === 'registration' ? 180 : 110" fixed="right">
+            <el-table-column label="Actions" :width="receiptType === 'registration' ? 220 : 110" fixed="right">
               <template #default="{ row }">
                 <div class="row-actions">
                   <el-button link type="primary" @click="openReceipt(row)">View</el-button>
@@ -135,8 +135,16 @@
                   >
                     Delete course
                   </el-button>
+                  <el-button
+                    v-if="canDeleteCreditTopUp(row)"
+                    link
+                    type="danger"
+                    @click="openDeleteCreditTopUpDialog(row)"
+                  >
+                    Delete top-up
+                  </el-button>
                   <span
-                    v-else-if="receiptType === 'registration' && hasReceiptCourses(row)"
+                    v-if="receiptType === 'registration' && !canDeleteCourse(row) && !canDeleteCreditTopUp(row) && hasReceiptCourses(row)"
                     class="muted-value"
                     :title="row.enrollmentOrderActive ? 'This receipt has no active course enrollment.' : 'The enrollment order is no longer active.'"
                   >
@@ -183,8 +191,16 @@
                 >
                   Delete course
                 </el-button>
+                <el-button
+                  v-if="canDeleteCreditTopUp(receipt)"
+                  type="danger"
+                  plain
+                  @click="openDeleteCreditTopUpDialog(receipt)"
+                >
+                  Delete top-up
+                </el-button>
                 <span
-                  v-else-if="receiptType === 'registration' && hasReceiptCourses(receipt)"
+                  v-if="receiptType === 'registration' && !canDeleteCourse(receipt) && !canDeleteCreditTopUp(receipt) && hasReceiptCourses(receipt)"
                   class="muted-value"
                 >View only</span>
               </div>
@@ -232,6 +248,46 @@
             </template>
           </el-dialog>
 
+          <el-dialog
+            v-model="deleteCreditTopUpDialogVisible"
+            title="Delete Credit top-up receipt"
+            width="520px"
+            :close-on-click-modal="!deletingCreditTopUp"
+            :close-on-press-escape="!deletingCreditTopUp"
+            @closed="resetDeleteCreditTopUpDialog"
+          >
+            <el-alert
+              type="warning"
+              :closable="false"
+              show-icon
+              title="The receipt, payment, and order will be removed. The Credit added by this top-up will be reversed."
+            />
+            <p class="delete-course-student">
+              {{ deleteCreditTopUpTarget?.studentName }} · {{ deleteCreditTopUpTarget?.receiptNo }}
+            </p>
+            <div class="top-up-delete-balance" v-loading="creditBalanceLoading">
+              <div><span>Top-up amount</span><strong>{{ formatMoney(deleteCreditTopUpTarget ? creditTopUpAmount(deleteCreditTopUpTarget) : 0) }}</strong></div>
+              <div><span>Available Credit</span><strong>{{ creditBalance == null ? 'Loading…' : formatMoney(creditBalance) }}</strong></div>
+            </div>
+            <p
+              v-if="creditBalance != null && deleteCreditTopUpTarget && creditBalance < creditTopUpAmount(deleteCreditTopUpTarget)"
+              class="delete-course-note"
+            >
+              The available Credit is less than this top-up. The student must have enough Credit to reverse the full amount.
+            </p>
+            <template #footer>
+              <el-button :disabled="deletingCreditTopUp" @click="deleteCreditTopUpDialogVisible = false">Cancel</el-button>
+              <el-button
+                type="danger"
+                :loading="deletingCreditTopUp"
+                :disabled="creditBalanceLoading || creditBalance == null || !deleteCreditTopUpTarget || creditBalance < creditTopUpAmount(deleteCreditTopUpTarget)"
+                @click="confirmDeleteCreditTopUp"
+              >
+                Delete top-up
+              </el-button>
+            </template>
+          </el-dialog>
+
           <el-pagination
             v-if="selectedStudent"
             class="records-pagination"
@@ -255,13 +311,18 @@ import { useRouter } from 'vue-router';
 import { useAppStore } from '@/stores/app';
 
 import { fetchStudents } from '@/api/base-data';
-import { deleteEnrollmentOrderItem, fetchReceipts } from '@/api/enrollment';
+import { deleteCreditTopUpReceipt, deleteEnrollmentOrderItem, fetchReceipts } from '@/api/enrollment';
 import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
+import { fetchStudentCreditBalance } from '@/api/student-credit';
+import { useAuthStore } from '@/stores/auth';
+import { isAdminOrStaffUser } from '@/types/auth';
 import type { ReceiptRecordItem, StudentItem } from '@/types/domain';
 import { formatRoundedUsd } from '@/utils/money-display';
 
 const router = useRouter();
 const appStore = useAppStore();
+const authStore = useAuthStore();
+const canManageCreditTopUpReceipts = computed(() => isAdminOrStaffUser(authStore.currentUser));
 const mobileSearchExpanded = ref(false);
 
 const studentLoading = ref(false);
@@ -276,6 +337,12 @@ const deleteCourseDialogVisible = ref(false);
 const deletingCourse = ref(false);
 const deleteTargetReceipt = ref<ReceiptRecordItem | null>(null);
 const deleteTargetItemId = ref('');
+const deleteCreditTopUpDialogVisible = ref(false);
+const deletingCreditTopUp = ref(false);
+const creditBalanceLoading = ref(false);
+const creditBalance = ref<number | null>(null);
+const deleteCreditTopUpTarget = ref<ReceiptRecordItem | null>(null);
+let creditBalanceLoadSequence = 0;
 
 const deleteCourseOptions = computed(() => deleteTargetReceipt.value
   ? receiptCourseOptions(deleteTargetReceipt.value)
@@ -509,6 +576,26 @@ function canDeleteCourse(row: ReceiptRecordItem) {
     && receiptCourseOptions(row).length > 0;
 }
 
+function creditTopUpAmount(row: ReceiptRecordItem) {
+  return numberValue(receiptPayload(row).creditTopUpAmount);
+}
+
+function isCreditTopUpReceipt(row: ReceiptRecordItem) {
+  const payload = receiptPayload(row);
+  return row.templateCode === 'DEFAULT_RECEIPT'
+    && creditTopUpAmount(row) > 0
+    && Array.isArray(payload.items)
+    && payload.items.length === 0;
+}
+
+function canDeleteCreditTopUp(row: ReceiptRecordItem) {
+  return canManageCreditTopUpReceipts.value
+    && receiptType.value === 'registration'
+    && row.enrollmentOrderActive === true
+    && row.studentId != null
+    && isCreditTopUpReceipt(row);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -549,6 +636,55 @@ async function confirmDeleteCourse() {
     ElMessage.error(extractErrorMessage(error));
   } finally {
     deletingCourse.value = false;
+  }
+}
+
+async function openDeleteCreditTopUpDialog(row: ReceiptRecordItem) {
+  deleteCreditTopUpTarget.value = row;
+  creditBalance.value = null;
+  deleteCreditTopUpDialogVisible.value = true;
+  const requestSequence = ++creditBalanceLoadSequence;
+  creditBalanceLoading.value = true;
+  try {
+    const response = await fetchStudentCreditBalance(row.studentId);
+    if (requestSequence === creditBalanceLoadSequence) {
+      const balance = Number(response.data.data);
+      creditBalance.value = Number.isFinite(balance) ? balance : null;
+    }
+  } catch (error) {
+    if (requestSequence === creditBalanceLoadSequence) {
+      ElMessage.error(extractErrorMessage(error));
+    }
+  } finally {
+    if (requestSequence === creditBalanceLoadSequence) creditBalanceLoading.value = false;
+  }
+}
+
+function resetDeleteCreditTopUpDialog() {
+  if (deletingCreditTopUp.value) return;
+  creditBalanceLoadSequence += 1;
+  deleteCreditTopUpTarget.value = null;
+  creditBalance.value = null;
+}
+
+async function confirmDeleteCreditTopUp() {
+  const receipt = deleteCreditTopUpTarget.value;
+  if (!receipt || creditBalance.value == null || creditBalance.value < creditTopUpAmount(receipt)) return;
+  deletingCreditTopUp.value = true;
+  try {
+    await deleteCreditTopUpReceipt(receipt.enrollmentOrderId, receipt.id);
+    ElMessage.success('Credit top-up receipt deleted and its Credit reversed.');
+    deleteCreditTopUpDialogVisible.value = false;
+    await Promise.all([loadSelectedStudentRecords(), loadStudents()]);
+    if (receipts.value.length === 0 && orderQuery.pageNum > 1) {
+      orderQuery.pageNum -= 1;
+      await loadSelectedStudentRecords();
+    }
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    deletingCreditTopUp.value = false;
+    if (!deleteCreditTopUpDialogVisible.value) resetDeleteCreditTopUpDialog();
   }
 }
 
@@ -687,6 +823,26 @@ function formatMoney(value?: number) {
 
 .muted-value,
 .delete-course-note {
+  color: var(--el-text-color-secondary);
+}
+
+.top-up-delete-balance {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-lighter);
+}
+
+.top-up-delete-balance > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.top-up-delete-balance span {
   color: var(--el-text-color-secondary);
 }
 

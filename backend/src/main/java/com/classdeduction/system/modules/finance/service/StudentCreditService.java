@@ -22,6 +22,10 @@ public interface StudentCreditService {
     void creditFromTopUp(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                          Long handledByUserId, String handledByName, String remark);
 
+    /** 删除充值收据时追加可审计的负向流水；余额不足或重复冲回时拒绝操作。 */
+    void reverseTopUp(Long studentId, Long orderId, BigDecimal amount,
+                      Long handledByUserId, String handledByName, String remark);
+
     void consumeForPayment(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                            Long handledByUserId, String handledByName, String remark);
 }

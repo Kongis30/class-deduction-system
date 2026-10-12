@@ -34,6 +34,13 @@ public interface StudentCreditLedgerMapper extends BaseMapper<StudentCreditLedge
             + "WHERE student_id = #{studentId} AND is_deleted = 0")
     BigDecimal selectBalance(@Param("studentId") Long studentId);
 
+    @Select("SELECT COALESCE(SUM(amount), 0.00) FROM student_credit_ledger "
+            + "WHERE student_id = #{studentId} AND source_enrollment_order_id = #{orderId} "
+            + "AND entry_type = #{entryType} AND is_deleted = 0")
+    BigDecimal selectOrderAmount(@Param("studentId") Long studentId,
+                                 @Param("orderId") Long orderId,
+                                 @Param("entryType") String entryType);
+
     /**
      * 抵扣 Credit 时锁定学生主表行，避免并发付款同时读取同一余额而超额使用。
      * 调用方必须处于事务中；报名和后续收款服务都满足这一条件。

@@ -4117,6 +4117,95 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    // 收据页专用入口：确认是纯充值订单、账款一致且余额足够后，冲回 Credit 并复用订单级联软删。
+    public void deleteCreditTopUpReceipt(Long orderId, Long receiptId, CurrentUserResponse operator) {
+        EnrollmentOrderEntity order = requireOrderForUpdate(orderId);
+        List<EnrollmentOrderItemEntity> items = listOrderItemsByOrderId(orderId);
+        if (order.getStudentId() == null || order.getClassId() != null || !items.isEmpty()) {
+            throw new BusinessException("CREDIT_TOP_UP_RECEIPT_REQUIRED",
+                    "Only a standalone Credit top-up receipt can be deleted here.");
+        }
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(new LambdaQueryWrapper<CoursePackageEntity>()
+                .eq(CoursePackageEntity::getEnrollmentOrderId, orderId));
+        if (packages != null && !packages.isEmpty()) {
+            throw new BusinessException("CREDIT_TOP_UP_RECEIPT_REQUIRED",
+                    "This receipt has course packages and cannot be deleted as a Credit top-up.");
+        }
+
+        ReceiptRecordEntity receipt = receiptRecordMapper.selectById(receiptId);
+        if (receipt == null || !Objects.equals(receipt.getEnrollmentOrderId(), orderId)
+                || !Objects.equals(receipt.getStudentId(), order.getStudentId())
+                || !DEFAULT_RECEIPT_TEMPLATE.equalsIgnoreCase(receipt.getTemplateCode())
+                || !StringUtils.hasText(receipt.getReceiptPayload())) {
+            throw new BusinessException("CREDIT_TOP_UP_RECEIPT_REQUIRED",
+                    "The selected receipt is not this student's active registration receipt.");
+        }
+
+        Map<String, Object> payload = jsonHelper.fromJson(receipt.getReceiptPayload(),
+                new TypeReference<LinkedHashMap<String, Object>>() {});
+        BigDecimal topUpAmount = payload == null ? ZERO_AMOUNT : toBigDecimal(payload.get("creditTopUpAmount"));
+        Object rawItems = payload == null ? null : payload.get("items");
+        if (topUpAmount.compareTo(ZERO_AMOUNT) <= 0 || !(rawItems instanceof List<?> receiptItems)
+                || !receiptItems.isEmpty()
+                || toBigDecimal(payload.get("amountDue")).compareTo(topUpAmount) != 0
+                || defaultAmount(order.getAmountDue()).compareTo(topUpAmount) != 0
+                || defaultAmount(order.getReceivedAmount()).compareTo(topUpAmount) != 0) {
+            throw new BusinessException("CREDIT_TOP_UP_ORDER_MISMATCH",
+                    "The top-up receipt and order amounts do not match. Review the account before deleting it.");
+        }
+
+        List<EnrollmentOrderParticipantEntity> participants = listOrderParticipants(orderId);
+        if (participants.size() != 1 || !Objects.equals(participants.get(0).getStudentId(), order.getStudentId())) {
+            throw new BusinessException("CREDIT_TOP_UP_PARTICIPANT_MISMATCH",
+                    "The top-up receipt must belong to exactly one student.");
+        }
+
+        List<PaymentRecordEntity> payments = paymentRecordMapper.selectList(
+                new LambdaQueryWrapper<PaymentRecordEntity>()
+                        .eq(PaymentRecordEntity::getEnrollmentOrderId, orderId));
+        BigDecimal paidTotal = ZERO_AMOUNT;
+        if (payments == null || payments.isEmpty()) {
+            throw new BusinessException("CREDIT_TOP_UP_PAYMENT_MISSING",
+                    "The top-up payment records could not be found. Review the account before deleting it.");
+        }
+        for (PaymentRecordEntity payment : payments) {
+            if (!"PAYMENT".equalsIgnoreCase(payment.getPaymentType())
+                    || defaultAmount(payment.getAmount()).compareTo(ZERO_AMOUNT) <= 0
+                    || "VOIDED".equalsIgnoreCase(payment.getPaymentStatus())
+                    || StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(payment.getPaymentMethod())) {
+                throw new BusinessException("CREDIT_TOP_UP_PAYMENT_CHANGED",
+                        "This top-up has refunded or adjusted payments. Review it before deleting the receipt.");
+            }
+            paidTotal = paidTotal.add(defaultAmount(payment.getAmount()));
+        }
+        if (paidTotal.compareTo(topUpAmount) != 0) {
+            throw new BusinessException("CREDIT_TOP_UP_PAYMENT_MISMATCH",
+                    "The top-up payments do not match the receipt amount. Review its payments before deleting it.");
+        }
+        List<PaymentAllocationEntity> allocations = paymentAllocationMapper.selectList(
+                new LambdaQueryWrapper<PaymentAllocationEntity>()
+                        .eq(PaymentAllocationEntity::getEnrollmentOrderId, orderId));
+        if (allocations != null && !allocations.isEmpty()) {
+            throw new BusinessException("CREDIT_TOP_UP_ALLOCATION_INVALID",
+                    "This top-up is linked to course payments. Review the account before deleting it.");
+        }
+
+        studentCreditService.reverseTopUp(order.getStudentId(), orderId, topUpAmount,
+                operator == null ? null : operator.userId(),
+                operator == null ? order.getHandledByName() : operator.displayName(),
+                "Deleted Credit top-up receipt " + receipt.getReceiptNo());
+
+        // 通用订单删除要求先退款至零；这里已用不可变 Credit 冲回替代退款，因此在同一事务中归零后复用级联软删。
+        order.setReceivedAmount(ZERO_AMOUNT);
+        if (enrollmentOrderMapper.updateById(order) != 1) {
+            throw new BusinessException("ORDER_CONCURRENT_UPDATE",
+                    "The receipt was updated by another request. Please retry.");
+        }
+        deleteOrder(orderId);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void deleteOrderItem(Long orderId, Long itemId) {
         EnrollmentOrderEntity order = requireOrderForUpdate(orderId);
         lockOrderClassGroupsForUpdate(order);
@@ -4576,6 +4665,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private void deleteOrderFinancialArtifacts(EnrollmentOrderEntity order, List<Long> itemIds) {
+        enrollmentOrderParticipantMapper.delete(new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId()));
         // 课程级分摊明细随订单一并软删
         paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
                 .eq(PaymentAllocationEntity::getEnrollmentOrderId, order.getId()));

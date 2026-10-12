@@ -74,6 +74,7 @@ Shared conventions:
 
 - `GET /api/v1/enrollment/orders`
 - `GET /api/v1/enrollment/orders/{id}`
+- `DELETE /api/v1/enrollment/orders/{id}/credit-top-up-receipt?receiptId={receiptId}` (ADMIN/STAFF only)
 - `POST /api/v1/enrollment/orders`
 - `GET /api/v1/enrollment/packages`
 - `GET /api/v1/enrollment/packages/{id}`
@@ -88,6 +89,7 @@ Shared conventions:
 - `MANAGER` may save registrations and positive incoming payments. Refund, saved-receipt correction, student-credit balance adjustment, teacher-payment creation, and teacher-payment confirmation remain restricted to `ADMIN`/`STAFF`.
 - The `MANAGER` Data Summary response omits all monetary numeric fields; page rendering and workbook exports follow the same restriction.
 - `PUT /api/v1/enrollment/orders/{id}/correction` uses the same course line and initial-payment allocation fields when correcting a registration.
+- Deleting a standalone Credit top-up receipt validates the order, participant, payment, receipt snapshot, and original Credit ledger; the student's available Credit must cover the full top-up. The operation appends a `TOP_UP_REVERSAL` entry and soft-deletes the order, receipt, payments, and participant snapshot atomically. It retains the original ledger entry; refunded, adjusted, linked, mismatched, or underfunded top-ups require manual review.
 - `POST /api/v1/enrollment/payments` accepts per-split `allocations[]` containing `enrollmentOrderItemId` and `amount`. A participant-specific payment cannot also use course allocations.
 - `GET /api/v1/enrollment/orders/{id}` returns each item’s `discountAmount`, `amountDue`, `paidAmount`, and `balanceAmount`, plus each payment’s course allocations.
 - Legacy clients may omit allocations; the backend keeps the existing automatic allocation behavior for those requests.

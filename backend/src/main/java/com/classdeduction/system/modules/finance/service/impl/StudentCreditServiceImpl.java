@@ -24,6 +24,8 @@ public class StudentCreditServiceImpl implements StudentCreditService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
     private static final String CREDIT_USED = "CREDIT_USED";
+    private static final String TOP_UP_CREDIT = "TOP_UP_CREDIT";
+    private static final String TOP_UP_REVERSAL = "TOP_UP_REVERSAL";
 
     private final StudentCreditLedgerMapper ledgerMapper;
 
@@ -71,7 +73,34 @@ public class StudentCreditServiceImpl implements StudentCreditService {
     @Override
     public void creditFromTopUp(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                                 Long handledByUserId, String handledByName, String remark) {
-        append(studentId, amount, "TOP_UP_CREDIT", orderId, paymentRecordId,
+        append(studentId, amount, TOP_UP_CREDIT, orderId, paymentRecordId,
+                handledByUserId, handledByName, remark);
+    }
+
+    @Override
+    @Transactional
+    public void reverseTopUp(Long studentId, Long orderId, BigDecimal amount,
+                             Long handledByUserId, String handledByName, String remark) {
+        BigDecimal normalized = defaultAmount(amount);
+        if (studentId == null || orderId == null || normalized.compareTo(ZERO) <= 0) {
+            throw new BusinessException("INVALID_CREDIT_TOP_UP_REVERSAL", "A valid Credit top-up is required.");
+        }
+        if (ledgerMapper.lockStudent(studentId) == null) {
+            throw new BusinessException("CREDIT_STUDENT_REQUIRED", "The Credit student does not exist.");
+        }
+
+        BigDecimal credited = defaultAmount(ledgerMapper.selectOrderAmount(studentId, orderId, TOP_UP_CREDIT));
+        BigDecimal alreadyReversed = defaultAmount(ledgerMapper.selectOrderAmount(studentId, orderId, TOP_UP_REVERSAL));
+        if (credited.compareTo(normalized) != 0 || alreadyReversed.compareTo(ZERO) != 0) {
+            throw new BusinessException("CREDIT_TOP_UP_LEDGER_MISMATCH",
+                    "The Credit top-up ledger does not match this receipt or has already been reversed.");
+        }
+
+        if (getBalance(studentId).compareTo(normalized) < 0) {
+            throw new BusinessException("INSUFFICIENT_STUDENT_CREDIT",
+                    "Available Credit is less than the top-up amount. Restore the Credit balance before deleting this receipt.");
+        }
+        append(studentId, normalized.negate(), TOP_UP_REVERSAL, orderId, null,
                 handledByUserId, handledByName, remark);
     }
 
@@ -100,12 +129,12 @@ public class StudentCreditServiceImpl implements StudentCreditService {
             throw new BusinessException("CREDIT_STUDENT_REQUIRED", "A student is required for Credit transactions.");
         }
         BigDecimal normalized = defaultAmount(amount);
-        // append 接收已经带方向的账本变动：使用抵扣为负数，退款和充值入账为正数。
-        boolean isCreditUsed = CREDIT_USED.equals(entryType);
-        if ((isCreditUsed && normalized.compareTo(ZERO) >= 0)
-                || (!isCreditUsed && normalized.compareTo(ZERO) <= 0)) {
-            String message = isCreditUsed
-                    ? "Credit usage amount must be less than zero."
+        // append 接收带方向的账本变动：抵扣和充值冲回为负数，退款和充值入账为正数。
+        boolean isCreditDebit = CREDIT_USED.equals(entryType) || TOP_UP_REVERSAL.equals(entryType);
+        if ((isCreditDebit && normalized.compareTo(ZERO) >= 0)
+                || (!isCreditDebit && normalized.compareTo(ZERO) <= 0)) {
+            String message = isCreditDebit
+                    ? "Credit debit amount must be less than zero."
                     : "Credit amount must be greater than zero.";
             throw new BusinessException("INVALID_CREDIT_AMOUNT", message);
         }
