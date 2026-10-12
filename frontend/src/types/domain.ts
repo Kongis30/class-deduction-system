@@ -542,6 +542,9 @@ export interface RecurringScheduleSlotItem {
 export interface RecurringScheduleRuleDetailItem extends RecurringScheduleRuleItem {
   packageName?: string;
   notes?: string;
+  deductedHours?: number;
+  pendingHours?: number;
+  otherReservedHours?: number;
   slots: RecurringScheduleSlotItem[];
   createdAt: string;
   updatedAt?: string;

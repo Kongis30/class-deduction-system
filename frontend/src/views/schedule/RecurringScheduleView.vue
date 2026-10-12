@@ -273,9 +273,9 @@
             <el-input-number v-model="deductedHoursDraft" :min="confirmedDeductionHours" :max="deductedHoursMax" :step="0.5" :precision="1" controls-position="right" />
           </label>
           <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
-          <div><span>Remaining</span><strong>{{ projectedRemainingHours }}h</strong></div>
+          <div><span>Package available</span><strong>{{ projectedRemainingHours }}h</strong></div>
         </div>
-        <p class="package-hours-card__hint">Already deducted includes confirmed lessons. Pending deduction includes teacher-submitted lessons awaiting admin review. Remaining excludes both.</p>
+        <p class="package-hours-card__hint">Total is the current package entitlement, including added or bonus hours. Package available excludes confirmed and pending deductions.</p>
       </section>
 
       <template #footer>
@@ -431,9 +431,10 @@
             class="edit-schedule__allocation"
             :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
-            · Available {{ allocatablePackageHours.toFixed(1) }}h · Allocated {{ allocatedTotalHours.toFixed(1) }}h
-            ({{ remainingAllocationHours >= 0 ? 'unallocated' : 'over by' }}
-            {{ Math.abs(remainingAllocationHours).toFixed(1) }}h)
+            · Allocated {{ allocatedTotalHours.toFixed(1) }}h
+            <template v-if="usedScheduleHours > 0"> · Used {{ usedScheduleHours.toFixed(1) }}h</template>
+            · Available {{ availableScheduledHours.toFixed(1) }}h
+            · Package balance {{ (selectedPackage ? projectedRemainingForPackage(selectedPackage) : 0).toFixed(1) }}h
           </span>
         </div>
       </div>
@@ -1889,20 +1890,28 @@ const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
 );
 
-// 编辑分配只使用课包当前剩余课时，与上方课包余额卡片保持一致。
-const allocatablePackageHours = computed(() => selectedPackage.value
-  ? projectedRemainingForPackage(selectedPackage.value) : 0);
+// 编辑的是累计分配额：把本规则已消课和待确认的课时加回可分配上限。
+const allocatablePackageHours = computed(() => {
+  const balance = selectedPackage.value ? projectedRemainingForPackage(selectedPackage.value) : 0;
+  return balance + (isEditing.value ? (currentRule.value?.deductedHours ?? 0)
+    + (currentRule.value?.pendingHours ?? 0)
+    - (currentRule.value?.otherReservedHours ?? 0) : 0);
+});
 
 // 已在各时段分配的课时合计（小时）。
 const allocatedTotalHours = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
 );
 
-const remainingAllocationHours = computed(() =>
-  Number((allocatablePackageHours.value - allocatedTotalHours.value).toFixed(1))
-);
+const usedScheduleHours = computed(() => isEditing.value
+  ? (currentRule.value?.deductedHours ?? 0) + (currentRule.value?.pendingHours ?? 0) : 0);
 
-const allocationExceedsRemaining = computed(() => remainingAllocationHours.value < 0);
+const availableScheduledHours = computed(() => Math.max(0, Number((
+  allocatedTotalHours.value - usedScheduleHours.value
+).toFixed(1))));
+
+const allocationExceedsRemaining = computed(() =>
+  allocatedTotalHours.value > allocatablePackageHours.value || allocatedTotalHours.value < usedScheduleHours.value);
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
@@ -1980,7 +1989,7 @@ async function submitCreateForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours exceed the remaining package hours. Please reduce the allocation.');
+      ElMessage.warning('Allocated hours must cover lessons already used and stay within the package balance.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2027,7 +2036,7 @@ async function submitEditForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours exceed the remaining package hours. Please reduce the allocation.');
+      ElMessage.warning('Allocated hours must cover lessons already used and stay within the package balance.');
       return;
     }
     if (!validateSlotAllocations()) return;

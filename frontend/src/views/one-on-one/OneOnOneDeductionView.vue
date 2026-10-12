@@ -205,7 +205,7 @@
                   @click="selectCandidatePackage(candidate)"
                 >
                   <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
-                  <small>{{ normalizedGradeBand(candidate.pkg.gradeBand) }} · {{ formatHours(candidate.pkg.remainingUnits) }}h remaining</small>
+                  <small>{{ normalizedGradeBand(candidate.pkg.gradeBand) }} · {{ formatHours(candidate.pkg.availablePackageUnits ?? candidate.pkg.remainingUnits) }}h available</small>
                 </button>
               </div>
             </section>
@@ -336,19 +336,21 @@
             <div class="oo-student-context__metrics">
               <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
               <span v-if="(activePackage.bonusUnits ?? 0) > 0"><small>Bonus</small>{{ formatHours(activePackage.bonusUnits ?? 0) }}h</span>
-              <span><small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h</span>
-              <span
-                :class="{ 'oo-metric--overallocated': (activePackage.allocatedUnits ?? 0) > activePackage.remainingUnits }"
-                title="Scheduled hours and lessons awaiting confirmation that still occupy the remaining balance. Confirmed lessons are excluded."
-              ><small>Allocated</small>{{ activePackage.allocatedUnits == null ? '—' : `${formatHours(activePackage.allocatedUnits)}h` }}</span>
+              <span><small>Package available</small>{{ formatHours(activePackage.availablePackageUnits ?? activePackage.remainingUnits) }}h</span>
+              <span v-if="activePackage.allocatedUnits != null" title="Total hours assigned to the active weekly schedule, including lessons already deducted.">
+                <small>Allocated</small>{{ formatHours(activePackage.allocatedUnits) }}h
+              </span>
+              <span v-if="activePackage.availableAllocatedUnits != null" title="Allocated hours left after confirmed and pending deductions.">
+                <small>Available</small>{{ formatHours(activePackage.availableAllocatedUnits) }}h
+              </span>
             </div>
           </div>
           <el-alert
-            v-if="(activePackage.allocatedUnits ?? 0) > activePackage.remainingUnits"
+            v-if="(activePackage.scheduledReservedUnits ?? 0) > (activePackage.availablePackageUnits ?? activePackage.remainingUnits)"
             type="warning"
             :closable="false"
             show-icon
-            :title="`Scheduled hours exceed the remaining balance by ${formatHours((activePackage.allocatedUnits ?? 0) - activePackage.remainingUnits)}h. Review this package's schedule.`"
+            :title="`Future scheduled hours exceed the available package balance by ${formatHours((activePackage.scheduledReservedUnits ?? 0) - (activePackage.availablePackageUnits ?? activePackage.remainingUnits))}h. Review this package's schedule.`"
           />
 
           <section class="oo-signature-sheet oo-parent-signature-sheet print-only">
@@ -363,7 +365,7 @@
                 </div>
                 <div class="oo-signature-hours__group oo-signature-hours__group--balance">
                   <p><strong>Already deducted:</strong> {{ formatHours(signaturePackage?.consumedUnits) }}</p>
-                  <p><strong>Remaining:</strong> {{ formatHours(signaturePackage?.remainingUnits) }}</p>
+                  <p><strong>Available balance:</strong> {{ formatHours(signaturePackage?.availablePackageUnits ?? signaturePackage?.remainingUnits) }}</p>
                 </div>
               </div>
             </div>
@@ -2116,7 +2118,9 @@ onMounted(async () => {
 .oo-student-context__metrics {
   display: flex;
   align-items: center;
-  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px 14px;
 }
 
 .oo-student-context__metrics > span {

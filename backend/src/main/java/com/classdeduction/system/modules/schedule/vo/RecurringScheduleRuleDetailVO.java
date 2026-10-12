@@ -27,6 +27,9 @@ public record RecurringScheduleRuleDetailVO(
         String notes,
         Integer generatedOccurrenceCount,
         LocalDateTime nextLessonStartAt,
+        Double deductedHours,
+        Double pendingHours,
+        Double otherReservedHours,
         List<RecurringScheduleSlotVO> slots,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
