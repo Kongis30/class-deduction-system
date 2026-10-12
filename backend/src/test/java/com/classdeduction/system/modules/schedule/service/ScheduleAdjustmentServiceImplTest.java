@@ -710,6 +710,7 @@ class ScheduleAdjustmentServiceImplTest {
         // 纯新增场景：无源课次，学生从课包既有课次推导（resolveStudentId 与周课次查询都走 selectList）。
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(existing), List.of(existing), List.of(future));
         when(lessonOccurrenceMapper.selectCount(any())).thenReturn(0L);
+        when(coursePackageMapper.selectUniqueActiveOneOnOneSubjectName(501L)).thenReturn("Math");
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(jsonHelper.toJson(any())).thenReturn("{\"ok\":true}");
@@ -726,6 +727,7 @@ class ScheduleAdjustmentServiceImplTest {
         verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
         verify(lessonAdjustmentLogMapper).insert(logCaptor.capture());
         assertThat(occurrenceCaptor.getValue().getOccurrenceType()).isEqualTo("ADHOC");
+        assertThat(occurrenceCaptor.getValue().getSubjectName()).isEqualTo("Math");
         assertThat(occurrenceCaptor.getValue().getPlanningStatus()).isEqualTo("SCHEDULED");
         assertThat(occurrenceCaptor.getValue().getStudentId()).isEqualTo(601L);
         assertThat(logCaptor.getValue().getAdjustmentType()).isEqualTo("WEEKLY_TEMP_CREATE");

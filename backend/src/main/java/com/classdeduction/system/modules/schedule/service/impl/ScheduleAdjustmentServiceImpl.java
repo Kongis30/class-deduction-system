@@ -256,8 +256,11 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         List<LessonOccurrenceEntity> updatedOccurrences = updateItems.stream()
                 .map(item -> buildWeeklyAdjustedOccurrence(sourceById.get(item.getOccurrenceId()), item, weekStart, weekEnd))
                 .toList();
+        String uniquePackageSubject = createItems.isEmpty()
+                ? null
+                : coursePackageMapper.selectUniqueActiveOneOnOneSubjectName(request.getPackageId());
         List<LessonOccurrenceEntity> createdOccurrences = createItems.stream()
-                .map(item -> buildCreatedOccurrence(request.getPackageId(), studentId, item, weekStart, weekEnd))
+                .map(item -> buildCreatedOccurrence(request.getPackageId(), studentId, uniquePackageSubject, item, weekStart, weekEnd))
                 .toList();
 
         List<LessonOccurrenceEntity> effectiveOccurrences = new ArrayList<>();
@@ -620,6 +623,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
      */
     private LessonOccurrenceEntity buildCreatedOccurrence(Long packageId,
                                                           Long studentId,
+                                                          String subjectName,
                                                           WeeklyScheduleAdjustmentRequest.Item item,
                                                           LocalDateTime weekStart,
                                                           LocalDateTime weekEnd) {
@@ -631,6 +635,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         created.setScheduleRuleId(null);
         created.setScheduleSlotId(null);
         created.setOccurrenceType("ADHOC");
+        created.setSubjectName(subjectName);
         created.setPlanningStatus("SCHEDULED");
         created.setConflictChecked(1);
         created.setPlannedTeacherId(item.getPlannedTeacherId());
