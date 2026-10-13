@@ -337,6 +337,9 @@
               <span>
                 <small>Total</small>{{ formatHours(activePackage.totalUnits) }}h
               </span>
+              <span title="Package balance when lesson tracking began; confirmed deductions do not change this starting value.">
+                <small>Starting</small>{{ formatHours(activePackage.startingHours) }}h
+              </span>
               <span
                 v-if="activePackage.allocatedUnits != null"
                 title="Hours assigned to the current schedule; confirmed lessons do not change this allocation."

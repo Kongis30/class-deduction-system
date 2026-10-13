@@ -74,6 +74,7 @@ export interface OneOnOnePackage {
   gradeBand?: string;
   packageName: string;
   totalUnits: number;
+  startingHours: number;
   purchasedUnits?: number;
   bonusUnits?: number;
   consumedUnits: number;

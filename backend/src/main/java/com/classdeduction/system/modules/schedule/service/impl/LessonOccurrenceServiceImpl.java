@@ -1608,6 +1608,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .gradeBand(orderItem == null ? null : orderItem.getGradeBand())
                 .packageName(coursePackage.getPackageName())
                 .totalUnits(UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()))
+                .startingHours(UnitConverter.toHoursDecimal(Math.max(0,
+                        totalUnitsRaw - safeUnits(coursePackage.getOpeningUsedUnits()))))
                 .purchasedUnits(UnitConverter.toHoursDecimal(purchasedUnits))
                 .bonusUnits(UnitConverter.toHoursDecimal(bonusUnits))
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))

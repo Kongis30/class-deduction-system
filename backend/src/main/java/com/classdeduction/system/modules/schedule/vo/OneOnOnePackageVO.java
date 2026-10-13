@@ -16,6 +16,7 @@ public record OneOnOnePackageVO(
         String gradeBand,
         String packageName,
         Double totalUnits,
+        Double startingHours,
         Double purchasedUnits,
         Double bonusUnits,
         Double consumedUnits,
