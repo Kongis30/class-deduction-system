@@ -21,6 +21,7 @@ public record OneOnOnePackageVO(
         Double bonusUnits,
         Double consumedUnits,
         Double remainingUnits,
+        Double usableRemainingUnits,
         Double availablePackageUnits,
         Double allocatedUnits,
         Double scheduledReservedUnits,

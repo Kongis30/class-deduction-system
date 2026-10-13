@@ -5035,7 +5035,7 @@ async function printForm() {
     return;
   }
   await nextTick();
-  if (!receiptPrinter.print()) {
+  if (!await receiptPrinter.printWhenReady()) {
     ElMessage.error('The receipt is not ready to print.');
   }
 }

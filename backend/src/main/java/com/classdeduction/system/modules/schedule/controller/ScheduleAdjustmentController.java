@@ -45,7 +45,8 @@ public class ScheduleAdjustmentController {
     @RequireRoles({"ADMIN", "STAFF", "MANAGER"})
     @Operation(summary = "Temporarily adjust planned lessons in one natural week")
     public ApiResponse<WeeklyScheduleAdjustmentResultVO> adjustWeekly(
-            @Valid @RequestBody WeeklyScheduleAdjustmentRequest request) {
-        return ApiResponse.success("Weekly schedule adjusted successfully.", scheduleAdjustmentService.adjustWeekly(request));
+            @Valid @RequestBody WeeklyScheduleAdjustmentRequest request,
+            @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser) {
+        return ApiResponse.success("Weekly schedule adjusted successfully.", scheduleAdjustmentService.adjustWeekly(request, currentUser));
     }
 }

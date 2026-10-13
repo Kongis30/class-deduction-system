@@ -52,6 +52,7 @@ import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -174,10 +175,13 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
         Map<Long, Integer> pendingDeductionByPackage = loadPendingDeductionUnits(
                 result.getRecords().stream().map(CoursePackageEntity::getId).toList());
+        Map<Long, Integer> unresolvedPastByPackage = loadUnresolvedPastUnits(
+                result.getRecords().stream().map(CoursePackageEntity::getId).toList());
         List<CoursePackageListItemVO> records = result.getRecords().stream()
                 .map(item -> toListItem(item, studentMap.get(item.getStudentId()), productMap.get(item.getCourseProductId()),
                         orderItemMap.get(item.getEnrollmentOrderItemId()), primaryTeacherNameMap.get(item.getId()),
-                        pendingDeductionByPackage.getOrDefault(item.getId(), 0), scheduleSummaryMap.get(item.getId())))
+                        pendingDeductionByPackage.getOrDefault(item.getId(), 0),
+                        unresolvedPastByPackage.getOrDefault(item.getId(), 0), scheduleSummaryMap.get(item.getId())))
                 .toList();
         return PageResponse.of(records, result.getTotal(), result.getCurrent(), result.getSize());
     }
@@ -678,7 +682,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
     private CoursePackageListItemVO toListItem(CoursePackageEntity item, StudentEntity student, CourseProductEntity product,
                                                EnrollmentOrderItemEntity orderItem, String primaryTeacherName,
-                                               int pendingDeductionUnits, PackageScheduleSummary scheduleSummary) {
+                                               int pendingDeductionUnits, int unresolvedPastUnits,
+                                               PackageScheduleSummary scheduleSummary) {
         return CoursePackageListItemVO.builder()
                 .id(item.getId())
                 .packageNo(item.getPackageNo())
@@ -698,6 +703,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .openingUsedHours(UnitConverter.toHoursDecimal(item.getOpeningUsedUnits()))
                 .pendingDeductionUnits(UnitConverter.toHoursDecimal(pendingDeductionUnits))
                 .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
+                .unresolvedPastHours(UnitConverter.toHoursDecimal(unresolvedPastUnits))
                 .receivedAmount(item.getReceivedAmount())
                 .packageStatus(item.getPackageStatus())
                 .scheduleStatus(scheduleSummary == null ? "Needs setup" : scheduleSummary.status())
@@ -796,6 +802,38 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .filter(record -> record.getPackageId() != null)
                 .collect(Collectors.groupingBy(LessonRecordEntity::getPackageId,
                         Collectors.summingInt(record -> safeUnits(record.getDeductedUnits()))));
+    }
+
+    /** 课包列表额外返回过去未处理课次的预留额；不改动账本 remaining_units。 */
+    private Map<Long, Integer> loadUnresolvedPastUnits(List<Long> packageIds) {
+        if (packageIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .in(LessonOccurrenceEntity::getPackageId, packageIds)
+                        .lt(LessonOccurrenceEntity::getPlannedStartAt, now)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
+        if (occurrences.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, LessonRecordEntity> records = new LinkedHashMap<>();
+        for (LessonRecordEntity record : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                .in(LessonRecordEntity::getOccurrenceId, occurrences.stream()
+                        .map(LessonOccurrenceEntity::getId).toList())
+                .eq(LessonRecordEntity::getIsDeleted, 0)
+                .orderByDesc(LessonRecordEntity::getUpdatedAt)
+                .orderByDesc(LessonRecordEntity::getId))) {
+            records.putIfAbsent(record.getOccurrenceId(), record);
+        }
+        Map<Long, Integer> reserved = new LinkedHashMap<>();
+        for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrences.stream()
+                .collect(Collectors.groupingBy(LessonOccurrenceEntity::getPackageId)).entrySet()) {
+            reserved.put(entry.getKey(), PrivateLessonAllocation.unresolvedPastUnits(
+                    entry.getValue(), records, now));
+        }
+        return reserved;
     }
 
     private Map<Long, Integer> loadConsumedUnitsByTeacher(Long packageId) {

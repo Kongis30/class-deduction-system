@@ -31,6 +31,7 @@ public record CoursePackageListItemVO(
         Double openingUsedHours,
         Double pendingDeductionUnits,
         Double remainingUnits,
+        Double unresolvedPastHours,
         BigDecimal receivedAmount,
         String packageStatus,
         String scheduleStatus,

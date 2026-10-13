@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 本周临时调整请求：批量修改同一课包同一自然周内的计划课次。
+ * 临时调整请求：以所选自然周定位原课次；编辑已有课次可改到任意日期，新建课次仍须在所选周内。
  */
 @Data
 @Schema(description = "Weekly temporary schedule adjustment request")
@@ -34,8 +34,8 @@ public class WeeklyScheduleAdjustmentRequest {
     @Schema(description = "Adjustment reason")
     private String reason;
 
-    @Schema(description = "Operator user ID", example = "1880000000000000010")
-    private Long adjustedBy;
+    @Schema(description = "Future occurrence IDs explicitly selected for reducing reserved hours")
+    private List<Long> releaseFutureOccurrenceIds;
 
     @Data
     @Schema(description = "Weekly temporary adjustment item")

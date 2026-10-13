@@ -35,6 +35,7 @@ import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleAdjustmentResultVO;
 import com.classdeduction.system.modules.schedule.vo.WeeklyScheduleAdjustmentResultVO;
+import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -212,13 +213,18 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public WeeklyScheduleAdjustmentResultVO adjustWeekly(WeeklyScheduleAdjustmentRequest request) {
+    public WeeklyScheduleAdjustmentResultVO adjustWeekly(WeeklyScheduleAdjustmentRequest request, CurrentUserResponse currentUser) {
         LocalDate currentWeekStartDate = currentWeekStartDate();
-        validateCurrentWeekRequest(request.getWeekStartDate(), currentWeekStartDate);
+        validateAdjustableWeekRequest(request, currentWeekStartDate);
+        CoursePackageEntity lockedPackage = coursePackageMapper.selectByIdForUpdate(request.getPackageId());
+        if (lockedPackage == null) {
+            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
+        }
         ensureOneOnOnePackageActive(request.getPackageId());
 
-        LocalDateTime weekStart = currentWeekStartDate.atStartOfDay();
-        LocalDateTime weekEnd = currentWeekStartDate.plusDays(7).atStartOfDay();
+        LocalDate requestedWeekStart = request.getWeekStartDate();
+        LocalDateTime weekStart = requestedWeekStart.atStartOfDay();
+        LocalDateTime weekEnd = requestedWeekStart.plusDays(7).atStartOfDay();
 
         // 1. 按动作分组并做字段级校验（UPDATE/DELETE 需 occurrenceId，CREATE 需完整计划字段与原因）。
         List<WeeklyScheduleAdjustmentRequest.Item> updateItems = new ArrayList<>();
@@ -250,11 +256,11 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
         // 4. 统计调整前当前周课时总量。
         List<LessonOccurrenceEntity> weeklyOccurrences = listWeeklyOccurrences(request.getPackageId(), studentId, weekStart, weekEnd);
-        Integer originalWeeklyUnits = sumPlannedUnits(weeklyOccurrences);
+        Integer originalWeeklyUnits = sumReservedUnits(weeklyOccurrences);
 
         // 5. 构造有效课次集合（UPDATE 改后 + CREATE 新增），用于冲突校验。
         List<LessonOccurrenceEntity> updatedOccurrences = updateItems.stream()
-                .map(item -> buildWeeklyAdjustedOccurrence(sourceById.get(item.getOccurrenceId()), item, weekStart, weekEnd))
+                .map(item -> buildWeeklyAdjustedOccurrence(sourceById.get(item.getOccurrenceId()), item))
                 .toList();
         String uniquePackageSubject = createItems.isEmpty()
                 ? null
@@ -277,12 +283,15 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 collectResourceIds(effectiveOccurrences, LessonOccurrenceEntity::getPlannedClassroomId));
         ensureNoConflicts(effectiveOccurrences, ignoredOccurrenceIds);
 
+        // 课时可用量按本次修改前的账面余额和未核销排课计算，避免把本批次新增的课次重复计入占用。
+        int previouslyAllocatedUnits = sumReservedUnits(listUnredeemedPackageOccurrences(request.getPackageId()));
+
         // 6. 事务内依次写入：新增、修改、删除（取消）并落库调整日志。
         for (int i = 0; i < createdOccurrences.size(); i++) {
             LessonOccurrenceEntity created = createdOccurrences.get(i);
             lessonOccurrenceMapper.insert(created);
             insertAdjustmentLog(created.getId(), "WEEKLY_TEMP_CREATE",
-                    Map.of(), toSnapshot(created), resolveItemReason(createItems.get(i), request), request.getAdjustedBy());
+                    Map.of(), toSnapshot(created), resolveItemReason(createItems.get(i), request), currentUser == null ? null : currentUser.userId());
         }
         for (int i = 0; i < updatedOccurrences.size(); i++) {
             LessonOccurrenceEntity updated = updatedOccurrences.get(i);
@@ -290,7 +299,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
             Map<String, Object> beforeSnapshot = toSnapshot(source);
             requireOccurrenceUpdate(lessonOccurrenceMapper.updateById(updated));
             insertAdjustmentLog(source.getId(), "WEEKLY_TEMP_UPDATE",
-                    beforeSnapshot, toSnapshot(updated), resolveItemReason(updateItems.get(i), request), request.getAdjustedBy());
+                    beforeSnapshot, toSnapshot(updated), resolveItemReason(updateItems.get(i), request), currentUser == null ? null : currentUser.userId());
         }
         Set<Long> deletedIds = new LinkedHashSet<>();
         for (WeeklyScheduleAdjustmentRequest.Item item : deleteItems) {
@@ -300,20 +309,26 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
             requireOccurrenceUpdate(lessonOccurrenceMapper.updateById(source));
             deletedIds.add(source.getId());
             insertAdjustmentLog(source.getId(), "WEEKLY_TEMP_DELETE",
-                    beforeSnapshot, toSnapshot(source), resolveItemReason(item, request), request.getAdjustedBy());
+                    beforeSnapshot, toSnapshot(source), resolveItemReason(item, request), currentUser == null ? null : currentUser.userId());
         }
 
         // 7. 计算调整后课时与各动作计数。
-        Integer adjustedWeeklyUnits = calculateAdjustedWeeklyUnits(weeklyOccurrences, updatedOccurrences, createdOccurrences, deletedIds);
-        // 本周临时调课改变了课时总量时，反向调整后续课次，保持课包排课总量不变。
-        adjustFutureOccurrences(request.getPackageId(), weekEnd, originalWeeklyUnits - adjustedWeeklyUnits);
+        Integer adjustedWeeklyUnits = calculateAdjustedWeeklyUnits(
+                originalWeeklyUnits, sourceById, updatedOccurrences, createdOccurrences, deletedIds, weekStart, weekEnd);
+        int unitDelta = calculatePackageUnitDelta(sourceById, updatedOccurrences, createdOccurrences, deletedIds);
+        // 若历史数据本身已超额分配，本次新增课时需先释放超额，再覆盖本次增加量。
+        int requiredFutureReleaseUnits = Math.max(0,
+                previouslyAllocatedUnits + unitDelta - safeUnits(lockedPackage.getRemainingUnits()));
+        List<LessonOccurrenceEntity> releasedFutureOccurrences = releaseExplicitFutureOccurrences(
+                request, studentId, requiredFutureReleaseUnits, currentUser == null ? null : currentUser.userId());
         List<LessonOccurrenceEntity> affectedOccurrences = new ArrayList<>();
         affectedOccurrences.addAll(updatedOccurrences);
         affectedOccurrences.addAll(createdOccurrences);
+        affectedOccurrences.addAll(releasedFutureOccurrences);
         return WeeklyScheduleAdjustmentResultVO.builder()
                 .originalWeeklyUnits(originalWeeklyUnits)
                 .adjustedWeeklyUnits(adjustedWeeklyUnits)
-                .unitDelta(adjustedWeeklyUnits - originalWeeklyUnits)
+                .unitDelta(unitDelta)
                 .createdCount(createdOccurrences.size())
                 .updatedCount(updatedOccurrences.size())
                 .deletedCount(deletedIds.size())
@@ -424,11 +439,10 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
     private void requirePlanningFields(WeeklyScheduleAdjustmentRequest.Item item) {
         if (item.getPlannedTeacherId() == null
-                || (item.getPlannedClassroomId() == null && !"ONLINE".equalsIgnoreCase(item.getDeliveryMode()))
                 || item.getPlannedStartAt() == null
                 || item.getPlannedEndAt() == null
                 || item.getPlannedUnits() == null) {
-            throw new BusinessException("INCOMPLETE_ADJUSTMENT", "Adjusted lesson must include teacher, classroom or Online, start time, end time, and planned units.");
+            throw new BusinessException("INCOMPLETE_ADJUSTMENT", "Adjusted lesson must include a teacher, start time, end time, and planned units.");
         }
     }
 
@@ -437,16 +451,16 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         return "ONLINE".equalsIgnoreCase(item.getDeliveryMode()) ? null : item.getPlannedClassroomId();
     }
 
-    /** 保留旧请求兼容性，同时将 Online 与实体教室选择明确写入课次。 */
+    /** 保留旧请求兼容性；实体教室为可选资源，未选教室时仍按线下课保存。 */
     private String resolveDeliveryMode(WeeklyScheduleAdjustmentRequest.Item item, String fallback) {
         String mode = item.getDeliveryMode();
         if (mode == null || mode.isBlank()) {
             if (item.getPlannedClassroomId() != null) return "IN_PERSON";
-            return fallback;
+            return fallback == null ? "IN_PERSON" : fallback;
         }
         if ("ONLINE".equalsIgnoreCase(mode)) return "ONLINE";
-        if ("IN_PERSON".equalsIgnoreCase(mode) && item.getPlannedClassroomId() != null) return "IN_PERSON";
-        throw new BusinessException("INVALID_DELIVERY_MODE", "Choose a classroom for in-person lessons or select Online.");
+        if ("IN_PERSON".equalsIgnoreCase(mode)) return "IN_PERSON";
+        throw new BusinessException("INVALID_DELIVERY_MODE", "Delivery mode must be in-person or online.");
     }
 
     /**
@@ -532,13 +546,19 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 .with(TemporalAdjusters.previousOrSame(DayOfWeek.SATURDAY));
     }
 
-    private void validateCurrentWeekRequest(LocalDate requestedWeekStartDate, LocalDate currentWeekStartDate) {
-        if (!Objects.equals(requestedWeekStartDate, currentWeekStartDate)) {
+    private void validateAdjustableWeekRequest(WeeklyScheduleAdjustmentRequest request, LocalDate currentWeekStartDate) {
+        LocalDate oldestAllowedWeekStart = currentWeekStartDate.minusWeeks(4);
+        if (request.getWeekStartDate().isBefore(oldestAllowedWeekStart)
+                || request.getWeekStartDate().isAfter(currentWeekStartDate)
+                || !DayOfWeek.SATURDAY.equals(request.getWeekStartDate().getDayOfWeek())) {
             throw new BusinessException(
-                    "WEEKLY_ADJUSTMENT_NOT_CURRENT_WEEK",
-                    "Weekly adjustments are only allowed for the current natural week starting "
-                            + currentWeekStartDate + "."
+                    "WEEKLY_ADJUSTMENT_WEEK_OUT_OF_RANGE",
+                    "Choose a Saturday-to-Friday week from the current week or one of the previous four weeks."
             );
+        }
+        if (request.getWeekStartDate().isBefore(currentWeekStartDate)
+                && (request.getReason() == null || request.getReason().isBlank())) {
+            throw new BusinessException("WEEKLY_ADJUSTMENT_REASON_REQUIRED", "Enter a reason when adjusting a past week.");
         }
     }
 
@@ -587,10 +607,96 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, weekEnd));
     }
 
+    private List<LessonOccurrenceEntity> listUnredeemedPackageOccurrences(Long packageId) {
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
+    }
+
+    /** 与私教消课页面共用预留口径：待确认课次仍占余额，已确认或无需消课记录不再占用。 */
+    private int sumReservedUnits(List<LessonOccurrenceEntity> occurrences) {
+        if (occurrences.isEmpty()) return 0;
+        List<Long> occurrenceIds = occurrences.stream().map(LessonOccurrenceEntity::getId).toList();
+        Map<Long, LessonRecordEntity> recordByOccurrence = new LinkedHashMap<>();
+        lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds)
+                        .orderByDesc(LessonRecordEntity::getCreatedAt)
+                        .orderByDesc(LessonRecordEntity::getId))
+                .forEach(record -> recordByOccurrence.putIfAbsent(record.getOccurrenceId(), record));
+        return PrivateLessonAllocation.reservedUnits(occurrences, recordByOccurrence);
+    }
+
+    /** 只释放管理员明确勾选的未核销未来课次；差额不足时事务回滚，不自动改动其他排课。 */
+    private List<LessonOccurrenceEntity> releaseExplicitFutureOccurrences(WeeklyScheduleAdjustmentRequest request,
+                                                                          Long studentId,
+                                                                          int requiredUnits,
+                                                                          Long adjustedBy) {
+        List<Long> requestedIds = request.getReleaseFutureOccurrenceIds() == null
+                ? List.of()
+                : request.getReleaseFutureOccurrenceIds().stream().filter(Objects::nonNull).distinct().toList();
+        if (requiredUnits <= 0) {
+            if (!requestedIds.isEmpty()) {
+                throw new BusinessException("UNNEEDED_FUTURE_RELEASE", "Future lessons were selected, but no additional package hours need to be released.");
+            }
+            return List.of();
+        }
+        if (requestedIds.isEmpty()) {
+            throw new BusinessException("PACKAGE_UNALLOCATED_HOURS_INSUFFICIENT",
+                    "The package has insufficient unallocated hours. Select future unconfirmed lessons to adjust.");
+        }
+
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> selected = new ArrayList<>();
+        for (Long id : requestedIds) {
+            LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectByIdForUpdate(id);
+            if (occurrence == null
+                    || !Objects.equals(request.getPackageId(), occurrence.getPackageId())
+                    || !Objects.equals(studentId, occurrence.getStudentId())
+                    || !List.of("SCHEDULED", "ADJUSTED").contains(occurrence.getPlanningStatus())
+                    || occurrence.getPlannedStartAt() == null
+                    || !occurrence.getPlannedStartAt().isAfter(now)
+                    || !occurrence.getPlannedStartAt().toLocalDate().isAfter(request.getWeekStartDate().plusDays(6))) {
+                throw new BusinessException("INVALID_FUTURE_RELEASE_OCCURRENCE",
+                        "Only this package's unconfirmed future lessons after the selected week can be adjusted.");
+            }
+            selected.add(occurrence);
+        }
+        ensureNoLessonRecords(requestedIds);
+
+        int selectedUnits = sumPlannedUnits(selected);
+        if (selectedUnits < requiredUnits) {
+            throw new BusinessException("FUTURE_RELEASE_HOURS_INSUFFICIENT",
+                    "The selected future lessons do not cover the additional scheduled hours. Select more lessons.");
+        }
+
+        int toRelease = requiredUnits;
+        List<LessonOccurrenceEntity> released = new ArrayList<>();
+        for (LessonOccurrenceEntity occurrence : selected) {
+            if (toRelease <= 0) break;
+            int currentUnits = safeUnits(occurrence.getPlannedUnits());
+            int releasedUnits = Math.min(currentUnits, toRelease);
+            Map<String, Object> before = toSnapshot(occurrence);
+            if (releasedUnits == currentUnits) {
+                occurrence.setPlanningStatus("CANCELLED");
+            } else {
+                updatePlannedUnits(occurrence, currentUnits - releasedUnits);
+                occurrence.setPlanningStatus("ADJUSTED");
+            }
+            requireOccurrenceUpdate(lessonOccurrenceMapper.updateById(occurrence));
+            insertAdjustmentLog(occurrence.getId(), "WEEKLY_TEMP_RELEASE_FUTURE",
+                    before, toSnapshot(occurrence), request.getReason(), adjustedBy);
+            released.add(occurrence);
+            toRelease -= releasedUnits;
+        }
+        return released;
+    }
+
+    private int safeUnits(Integer units) {
+        return units == null ? 0 : Math.max(units, 0);
+    }
+
     private LessonOccurrenceEntity buildWeeklyAdjustedOccurrence(LessonOccurrenceEntity source,
-                                                                 WeeklyScheduleAdjustmentRequest.Item item,
-                                                                 LocalDateTime weekStart,
-                                                                 LocalDateTime weekEnd) {
+                                                                 WeeklyScheduleAdjustmentRequest.Item item) {
         LessonOccurrenceEntity adjusted = new LessonOccurrenceEntity();
         adjusted.setId(source.getId());
         adjusted.setLessonNo(source.getLessonNo());
@@ -615,9 +721,6 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         adjusted.setPlannedUnits(item.getPlannedUnits());
 
         validatePlannedWindow(adjusted.getPlannedStartAt(), adjusted.getPlannedEndAt(), adjusted.getPlannedUnits());
-        if (!isInsideWeek(adjusted.getPlannedStartAt(), adjusted.getPlannedEndAt(), weekStart, weekEnd)) {
-            throw new BusinessException("ADJUSTED_OCCURRENCE_OUT_OF_WEEK", "Adjusted lesson time must stay inside the requested week.");
-        }
         validateTeacher(adjusted.getPlannedTeacherId());
         validateClassroom(adjusted.getPlannedClassroomId());
         return adjusted;
@@ -685,23 +788,44 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     /**
      * 计算调整后当前周课时：在原始周课次基础上应用 UPDATE(改后)、剔除 DELETE、叠加 CREATE。
      */
-    private Integer calculateAdjustedWeeklyUnits(List<LessonOccurrenceEntity> weeklyOccurrences,
+    private Integer calculateAdjustedWeeklyUnits(int originalWeeklyUnits,
+                                                 Map<Long, LessonOccurrenceEntity> sourceById,
                                                  List<LessonOccurrenceEntity> updatedOccurrences,
                                                  List<LessonOccurrenceEntity> createdOccurrences,
-                                                 Set<Long> deletedIds) {
-        Map<Long, LessonOccurrenceEntity> updatedById = updatedOccurrences.stream()
-                .collect(Collectors.toMap(LessonOccurrenceEntity::getId, Function.identity()));
-        int base = weeklyOccurrences.stream()
-                .filter(item -> !deletedIds.contains(item.getId()))
-                .map(item -> updatedById.getOrDefault(item.getId(), item))
-                .map(LessonOccurrenceEntity::getPlannedUnits)
-                .filter(Objects::nonNull)
-                .reduce(0, Integer::sum);
-        int created = createdOccurrences.stream()
-                .map(LessonOccurrenceEntity::getPlannedUnits)
-                .filter(Objects::nonNull)
-                .reduce(0, Integer::sum);
-        return base + created;
+                                                 Set<Long> deletedIds,
+                                                 LocalDateTime weekStart,
+                                                 LocalDateTime weekEnd) {
+        int adjusted = originalWeeklyUnits;
+        for (LessonOccurrenceEntity updated : updatedOccurrences) {
+            LessonOccurrenceEntity source = sourceById.get(updated.getId());
+            adjusted -= safeUnits(source.getPlannedUnits());
+            if (isInsideWeek(updated.getPlannedStartAt(), updated.getPlannedEndAt(), weekStart, weekEnd)) {
+                adjusted += safeUnits(updated.getPlannedUnits());
+            }
+        }
+        for (Long deletedId : deletedIds) {
+            adjusted -= safeUnits(sourceById.get(deletedId).getPlannedUnits());
+        }
+        return adjusted + createdOccurrences.stream()
+                .filter(item -> isInsideWeek(item.getPlannedStartAt(), item.getPlannedEndAt(), weekStart, weekEnd))
+                .mapToInt(item -> safeUnits(item.getPlannedUnits()))
+                .sum();
+    }
+
+    /** 计算课包总排课占用的变化量，跨周移动不改变总量，只有新增、删除或改课时会改变。 */
+    private int calculatePackageUnitDelta(Map<Long, LessonOccurrenceEntity> sourceById,
+                                          List<LessonOccurrenceEntity> updatedOccurrences,
+                                          List<LessonOccurrenceEntity> createdOccurrences,
+                                          Set<Long> deletedIds) {
+        int delta = sumPlannedUnits(createdOccurrences);
+        for (LessonOccurrenceEntity updated : updatedOccurrences) {
+            delta += safeUnits(updated.getPlannedUnits())
+                    - safeUnits(sourceById.get(updated.getId()).getPlannedUnits());
+        }
+        for (Long deletedId : deletedIds) {
+            delta -= safeUnits(sourceById.get(deletedId).getPlannedUnits());
+        }
+        return delta;
     }
 
     /**

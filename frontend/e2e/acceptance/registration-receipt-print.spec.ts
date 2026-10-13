@@ -52,10 +52,17 @@ test('saved receipt prints its content through the browser print command', async
   await expect(page.locator('#app .paper-form--readonly')).toContainText('Print Receipt Student');
 
   await page.evaluate(() => {
-    window.print = () => { document.documentElement.dataset.receiptPrintInvoked = 'yes'; };
+    window.print = () => {
+      const printRoot = document.querySelector<HTMLElement>('#print-document-root .paper-form');
+      document.documentElement.dataset.receiptPrintInvoked = 'yes';
+      document.documentElement.dataset.receiptPrintContentReady = String(
+        Boolean(printRoot?.innerText.includes('Print Receipt Student')),
+      );
+    };
   });
   await page.getByRole('button', { name: 'Print', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-receipt-print-invoked', 'yes');
+  await expect(page.locator('html')).toHaveAttribute('data-receipt-print-content-ready', 'true');
   await expect(page.locator('#print-document-root .paper-form')).toContainText('Print Receipt Student');
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
 

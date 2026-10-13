@@ -1,6 +1,7 @@
 package com.classdeduction.system.modules.schedule.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
@@ -165,6 +166,23 @@ class LessonOccurrenceServiceImplTest {
         when(lessonOccurrenceMapper.selectPage(any(), any())).thenReturn(new Page<>(1, 10));
 
         assertThat(lessonOccurrenceService.pageOccurrences(query).records()).isEmpty();
+    }
+
+    @Test
+    void shouldReturnAllPackageOccurrencesWhenNoDateRangeIsProvided() {
+        LessonOccurrencePageQuery query = new LessonOccurrencePageQuery();
+        query.setPackageId(1001L);
+        query.setPageNum(1);
+        query.setPageSize(10);
+        when(lessonOccurrenceMapper.selectPage(any(), any())).thenReturn(new Page<>(1, 10));
+
+        lessonOccurrenceService.pageOccurrences(query);
+
+        ArgumentCaptor<Wrapper<LessonOccurrenceEntity>> wrapperCaptor = ArgumentCaptor.forClass(Wrapper.class);
+        verify(lessonOccurrenceMapper).selectPage(any(), wrapperCaptor.capture());
+        assertThat(wrapperCaptor.getValue().getSqlSegment())
+                .contains("package_id")
+                .doesNotContain("planned_start_at");
     }
 
     @Test

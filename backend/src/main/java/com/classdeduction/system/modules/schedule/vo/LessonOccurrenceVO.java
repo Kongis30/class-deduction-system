@@ -58,6 +58,8 @@ public record LessonOccurrenceVO(
         LocalDateTime actualStartAt,
         LocalDateTime actualEndAt,
         Integer actualUnits,
-        Long privateLessonGroupId
+        Long privateLessonGroupId,
+        Integer deductedUnits,
+        Integer shouldDeduct
 ) {
 }

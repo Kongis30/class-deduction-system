@@ -227,8 +227,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .min(LocalDateTime::compareTo)
                 .orElse(null);
         RuleDeductionUnits deductions = ruleDeductionUnits(id, coursePackage.getId());
+        List<LessonOccurrenceEntity> preservedForBalance = new ArrayList<>(occurrences);
+        preservedForBalance.addAll(loadEndedPeriodOccurrences(coursePackage.getId(), id));
         Map<Long, LessonRecordEntity> recordByOccurrenceId = latestRecordsForPackage(
-                occurrences.stream().map(LessonOccurrenceEntity::getId).toList(), coursePackage.getId());
+                preservedForBalance.stream().map(LessonOccurrenceEntity::getId).toList(), coursePackage.getId());
         int startingUnits = startingUnits(rule.getId(), coursePackage.getId(), legacyStartingUnits(coursePackage));
         return RecurringScheduleRuleDetailVO.builder()
                 .id(rule.getId())
@@ -248,7 +250,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .deductedHours(deductions.confirmed() * 0.5)
                 .pendingHours(deductions.pending() * 0.5)
                 .otherReservedHours(otherRuleReservedUnits(coursePackage.getId(), id) * 0.5)
-                .preservedReservedHours(preservedNonPendingUnits(occurrences, recordByOccurrenceId,
+                .preservedReservedHours(preservedNonPendingUnits(preservedForBalance, recordByOccurrenceId,
                         AppTime.nowLocalDateTime()) * 0.5)
                 .startingHours(startingUnits * 0.5)
                 .slots(slots.stream().map(slot -> toSlotVO(slot,
@@ -1373,7 +1375,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return classroom;
     }
 
-    /** 保存每个时段明确的线上/线下状态；旧客户端仍可通过规则默认教室补齐。 */
+    /** 保存线上/线下状态；线下课允许暂不分配教室，旧客户端仍可用规则默认教室补齐。 */
     private void normalizeSlotClassrooms(List<RecurringScheduleSlotRequest> slots, Long legacyDefaultClassroomId) {
         for (RecurringScheduleSlotRequest slot : slots) {
             String mode = slot.getDeliveryMode();
@@ -1385,11 +1387,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 continue;
             }
             if (mode != null && !"IN_PERSON".equalsIgnoreCase(mode)) {
-                throw new BusinessException("INVALID_DELIVERY_MODE", "Choose a classroom or Online for every slot.");
+                throw new BusinessException("INVALID_DELIVERY_MODE", "Delivery mode must be in-person or online.");
             }
             Long classroomId = slot.getClassroomId() != null ? slot.getClassroomId() : legacyDefaultClassroomId;
             if (classroomId == null) {
-                throw new BusinessException("SLOT_CLASSROOM_REQUIRED", "Choose a classroom or Online for every slot.");
+                slot.setDeliveryMode("IN_PERSON");
+                slot.setClassroomId(null);
+                continue;
             }
             ClassroomEntity classroom = resolveClassroom(classroomId);
             slot.setDeliveryMode("IN_PERSON");

@@ -13,6 +13,10 @@ import java.util.Map;
 @Mapper
 public interface CoursePackageMapper extends BaseMapper<CoursePackageEntity> {
 
+    /** 临时排课调整时锁定课包，保证剩余课时与已分配课时的校验和写入原子执行。 */
+    @Select("SELECT * FROM course_package WHERE id = #{packageId} AND is_deleted = 0 FOR UPDATE")
+    CoursePackageEntity selectByIdForUpdate(@Param("packageId") Long packageId);
+
     /** 查询排课侧栏的在读及停课课包；共享课只返回主课包，并附带完整成员信息。 */
     @Select("""
             SELECT s.id AS studentId,

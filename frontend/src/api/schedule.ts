@@ -208,6 +208,7 @@ export interface WeeklyScheduleAdjustmentPayload {
   packageId: string | number;
   weekStartDate: string;
   reason?: string;
+  releaseFutureOccurrenceIds?: Array<string | number>;
   items: WeeklyScheduleAdjustmentItemPayload[];
 }
 

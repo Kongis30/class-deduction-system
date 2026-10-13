@@ -81,6 +81,10 @@ export function fetchAllTeachers() {
   return http.get<ApiResponse<TeacherItem[]>>('/v1/base/teachers/active');
 }
 
+export function fetchTeacher(id: EntityId) {
+  return http.get<ApiResponse<TeacherItem>>(`/v1/base/teachers/${id}`);
+}
+
 export interface TeacherQuery {
   keyword?: string;
   subject?: string;
@@ -133,6 +137,10 @@ export function fetchClassrooms(params: ClassroomQuery = {}) {
 
 export function fetchAllClassrooms() {
   return http.get<ApiResponse<ClassroomItem[]>>('/v1/base/classrooms/active');
+}
+
+export function fetchClassroom(id: EntityId) {
+  return http.get<ApiResponse<ClassroomItem>>(`/v1/base/classrooms/${id}`);
 }
 
 export interface ClassroomSavePayload {

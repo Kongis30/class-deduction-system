@@ -50,7 +50,13 @@ body {
 }
 
 #print-document-root {
-  display: none;
+  /* 打印前保持可布局；display:none 会让打印快照拿到空白页面。 */
+  position: absolute;
+  left: -100000px;
+  top: 0;
+  width: 8.5in;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 @media print {
@@ -60,7 +66,10 @@ body {
 
   body.has-isolated-print > #print-document-root {
     display: block !important;
+    position: static;
     width: 100%;
+    visibility: visible;
+    pointer-events: auto;
   }
 
   .sidebar,

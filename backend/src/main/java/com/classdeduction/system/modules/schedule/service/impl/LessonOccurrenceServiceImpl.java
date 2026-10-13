@@ -107,9 +107,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     @Override
     public PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query, CurrentUserResponse currentUser) {
         applyScheduleScope(query, currentUser);
-        // 按课包查询由调用方按课包周期指定范围；普通日历查询仍限制在 180 天内。
+        // 课包 ID 是精确范围；未传日期时返回该课包全部历史与未来课次，供临时调课计算整包占用。
+        boolean packageWideQuery = query.getPackageId() != null
+                && query.getStartAt() == null
+                && query.getEndAt() == null;
         Integer maxDays = query.getPackageId() != null ? null : MAX_QUERY_WINDOW_DAYS;
-        LocalDateTime[] window = normalizeWindow(query.getStartAt(), query.getEndAt(), DEFAULT_OCCURRENCE_WINDOW_DAYS, maxDays);
+        LocalDateTime[] window = packageWideQuery
+                ? null
+                : normalizeWindow(query.getStartAt(), query.getEndAt(), DEFAULT_OCCURRENCE_WINDOW_DAYS, maxDays);
         Page<LessonOccurrenceEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
         List<Long> matchedPackageIds = findMatchedPackageIds(query.getKeyword());
         List<Long> matchedStudentIds = findMatchedStudentIds(query.getKeyword());
@@ -168,9 +173,12 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .eq(query.getClassroomId() != null, LessonOccurrenceEntity::getPlannedClassroomId, query.getClassroomId())
                 .eq(query.getClassGroupId() != null, LessonOccurrenceEntity::getClassGroupId, query.getClassGroupId())
                 .isNull(LessonOccurrenceEntity::getCourseHolidayId)
-                .ge(LessonOccurrenceEntity::getPlannedStartAt, window[0])
-                .lt(LessonOccurrenceEntity::getPlannedStartAt, window[1])
                 .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt);
+
+        if (window != null) {
+            wrapper.ge(LessonOccurrenceEntity::getPlannedStartAt, window[0])
+                    .lt(LessonOccurrenceEntity::getPlannedStartAt, window[1]);
+        }
 
         if (singleStatus != null) {
             wrapper.eq(LessonOccurrenceEntity::getPlanningStatus, singleStatus);
@@ -784,7 +792,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toMap(Map.Entry::getKey,
                         entry -> PrivateLessonAllocation.reservedUnits(entry.getValue(),
                                 recordIndex.forPackage(entry.getKey(), entry.getValue()))));
-        PackageHoursContext hoursContext = loadPackageHoursContext(packageIds, scheduledUnitsByPackage);
+        Map<Long, Integer> unresolvedPastByPackage = allocationOccurrenceMap.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey,
+                        entry -> PrivateLessonAllocation.unresolvedPastUnits(entry.getValue(),
+                                recordIndex.forPackage(entry.getKey(), entry.getValue()),
+                                AppTime.nowLocalDateTime())));
+        PackageHoursContext hoursContext = loadPackageHoursContext(
+                packageIds, scheduledUnitsByPackage, unresolvedPastByPackage);
 
         Set<Long> studentIds = new LinkedHashSet<>(packages.stream()
                 .map(CoursePackageEntity::getStudentId)
@@ -927,6 +941,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .actualEndAt(record == null ? null : record.getActualEndAt())
                             .actualUnits(record == null ? null : record.getActualUnits())
                             .privateLessonGroupId(item.getPrivateLessonGroupId())
+                            .deductedUnits(record == null ? null : record.getDeductedUnits())
+                            .shouldDeduct(record == null ? null : record.getShouldDeduct())
                             .build();
                 })
                 .toList();
@@ -1412,11 +1428,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private record PackageHoursContext(Map<Long, Integer> allocatedByPackage,
                                        Map<Long, Integer> startingByPackage,
                                        Map<Long, Integer> scheduledByPackage,
-                                       Map<Long, Integer> pendingByPackage) {}
+                                       Map<Long, Integer> pendingByPackage,
+                                       Map<Long, Integer> unresolvedPastByPackage) {}
 
     /** 与 Schedule 页面一样，按最新 ACTIVE 规则统计分配课时；余额和待确认课时单独计算。 */
     private PackageHoursContext loadPackageHoursContext(
-            List<Long> packageIds, Map<Long, Integer> scheduledByPackage) {
+            List<Long> packageIds, Map<Long, Integer> scheduledByPackage,
+            Map<Long, Integer> unresolvedPastByPackage) {
         Map<Long, Integer> pendingByPackage = new HashMap<>();
         for (LessonRecordEntity record : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
                 .in(LessonRecordEntity::getPackageId, packageIds)
@@ -1481,7 +1499,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 startingByPackage.putIfAbsent(balance.getPackageId(), Math.max(0, safeUnits(balance.getStartingUnits())));
             }
         }
-        return new PackageHoursContext(allocatedByPackage, startingByPackage, scheduledByPackage, pendingByPackage);
+        return new PackageHoursContext(allocatedByPackage, startingByPackage, scheduledByPackage,
+                pendingByPackage, unresolvedPastByPackage);
     }
 
     /** 管理员按课包内实际排课的老师分别建立入口；老师账号查询时只保留本人入口。 */
@@ -1631,6 +1650,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Integer allocatedUnits = hoursContext.allocatedByPackage().get(packageId);
         int availablePackageUnits = Math.max(0, safeUnits(coursePackage.getRemainingUnits())
                 - hoursContext.pendingByPackage().getOrDefault(packageId, 0));
+        int usableRemainingUnits = Math.max(0, availablePackageUnits
+                - hoursContext.unresolvedPastByPackage().getOrDefault(packageId, 0));
         return OneOnOnePackageVO.builder()
                 .packageId(coursePackage.getId())
                 .packageNo(coursePackage.getPackageNo())
@@ -1649,6 +1670,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .bonusUnits(UnitConverter.toHoursDecimal(bonusUnits))
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
+                .usableRemainingUnits(UnitConverter.toHoursDecimal(usableRemainingUnits))
                 .availablePackageUnits(UnitConverter.toHoursDecimal(availablePackageUnits))
                 .allocatedUnits(allocatedUnits == null ? null : UnitConverter.toHoursDecimal(allocatedUnits))
                 .scheduledReservedUnits(UnitConverter.toHoursDecimal(

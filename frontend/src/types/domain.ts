@@ -395,6 +395,7 @@ export interface CoursePackageItem {
   openingUsedHours?: number;
   pendingDeductionUnits?: number;
   remainingUnits: number;
+  unresolvedPastHours?: number;
   receivedAmount: number;
   packageStatus: string;
   scheduleStatus?: 'Scheduled' | 'Needs setup' | 'Incomplete' | 'Paused';
@@ -603,6 +604,8 @@ export interface LessonOccurrenceItem {
   actualStartAt?: string;
   actualEndAt?: string;
   actualUnits?: number;
+  deductedUnits?: number;
+  shouldDeduct?: 0 | 1;
   privateLessonGroupId?: EntityId;
 }
 

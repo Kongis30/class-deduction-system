@@ -12,5 +12,5 @@ public interface ScheduleAdjustmentService {
 
     ScheduleAdjustmentResultVO adjustByTeacher(ScheduleAdjustmentRequest request, CurrentUserResponse currentUser);
 
-    WeeklyScheduleAdjustmentResultVO adjustWeekly(WeeklyScheduleAdjustmentRequest request);
+    WeeklyScheduleAdjustmentResultVO adjustWeekly(WeeklyScheduleAdjustmentRequest request, CurrentUserResponse currentUser);
 }

@@ -137,7 +137,7 @@
                       plain
                       @click="openWeeklyAdjustmentDialog"
                     >
-                      Adjust This Week
+                      Adjust Schedule
                     </el-button>
                     <el-button
                       v-if="selectedPackage?.packageStatus === 'ACTIVE' && !currentRule"
@@ -343,7 +343,8 @@
           Click and drag on the calendar to select class time slots. For each slot, assign a teacher,
           lesson name, and its schedule total, including deducted and pending lessons. Each slot is scheduled independently until
           its schedule total runs out (the last class takes the remainder if it does not divide evenly).
-          Other lessons for every student are shown for the week of the start date. Saving checks the full schedule.
+          Existing lessons stay visible as a reference. A blue edge marks your choice over an existing lesson;
+          saving checks conflicts on the actual lesson dates.
         </p>
         <el-alert v-if="editBusyError" :title="editBusyError" type="error" :closable="false" show-icon />
         <div v-if="editBusyLoading" class="edit-schedule__hint">Loading student availability...</div>
@@ -361,7 +362,7 @@
           >
             <div class="slot-teacher-row__time">
               <strong>{{ scheduleSlotLabel(slot) }}</strong>
-              <small>Each lesson {{ formatSlotHours(slot.plannedUnits) }} · {{ slotLessonPlan(slot) }}</small>
+              <small>First class {{ firstOccurrenceDate(slot) }} · Each lesson {{ formatSlotHours(slot.plannedUnits) }} · {{ slotLessonPlan(slot) }}</small>
             </div>
             <div class="slot-teacher-row__fields">
               <label class="slot-teacher-row__field">
@@ -371,7 +372,7 @@
                   filterable
                   placeholder="Select teacher"
                 >
-                  <el-option v-for="teacher in teachers" :key="teacher.id" :label="teacher.teacherName" :value="teacher.id" />
+                  <el-option v-for="teacher in teachers" :key="String(teacher.id)" :label="teacher.teacherName" :value="String(teacher.id)" />
                 </el-select>
               </label>
               <label class="slot-teacher-row__field">
@@ -380,7 +381,8 @@
                   v-model="slot.classroomSelection"
                   popper-class="classroom-campus-picker"
                   filterable
-                  placeholder="Select classroom or Online"
+                  clearable
+                  placeholder="No classroom or Online"
                 >
                   <el-option label="Online" value="ONLINE" />
                   <el-option-group
@@ -391,9 +393,9 @@
                   >
                     <el-option
                       v-for="c in group.classrooms"
-                      :key="c.id"
+                      :key="String(c.id)"
                       :label="classroomSelectLabel(c)"
-                      :value="`ROOM:${c.id}`"
+                      :value="`ROOM:${String(c.id)}`"
                     >
                       <div class="classroom-select-option"><span>{{ c.roomName }}</span></div>
                     </el-option>
@@ -432,7 +434,13 @@
             :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
             · Allocated {{ allocatedHours.toFixed(1) }}h
-            · Unallocated {{ unallocatedHours.toFixed(1) }}h
+            · Remaining {{ remainingPackageHours.toFixed(1) }}h
+            <template v-if="allocatableForNewScheduleHours < remainingPackageHours">
+              · Available to allocate {{ allocatableForNewScheduleHours.toFixed(1) }}h
+            </template>
+            <template v-if="allocationExceedsRemaining">
+              · Exceeds by {{ (allocatedHours - allocatableForNewScheduleHours).toFixed(1) }}h
+            </template>
           </span>
         </div>
       </div>
@@ -447,17 +455,42 @@
       </template>
     </el-dialog>
 
-    <!-- This week adjustment dialog -->
+    <!-- Selected natural week temporary adjustment -->
     <el-dialog
       v-model="weeklyDialogVisible"
-      :title="`Adjust This Week — ${selectedPackageName}`"
+      :title="`Adjust Schedule — ${selectedPackageName}`"
       width="860px"
       :close-on-click-modal="false"
       class="schedule-dialog"
     >
       <div v-loading="weeklyLoading" class="weekly-adjustment">
+        <div class="weekly-adjustment__week-picker">
+          <label for="weekly-adjustment-week">Week</label>
+          <el-select
+            id="weekly-adjustment-week"
+            v-model="selectedWeekStartDate"
+            :disabled="weeklyLoading || submitting"
+            @change="onWeeklyWeekChange"
+          >
+            <el-option
+              v-for="week in adjustableWeekOptions"
+              :key="week.startDate"
+              :label="week.label"
+              :value="week.startDate"
+            />
+          </el-select>
+          <span>Current week and previous four weeks</span>
+        </div>
         <el-alert
-          title="Only this week's lesson occurrences will be changed. The recurring weekly schedule remains unchanged."
+          v-if="isSelectedWeekInPast"
+          title="Past week adjustment"
+          description="Only lessons without a lesson record can be changed. Enter a reason for the audit history."
+          type="warning"
+          show-icon
+          :closable="false"
+        />
+        <el-alert
+          title="You can edit lessons from the selected week and move them to any date. New lessons must stay in the selected week; the recurring schedule remains unchanged."
           type="info"
           show-icon
           :closable="false"
@@ -489,17 +522,17 @@
             </span>
             <strong>{{ formatUnitsAsHours(adjustedWeeklyUnits) }}</strong>
           </div>
-          <div class="weekly-summary__item" :class="{ 'weekly-summary__item--changed': unitDelta !== 0 }">
+          <div class="weekly-summary__item" :class="{ 'weekly-summary__item--changed': weeklyUnitDelta !== 0 }">
             <span>
               Delta
               <el-tooltip
-                content="Adjusted minus original hours. Positive = more hours used this week (package may run out sooner); negative = fewer hours used."
+                content="Adjusted minus original hours in this week. Moving a lesson to another date changes this weekly total, but does not by itself change the package's total scheduled hours."
                 placement="top"
               >
                 <el-icon class="weekly-summary__help"><QuestionFilled /></el-icon>
               </el-tooltip>
             </span>
-            <strong>{{ formatSignedUnitsAsHours(unitDelta) }}</strong>
+            <strong>{{ formatSignedUnitsAsHours(weeklyUnitDelta) }}</strong>
           </div>
           <div class="weekly-summary__item">
             <span>
@@ -592,6 +625,7 @@
                   'weekly-cal__event--modified': row.rowType === 'EXISTING' && !row.markedForDelete && isWeeklyRowChanged(row),
                   'weekly-cal__event--deleted': row.rowType === 'EXISTING' && row.markedForDelete,
                   'weekly-cal__event--active': row.rowKey === selectedRowKey,
+                  'weekly-cal__event--readonly': row.readOnly,
                 }"
                 :style="eventStyle(row)"
                 @mousedown.stop
@@ -615,6 +649,7 @@
               'weekly-list__item--modified': row.rowType === 'EXISTING' && !row.markedForDelete && isWeeklyRowChanged(row),
               'weekly-list__item--deleted': row.rowType === 'EXISTING' && row.markedForDelete,
               'weekly-list__item--active': row.rowKey === selectedRowKey,
+              'weekly-list__item--readonly': row.readOnly,
             }"
             @click="selectRow(row)"
           >
@@ -626,11 +661,14 @@
               :type="rowStatusTag(row)!.type"
               effect="plain"
             >{{ rowStatusTag(row)!.label }}</el-tag>
+            <el-tag v-if="isOutsideSelectedWeek(row)" size="small" type="info" effect="plain">
+              Outside selected week
+            </el-tag>
           </div>
         </div>
 
 
-        <div v-if="selectedRow" class="weekly-editor" :class="{ 'weekly-editor--deleted': selectedRow.markedForDelete }">
+        <div v-if="selectedRow && !selectedRow.readOnly" class="weekly-editor" :class="{ 'weekly-editor--deleted': selectedRow.markedForDelete }">
           <div class="weekly-editor__title">
             <strong>{{ selectedRow.rowType === 'NEW' ? 'New lesson' : 'Edit lesson' }}</strong>
             <span v-if="selectedRow.rowType === 'EXISTING'">{{ formatDate(selectedRow.original?.plannedStartAt) }}</span>
@@ -638,18 +676,20 @@
           <div class="weekly-editor__grid">
             <div class="weekly-editor__field">
               <label>Day</label>
-              <el-select
+              <el-date-picker
                 :model-value="rowDate(selectedRow)"
+                type="date"
+                format="ddd, MMM D, YYYY"
+                value-format="YYYY-MM-DD"
+                placeholder="Choose lesson date"
+                :clearable="false"
+                :disabled-date="isDayDisabledForSelectedRow"
                 :disabled="selectedRow.markedForDelete"
-                @update:model-value="(v: string) => setRowDay(selectedRow!, v)"
-              >
-                <el-option
-                  v-for="day in weekDays"
-                  :key="day.date"
-                  :label="`${day.dayLabel} ${day.dateLabel}`"
-                  :value="day.date"
-                />
-              </el-select>
+                @update:model-value="(v: string | null) => v && setRowDay(selectedRow!, v)"
+              />
+              <small v-if="isOutsideSelectedWeek(selectedRow)" class="weekly-editor__hint">
+                This lesson will move outside the selected week. Its original week is used for this adjustment; conflicts are checked when saving.
+              </small>
             </div>
             <div class="weekly-editor__field">
               <label>Start</label>
@@ -679,12 +719,12 @@
             <div class="weekly-editor__field">
               <label>Teacher</label>
               <el-select v-model="selectedRow.plannedTeacherId" clearable filterable placeholder="Teacher" :disabled="selectedRow.markedForDelete">
-                <el-option v-for="t in teachers" :key="t.id" :label="t.teacherName" :value="t.id" />
+                <el-option v-for="t in teachers" :key="String(t.id)" :label="t.teacherName" :value="String(t.id)" />
               </el-select>
             </div>
             <div class="weekly-editor__field">
               <label>Classroom</label>
-              <el-select v-model="selectedRow.classroomSelection" popper-class="classroom-campus-picker" filterable placeholder="Classroom or Online" :disabled="selectedRow.markedForDelete">
+              <el-select v-model="selectedRow.classroomSelection" popper-class="classroom-campus-picker" filterable clearable placeholder="No classroom or Online" :disabled="selectedRow.markedForDelete">
                 <el-option label="Online" value="ONLINE" />
                 <el-option-group
                   v-for="group in classroomOptionGroups"
@@ -694,9 +734,9 @@
                 >
                   <el-option
                     v-for="c in group.classrooms"
-                    :key="c.id"
+                    :key="String(c.id)"
                     :label="classroomSelectLabel(c)"
-                    :value="`ROOM:${c.id}`"
+                    :value="`ROOM:${String(c.id)}`"
                   >
                     <div class="classroom-select-option">
                       <span>{{ c.roomName }}</span>
@@ -734,9 +774,37 @@
         </div>
 
 
+        <section v-if="unitDelta > unallocatedUnitsBeforeAdjustment" class="weekly-future-release">
+          <div class="weekly-future-release__heading">
+            <strong>Choose future lessons to adjust</strong>
+            <span>{{ formatUnitsAsHours(unallocatedUnitsBeforeAdjustment) }} unallocated · {{ formatUnitsAsHours(futureReleaseNeedUnits) }} more must be freed</span>
+          </div>
+          <p>Added hours exceed the package’s unallocated balance. Select upcoming unconfirmed lessons; the latest selected lessons are reduced first. No other future lesson will change.</p>
+          <el-checkbox-group v-model="selectedFutureReleaseIds" class="weekly-future-release__list">
+            <el-checkbox
+              v-for="occurrence in futureReleaseCandidates"
+              :key="occurrence.id"
+              :value="String(occurrence.id)"
+            >
+              {{ dayjs(occurrence.plannedStartAt).format('ddd, MMM D, YYYY') }} · {{ occurrenceTimeRange(occurrence.plannedStartAt, occurrence.plannedEndAt) }} · {{ occurrence.subjectName || occurrence.packageName || 'Lesson' }} · {{ formatUnitsAsHours(occurrence.plannedUnits ?? 0) }}
+            </el-checkbox>
+          </el-checkbox-group>
+          <el-empty v-if="futureReleaseCandidates.length === 0" description="No upcoming unconfirmed lessons are available to adjust." :image-size="48" />
+          <div v-if="futureReleasePreview.length" class="weekly-future-release__preview">
+            <span>Will be reduced:</span>
+            <span v-for="item in futureReleasePreview" :key="item.id">{{ item.label }} ({{ formatUnitsAsHours(item.units) }})</span>
+          </div>
+          <el-alert
+            v-if="selectedFutureReleaseUnits < futureReleaseNeedUnits"
+            :title="`Select ${formatUnitsAsHours(futureReleaseNeedUnits - selectedFutureReleaseUnits)} more.`"
+            type="error"
+            :closable="false"
+          />
+        </section>
+
         <el-form label-width="80px" class="weekly-reason">
-          <el-form-item label="Reason">
-            <el-input v-model="weeklyReason" type="textarea" :rows="2" placeholder="Optional reason" />
+          <el-form-item label="Reason" :required="isSelectedWeekInPast">
+            <el-input v-model="weeklyReason" type="textarea" :rows="2" :placeholder="isSelectedWeekInPast ? 'Required for past-week changes' : 'Optional reason'" />
           </el-form-item>
         </el-form>
       </div>
@@ -744,8 +812,8 @@
       <template #footer>
         <div class="dialog-footer">
           <el-button @click="weeklyDialogVisible = false">Cancel</el-button>
-          <el-button type="primary" :loading="submitting || weeklyLoading" :disabled="!hasWeeklyChanges || Boolean(weeklyBusyError)" @click="submitWeeklyAdjustment">
-            Save This Week
+          <el-button type="primary" :loading="submitting || weeklyLoading" :disabled="!hasWeeklyChanges || Boolean(weeklyBusyError) || isMissingPastWeekReason || selectedFutureReleaseUnits < futureReleaseNeedUnits" @click="submitWeeklyAdjustment">
+            Save Adjustments
           </el-button>
         </div>
       </template>
@@ -880,7 +948,7 @@ import dayjs from 'dayjs';
 import { useRoute, useRouter } from 'vue-router';
 
 import { extractErrorMessage } from '@/api/http';
-import { fetchAllClassrooms, fetchAllTeachers } from '@/api/base-data';
+import { fetchAllClassrooms, fetchAllTeachers, fetchClassroom, fetchTeacher } from '@/api/base-data';
 import { useAppStore } from '@/stores/app';
 import { fetchCoursePackage, fetchCoursePackages, pauseCoursePackage, resumeCoursePackage, updateCoursePackageDeductedHours } from '@/api/enrollment';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
@@ -919,6 +987,7 @@ interface WeeklyAdjustmentRow {
   classroomSelection?: string;
 
   markedForDelete: boolean;
+  readOnly: boolean;
 
   itemReason: string;
   original?: LessonOccurrenceItem;
@@ -1007,6 +1076,42 @@ function classroomSelectLabel(classroom: ClassroomItem) {
   return campusName ? `${classroom.roomName} · ${campusName}` : classroom.roomName;
 }
 
+// 编辑排课时补齐 active 列表之外的已关联资源，避免选择框把原始 ID 当作标签显示。
+async function ensureScheduleResourceOptions(
+  slots: Array<{ teacherId?: EntityId; deliveryMode?: string; classroomId?: EntityId }>,
+  defaultClassroomId?: EntityId,
+) {
+  const teacherIds = [...new Set(slots
+    .map(slot => slot.teacherId == null ? '' : String(slot.teacherId))
+    .filter(Boolean))];
+  const classroomIds = [...new Set(slots
+    .filter(slot => slot.deliveryMode !== 'ONLINE')
+    .map(slot => slot.classroomId ?? defaultClassroomId)
+    .filter((id): id is EntityId => id != null)
+    .map(String))];
+  const knownTeacherIds = new Set(teachers.value.map(teacher => String(teacher.id)));
+  const knownClassroomIds = new Set(classrooms.value.map(classroom => String(classroom.id)));
+  const missingTeacherIds = teacherIds.filter(id => !knownTeacherIds.has(id));
+  const missingClassroomIds = classroomIds.filter(id => !knownClassroomIds.has(id));
+
+  const [teacherResults, classroomResults] = await Promise.all([
+    Promise.allSettled(missingTeacherIds.map(id => fetchTeacher(id))),
+    Promise.allSettled(missingClassroomIds.map(id => fetchClassroom(id))),
+  ]);
+  const extraTeachers = teacherResults.flatMap(result =>
+    result.status === 'fulfilled' ? [result.value.data.data] : [],
+  );
+  const extraClassrooms = classroomResults.flatMap(result =>
+    result.status === 'fulfilled' ? [result.value.data.data] : [],
+  );
+
+  if (extraTeachers.length) {
+    teachers.value = [...teachers.value, ...extraTeachers]
+      .sort((left, right) => left.teacherName.localeCompare(right.teacherName, 'en', { sensitivity: 'base', numeric: true }));
+  }
+  if (extraClassrooms.length) classrooms.value = [...classrooms.value, ...extraClassrooms];
+}
+
 function slotTeacherNames(rule: { slots?: Array<{ teacherId?: EntityId }> }): string {
   const teacherNames = (rule.slots ?? [])
     .map(slot => teachers.value.find(teacher => String(teacher.id) === String(slot.teacherId))?.teacherName)
@@ -1067,11 +1172,16 @@ watch(selectedPackage, pkg => {
   startingHoursDraft.value = packageHours(pkg?.startingHours);
 }, { immediate: true });
 function remainingForPackage(pkg: CoursePackageItem): number {
-  return packageHours(Math.max(0, pkg.remainingUnits));
+  return packageHours(Math.max(0, pkg.remainingUnits
+    - (pkg.pendingDeductionUnits ?? 0) - (pkg.unresolvedPastHours ?? 0)));
 }
 const emptySlots = ref<SlotDef[]>([]);
 const weeklyRows = ref<WeeklyAdjustmentRow[]>([]);
 const weeklyReason = ref('');
+const selectedWeekStartDate = ref(currentNaturalWeekStartDate());
+const weeklyLoadedWeekStartDate = ref(selectedWeekStartDate.value);
+const allWeeklyPackageOccurrences = ref<LessonOccurrenceItem[]>([]);
+const selectedFutureReleaseIds = ref<string[]>([]);
 
 // ─── Weekly adjustment calendar (Sat→Fri) ──────────────────
 
@@ -1086,10 +1196,22 @@ const selectedRowKey = ref<string | null>(null);
 const weeklyBusyOccurrences = ref<BusyOccurrence[]>([]);
 const weeklyBusyError = ref('');
 
+const adjustableWeekOptions = computed(() => Array.from({ length: 5 }, (_, index) => {
+  const startDate = addCalendarDays(currentNaturalWeekStartDate(), -index * 7);
+  const endDate = addCalendarDays(startDate, 6);
+  return {
+    startDate,
+    label: `${formatCalendarDate(startDate)} – ${formatCalendarDate(endDate)}${index === 0 ? ' · Current week' : ''}`,
+  };
+}));
+
+const isSelectedWeekInPast = computed(() => selectedWeekStartDate.value < currentNaturalWeekStartDate());
+const isMissingPastWeekReason = computed(() => isSelectedWeekInPast.value && !weeklyReason.value.trim());
+
 
 const weekDays = computed(() => {
   const { start } = currentNaturalWeekRange();
-  const todayStr = dayjs().format('YYYY-MM-DD');
+  const todayStr = todayInAppTimezone();
   return Array.from({ length: 7 }, (_, i) => {
     const d = start.add(i, 'day');
     return {
@@ -1119,6 +1241,52 @@ const calendarRows = computed(() => {
 const selectedRow = computed(() =>
   weeklyRows.value.find(r => r.rowKey === selectedRowKey.value) ?? null
 );
+
+const allocatedUnitsBeforeAdjustment = computed(() => allWeeklyPackageOccurrences.value
+    .reduce((sum, occurrence) => sum + reservedUnitsForOccurrence(occurrence), 0));
+
+const packageRemainingUnits = computed(() => Math.round(Number(selectedPackage.value?.remainingUnits ?? 0) * 2));
+const unallocatedUnitsBeforeAdjustment = computed(() => Math.max(0, packageRemainingUnits.value - allocatedUnitsBeforeAdjustment.value));
+
+const futureReleaseNeedUnits = computed(() => Math.max(
+  0,
+  allocatedUnitsBeforeAdjustment.value + unitDelta.value - packageRemainingUnits.value,
+));
+
+const futureReleaseCandidates = computed(() => {
+  const weekEnd = addCalendarDays(selectedWeekStartDate.value, 7);
+  return allWeeklyPackageOccurrences.value
+    .filter(isFutureReleaseCandidate)
+    .filter(occurrence => occurrence.plannedStartAt > nowInAppTimezone())
+    .filter(occurrence => occurrence.plannedStartAt.slice(0, 10) >= weekEnd)
+    .sort((left, right) => right.plannedStartAt.localeCompare(left.plannedStartAt));
+});
+
+const selectedFutureReleaseUnits = computed(() => {
+  const selectedIds = new Set(selectedFutureReleaseIds.value);
+  return futureReleaseCandidates.value
+    .filter(occurrence => selectedIds.has(String(occurrence.id)))
+    .reduce((sum, occurrence) => sum + Math.max(0, occurrence.plannedUnits ?? 0), 0);
+});
+
+const futureReleasePreview = computed(() => {
+  const selectedIds = new Set(selectedFutureReleaseIds.value);
+  let remaining = futureReleaseNeedUnits.value;
+  const preview: Array<{ id: EntityId; label: string; units: number }> = [];
+  for (const occurrence of futureReleaseCandidates.value) {
+    if (!selectedIds.has(String(occurrence.id)) || remaining <= 0) continue;
+    const units = Math.min(remaining, Math.max(0, occurrence.plannedUnits ?? 0));
+    if (units > 0) {
+      preview.push({
+        id: occurrence.id,
+        label: `${dayjs(occurrence.plannedStartAt).format('ddd, MMM D')} ${occurrenceTimeRange(occurrence.plannedStartAt, occurrence.plannedEndAt)}`,
+        units,
+      });
+      remaining -= units;
+    }
+  }
+  return preview;
+});
 
 
 function rowsForDay(dayIndex: number): WeeklyAdjustmentRow[] {
@@ -1175,6 +1343,7 @@ function eventTeacherLabel(row: WeeklyAdjustmentRow): string {
 }
 
 function selectRow(row: WeeklyAdjustmentRow) {
+  if (row.readOnly) return;
   selectedRowKey.value = row.rowKey;
 }
 
@@ -1192,6 +1361,7 @@ function rowDayLabel(row: WeeklyAdjustmentRow): string {
 
 function rowStatusTag(row: WeeklyAdjustmentRow): { label: string; type: 'success' | 'warning' | 'danger' } | null {
   if (row.rowType === 'NEW') return { label: 'Added', type: 'success' };
+  if (row.readOnly) return { label: 'Recorded · read-only', type: 'success' };
   if (row.markedForDelete) return { label: 'Removed', type: 'danger' };
   if (isWeeklyRowChanged(row)) return { label: 'Modified', type: 'warning' };
   return null;
@@ -1206,10 +1376,27 @@ function rowStartTime(row: WeeklyAdjustmentRow): string {
   return dayjs(row.plannedStartAt).format('HH:mm');
 }
 
+function isDateWithinSelectedWeek(value: string): boolean {
+  const date = value.slice(0, 10);
+  const weekStart = selectedWeekStartDate.value;
+  return date >= weekStart && date < addCalendarDays(weekStart, 7);
+}
+
+function isOutsideSelectedWeek(row: WeeklyAdjustmentRow): boolean {
+  return row.rowType === 'EXISTING' && !isDateWithinSelectedWeek(row.plannedStartAt);
+}
+
+function isDayDisabledForSelectedRow(date: Date): boolean {
+  return selectedRow.value?.rowType === 'NEW'
+    && !isDateWithinSelectedWeek(dayjs(date).format('YYYY-MM-DD'));
+}
+
 
 function setRowDay(row: WeeklyAdjustmentRow, date: string) {
+  if (!date) return;
   const start = dayjs(row.plannedStartAt);
   const target = dayjs(`${date}T${start.format('HH:mm:ss')}`);
+  if (!target.isValid()) return;
   row.plannedStartAt = target.format('YYYY-MM-DDTHH:mm:ss');
   row.plannedEndAt = target.add(row.plannedHours, 'hour').format('YYYY-MM-DDTHH:mm:ss');
 }
@@ -1247,6 +1434,7 @@ const dragStartSlot = ref<number | null>(null);
 const dragEndSlot = ref<number | null>(null);
 
 function onCalMouseDown(dayIndex: number, slotIndex: number) {
+  if (weeklyLoading.value) return;
   dragging.value = true;
   dragDayIndex.value = dayIndex;
   dragStartSlot.value = slotIndex;
@@ -1405,17 +1593,29 @@ const editFormRules: FormRules = {
 const originalWeeklyUnits = computed(() =>
   weeklyRows.value
     .filter(row => row.rowType === 'EXISTING')
-    .reduce((sum, row) => sum + (row.original?.plannedUnits ?? 0), 0)
+    .reduce((sum, row) => sum + (row.original ? reservedUnitsForOccurrence(row.original) : 0), 0)
 );
 
 
 const adjustedWeeklyUnits = computed(() =>
   weeklyRows.value
-    .filter(row => !(row.rowType === 'EXISTING' && row.markedForDelete))
-    .reduce((sum, row) => sum + Math.round((row.plannedHours ?? 0) * 2), 0)
+    .reduce((sum, row) => {
+      if (row.readOnly) return sum + (row.original ? reservedUnitsForOccurrence(row.original) : 0);
+      if (row.rowType === 'EXISTING' && row.markedForDelete) return sum;
+      if (!isDateWithinSelectedWeek(row.plannedStartAt)) return sum;
+      return sum + Math.round((row.plannedHours ?? 0) * 2);
+    }, 0)
 );
 
-const unitDelta = computed(() => adjustedWeeklyUnits.value - originalWeeklyUnits.value);
+// 周内汇总按课次最终日期计算；课包总占用变化只看课时增减，跨周移动本身不改变课包总课时。
+const weeklyUnitDelta = computed(() => adjustedWeeklyUnits.value - originalWeeklyUnits.value);
+const unitDelta = computed(() => weeklyRows.value.reduce((delta, row) => {
+  if (row.readOnly) return delta;
+  if (row.rowType === 'NEW') return delta + Math.round((row.plannedHours ?? 0) * 2);
+  const originalUnits = row.original ? reservedUnitsForOccurrence(row.original) : 0;
+  if (row.markedForDelete) return delta - originalUnits;
+  return delta + Math.round((row.plannedHours ?? 0) * 2) - originalUnits;
+}, 0));
 
 
 const addedCount = computed(() =>
@@ -1499,6 +1699,7 @@ const otherPackageOccupiedSlots = computed<OccupiedSlotDef[]>(() => {
       weekday: start.day() === 0 ? 7 : start.day(),
       startTime: start.format('HH:mm'),
       endTime: dayjs(occ.plannedEndAt).format('HH:mm'),
+      occurrenceDate: start.format('YYYY-MM-DD'),
       courseLabel: occ.packageName || occ.className || 'Lesson',
       studentName: occ.busyStudentNames.join(' / '),
       teacherName: occ.plannedTeacherName,
@@ -1512,6 +1713,15 @@ const editWeekMonday = computed(() => {
   const start = editForm.startDate ? dayjs(editForm.startDate) : dayjs();
   return start.subtract((start.day() + 6) % 7, 'day').format('YYYY-MM-DD');
 });
+
+// 周模板选择的是星期和时间；展示首节课日期，避免把当前周的占用误解为同日冲突。
+function firstOccurrenceDate(slot: SlotDef): string {
+  if (!editForm.startDate) return '—';
+  const start = dayjs(editForm.startDate);
+  const startWeekday = start.day() === 0 ? 7 : start.day();
+  const daysUntilSlot = (slot.weekday - startWeekday + 7) % 7;
+  return start.add(daysUntilSlot, 'day').format('MMM D, YYYY');
+}
 
 // 弹窗与开课日期变化时刷新所有成员的占用；旧请求不得覆盖新日期的预览。
 watch(
@@ -1908,16 +2118,16 @@ const remainingPackageHours = computed(() => selectedPackage.value
   ? remainingForPackage(selectedPackage.value) : 0);
 const otherReservedHours = computed(() => isEditing.value
   ? (currentRule.value?.otherReservedHours ?? 0) : 0);
-const pendingAndPreservedHours = computed(() => pendingDeductionHours.value
-  + (isEditing.value ? (currentRule.value?.preservedReservedHours ?? 0) : 0));
-const unallocatedHours = computed(() => Math.max(0, Number((
-  remainingPackageHours.value - pendingAndPreservedHours.value
-  - otherReservedHours.value - allocatedHours.value
-).toFixed(1))));
-
+// 账本余额不变；编辑时释放旧规则的普通未来课次，只预留未处理历史及保留的例外课次。
+const allocatableForNewScheduleHours = computed(() => packageHours(Math.max(0, Math.min(
+  remainingPackageHours.value,
+  (selectedPackage.value?.remainingUnits ?? 0)
+    - pendingDeductionHours.value
+    - otherReservedHours.value
+    - (isEditing.value ? (currentRule.value?.preservedReservedHours ?? 0) : 0),
+))));
 const allocationExceedsRemaining = computed(() =>
-  allocatedHours.value + otherReservedHours.value + pendingAndPreservedHours.value
-    > remainingPackageHours.value);
+  allocatedHours.value > allocatableForNewScheduleHours.value);
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
@@ -1936,6 +2146,7 @@ async function openCreateDialog() {
 async function openEditDialog() {
   if (!currentRule.value) return;
   const detail = currentRule.value;
+  await ensureScheduleResourceOptions(detail.slots || [], detail.defaultClassroomId);
   isEditing.value = true;
   editingRuleId.value = detail.id;
   editFormRef.value?.resetFields();
@@ -1944,11 +2155,11 @@ async function openEditDialog() {
     startDate: detail.startDate,
     notes: detail.notes || '',
     slots: (detail.slots || []).map((s: any) => ({
-      teacherId: s.teacherId,
+      teacherId: s.teacherId == null ? undefined : String(s.teacherId),
       classroomSelection: s.deliveryMode === 'ONLINE'
         ? 'ONLINE'
         : s.classroomId != null || detail.defaultClassroomId != null
-          ? `ROOM:${s.classroomId ?? detail.defaultClassroomId}`
+          ? `ROOM:${String(s.classroomId ?? detail.defaultClassroomId)}`
           : '',
       subjectName: s.subjectName,
       weekday: s.weekday,
@@ -1992,12 +2203,8 @@ async function submitCreateForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
-    if (editForm.slots.some(slot => !slot.classroomSelection)) {
-      ElMessage.warning('Choose a classroom or Online for every time slot.');
-      return;
-    }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours must fit the current package balance after pending lessons, preserved schedule exceptions, and other schedules.');
+      ElMessage.warning(`Allocated ${allocatedHours.value.toFixed(1)}h exceeds the ${allocatableForNewScheduleHours.value.toFixed(1)}h available for this schedule.`);
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2039,12 +2246,8 @@ async function submitEditForm() {
       ElMessage.warning('Please select at least one class time slot on the calendar.');
       return;
     }
-    if (editForm.slots.some(slot => !slot.classroomSelection)) {
-      ElMessage.warning('Choose a classroom or Online for every time slot.');
-      return;
-    }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours must fit the current package balance after pending lessons, preserved schedule exceptions, and other schedules.');
+      ElMessage.warning(`Allocated ${allocatedHours.value.toFixed(1)}h exceeds the ${allocatableForNewScheduleHours.value.toFixed(1)}h available for this schedule.`);
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2098,26 +2301,69 @@ async function openWeeklyAdjustmentDialog() {
   if (!selectedPackageId.value) return;
   weeklyReason.value = '';
   weeklyRows.value = [];
+  selectedWeekStartDate.value = currentNaturalWeekStartDate();
+  weeklyLoadedWeekStartDate.value = selectedWeekStartDate.value;
+  selectedFutureReleaseIds.value = [];
+  allWeeklyPackageOccurrences.value = [];
   weeklyBusyOccurrences.value = [];
   weeklyBusyError.value = '';
   weeklyDialogVisible.value = true;
+  await loadWeeklyAdjustmentWeek();
+}
+
+async function onWeeklyWeekChange() {
+  if (hasWeeklyChanges.value || weeklyReason.value.trim() || selectedFutureReleaseIds.value.length) {
+    try {
+      await ElMessageBox.confirm('Changing the week will discard unsaved adjustments. Continue?', 'Change selected week', {
+        confirmButtonText: 'Discard changes',
+        cancelButtonText: 'Stay here',
+        type: 'warning',
+      });
+    } catch {
+      selectedWeekStartDate.value = weeklyLoadedWeekStartDate.value;
+      return;
+    }
+  }
+  weeklyReason.value = '';
+  await loadWeeklyAdjustmentWeek();
+}
+
+async function loadWeeklyAdjustmentWeek() {
+  if (!selectedPackageId.value) return;
   weeklyLoading.value = true;
+  selectedRowKey.value = null;
+  selectedFutureReleaseIds.value = [];
+  weeklyRows.value = [];
+  allWeeklyPackageOccurrences.value = [];
+  weeklyBusyOccurrences.value = [];
+  weeklyBusyError.value = '';
   try {
     const { start, end } = currentNaturalWeekRange();
     const startAt = start.format('YYYY-MM-DDT00:00:00');
-    const endAt = end.format('YYYY-MM-DDT23:59:59');
+    const endAt = end.add(1, 'day').format('YYYY-MM-DDT00:00:00');
 
-    const [packageOccurrences, participantBusy] = await Promise.all([
-      fetchAllOccurrences({ packageId: selectedPackageId.value, startAt, endAt }),
+    const [allPackageOccurrences, participantBusy] = await Promise.all([
+      fetchAllOccurrences({ packageId: selectedPackageId.value }),
       fetchParticipantBusyOccurrences(startAt, endAt),
     ]);
-    weeklyRows.value = packageOccurrences
-      .filter(canEditWeeklyOccurrence)
+    allWeeklyPackageOccurrences.value = allPackageOccurrences;
+    weeklyRows.value = allPackageOccurrences
+      .filter(occurrence => occurrence.plannedStartAt >= startAt && occurrence.plannedStartAt < endAt)
+      .filter(canShowWeeklyOccurrence)
       .map(toWeeklyAdjustmentRow);
+    await ensureScheduleResourceOptions(weeklyRows.value.map(row => ({
+      teacherId: row.plannedTeacherId,
+      deliveryMode: row.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
+      classroomId: row.classroomSelection?.startsWith('ROOM:')
+        ? row.classroomSelection.slice(5)
+        : undefined,
+    })));
 
     weeklyBusyOccurrences.value = participantBusy;
+    weeklyLoadedWeekStartDate.value = selectedWeekStartDate.value;
   } catch (err) {
     weeklyRows.value = [];
+    allWeeklyPackageOccurrences.value = [];
     weeklyBusyOccurrences.value = [];
     weeklyBusyError.value = extractErrorMessage(err);
     ElMessage.error(extractErrorMessage(err));
@@ -2160,11 +2406,12 @@ async function submitWeeklyAdjustment() {
   try {
     await adjustWeeklySchedule({
       packageId: selectedPackageId.value,
-      weekStartDate: currentNaturalWeekRange().start.format('YYYY-MM-DD'),
-      reason: weeklyReason.value || undefined,
+      weekStartDate: selectedWeekStartDate.value,
+      reason: weeklyReason.value.trim() || undefined,
+      releaseFutureOccurrenceIds: futureReleasePreview.value.map(item => item.id),
       items,
     });
-    ElMessage.success('This week adjustment saved.');
+    ElMessage.success('Schedule adjustment saved.');
     weeklyDialogVisible.value = false;
     await loadAllPackageRules();
 
@@ -2217,26 +2464,83 @@ const weeklyImpactMessage = computed(() => {
 
   const summary = `Added ${addedCount.value}, modified ${modifiedCount.value}, removed ${removedCount.value} lesson(s).`;
   let impact: string;
-  if (unitDelta.value > 0) {
-    impact = 'This week will use more package hours. The package balance may run out earlier and the estimated end date may move up.';
+  if (futureReleaseNeedUnits.value > 0) {
+    const rows = futureReleasePreview.value.map(item => `${item.label} ${formatUnitsAsHours(item.units)}`).join('; ');
+    impact = `The package has ${formatUnitsAsHours(unallocatedUnitsBeforeAdjustment.value)} unallocated. These future lessons will be reduced by ${formatUnitsAsHours(futureReleaseNeedUnits.value)}: ${rows}.`;
+  } else if (unitDelta.value > 0) {
+    impact = `The added ${formatUnitsAsHours(unitDelta.value)} will use the package’s unallocated hours. Future lessons will stay unchanged.`;
   } else if (unitDelta.value < 0) {
-    impact = 'This week will use fewer package hours. The student may need makeup lessons and the estimated end date may be extended.';
+    impact = `${formatUnitsAsHours(-unitDelta.value)} will return to the package’s unallocated hours. Future lessons will stay unchanged.`;
   } else {
-    impact = 'This week timing changes only. The recurring weekly schedule and package consumption pace stay unchanged.';
+    impact = 'This adjustment changes lesson details only. The recurring weekly schedule and other lesson occurrences will stay unchanged.';
   }
   return `${summary}<br/><br/>${impact}`;
 });
 
 function currentNaturalWeekRange() {
-
-  const today = dayjs().startOf('day');
-  const daysFromSaturday = (today.day() + 1) % 7;
-  const start = today.subtract(daysFromSaturday, 'day');
+  const start = dayjs(`${selectedWeekStartDate.value}T00:00:00`);
   return { start, end: start.add(6, 'day') };
 }
 
-function canEditWeeklyOccurrence(occ: LessonOccurrenceItem): boolean {
-  return occ.planningStatus !== 'CANCELLED' && !occ.resultStatus;
+function currentNaturalWeekStartDate(): string {
+  const today = todayInAppTimezone();
+  const weekday = new Date(`${today}T00:00:00Z`).getUTCDay();
+  return addCalendarDays(today, -((weekday + 1) % 7));
+}
+
+function todayInAppTimezone(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function nowInAppTimezone(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
+}
+
+function addCalendarDays(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, '0')}-${String(value.getUTCDate()).padStart(2, '0')}`;
+}
+
+function formatCalendarDate(date: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
+    .format(new Date(`${date}T00:00:00Z`));
+}
+
+function canShowWeeklyOccurrence(occ: LessonOccurrenceItem): boolean {
+  return occ.planningStatus !== 'CANCELLED';
+}
+
+function isPackageAllocation(occ: LessonOccurrenceItem): boolean {
+  return reservedUnitsForOccurrence(occ) > 0;
+}
+
+function reservedUnitsForOccurrence(occ: LessonOccurrenceItem): number {
+  if (occ.planningStatus === 'CANCELLED') return 0;
+  if (occ.confirmStage === 'CONFIRMED') return 0;
+  if (occ.confirmStage === 'PENDING_ADMIN') {
+    if (occ.shouldDeduct === 0) return 0;
+    if (occ.shouldDeduct === 1 && occ.deductedUnits != null) return Math.max(0, occ.deductedUnits);
+  }
+  return Math.max(0, occ.plannedUnits ?? 0);
+}
+
+function isFutureReleaseCandidate(occ: LessonOccurrenceItem): boolean {
+  return ['SCHEDULED', 'ADJUSTED'].includes(occ.planningStatus)
+    && isPackageAllocation(occ)
+    && occ.lessonRecordId == null
+    && occ.recordId == null;
 }
 
 function toWeeklyAdjustmentRow(occ: LessonOccurrenceItem): WeeklyAdjustmentRow {
@@ -2248,11 +2552,12 @@ function toWeeklyAdjustmentRow(occ: LessonOccurrenceItem): WeeklyAdjustmentRow {
     plannedStartAt: occ.plannedStartAt,
     plannedEndAt: occ.plannedEndAt,
     plannedHours: (occ.plannedUnits ?? 0) * 0.5,
-    plannedTeacherId: occ.plannedTeacherId,
+    plannedTeacherId: occ.plannedTeacherId == null ? undefined : String(occ.plannedTeacherId),
     classroomSelection: occ.deliveryMode === 'ONLINE'
       ? 'ONLINE'
-      : occ.plannedClassroomId == null ? undefined : `ROOM:${occ.plannedClassroomId}`,
+      : occ.plannedClassroomId == null ? undefined : `ROOM:${String(occ.plannedClassroomId)}`,
     markedForDelete: false,
+    readOnly: Boolean(occ.resultStatus) || occ.planningStatus === 'MERGED',
     itemReason: '',
     original: occ,
   };
@@ -2274,6 +2579,7 @@ function addWeeklyNewRow(startAt?: dayjs.Dayjs, hours = 1): WeeklyAdjustmentRow 
     plannedTeacherId: currentRule.value?.slots?.[0]?.teacherId,
     classroomSelection: defaultWeeklyClassroomSelection(),
     markedForDelete: false,
+    readOnly: false,
     itemReason: '',
   };
   weeklyRows.value.push(row);
@@ -2292,9 +2598,11 @@ function removeWeeklyNewRow(row: WeeklyAdjustmentRow) {
 }
 
 function validateWeeklyRows(): string {
-  const { start, end } = currentNaturalWeekRange();
+  const weekStartDate = selectedWeekStartDate.value;
+  const weekEndDate = addCalendarDays(weekStartDate, 7);
   for (const row of weeklyRows.value) {
 
+    if (row.readOnly) continue;
     if (row.rowType === 'EXISTING' && row.markedForDelete) {
       continue;
     }
@@ -2303,17 +2611,16 @@ function validateWeeklyRows(): string {
     if (!startAt.isValid() || !endAt.isValid()) {
       return 'Please provide valid start and end times.';
     }
-    if (startAt.isBefore(start) || startAt.isAfter(end.endOf('day'))) {
-      return 'Adjusted lessons must stay in the current natural week.';
+    const startDate = row.plannedStartAt.slice(0, 10);
+    const endDate = row.plannedEndAt.slice(0, 10);
+    if (row.rowType === 'NEW' && (startDate < weekStartDate || startDate >= weekEndDate)) {
+      return 'Adjusted lessons must stay in the selected natural week.';
     }
     if (!endAt.isAfter(startAt)) {
       return 'End time must be later than start time.';
     }
     if (Math.round(row.plannedHours * 2) < 1) {
       return 'Lesson hours must be at least 0.5h.';
-    }
-    if (!row.classroomSelection) {
-      return 'Choose a classroom or Online for every lesson.';
     }
     if (!isHalfHourIncrement(row.plannedHours)) {
       return 'Lesson hours must be in 0.5h increments.';
@@ -2322,10 +2629,10 @@ function validateWeeklyRows(): string {
     if (minutes !== Math.round(row.plannedHours * 2) * 30) {
       return 'Lesson duration must match the selected hours.';
     }
-    if (endAt.isAfter(startAt.startOf('day').add(1, 'day'))) {
+    if (endDate !== startDate || endAt.isAfter(startAt.startOf('day').add(1, 'day'))) {
       return 'Lessons must finish by midnight.';
     }
-    const busy = weeklyBusyOccurrences.value.find(occurrence =>
+    const busy = isDateWithinSelectedWeek(row.plannedStartAt) && weeklyBusyOccurrences.value.find(occurrence =>
       startAt.isBefore(dayjs(occurrence.plannedEndAt))
       && endAt.isAfter(dayjs(occurrence.plannedStartAt)));
     if (busy) {
@@ -2355,7 +2662,7 @@ function classroomIdFromSelection(selection?: string): EntityId | undefined {
 
 function deliveryModeFromSelection(selection?: string): 'IN_PERSON' | 'ONLINE' | undefined {
   if (selection === 'ONLINE') return 'ONLINE';
-  return selection?.startsWith('ROOM:') ? 'IN_PERSON' : undefined;
+  return 'IN_PERSON';
 }
 
 function defaultWeeklyClassroomSelection(): string | undefined {
@@ -3016,6 +3323,75 @@ function disabledPastDate(date: Date) {
   gap: 14px;
 }
 
+.weekly-adjustment__week-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #606266;
+}
+
+.weekly-adjustment__week-picker label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.weekly-adjustment__week-picker :deep(.el-select) {
+  width: 270px;
+}
+
+.weekly-adjustment__week-picker > span {
+  color: #909399;
+  font-size: 12px;
+}
+
+.weekly-future-release {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e6a23c;
+  border-radius: 8px;
+  background: #fdf6ec;
+}
+
+.weekly-future-release__heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #303133;
+}
+
+.weekly-future-release__heading span,
+.weekly-future-release p {
+  color: #7b8797;
+  font-size: 12px;
+}
+
+.weekly-future-release p {
+  margin: 0;
+}
+
+.weekly-future-release__list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: 180px;
+  overflow: auto;
+  gap: 4px 12px;
+}
+
+.weekly-future-release__list :deep(.el-checkbox) {
+  margin-right: 0;
+  white-space: normal;
+}
+
+.weekly-future-release__preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: #606266;
+  font-size: 12px;
+}
+
 .weekly-summary {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -3272,6 +3648,12 @@ function disabledPastDate(date: Date) {
   z-index: 2;
 }
 
+.weekly-cal__event--readonly {
+  cursor: not-allowed;
+  opacity: 0.65;
+  filter: grayscale(0.25);
+}
+
 /* ── Weekly lessons list ─────────────────── */
 .weekly-list {
   display: flex;
@@ -3313,6 +3695,11 @@ function disabledPastDate(date: Date) {
 
 .weekly-list__item--active {
   background: #ecf5ff;
+}
+
+.weekly-list__item--readonly {
+  cursor: not-allowed;
+  background: #fafafa;
 }
 
 
@@ -3381,6 +3768,25 @@ function disabledPastDate(date: Date) {
 
 .weekly-reason {
   margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .weekly-adjustment__week-picker {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .weekly-adjustment__week-picker :deep(.el-select) {
+    width: 100%;
+  }
+
+  .weekly-future-release__heading {
+    flex-direction: column;
+  }
+
+  .weekly-future-release__list {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ── Dialog ─────────────────────────────────── */

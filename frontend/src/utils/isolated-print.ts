@@ -58,6 +58,19 @@ export function createIsolatedPrinter(getSource: () => HTMLElement | null | unde
     return true;
   }
 
+  // 大型表单需要先让浏览器完成样式计算和布局，再打开打印预览。
+  async function printWhenReady(): Promise<boolean> {
+    if (!prepare()) return false;
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    });
+    if (document.fonts?.status === 'loading') {
+      await document.fonts.ready;
+    }
+    window.print();
+    return true;
+  }
+
   function detach() {
     if (attached) {
       window.removeEventListener('beforeprint', prepare);
@@ -67,5 +80,5 @@ export function createIsolatedPrinter(getSource: () => HTMLElement | null | unde
     clear();
   }
 
-  return { attach, print, detach };
+  return { attach, print, printWhenReady, detach };
 }

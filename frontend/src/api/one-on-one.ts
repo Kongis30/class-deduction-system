@@ -80,6 +80,7 @@ export interface OneOnOnePackage {
   bonusUnits?: number;
   consumedUnits: number;
   remainingUnits: number;
+  usableRemainingUnits?: number;
   availablePackageUnits?: number;
   allocatedUnits?: number;
   scheduledReservedUnits?: number;

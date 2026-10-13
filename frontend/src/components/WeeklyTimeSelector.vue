@@ -24,6 +24,12 @@
           <span v-if="label.date" class="wts-header__date">{{ label.date }}</span>
         </span>
       </div>
+      <div v-if="dragPreview" class="wts-drag-feedback" role="status" aria-live="polite">
+        <span class="wts-drag-feedback__content">
+          {{ weekdayName(dragPreview.weekday) }} {{ formatTime(dragPreview.startMin) }}–{{ formatTime(dragPreview.endMin) }}
+          <strong>{{ dragPreview.units }} × 30 min · {{ (dragPreview.units * 0.5).toFixed(1) }}h</strong>
+        </span>
+      </div>
       <div class="wts-body">
         <div
           class="wts-row"
@@ -61,8 +67,8 @@
                 v-if="occupiedEvent(day, time.hour, time.minute)"
                 class="wts-event"
                 :class="{
-                  'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict,
-                  'wts-event--online': occupiedEvent(day, time.hour, time.minute)?.isOnline && !occupiedEvent(day, time.hour, time.minute)?.isConflict,
+                  'wts-event--multiple': occupiedEvent(day, time.hour, time.minute)?.isMultiple,
+                  'wts-event--online': occupiedEvent(day, time.hour, time.minute)?.isOnline && !occupiedEvent(day, time.hour, time.minute)?.isMultiple,
                 }"
                 :style="occupiedEventStyle(occupiedEvent(day, time.hour, time.minute)!)"
               >
@@ -87,8 +93,8 @@
                 v-if="occupiedEvent(day, time.hour, time.minute)"
                 class="wts-event"
                 :class="{
-                  'wts-event--conflict': occupiedEvent(day, time.hour, time.minute)?.isConflict,
-                  'wts-event--online': occupiedEvent(day, time.hour, time.minute)?.isOnline && !occupiedEvent(day, time.hour, time.minute)?.isConflict,
+                  'wts-event--multiple': occupiedEvent(day, time.hour, time.minute)?.isMultiple,
+                  'wts-event--online': occupiedEvent(day, time.hour, time.minute)?.isOnline && !occupiedEvent(day, time.hour, time.minute)?.isMultiple,
                 }"
                 :style="occupiedEventStyle(occupiedEvent(day, time.hour, time.minute)!)"
               >
@@ -149,6 +155,7 @@ export interface OccupiedSlotDef {
   weekday: number;
   startTime: string;
   endTime: string;
+  occurrenceDate?: string;
   courseLabel: string;
   displayTitle?: string;
   subjectName?: string;
@@ -333,7 +340,7 @@ function occupiedTooltipContent(day: number, hour: number, minute: number): stri
     return occupiedSlotTooltip(slots[0]);
   }
   return [
-    `<b>Conflict: ${slots.length} lessons overlap</b>`,
+    `<b>${slots.length} lessons in this time slot</b>`,
     ...slots.map((slot, index) => `${index + 1}. ${occupiedSlotTooltip(slot)}`),
   ].join('<br><br>');
 }
@@ -343,7 +350,7 @@ interface OccupiedEvent {
   context?: string;
   timeLabel?: string;
   coveredCells: number;
-  isConflict?: boolean;
+  isMultiple?: boolean;
   isOnline?: boolean;
   showTime: boolean;
 }
@@ -354,9 +361,9 @@ function occupiedEvent(day: number, hour: number, minute: number): OccupiedEvent
   if (!slots?.length) return null;
   if (slots.length > 1 && isConflictStart(day, minuteVal)) {
     return {
-      title: `${slots.length} lessons conflict`,
+      title: `${slots.length} lessons`,
       coveredCells: 1,
-      isConflict: true,
+      isMultiple: true,
       showTime: false,
     };
   }
@@ -392,6 +399,7 @@ function occupiedEventStyle(event: OccupiedEvent) {
 function occupiedSlotTooltip(slot: OccupiedSlotDef): string {
   const lines = [
     `<b>${escapeHtml(occupiedSlotTitle(slot))}</b>`,
+    ...(slot.occurrenceDate ? [`Date: ${escapeHtml(slot.occurrenceDate)}`] : []),
     `Time: ${escapeHtml(slot.startTime)}–${escapeHtml(scheduleEndTimeForDisplay(slot.startTime, slot.endTime))}`,
   ];
   if (slot.courseLabel) lines.push(`Course: ${escapeHtml(slot.courseLabel)}`);
@@ -426,6 +434,29 @@ const selecting = ref(false);
 const anchor = ref<{ weekday: number; hour: number; minute: number } | null>(null);
 const currentHover = ref<{ weekday: number; hour: number; minute: number } | null>(null);
 
+// 拖动预览与松开鼠标时使用相同的范围，保证看到的格数就是最终选中的课时。
+const dragPreview = computed(() => {
+  if (!selecting.value || !anchor.value) return null;
+  const hover = currentHover.value || anchor.value;
+  if (hover.weekday !== anchor.value.weekday) return null;
+  const anchorMin = timeToMinutes(anchor.value.hour, anchor.value.minute);
+  const hoverMin = timeToMinutes(hover.hour, hover.minute);
+  const startMin = Math.min(anchorMin, hoverMin);
+  const endMin = Math.max(anchorMin, hoverMin) + 30;
+  return {
+    weekday: anchor.value.weekday,
+    startMin,
+    endMin,
+    units: (endMin - startMin) / 30,
+  };
+});
+
+function clearDrag() {
+  selecting.value = false;
+  anchor.value = null;
+  currentHover.value = null;
+}
+
 function onCellClick(weekday: number, hour: number, minute: number) {
   if (props.readonly) {
     if (isOccupied(weekday, hour, minute)) {
@@ -441,8 +472,8 @@ function onCellClick(weekday: number, hour: number, minute: number) {
 function onMouseDown(weekday: number, hour: number, minute: number) {
   if (props.readonly) return;
   if (timeToMinutes(hour, minute) >= GRID_END_MINUTES) return;
-  if (isOccupied(weekday, hour, minute)) return;
   anchor.value = { weekday, hour, minute };
+  currentHover.value = anchor.value;
   selecting.value = true;
 }
 
@@ -454,45 +485,16 @@ function onMouseEnter(weekday: number, hour: number, minute: number) {
 
 function onMouseUp() {
   if (props.readonly) return;
-  if (!selecting.value || !anchor.value) {
-    selecting.value = false;
-    return;
-  }
-  const hover = currentHover.value || anchor.value;
-  if (hover.weekday !== anchor.value.weekday) {
-    selecting.value = false;
+  const preview = dragPreview.value;
+  if (!preview) {
+    clearDrag();
     return;
   }
 
-  const anchorMin = timeToMinutes(anchor.value.hour, anchor.value.minute);
-  const hoverMin = timeToMinutes(hover.hour, hover.minute);
-  if (hoverMin !== anchorMin && Math.abs(hoverMin - anchorMin) < 30) {
-    selecting.value = false;
-    return;
-  }
-
-  const startMin = Math.min(anchorMin, hoverMin);
-  const endMin = hoverMin === anchorMin
-    ? anchorMin + 30
-    : Math.max(anchorMin, hoverMin);
-  const units = Math.round((endMin - startMin) / 30);
-
-  // Check no overlap with occupied slots
-  const overlapsOccupied = (props.occupiedSlots || []).some(s => {
-    if (s.weekday !== anchor.value!.weekday) return false;
-    const sStart = parseTimeToMin(s.startTime);
-    const sEnd = parseEndTimeToMin(s.startTime, s.endTime);
-    return startMin < sEnd && endMin > sStart;
-  });
-  if (overlapsOccupied) {
-    selecting.value = false;
-    anchor.value = null;
-    currentHover.value = null;
-    return;
-  }
+  const { startMin, endMin, units } = preview;
 
   const newSlot: SlotDef = {
-    weekday: anchor.value.weekday,
+    weekday: preview.weekday,
     startTime: formatTime(startMin),
     endTime: formatTime(endMin),
     plannedUnits: units,
@@ -509,9 +511,7 @@ function onMouseUp() {
     emit('update:modelValue', [...props.modelValue, newSlot]);
   }
 
-  selecting.value = false;
-  anchor.value = null;
-  currentHover.value = null;
+  clearDrag();
 }
 
 document.addEventListener('mouseup', onMouseUp);
@@ -530,13 +530,15 @@ function cellClass(day: number, hour: number, minute: number) {
   if (props.readonly && !isOccupied(day, hour, minute)) return '';
 
   const minuteVal = timeToMinutes(hour, minute);
+  const selectedClass = selectedOverlapClass(day, minuteVal);
+  const previewClass = dragPreviewClass(day, minuteVal);
 
   // Occupied cells
   if (isOccupied(day, hour, minute)) {
     const slots = occupiedMap.value.get(`${day}:${minuteVal}`) || [];
-    if (slots.length > 1) return 'wts-cell--conflict';
+    if (slots.length > 1) return `wts-cell--multiple${selectedClass}${previewClass}`;
     const slot = slots[0];
-    return slot?.isCurrent ? 'wts-cell--current' : 'wts-cell--occupied';
+    return `${slot?.isCurrent ? 'wts-cell--current' : 'wts-cell--occupied'}${selectedClass}${previewClass}`;
   }
 
   // Selected slots in edit mode
@@ -559,20 +561,32 @@ function cellClass(day: number, hour: number, minute: number) {
       return 'wts-cell--selected';
     }
 
-    // Drag preview
-    if (selecting.value && anchor.value && currentHover.value) {
-      if (anchor.value.weekday === day && currentHover.value.weekday === day) {
-        const aMin = timeToMinutes(anchor.value.hour, anchor.value.minute);
-        const hMin = timeToMinutes(currentHover.value.hour, currentHover.value.minute);
-        const lo = Math.min(aMin, hMin);
-        const hi = Math.max(aMin, hMin);
-        if (minuteVal >= lo && minuteVal < hi) {
-          return 'wts-cell--preview';
-        }
-      }
-    }
+    if (previewClass) return 'wts-cell--preview';
   }
   return '';
+}
+
+function dragPreviewClass(day: number, minuteVal: number): string {
+  const preview = dragPreview.value;
+  if (!preview || preview.weekday !== day
+    || minuteVal < preview.startMin || minuteVal >= preview.endMin) return '';
+  if (!isOccupied(day, Math.floor(minuteVal / 60), minuteVal % 60)) return ' wts-cell--preview';
+  return ' wts-cell--preview-overlap';
+}
+
+function selectedOverlapClass(day: number, minuteVal: number): string {
+  if (props.readonly) return '';
+  const slot = props.modelValue.find(item => item.weekday === day
+    && minuteVal >= parseTimeToMin(item.startTime)
+    && minuteVal < parseEndTimeToMin(item.startTime, item.endTime));
+  if (!slot) return '';
+
+  const start = parseTimeToMin(slot.startTime);
+  const end = parseEndTimeToMin(slot.startTime, slot.endTime);
+  const classes = ['wts-cell--selected-overlap'];
+  if (minuteVal === Math.floor(start / 30) * 30) classes.push('wts-cell--selected-overlap-start');
+  if (minuteVal + 30 >= end) classes.push('wts-cell--selected-overlap-end');
+  return ` ${classes.join(' ')}`;
 }
 
 function weekdayName(d: number) {
@@ -685,6 +699,32 @@ function weekdayName(d: number) {
   display: block;
 }
 
+.wts-drag-feedback {
+  position: sticky;
+  top: 42px;
+  height: 0;
+  z-index: 20;
+  pointer-events: none;
+}
+.wts-drag-feedback__content {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid #93bbff;
+  border-radius: 7px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgb(25 79 159 / 18%);
+  color: #1d4f99;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.wts-drag-feedback__content strong { color: #17427f; }
+
 /* ─── Body (grid container) ─────────── */
 .wts-body {
   border: 1px solid #e8e8e8;
@@ -773,8 +813,24 @@ function weekdayName(d: number) {
   background: #d6e5ff;
   border-color: #b3d4ff;
 }
+.wts-cell--preview-overlap,
+.wts-cell--preview-overlap:hover {
+  background: transparent;
+  z-index: 4;
+}
+.wts-cell--preview-overlap::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  background: repeating-linear-gradient(to bottom, #1d65db 0 6px, transparent 6px 9px);
+  pointer-events: none;
+  z-index: 5;
+  content: '';
+}
 
-/* ─── Occupied cells (conflicting) ─────────── */
+/* ─── Occupied cells remain visible and selectable in edit mode ─────────── */
 .wts-cell--occupied {
   background: repeating-linear-gradient(
     -45deg,
@@ -783,7 +839,7 @@ function weekdayName(d: number) {
     #ffe8e6 4px,
     #ffe8e6 8px
   );
-  cursor: not-allowed;
+  cursor: pointer;
 }
 .wts-cell--occupied:hover {
   background: repeating-linear-gradient(
@@ -795,18 +851,50 @@ function weekdayName(d: number) {
   );
 }
 
-/* ─── Hard conflicts: multiple lessons cover the same 30-minute cell ─────────── */
-.wts-cell--conflict {
-  background: #fff1f0;
-  box-shadow:
-    inset 4px 0 0 #f56c6c,
-    inset 0 0 0 1px #f56c6c;
-  cursor: not-allowed;
+/* Multiple existing lessons stay visible; save validation checks actual dates. */
+.wts-cell--multiple {
+  background: #fff8eb;
+  box-shadow: inset 0 0 0 1px #e6a23c;
+  cursor: pointer;
   z-index: 2;
 }
 
-.wts-cell--conflict:hover {
-  background: #ffe4e1;
+.wts-cell--multiple:hover {
+  background: #fff0d1;
+}
+
+/* Keep the existing lesson readable; the narrow rail marks the new weekly selection. */
+.wts-cell--selected-overlap {
+  background: transparent;
+  box-shadow: none;
+  z-index: 4;
+}
+.wts-cell--selected-overlap:hover,
+.wts-cell--occupied.wts-cell--selected-overlap:hover,
+.wts-cell--multiple.wts-cell--selected-overlap:hover {
+  background: transparent;
+}
+.wts-cell--selected-overlap::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  background: #409eff;
+  pointer-events: none;
+  z-index: 5;
+  content: '';
+}
+.wts-cell--selected-overlap-start::after {
+  top: 2px;
+  border-radius: 3px 3px 0 0;
+}
+.wts-cell--selected-overlap-end::after {
+  bottom: 2px;
+  border-radius: 0 0 3px 3px;
+}
+.wts-cell--selected-overlap-start.wts-cell--selected-overlap-end::after {
+  border-radius: 3px;
 }
 
 /* ─── Current package's own slots ─────────── */
@@ -869,12 +957,12 @@ function weekdayName(d: number) {
 .wts-event--online .wts-event__time {
   color: #52769b;
 }
-.wts-event--conflict {
-  border-left-color: #f56c6c;
-  background: #fff1f0;
-  color: #b42318;
+.wts-event--multiple {
+  border-left-color: #e6a23c;
+  background: rgba(255, 248, 235, 0.96);
+  color: #6b4a16;
 }
-.wts-event--conflict .wts-event__title {
+.wts-event--multiple .wts-event__title {
   font-size: 10px;
 }
 
