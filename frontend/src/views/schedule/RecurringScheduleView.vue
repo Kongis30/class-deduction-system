@@ -431,8 +431,8 @@
             class="edit-schedule__allocation"
             :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
-            · Remaining {{ remainingPackageHours.toFixed(1) }}h
             · Allocated {{ allocatedHours.toFixed(1) }}h
+            · Remaining {{ remainingPackageHours.toFixed(1) }}h
           </span>
         </div>
       </div>
