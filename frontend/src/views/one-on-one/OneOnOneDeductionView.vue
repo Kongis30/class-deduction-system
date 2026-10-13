@@ -334,7 +334,12 @@
               <span>{{ activePackage.packageName }}</span>
             </div>
             <div class="oo-student-context__metrics">
-              <span><small>Total</small>{{ formatHours(activePackage.totalUnits) }}h</span>
+              <span>
+                <small>Total</small>{{ formatHours(activePackage.totalUnits) }}h
+                <em v-if="(activePackage.bonusUnits ?? 0) > 0" class="oo-student-context__bonus-note">
+                  (includes {{ formatHours(activePackage.bonusUnits ?? 0) }}h bonus)
+                </em>
+              </span>
               <span
                 v-if="activePackage.availableAllocatedUnits != null"
                 title="Hours assigned to the active schedule from the package's remaining balance."
@@ -344,7 +349,6 @@
               <span title="Package balance after confirmed and pending deductions.">
                 <small>Remaining</small>{{ formatHours(activePackage.availablePackageUnits ?? activePackage.remainingUnits) }}h
               </span>
-              <span v-if="(activePackage.bonusUnits ?? 0) > 0"><small>Bonus</small>{{ formatHours(activePackage.bonusUnits ?? 0) }}h</span>
             </div>
           </div>
           <el-alert
@@ -2140,6 +2144,17 @@ onMounted(async () => {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.oo-student-context__metrics .oo-student-context__bonus-note {
+  display: block;
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: normal;
 }
 
 .oo-student-context__metrics .oo-metric--overallocated {
