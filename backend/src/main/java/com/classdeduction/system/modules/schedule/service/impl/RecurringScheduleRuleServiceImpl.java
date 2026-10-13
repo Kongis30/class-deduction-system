@@ -155,7 +155,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .in(query.getTeacherId() != null, RecurringScheduleRuleEntity::getId, matchedRuleIds)
                 .in(query.getClassroomId() != null, RecurringScheduleRuleEntity::getId, matchedClassroomRuleIds)
                 .eq(query.getPackageId() != null, RecurringScheduleRuleEntity::getPackageId, query.getPackageId())
-                .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt);
+                .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt)
+                .orderByDesc(RecurringScheduleRuleEntity::getId);
         IPage<RecurringScheduleRuleEntity> result = recurringScheduleRuleMapper.selectPage(page, wrapper);
         if (result.getRecords().isEmpty()) {
             return PageResponse.empty(query.getPageNum(), query.getPageSize());

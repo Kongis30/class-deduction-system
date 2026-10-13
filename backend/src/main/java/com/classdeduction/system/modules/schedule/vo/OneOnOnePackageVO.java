@@ -22,7 +22,6 @@ public record OneOnOnePackageVO(
         Double remainingUnits,
         Double availablePackageUnits,
         Double allocatedUnits,
-        Double availableAllocatedUnits,
         Double scheduledReservedUnits,
         Boolean renewalReminder,
         String packageStatus,

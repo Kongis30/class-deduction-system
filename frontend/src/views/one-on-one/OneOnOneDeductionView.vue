@@ -341,13 +341,13 @@
                 </em>
               </span>
               <span
-                v-if="activePackage.availableAllocatedUnits != null"
-                title="Hours assigned to the active schedule from the package's remaining balance."
+                v-if="activePackage.allocatedUnits != null"
+                title="Hours assigned to the current schedule; confirmed lessons do not change this allocation."
               >
-                <small>Allocated</small>{{ formatHours(activePackage.availableAllocatedUnits) }}h
+                <small>Allocated</small>{{ formatHours(activePackage.allocatedUnits) }}h
               </span>
-              <span title="Package balance after confirmed and pending deductions.">
-                <small>Remaining</small>{{ formatHours(activePackage.availablePackageUnits ?? activePackage.remainingUnits) }}h
+              <span title="Package balance after confirmed deductions.">
+                <small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h
               </span>
             </div>
           </div>

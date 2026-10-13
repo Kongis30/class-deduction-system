@@ -781,8 +781,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toMap(Map.Entry::getKey,
                         entry -> PrivateLessonAllocation.reservedUnits(entry.getValue(),
                                 recordIndex.forPackage(entry.getKey(), entry.getValue()))));
-        PackageHoursContext hoursContext = loadPackageHoursContext(
-                packageIds, allocationOccurrenceMap, recordIndex, scheduledUnitsByPackage);
+        PackageHoursContext hoursContext = loadPackageHoursContext(packageIds, scheduledUnitsByPackage);
 
         Set<Long> studentIds = new LinkedHashSet<>(packages.stream()
                 .map(CoursePackageEntity::getStudentId)
@@ -1408,14 +1407,12 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     }
 
     private record PackageHoursContext(Map<Long, Integer> allocatedByPackage,
-                                       Map<Long, Integer> usedByPackage,
                                        Map<Long, Integer> scheduledByPackage,
                                        Map<Long, Integer> pendingByPackage) {}
 
-    /** 同一批课包统一计算累计分配、规则已用、当前排课占用和待确认课时。 */
+    /** 与 Schedule 页面一样，按最新 ACTIVE 规则统计分配课时；余额和待确认课时单独计算。 */
     private PackageHoursContext loadPackageHoursContext(
-            List<Long> packageIds, Map<Long, List<LessonOccurrenceEntity>> occurrencesByPackage,
-            LatestRecordIndex recordIndex, Map<Long, Integer> scheduledByPackage) {
+            List<Long> packageIds, Map<Long, Integer> scheduledByPackage) {
         Map<Long, Integer> pendingByPackage = new HashMap<>();
         for (LessonRecordEntity record : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
                 .in(LessonRecordEntity::getPackageId, packageIds)
@@ -1427,42 +1424,29 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
                 new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                         .in(RecurringScheduleRuleEntity::getPackageId, packageIds)
-                        .in(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE", "PAUSED"));
+                        .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                        .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt)
+                        .orderByDesc(RecurringScheduleRuleEntity::getId));
         Map<Long, Integer> allocatedByPackage = new HashMap<>();
-        Map<Long, Integer> usedByPackage = new HashMap<>();
         if (!rules.isEmpty()) {
-            Map<Long, Long> packageByRule = rules.stream().collect(Collectors.toMap(
-                    RecurringScheduleRuleEntity::getId, RecurringScheduleRuleEntity::getPackageId));
+            // Schedule 列表每个课包只取最新 ACTIVE 规则，避免把旧的 PAUSED 规则再次计入。
+            Map<Long, Long> currentRuleByPackage = new HashMap<>();
             for (RecurringScheduleRuleEntity rule : rules) {
-                allocatedByPackage.putIfAbsent(rule.getPackageId(), 0);
+                currentRuleByPackage.putIfAbsent(rule.getPackageId(), rule.getId());
             }
+            Map<Long, Long> packageByRule = currentRuleByPackage.entrySet().stream().collect(Collectors.toMap(
+                    Map.Entry::getValue, Map.Entry::getKey));
             for (RecurringScheduleSlotEntity slot : recurringScheduleSlotMapper.selectList(
                     new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
-                            .in(RecurringScheduleSlotEntity::getRuleId, packageByRule.keySet())
-                            .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"))) {
+                            .in(RecurringScheduleSlotEntity::getRuleId, packageByRule.keySet()))) {
                 allocatedByPackage.merge(packageByRule.get(slot.getRuleId()),
                         Math.max(0, safeUnits(slot.getAllocatedUnits())), Integer::sum);
             }
-            for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
-                Map<Long, LessonRecordEntity> records = recordIndex.forPackage(entry.getKey(), entry.getValue());
-                Set<Long> seen = new HashSet<>();
-                for (LessonOccurrenceEntity occurrence : entry.getValue()) {
-                    if (!seen.add(occurrence.getId())
-                            || !packageByRule.containsKey(occurrence.getScheduleRuleId())) {
-                        continue;
-                    }
-                    LessonRecordEntity record = records.get(occurrence.getId());
-                    if (record == null || !Objects.equals(record.getShouldDeduct(), 1)
-                            || (!"CONFIRMED".equals(record.getConfirmStage())
-                            && !"PENDING_ADMIN".equals(record.getConfirmStage()))) {
-                        continue;
-                    }
-                    usedByPackage.merge(entry.getKey(),
-                            Math.max(0, safeUnits(record.getDeductedUnits())), Integer::sum);
-                }
+            for (Long packageId : currentRuleByPackage.keySet()) {
+                allocatedByPackage.putIfAbsent(packageId, 0);
             }
         }
-        return new PackageHoursContext(allocatedByPackage, usedByPackage, scheduledByPackage, pendingByPackage);
+        return new PackageHoursContext(allocatedByPackage, scheduledByPackage, pendingByPackage);
     }
 
     /** 管理员按课包内实际排课的老师分别建立入口；老师账号查询时只保留本人入口。 */
@@ -1612,7 +1596,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Integer allocatedUnits = hoursContext.allocatedByPackage().get(packageId);
         int availablePackageUnits = Math.max(0, safeUnits(coursePackage.getRemainingUnits())
                 - hoursContext.pendingByPackage().getOrDefault(packageId, 0));
-        int usedAllocationUnits = hoursContext.usedByPackage().getOrDefault(packageId, 0);
         return OneOnOnePackageVO.builder()
                 .packageId(coursePackage.getId())
                 .packageNo(coursePackage.getPackageNo())
@@ -1631,8 +1614,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
                 .availablePackageUnits(UnitConverter.toHoursDecimal(availablePackageUnits))
                 .allocatedUnits(allocatedUnits == null ? null : UnitConverter.toHoursDecimal(allocatedUnits))
-                .availableAllocatedUnits(allocatedUnits == null ? null : UnitConverter.toHoursDecimal(
-                        Math.min(availablePackageUnits, Math.max(0, allocatedUnits - usedAllocationUnits))))
                 .scheduledReservedUnits(UnitConverter.toHoursDecimal(
                         hoursContext.scheduledByPackage().getOrDefault(packageId, 0)))
                 .renewalReminder(safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage))
