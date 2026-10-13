@@ -3304,6 +3304,11 @@ onMounted(async () => {
 }
 
 @media print {
+  @page {
+    size: letter portrait;
+    margin: 0.5in 0.5in 0.5in 0.75in;
+  }
+
   :global(.app-sidebar),
   :global(.app-header),
   .no-print {
@@ -3313,6 +3318,7 @@ onMounted(async () => {
   .oo-page,
   .oo-workspace {
     display: block;
+    width: 100%;
     border: 0;
     padding: 0;
     height: auto;
@@ -3372,6 +3378,7 @@ onMounted(async () => {
   }
 
   .oo-record-panel {
+    width: 100%;
     border: 0;
     padding: 0;
     height: auto;
@@ -3380,6 +3387,7 @@ onMounted(async () => {
 
   .oo-signature-sheet {
     width: 100%;
+    box-sizing: border-box;
     border: 0;
     padding: 0;
     break-inside: avoid;

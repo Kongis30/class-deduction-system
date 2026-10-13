@@ -59,10 +59,11 @@ export function renderSignatureSheetDocument(
   .lesson-table th, .lesson-table td { height: 22px; padding: 2px 4px; font-size: 14px; }
   .empty { padding: 24px; border: 1px solid #bbb; text-align: center; color: #555; }
   @media print {
-    @page { size: letter portrait; margin: 0.5in; }
+    @page { size: letter portrait; margin: 0.5in 0.5in 0.5in 0.75in; }
     body { padding: 0; background: #fff; }
     .toolbar { display: none; }
-    .sheet { max-width: none; margin: 0; padding: 0; box-shadow: none; }
+    .sheet { width: 100%; max-width: none; margin: 0; padding: 0; box-shadow: none; }
+    .lesson-table { width: 100%; margin-left: 0; }
   }
 </style></head><body>
 <div class="toolbar"><button onclick="window.close()">Close</button><button class="primary" onclick="window.print()" ${warnings.length ? 'disabled title="Resolve the missing print data and retry"' : ''}>Print</button></div>
