@@ -433,7 +433,6 @@
           >
             · Remaining {{ remainingPackageHours.toFixed(1) }}h
             · Allocated {{ allocatedHours.toFixed(1) }}h
-            · Unallocated {{ unallocatedHours.toFixed(1) }}h
           </span>
         </div>
       </div>
@@ -1908,12 +1907,6 @@ const remainingPackageHours = computed(() => selectedPackage.value
   ? remainingForPackage(selectedPackage.value) : 0);
 const otherReservedHours = computed(() => isEditing.value
   ? (currentRule.value?.otherReservedHours ?? 0) : 0);
-
-// 待确认课时不减少 Remaining，但与各规则尚未消课的分配额一起占用可再次分配的额度。
-const unallocatedHours = computed(() => Math.max(0, Number((
-  remainingPackageHours.value - pendingDeductionHours.value
-    - unusedAllocatedHours.value - otherReservedHours.value
-).toFixed(1))));
 
 const allocationExceedsRemaining = computed(() =>
   allocatedHours.value < usedScheduleHours.value
