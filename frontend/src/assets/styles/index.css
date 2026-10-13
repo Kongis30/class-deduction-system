@@ -80,6 +80,7 @@ body {
 
   body {
     background: #fff !important;
+    overflow: visible !important;
   }
 }
 

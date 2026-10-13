@@ -7917,13 +7917,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
-@media (max-width: 1100px) {
+@media screen and (max-width: 1100px) {
   .adjustment-column--discounts .course-adjustment-list {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-@media (max-width: 720px) {
+@media screen and (max-width: 720px) {
   .private-lesson-switcher__header {
     align-items: flex-start;
     flex-direction: column;
@@ -8287,7 +8287,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   padding-left: 18px;
 }
 
-@media (max-width: 1280px) {
+@media screen and (max-width: 1280px) {
   .paper-form,
   .registration-desk,
   .registration-student-picker,
@@ -8296,7 +8296,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
-@media (max-width: 960px) {
+@media screen and (max-width: 960px) {
   .registration-desk,
   .registration-flow,
   .registration-student-picker,
@@ -8312,7 +8312,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 }
 
-@media (max-width: 720px) {
+@media screen and (max-width: 720px) {
   .registration-page {
     align-items: stretch;
     gap: 10px;
@@ -8689,6 +8689,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 @media print {
+  /* 打印页按纸张分页，不继承屏幕窄视口触发的滚动布局。 */
   .no-print,
   .screen-only,
   .submit-bar,
@@ -8701,6 +8702,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 
   .registration-page {
+    display: block;
+    height: auto;
+    overflow: visible;
     background: #fff;
     padding: 0;
     color: #111;
@@ -8713,8 +8717,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   }
 
   .paper-form {
+    display: block;
     width: 100%;
+    max-width: none;
+    height: auto;
     min-height: auto;
+    overflow: visible;
     box-shadow: none;
     padding: 0;
     font-size: 11.5px;
