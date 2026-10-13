@@ -157,6 +157,9 @@ class EnrollmentOrderServiceImplTest {
     private com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper recurringScheduleRuleMapper;
 
     @Mock
+    private com.classdeduction.system.modules.schedule.mapper.RecurringScheduleStartingBalanceMapper recurringScheduleStartingBalanceMapper;
+
+    @Mock
     private com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper recurringScheduleSlotMapper;
 
     @Mock
@@ -281,6 +284,7 @@ class EnrollmentOrderServiceImplTest {
                 teacherMapper,
                 jsonHelper,
                 recurringScheduleRuleMapper,
+                recurringScheduleStartingBalanceMapper,
                 recurringScheduleSlotMapper,
                 lessonOccurrenceMapper,
                 lessonRecordMapper,

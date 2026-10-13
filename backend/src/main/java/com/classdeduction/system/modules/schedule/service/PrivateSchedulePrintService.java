@@ -83,8 +83,8 @@ public class PrivateSchedulePrintService {
             RecurringScheduleRuleEntity rule = rules.get(index);
             List<RecurringScheduleSlotEntity> ruleSlots = slotsByRule.getOrDefault(rule.getId(), List.of());
             List<PrivateSchedulePrintRevisionVO.Slot> printSlots = ruleSlots.stream().map(slot -> {
-                TeacherEntity teacher = teachers.get(slot.getTeacherId());
-                ClassroomEntity classroom = classrooms.get(slot.getClassroomId());
+                TeacherEntity teacher = slot.getTeacherId() == null ? null : teachers.get(slot.getTeacherId());
+                ClassroomEntity classroom = slot.getClassroomId() == null ? null : classrooms.get(slot.getClassroomId());
                 return new PrivateSchedulePrintRevisionVO.Slot(slot.getWeekday(), slot.getStartTime(),
                         slot.getEndTime(), slot.getSubjectName(),
                         teacher == null ? null : teacher.getTeacherName(),

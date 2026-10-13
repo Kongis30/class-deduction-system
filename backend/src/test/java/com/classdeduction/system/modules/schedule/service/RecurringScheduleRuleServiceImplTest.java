@@ -71,6 +71,9 @@ class RecurringScheduleRuleServiceImplTest {
     private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
 
     @Mock
+    private com.classdeduction.system.modules.schedule.mapper.RecurringScheduleStartingBalanceMapper startingBalanceMapper;
+
+    @Mock
     private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
 
     @Mock
@@ -128,6 +131,7 @@ class RecurringScheduleRuleServiceImplTest {
     void setUp() {
         recurringScheduleRuleService = new RecurringScheduleRuleServiceImpl(
                 recurringScheduleRuleMapper,
+                startingBalanceMapper,
                 recurringScheduleSlotMapper,
                 lessonOccurrenceMapper,
                 classEnrollmentMapper,
