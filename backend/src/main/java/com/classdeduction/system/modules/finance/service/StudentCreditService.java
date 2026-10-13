@@ -22,7 +22,7 @@ public interface StudentCreditService {
     void creditFromTopUp(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                          Long handledByUserId, String handledByName, String remark);
 
-    /** 锁定学生并按当前可用余额冲回充值 Credit；余额不足时最多扣至零，返回实际冲回额。 */
+    /** 锁定学生并按当前可用余额冲回充值 Credit；可选核对确认框余额，余额不足时最多扣至零。 */
     BigDecimal reverseTopUpUpToAvailable(Long studentId, Long orderId, BigDecimal amount,
                                          BigDecimal expectedBalance, Long handledByUserId,
                                          String handledByName, String remark);

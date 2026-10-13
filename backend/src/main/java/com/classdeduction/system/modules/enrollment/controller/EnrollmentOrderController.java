@@ -149,7 +149,7 @@ public class EnrollmentOrderController {
     public ApiResponse<Void> deleteCreditTopUpReceipt(
             @PathVariable Long id,
             @RequestParam Long receiptId,
-            @RequestParam BigDecimal expectedCreditBalance,
+            @RequestParam(required = false) BigDecimal expectedCreditBalance,
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
         boolean transactionDeleted = enrollmentOrderService.deleteCreditTopUpReceipt(
                 id, receiptId, expectedCreditBalance, currentUser);

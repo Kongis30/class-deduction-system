@@ -84,7 +84,7 @@ public class StudentCreditServiceImpl implements StudentCreditService {
                                                 String handledByName, String remark) {
         BigDecimal normalized = defaultAmount(amount);
         if (studentId == null || orderId == null || normalized.compareTo(ZERO) <= 0
-                || expectedBalance == null || expectedBalance.compareTo(ZERO) < 0) {
+                || (expectedBalance != null && expectedBalance.compareTo(ZERO) < 0)) {
             throw new BusinessException("INVALID_CREDIT_TOP_UP_REVERSAL", "A valid Credit top-up is required.");
         }
         if (ledgerMapper.lockStudent(studentId) == null) {
@@ -99,7 +99,8 @@ public class StudentCreditServiceImpl implements StudentCreditService {
         }
 
         BigDecimal available = getBalance(studentId);
-        if (available.compareTo(defaultAmount(expectedBalance)) != 0) {
+        // 旧版页面不会传确认时余额；兼容期间仍在学生行锁内使用最新余额执行。
+        if (expectedBalance != null && available.compareTo(defaultAmount(expectedBalance)) != 0) {
             throw new BusinessException("CREDIT_BALANCE_CHANGED",
                     "The available Credit changed. Reopen the receipt and review the updated balance before deleting.");
         }
