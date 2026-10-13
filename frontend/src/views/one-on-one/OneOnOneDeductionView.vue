@@ -336,9 +336,6 @@
             <div class="oo-student-context__metrics">
               <span>
                 <small>Total</small>{{ formatHours(activePackage.totalUnits) }}h
-                <em v-if="(activePackage.bonusUnits ?? 0) > 0" class="oo-student-context__bonus-note">
-                  (includes {{ formatHours(activePackage.bonusUnits ?? 0) }}h bonus)
-                </em>
               </span>
               <span
                 v-if="activePackage.allocatedUnits != null"
@@ -2144,17 +2141,6 @@ onMounted(async () => {
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-}
-
-.oo-student-context__metrics .oo-student-context__bonus-note {
-  display: block;
-  margin-top: 2px;
-  color: #64748b;
-  font-size: 10px;
-  font-style: normal;
-  font-weight: 500;
-  line-height: 1.2;
-  white-space: normal;
 }
 
 .oo-student-context__metrics .oo-metric--overallocated {
