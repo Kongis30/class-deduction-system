@@ -4,6 +4,7 @@
  */
 export function createIsolatedPrinter(getSource: () => HTMLElement | null | undefined) {
   let attached = false;
+  let preparedForPrint = false;
 
   // 浏览器直接执行 ⌘P 时也会触发 beforeprint，必须同步准备打印节点。
   function prepare(): boolean {
@@ -37,17 +38,24 @@ export function createIsolatedPrinter(getSource: () => HTMLElement | null | unde
 
     root.replaceChildren(copy);
     document.body.classList.add('has-isolated-print');
+    preparedForPrint = true;
     return true;
   }
 
   function clear() {
+    preparedForPrint = false;
     document.body.classList.remove('has-isolated-print');
     document.getElementById('print-document-root')?.remove();
   }
 
+  // 按钮打印已提前复制并完成布局；仅在浏览器快捷键打印时才在 beforeprint 创建副本。
+  function prepareForBrowserPrint() {
+    if (!preparedForPrint) prepare();
+  }
+
   function attach() {
     if (attached) return;
-    window.addEventListener('beforeprint', prepare);
+    window.addEventListener('beforeprint', prepareForBrowserPrint);
     window.addEventListener('afterprint', clear);
     attached = true;
   }
@@ -73,7 +81,7 @@ export function createIsolatedPrinter(getSource: () => HTMLElement | null | unde
 
   function detach() {
     if (attached) {
-      window.removeEventListener('beforeprint', prepare);
+      window.removeEventListener('beforeprint', prepareForBrowserPrint);
       window.removeEventListener('afterprint', clear);
       attached = false;
     }

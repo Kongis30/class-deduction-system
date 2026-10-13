@@ -37,11 +37,19 @@ test('saved receipt prints its content through the browser print command', async
     receipts: [{ id: '300', templateCode: 'DEFAULT_RECEIPT', receiptPayload: JSON.stringify(receiptPayload) }],
   };
 
+  let releaseOrderRequest!: () => void;
+  const orderRequestGate = new Promise<void>((resolve) => {
+    releaseOrderRequest = resolve;
+  });
+
   await page.route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (!path.startsWith('/api/')) {
       await route.continue();
       return;
+    }
+    if (path.endsWith('/v1/enrollment/orders/100')) {
+      await orderRequestGate;
     }
     const data = path.endsWith('/v1/auth/me') ? admin
       : path.endsWith('/v1/enrollment/orders/100') ? order : [];
@@ -49,19 +57,27 @@ test('saved receipt prints its content through the browser print command', async
   });
 
   await page.goto('/registration?orderId=100');
+  const printButton = page.getByRole('button', { name: 'Print', exact: true });
+  await expect(printButton).toBeDisabled();
+  releaseOrderRequest();
   await expect(page.locator('#app .paper-form--readonly')).toContainText('Print Receipt Student');
+  await expect(printButton).toBeEnabled();
 
   await page.evaluate(() => {
     window.print = () => {
+      const preparedBeforePrint = document.querySelector('#print-document-root .paper-form');
+      window.dispatchEvent(new Event('beforeprint'));
       const printRoot = document.querySelector<HTMLElement>('#print-document-root .paper-form');
       document.documentElement.dataset.receiptPrintInvoked = 'yes';
+      document.documentElement.dataset.receiptPrintSnapshotPreserved = String(preparedBeforePrint === printRoot);
       document.documentElement.dataset.receiptPrintContentReady = String(
         Boolean(printRoot?.innerText.includes('Print Receipt Student')),
       );
     };
   });
-  await page.getByRole('button', { name: 'Print', exact: true }).click();
+  await printButton.click();
   await expect(page.locator('html')).toHaveAttribute('data-receipt-print-invoked', 'yes');
+  await expect(page.locator('html')).toHaveAttribute('data-receipt-print-snapshot-preserved', 'true');
   await expect(page.locator('html')).toHaveAttribute('data-receipt-print-content-ready', 'true');
   await expect(page.locator('#print-document-root .paper-form')).toContainText('Print Receipt Student');
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));

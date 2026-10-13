@@ -1253,7 +1253,12 @@
       />
       <el-input v-if="receiptEditingEnabled && !isPrivateAllReceiptView" v-model="form.remark" placeholder="Registration remark" class="remark-input" />
       <el-button v-if="!isReadOnly" class="action-primary" type="primary" size="large" :loading="submitting" @click="submitForm">Save</el-button>
-      <el-button class="action-print" size="large" @click="printForm">Print</el-button>
+      <el-button
+        class="action-print"
+        size="large"
+        :disabled="isReadOnly && (historicalOrderLoading || !historicalOrder)"
+        @click="printForm"
+      >Print</el-button>
     </section>
 
     <nav v-if="appStore.isMobileViewport" class="mobile-registration-actions no-print" aria-label="Registration actions">
@@ -1288,6 +1293,7 @@
         <el-button
           v-if="isReadOnly && !editingCorrection"
           class="action-print"
+          :disabled="historicalOrderLoading || !historicalOrder"
           @click="printForm"
         >Print receipt</el-button>
       </div>
@@ -1490,6 +1496,8 @@ const router = useRouter();
 const appStore = useAppStore();
 const paperFormRef = ref<HTMLElement | null>(null);
 const receiptPrinter = createIsolatedPrinter(() => paperFormRef.value);
+const historicalOrderLoading = ref(Boolean(route.query.orderId));
+let historicalOrderLoadSequence = 0;
 const { isKeyboardOpen } = useMobileKeyboardState();
 const mobileRegistrationSteps = [
   { title: 'Student', description: 'Choose an existing student or enter student details.' },
@@ -2304,22 +2312,35 @@ async function loadProductGradeOrders(products: CourseProductItem[]) {
 async function loadHistoricalOrder() {
   const orderId = Array.isArray(route.query.orderId) ? route.query.orderId[0] : route.query.orderId;
   if (!orderId) {
+    historicalOrderLoading.value = false;
     return;
   }
+  const loadSequence = ++historicalOrderLoadSequence;
+  historicalOrderLoading.value = true;
+  historicalOrder.value = null;
   try {
     // 只读收据依赖订单快照与校区信息；和大批量下拉数据并行加载，避免等待报名表选项。
     const [orderResponse, campusResponse] = await Promise.all([
       fetchEnrollmentOrder(orderId),
       campuses.value.length > 0 ? Promise.resolve(null) : fetchCampuses(),
     ]);
+    if (loadSequence !== historicalOrderLoadSequence) return;
     if (campusResponse) {
       campuses.value = campusResponse.data.data ?? [];
     }
     historicalOrder.value = orderResponse.data.data;
     applyHistoricalOrder(historicalOrder.value);
+    // 页面只在历史数据已映射并完成 Vue 渲染后开放打印，避免复制到尚未更新的表单。
+    await nextTick();
     await printHistoricalFormIfRequested(String(orderId));
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
+    if (loadSequence === historicalOrderLoadSequence) {
+      ElMessage.error(extractErrorMessage(error));
+    }
+  } finally {
+    if (loadSequence === historicalOrderLoadSequence) {
+      historicalOrderLoading.value = false;
+    }
   }
 }
 
@@ -5030,11 +5051,17 @@ function notifyRegistrationSaved(saved: RegistrationIntakeResult) {
 }
 
 async function printForm() {
-  if (isReadOnly.value && !historicalOrder.value) {
+  if (isReadOnly.value && (historicalOrderLoading.value || !historicalOrder.value)) {
     ElMessage.warning('Wait for the saved receipt to load before printing.');
     return;
   }
   await nextTick();
+  const source = paperFormRef.value;
+  const studentName = fullStudentName.value.trim();
+  if (isReadOnly.value && (!source || !studentName || !source.innerText.includes(studentName))) {
+    ElMessage.warning('The saved receipt is still rendering. Please try printing again in a moment.');
+    return;
+  }
   if (!await receiptPrinter.printWhenReady()) {
     ElMessage.error('The receipt is not ready to print.');
   }
