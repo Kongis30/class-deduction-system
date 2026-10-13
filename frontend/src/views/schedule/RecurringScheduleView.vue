@@ -97,7 +97,7 @@
               >
                 <div class="col-item__stack">
                   <span class="col-item__name">{{ pkg.packageName }}</span>
-                  <span class="col-item__sub">{{ pkg.packageStatus }} · {{ projectedRemainingForPackage(pkg) }}h remaining</span>
+                  <span class="col-item__sub">{{ pkg.packageStatus }} · {{ remainingForPackage(pkg) }}h remaining</span>
                 </div>
                 <el-icon v-if="selectedPackageId === pkg.id" color="#409eff"><ArrowRight /></el-icon>
               </div>
@@ -262,20 +262,20 @@
             <div class="package-hours-card__eyebrow">PACKAGE HOURS</div>
             <strong>Hours overview</strong>
           </div>
-          <el-button type="primary" size="small" :loading="savingDeductedHours" @click="saveDeductedHours">
+          <el-button type="primary" size="small" :loading="savingStartingHours" @click="saveStartingHours">
             Save hours
           </el-button>
         </div>
         <div class="package-hours-card__fields">
           <div><span>Total hours</span><strong>{{ packageHours(selectedPackage.totalUnits) }}h</strong></div>
-          <label class="package-hours-card__input">
-            <span>Already deducted</span>
-            <el-input-number v-model="deductedHoursDraft" :min="confirmedDeductionHours" :max="deductedHoursMax" :step="0.5" :precision="1" controls-position="right" />
-          </label>
+          <div><span>Already deducted</span><strong>{{ confirmedDeductionHours }}h</strong></div>
           <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
-          <div><span>Starting Hours</span><strong>{{ projectedRemainingHours }}h</strong></div>
+          <label class="package-hours-card__input">
+            <span>Starting Hours</span>
+            <el-input-number v-model="startingHoursDraft" :min="startingHoursMin" :max="startingHoursMax" :step="0.5" :precision="1" controls-position="right" />
+          </label>
         </div>
-        <p class="package-hours-card__hint">Total includes added and bonus hours. Starting Hours reflects the balance after already deducted and pending deduction hours.</p>
+        <p class="package-hours-card__hint">Total includes added and bonus hours. Starting Hours is the balance when lesson tracking begins; confirmed lessons reduce the remaining balance without changing it.</p>
       </section>
 
       <template #footer>
@@ -412,7 +412,7 @@
                 <span>Schedule total</span>
                 <span class="slot-teacher-row__hours-control">
                   <el-input-number
-                    v-model="slot.scheduleTotalHours"
+                    v-model="slot.allocatedHours"
                     :min="0.5"
                     :step="0.5"
                     :precision="1"
@@ -432,7 +432,7 @@
             :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
             · Remaining {{ remainingPackageHours.toFixed(1) }}h
-            · Allocated {{ allocatedRemainingHours.toFixed(1) }}h
+            · Allocated {{ allocatedHours.toFixed(1) }}h
             · Unallocated {{ unallocatedHours.toFixed(1) }}h
           </span>
         </div>
@@ -1050,8 +1050,8 @@ const editDeductionPromptVisible = ref(false);
 const pendingStartedLessons = ref<OneOnOneLesson[]>([]);
 const resumingPackageId = ref<EntityId | null>(null);
 const packageHoursDialogVisible = ref(false);
-const deductedHoursDraft = ref(0);
-const savingDeductedHours = ref(false);
+const startingHoursDraft = ref(0);
+const savingStartingHours = ref(false);
 const selectedPackage = computed(() => studentPackages.value.find(p => String(p.id) === String(selectedPackageId.value)) ?? null);
 const packageHours = (hours?: number) => Number((hours ?? 0).toFixed(1));
 const confirmedDeductionHours = computed(() => {
@@ -1059,18 +1059,17 @@ const confirmedDeductionHours = computed(() => {
   return packageHours(Math.max(0, (pkg?.consumedUnits ?? 0) - (pkg?.openingUsedHours ?? 0)));
 });
 const pendingDeductionHours = computed(() => packageHours(selectedPackage.value?.pendingDeductionUnits));
-const deductedHoursMax = computed(() => Math.max(0,
-  packageHours(selectedPackage.value?.totalUnits) - pendingDeductionHours.value,
+const startingHoursMin = computed(() => packageHours(
+  confirmedDeductionHours.value + pendingDeductionHours.value,
 ));
-const projectedRemainingHours = computed(() => Number(Math.max(0,
-  packageHours(selectedPackage.value?.remainingUnits) + packageHours(selectedPackage.value?.consumedUnits)
-    - deductedHoursDraft.value - pendingDeductionHours.value,
-).toFixed(1)));
+const startingHoursMax = computed(() => packageHours(selectedPackage.value?.totalUnits));
 watch(selectedPackage, pkg => {
-  deductedHoursDraft.value = pkg?.consumedUnits ?? 0;
+  startingHoursDraft.value = packageHours(Math.max(0,
+    (pkg?.totalUnits ?? 0) - (pkg?.openingUsedHours ?? 0),
+  ));
 }, { immediate: true });
-function projectedRemainingForPackage(pkg: CoursePackageItem): number {
-  return packageHours(Math.max(0, pkg.remainingUnits - (pkg.pendingDeductionUnits ?? 0)));
+function remainingForPackage(pkg: CoursePackageItem): number {
+  return packageHours(Math.max(0, pkg.remainingUnits));
 }
 const emptySlots = ref<SlotDef[]>([]);
 const weeklyRows = ref<WeeklyAdjustmentRow[]>([]);
@@ -1397,7 +1396,7 @@ const editForm = reactive({
   ruleStatus: undefined as string | undefined,
   startDate: '',
   notes: '',
-  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string; subjectName?: string; scheduleTotalHours?: number }>,
+  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string; subjectName?: string; allocatedHours?: number }>,
 });
 
 const editFormRules: FormRules = {
@@ -1831,25 +1830,27 @@ async function openPrintSheet(command: string | number | object) {
   }
 }
 
-async function saveDeductedHours() {
+async function saveStartingHours() {
   const pkg = selectedPackage.value;
-  if (!pkg || !selectedStudentId.value || savingDeductedHours.value) return;
-  if (!Number.isInteger(deductedHoursDraft.value * 2)
-    || deductedHoursDraft.value < confirmedDeductionHours.value
-    || deductedHoursDraft.value > deductedHoursMax.value) {
-    ElMessage.warning('Already deducted hours must use 0.5-hour increments and fit within the package total after pending deduction.');
+  if (!pkg || !selectedStudentId.value || savingStartingHours.value) return;
+  if (!Number.isInteger(startingHoursDraft.value * 2)
+    || startingHoursDraft.value < startingHoursMin.value
+    || startingHoursDraft.value > startingHoursMax.value) {
+    ElMessage.warning('Starting Hours must use 0.5-hour increments and cover confirmed and pending deductions without exceeding the package total.');
     return;
   }
-  savingDeductedHours.value = true;
+  savingStartingHours.value = true;
   try {
-    await updateCoursePackageDeductedHours(pkg.id, deductedHoursDraft.value);
+    // 兼容现有课包接口：总已用量 = 录入前历史已用量 + 系统已确认消课。
+    const totalConsumedHours = packageHours(pkg.totalUnits - startingHoursDraft.value + confirmedDeductionHours.value);
+    await updateCoursePackageDeductedHours(pkg.id, totalConsumedHours);
     studentPackages.value = await fetchSchedulePackages(selectedStudentId.value);
     await Promise.all([loadAllPackageRules(), loadCurrentWeekOccurrences()]);
     ElMessage.success('Package hours and future schedule updated.');
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
   } finally {
-    savingDeductedHours.value = false;
+    savingStartingHours.value = false;
   }
 }
 
@@ -1890,33 +1891,34 @@ const totalSlotUnits = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.plannedUnits || 0), 0)
 );
 
-// 输入值是含历史已消课的累计排课额；展示给用户的 Allocated 只计剩余课时中的排课额。
-const scheduledTotalHours = computed(() =>
-  editForm.slots.reduce((sum, s) => sum + (s.scheduleTotalHours || 0), 0)
+// 排课槽位保存累计分配额；确认消课只改变余额，不回写已分配课时。
+const allocatedHours = computed(() =>
+  editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
 );
 
 const scheduleDeductedHours = computed(() => isEditing.value ? (currentRule.value?.deductedHours ?? 0) : 0);
 const schedulePendingHours = computed(() => isEditing.value ? (currentRule.value?.pendingHours ?? 0) : 0);
 const usedScheduleHours = computed(() => scheduleDeductedHours.value + schedulePendingHours.value);
 
-const allocatedRemainingHours = computed(() => Math.max(0, Number((
-  scheduledTotalHours.value - usedScheduleHours.value
+const unusedAllocatedHours = computed(() => Math.max(0, Number((
+  allocatedHours.value - usedScheduleHours.value
 ).toFixed(1))));
 
 const remainingPackageHours = computed(() => selectedPackage.value
-  ? projectedRemainingForPackage(selectedPackage.value) : 0);
-const otherScheduleAllocatedHours = computed(() => isEditing.value
+  ? remainingForPackage(selectedPackage.value) : 0);
+const otherReservedHours = computed(() => isEditing.value
   ? (currentRule.value?.otherReservedHours ?? 0) : 0);
 
-// 其他仍生效排课占用同一课包的余额；已消课和待确认课时不再计入当前 Allocated。
-// Unallocated 从课包当前可用余额中扣除本规则和其他规则已占用的剩余课时。
+// 待确认课时不减少 Remaining，但与各规则尚未消课的分配额一起占用可再次分配的额度。
 const unallocatedHours = computed(() => Math.max(0, Number((
-  remainingPackageHours.value - allocatedRemainingHours.value - otherScheduleAllocatedHours.value
+  remainingPackageHours.value - pendingDeductionHours.value
+    - unusedAllocatedHours.value - otherReservedHours.value
 ).toFixed(1))));
 
 const allocationExceedsRemaining = computed(() =>
-  scheduledTotalHours.value < usedScheduleHours.value
-  || allocatedRemainingHours.value + otherScheduleAllocatedHours.value > remainingPackageHours.value);
+  allocatedHours.value < usedScheduleHours.value
+  || unusedAllocatedHours.value + otherReservedHours.value
+    > remainingPackageHours.value - pendingDeductionHours.value);
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
@@ -1954,7 +1956,7 @@ async function openEditDialog() {
       startTime: s.startTime,
       endTime: scheduleEndTimeForDisplay(s.startTime, s.endTime),
       plannedUnits: s.plannedUnits,
-      scheduleTotalHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
+      allocatedHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
     })),
   });
   editDialogVisible.value = true;
@@ -1974,7 +1976,7 @@ function submitForm() {
 
 function validateSlotAllocations(): boolean {
   const incompleteSlot = editForm.slots.find(slot =>
-    !slot.teacherId || !slot.subjectName?.trim() || !slot.scheduleTotalHours || slot.scheduleTotalHours <= 0
+    !slot.teacherId || !slot.subjectName?.trim() || !slot.allocatedHours || slot.allocatedHours <= 0
   );
   if (!incompleteSlot) return true;
   ElMessage.warning('Each time slot requires a teacher, lesson name, and schedule total hours.');
@@ -1994,7 +1996,7 @@ async function submitCreateForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Schedule total must cover deducted and pending lessons; Allocated must fit within Remaining.');
+      ElMessage.warning('Allocated hours must cover deducted and pending lessons. Hours not yet deducted must fit within the remaining package balance after pending deductions and other schedules.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2013,7 +2015,7 @@ async function submitCreateForm() {
           startTime: s.startTime,
           endTime: scheduleEndTimeForApi(s.endTime),
           plannedUnits: s.plannedUnits,
-          allocatedUnits: s.scheduleTotalHours != null ? Math.round(s.scheduleTotalHours * 2) : undefined,
+          allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
         })),
       });
       ElMessage.success('Schedule created and lessons generated.');
@@ -2041,7 +2043,7 @@ async function submitEditForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Schedule total must cover deducted and pending lessons; Allocated must fit within Remaining.');
+      ElMessage.warning('Allocated hours must cover deducted and pending lessons. Hours not yet deducted must fit within the remaining package balance after pending deductions and other schedules.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2060,7 +2062,7 @@ async function submitEditForm() {
           startTime: s.startTime,
           endTime: scheduleEndTimeForApi(s.endTime),
           plannedUnits: s.plannedUnits,
-          allocatedUnits: s.scheduleTotalHours != null ? Math.round(s.scheduleTotalHours * 2) : undefined,
+          allocatedUnits: s.allocatedHours != null ? Math.round(s.allocatedHours * 2) : undefined,
         })),
       });
       const data = result.data.data;
@@ -2403,12 +2405,12 @@ function formatSlotHours(units?: number) {
   return units == null ? '—' : `${(units * 0.5).toFixed(1)}h`;
 }
 
-function slotLessonPlan(slot: SlotDef & { scheduleTotalHours?: number }) {
+function slotLessonPlan(slot: SlotDef & { allocatedHours?: number }) {
   const lessonHours = Number(slot.plannedUnits || 0) * 0.5;
-  const scheduleTotalHours = Number(slot.scheduleTotalHours || 0);
-  if (lessonHours <= 0 || scheduleTotalHours <= 0) return 'Set schedule total';
-  const fullLessons = Math.floor((scheduleTotalHours + 0.0001) / lessonHours);
-  const remainder = Number((scheduleTotalHours - fullLessons * lessonHours).toFixed(1));
+  const slotAllocatedHours = Number(slot.allocatedHours || 0);
+  if (lessonHours <= 0 || slotAllocatedHours <= 0) return 'Set schedule total';
+  const fullLessons = Math.floor((slotAllocatedHours + 0.0001) / lessonHours);
+  const remainder = Number((slotAllocatedHours - fullLessons * lessonHours).toFixed(1));
   if (remainder <= 0) {
     return `${fullLessons} lesson${fullLessons === 1 ? '' : 's'}`;
   }
