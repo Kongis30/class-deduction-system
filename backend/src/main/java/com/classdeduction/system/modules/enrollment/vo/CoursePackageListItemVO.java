@@ -26,6 +26,7 @@ public record CoursePackageListItemVO(
         String subjectName,
         String teachingMode,
         Double totalUnits,
+        Double startingHours,
         Double consumedUnits,
         Double openingUsedHours,
         Double pendingDeductionUnits,

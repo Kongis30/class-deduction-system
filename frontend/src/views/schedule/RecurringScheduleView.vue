@@ -1063,9 +1063,7 @@ const startingHoursMin = computed(() => packageHours(
 ));
 const startingHoursMax = computed(() => packageHours(selectedPackage.value?.totalUnits));
 watch(selectedPackage, pkg => {
-  startingHoursDraft.value = packageHours(Math.max(0,
-    (pkg?.totalUnits ?? 0) - (pkg?.openingUsedHours ?? 0),
-  ));
+  startingHoursDraft.value = packageHours(pkg?.startingHours);
 }, { immediate: true });
 function remainingForPackage(pkg: CoursePackageItem): number {
   return packageHours(Math.max(0, pkg.remainingUnits));

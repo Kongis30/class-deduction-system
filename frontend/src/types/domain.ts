@@ -390,6 +390,7 @@ export interface CoursePackageItem {
   teachingMode?: string;
   purchasedHours?: number;
   totalUnits: number;
+  startingHours: number;
   consumedUnits: number;
   openingUsedHours?: number;
   pendingDeductionUnits?: number;

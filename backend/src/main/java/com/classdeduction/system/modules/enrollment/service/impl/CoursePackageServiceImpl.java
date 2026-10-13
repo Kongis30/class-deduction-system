@@ -692,6 +692,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .subjectName(item.getSubjectName())
                 .teachingMode(item.getTeachingMode())
                 .totalUnits(UnitConverter.toHoursDecimal(item.getTotalUnits()))
+                .startingHours(UnitConverter.toHoursDecimal(Math.max(0,
+                        safeUnits(item.getTotalUnits()) - safeUnits(item.getOpeningUsedUnits()))))
                 .consumedUnits(UnitConverter.toHoursDecimal(item.getConsumedUnits()))
                 .openingUsedHours(UnitConverter.toHoursDecimal(item.getOpeningUsedUnits()))
                 .pendingDeductionUnits(UnitConverter.toHoursDecimal(pendingDeductionUnits))

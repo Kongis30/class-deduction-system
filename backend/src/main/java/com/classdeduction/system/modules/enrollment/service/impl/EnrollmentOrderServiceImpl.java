@@ -1208,6 +1208,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .subjectName(item.getSubjectName())
                 .teachingMode(item.getTeachingMode())
                 .totalUnits(UnitConverter.toHoursDecimal(item.getTotalUnits()))
+                .startingHours(UnitConverter.toHoursDecimal(Math.max(0,
+                        (item.getTotalUnits() == null ? 0 : item.getTotalUnits())
+                                - (item.getOpeningUsedUnits() == null ? 0 : item.getOpeningUsedUnits()))))
                 .consumedUnits(UnitConverter.toHoursDecimal(item.getConsumedUnits()))
                 .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
                 .receivedAmount(item.getReceivedAmount())
