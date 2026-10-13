@@ -273,9 +273,9 @@
             <el-input-number v-model="deductedHoursDraft" :min="confirmedDeductionHours" :max="deductedHoursMax" :step="0.5" :precision="1" controls-position="right" />
           </label>
           <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
-          <div><span>Remaining</span><strong>{{ projectedRemainingHours }}h</strong></div>
+          <div><span>Starting Hours</span><strong>{{ projectedRemainingHours }}h</strong></div>
         </div>
-        <p class="package-hours-card__hint">Total includes added and bonus hours. Remaining excludes already deducted and pending deduction hours.</p>
+        <p class="package-hours-card__hint">Total includes added and bonus hours. Starting Hours reflects the balance after already deducted and pending deduction hours.</p>
       </section>
 
       <template #footer>
