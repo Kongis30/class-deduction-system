@@ -1,6 +1,6 @@
 import type { OneOnOneLesson, OneOnOnePackage, OneOnOneStudent } from '@/api/one-on-one';
 import type { SchedulePrintRevision } from '@/api/schedule';
-import { isSignatureLesson } from '@/utils/one-on-one-signature-data';
+import { signatureLessonRows, signatureLessonStatus, signatureSubjectName } from '@/utils/one-on-one-signature-data';
 
 type SheetMode = 'parent' | 'teacher';
 
@@ -15,10 +15,9 @@ export function renderSignatureSheetDocument(
   warnings: string[] = [],
   teacherKey?: string,
 ): string {
-  const lessons = coursePackage.lessons.filter(row => (isSignatureLesson(row)
-    || (row.confirmStage === 'CONFIRMED' && Number(row.deductedUnits ?? 0) > 0))
-    && (mode !== 'teacher' || !teacherKey || teacherKey === '__all__'
-      || teacherIdentity(row) === teacherKey));
+  const lessons = signatureLessonRows(coursePackage).filter(row =>
+    mode !== 'teacher' || !teacherKey || teacherKey === '__all__'
+      || teacherIdentity(row) === teacherKey);
   const title = mode === 'parent' ? 'Student Signature Sheet' : 'Teacher Signature Sheets';
   const content = mode === 'parent'
     ? renderParentSheet(student, coursePackage, lessons, revisions)
@@ -57,8 +56,7 @@ export function renderSignatureSheetDocument(
   .revision-slot { margin: 4px 0 0; font-size: 13px; }
   .lesson-status { color: #47566a; font-size: 12px; }
   .print-warning { max-width: 1000px; margin: 0 auto 12px; padding: 12px; border: 1px solid #be6d00; background: #fff2d8; color: #6b3900; }
-  .lesson-table td { font-size: 12px; }
-  .lesson-table th { font-size: 12px; }
+  .lesson-table th, .lesson-table td { height: 22px; padding: 2px 4px; font-size: 14px; }
   .empty { padding: 24px; border: 1px solid #bbb; text-align: center; color: #555; }
   @media print {
     @page { size: letter portrait; margin: 0.5in; }
@@ -98,7 +96,7 @@ function renderParentSheet(
       </section></div>
     </div>
     ${renderRevisionHistory(revisions)}
-    ${renderLessonSection(lessons, revisions)}
+    ${renderLessonSection(lessons, coursePackage, 'parent')}
   </main>`;
 }
 
@@ -123,7 +121,7 @@ function renderTeacherSheets(
       <p><strong>Course:</strong> ${escapeHtml(coursePackage.packageName)}</p>
     </div>
     ${renderRevisionHistory(revisions)}
-    ${renderLessonSection(group.rows, revisions)}
+    ${renderLessonSection(group.rows, coursePackage, 'teacher')}
   </main>`).join('');
 }
 
@@ -155,41 +153,21 @@ function renderRevisionHistory(revisions: SchedulePrintRevision[]) {
   }).join('')}`;
 }
 
-/** 历史、待确认和未来课次合并为一张时间顺序表，状态列区分处理阶段。 */
-function renderLessonSection(rows: OneOnOneLesson[], revisions: SchedulePrintRevision[]) {
-  const versionByRule = new Map(revisions.map(revision => [String(revision.ruleId), revision.revisionNumber]));
-  const sorted = [...rows].sort((left, right) =>
-    left.plannedStartAt.localeCompare(right.plannedStartAt)
-    || String(left.occurrenceId).localeCompare(String(right.occurrenceId)));
-  if (!sorted.length) return '<h2>Lesson records</h2><p class="lesson-status">No entries.</p>';
+/** 与消课页使用相同的签字表列；历史记录取课次快照，未来记录取新排课生成的课次。 */
+function renderLessonSection(rows: OneOnOneLesson[], coursePackage: OneOnOnePackage, mode: SheetMode) {
+  if (!rows.length) return '<h2>Lesson records</h2><p class="lesson-status">No entries.</p>';
+  const teacherColumns = mode === 'teacher' ? '<th>Time</th><th>Hours</th>' : '';
   return `<h2>Lesson records</h2>
     <table class="lesson-table"><thead><tr>
-      <th>Date / time</th><th>Lesson</th><th>Teacher</th><th>Schedule</th><th>Status / hours</th><th>Signature</th>
-    </tr></thead><tbody>${sorted.map(row => {
-      const versionNumber = row.scheduleRuleId == null ? null : versionByRule.get(String(row.scheduleRuleId));
-      const versionLabel = row.signatureHistory ? 'Imported history'
-        : versionNumber == null ? 'Earlier schedule' : `Version ${versionNumber}`;
-      return `<tr>
-        <td>${escapeHtml(formatDate(row.plannedStartAt))}<div class="lesson-status">${escapeHtml(formatLessonTime(row))}</div></td>
-        <td>${escapeHtml(subjectLabel(row))}</td>
+      <th>Lesson name</th><th>Teacher</th><th>Date</th>${teacherColumns}<th>Status</th><th>Signature</th>
+    </tr></thead><tbody>${rows.map(row => `<tr>
+        <td>${escapeHtml(signatureSubjectName(row, coursePackage))}</td>
         <td>${escapeHtml(teacherName(row))}</td>
-        <td>${escapeHtml(versionLabel)}</td>
-        <td>${escapeHtml(lessonStatus(row))}</td>
+        <td>${escapeHtml(formatDate(row.plannedStartAt))}</td>
+        ${mode === 'teacher' ? `<td>${escapeHtml(formatLessonTime(row))}</td><td>${formatHours(row.plannedUnits)}</td>` : ''}
+        <td>${escapeHtml(signatureLessonStatus(row))}</td>
         <td>${escapeHtml(row.historicalSignatureText ?? '')}</td>
-      </tr>`;
-    }).join('')}</tbody></table>`;
-}
-
-function lessonStatus(row: OneOnOneLesson) {
-  if (row.signatureHistory) return 'Verified legacy signature';
-  if (row.confirmStage === 'CONFIRMED') {
-    const result = row.resultStatusName || row.resultStatus || 'Completed';
-    return Number(row.deductedUnits ?? 0) > 0
-      ? `${result} · ${formatHours(row.deductedUnits)} deducted`
-      : result;
-  }
-  if (row.confirmStage === 'PENDING_ADMIN') return 'Awaiting admin review';
-  return 'Scheduled / awaiting teacher';
+      </tr>`).join('')}</tbody></table>`;
 }
 
 function groupByTeacher(lessons: OneOnOneLesson[]) {
@@ -216,10 +194,6 @@ function studentDisplayName(student: OneOnOneStudent, coursePackage: OneOnOnePac
     .map(item => item.studentName?.trim())
     .filter((name): name is string => Boolean(name));
   return participants.length > 1 ? participants.join(' / ') : student.studentName;
-}
-
-function subjectLabel(row: OneOnOneLesson) {
-  return row.subjectName?.trim() || 'Unnamed lesson';
 }
 
 function teacherName(row: OneOnOneLesson) {
@@ -261,8 +235,10 @@ function formatClock(value?: string) {
 }
 
 function formatLessonTime(row: OneOnOneLesson) {
-  if (row.signatureHistory) return 'Time not recorded';
-  return `${formatClock(row.plannedStartAt.slice(11, 16))}–${formatClock(row.plannedEndAt.slice(11, 16))}`;
+  if (row.signatureHistory) return '—';
+  const start = formatClock(row.plannedStartAt.slice(11, 16));
+  const end = formatClock(row.plannedEndAt.slice(11, 16)).replace(':00', '');
+  return `${start}-${end}`;
 }
 
 function escapeHtml(value: string | number | undefined | null) {

@@ -396,6 +396,7 @@
                   <th>Lesson name</th>
                   <th>Teacher</th>
                   <th>Date</th>
+                  <th>Status</th>
                   <th>Signature</th>
                 </tr>
               </thead>
@@ -403,7 +404,8 @@
                 <tr v-for="row in signatureSheetRows" :key="row.occurrenceId">
                   <td>{{ signatureSubjectLabel(row) }}</td>
                   <td>{{ signatureLessonTeacher(row) }}</td>
-                  <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
+                  <td>{{ signatureLessonDate(row) }}</td>
+                  <td>{{ signatureLessonStatus(row) }}</td>
                   <td>{{ row.historicalSignatureText ?? '' }}</td>
                 </tr>
               </tbody>
@@ -428,6 +430,7 @@
                   <th>Date</th>
                   <th>Time</th>
                   <th>Hours</th>
+                  <th>Status</th>
                   <th>Signature</th>
                 </tr>
               </thead>
@@ -435,9 +438,10 @@
                 <tr v-for="row in teacherPrintRows" :key="`teacher-${row.occurrenceId}`">
                   <td>{{ signatureSubjectLabel(row) }}</td>
                   <td>{{ signatureLessonTeacher(row) }}</td>
-                  <td>{{ formatSignatureDate(row.plannedStartAt) }}</td>
+                  <td>{{ signatureLessonDate(row) }}</td>
                   <td>{{ signatureTimeOfDayKey(row) || '—' }}</td>
                   <td>{{ formatHours(row.plannedUnits) }}</td>
+                  <td>{{ signatureLessonStatus(row) }}</td>
                   <td>{{ row.historicalSignatureText ?? '' }}</td>
                 </tr>
               </tbody>
@@ -754,7 +758,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useAppStore } from '@/stores/app';
 import { isAdminOrStaffUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
 import type { EntityId } from '@/types/domain';
-import { findSignaturePackage, isSignatureLesson, withSignatureHistory } from '@/utils/one-on-one-signature-data';
+import { findSignaturePackage, signatureLessonRows, signatureLessonStatus, signatureSubjectName, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 
 interface PackageCandidate {
   teacher: OneOnOneTeacher;
@@ -1040,7 +1044,7 @@ const signaturePackage = computed(() => {
     ? withSignatureHistory(coursePackage, signatureHistory.value)
     : coursePackage;
 });
-const signatureSheetRows = computed(() => signaturePackage.value?.lessons.filter(isSignatureLesson) ?? []);
+const signatureSheetRows = computed(() => signaturePackage.value ? signatureLessonRows(signaturePackage.value) : []);
 const signatureSheetHours = computed(() =>
   signatureSheetRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
 );
@@ -1116,12 +1120,7 @@ function signatureCourseLabel(row?: OneOnOneLesson) {
   return label || pkg.packageName;
 }
 function signatureSubjectLabel(row?: OneOnOneLesson) {
-  const pkg = activePackage.value;
-  return row?.subjectName?.trim()
-    || pkg?.subjectName?.trim()
-    || pkg?.courseProductName?.trim()
-    || pkg?.packageName
-    || 'Unnamed lesson';
+  return signatureSubjectName(row, signaturePackage.value);
 }
 function subjectClassTime(rows: OneOnOneLesson[]) {
   const schedules = new Map<string, Set<number>>();
@@ -1876,6 +1875,12 @@ function formatDate(value: string) {
 
 function formatSignatureDate(value: string) {
   return value ? dayjs(value).format('M/D/YYYY') : '—';
+}
+
+function signatureLessonDate(row: OneOnOneLesson) {
+  if (!row.signatureHistory) return formatSignatureDate(row.plannedStartAt);
+  const [year, month, day] = row.plannedStartAt.slice(0, 10).split('-');
+  return year && month && day ? `${Number(month)}/${Number(day)}/${year}` : '—';
 }
 
 function signatureWeeklyTime(row: OneOnOneLesson) {

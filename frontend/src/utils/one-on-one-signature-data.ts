@@ -36,6 +36,36 @@ export function isSignatureLesson(lesson: OneOnOneLesson): boolean {
       .includes(lesson.resultStatus ?? '');
 }
 
+/** 两个打印入口共用课次范围与顺序：已保存的历史课次和当前未来排课按日期合并。 */
+export function signatureLessonRows(coursePackage: OneOnOnePackage): OneOnOneLesson[] {
+  return coursePackage.lessons.filter(isSignatureLesson).sort((left, right) =>
+    left.plannedStartAt.localeCompare(right.plannedStartAt)
+    || String(left.occurrenceId).localeCompare(String(right.occurrenceId)));
+}
+
+/** 打印表中的状态来自课次自身，不能用当前排课规则推断历史课次的状态。 */
+export function signatureLessonStatus(row: OneOnOneLesson): string {
+  if (row.signatureHistory) return 'Verified legacy signature';
+  if (row.confirmStage === 'CONFIRMED') {
+    const result = row.resultStatusName || row.resultStatus || 'Completed';
+    return Number(row.deductedUnits ?? 0) > 0
+      ? `${result} · ${Number(row.deductedUnits).toFixed(1)}h deducted`
+      : result;
+  }
+  if (row.confirmStage === 'PENDING_ADMIN') return 'Awaiting admin review';
+  if (row.confirmStage === 'REJECTED') return 'Rejected';
+  return 'Scheduled / awaiting teacher';
+}
+
+/** 旧数据缺少科目时沿用消课打印页的课包名称兜底。 */
+export function signatureSubjectName(row: OneOnOneLesson | undefined, coursePackage: OneOnOnePackage | null): string {
+  return row?.subjectName?.trim()
+    || coursePackage?.subjectName?.trim()
+    || coursePackage?.courseProductName?.trim()
+    || coursePackage?.packageName
+    || 'Unnamed lesson';
+}
+
 /** 纸质签字表的历史日期仅用于打印展示，不成为可消课、占用老师或扣课时的正式课次。 */
 export function withSignatureHistory(
   coursePackage: OneOnOnePackage, history: PrivateSignatureHistory[],
