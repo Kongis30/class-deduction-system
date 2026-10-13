@@ -79,10 +79,12 @@ public class StudentCreditServiceImpl implements StudentCreditService {
 
     @Override
     @Transactional
-    public void reverseTopUp(Long studentId, Long orderId, BigDecimal amount,
-                             Long handledByUserId, String handledByName, String remark) {
+    public BigDecimal reverseTopUpUpToAvailable(Long studentId, Long orderId, BigDecimal amount,
+                                                BigDecimal expectedBalance, Long handledByUserId,
+                                                String handledByName, String remark) {
         BigDecimal normalized = defaultAmount(amount);
-        if (studentId == null || orderId == null || normalized.compareTo(ZERO) <= 0) {
+        if (studentId == null || orderId == null || normalized.compareTo(ZERO) <= 0
+                || expectedBalance == null || expectedBalance.compareTo(ZERO) < 0) {
             throw new BusinessException("INVALID_CREDIT_TOP_UP_REVERSAL", "A valid Credit top-up is required.");
         }
         if (ledgerMapper.lockStudent(studentId) == null) {
@@ -96,12 +98,17 @@ public class StudentCreditServiceImpl implements StudentCreditService {
                     "The Credit top-up ledger does not match this receipt or has already been reversed.");
         }
 
-        if (getBalance(studentId).compareTo(normalized) < 0) {
-            throw new BusinessException("INSUFFICIENT_STUDENT_CREDIT",
-                    "Available Credit is less than the top-up amount. Restore the Credit balance before deleting this receipt.");
+        BigDecimal available = getBalance(studentId);
+        if (available.compareTo(defaultAmount(expectedBalance)) != 0) {
+            throw new BusinessException("CREDIT_BALANCE_CHANGED",
+                    "The available Credit changed. Reopen the receipt and review the updated balance before deleting.");
         }
-        append(studentId, normalized.negate(), TOP_UP_REVERSAL, orderId, null,
-                handledByUserId, handledByName, remark);
+        BigDecimal reversed = available.min(normalized);
+        if (reversed.compareTo(ZERO) > 0) {
+            append(studentId, reversed.negate(), TOP_UP_REVERSAL, orderId, null,
+                    handledByUserId, handledByName, remark);
+        }
+        return reversed;
     }
 
     @Override

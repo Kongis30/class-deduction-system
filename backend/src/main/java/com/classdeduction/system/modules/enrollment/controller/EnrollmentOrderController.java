@@ -30,6 +30,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -143,14 +144,18 @@ public class EnrollmentOrderController {
     }
 
     @DeleteMapping("/{id}/credit-top-up-receipt")
-    @Operation(summary = "Delete a standalone Credit top-up receipt and reverse its unused Credit")
+    @Operation(summary = "Delete a standalone Credit top-up receipt and clear its available Credit")
     @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<Void> deleteCreditTopUpReceipt(
             @PathVariable Long id,
             @RequestParam Long receiptId,
+            @RequestParam BigDecimal expectedCreditBalance,
             @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
-        enrollmentOrderService.deleteCreditTopUpReceipt(id, receiptId, currentUser);
-        return ApiResponse.success("Credit top-up receipt deleted successfully.", null);
+        boolean transactionDeleted = enrollmentOrderService.deleteCreditTopUpReceipt(
+                id, receiptId, expectedCreditBalance, currentUser);
+        return ApiResponse.success(transactionDeleted
+                ? "Credit top-up receipt and transaction deleted; its Credit was reversed."
+                : "Credit top-up receipt removed and available Credit cleared to $0. The payment and order remain in financial history.", null);
     }
 
     @PostMapping("/{id}/force-void")

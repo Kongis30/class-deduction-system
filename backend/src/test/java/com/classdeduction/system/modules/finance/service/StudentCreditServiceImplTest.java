@@ -129,8 +129,10 @@ class StudentCreditServiceImplTest {
         when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_REVERSAL")).thenReturn(BigDecimal.ZERO);
         when(ledgerMapper.selectBalance(8L)).thenReturn(new BigDecimal("125.00"));
 
-        service.reverseTopUp(8L, 21L, new BigDecimal("100.00"), 3L, "Admin", "Delete top-up receipt");
+        BigDecimal reversed = service.reverseTopUpUpToAvailable(8L, 21L, new BigDecimal("100.00"),
+                new BigDecimal("125.00"), 3L, "Admin", "Delete top-up receipt");
 
+        assertThat(reversed).isEqualByComparingTo("100.00");
         ArgumentCaptor<StudentCreditLedgerEntity> captor = ArgumentCaptor.forClass(StudentCreditLedgerEntity.class);
         verify(ledgerMapper).insert(captor.capture());
         StudentCreditLedgerEntity entry = captor.getValue();
@@ -141,15 +143,46 @@ class StudentCreditServiceImplTest {
     }
 
     @Test
-    void topUpReversalIsRejectedWhenAvailableCreditIsInsufficient() {
+    void topUpReversalClearsOnlyAvailableCreditWhenBalanceIsInsufficient() {
         when(ledgerMapper.lockStudent(8L)).thenReturn(8L);
         when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_CREDIT")).thenReturn(new BigDecimal("100.00"));
         when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_REVERSAL")).thenReturn(BigDecimal.ZERO);
         when(ledgerMapper.selectBalance(8L)).thenReturn(new BigDecimal("99.00"));
 
-        assertThatThrownBy(() -> service.reverseTopUp(8L, 21L, new BigDecimal("100.00"), 3L, "Admin", null))
+        BigDecimal reversed = service.reverseTopUpUpToAvailable(8L, 21L, new BigDecimal("100.00"),
+                new BigDecimal("99.00"), 3L, "Admin", null);
+
+        assertThat(reversed).isEqualByComparingTo("99.00");
+        ArgumentCaptor<StudentCreditLedgerEntity> captor = ArgumentCaptor.forClass(StudentCreditLedgerEntity.class);
+        verify(ledgerMapper).insert(captor.capture());
+        assertThat(captor.getValue().getAmount()).isEqualByComparingTo("-99.00");
+    }
+
+    @Test
+    void topUpReversalAtZeroBalanceDoesNotWriteAnEmptyLedgerEntry() {
+        when(ledgerMapper.lockStudent(8L)).thenReturn(8L);
+        when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_CREDIT")).thenReturn(new BigDecimal("100.00"));
+        when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_REVERSAL")).thenReturn(BigDecimal.ZERO);
+        when(ledgerMapper.selectBalance(8L)).thenReturn(BigDecimal.ZERO);
+
+        BigDecimal reversed = service.reverseTopUpUpToAvailable(8L, 21L, new BigDecimal("100.00"),
+                BigDecimal.ZERO, 3L, "Admin", null);
+
+        assertThat(reversed).isEqualByComparingTo("0.00");
+        verify(ledgerMapper, never()).insert(org.mockito.ArgumentMatchers.any(StudentCreditLedgerEntity.class));
+    }
+
+    @Test
+    void topUpReversalRequiresTheBalanceShownDuringConfirmation() {
+        when(ledgerMapper.lockStudent(8L)).thenReturn(8L);
+        when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_CREDIT")).thenReturn(new BigDecimal("100.00"));
+        when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_REVERSAL")).thenReturn(BigDecimal.ZERO);
+        when(ledgerMapper.selectBalance(8L)).thenReturn(new BigDecimal("20.00"));
+
+        assertThatThrownBy(() -> service.reverseTopUpUpToAvailable(8L, 21L, new BigDecimal("100.00"),
+                new BigDecimal("30.00"), 3L, "Admin", null))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Available Credit is less");
+                .hasMessageContaining("changed");
         verify(ledgerMapper, never()).insert(org.mockito.ArgumentMatchers.any(StudentCreditLedgerEntity.class));
     }
 
@@ -159,7 +192,8 @@ class StudentCreditServiceImplTest {
         when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_CREDIT")).thenReturn(new BigDecimal("100.00"));
         when(ledgerMapper.selectOrderAmount(8L, 21L, "TOP_UP_REVERSAL")).thenReturn(new BigDecimal("100.00"));
 
-        assertThatThrownBy(() -> service.reverseTopUp(8L, 21L, new BigDecimal("100.00"), 3L, "Admin", null))
+        assertThatThrownBy(() -> service.reverseTopUpUpToAvailable(8L, 21L, new BigDecimal("100.00"),
+                BigDecimal.ZERO, 3L, "Admin", null))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("does not match");
         verify(ledgerMapper, never()).insert(org.mockito.ArgumentMatchers.any(StudentCreditLedgerEntity.class));

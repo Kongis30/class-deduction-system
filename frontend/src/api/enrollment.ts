@@ -154,8 +154,10 @@ export function deleteEnrollmentOrderItem(orderId: string | number, itemId: stri
   return http.delete(`/v1/enrollment/orders/${orderId}/items/${itemId}`);
 }
 
-export function deleteCreditTopUpReceipt(orderId: string | number, receiptId: string | number) {
-  return http.delete(`/v1/enrollment/orders/${orderId}/credit-top-up-receipt`, { params: { receiptId } });
+export function deleteCreditTopUpReceipt(orderId: string | number, receiptId: string | number, expectedCreditBalance: string) {
+  return http.delete<ApiResponse<void>>(`/v1/enrollment/orders/${orderId}/credit-top-up-receipt`, {
+    params: { receiptId, expectedCreditBalance },
+  });
 }
 
 export function forceVoidEnrollmentOrder(id: string | number, reason?: string) {

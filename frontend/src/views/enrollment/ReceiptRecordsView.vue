@@ -257,10 +257,13 @@
             @closed="resetDeleteCreditTopUpDialog"
           >
             <el-alert
+              v-if="creditBalance != null && deleteCreditTopUpTarget"
               type="warning"
               :closable="false"
               show-icon
-              title="The receipt, payment, and order will be removed. The Credit added by this top-up will be reversed."
+              :title="creditTopUpReceiptOnly
+                ? 'This receipt will be hidden and available Credit cleared to $0. The payment, order, and Credit already used for courses will remain.'
+                : 'The receipt, payment, and order will be removed. The Credit added by this top-up will be reversed.'"
             />
             <p class="delete-course-student">
               {{ deleteCreditTopUpTarget?.studentName }} · {{ deleteCreditTopUpTarget?.receiptNo }}
@@ -269,21 +272,18 @@
               <div><span>Top-up amount</span><strong>{{ formatMoney(deleteCreditTopUpTarget ? creditTopUpAmount(deleteCreditTopUpTarget) : 0) }}</strong></div>
               <div><span>Available Credit</span><strong>{{ creditBalance == null ? 'Loading…' : formatMoney(creditBalance) }}</strong></div>
             </div>
-            <p
-              v-if="creditBalance != null && deleteCreditTopUpTarget && creditBalance < creditTopUpAmount(deleteCreditTopUpTarget)"
-              class="delete-course-note"
-            >
-              The available Credit is less than this top-up. The student must have enough Credit to reverse the full amount.
+            <p v-if="creditTopUpReceiptOnly" class="delete-course-note">
+              The unused {{ formatMoney(creditBalance ?? 0) }} Credit will be removed. Previous course payments stay paid.
             </p>
             <template #footer>
               <el-button :disabled="deletingCreditTopUp" @click="deleteCreditTopUpDialogVisible = false">Cancel</el-button>
               <el-button
                 type="danger"
                 :loading="deletingCreditTopUp"
-                :disabled="creditBalanceLoading || creditBalance == null || !deleteCreditTopUpTarget || creditBalance < creditTopUpAmount(deleteCreditTopUpTarget)"
+                :disabled="creditBalanceLoading || creditBalance == null || !deleteCreditTopUpTarget"
                 @click="confirmDeleteCreditTopUp"
               >
-                Delete top-up
+                {{ creditTopUpReceiptOnly ? 'Delete receipt' : 'Delete top-up' }}
               </el-button>
             </template>
           </el-dialog>
@@ -343,6 +343,9 @@ const creditBalanceLoading = ref(false);
 const creditBalance = ref<number | null>(null);
 const deleteCreditTopUpTarget = ref<ReceiptRecordItem | null>(null);
 let creditBalanceLoadSequence = 0;
+const creditTopUpReceiptOnly = computed(() => deleteCreditTopUpTarget.value != null
+  && creditBalance.value != null
+  && creditBalance.value < creditTopUpAmount(deleteCreditTopUpTarget.value));
 
 const deleteCourseOptions = computed(() => deleteTargetReceipt.value
   ? receiptCourseOptions(deleteTargetReceipt.value)
@@ -669,11 +672,11 @@ function resetDeleteCreditTopUpDialog() {
 
 async function confirmDeleteCreditTopUp() {
   const receipt = deleteCreditTopUpTarget.value;
-  if (!receipt || creditBalance.value == null || creditBalance.value < creditTopUpAmount(receipt)) return;
+  if (!receipt || creditBalance.value == null) return;
   deletingCreditTopUp.value = true;
   try {
-    await deleteCreditTopUpReceipt(receipt.enrollmentOrderId, receipt.id);
-    ElMessage.success('Credit top-up receipt deleted and its Credit reversed.');
+    const response = await deleteCreditTopUpReceipt(receipt.enrollmentOrderId, receipt.id, creditBalance.value.toFixed(2));
+    ElMessage.success(response.data.message);
     deleteCreditTopUpDialogVisible.value = false;
     await Promise.all([loadSelectedStudentRecords(), loadStudents()]);
     if (receipts.value.length === 0 && orderQuery.pageNum > 1) {

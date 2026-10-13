@@ -4123,8 +4123,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    // 收据页专用入口：确认是纯充值订单、账款一致且余额足够后，冲回 Credit 并复用订单级联软删。
-    public void deleteCreditTopUpReceipt(Long orderId, Long receiptId, CurrentUserResponse operator) {
+    // 收据页专用入口：核对充值交易后冲回可用 Credit，余额不足时只隐藏收据并保留已发生的付款。
+    public boolean deleteCreditTopUpReceipt(Long orderId, Long receiptId, BigDecimal expectedCreditBalance,
+                                            CurrentUserResponse operator) {
         EnrollmentOrderEntity order = requireOrderForUpdate(orderId);
         List<EnrollmentOrderItemEntity> items = listOrderItemsByOrderId(orderId);
         if (order.getStudentId() == null || order.getClassId() != null || !items.isEmpty()) {
@@ -4196,10 +4197,26 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     "This top-up is linked to course payments. Review the account before deleting it.");
         }
 
-        studentCreditService.reverseTopUp(order.getStudentId(), orderId, topUpAmount,
+        BigDecimal reversed = studentCreditService.reverseTopUpUpToAvailable(
+                order.getStudentId(), orderId, topUpAmount, expectedCreditBalance,
                 operator == null ? null : operator.userId(),
                 operator == null ? order.getHandledByName() : operator.displayName(),
                 "Deleted Credit top-up receipt " + receipt.getReceiptNo());
+
+        if (reversed.compareTo(topUpAmount) < 0) {
+            // 已使用的 Credit 对应后续课程付款，保留原充值订单与收款；仅撤销剩余 Credit 并软删收据。
+            int renamed = receiptRecordMapper.update(null, new LambdaUpdateWrapper<ReceiptRecordEntity>()
+                    .eq(ReceiptRecordEntity::getId, receiptId)
+                    .eq(ReceiptRecordEntity::getIsDeleted, 0)
+                    .setSql("receipt_no = CONCAT(LEFT(receipt_no, 8), '-DEL-', id)")
+                    .set(ReceiptRecordEntity::getDeletedAt, AppTime.nowLocalDateTime())
+                    .set(ReceiptRecordEntity::getDeletedBy, operator == null ? null : operator.userId()));
+            if (renamed != 1 || receiptRecordMapper.deleteById(receiptId) != 1) {
+                throw new BusinessException("RECEIPT_CONCURRENT_UPDATE",
+                        "The receipt changed while deleting. Please refresh and try again.");
+            }
+            return false;
+        }
 
         // 通用订单删除要求先退款至零；这里已用不可变 Credit 冲回替代退款，因此在同一事务中归零后复用级联软删。
         order.setReceivedAmount(ZERO_AMOUNT);
@@ -4208,6 +4225,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     "The receipt was updated by another request. Please retry.");
         }
         deleteOrder(orderId);
+        return true;
     }
 
     @Override

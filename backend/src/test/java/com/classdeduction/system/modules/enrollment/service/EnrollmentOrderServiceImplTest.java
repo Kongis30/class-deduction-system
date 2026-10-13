@@ -227,6 +227,7 @@ class EnrollmentOrderServiceImplTest {
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), CoursePackageEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), PaymentAllocationEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), ReceiptRecordEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""),
                 com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity.class);
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), EnrollmentOrderItemEntity.class);
@@ -1115,16 +1116,70 @@ class EnrollmentOrderServiceImplTest {
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
         when(paymentAllocationMapper.selectList(any())).thenReturn(Collections.emptyList());
         when(enrollmentOrderMapper.updateById(order)).thenReturn(1);
+        when(studentCreditService.reverseTopUpUpToAvailable(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new BigDecimal("100.00"));
 
-        enrollmentOrderService.deleteCreditTopUpReceipt(2001L, 3001L,
+        boolean transactionDeleted = enrollmentOrderService.deleteCreditTopUpReceipt(2001L, 3001L,
+                new BigDecimal("100.00"),
                 new CurrentUserResponse(9L, "admin", "Admin", "STAFF", null, null, List.of("STAFF")));
 
-        verify(studentCreditService).reverseTopUp(101L, 2001L, new BigDecimal("100.00"),
-                9L, "Admin", "Deleted Credit top-up receipt RCP202610120001");
+        assertThat(transactionDeleted).isTrue();
+        verify(studentCreditService).reverseTopUpUpToAvailable(101L, 2001L, new BigDecimal("100.00"),
+                new BigDecimal("100.00"), 9L, "Admin", "Deleted Credit top-up receipt RCP202610120001");
         verify(paymentRecordMapper).delete(any());
         verify(receiptRecordMapper).delete(any());
         verify(enrollmentOrderParticipantMapper).delete(any());
         verify(enrollmentOrderMapper).deleteById(2001L);
+    }
+
+    @Test
+    void shouldKeepSpentTopUpPaymentAndOnlyHideReceiptWhenAvailableCreditIsInsufficient() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setAmountDue(new BigDecimal("100.00"));
+        order.setReceivedAmount(new BigDecimal("100.00"));
+        ReceiptRecordEntity receipt = new ReceiptRecordEntity();
+        receipt.setId(3001L);
+        receipt.setEnrollmentOrderId(2001L);
+        receipt.setStudentId(101L);
+        receipt.setReceiptNo("RCP202610120001");
+        receipt.setTemplateCode("DEFAULT_RECEIPT");
+        receipt.setReceiptPayload("top-up snapshot");
+        EnrollmentOrderParticipantEntity participant = new EnrollmentOrderParticipantEntity();
+        participant.setStudentId(101L);
+        PaymentRecordEntity payment = new PaymentRecordEntity();
+        payment.setPaymentType("PAYMENT");
+        payment.setPaymentMethod("ZELLE");
+        payment.setPaymentStatus("COMPLETED");
+        payment.setAmount(new BigDecimal("100.00"));
+
+        when(enrollmentOrderMapper.selectByIdForUpdate(2001L)).thenReturn(order);
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(receiptRecordMapper.selectById(3001L)).thenReturn(receipt);
+        when(jsonHelper.fromJson(any(), any())).thenReturn(Map.of(
+                "creditTopUpAmount", new BigDecimal("100.00"),
+                "amountDue", new BigDecimal("100.00"),
+                "items", Collections.emptyList()));
+        when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(participant));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
+        when(paymentAllocationMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentCreditService.reverseTopUpUpToAvailable(any(), any(), any(), any(), any(), any(), any()))
+                .thenReturn(new BigDecimal("30.00"));
+        when(receiptRecordMapper.update(org.mockito.ArgumentMatchers.isNull(), any())).thenReturn(1);
+        when(receiptRecordMapper.deleteById(3001L)).thenReturn(1);
+
+        boolean transactionDeleted = enrollmentOrderService.deleteCreditTopUpReceipt(2001L, 3001L,
+                new BigDecimal("30.00"),
+                new CurrentUserResponse(9L, "admin", "Admin", "STAFF", null, null, List.of("STAFF")));
+
+        assertThat(transactionDeleted).isFalse();
+        assertThat(order.getReceivedAmount()).isEqualByComparingTo("100.00");
+        verify(receiptRecordMapper).deleteById(3001L);
+        verify(paymentRecordMapper, never()).delete(any());
+        verify(enrollmentOrderParticipantMapper, never()).delete(any());
+        verify(enrollmentOrderMapper, never()).deleteById(2001L);
     }
 
     @Test
@@ -1158,11 +1213,13 @@ class EnrollmentOrderServiceImplTest {
         when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(List.of(participant));
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment));
 
-        assertThatThrownBy(() -> enrollmentOrderService.deleteCreditTopUpReceipt(2001L, 3001L, null))
+        assertThatThrownBy(() -> enrollmentOrderService.deleteCreditTopUpReceipt(
+                2001L, 3001L, BigDecimal.ZERO, null))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo("CREDIT_TOP_UP_PAYMENT_MISMATCH");
-        verify(studentCreditService, never()).reverseTopUp(any(), any(), any(), any(), any(), any());
+        verify(studentCreditService, never()).reverseTopUpUpToAvailable(
+                any(), any(), any(), any(), any(), any(), any());
         verify(enrollmentOrderMapper, never()).deleteById(2001L);
     }
 

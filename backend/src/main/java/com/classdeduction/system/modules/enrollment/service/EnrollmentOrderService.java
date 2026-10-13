@@ -13,6 +13,8 @@ import com.classdeduction.system.modules.enrollment.vo.ReceiptRecordVO;
 import com.classdeduction.system.modules.enrollment.vo.RefundCoursePreviewVO;
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 
+import java.math.BigDecimal;
+
 public interface EnrollmentOrderService {
 
     /**
@@ -59,8 +61,9 @@ public interface EnrollmentOrderService {
     /** 删除报名单中的一门课程及其个人排课，保留同单其他课程与收据。 */
     void deleteOrderItem(Long orderId, Long itemId);
 
-    /** 删除独立 Credit 充值收据；只追加负向账本冲回，不删除原充值流水。 */
-    void deleteCreditTopUpReceipt(Long orderId, Long receiptId, CurrentUserResponse operator);
+    /** 删除独立充值收据；返回是否同时撤销了整笔充值交易。 */
+    boolean deleteCreditTopUpReceipt(Long orderId, Long receiptId, BigDecimal expectedCreditBalance,
+                                     CurrentUserResponse operator);
 
     /**
      * 管理员强制作废报名订单（软删除）：用于清理系统改造前遗留、已付款或已消课而无法走常规删除的历史脏数据。
