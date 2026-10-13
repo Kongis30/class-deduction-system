@@ -154,7 +154,7 @@
       </el-select>
     </section>
 
-    <section class="paper-form" :class="{ 'paper-form--readonly': isReadOnly && !editingCorrection }">
+    <section ref="paperFormRef" class="paper-form" :class="{ 'paper-form--readonly': isReadOnly && !editingCorrection }">
       <header class="form-header" data-mobile-steps="1 5">
         <div class="form-title-block">
           <h1>Registration &amp; Receipt</h1>
@@ -1299,7 +1299,7 @@
 <script setup lang="ts">
 import { QuestionFilled } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { fetchActiveCoursePriceOptions, fetchAllStudents, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
@@ -1314,6 +1314,7 @@ import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionIt
 import { getStoredAuthUser } from '@/utils/auth-storage';
 import { isAdminUser, isManagerUser, isStaffUser } from '@/types/auth';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
+import { createIsolatedPrinter } from '@/utils/isolated-print';
 import { exceedsMoney, formatExactUsd, formatRoundedUsd } from '@/utils/money-display';
 import { calculateProratedSessionPrice } from '@/utils/session-price';
 import { useAppStore } from '@/stores/app';
@@ -1487,6 +1488,8 @@ const currentUser = getStoredAuthUser();
 const route = useRoute();
 const router = useRouter();
 const appStore = useAppStore();
+const paperFormRef = ref<HTMLElement | null>(null);
+const receiptPrinter = createIsolatedPrinter(() => paperFormRef.value);
 const { isKeyboardOpen } = useMobileKeyboardState();
 const mobileRegistrationSteps = [
   { title: 'Student', description: 'Choose an existing student or enter student details.' },
@@ -2183,6 +2186,7 @@ watch([privateParticipantCount, hasOneOnOneLine], () => {
 });
 
 onMounted(async () => {
+  receiptPrinter.attach();
   if (isReadOnly.value) {
     await loadHistoricalOrder();
     void loadCourseCategoryLabels();
@@ -2194,6 +2198,7 @@ onMounted(async () => {
     await loadExistingStudent();
   }
 });
+onBeforeUnmount(() => receiptPrinter.detach());
 
 async function loadInitialData() {
   try {
@@ -2434,8 +2439,7 @@ async function printHistoricalFormIfRequested(orderId: string) {
     return;
   }
   printedOrderId.value = orderId;
-  await nextTick();
-  window.setTimeout(printForm, 100);
+  await printForm();
 }
 
 /**
@@ -5025,8 +5029,15 @@ function notifyRegistrationSaved(saved: RegistrationIntakeResult) {
   });
 }
 
-function printForm() {
-  window.print();
+async function printForm() {
+  if (isReadOnly.value && !historicalOrder.value) {
+    ElMessage.warning('Wait for the saved receipt to load before printing.');
+    return;
+  }
+  await nextTick();
+  if (!receiptPrinter.print()) {
+    ElMessage.error('The receipt is not ready to print.');
+  }
 }
 
 function openCurrentStudentHistory() {

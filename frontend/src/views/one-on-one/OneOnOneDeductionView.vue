@@ -747,7 +747,7 @@
 import dayjs from 'dayjs';
 import { Close, Search, WarningFilled } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import { computed, nextTick, onMounted, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { fetchAllClassrooms, fetchAllTeachers, fetchStudents } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
@@ -759,6 +759,7 @@ import { useAppStore } from '@/stores/app';
 import { isAdminOrStaffUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
 import type { EntityId } from '@/types/domain';
 import { findSignaturePackage, signatureLessonRows, signatureLessonStatus, signatureSubjectName, withSignatureHistory } from '@/utils/one-on-one-signature-data';
+import { createIsolatedPrinter } from '@/utils/isolated-print';
 
 interface PackageCandidate {
   teacher: OneOnOneTeacher;
@@ -826,6 +827,7 @@ const activePackage = ref<OneOnOnePackage | null>(null);
 const signatureHistory = ref<PrivateSignatureHistory[]>([]);
 const signatureHistoryPackageId = ref('');
 const printAreaRef = ref<HTMLElement>();
+const signaturePrinter = createIsolatedPrinter(() => printAreaRef.value);
 const packagePanelRef = ref<HTMLElement>();
 const printMode = ref<'parent' | 'teacher'>('parent');
 const selectedTeacherPrintKey = ref<string>('__all__');
@@ -1777,10 +1779,9 @@ async function printCurrentPackage(mode: 'parent' | 'teacher') {
   if (!(await loadSignatureHistory(activePackage.value.packageId))) return;
   printMode.value = mode;
   selectedTeacherPrintKey.value = '__all__';
-  // 先等 Vue 把 printMode/selectedTeacherPrintKey 反映到 DOM（@media print 靠绑定类切换显示），
-  // 再打开打印，否则第一次点击打印的还是上一次渲染的 sheet。
+  // 打印当前课包的快照；先等模式更新后再复制 DOM，避免打印上一次的签字表。
   await nextTick();
-  window.print();
+  if (!signaturePrinter.print()) ElMessage.error('The signature sheet is not ready to print.');
 }
 
 async function printTeacherSheet(command: string | number | object) {
@@ -1789,7 +1790,7 @@ async function printTeacherSheet(command: string | number | object) {
   printMode.value = 'teacher';
   selectedTeacherPrintKey.value = String(command || '__all__');
   await nextTick();
-  window.print();
+  if (!signaturePrinter.print()) ElMessage.error('The signature sheet is not ready to print.');
 }
 
 /** 打印前补充有凭据的历史签字行；老师账户仍只看到自己可见的正式课次。 */
@@ -1920,11 +1921,13 @@ function displayResourceName(name?: string) {
 }
 
 onMounted(async () => {
+  signaturePrinter.attach();
   await Promise.all([loadTeachers(), loadClassrooms()]);
   await loadData();
   selectRouteDeductionTarget();
   await printRoutePackage();
 });
+onBeforeUnmount(() => signaturePrinter.detach());
 </script>
 
 <style scoped>

@@ -49,7 +49,20 @@ body {
     var(--app-bg);
 }
 
+#print-document-root {
+  display: none;
+}
+
 @media print {
+  body.has-isolated-print > #app {
+    display: none !important;
+  }
+
+  body.has-isolated-print > #print-document-root {
+    display: block !important;
+    width: 100%;
+  }
+
   .sidebar,
   .app-sidebar,
   .app-header,

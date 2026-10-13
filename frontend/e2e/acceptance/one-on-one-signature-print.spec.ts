@@ -87,7 +87,8 @@ test('1-on-1 print still includes the schedule when signature history is unavail
   await expect(page.getByText('Historical signature entries could not be loaded. The sheet will include scheduled lessons only.')).toBeVisible();
 
   await page.emulateMedia({ media: 'print' });
-  const printedSheet = page.locator('.oo-parent-signature-sheet');
+  const printedSheet = page.locator('#print-document-root .oo-parent-signature-sheet');
   await expect(printedSheet).toBeVisible();
   await expect(printedSheet.locator('tbody tr')).toHaveCount(3);
+  await expect(page.locator('#app')).toBeHidden();
 });

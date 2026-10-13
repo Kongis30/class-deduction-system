@@ -37,9 +37,22 @@ import MobileTabBar from './MobileTabBar.vue';
 const appStore = useAppStore();
 const route = useRoute();
 const mobileNavigationQuery = window.matchMedia('(max-width: 920px)');
+const printQuery = window.matchMedia('print');
+let isPrinting = false;
 
 function updateViewportMode(event?: MediaQueryListEvent) {
+  // 打印预览会暂时改变媒体查询宽度；此时切换移动布局会重建收据和签字表 DOM。
+  if (isPrinting || printQuery.matches) return;
   appStore.setMobileViewport(event?.matches ?? mobileNavigationQuery.matches);
+}
+
+function beginPrint() {
+  isPrinting = true;
+}
+
+function endPrint() {
+  isPrinting = false;
+  updateViewportMode();
 }
 
 appStore.initializePreferences();
@@ -54,9 +67,15 @@ watch(
   { immediate: true },
 );
 
-onMounted(() => mobileNavigationQuery.addEventListener('change', updateViewportMode));
+onMounted(() => {
+  mobileNavigationQuery.addEventListener('change', updateViewportMode);
+  window.addEventListener('beforeprint', beginPrint);
+  window.addEventListener('afterprint', endPrint);
+});
 onBeforeUnmount(() => {
   mobileNavigationQuery.removeEventListener('change', updateViewportMode);
+  window.removeEventListener('beforeprint', beginPrint);
+  window.removeEventListener('afterprint', endPrint);
   document.body.classList.remove('app-desktop-override');
 });
 
