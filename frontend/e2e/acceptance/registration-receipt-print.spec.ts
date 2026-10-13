@@ -71,7 +71,7 @@ test('saved receipt prints its content through the browser print command', async
       document.documentElement.dataset.receiptPrintInvoked = 'yes';
       document.documentElement.dataset.receiptPrintSnapshotPreserved = String(preparedBeforePrint === printRoot);
       document.documentElement.dataset.receiptPrintContentReady = String(
-        Boolean(printRoot?.innerText.includes('Print Receipt Student')),
+        Boolean(printRoot?.textContent?.replace(/\s+/g, ' ').includes('Print Receipt Student')),
       );
     };
   });

@@ -73,7 +73,11 @@ export function createIsolatedPrinter(getSource: () => HTMLElement | null | unde
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
     if (document.fonts?.status === 'loading') {
-      await document.fonts.ready;
+      // Webfont 加载失败或被拦截时不能无限阻塞打印预览；超时后使用浏览器回退字体打印。
+      await Promise.race([
+        document.fonts.ready.then(() => undefined),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 1200)),
+      ]);
     }
     window.print();
     return true;

@@ -5058,7 +5058,9 @@ async function printForm() {
   await nextTick();
   const source = paperFormRef.value;
   const studentName = fullStudentName.value.trim();
-  if (isReadOnly.value && (!source || !studentName || !source.innerText.includes(studentName))) {
+  // 收据姓名可能只出现在打印副本节点或表单控件中，innerText 会漏掉隐藏打印节点与控件值。
+  const normalizedReceiptText = source?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+  if (isReadOnly.value && (!source || !studentName || !normalizedReceiptText.includes(studentName))) {
     ElMessage.warning('The saved receipt is still rendering. Please try printing again in a moment.');
     return;
   }
