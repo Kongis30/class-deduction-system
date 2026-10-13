@@ -81,8 +81,6 @@ function renderParentSheet(
   revisions: SchedulePrintRevision[],
 ) {
   const participantNames = studentDisplayName(student, coursePackage);
-  const completed = lessons.filter(isHistoricalLesson);
-  const planned = lessons.filter(row => !isHistoricalLesson(row));
   const groupTag = (coursePackage.participantCount ?? 1) > 1
     ? `<p><strong>Lesson format:</strong> 1-on-${escapeHtml(coursePackage.participantCount)} shared course</p>`
     : '';
@@ -100,8 +98,7 @@ function renderParentSheet(
       </section></div>
     </div>
     ${renderRevisionHistory(revisions)}
-    ${renderLessonSection('Completed lesson history', completed, revisions)}
-    ${renderLessonSection('Scheduled and pending lessons', planned, revisions)}
+    ${renderLessonSection(lessons, revisions)}
   </main>`;
 }
 
@@ -126,8 +123,7 @@ function renderTeacherSheets(
       <p><strong>Course:</strong> ${escapeHtml(coursePackage.packageName)}</p>
     </div>
     ${renderRevisionHistory(revisions)}
-    ${renderLessonSection('Completed lesson history', group.rows.filter(isHistoricalLesson), revisions)}
-    ${renderLessonSection('Scheduled and pending lessons', group.rows.filter(row => !isHistoricalLesson(row)), revisions)}
+    ${renderLessonSection(group.rows, revisions)}
   </main>`).join('');
 }
 
@@ -159,14 +155,14 @@ function renderRevisionHistory(revisions: SchedulePrintRevision[]) {
   }).join('')}`;
 }
 
-/** 已确认课次与有凭据的旧签字行独立列出；待处理课次保留在当前排课中。 */
-function renderLessonSection(title: string, rows: OneOnOneLesson[], revisions: SchedulePrintRevision[]) {
+/** 历史、待确认和未来课次合并为一张时间顺序表，状态列区分处理阶段。 */
+function renderLessonSection(rows: OneOnOneLesson[], revisions: SchedulePrintRevision[]) {
   const versionByRule = new Map(revisions.map(revision => [String(revision.ruleId), revision.revisionNumber]));
   const sorted = [...rows].sort((left, right) =>
     left.plannedStartAt.localeCompare(right.plannedStartAt)
     || String(left.occurrenceId).localeCompare(String(right.occurrenceId)));
-  if (!sorted.length) return `<h2>${escapeHtml(title)}</h2><p class="lesson-status">No entries.</p>`;
-  return `<h2>${escapeHtml(title)}</h2>
+  if (!sorted.length) return '<h2>Lesson records</h2><p class="lesson-status">No entries.</p>';
+  return `<h2>Lesson records</h2>
     <table class="lesson-table"><thead><tr>
       <th>Date / time</th><th>Lesson</th><th>Teacher</th><th>Schedule</th><th>Status / hours</th><th>Signature</th>
     </tr></thead><tbody>${sorted.map(row => {
@@ -182,10 +178,6 @@ function renderLessonSection(title: string, rows: OneOnOneLesson[], revisions: S
         <td>${escapeHtml(row.historicalSignatureText ?? '')}</td>
       </tr>`;
     }).join('')}</tbody></table>`;
-}
-
-function isHistoricalLesson(row: OneOnOneLesson) {
-  return row.signatureHistory === true || row.confirmStage === 'CONFIRMED';
 }
 
 function lessonStatus(row: OneOnOneLesson) {
