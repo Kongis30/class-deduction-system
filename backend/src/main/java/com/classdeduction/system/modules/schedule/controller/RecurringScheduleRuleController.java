@@ -7,6 +7,8 @@ import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleCreat
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRulePageQuery;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleUpdateRequest;
 import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
+import com.classdeduction.system.modules.schedule.service.PrivateSchedulePrintService;
+import com.classdeduction.system.modules.schedule.vo.PrivateSchedulePrintRevisionVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleDetailVO;
 import com.classdeduction.system.modules.schedule.vo.RecurringScheduleRuleListItemVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleRuleCreateResultVO;
@@ -18,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import java.util.List;
 
 /**
  * 周期排课规则控制器：负责规则创建、更新与查询。
@@ -31,6 +34,7 @@ import org.springframework.web.bind.annotation.*;
 public class RecurringScheduleRuleController {
 
     private final RecurringScheduleRuleService recurringScheduleRuleService;
+    private final PrivateSchedulePrintService privateSchedulePrintService;
 
     @GetMapping
     @Operation(summary = "Page recurring schedule rules")
@@ -42,6 +46,12 @@ public class RecurringScheduleRuleController {
     @Operation(summary = "Get recurring schedule rule detail")
     public ApiResponse<RecurringScheduleRuleDetailVO> getRule(@PathVariable Long id) {
         return ApiResponse.success(recurringScheduleRuleService.getRule(id));
+    }
+
+    @GetMapping("/package/{packageId}/print-history")
+    @Operation(summary = "List all recurring schedule revisions for a private lesson signature sheet")
+    public ApiResponse<List<PrivateSchedulePrintRevisionVO>> printHistory(@PathVariable Long packageId) {
+        return ApiResponse.success(privateSchedulePrintService.listRevisions(packageId));
     }
 
     @PostMapping

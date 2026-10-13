@@ -275,7 +275,7 @@
             <el-input-number v-model="startingHoursDraft" :min="startingHoursMin" :max="startingHoursMax" :step="0.5" :precision="1" controls-position="right" />
           </label>
         </div>
-        <p class="package-hours-card__hint">Total includes added and bonus hours. Starting Hours is the balance when lesson tracking begins; confirmed lessons reduce the remaining balance without changing it.</p>
+        <p class="package-hours-card__hint">Total includes added and bonus hours. Package Starting Hours records the opening balance for imported lesson history. Changing the weekly schedule starts a new schedule period from the current remaining balance.</p>
       </section>
 
       <template #footer>
@@ -432,7 +432,7 @@
             :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
             · Allocated {{ allocatedHours.toFixed(1) }}h
-            · Remaining {{ remainingPackageHours.toFixed(1) }}h
+            · Unallocated {{ unallocatedHours.toFixed(1) }}h
           </span>
         </div>
       </div>
@@ -890,6 +890,7 @@ import {
   updateRecurringScheduleRule,
   fetchRecurringScheduleRule,
   fetchRecurringScheduleRules,
+  fetchSchedulePrintHistory,
   fetchOneOnOneScheduleStudents,
   fetchLessonOccurrences,
   adjustWeeklySchedule,
@@ -1814,11 +1815,21 @@ async function openPrintSheet(command: string | number | object) {
     const match = findSignaturePackage(response.data.data, selectedStudentId.value, selectedPackageId.value);
 
     if (!match) throw new Error('No signature sheet is available for the selected course.');
-    const history = await fetchPrivateSignatureHistory(selectedPackageId.value);
+    const [history, revisions] = await Promise.allSettled([
+      fetchPrivateSignatureHistory(selectedPackageId.value),
+      fetchSchedulePrintHistory(selectedPackageId.value),
+    ]);
+    const warnings: string[] = [];
+    if (history.status === 'rejected') warnings.push('Verified historical signature entries could not be loaded.');
+    if (revisions.status === 'rejected') warnings.push('Schedule change history could not be loaded.');
+    const printPackage = history.status === 'fulfilled'
+      ? withSignatureHistory(match.coursePackage, history.value.data.data)
+      : match.coursePackage;
     if (preview.closed) return;
     preview.document.open();
     preview.document.write(renderSignatureSheetDocument(
-      match.student, withSignatureHistory(match.coursePackage, history.data.data), mode));
+      match.student, printPackage, mode,
+      revisions.status === 'fulfilled' ? revisions.value.data.data : [], warnings));
     preview.document.close();
     preview.focus();
   } catch (err) {
@@ -1893,23 +1904,20 @@ const allocatedHours = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
 );
 
-const scheduleDeductedHours = computed(() => isEditing.value ? (currentRule.value?.deductedHours ?? 0) : 0);
-const schedulePendingHours = computed(() => isEditing.value ? (currentRule.value?.pendingHours ?? 0) : 0);
-const usedScheduleHours = computed(() => scheduleDeductedHours.value + schedulePendingHours.value);
-
-const unusedAllocatedHours = computed(() => Math.max(0, Number((
-  allocatedHours.value - usedScheduleHours.value
-).toFixed(1))));
-
 const remainingPackageHours = computed(() => selectedPackage.value
   ? remainingForPackage(selectedPackage.value) : 0);
 const otherReservedHours = computed(() => isEditing.value
   ? (currentRule.value?.otherReservedHours ?? 0) : 0);
+const pendingAndPreservedHours = computed(() => pendingDeductionHours.value
+  + (isEditing.value ? (currentRule.value?.preservedReservedHours ?? 0) : 0));
+const unallocatedHours = computed(() => Math.max(0, Number((
+  remainingPackageHours.value - pendingAndPreservedHours.value
+  - otherReservedHours.value - allocatedHours.value
+).toFixed(1))));
 
 const allocationExceedsRemaining = computed(() =>
-  allocatedHours.value < usedScheduleHours.value
-  || unusedAllocatedHours.value + otherReservedHours.value
-    > remainingPackageHours.value - pendingDeductionHours.value);
+  allocatedHours.value + otherReservedHours.value + pendingAndPreservedHours.value
+    > remainingPackageHours.value);
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
@@ -1947,7 +1955,9 @@ async function openEditDialog() {
       startTime: s.startTime,
       endTime: scheduleEndTimeForDisplay(s.startTime, s.endTime),
       plannedUnits: s.plannedUnits,
-      allocatedHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
+      allocatedHours: s.rolloverAllocatedUnits != null
+        ? s.rolloverAllocatedUnits * 0.5
+        : s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
     })),
   });
   editDialogVisible.value = true;
@@ -1987,7 +1997,7 @@ async function submitCreateForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours must cover deducted and pending lessons. Hours not yet deducted must fit within the remaining package balance after pending deductions and other schedules.');
+      ElMessage.warning('Allocated hours must fit the current package balance after pending lessons, preserved schedule exceptions, and other schedules.');
       return;
     }
     if (!validateSlotAllocations()) return;
@@ -2034,7 +2044,7 @@ async function submitEditForm() {
       return;
     }
     if (allocationExceedsRemaining.value) {
-      ElMessage.warning('Allocated hours must cover deducted and pending lessons. Hours not yet deducted must fit within the remaining package balance after pending deductions and other schedules.');
+      ElMessage.warning('Allocated hours must fit the current package balance after pending lessons, preserved schedule exceptions, and other schedules.');
       return;
     }
     if (!validateSlotAllocations()) return;

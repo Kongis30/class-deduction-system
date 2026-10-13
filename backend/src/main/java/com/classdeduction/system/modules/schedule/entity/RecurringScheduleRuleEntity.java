@@ -31,6 +31,12 @@ public class RecurringScheduleRuleEntity extends BaseEntity {
     /** Shared private lesson group; packageId remains for legacy single-student schedules. */
     private Long privateLessonGroupId;
 
+    /** Previous schedule period replaced by this rule, if any. */
+    private Long supersedesRuleId;
+
+    /** Replacement rule created when this period was superseded. */
+    private Long supersededByRuleId;
+
     private Long primaryTeacherId;
 
     private Long defaultClassroomId;

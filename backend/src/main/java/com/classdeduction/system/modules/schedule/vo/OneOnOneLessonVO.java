@@ -12,6 +12,7 @@ public record OneOnOneLessonVO(
         Long lessonRecordId,
         String lessonNo,
         Long packageId,
+        Long scheduleRuleId,
         Long plannedTeacherId,
         String plannedTeacherName,
         String subjectName,

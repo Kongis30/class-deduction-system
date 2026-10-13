@@ -16,6 +16,7 @@ export interface OneOnOneLesson {
   lessonRecordId?: EntityId;
   lessonNo: string;
   packageId: EntityId;
+  scheduleRuleId?: EntityId;
   plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
   subjectName?: string;

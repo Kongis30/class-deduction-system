@@ -60,6 +60,31 @@ export function fetchRecurringScheduleRule(id: EntityId) {
   return http.get<ApiResponse<RecurringScheduleRuleDetailItem>>(`/v1/schedule/rules/${id}`);
 }
 
+export interface SchedulePrintRevision {
+  ruleId: EntityId;
+  supersedesRuleId?: EntityId;
+  revisionNumber: number;
+  changedAt?: string;
+  startDate?: string;
+  endDate?: string;
+  startingHours?: number;
+  allocatedHours: number;
+  slots: Array<{
+    weekday: number;
+    startTime: string;
+    endTime: string;
+    subjectName?: string;
+    teacherName?: string;
+    classroomName?: string;
+    deliveryMode?: string;
+    allocatedHours: number;
+  }>;
+}
+
+export function fetchSchedulePrintHistory(packageId: EntityId) {
+  return http.get<ApiResponse<SchedulePrintRevision[]>>(`/v1/schedule/rules/package/${packageId}/print-history`);
+}
+
 export interface RecurringScheduleSlotPayload {
   teacherId?: EntityId;
   deliveryMode?: 'IN_PERSON' | 'ONLINE';

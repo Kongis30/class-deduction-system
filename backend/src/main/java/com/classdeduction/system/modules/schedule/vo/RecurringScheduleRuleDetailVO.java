@@ -30,6 +30,8 @@ public record RecurringScheduleRuleDetailVO(
         Double deductedHours,
         Double pendingHours,
         Double otherReservedHours,
+        Double preservedReservedHours,
+        Double startingHours,
         List<RecurringScheduleSlotVO> slots,
         LocalDateTime createdAt,
         LocalDateTime updatedAt

@@ -21,6 +21,7 @@ public record RecurringScheduleSlotVO(
         LocalTime endTime,
         Integer plannedUnits,
         Integer allocatedUnits,
+        Integer rolloverAllocatedUnits,
         String slotStatus
 ) {
 }

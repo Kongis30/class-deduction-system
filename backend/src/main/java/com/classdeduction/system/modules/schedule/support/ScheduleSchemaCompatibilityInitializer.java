@@ -19,6 +19,12 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
 
     @Override
     public void run(ApplicationArguments args) {
+        createPrivateSignatureHistoryTable();
+        createRecurringScheduleStartingBalanceTable();
+        addScheduleColumnIfMissing("recurring_schedule_rule", "supersedes_rule_id",
+                "bigint DEFAULT NULL COMMENT 'Previous schedule period replaced by this rule'");
+        addScheduleColumnIfMissing("recurring_schedule_rule", "superseded_by_rule_id",
+                "bigint DEFAULT NULL COMMENT 'Replacement schedule period created from this rule'");
         dropLegacyOccurrenceSlotForeignKey();
         addClassGroupColumnIfMissing("end_date",
                 "date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class' AFTER start_date");
@@ -81,6 +87,50 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         addTeacherPayRateColumnIfMissing("delivery_mode",
                 "varchar(16) DEFAULT NULL COMMENT 'Optional delivery scope: ONLINE, OFFLINE, or NULL for any' AFTER grade_band");
         makeTeacherPayRateProductScopeOptional();
+    }
+
+    /** 历史签字行属于可选补录数据；表结构缺失不能让整张签字表返回 500。 */
+    private void createPrivateSignatureHistoryTable() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS private_signature_history (
+                    id bigint NOT NULL AUTO_INCREMENT,
+                    package_id bigint NOT NULL,
+                    lesson_date date NOT NULL,
+                    teacher_id bigint DEFAULT NULL,
+                    teacher_name varchar(128) NOT NULL,
+                    subject_name varchar(128) DEFAULT NULL,
+                    planned_units int NOT NULL,
+                    signature_text varchar(128) DEFAULT NULL,
+                    source_reference varchar(255) NOT NULL,
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uk_private_signature_history (package_id, lesson_date, teacher_name),
+                    CONSTRAINT fk_private_signature_history_package FOREIGN KEY (package_id) REFERENCES course_package(id),
+                    CONSTRAINT chk_private_signature_history_units CHECK (planned_units > 0)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
+    }
+
+    private void createRecurringScheduleStartingBalanceTable() {
+        jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS recurring_schedule_starting_balance (
+                    id bigint NOT NULL,
+                    schedule_rule_id bigint NOT NULL,
+                    package_id bigint NOT NULL,
+                    starting_units int NOT NULL DEFAULT 0 COMMENT 'Schedule-period opening balance, in half-hour units',
+                    created_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    created_by bigint DEFAULT NULL,
+                    updated_at datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+                    updated_by bigint DEFAULT NULL,
+                    is_deleted tinyint(1) NOT NULL DEFAULT 0,
+                    deleted_at datetime(3) DEFAULT NULL,
+                    deleted_by bigint DEFAULT NULL,
+                    version int NOT NULL DEFAULT 0,
+                    PRIMARY KEY (id),
+                    UNIQUE KEY uk_schedule_starting_balance_rule_package (schedule_rule_id, package_id),
+                    KEY idx_schedule_starting_balance_package (package_id, schedule_rule_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+                """);
     }
 
     private boolean addClassGroupColumnIfMissing(String columnName, String columnDefinition) {

@@ -537,6 +537,7 @@ export interface RecurringScheduleSlotItem {
   endTime: string;
   plannedUnits: number;
   allocatedUnits?: number;
+  rolloverAllocatedUnits?: number;
   slotStatus: string;
 }
 
@@ -546,6 +547,8 @@ export interface RecurringScheduleRuleDetailItem extends RecurringScheduleRuleIt
   deductedHours?: number;
   pendingHours?: number;
   otherReservedHours?: number;
+  preservedReservedHours?: number;
+  startingHours?: number;
   slots: RecurringScheduleSlotItem[];
   createdAt: string;
   updatedAt?: string;

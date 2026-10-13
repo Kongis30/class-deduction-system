@@ -83,6 +83,7 @@ import com.classdeduction.system.modules.schedule.entity.ClassHolidayEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleStartingBalanceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.util.ClassSlotRotation;
 import com.classdeduction.system.modules.schedule.util.ScheduleSlotTime;
@@ -94,6 +95,7 @@ import com.classdeduction.system.modules.schedule.util.ClassScheduleDates;
 import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleStartingBalanceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationLogEntity;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationLogMapper;
@@ -163,6 +165,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Autowired
     private StudentCreditService studentCreditService;
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final RecurringScheduleStartingBalanceMapper recurringScheduleStartingBalanceMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordMapper lessonRecordMapper;
@@ -4628,6 +4631,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (!ruleIds.isEmpty()) {
             recurringScheduleSlotMapper.delete(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                     .in(RecurringScheduleSlotEntity::getRuleId, ruleIds));
+            recurringScheduleStartingBalanceMapper.delete(new LambdaQueryWrapper<RecurringScheduleStartingBalanceEntity>()
+                    .and(wrapper -> wrapper.in(RecurringScheduleStartingBalanceEntity::getScheduleRuleId, ruleIds)
+                            .or().in(RecurringScheduleStartingBalanceEntity::getPackageId, packageIds)));
+        } else {
+            recurringScheduleStartingBalanceMapper.delete(new LambdaQueryWrapper<RecurringScheduleStartingBalanceEntity>()
+                    .in(RecurringScheduleStartingBalanceEntity::getPackageId, packageIds));
         }
         recurringScheduleRuleMapper.delete(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                 .in(RecurringScheduleRuleEntity::getPackageId, packageIds));
