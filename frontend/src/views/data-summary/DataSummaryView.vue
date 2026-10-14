@@ -2608,65 +2608,66 @@ th.workbook-column--studentName {
 }
 
 @media print {
-  @page {
+  @page data-summary-roster {
     size: portrait;
     margin: 16mm;
   }
 
-  :global(body *) {
+  .data-summary-page * {
     visibility: hidden !important;
   }
 
-  .roster-print,
-  .roster-print * {
+  .data-summary-page .roster-print,
+  .data-summary-page .roster-print * {
     visibility: visible !important;
   }
 
-  .roster-print {
+  .data-summary-page .roster-print {
     display: block !important;
     position: absolute;
     inset: 0;
     width: 100%;
+    page: data-summary-roster;
     color: #111;
     font-family: Arial, sans-serif;
   }
 
-  .roster-print__page {
+  .data-summary-page .roster-print__page {
     min-height: 250mm;
     break-after: page;
     page-break-after: always;
   }
 
-  .roster-print__page:last-child {
+  .data-summary-page .roster-print__page:last-child {
     break-after: auto;
     page-break-after: auto;
   }
 
-  .roster-print h1,
-  .roster-print h2 {
+  .data-summary-page .roster-print h1,
+  .data-summary-page .roster-print h2 {
     margin: 0;
     text-align: center;
     font-weight: 700;
   }
 
-  .roster-print h1 {
+  .data-summary-page .roster-print h1 {
     padding-top: 8mm;
     font-size: 32pt;
   }
 
-  .roster-print h2 {
+  .data-summary-page .roster-print h2 {
     margin-top: 12mm;
     font-size: 25pt;
   }
 
-  .roster-print__campus {
+  .data-summary-page .roster-print__campus {
     margin: 5mm 0 3mm;
     text-align: center;
     font-size: 12pt;
     color: #555;
   }
 
-  .roster-print table {
+  .data-summary-page .roster-print table {
     width: 84%;
     margin: 10mm auto 0;
     border-collapse: collapse;
@@ -2674,7 +2675,7 @@ th.workbook-column--studentName {
     font-size: 16pt;
   }
 
-  .roster-print th {
+  .data-summary-page .roster-print th {
     width: 50%;
     padding: 4mm;
     border: 1px solid #b8c7d4;
@@ -2683,7 +2684,7 @@ th.workbook-column--studentName {
     font-size: 12pt;
   }
 
-  .roster-print td {
+  .data-summary-page .roster-print td {
     width: 50%;
     padding: 4mm;
     border: 1px solid #b8c7d4;
