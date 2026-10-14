@@ -91,17 +91,7 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
                         AND eo.payment_status &lt;&gt; 'REFUNDED'
                     GROUP BY eo.student_id
                 ) agg ON agg.studentId = s.id
-                WHERE (
-                    s.is_deleted = 0
-                <if test="query.includeReceiptStudents != null and query.includeReceiptStudents">
-                    OR EXISTS (
-                        SELECT 1
-                        FROM receipt_record rr
-                        WHERE rr.student_id = s.id
-                          AND rr.is_deleted = 0
-                    )
-                </if>
-                )
+                WHERE s.is_deleted = 0
                 <if test="query.keyword != null">
                     AND (s.student_name LIKE CONCAT('%', #{query.keyword}, '%')
                         OR REPLACE(REPLACE(LOWER(s.student_name), ' ', ''), '-', '')
