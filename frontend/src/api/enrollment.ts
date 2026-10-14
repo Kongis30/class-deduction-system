@@ -517,3 +517,7 @@ export function fetchReceipts(params: ReceiptQuery = {}) {
 export function fetchReceipt(id: EntityId) {
   return http.get<ApiResponse<ReceiptRecordItem>>(`/v1/enrollment/receipts/${id}`);
 }
+
+export function deleteRefundReceipt(id: EntityId) {
+  return http.delete<ApiResponse<void>>(`/v1/enrollment/receipts/${id}`);
+}

@@ -19,6 +19,11 @@ public interface StudentCreditService {
     void creditFromRefund(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                           Long handledByUserId, String handledByName, String remark);
 
+    /** 冲回未消费的退款 Credit；expectedBalance 用于阻止覆盖后续 Credit 操作。 */
+    void reverseRefundCredit(Long studentId, BigDecimal amount, BigDecimal expectedBalance,
+                             Long orderId, Long paymentRecordId,
+                             Long handledByUserId, String handledByName, String remark);
+
     void creditFromTopUp(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                          Long handledByUserId, String handledByName, String remark);
 

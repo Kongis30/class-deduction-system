@@ -123,10 +123,13 @@
             <el-table-column label="Date" min-width="150">
               <template #default="{ row }">{{ formatDateTime(row.issuedAt) }}</template>
             </el-table-column>
-            <el-table-column label="Actions" :width="receiptType === 'registration' ? 220 : 110" fixed="right">
+            <el-table-column label="Actions" :width="receiptType === 'registration' ? 220 : 170" fixed="right">
               <template #default="{ row }">
                 <div class="row-actions">
                   <el-button link type="primary" @click="openReceipt(row)">View</el-button>
+                  <el-button v-if="canDeleteRefund(row)" link type="danger" @click="confirmDeleteRefund(row)">
+                    Delete refund
+                  </el-button>
                   <el-button
                     v-if="canDeleteCourse(row)"
                     link
@@ -183,6 +186,9 @@
               </dl>
               <div class="mobile-receipt-card__actions">
                 <el-button type="primary" plain @click="openReceipt(receipt)">View receipt</el-button>
+                <el-button v-if="canDeleteRefund(receipt)" type="danger" plain @click="confirmDeleteRefund(receipt)">
+                  Delete refund
+                </el-button>
                 <el-button
                   v-if="canDeleteCourse(receipt)"
                   type="danger"
@@ -305,13 +311,13 @@
 
 <script setup lang="ts">
 import { Close, Search } from '@element-plus/icons-vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAppStore } from '@/stores/app';
 
 import { fetchStudents } from '@/api/base-data';
-import { deleteCreditTopUpReceipt, deleteEnrollmentOrderItem, fetchReceipts } from '@/api/enrollment';
+import { deleteCreditTopUpReceipt, deleteEnrollmentOrderItem, deleteRefundReceipt, fetchReceipts } from '@/api/enrollment';
 import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
 import { fetchStudentCreditBalance } from '@/api/student-credit';
 import { useAuthStore } from '@/stores/auth';
@@ -597,6 +603,46 @@ function canDeleteCreditTopUp(row: ReceiptRecordItem) {
     && row.enrollmentOrderActive === true
     && row.studentId != null
     && isCreditTopUpReceipt(row);
+}
+
+function canDeleteRefund(row: ReceiptRecordItem) {
+  return canManageCreditTopUpReceipts.value
+    && receiptType.value === 'refund'
+    && row.templateCode === 'REFUND_RECEIPT'
+    && row.paymentRecordId != null
+    && row.enrollmentOrderActive === true;
+}
+
+async function confirmDeleteRefund(row: ReceiptRecordItem) {
+  try {
+    await ElMessageBox.confirm(
+      'This removes the refund as if it never happened. The original payment remains unchanged. Use this only for a test refund that was not actually paid out. If the refund created Credit, it can only be reversed while that Credit is still unused. Later payment, lesson, or schedule changes will block automatic deletion.',
+      `Delete refund receipt ${row.receiptNo}?`,
+      {
+        type: 'warning',
+        confirmButtonText: 'Delete refund',
+        cancelButtonText: 'Cancel',
+        distinguishCancelAndClose: true,
+      },
+    );
+  } catch {
+    return;
+  }
+
+  receiptLoading.value = true;
+  try {
+    const response = await deleteRefundReceipt(row.id);
+    ElMessage.success(response.data.message || 'Refund receipt deleted and refund undone.');
+    await loadSelectedStudentRecords();
+    if (receipts.value.length === 0 && orderQuery.pageNum > 1) {
+      orderQuery.pageNum -= 1;
+      await loadSelectedStudentRecords();
+    }
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    receiptLoading.value = false;
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

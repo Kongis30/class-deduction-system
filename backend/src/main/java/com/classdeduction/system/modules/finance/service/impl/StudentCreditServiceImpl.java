@@ -71,6 +71,24 @@ public class StudentCreditServiceImpl implements StudentCreditService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void reverseRefundCredit(Long studentId, BigDecimal amount, BigDecimal expectedBalance,
+                                    Long orderId, Long paymentRecordId,
+                                    Long handledByUserId, String handledByName, String remark) {
+        if (studentId == null || ledgerMapper.lockStudent(studentId) == null) {
+            throw new BusinessException("CREDIT_STUDENT_REQUIRED", "The Credit student does not exist.");
+        }
+        BigDecimal normalized = defaultAmount(amount);
+        BigDecimal actualBalance = getBalance(studentId);
+        if (normalized.compareTo(ZERO) <= 0 || actualBalance.compareTo(defaultAmount(expectedBalance)) != 0) {
+            throw new BusinessException("REFUND_CREDIT_ALREADY_USED",
+                    "This refund Credit has changed or has already been used. Review the student's Credit ledger before deleting.");
+        }
+        append(studentId, normalized.negate(), "REFUND_VOID_REVERSAL", orderId, paymentRecordId,
+                handledByUserId, handledByName, remark);
+    }
+
+    @Override
     public void creditFromTopUp(Long studentId, BigDecimal amount, Long orderId, Long paymentRecordId,
                                 Long handledByUserId, String handledByName, String remark) {
         append(studentId, amount, TOP_UP_CREDIT, orderId, paymentRecordId,
@@ -138,7 +156,8 @@ public class StudentCreditServiceImpl implements StudentCreditService {
         }
         BigDecimal normalized = defaultAmount(amount);
         // append 接收带方向的账本变动：抵扣和充值冲回为负数，退款和充值入账为正数。
-        boolean isCreditDebit = CREDIT_USED.equals(entryType) || TOP_UP_REVERSAL.equals(entryType);
+        boolean isCreditDebit = CREDIT_USED.equals(entryType) || TOP_UP_REVERSAL.equals(entryType)
+                || "REFUND_VOID_REVERSAL".equals(entryType);
         if ((isCreditDebit && normalized.compareTo(ZERO) >= 0)
                 || (!isCreditDebit && normalized.compareTo(ZERO) <= 0)) {
             String message = isCreditDebit

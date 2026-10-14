@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.enrollment.dto.ReceiptPageQuery;
@@ -21,10 +22,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import com.fasterxml.jackson.core.type.TypeReference;
 
 /**
  * 收据服务：负责收据列表和详情查询。
@@ -37,6 +40,7 @@ public class ReceiptServiceImpl implements ReceiptService {
     private final StudentMapper studentMapper;
     private final EnrollmentOrderMapper enrollmentOrderMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
+    private final JsonHelper jsonHelper;
 
     @Override
     public PageResponse<ReceiptRecordVO> pageReceipts(ReceiptPageQuery query) {
@@ -145,9 +149,24 @@ public class ReceiptServiceImpl implements ReceiptService {
                 .activeCourseItemIds(activeCourseItemIds)
                 .studentName(student == null ? null : student.getStudentName())
                 .templateCode(item.getTemplateCode())
-                .receiptPayload(item.getReceiptPayload())
+                .receiptPayload(publicReceiptPayload(item))
                 .fileUrl(item.getFileUrl())
                 .issuedAt(item.getIssuedAt())
                 .build();
+    }
+
+    /** 回滚快照仅供撤销退款使用，不应通过收据详情接口暴露给浏览器。 */
+    private String publicReceiptPayload(ReceiptRecordEntity item) {
+        if (!"REFUND_RECEIPT".equalsIgnoreCase(item.getTemplateCode())
+                || !StringUtils.hasText(item.getReceiptPayload())) {
+            return item.getReceiptPayload();
+        }
+        Map<String, Object> payload = jsonHelper.fromJson(item.getReceiptPayload(),
+                new TypeReference<LinkedHashMap<String, Object>>() {});
+        if (payload == null || !payload.containsKey("refundUndoSnapshot")) {
+            return item.getReceiptPayload();
+        }
+        payload.remove("refundUndoSnapshot");
+        return jsonHelper.toJson(payload);
     }
 }

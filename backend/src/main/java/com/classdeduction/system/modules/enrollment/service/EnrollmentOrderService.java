@@ -65,6 +65,9 @@ public interface EnrollmentOrderService {
     boolean deleteCreditTopUpReceipt(Long orderId, Long receiptId, BigDecimal expectedCreditBalance,
                                      CurrentUserResponse operator);
 
+    /** 撤销退款收据对应的测试退款，并恢复退款前的财务、课程和排课状态。 */
+    void deleteRefundReceipt(Long receiptId, CurrentUserResponse operator);
+
     /**
      * 管理员强制作废报名订单（软删除）：用于清理系统改造前遗留、已付款或已消课而无法走常规删除的历史脏数据。
      * 会关闭关联课包、取消未来课次、停用排课，但保留历史流水与消课记录以供审计。
