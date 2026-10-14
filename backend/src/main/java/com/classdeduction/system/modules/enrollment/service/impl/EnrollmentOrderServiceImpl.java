@@ -4204,7 +4204,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 "Deleted Credit top-up receipt " + receipt.getReceiptNo());
 
         if (reversed.compareTo(topUpAmount) < 0) {
-            // 已使用的 Credit 对应后续课程付款，保留原充值订单与收款；仅撤销剩余 Credit 并软删收据。
+            // 已使用的 Credit 对应后续课程付款：保留付款流水，只将充值订单移出活动报表并软删收据。
             int renamed = receiptRecordMapper.update(null, new LambdaUpdateWrapper<ReceiptRecordEntity>()
                     .eq(ReceiptRecordEntity::getId, receiptId)
                     .eq(ReceiptRecordEntity::getIsDeleted, 0)
@@ -4214,6 +4214,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (renamed != 1 || receiptRecordMapper.deleteById(receiptId) != 1) {
                 throw new BusinessException("RECEIPT_CONCURRENT_UPDATE",
                         "The receipt changed while deleting. Please refresh and try again.");
+            }
+            // Data Summary 从活动订单生成；软删订单即可隐藏该充值行，不影响已使用 Credit 的付款审计流水。
+            renameEnrollmentNoBeforeSoftDelete(orderId);
+            if (enrollmentOrderMapper.deleteById(orderId) != 1) {
+                throw new BusinessException("ORDER_CONCURRENT_UPDATE",
+                        "The top-up order changed while deleting. Please refresh and try again.");
             }
             return false;
         }

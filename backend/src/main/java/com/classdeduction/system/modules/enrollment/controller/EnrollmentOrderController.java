@@ -155,7 +155,7 @@ public class EnrollmentOrderController {
                 id, receiptId, expectedCreditBalance, currentUser);
         return ApiResponse.success(transactionDeleted
                 ? "Credit top-up receipt and transaction deleted; its Credit was reversed."
-                : "Credit top-up receipt removed and available Credit cleared to $0. The payment and order remain in financial history.", null);
+                : "Credit top-up receipt deleted and its Data Summary record removed. The payment remains in financial history, and any Credit already used is preserved.", null);
     }
 
     @PostMapping("/{id}/force-void")
