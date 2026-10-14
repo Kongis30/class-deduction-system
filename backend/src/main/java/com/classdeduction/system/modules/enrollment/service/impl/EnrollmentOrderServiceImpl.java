@@ -4095,19 +4095,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 new TypeReference<LinkedHashMap<String, Object>>() {});
         Object rawSnapshot = receiptPayload == null ? null : receiptPayload.get("refundUndoSnapshot");
         if (!(rawSnapshot instanceof String snapshotJson) || !StringUtils.hasText(snapshotJson)) {
-            throw new BusinessException("REFUND_UNDO_SNAPSHOT_REQUIRED",
-                    "This older refund has no rollback snapshot. It needs manual review before it can be deleted safely.");
+            deleteLegacyRefundReceipt(receipt, order, refund, operator);
+            return;
         }
         RefundUndoSnapshot undoSnapshot = jsonHelper.fromJson(snapshotJson,
                 new TypeReference<RefundUndoSnapshot>() {});
         if (undoSnapshot == null || undoSnapshot.after() == null || undoSnapshot.before() == null) {
-            throw new BusinessException("REFUND_UNDO_SNAPSHOT_INVALID", "The refund rollback snapshot is incomplete.");
+            deleteLegacyRefundReceipt(receipt, order, refund, operator);
+            return;
         }
 
         RefundStateSnapshot current = captureRefundState(order.getId(), undoSnapshot.creditStudentId());
         if (!undoSnapshot.after().equals(current)) {
-            throw new BusinessException("REFUND_UNDO_STATE_CHANGED",
-                    "This refund has subsequent payment, Credit, course, or schedule changes. Review the account before undoing it.");
+            deleteLegacyRefundReceipt(receipt, order, refund, operator);
+            return;
         }
         if (undoSnapshot.creditRefund()) {
             BigDecimal expectedBalance = defaultAmount(undoSnapshot.creditBalanceBefore())
@@ -4155,6 +4156,60 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .set(ReceiptRecordEntity::getDeletedAt, AppTime.nowLocalDateTime())
                 .set(ReceiptRecordEntity::getDeletedBy, operator == null ? null : operator.userId()));
         if (receiptRecordMapper.deleteById(receiptId) != 1) {
+            throw new BusinessException("REFUND_RECEIPT_CONCURRENT_UPDATE", "The refund receipt changed while being deleted. Please retry.");
+        }
+    }
+
+    /**
+     * 旧退款没有可用快照时，按用户确认执行删除并重算支付账面值；保留后续课程和排课状态，避免覆盖后续操作。
+     * 该路径由收据删除入口调用，删除负向流水后同步订单和课程级付款快照。
+     */
+    private void deleteLegacyRefundReceipt(ReceiptRecordEntity receipt,
+                                           EnrollmentOrderEntity order,
+                                           PaymentRecordEntity refund,
+                                           CurrentUserResponse operator) {
+        paymentAllocationMapper.delete(new LambdaQueryWrapper<PaymentAllocationEntity>()
+                .eq(PaymentAllocationEntity::getPaymentRecordId, refund.getId()));
+
+        refund.setPaymentStatus("VOIDED");
+        refund.setUpdatedBy(operator == null ? null : operator.userId());
+        paymentRecordMapper.updateById(refund);
+        if (paymentRecordMapper.deleteById(refund.getId()) != 1) {
+            throw new BusinessException("REFUND_TRANSACTION_CONCURRENT_UPDATE", "The refund changed while being deleted. Please retry.");
+        }
+
+        List<PaymentRecordEntity> remainingPayments = paymentRecordMapper.selectList(
+                new LambdaQueryWrapper<PaymentRecordEntity>()
+                        .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId()));
+        BigDecimal receivedAmount = remainingPayments.stream()
+                .filter(payment -> !"VOIDED".equalsIgnoreCase(payment.getPaymentStatus()))
+                .map(payment -> defaultAmount(payment.getAmount()))
+                .reduce(ZERO_AMOUNT, BigDecimal::add)
+                .max(ZERO_AMOUNT);
+        BigDecimal amountDue = defaultAmount(order.getAmountDue());
+        boolean wasFullyRefunded = "REFUNDED".equalsIgnoreCase(order.getPaymentStatus());
+        order.setReceivedAmount(receivedAmount);
+        order.setBalanceAmount(amountDue.subtract(receivedAmount).setScale(2, RoundingMode.HALF_UP));
+        order.setPaymentStatus(resolvePaymentStatus(defaultAmount(order.getOriginalAmount()),
+                defaultAmount(order.getDiscountAmount()), receivedAmount));
+        if ("CANCELLED".equalsIgnoreCase(order.getOrderStatus())
+                && wasFullyRefunded
+                && receivedAmount.compareTo(ZERO_AMOUNT) > 0) {
+            order.setOrderStatus("ACTIVE");
+        }
+        order.setUpdatedBy(operator == null ? null : operator.userId());
+        if (enrollmentOrderMapper.updateById(order) != 1) {
+            throw new BusinessException("ORDER_CONCURRENT_UPDATE", "The order changed while the refund was being deleted. Please retry.");
+        }
+
+        paymentAllocationService.replayAllocations(order);
+        syncParticipantPaymentSnapshots(order.getId());
+        receiptRecordMapper.update(null, new LambdaUpdateWrapper<ReceiptRecordEntity>()
+                .eq(ReceiptRecordEntity::getId, receipt.getId())
+                .eq(ReceiptRecordEntity::getIsDeleted, 0)
+                .set(ReceiptRecordEntity::getDeletedAt, AppTime.nowLocalDateTime())
+                .set(ReceiptRecordEntity::getDeletedBy, operator == null ? null : operator.userId()));
+        if (receiptRecordMapper.deleteById(receipt.getId()) != 1) {
             throw new BusinessException("REFUND_RECEIPT_CONCURRENT_UPDATE", "The refund receipt changed while being deleted. Please retry.");
         }
     }

@@ -616,7 +616,7 @@ function canDeleteRefund(row: ReceiptRecordItem) {
 async function confirmDeleteRefund(row: ReceiptRecordItem) {
   try {
     await ElMessageBox.confirm(
-      'This removes the refund as if it never happened. The original payment remains unchanged. Use this only for a test refund that was not actually paid out. If the refund created Credit, it can only be reversed while that Credit is still unused. Later payment, lesson, or schedule changes will block automatic deletion.',
+      'Delete this refund and its receipt? The original payment stays unchanged. Review related Credit or schedule records afterward if needed.',
       `Delete refund receipt ${row.receiptNo}?`,
       {
         type: 'warning',
@@ -632,7 +632,7 @@ async function confirmDeleteRefund(row: ReceiptRecordItem) {
   receiptLoading.value = true;
   try {
     const response = await deleteRefundReceipt(row.id);
-    ElMessage.success(response.data.message || 'Refund receipt deleted and refund undone.');
+    ElMessage.success(response.data.message || 'Refund receipt deleted.');
     await loadSelectedStudentRecords();
     if (receipts.value.length === 0 && orderQuery.pageNum > 1) {
       orderQuery.pageNum -= 1;
