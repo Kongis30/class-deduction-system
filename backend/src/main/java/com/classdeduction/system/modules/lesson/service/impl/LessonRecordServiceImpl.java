@@ -247,8 +247,10 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             }
         }
 
-        for (PrivateLessonGroupMemberEntity member : members) {
-            ensureNoConflictForConfirmedOccurrence(occurrence, decision, member.getStudentId());
+        if (requiresConfirmedOccurrenceConflictCheck(statusRule)) {
+            for (PrivateLessonGroupMemberEntity member : members) {
+                ensureNoConflictForConfirmedOccurrence(occurrence, decision, member.getStudentId());
+            }
         }
         int originalPlannedUnits = occurrence.getPlannedUnits();
         LessonOccurrenceEntity makeup = buildMakeupIfNeeded(primaryPackage, primaryStudent, occurrence,
@@ -573,7 +575,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (decision.shouldDeduct() && decision.deductedUnits() > coursePackage.getRemainingUnits()) {
             throw new BusinessException("INSUFFICIENT_REMAINING_UNITS", "The package does not have enough remaining units for this confirmation.");
         }
-        ensureNoConflictForConfirmedOccurrence(occurrence, decision);
+        if (requiresConfirmedOccurrenceConflictCheck(rule)) {
+            ensureNoConflictForConfirmedOccurrence(occurrence, decision);
+        }
         int originalPlannedUnits = occurrence.getPlannedUnits();
         LessonOccurrenceEntity makeup = buildMakeupIfNeeded(
                 coursePackage, student, occurrence, originalPlannedUnits, decision);
@@ -633,6 +637,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private void ensureNoConflictForConfirmedOccurrence(LessonOccurrenceEntity occurrence,
                                                         ConfirmationDecision decision) {
         ensureNoConflictForConfirmedOccurrence(occurrence, decision, occurrence.getStudentId());
+    }
+
+    /** 请假没有实际占用原课次时段；补课课次仍由单独的冲突校验负责。 */
+    private boolean requiresConfirmedOccurrenceConflictCheck(LessonStatusRuleEntity rule) {
+        return rule == null || !"FORMAL_LEAVE".equalsIgnoreCase(rule.getStatusCode());
     }
 
     private void ensureNoConflictForConfirmedOccurrence(LessonOccurrenceEntity occurrence,
