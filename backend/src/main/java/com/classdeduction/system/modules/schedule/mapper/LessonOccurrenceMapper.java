@@ -14,6 +14,11 @@ import java.util.Map;
 @Mapper
 public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntity> {
 
+    /** 打印变更历史时包含已软删除课次，避免后续重新排课隐藏早先的调整记录。 */
+    @Select("<script>SELECT id, schedule_rule_id FROM lesson_occurrence WHERE schedule_rule_id IN "
+            + "<foreach collection='ruleIds' item='ruleId' open='(' separator=',' close=')'>#{ruleId}</foreach></script>")
+    List<LessonOccurrenceEntity> selectIncludingDeletedByRuleIds(@Param("ruleIds") List<Long> ruleIds);
+
     /** 调课、确认、撤销和补录共用课次行锁，避免基于旧状态互相覆盖。 */
     @Select("SELECT * FROM lesson_occurrence WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
     LessonOccurrenceEntity selectByIdForUpdate(@Param("id") Long id);
@@ -23,6 +28,17 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
     int updateInheritedClassroom(@Param("id") Long id,
                                  @Param("classroomId") Long classroomId,
                                  @Param("deliveryMode") String deliveryMode);
+
+    /** 周排课信息调整只同步未来普通课次，保留单次教室覆盖和课次身份。 */
+    @Update("UPDATE lesson_occurrence SET planned_teacher_id = #{teacherId}, subject_name = #{subjectName}, "
+            + "delivery_mode = IF(classroom_overridden = 1, delivery_mode, #{deliveryMode}), "
+            + "planned_classroom_id = IF(classroom_overridden = 1, planned_classroom_id, #{classroomId}), "
+            + "updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0")
+    int updateRecurringDetails(@Param("id") Long id,
+                               @Param("teacherId") Long teacherId,
+                               @Param("subjectName") String subjectName,
+                               @Param("classroomId") Long classroomId,
+                               @Param("deliveryMode") String deliveryMode);
 
     /**
      * 按校区统计今日待上课次数（批量GROUP BY JOIN，避免N+1）。

@@ -69,6 +69,11 @@ export interface SchedulePrintRevision {
   endDate?: string;
   startingHours?: number;
   allocatedHours: number;
+  detailsChanges?: Array<{
+    changedAt?: string;
+    beforeSummary: string;
+    afterSummary: string;
+  }>;
   slots: Array<{
     weekday: number;
     startTime: string;
@@ -86,6 +91,7 @@ export function fetchSchedulePrintHistory(packageId: EntityId) {
 }
 
 export interface RecurringScheduleSlotPayload {
+  slotId?: EntityId;
   teacherId?: EntityId;
   deliveryMode?: 'IN_PERSON' | 'ONLINE';
   classroomId?: EntityId;

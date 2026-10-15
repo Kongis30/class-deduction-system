@@ -15,8 +15,12 @@ public record PrivateSchedulePrintRevisionVO(
         LocalDate endDate,
         Double startingHours,
         Double allocatedHours,
-        List<Slot> slots
+        List<Slot> slots,
+        List<DetailsChange> detailsChanges
 ) {
+    public record DetailsChange(LocalDateTime changedAt, String beforeSummary, String afterSummary) {
+    }
+
     public record Slot(
             Integer weekday,
             LocalTime startTime,

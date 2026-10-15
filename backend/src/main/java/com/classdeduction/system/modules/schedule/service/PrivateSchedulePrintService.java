@@ -1,7 +1,9 @@
 package com.classdeduction.system.modules.schedule.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.classdeduction.system.common.exception.BusinessException;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.common.util.UnitConverter;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
@@ -12,7 +14,11 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleStartingBalanceEntity;
+import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleStartingBalanceMapper;
@@ -20,7 +26,10 @@ import com.classdeduction.system.modules.schedule.vo.PrivateSchedulePrintRevisio
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,8 +47,11 @@ public class PrivateSchedulePrintService {
     private final RecurringScheduleRuleMapper ruleMapper;
     private final RecurringScheduleSlotMapper slotMapper;
     private final RecurringScheduleStartingBalanceMapper startingBalanceMapper;
+    private final LessonOccurrenceMapper occurrenceMapper;
+    private final LessonAdjustmentLogMapper adjustmentLogMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final JsonHelper jsonHelper;
 
     /** 共享课成员沿用同一规则版本；每位成员读取自己的 Starting Hours 快照。 */
     public List<PrivateSchedulePrintRevisionVO> listRevisions(Long packageId) {
@@ -63,13 +75,11 @@ public class PrivateSchedulePrintService {
         if (rules.isEmpty()) return Collections.emptyList();
 
         List<Long> ruleIds = rules.stream().map(RecurringScheduleRuleEntity::getId).toList();
-        List<RecurringScheduleSlotEntity> slots = slotMapper.selectList(
-                new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
-                        .in(RecurringScheduleSlotEntity::getRuleId, ruleIds)
-                        .orderByAsc(RecurringScheduleSlotEntity::getWeekday)
-                        .orderByAsc(RecurringScheduleSlotEntity::getStartTime));
+        List<RecurringScheduleSlotEntity> slots = slotMapper.selectIncludingDeletedByRuleIds(ruleIds);
         Map<Long, List<RecurringScheduleSlotEntity>> slotsByRule = slots.stream()
                 .collect(Collectors.groupingBy(RecurringScheduleSlotEntity::getRuleId));
+        Map<Long, List<PrivateSchedulePrintRevisionVO.DetailsChange>> detailsChangesByRule =
+                detailsChangesByRule(ruleIds);
         Map<Long, Integer> startingByRule = startingBalanceMapper.selectList(
                         new LambdaQueryWrapper<RecurringScheduleStartingBalanceEntity>()
                                 .in(RecurringScheduleStartingBalanceEntity::getScheduleRuleId, ruleIds)
@@ -97,8 +107,54 @@ public class PrivateSchedulePrintService {
             return new PrivateSchedulePrintRevisionVO(rule.getId(), rule.getSupersedesRuleId(),
                     index + 1, rule.getCreatedAt(), rule.getStartDate(), rule.getEndDate(),
                     startingUnits == null ? null : UnitConverter.toHoursDecimal(startingUnits),
-                    UnitConverter.toHoursDecimal(allocatedUnits), printSlots);
+                    UnitConverter.toHoursDecimal(allocatedUnits), printSlots,
+                    detailsChangesByRule.getOrDefault(rule.getId(), List.of()));
         }).toList();
+    }
+
+    /** 将周排课字段修改日志附到对应版本，供 Schedule 打印页保留每次改动。 */
+    private Map<Long, List<PrivateSchedulePrintRevisionVO.DetailsChange>> detailsChangesByRule(List<Long> ruleIds) {
+        List<LessonOccurrenceEntity> occurrences = occurrenceMapper.selectIncludingDeletedByRuleIds(ruleIds);
+        if (occurrences.isEmpty()) return Map.of();
+        Map<Long, Long> ruleByOccurrence = occurrences.stream().collect(Collectors.toMap(
+                LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getScheduleRuleId, (left, right) -> left));
+        List<Long> occurrenceIds = new ArrayList<>(ruleByOccurrence.keySet());
+        List<LessonAdjustmentLogEntity> logs = adjustmentLogMapper.selectList(
+                new LambdaQueryWrapper<LessonAdjustmentLogEntity>()
+                        .in(LessonAdjustmentLogEntity::getOccurrenceId, occurrenceIds)
+                        .eq(LessonAdjustmentLogEntity::getAdjustmentType, "SCHEDULE_DETAILS_UPDATE")
+                        .orderByAsc(LessonAdjustmentLogEntity::getAdjustedAt)
+                        .orderByAsc(LessonAdjustmentLogEntity::getId));
+        Map<Long, LinkedHashSet<String>> uniqueByRule = new HashMap<>();
+        Map<Long, List<PrivateSchedulePrintRevisionVO.DetailsChange>> changesByRule = new HashMap<>();
+        for (LessonAdjustmentLogEntity log : logs) {
+            Long ruleId = ruleByOccurrence.get(log.getOccurrenceId());
+            if (ruleId == null) continue;
+            String before = detailsSummary(log.getBeforeSnapshot());
+            String after = detailsSummary(log.getAfterSnapshot());
+            String key = log.getAdjustedAt() + "|" + before + "|" + after;
+            if (!uniqueByRule.computeIfAbsent(ruleId, ignored -> new LinkedHashSet<>()).add(key)) continue;
+            changesByRule.computeIfAbsent(ruleId, ignored -> new ArrayList<>()).add(
+                    new PrivateSchedulePrintRevisionVO.DetailsChange(log.getAdjustedAt(), before, after));
+        }
+        return changesByRule;
+    }
+
+    private String detailsSummary(String json) {
+        Map<String, Object> snapshot = jsonHelper.fromJson(json, new TypeReference<>() {});
+        if (snapshot == null) return "Schedule details unavailable";
+        String[] weekdays = {"", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+        Object weekdayValue = snapshot.get("weekday");
+        int weekday = weekdayValue instanceof Number number ? number.intValue() : 0;
+        String day = weekday > 0 && weekday < weekdays.length ? weekdays[weekday] : "Day";
+        return String.join(" · ", day + " " + valueOrDash(snapshot.get("startTime")) + "–"
+                        + valueOrDash(snapshot.get("endTime")),
+                valueOrDash(snapshot.get("subjectName")), valueOrDash(snapshot.get("teacherName")),
+                valueOrDash(snapshot.get("classroomName")));
+    }
+
+    private String valueOrDash(Object value) {
+        return value == null || value.toString().isBlank() ? "—" : value.toString();
     }
 
     private Map<Long, TeacherEntity> teachersById(List<RecurringScheduleSlotEntity> slots) {

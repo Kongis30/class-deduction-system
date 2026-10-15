@@ -56,6 +56,7 @@ export function renderSignatureSheetDocument(
   .revision-heading { display: flex; justify-content: space-between; gap: 12px; font-weight: 700; }
   .revision-meta { margin: 6px 0; color: #47566a; font-size: 12px; }
   .revision-slot { margin: 4px 0 0; font-size: 13px; }
+  .revision-change { margin: 6px 0 0; color: #47566a; font-size: 12px; }
   .lesson-status { color: #47566a; font-size: 12px; }
   .print-warning { max-width: 1000px; margin: 0 auto 12px; padding: 12px; border: 1px solid #be6d00; background: #fff2d8; color: #6b3900; }
   .lesson-table th, .lesson-table td { height: 22px; padding: 2px 4px; font-size: 14px; }
@@ -160,12 +161,17 @@ function renderRevisionHistory(revisions: SchedulePrintRevision[]) {
           · ${formatHours(slot.allocatedHours)}
         </p>`).join('')
       : '<p class="lesson-status">This older schedule has no preserved weekly slot details.</p>';
+    const detailChanges = (revision.detailsChanges ?? []).map(change => `<p class="revision-change">
+      Course details updated ${escapeHtml(change.changedAt ? formatLocalDateTime(change.changedAt) : 'Date not recorded')}:
+      ${escapeHtml(change.beforeSummary)} → ${escapeHtml(change.afterSummary)}
+    </p>`).join('');
     return `<section class="revision">
       <div class="revision-heading"><span>${heading} #${revision.revisionNumber}</span><span>${escapeHtml(changedAt)}</span></div>
       <div class="revision-meta">Rule start: ${escapeHtml(startDate)}
         · Starting: ${revision.startingHours == null ? '—' : formatHours(revision.startingHours)}
         · Allocated: ${formatHours(revision.allocatedHours)}</div>
       ${slots}
+      ${detailChanges}
     </section>`;
   }).join('')}`;
 }

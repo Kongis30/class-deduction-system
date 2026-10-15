@@ -1511,25 +1511,55 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 allocatedByPackage.putIfAbsent(packageId, 0);
             }
 
-            // 消课归属按当前规则中的排课老师和 slot 确定；临时代课老师仍保留在课次记录中。
+            // 历史消课归属课次快照中的老师；同一时段换老师时，将已确认或待确认部分的分配额留给原老师。
             for (Map.Entry<Long, Long> entry : currentRuleByPackage.entrySet()) {
                 Long packageId = entry.getKey();
                 Long currentRuleId = entry.getValue();
                 List<LessonOccurrenceEntity> packageOccurrences = occurrencesByPackage.getOrDefault(
                         packageId, Collections.emptyList());
                 Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
+                Map<Long, Map<Long, Integer>> reservedBySlotAndTeacher = new HashMap<>();
                 for (LessonOccurrenceEntity occurrence : packageOccurrences) {
-                    if (!Objects.equals(currentRuleId, occurrence.getScheduleRuleId())) continue;
                     LessonRecordEntity record = records.get(occurrence.getId());
-                    if (record == null || !"CONFIRMED".equals(record.getConfirmStage())
-                            || !Objects.equals(record.getShouldDeduct(), 1)
+                    if (record == null || !Objects.equals(record.getShouldDeduct(), 1)
                             || Objects.equals(record.getIsDeleted(), 1)) continue;
-                    Long teacherId = currentSlotTeacherById.get(occurrence.getScheduleSlotId());
-                    if (teacherId == null) teacherId = occurrence.getPlannedTeacherId();
-                    if (teacherId == null) continue;
-                    deductedByTeacherByPackage
-                            .computeIfAbsent(packageId, key -> new HashMap<>())
-                            .merge(teacherId, Math.max(0, safeUnits(record.getDeductedUnits())), Integer::sum);
+                    Long historicalTeacherId = occurrence.getPlannedTeacherId();
+                    int units = Math.max(0, safeUnits(record.getDeductedUnits()));
+                    if ("CONFIRMED".equals(record.getConfirmStage()) && historicalTeacherId != null) {
+                        deductedByTeacherByPackage
+                                .computeIfAbsent(packageId, key -> new HashMap<>())
+                                .merge(historicalTeacherId, units, Integer::sum);
+                    }
+
+                    // 同一 slot 原位换老师时，已确认/待确认的历史部分仍归原老师，未来余额归当前老师。
+                    boolean reservesAllocation = "CONFIRMED".equals(record.getConfirmStage())
+                            || "PENDING_ADMIN".equals(record.getConfirmStage());
+                    Long currentTeacherId = currentSlotTeacherById.get(occurrence.getScheduleSlotId());
+                    if (reservesAllocation && currentTeacherId != null && historicalTeacherId != null
+                            && !Objects.equals(currentTeacherId, historicalTeacherId)
+                            && Objects.equals(currentRuleId, occurrence.getScheduleRuleId())) {
+                        reservedBySlotAndTeacher
+                                .computeIfAbsent(occurrence.getScheduleSlotId(), key -> new HashMap<>())
+                                .merge(historicalTeacherId, units, Integer::sum);
+                    }
+                }
+                Map<Long, Integer> teacherAllocations = allocatedByTeacherByPackage
+                        .computeIfAbsent(packageId, key -> new HashMap<>());
+                for (RecurringScheduleSlotEntity slot : currentSlots) {
+                    if (!Objects.equals(currentRuleId, slot.getRuleId()) || slot.getTeacherId() == null) continue;
+                    int slotAllocated = Math.max(0, safeUnits(slot.getAllocatedUnits()));
+                    int remainingSlotUnits = slotAllocated;
+                    Map<Long, Integer> historicalReservations = reservedBySlotAndTeacher
+                            .getOrDefault(slot.getId(), Collections.emptyMap());
+                    for (Map.Entry<Long, Integer> reservation : historicalReservations.entrySet()) {
+                        int transferred = Math.min(remainingSlotUnits, Math.max(0, reservation.getValue()));
+                        int currentAllocation = teacherAllocations.getOrDefault(slot.getTeacherId(), 0);
+                        transferred = Math.min(transferred, currentAllocation);
+                        if (transferred <= 0) continue;
+                        teacherAllocations.put(slot.getTeacherId(), currentAllocation - transferred);
+                        teacherAllocations.merge(reservation.getKey(), transferred, Integer::sum);
+                        remainingSlotUnits -= transferred;
+                    }
                 }
             }
         }

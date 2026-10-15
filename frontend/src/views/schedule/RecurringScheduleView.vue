@@ -433,10 +433,27 @@
             class="edit-schedule__allocation"
             :class="{ 'edit-schedule__allocation--over': allocationExceedsRemaining }"
           >
-            · Allocated {{ allocatedHours.toFixed(1) }}h
+            · {{ isEditing ? 'Original Allocated' : 'Allocated' }} {{ (isEditing ? originalAllocatedHours : allocatedHours).toFixed(1) }}h
+            <template v-if="isEditing && hasSchedulePlanChanges">
+              · Adjusted Allocated {{ allocatedHours.toFixed(1) }}h
+            </template>
             · Remaining {{ remainingPackageHours.toFixed(1) }}h
           </span>
         </div>
+        <el-alert
+          v-if="isEditing && !hasSchedulePlanChanges"
+          class="edit-schedule__change-hint"
+          type="info"
+          :closable="false"
+          title="Changing a teacher, classroom, or lesson name updates future lessons only. Existing lesson records and allocated hours stay unchanged."
+        />
+        <el-alert
+          v-else-if="isEditing && hasSchedulePlanChanges"
+          class="edit-schedule__change-hint"
+          type="warning"
+          :closable="false"
+          title="The future schedule or allocated hours changed. Historical lessons stay unchanged; the adjusted allocation must fit the available package balance."
+        />
       </div>
 
       <template #footer>
@@ -1575,8 +1592,17 @@ const editForm = reactive({
   ruleStatus: undefined as string | undefined,
   startDate: '',
   notes: '',
-  slots: [] as Array<SlotDef & { teacherId?: EntityId; classroomSelection?: string; subjectName?: string; allocatedHours?: number }>,
+  slots: [] as Array<SlotDef & {
+    slotId?: EntityId;
+    teacherId?: EntityId;
+    classroomSelection?: string;
+    subjectName?: string;
+    allocatedHours?: number;
+    rolloverAllocatedHours?: number;
+  }>,
 });
+const originalEditSlots = ref<Array<SlotDef & { slotId?: EntityId; allocatedHours?: number }>>([]);
+const originalAllocatedHours = ref(0);
 
 const editFormRules: FormRules = {
   startDate: [{ required: true, message: 'Start date is required', trigger: 'change' }],
@@ -2107,6 +2133,23 @@ const allocatedHours = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
 );
 
+// 只有时段、单节时长或分配小时变化，才算重新安排；老师、教室和课程名称属于未来课程信息。
+const hasSchedulePlanChanges = computed(() => {
+  if (!isEditing.value) return false;
+  if (editForm.slots.length !== originalEditSlots.value.length) return true;
+  const originalById = new Map(originalEditSlots.value.map(slot => [String(slot.slotId), slot]));
+  return editForm.slots.some(slot => {
+    if (slot.slotId == null) return true;
+    const original = originalById.get(String(slot.slotId));
+    return !original
+      || slot.weekday !== original.weekday
+      || slot.startTime !== original.startTime
+      || slot.endTime !== original.endTime
+      || slot.plannedUnits !== original.plannedUnits
+      || Number(slot.allocatedHours || 0) !== Number(original.allocatedHours || 0);
+  });
+});
+
 const remainingPackageHours = computed(() => selectedPackage.value
   ? remainingForPackage(selectedPackage.value) : 0);
 const otherReservedHours = computed(() => isEditing.value
@@ -2120,7 +2163,8 @@ const allocatableForNewScheduleHours = computed(() => packageHours(Math.max(0, M
     - (isEditing.value ? (currentRule.value?.preservedReservedHours ?? 0) : 0),
 ))));
 const allocationExceedsRemaining = computed(() =>
-  allocatedHours.value > allocatableForNewScheduleHours.value);
+  (!isEditing.value || hasSchedulePlanChanges.value)
+    && allocatedHours.value > allocatableForNewScheduleHours.value);
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
@@ -2133,6 +2177,8 @@ async function openCreateDialog() {
     notes: '',
     slots: [],
   });
+  originalEditSlots.value = [];
+  originalAllocatedHours.value = 0;
   editDialogVisible.value = true;
 }
 
@@ -2148,6 +2194,7 @@ async function openEditDialog() {
     startDate: detail.startDate,
     notes: detail.notes || '',
     slots: (detail.slots || []).map((s: any) => ({
+      slotId: s.id,
       teacherId: s.teacherId == null ? undefined : String(s.teacherId),
       classroomSelection: s.deliveryMode === 'ONLINE'
         ? 'ONLINE'
@@ -2160,8 +2207,11 @@ async function openEditDialog() {
       endTime: scheduleEndTimeForDisplay(s.startTime, s.endTime),
       plannedUnits: s.plannedUnits,
       allocatedHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
+      rolloverAllocatedHours: s.rolloverAllocatedUnits != null ? s.rolloverAllocatedUnits * 0.5 : undefined,
     })),
   });
+  originalEditSlots.value = editForm.slots.map(slot => ({ ...slot }));
+  originalAllocatedHours.value = editForm.slots.reduce((sum, slot) => sum + Number(slot.allocatedHours || 0), 0);
   editDialogVisible.value = true;
 }
 
@@ -2206,6 +2256,7 @@ async function submitCreateForm() {
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
+          slotId: s.slotId,
           teacherId: s.teacherId,
           deliveryMode: s.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
           classroomId: s.classroomSelection?.startsWith('ROOM:') ? s.classroomSelection.slice(5) : undefined,
@@ -2249,6 +2300,7 @@ async function submitEditForm() {
         startDate: editForm.startDate,
         notes: editForm.notes || undefined,
         slots: editForm.slots.map((s) => ({
+          slotId: s.slotId,
           teacherId: s.teacherId,
           deliveryMode: s.classroomSelection === 'ONLINE' ? 'ONLINE' : 'IN_PERSON',
           classroomId: s.classroomSelection?.startsWith('ROOM:') ? s.classroomSelection.slice(5) : undefined,

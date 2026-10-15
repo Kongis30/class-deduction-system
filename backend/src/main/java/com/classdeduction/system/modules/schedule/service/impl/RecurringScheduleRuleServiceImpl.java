@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
@@ -27,12 +28,14 @@ import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRulePageQ
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleRuleUpdateRequest;
 import com.classdeduction.system.modules.schedule.dto.RecurringScheduleSlotRequest;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonAdjustmentLogEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassEnrollmentEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleStartingBalanceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
@@ -83,6 +86,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final RecurringScheduleStartingBalanceMapper startingBalanceMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final LessonRecordMapper lessonRecordMapper;
@@ -92,6 +96,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
+    private final JsonHelper jsonHelper;
 
     @Override
     public List<ScheduleStudentOptionVO> listOneOnOneScheduleStudents() {
@@ -436,6 +441,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         List<RecurringScheduleSlotEntity> existingSlots = recurringScheduleSlotMapper.selectList(
                 new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                         .eq(RecurringScheduleSlotEntity::getRuleId, id));
+        if (isCourseDetailsOnlyChange(existingRule, existingSlots, request, privateLessonGroupId, newStatus)) {
+            Set<Long> existingOccurrenceIds = allOccurrences.stream()
+                    .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
+            Map<Long, LessonRecordEntity> existingRecords = latestRecordsForPackage(
+                    existingOccurrenceIds, coursePackage.getId());
+            return updateCourseDetailsOnly(existingRule, existingSlots, allOccurrences, existingRecords,
+                    request, coursePackage, student.getId(), privateLessonGroupId);
+        }
         boolean startsNewPeriod = allowNewPeriod
                 && !"ENDED".equals(newStatus)
                 && hasScheduleDefinitionChanged(existingRule, existingSlots, request, privateLessonGroupId);
@@ -594,6 +607,170 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return new ScheduleRuleUpdateResultVO(
                 targetRule.getId(), newSlots.size(), toPreserve.size(), toDelete.size(),
                 newOccurrences.size(), confirmedCount, firstStart, lastEnd);
+    }
+
+    /** 判断是否只改老师、教室或课程名称；此类编辑不改变排课计划和小时分配。 */
+    private boolean isCourseDetailsOnlyChange(RecurringScheduleRuleEntity rule,
+                                              List<RecurringScheduleSlotEntity> currentSlots,
+                                              RecurringScheduleRuleUpdateRequest request,
+                                              Long privateLessonGroupId,
+                                              String newStatus) {
+        if (!Objects.equals(rule.getPrivateLessonGroupId(), privateLessonGroupId)
+                || !Objects.equals(rule.getRuleStatus(), newStatus)
+                || !Objects.equals(rule.getStartDate(), request.getStartDate())
+                || !Objects.equals(rule.getEndDate(), request.getEndDate() == null
+                        ? rule.getEndDate() : request.getEndDate())
+                || currentSlots.size() != request.getSlots().size()) {
+            return false;
+        }
+        Map<Long, RecurringScheduleSlotEntity> currentById = currentSlots.stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        if (request.getSlots().stream().map(RecurringScheduleSlotRequest::getSlotId)
+                .distinct().count() != request.getSlots().size()) {
+            return false;
+        }
+        boolean changed = !Objects.equals(rule.getNotes(), request.getNotes());
+        for (RecurringScheduleSlotRequest requested : request.getSlots()) {
+            if (requested.getSlotId() == null) return false;
+            RecurringScheduleSlotEntity current = currentById.get(requested.getSlotId());
+            if (current == null
+                    || !Objects.equals(current.getWeekday(), requested.getWeekday())
+                    || !Objects.equals(current.getStartTime(), requested.getStartTime())
+                    || !Objects.equals(current.getEndTime(), requested.getEndTime())
+                    || !Objects.equals(current.getPlannedUnits(), requested.getPlannedUnits())
+                    || !Objects.equals(current.getAllocatedUnits(), requested.getAllocatedUnits())) {
+                return false;
+            }
+            changed |= !Objects.equals(current.getTeacherId(), requested.getTeacherId())
+                    || !Objects.equals(current.getDeliveryMode(), requested.getDeliveryMode())
+                    || !Objects.equals(current.getClassroomId(), requested.getClassroomId())
+                    || !Objects.equals(current.getSubjectName(), requested.getSubjectName());
+        }
+        return changed;
+    }
+
+    /** 只同步未来、未开始且未进入消课流程的课次，不删除或重建课次、不改变分配额。 */
+    private ScheduleRuleUpdateResultVO updateCourseDetailsOnly(
+            RecurringScheduleRuleEntity rule,
+            List<RecurringScheduleSlotEntity> currentSlots,
+            List<LessonOccurrenceEntity> occurrences,
+            Map<Long, LessonRecordEntity> records,
+            RecurringScheduleRuleUpdateRequest request,
+            CoursePackageEntity coursePackage,
+            Long studentId,
+            Long privateLessonGroupId) {
+        Map<Long, RecurringScheduleSlotEntity> slotsById = currentSlots.stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        Map<Long, RecurringScheduleSlotRequest> requestedById = request.getSlots().stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotRequest::getSlotId, slot -> slot));
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> futureUpdates = occurrences.stream()
+                .filter(occurrence -> "SCHEDULED".equals(occurrence.getPlanningStatus()))
+                .filter(occurrence -> occurrence.getPlannedStartAt() != null
+                        && !occurrence.getPlannedStartAt().isBefore(now))
+                .filter(occurrence -> !records.containsKey(occurrence.getId()))
+                .filter(occurrence -> requestedById.containsKey(occurrence.getScheduleSlotId()))
+                .filter(occurrence -> {
+                    RecurringScheduleSlotEntity current = slotsById.get(occurrence.getScheduleSlotId());
+                    RecurringScheduleSlotRequest requested = requestedById.get(occurrence.getScheduleSlotId());
+                    return !Objects.equals(current.getTeacherId(), requested.getTeacherId())
+                            || !Objects.equals(current.getDeliveryMode(), requested.getDeliveryMode())
+                            || !Objects.equals(current.getClassroomId(), requested.getClassroomId())
+                            || !Objects.equals(current.getSubjectName(), requested.getSubjectName());
+                })
+                .map(occurrence -> {
+                    RecurringScheduleSlotRequest requested = requestedById.get(occurrence.getScheduleSlotId());
+                    LessonOccurrenceEntity candidate = new LessonOccurrenceEntity();
+                    candidate.setId(occurrence.getId());
+                    candidate.setScheduleSlotId(occurrence.getScheduleSlotId());
+                    candidate.setStudentId(occurrence.getStudentId());
+                    candidate.setPrivateLessonGroupId(privateLessonGroupId);
+                    candidate.setPlannedTeacherId(requested.getTeacherId());
+                    candidate.setPlannedClassroomId(Objects.equals(occurrence.getClassroomOverridden(), 1)
+                            ? occurrence.getPlannedClassroomId() : requested.getClassroomId());
+                    candidate.setDeliveryMode(Objects.equals(occurrence.getClassroomOverridden(), 1)
+                            ? occurrence.getDeliveryMode() : requested.getDeliveryMode());
+                    candidate.setPlannedStartAt(occurrence.getPlannedStartAt());
+                    candidate.setPlannedEndAt(occurrence.getPlannedEndAt());
+                    candidate.setPlannedUnits(occurrence.getPlannedUnits());
+                    return candidate;
+                }).toList();
+
+        Map<Long, LessonOccurrenceEntity> originalByOccurrenceId = occurrences.stream()
+                .collect(Collectors.toMap(LessonOccurrenceEntity::getId, occurrence -> occurrence));
+        List<LessonOccurrenceEntity> resourceChanges = futureUpdates.stream().filter(candidate -> {
+            RecurringScheduleSlotEntity current = slotsById.get(candidate.getScheduleSlotId());
+            RecurringScheduleSlotRequest requested = requestedById.get(candidate.getScheduleSlotId());
+            LessonOccurrenceEntity original = originalByOccurrenceId.get(candidate.getId());
+            boolean classroomOverridden = Objects.equals(original.getClassroomOverridden(), 1);
+            return !Objects.equals(current.getTeacherId(), requested.getTeacherId())
+                    || (!classroomOverridden && (!Objects.equals(original.getPlannedClassroomId(),
+                            requested.getClassroomId())
+                            || !Objects.equals(original.getDeliveryMode(), requested.getDeliveryMode())));
+        }).toList();
+        ensureNoConflictsExcludingPrivateLessonGroup(resourceChanges, studentId, rule.getId(), privateLessonGroupId);
+
+        for (RecurringScheduleSlotRequest requested : request.getSlots()) {
+            RecurringScheduleSlotEntity current = slotsById.get(requested.getSlotId());
+            if (!Objects.equals(current.getTeacherId(), requested.getTeacherId())
+                    || !Objects.equals(current.getDeliveryMode(), requested.getDeliveryMode())
+                    || !Objects.equals(current.getClassroomId(), requested.getClassroomId())
+                    || !Objects.equals(current.getSubjectName(), requested.getSubjectName())) {
+                LessonOccurrenceEntity auditOccurrence = futureUpdates.stream()
+                        .filter(occurrence -> Objects.equals(occurrence.getScheduleSlotId(), current.getId()))
+                        .findFirst()
+                        .orElseGet(() -> occurrences.stream()
+                                .filter(occurrence -> Objects.equals(occurrence.getScheduleSlotId(), current.getId()))
+                                .findFirst().orElse(null));
+                if (auditOccurrence != null) {
+                    LessonAdjustmentLogEntity log = new LessonAdjustmentLogEntity();
+                    log.setOccurrenceId(auditOccurrence.getId());
+                    log.setAdjustmentType("SCHEDULE_DETAILS_UPDATE");
+                    log.setBeforeSnapshot(jsonHelper.toJson(scheduleDetailsSnapshot(current.getTeacherId(),
+                            current.getDeliveryMode(), current.getClassroomId(), current.getSubjectName(),
+                            current.getWeekday(), current.getStartTime(), current.getEndTime())));
+                    log.setAfterSnapshot(jsonHelper.toJson(scheduleDetailsSnapshot(requested.getTeacherId(),
+                            requested.getDeliveryMode(), requested.getClassroomId(), requested.getSubjectName(),
+                            requested.getWeekday(), requested.getStartTime(), requested.getEndTime())));
+                    log.setReason("Recurring schedule details updated");
+                    log.setAdjustedAt(now);
+                    lessonAdjustmentLogMapper.insert(log);
+                }
+                recurringScheduleSlotMapper.updateCourseDetails(current.getId(), requested.getTeacherId(),
+                        requested.getDeliveryMode(), requested.getClassroomId(), requested.getSubjectName());
+            }
+        }
+        for (LessonOccurrenceEntity update : futureUpdates) {
+            RecurringScheduleSlotRequest requested = requestedById.get(update.getScheduleSlotId());
+            lessonOccurrenceMapper.updateRecurringDetails(update.getId(), requested.getTeacherId(),
+                    requested.getSubjectName(), requested.getClassroomId(), requested.getDeliveryMode());
+        }
+
+        Long defaultClassroomId = request.getSlots().stream()
+                .map(RecurringScheduleSlotRequest::getClassroomId)
+                .filter(Objects::nonNull).findFirst().orElse(null);
+        recurringScheduleRuleMapper.updateCourseDetails(rule.getId(), defaultClassroomId, request.getNotes());
+        int confirmedCount = (int) records.values().stream()
+                .filter(record -> "CONFIRMED".equals(record.getConfirmStage())).count();
+        return new ScheduleRuleUpdateResultVO(rule.getId(), currentSlots.size(), occurrences.size(), 0,
+                0, confirmedCount, null, null);
+    }
+
+    /** 为签字表保留课程信息修改前后的可读快照，不改写已生成课程的历史信息。 */
+    private Map<String, Object> scheduleDetailsSnapshot(Long teacherId, String deliveryMode, Long classroomId,
+                                                          String subjectName, Integer weekday,
+                                                          java.time.LocalTime startTime, java.time.LocalTime endTime) {
+        TeacherEntity teacher = teacherId == null ? null : teacherMapper.selectById(teacherId);
+        ClassroomEntity classroom = classroomId == null ? null : classroomMapper.selectById(classroomId);
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("weekday", weekday);
+        snapshot.put("startTime", startTime);
+        snapshot.put("endTime", endTime);
+        snapshot.put("subjectName", subjectName);
+        snapshot.put("teacherName", teacher == null ? null : teacher.getTeacherName());
+        snapshot.put("classroomName", "ONLINE".equals(deliveryMode)
+                ? "Online" : classroom == null ? null : classroom.getRoomName());
+        return snapshot;
     }
 
     @Override

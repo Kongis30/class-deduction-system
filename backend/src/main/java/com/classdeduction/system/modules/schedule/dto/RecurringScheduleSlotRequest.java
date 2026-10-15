@@ -16,6 +16,9 @@ import java.time.LocalTime;
 @Schema(description = "Recurring schedule slot request")
 public class RecurringScheduleSlotRequest {
 
+    @Schema(description = "Existing weekly slot ID when editing a schedule")
+    private Long slotId;
+
     @NotNull(message = "Teacher is required for every slot")
     @Schema(description = "Teacher assigned to this slot")
     private Long teacherId;
