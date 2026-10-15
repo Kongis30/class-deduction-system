@@ -435,12 +435,6 @@
           >
             · Allocated {{ allocatedHours.toFixed(1) }}h
             · Remaining {{ remainingPackageHours.toFixed(1) }}h
-            <template v-if="allocatableForNewScheduleHours < remainingPackageHours">
-              · Available to allocate {{ allocatableForNewScheduleHours.toFixed(1) }}h
-            </template>
-            <template v-if="allocationExceedsRemaining">
-              · Exceeds by {{ (allocatedHours - allocatableForNewScheduleHours).toFixed(1) }}h
-            </template>
           </span>
         </div>
       </div>
