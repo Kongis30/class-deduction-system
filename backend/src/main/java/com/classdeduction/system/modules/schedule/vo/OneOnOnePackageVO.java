@@ -23,6 +23,7 @@ public record OneOnOnePackageVO(
         Double remainingUnits,
         Double usableRemainingUnits,
         Double availablePackageUnits,
+        Double pendingDeductionUnits,
         Double allocatedUnits,
         List<OneOnOneTeacherHoursVO> teacherHours,
         Double scheduledReservedUnits,

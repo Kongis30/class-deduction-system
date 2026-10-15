@@ -348,17 +348,20 @@
               <span title="Confirmed deductions from lessons assigned to this teacher in the current schedule.">
                 <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
               </span>
+              <span title="Package-wide lesson hours awaiting admin confirmation. These hours are not included in deducted or remaining hours.">
+                <small>Pending deduction</small>{{ formatHours(activePackage.pendingDeductionUnits ?? 0) }}h
+              </span>
               <span title="This teacher's current allocation minus confirmed deductions in the current schedule.">
                 <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
               </span>
             </div>
           </div>
           <el-alert
-            v-if="(activePackage.scheduledReservedUnits ?? 0) > (activePackage.availablePackageUnits ?? activePackage.remainingUnits)"
+            v-if="(activePackage.scheduledReservedUnits ?? 0) > activePackage.remainingUnits"
             type="warning"
             :closable="false"
             show-icon
-            :title="`Future scheduled hours exceed the available package balance by ${formatHours((activePackage.scheduledReservedUnits ?? 0) - (activePackage.availablePackageUnits ?? activePackage.remainingUnits))}h. Review this package's schedule.`"
+            :title="`Scheduled and pending lesson hours exceed the remaining package balance by ${formatHours((activePackage.scheduledReservedUnits ?? 0) - activePackage.remainingUnits)}h. Review this package's schedule and pending lessons.`"
           />
 
           <section class="oo-signature-sheet oo-parent-signature-sheet print-only">
@@ -2178,7 +2181,7 @@ onBeforeUnmount(() => signaturePrinter.detach());
 
 .oo-student-context__metrics {
   display: grid;
-  grid-template-columns: repeat(5, minmax(82px, 1fr));
+  grid-template-columns: repeat(6, minmax(82px, 1fr));
   align-items: center;
   gap: 8px 12px;
 }

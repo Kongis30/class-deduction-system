@@ -90,6 +90,7 @@ export interface OneOnOnePackage {
   remainingUnits: number;
   usableRemainingUnits?: number;
   availablePackageUnits?: number;
+  pendingDeductionUnits?: number;
   allocatedUnits?: number;
   teacherHours?: OneOnOneTeacherHours[];
   scheduledReservedUnits?: number;

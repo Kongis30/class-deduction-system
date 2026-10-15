@@ -1709,6 +1709,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .remainingUnits(UnitConverter.toHoursDecimal(coursePackage.getRemainingUnits()))
                 .usableRemainingUnits(UnitConverter.toHoursDecimal(usableRemainingUnits))
                 .availablePackageUnits(UnitConverter.toHoursDecimal(availablePackageUnits))
+                .pendingDeductionUnits(UnitConverter.toHoursDecimal(
+                        hoursContext.pendingByPackage().getOrDefault(packageId, 0)))
                 .allocatedUnits(allocatedUnits == null ? null : UnitConverter.toHoursDecimal(allocatedUnits))
                 .teacherHours(teacherHours)
                 .scheduledReservedUnits(UnitConverter.toHoursDecimal(
