@@ -298,6 +298,13 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
         adjustFutureOccurrencesIfNeeded(primaryPackage.getId(), occurrence.getPrivateLessonGroupId(), originalPlannedUnits, decision);
 
+        LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
+        for (int index = 0; index < members.size(); index++) {
+            CoursePackageEntity coursePackage = packageMap.get(members.get(index).getPackageId());
+            refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision,
+                    packageUpdates.get(index), makeupEndDate);
+        }
+
         for (int index = 0; index < members.size(); index++) {
             CoursePackageEntity coursePackage = packageMap.get(members.get(index).getPackageId());
             StudentEntity student = requireStudent(members.get(index).getStudentId());
@@ -609,7 +616,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             lessonOccurrenceMapper.insert(makeup);
         }
         adjustFutureOccurrencesIfNeeded(coursePackage.getId(), null, originalPlannedUnits, decision);
-        refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision, packageUpdate);
+        LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
+        refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision,
+                packageUpdate, makeupEndDate);
 
         notificationOutboxService.queueLessonBalanceEmail(record, coursePackage, student, rule.getStatusName());
         queueLowBalanceWarningIfNeeded(coursePackage, student, packageUpdate);
@@ -1035,13 +1044,20 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private void refreshEstimatedEndDateAfterScheduleChange(CoursePackageEntity coursePackage,
                                                             int originalPlannedUnits,
                                                             ConfirmationDecision decision,
-                                                            PackageUpdateResult packageUpdate) {
+                                                            PackageUpdateResult packageUpdate,
+                                                            LocalDate makeupEndDate) {
         boolean futureScheduleChanged = decision.shouldExtendEndDate()
                 || (decision.shouldDeduct() && originalPlannedUnits != decision.deductedUnits());
         if (!futureScheduleChanged) {
             return;
         }
-        coursePackage.setEstimatedEndDate(recomputeEstimatedEndDate(coursePackage.getId(), packageUpdate.remainingUnits()));
+        LocalDate estimatedEndDate = recomputeEstimatedEndDate(coursePackage.getId(), packageUpdate.remainingUnits());
+        if (decision.shouldExtendEndDate() && makeupEndDate != null
+                && (estimatedEndDate == null || makeupEndDate.isAfter(estimatedEndDate))) {
+            // Formal Leave 的补课可能落在余额推算的最后一课之后；结束日不能早于实际补课日期。
+            estimatedEndDate = makeupEndDate;
+        }
+        coursePackage.setEstimatedEndDate(estimatedEndDate);
         if (coursePackageMapper.updateById(coursePackage) != 1) {
             throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
         }
