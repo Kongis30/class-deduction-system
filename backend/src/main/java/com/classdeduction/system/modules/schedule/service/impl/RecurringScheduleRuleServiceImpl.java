@@ -1333,7 +1333,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return units == null ? 0 : units;
     }
 
-    /** 规则版本在写入前，为独立课包或共享课的每位成员捕获当前余额。 */
+    /** 规则版本保存课包的 Starting 快照，不通过排课操作重设课包起始值。 */
     private void saveStartingBalances(RecurringScheduleRuleEntity rule,
                                       CoursePackageEntity primaryPackage,
                                       Long privateLessonGroupId) {
@@ -1347,22 +1347,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     .toList();
         }
         for (CoursePackageEntity coursePackage : packages) {
-            rebasePackageStartingHours(coursePackage);
             saveStartingBalance(rule, coursePackage);
-        }
-    }
-
-    /** 新周期把此前消课量并入 opening balance，后续只统计本周期新增消课。 */
-    private void rebasePackageStartingHours(CoursePackageEntity coursePackage) {
-        int startingUnits = allocatableUnits(coursePackage);
-        int openingUsedUnits = Math.max(0, safeUnits(coursePackage.getTotalUnits()) - startingUnits);
-        if (Objects.equals(coursePackage.getOpeningUsedUnits(), openingUsedUnits)) {
-            return;
-        }
-        coursePackage.setOpeningUsedUnits(openingUsedUnits);
-        if (coursePackageMapper.updateById(coursePackage) != 1) {
-            throw new BusinessException("PACKAGE_CONCURRENT_UPDATE",
-                    "The package was updated by another request. Please retry.");
         }
     }
 
@@ -1391,7 +1376,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             balance = new RecurringScheduleStartingBalanceEntity();
             balance.setScheduleRuleId(rule.getId());
             balance.setPackageId(coursePackage.getId());
-            balance.setStartingUnits(startingUnits == null ? allocatableUnits(coursePackage) : Math.max(0, startingUnits));
+            balance.setStartingUnits(startingUnits == null
+                    ? packageStartingUnits(coursePackage)
+                    : Math.max(0, startingUnits));
             startingBalanceMapper.insert(balance);
             return;
         }
