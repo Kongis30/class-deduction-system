@@ -275,7 +275,7 @@
             <el-input-number v-model="startingHoursDraft" :min="startingHoursMin" :max="startingHoursMax" :step="0.5" :precision="1" controls-position="right" />
           </label>
         </div>
-        <p class="package-hours-card__hint">Total includes added and bonus hours. Package Starting Hours records the opening balance for imported lesson history. Changing the weekly schedule starts a new schedule period from the current remaining balance.</p>
+        <p class="package-hours-card__hint">Total includes added and bonus hours. Starting Hours is the manually set opening balance and stays the same when the weekly schedule changes. Remaining Hours decreases only when lessons are deducted.</p>
       </section>
 
       <template #footer>

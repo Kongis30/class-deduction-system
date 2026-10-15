@@ -43,6 +43,8 @@ export function renderSignatureSheetDocument(
   .teacher-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 24px; margin-bottom: 28px; }
   .teacher-meta p { margin: 0; font-size: 15px; font-weight: 600; }
   .teacher-meta p:first-child { grid-column: 1 / -1; }
+  .teacher-hours { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: -14px 0 22px; }
+  .teacher-hours p { margin: 0; font-size: 13px; }
   .lesson-table thead { display: table-header-group; }
   .lesson-table tr { page-break-inside: avoid; break-inside: avoid; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 14px; }
@@ -121,9 +123,23 @@ function renderTeacherSheets(
       <p><strong>Teacher:</strong> ${escapeHtml(group.teacher)}</p>
       <p><strong>Course:</strong> ${escapeHtml(coursePackage.packageName)}</p>
     </div>
+    ${renderTeacherHours(coursePackage, group.key, group.teacher)}
     ${renderRevisionHistory(revisions)}
     ${renderLessonSection(group.rows, coursePackage, 'teacher')}
   </main>`).join('');
+}
+
+function renderTeacherHours(coursePackage: OneOnOnePackage, teacherKey: string, teacherName: string) {
+  const hours = coursePackage.teacherHours?.find(item =>
+    String(item.teacherId).trim().toLowerCase() === teacherKey
+    || (!item.teacherId && item.teacherName?.trim().toLowerCase() === teacherName.trim().toLowerCase()));
+  return `<div class="teacher-hours">
+    <p><strong>Total Hours:</strong> ${formatHours(coursePackage.totalUnits)}</p>
+    <p><strong>Starting Hours:</strong> ${formatHours(coursePackage.startingHours)}</p>
+    <p><strong>Allocated to ${escapeHtml(teacherName)}:</strong> ${formatHours(hours?.allocatedUnits)}</p>
+    <p><strong>Deducted by ${escapeHtml(teacherName)}:</strong> ${formatHours(hours?.deductedUnits)}</p>
+    <p><strong>Remaining with ${escapeHtml(teacherName)}:</strong> ${formatHours(hours?.remainingUnits)}</p>
+  </div>`;
 }
 
 /** 每个规则版本的时段快照直接打印，保留变更发生前后的完整配置。 */
@@ -174,7 +190,7 @@ function renderLessonSection(rows: OneOnOneLesson[], coursePackage: OneOnOnePack
 function groupByTeacher(lessons: OneOnOneLesson[]) {
   const groups = new Map<string, { teacher: string; rows: OneOnOneLesson[] }>();
   for (const row of lessons) {
-    const teacher = teacherName(row);
+    const teacher = row.plannedTeacherName?.split(/\r?\n/)[0]?.trim() || teacherName(row);
     const key = teacherIdentity(row);
     const group = groups.get(key);
     if (group) group.rows.push(row);
@@ -184,10 +200,8 @@ function groupByTeacher(lessons: OneOnOneLesson[]) {
 }
 
 function teacherIdentity(row: OneOnOneLesson) {
-  const teacher = teacherName(row);
-  return String(row.confirmStage === 'CONFIRMED'
-    ? row.actualTeacherId ?? row.plannedTeacherId ?? teacher
-    : row.plannedTeacherId ?? teacher).trim().toLowerCase();
+  const teacher = row.plannedTeacherName?.trim() || teacherName(row);
+  return String(row.plannedTeacherId ?? teacher).trim().toLowerCase();
 }
 
 function studentDisplayName(student: OneOnOneStudent, coursePackage: OneOnOnePackage): string {

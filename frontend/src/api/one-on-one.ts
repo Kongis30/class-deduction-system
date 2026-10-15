@@ -66,6 +66,14 @@ export interface OneOnOneParticipant {
   remainingUnits?: number;
 }
 
+export interface OneOnOneTeacherHours {
+  teacherId: EntityId;
+  teacherName?: string;
+  allocatedUnits: number;
+  deductedUnits: number;
+  remainingUnits: number;
+}
+
 export interface OneOnOnePackage {
   packageId: EntityId;
   packageNo: string;
@@ -83,6 +91,7 @@ export interface OneOnOnePackage {
   usableRemainingUnits?: number;
   availablePackageUnits?: number;
   allocatedUnits?: number;
+  teacherHours?: OneOnOneTeacherHours[];
   scheduledReservedUnits?: number;
   renewalReminder: boolean;
   packageStatus: string;

@@ -24,6 +24,7 @@ public record OneOnOnePackageVO(
         Double usableRemainingUnits,
         Double availablePackageUnits,
         Double allocatedUnits,
+        List<OneOnOneTeacherHoursVO> teacherHours,
         Double scheduledReservedUnits,
         Boolean renewalReminder,
         String packageStatus,

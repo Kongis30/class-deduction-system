@@ -50,6 +50,7 @@ import com.classdeduction.system.modules.schedule.vo.OneOnOnePackageVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneParticipantVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneStudentVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
+import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherHoursVO;
 import com.classdeduction.system.modules.schedule.vo.PendingClassroomAssignmentVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
@@ -795,7 +796,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                 recordIndex.forPackage(entry.getKey(), entry.getValue()),
                                 AppTime.nowLocalDateTime())));
         PackageHoursContext hoursContext = loadPackageHoursContext(
-                packageIds, scheduledUnitsByPackage, unresolvedPastByPackage);
+                packageIds, scheduledUnitsByPackage, unresolvedPastByPackage,
+                allocationOccurrenceMap, recordIndex);
 
         Set<Long> studentIds = new LinkedHashSet<>(packages.stream()
                 .map(CoursePackageEntity::getStudentId)
@@ -806,7 +808,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .filter(Objects::nonNull)
                 .forEach(studentIds::add);
         Map<Long, StudentEntity> studentMap = listStudentsByIds(studentIds);
-        Map<Long, TeacherEntity> teacherMap = loadOneOnOneTeachers(occurrenceMap, allRecords);
+        Map<Long, TeacherEntity> teacherMap = loadOneOnOneTeachers(occurrenceMap, allRecords, hoursContext);
         Map<Long, ClassroomEntity> classroomMap = loadOneOnOneClassrooms(occurrenceMap, allRecords);
         Map<Long, EnrollmentOrderItemEntity> orderItemMap = listEnrollmentOrderItemsByIds(packages.stream()
                 .map(CoursePackageEntity::getEnrollmentOrderItemId)
@@ -816,7 +818,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
         LinkedHashMap<Long, LinkedHashMap<Long, List<CoursePackageEntity>>> grouped = new LinkedHashMap<>();
         for (CoursePackageEntity coursePackage : packages) {
-            for (Long groupTeacherId : resolveOneOnOneGroupTeacherIds(coursePackage, occurrenceMap, teacherId)) {
+            for (Long groupTeacherId : resolveOneOnOneGroupTeacherIds(
+                    coursePackage, occurrenceMap, teacherId, hoursContext)) {
                 grouped.computeIfAbsent(groupTeacherId, key -> new LinkedHashMap<>())
                         .computeIfAbsent(coursePackage.getStudentId(), key -> new ArrayList<>())
                         .add(coursePackage);
@@ -1371,7 +1374,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     }
 
     private Map<Long, TeacherEntity> loadOneOnOneTeachers(Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
-                                                          Collection<LessonRecordEntity> records) {
+                                                          Collection<LessonRecordEntity> records,
+                                                          PackageHoursContext hoursContext) {
         Set<Long> teacherIds = new LinkedHashSet<>();
         occurrenceMap.values().stream()
                 .flatMap(List::stream)
@@ -1386,6 +1390,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 teacherIds.add(record.getActualTeacherId());
             }
         });
+        hoursContext.allocatedByTeacherByPackage().values().forEach(
+                allocations -> teacherIds.addAll(allocations.keySet()));
+        hoursContext.deductedByTeacherByPackage().values().forEach(
+                deductions -> teacherIds.addAll(deductions.keySet()));
         return listTeachersByIds(teacherIds);
     }
 
@@ -1423,6 +1431,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     }
 
     private record PackageHoursContext(Map<Long, Integer> allocatedByPackage,
+                                       Map<Long, Map<Long, Integer>> allocatedByTeacherByPackage,
+                                       Map<Long, Map<Long, Integer>> deductedByTeacherByPackage,
                                        Map<Long, Integer> scheduledByPackage,
                                        Map<Long, Integer> pendingByPackage,
                                        Map<Long, Integer> unresolvedPastByPackage) {}
@@ -1430,7 +1440,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     /** 与 Schedule 页面一样，按最新 ACTIVE 规则统计分配课时；余额和待确认课时单独计算。 */
     private PackageHoursContext loadPackageHoursContext(
             List<Long> packageIds, Map<Long, Integer> scheduledByPackage,
-            Map<Long, Integer> unresolvedPastByPackage) {
+            Map<Long, Integer> unresolvedPastByPackage,
+            Map<Long, List<LessonOccurrenceEntity>> occurrencesByPackage,
+            LatestRecordIndex recordIndex) {
         Map<Long, Integer> pendingByPackage = new HashMap<>();
         for (LessonRecordEntity record : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
                 .in(LessonRecordEntity::getPackageId, packageIds)
@@ -1459,9 +1471,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt)
                         .orderByDesc(RecurringScheduleRuleEntity::getId));
         Map<Long, Integer> allocatedByPackage = new HashMap<>();
+        Map<Long, Map<Long, Integer>> allocatedByTeacherByPackage = new HashMap<>();
+        Map<Long, Long> currentRuleByPackage = new HashMap<>();
+        Map<Long, Map<Long, Integer>> deductedByTeacherByPackage = new HashMap<>();
         if (!rules.isEmpty()) {
             // Schedule 列表每个课包只取最新 ACTIVE 规则，避免把旧的 PAUSED 规则再次计入。
-            Map<Long, Long> currentRuleByPackage = new HashMap<>();
             for (RecurringScheduleRuleEntity rule : rules) {
                 if (packageIds.contains(rule.getPackageId())) {
                     currentRuleByPackage.putIfAbsent(rule.getPackageId(), rule.getId());
@@ -1476,37 +1490,70 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             Map<Long, List<Long>> packageIdsByRule = currentRuleByPackage.entrySet().stream()
                     .collect(Collectors.groupingBy(Map.Entry::getValue,
                             Collectors.mapping(Map.Entry::getKey, Collectors.toList())));
-            for (RecurringScheduleSlotEntity slot : recurringScheduleSlotMapper.selectList(
+            List<RecurringScheduleSlotEntity> currentSlots = recurringScheduleSlotMapper.selectList(
                     new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
-                            .in(RecurringScheduleSlotEntity::getRuleId, packageIdsByRule.keySet()))) {
+                            .in(RecurringScheduleSlotEntity::getRuleId, packageIdsByRule.keySet())
+                            .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"));
+            Map<Long, Long> currentSlotTeacherById = new HashMap<>();
+            for (RecurringScheduleSlotEntity slot : currentSlots) {
+                currentSlotTeacherById.put(slot.getId(), slot.getTeacherId());
                 for (Long packageId : packageIdsByRule.getOrDefault(slot.getRuleId(), Collections.emptyList())) {
                     allocatedByPackage.merge(packageId,
                             Math.max(0, safeUnits(slot.getAllocatedUnits())), Integer::sum);
+                    if (slot.getTeacherId() != null) {
+                        allocatedByTeacherByPackage
+                                .computeIfAbsent(packageId, key -> new HashMap<>())
+                                .merge(slot.getTeacherId(), Math.max(0, safeUnits(slot.getAllocatedUnits())), Integer::sum);
+                    }
                 }
             }
             for (Long packageId : currentRuleByPackage.keySet()) {
                 allocatedByPackage.putIfAbsent(packageId, 0);
             }
+
+            // 消课归属按当前规则中的排课老师和 slot 确定；临时代课老师仍保留在课次记录中。
+            for (Map.Entry<Long, Long> entry : currentRuleByPackage.entrySet()) {
+                Long packageId = entry.getKey();
+                Long currentRuleId = entry.getValue();
+                List<LessonOccurrenceEntity> packageOccurrences = occurrencesByPackage.getOrDefault(
+                        packageId, Collections.emptyList());
+                Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
+                for (LessonOccurrenceEntity occurrence : packageOccurrences) {
+                    if (!Objects.equals(currentRuleId, occurrence.getScheduleRuleId())) continue;
+                    LessonRecordEntity record = records.get(occurrence.getId());
+                    if (record == null || !"CONFIRMED".equals(record.getConfirmStage())
+                            || !Objects.equals(record.getShouldDeduct(), 1)
+                            || Objects.equals(record.getIsDeleted(), 1)) continue;
+                    Long teacherId = currentSlotTeacherById.get(occurrence.getScheduleSlotId());
+                    if (teacherId == null) teacherId = occurrence.getPlannedTeacherId();
+                    if (teacherId == null) continue;
+                    deductedByTeacherByPackage
+                            .computeIfAbsent(packageId, key -> new HashMap<>())
+                            .merge(teacherId, Math.max(0, safeUnits(record.getDeductedUnits())), Integer::sum);
+                }
+            }
         }
-        return new PackageHoursContext(allocatedByPackage, scheduledByPackage,
+        return new PackageHoursContext(allocatedByPackage, allocatedByTeacherByPackage,
+                deductedByTeacherByPackage, scheduledByPackage,
                 pendingByPackage, unresolvedPastByPackage);
     }
 
     /** 管理员按课包内实际排课的老师分别建立入口；老师账号查询时只保留本人入口。 */
     private Set<Long> resolveOneOnOneGroupTeacherIds(CoursePackageEntity coursePackage,
                                                      Map<Long, List<LessonOccurrenceEntity>> occurrenceMap,
-                                                     Long requestedTeacherId) {
+                                                     Long requestedTeacherId,
+                                                     PackageHoursContext hoursContext) {
         if (requestedTeacherId != null) {
             return Set.of(requestedTeacherId);
         }
         List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(
                 coursePackage.getId(), Collections.emptyList());
-        if (occurrences.isEmpty()) {
-            return Collections.singleton(null);
-        }
-        return occurrences.stream()
+        Set<Long> teacherIds = occurrences.stream()
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
+        teacherIds.addAll(hoursContext.allocatedByTeacherByPackage()
+                .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
+        return teacherIds.isEmpty() ? Collections.singleton(null) : teacherIds;
     }
 
     private OneOnOneTeacherVO toOneOnOneTeacherVO(Long teacherId,
@@ -1637,6 +1684,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         boolean primary = groupMembers.isEmpty() || Objects.equals(groupMembers.get(0).getPackageId(), coursePackage.getId());
         Long packageId = coursePackage.getId();
         Integer allocatedUnits = hoursContext.allocatedByPackage().get(packageId);
+        List<OneOnOneTeacherHoursVO> teacherHours = toTeacherHoursVOs(packageId, teacherMap, hoursContext);
         int availablePackageUnits = Math.max(0, safeUnits(coursePackage.getRemainingUnits())
                 - hoursContext.pendingByPackage().getOrDefault(packageId, 0));
         int usableRemainingUnits = Math.max(0, availablePackageUnits
@@ -1662,6 +1710,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .usableRemainingUnits(UnitConverter.toHoursDecimal(usableRemainingUnits))
                 .availablePackageUnits(UnitConverter.toHoursDecimal(availablePackageUnits))
                 .allocatedUnits(allocatedUnits == null ? null : UnitConverter.toHoursDecimal(allocatedUnits))
+                .teacherHours(teacherHours)
                 .scheduledReservedUnits(UnitConverter.toHoursDecimal(
                         hoursContext.scheduledByPackage().getOrDefault(packageId, 0)))
                 .renewalReminder(safeUnits(coursePackage.getRemainingUnits()) <= renewalReminderUnits(coursePackage))
@@ -1674,6 +1723,33 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .participants(participants)
                 .lessons(lessons)
                 .build();
+    }
+
+    private List<OneOnOneTeacherHoursVO> toTeacherHoursVOs(Long packageId,
+                                                           Map<Long, TeacherEntity> teacherMap,
+                                                           PackageHoursContext hoursContext) {
+        Map<Long, Integer> allocatedByTeacher = hoursContext.allocatedByTeacherByPackage()
+                .getOrDefault(packageId, Collections.emptyMap());
+        Map<Long, Integer> deductedByTeacher = hoursContext.deductedByTeacherByPackage()
+                .getOrDefault(packageId, Collections.emptyMap());
+        Set<Long> teacherIds = new LinkedHashSet<>(allocatedByTeacher.keySet());
+        teacherIds.addAll(deductedByTeacher.keySet());
+        return teacherIds.stream()
+                .map(teacherId -> {
+                    int allocated = allocatedByTeacher.getOrDefault(teacherId, 0);
+                    int deducted = deductedByTeacher.getOrDefault(teacherId, 0);
+                    TeacherEntity teacher = teacherMap.get(teacherId);
+                    return OneOnOneTeacherHoursVO.builder()
+                            .teacherId(teacherId)
+                            .teacherName(teacher == null ? null : teacher.getTeacherName())
+                            .allocatedUnits(UnitConverter.toHoursDecimal(allocated))
+                            .deductedUnits(UnitConverter.toHoursDecimal(deducted))
+                            .remainingUnits(UnitConverter.toHoursDecimal(Math.max(0, allocated - deducted)))
+                            .build();
+                })
+                .sorted(Comparator.comparing(item -> item.teacherName() == null ? "" : item.teacherName(),
+                        String.CASE_INSENSITIVE_ORDER))
+                .toList();
     }
 
     private int renewalReminderUnits(CoursePackageEntity coursePackage) {

@@ -335,19 +335,21 @@
             </div>
             <div class="oo-student-context__metrics">
               <span>
-                <small>Total</small>{{ formatHours(activePackage.totalUnits) }}h
+                <small>Total Hours</small>{{ formatHours(activePackage.totalUnits) }}h
               </span>
-              <span title="Starting balance for the current schedule period; it resets when the schedule changes.">
-                <small>Starting</small>{{ formatHours(activePackage.startingHours) }}h
+              <span title="The opening balance set in Package Hours. Lesson deductions and schedule edits do not change it.">
+                <small>Starting Hours</small>{{ formatHours(activePackage.startingHours) }}h
               </span>
               <span
-                v-if="activePackage.allocatedUnits != null"
-                title="Hours assigned to the current schedule; confirmed lessons do not change this allocation."
+                title="Hours allocated to this teacher in the current schedule. Lesson deductions do not change this allocation."
               >
-                <small>Allocated</small>{{ formatHours(activePackage.allocatedUnits) }}h
+                <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
               </span>
-              <span>
-                <small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h
+              <span title="Confirmed deductions from lessons assigned to this teacher in the current schedule.">
+                <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
+              </span>
+              <span title="This teacher's current allocation minus confirmed deductions in the current schedule.">
+                <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
               </span>
             </div>
           </div>
@@ -418,8 +420,14 @@
               <p><strong>Course:</strong> {{ signaturePackage?.packageName }}</p>
               <p><strong>Teacher(s):</strong> {{ teacherPrintTeacherNames.join(', ') || '—' }}</p>
               <p><strong>Classtime:</strong> {{ subjectClassTime(teacherPrintRows) }}</p>
-              <p><strong>Hours on sheet:</strong> {{ formatHours(teacherPrintSheetHours) }}</p>
               <p><strong>Starting Date:</strong> {{ teacherPrintStartDate }}</p>
+              <p v-for="hours in teacherPrintHoursSummaries" :key="`teacher-hours-${hours.teacherId}`">
+                <strong>Total Hours:</strong> {{ formatHours(activePackage.totalUnits) }}h ·
+                <strong>Starting Hours:</strong> {{ formatHours(activePackage.startingHours) }}h ·
+                <strong>Allocated to {{ hours.teacherName }}:</strong> {{ formatHours(hours.allocatedUnits) }}h ·
+                <strong>Deducted by {{ hours.teacherName }}:</strong> {{ formatHours(hours.deductedUnits) }}h ·
+                <strong>Remaining with {{ hours.teacherName }}:</strong> {{ formatHours(hours.remainingUnits) }}h
+              </p>
             </div>
 
             <table class="oo-signature-table oo-signature-table--teacher">
@@ -831,6 +839,14 @@ const teachers = ref<OneOnOneTeacher[]>([]);
 const activeTeacher = ref<OneOnOneTeacher | null>(null);
 const activeStudent = ref<OneOnOneStudent | null>(null);
 const activePackage = ref<OneOnOnePackage | null>(null);
+const activeTeacherHours = computed(() => {
+  const teacher = activeTeacher.value;
+  const hours = activePackage.value?.teacherHours ?? [];
+  const teacherId = entityKey(teacher?.teacherId);
+  if (teacherId) return hours.find(item => entityKey(item.teacherId) === teacherId);
+  const name = optionKey(teacher?.teacherName);
+  return hours.find(item => !item.teacherId && optionKey(item.teacherName) === name);
+});
 const signatureHistory = ref<PrivateSignatureHistory[]>([]);
 const signatureHistoryPackageId = ref('');
 const printAreaRef = ref<HTMLElement>();
@@ -1061,17 +1077,31 @@ const teacherPrintRows = computed(() => {
   const selectedKey = selectedTeacherPrintKey.value;
   return signatureSheetRows.value
     .filter((row) => selectedKey === '__all__'
-      || signatureTeacherKey(row, signatureLessonTeacher(row)) === selectedKey)
+      || scheduleTeacherKey(row) === selectedKey)
     .sort((left, right) => dayjs(left.plannedStartAt).valueOf() - dayjs(right.plannedStartAt).valueOf()
       || signatureSubjectLabel(left).localeCompare(signatureSubjectLabel(right))
       || signatureLessonTeacher(left).localeCompare(signatureLessonTeacher(right)));
 });
 const teacherPrintTeacherNames = computed(() => Array.from(new Set(
-  teacherPrintRows.value.map(signatureLessonTeacher)
+  teacherPrintRows.value.map(row => row.plannedTeacherName?.trim() || signatureLessonTeacher(row))
 )));
-const teacherPrintSheetHours = computed(() =>
-  teacherPrintRows.value.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0)
-);
+const teacherPrintHoursSummaries = computed(() => {
+  const selectedKey = selectedTeacherPrintKey.value;
+  return teacherPrintOptions.value
+    .filter(option => selectedKey === '__all__' || option.key === selectedKey)
+    .map(option => {
+      const hours = activePackage.value?.teacherHours?.find(item => entityKey(item.teacherId) === option.key)
+        ?? activePackage.value?.teacherHours?.find(item =>
+          !item.teacherId && optionKey(item.teacherName) === optionKey(option.teacher));
+      return {
+        teacherId: option.key,
+        teacherName: option.teacher,
+        allocatedUnits: hours?.allocatedUnits ?? 0,
+        deductedUnits: hours?.deductedUnits ?? 0,
+        remainingUnits: hours?.remainingUnits ?? 0,
+      };
+    });
+});
 const teacherPrintStartDate = computed(() =>
   formatSignatureDate(teacherPrintRows.value[0]?.plannedStartAt ?? '')
 );
@@ -1110,8 +1140,8 @@ const signatureSubjectSummaries = computed<SignatureSubjectSummary[]>(() => {
 const teacherPrintOptions = computed(() => {
   const options = new Map<string, { key: string; teacher: string }>();
   for (const row of signatureSheetRows.value) {
-    const teacher = signatureLessonTeacher(row);
-    const key = signatureTeacherKey(row, teacher);
+    const teacher = row.plannedTeacherName?.trim() || signatureLessonTeacher(row);
+    const key = scheduleTeacherKey(row);
     if (!options.has(key)) {
       options.set(key, { key, teacher });
     }
@@ -1829,6 +1859,10 @@ function signatureTeacherKey(row: OneOnOneLesson, teacherName: string) {
     : row.plannedTeacherId) || optionKey(teacherName);
 }
 
+function scheduleTeacherKey(row: OneOnOneLesson) {
+  return entityKey(row.plannedTeacherId) || optionKey(row.plannedTeacherName);
+}
+
 function statusTag(row: OneOnOneLesson) {
   if (row.confirmStage === 'PENDING_ADMIN') return 'warning';
   if (isRejectedOrAbnormal(row)) return 'danger';
@@ -2143,11 +2177,10 @@ onBeforeUnmount(() => signaturePrinter.detach());
 }
 
 .oo-student-context__metrics {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(82px, 1fr));
   align-items: center;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 8px 14px;
+  gap: 8px 12px;
 }
 
 .oo-student-context__metrics > span {
@@ -2155,7 +2188,7 @@ onBeforeUnmount(() => signaturePrinter.detach());
   font-size: 15px;
   font-weight: 800;
   text-align: right;
-  white-space: nowrap;
+  white-space: normal;
 }
 
 .oo-student-context__metrics small {
@@ -2164,7 +2197,7 @@ onBeforeUnmount(() => signaturePrinter.detach());
   color: #64748b;
   font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
+  line-height: 1.2;
 }
 
 .oo-student-context__metrics .oo-metric--overallocated {
