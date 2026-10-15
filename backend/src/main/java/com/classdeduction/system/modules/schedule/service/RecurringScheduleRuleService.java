@@ -28,6 +28,9 @@ public interface RecurringScheduleRuleService {
     /** 按当前课包余额重建未来未确认课次，保留已确认和人工调整过的课次。 */
     void refreshPackageSchedule(Long packageId);
 
+    /** 更新管理员明确录入的当前排课周期起始课时。 */
+    void setPackageStartingHours(Long packageId, int startingUnits);
+
     /**
      * 滚动续期：为所有 ACTIVE 规则补齐尚未生成的分配课次，幂等去重。返回新增课次数。
      */

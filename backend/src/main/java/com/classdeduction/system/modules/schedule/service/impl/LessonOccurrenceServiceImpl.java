@@ -36,14 +36,12 @@ import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotE
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
-import com.classdeduction.system.modules.schedule.entity.RecurringScheduleStartingBalanceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
-import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleStartingBalanceMapper;
 import com.classdeduction.system.modules.schedule.service.LessonOccurrenceService;
 import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
@@ -97,7 +95,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
-    private final RecurringScheduleStartingBalanceMapper startingBalanceMapper;
 
     @Override
     public PageResponse<LessonOccurrenceVO> pageOccurrences(LessonOccurrencePageQuery query) {
@@ -1426,7 +1423,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     }
 
     private record PackageHoursContext(Map<Long, Integer> allocatedByPackage,
-                                       Map<Long, Integer> startingByPackage,
                                        Map<Long, Integer> scheduledByPackage,
                                        Map<Long, Integer> pendingByPackage,
                                        Map<Long, Integer> unresolvedPastByPackage) {}
@@ -1463,7 +1459,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt)
                         .orderByDesc(RecurringScheduleRuleEntity::getId));
         Map<Long, Integer> allocatedByPackage = new HashMap<>();
-        Map<Long, Integer> startingByPackage = new HashMap<>();
         if (!rules.isEmpty()) {
             // Schedule 列表每个课包只取最新 ACTIVE 规则，避免把旧的 PAUSED 规则再次计入。
             Map<Long, Long> currentRuleByPackage = new HashMap<>();
@@ -1492,14 +1487,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             for (Long packageId : currentRuleByPackage.keySet()) {
                 allocatedByPackage.putIfAbsent(packageId, 0);
             }
-            List<Long> currentRuleIds = currentRuleByPackage.values().stream().distinct().toList();
-            for (RecurringScheduleStartingBalanceEntity balance : startingBalanceMapper.selectList(
-                    new LambdaQueryWrapper<RecurringScheduleStartingBalanceEntity>()
-                            .in(RecurringScheduleStartingBalanceEntity::getScheduleRuleId, currentRuleIds))) {
-                startingByPackage.putIfAbsent(balance.getPackageId(), Math.max(0, safeUnits(balance.getStartingUnits())));
-            }
         }
-        return new PackageHoursContext(allocatedByPackage, startingByPackage, scheduledByPackage,
+        return new PackageHoursContext(allocatedByPackage, scheduledByPackage,
                 pendingByPackage, unresolvedPastByPackage);
     }
 
@@ -1664,8 +1653,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .gradeBand(orderItem == null ? null : orderItem.getGradeBand())
                 .packageName(coursePackage.getPackageName())
                 .totalUnits(UnitConverter.toHoursDecimal(coursePackage.getTotalUnits()))
-                .startingHours(UnitConverter.toHoursDecimal(hoursContext.startingByPackage().getOrDefault(
-                        packageId, Math.max(0, totalUnitsRaw - safeUnits(coursePackage.getOpeningUsedUnits())))))
+                .startingHours(UnitConverter.toHoursDecimal(
+                        Math.max(0, totalUnitsRaw - safeUnits(coursePackage.getOpeningUsedUnits()))))
                 .purchasedUnits(UnitConverter.toHoursDecimal(purchasedUnits))
                 .bonusUnits(UnitConverter.toHoursDecimal(bonusUnits))
                 .consumedUnits(UnitConverter.toHoursDecimal(coursePackage.getConsumedUnits()))

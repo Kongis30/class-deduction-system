@@ -1172,8 +1172,7 @@ watch(selectedPackage, pkg => {
   startingHoursDraft.value = packageHours(pkg?.startingHours);
 }, { immediate: true });
 function remainingForPackage(pkg: CoursePackageItem): number {
-  return packageHours(Math.max(0, pkg.remainingUnits
-    - (pkg.pendingDeductionUnits ?? 0) - (pkg.unresolvedPastHours ?? 0)));
+  return packageHours(Math.max(0, pkg.remainingUnits));
 }
 const emptySlots = ref<SlotDef[]>([]);
 const weeklyRows = ref<WeeklyAdjustmentRow[]>([]);
@@ -2166,9 +2165,7 @@ async function openEditDialog() {
       startTime: s.startTime,
       endTime: scheduleEndTimeForDisplay(s.startTime, s.endTime),
       plannedUnits: s.plannedUnits,
-      allocatedHours: s.rolloverAllocatedUnits != null
-        ? s.rolloverAllocatedUnits * 0.5
-        : s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
+      allocatedHours: s.allocatedUnits != null ? s.allocatedUnits * 0.5 : undefined,
     })),
   });
   editDialogVisible.value = true;

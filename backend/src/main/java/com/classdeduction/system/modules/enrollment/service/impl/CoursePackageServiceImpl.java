@@ -1019,7 +1019,9 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         hourLedgerMapper.insert(ledger);
         upsertBalanceSnapshot(coursePackage, ledger.getId());
 
-        // 余额变化后重算未来课次；排课服务会保留已确认和人工调整过的课次。
+        // 此入口编辑的是周期起始值；明确保存输入值，再重算未来课次。
+        recurringScheduleRuleService.setPackageStartingHours(id, totalUnits - nextOpeningUsedUnits);
+        // 重算只更新未来课次，不得覆盖 Starting Hours 快照。
         recurringScheduleRuleService.refreshPackageSchedule(id);
     }
 

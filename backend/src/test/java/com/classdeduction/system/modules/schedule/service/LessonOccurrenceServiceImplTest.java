@@ -111,9 +111,6 @@ class LessonOccurrenceServiceImplTest {
     @Mock
     private com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper recurringScheduleRuleMapper;
 
-    @Mock
-    private com.classdeduction.system.modules.schedule.mapper.RecurringScheduleStartingBalanceMapper startingBalanceMapper;
-
     private LessonOccurrenceServiceImpl lessonOccurrenceService;
 
     @BeforeEach
@@ -137,8 +134,7 @@ class LessonOccurrenceServiceImplTest {
                 classEnrollmentMapper,
                 classGroupScheduleSlotMapper,
                 recurringScheduleSlotMapper,
-                recurringScheduleRuleMapper,
-                startingBalanceMapper
+                recurringScheduleRuleMapper
         );
     }
 

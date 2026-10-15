@@ -231,7 +231,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         preservedForBalance.addAll(loadEndedPeriodOccurrences(coursePackage.getId(), id));
         Map<Long, LessonRecordEntity> recordByOccurrenceId = latestRecordsForPackage(
                 preservedForBalance.stream().map(LessonOccurrenceEntity::getId).toList(), coursePackage.getId());
-        int startingUnits = startingUnits(rule.getId(), coursePackage.getId(), legacyStartingUnits(coursePackage));
+        int startingUnits = packageStartingUnits(coursePackage);
         return RecurringScheduleRuleDetailVO.builder()
                 .id(rule.getId())
                 .packageId(rule.getPackageId())
@@ -621,12 +621,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                                 .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
                                 .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt)
                                 .orderByDesc(RecurringScheduleRuleEntity::getId));
-                rules.stream().findFirst().ifPresent(rule -> saveStartingBalance(rule, coursePackage));
+                rules.stream().findFirst().ifPresent(rule -> ensureStartingBalance(rule, coursePackage));
                 return;
             }
         }
         for (RecurringScheduleRuleEntity rule : rules) {
-            saveStartingBalance(rule, coursePackage);
+            ensureStartingBalance(rule, coursePackage);
             List<RecurringScheduleSlotEntity> slots = recurringScheduleSlotMapper.selectList(
                     new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                             .eq(RecurringScheduleSlotEntity::getRuleId, rule.getId())
@@ -645,6 +645,31 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             request.setNotes(rule.getNotes());
             request.setSlots(slots.stream().map(this::toSlotRequest).toList());
             updateRuleInternal(rule.getId(), request, false);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void setPackageStartingHours(Long packageId, int startingUnits) {
+        CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
+        if (coursePackage == null) {
+            return;
+        }
+        List<PrivateLessonGroupMemberEntity> members = privateLessonGroupMemberMapper.selectList(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0));
+        Set<Long> groupIds = members.stream().map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                        .and(wrapper -> wrapper.eq(RecurringScheduleRuleEntity::getPackageId, packageId)
+                                .or(!groupIds.isEmpty(), group -> group.in(
+                                        RecurringScheduleRuleEntity::getPrivateLessonGroupId, groupIds))));
+        for (RecurringScheduleRuleEntity rule : rules) {
+            setStartingBalance(rule, coursePackage, startingUnits);
         }
     }
 
@@ -1299,16 +1324,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         return Math.max(0, safeUnits(slot.getAllocatedUnits()) - usedOrReserved);
     }
 
-    private int startingUnits(Long ruleId, Long packageId, int fallbackUnits) {
-        RecurringScheduleStartingBalanceEntity balance = startingBalanceMapper.selectOne(
-                new LambdaQueryWrapper<RecurringScheduleStartingBalanceEntity>()
-                        .eq(RecurringScheduleStartingBalanceEntity::getScheduleRuleId, ruleId)
-                        .eq(RecurringScheduleStartingBalanceEntity::getPackageId, packageId)
-                        .last("LIMIT 1"));
-        return balance == null ? fallbackUnits : Math.max(0, safeUnits(balance.getStartingUnits()));
-    }
-
-    private int legacyStartingUnits(CoursePackageEntity coursePackage) {
+    private int packageStartingUnits(CoursePackageEntity coursePackage) {
         return Math.max(0, safeUnits(coursePackage.getTotalUnits())
                 - safeUnits(coursePackage.getOpeningUsedUnits()));
     }
@@ -1331,11 +1347,41 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     .toList();
         }
         for (CoursePackageEntity coursePackage : packages) {
+            rebasePackageStartingHours(coursePackage);
             saveStartingBalance(rule, coursePackage);
         }
     }
 
+    /** 新周期把此前消课量并入 opening balance，后续只统计本周期新增消课。 */
+    private void rebasePackageStartingHours(CoursePackageEntity coursePackage) {
+        int startingUnits = allocatableUnits(coursePackage);
+        int openingUsedUnits = Math.max(0, safeUnits(coursePackage.getTotalUnits()) - startingUnits);
+        if (Objects.equals(coursePackage.getOpeningUsedUnits(), openingUsedUnits)) {
+            return;
+        }
+        coursePackage.setOpeningUsedUnits(openingUsedUnits);
+        if (coursePackageMapper.updateById(coursePackage) != 1) {
+            throw new BusinessException("PACKAGE_CONCURRENT_UPDATE",
+                    "The package was updated by another request. Please retry.");
+        }
+    }
+
     private void saveStartingBalance(RecurringScheduleRuleEntity rule, CoursePackageEntity coursePackage) {
+        ensureStartingBalance(rule, coursePackage);
+    }
+
+    /** 普通刷新只补齐缺失快照，不能用当前余额覆盖周期起始值。 */
+    private void ensureStartingBalance(RecurringScheduleRuleEntity rule, CoursePackageEntity coursePackage) {
+        upsertStartingBalance(rule, coursePackage, null);
+    }
+
+    private void setStartingBalance(RecurringScheduleRuleEntity rule, CoursePackageEntity coursePackage,
+                                    int startingUnits) {
+        upsertStartingBalance(rule, coursePackage, startingUnits);
+    }
+
+    private void upsertStartingBalance(RecurringScheduleRuleEntity rule, CoursePackageEntity coursePackage,
+                                       Integer startingUnits) {
         RecurringScheduleStartingBalanceEntity balance = startingBalanceMapper.selectOne(
                 new LambdaQueryWrapper<RecurringScheduleStartingBalanceEntity>()
                         .eq(RecurringScheduleStartingBalanceEntity::getScheduleRuleId, rule.getId())
@@ -1345,12 +1391,14 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             balance = new RecurringScheduleStartingBalanceEntity();
             balance.setScheduleRuleId(rule.getId());
             balance.setPackageId(coursePackage.getId());
-            balance.setStartingUnits(allocatableUnits(coursePackage));
+            balance.setStartingUnits(startingUnits == null ? allocatableUnits(coursePackage) : Math.max(0, startingUnits));
             startingBalanceMapper.insert(balance);
             return;
         }
-        balance.setStartingUnits(allocatableUnits(coursePackage));
-        startingBalanceMapper.updateById(balance);
+        if (startingUnits != null) {
+            balance.setStartingUnits(Math.max(0, startingUnits));
+            startingBalanceMapper.updateById(balance);
+        }
     }
 
     /** 课时包当前可用于新生成课次的余额，单位为半小时。 */

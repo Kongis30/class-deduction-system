@@ -205,7 +205,7 @@
                   @click="selectCandidatePackage(candidate)"
                 >
                   <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
-                  <small>{{ normalizedGradeBand(candidate.pkg.gradeBand) }} · {{ formatHours(candidate.pkg.usableRemainingUnits ?? candidate.pkg.availablePackageUnits ?? candidate.pkg.remainingUnits) }}h available</small>
+                  <small>{{ normalizedGradeBand(candidate.pkg.gradeBand) }} · {{ formatHours(candidate.pkg.remainingUnits) }}h remaining</small>
                 </button>
               </div>
             </section>
@@ -337,7 +337,7 @@
               <span>
                 <small>Total</small>{{ formatHours(activePackage.totalUnits) }}h
               </span>
-              <span title="Package balance when lesson tracking began; confirmed deductions do not change this starting value.">
+              <span title="Starting balance for the current schedule period; it resets when the schedule changes.">
                 <small>Starting</small>{{ formatHours(activePackage.startingHours) }}h
               </span>
               <span
@@ -346,8 +346,8 @@
               >
                 <small>Allocated</small>{{ formatHours(activePackage.allocatedUnits) }}h
               </span>
-              <span title="Available after confirmed deductions, pending deductions, and past lessons awaiting a result.">
-                <small>Remaining</small>{{ formatHours(activePackage.usableRemainingUnits ?? activePackage.remainingUnits) }}h
+              <span>
+                <small>Remaining</small>{{ formatHours(activePackage.remainingUnits) }}h
               </span>
             </div>
           </div>
@@ -371,7 +371,7 @@
                 </div>
                 <div class="oo-signature-hours__group oo-signature-hours__group--balance">
                   <p><strong>Already deducted:</strong> {{ formatHours(signaturePackage?.consumedUnits) }}</p>
-                  <p><strong>Available balance:</strong> {{ formatHours(signaturePackage?.usableRemainingUnits ?? signaturePackage?.availablePackageUnits ?? signaturePackage?.remainingUnits) }}</p>
+                  <p><strong>Remaining:</strong> {{ formatHours(signaturePackage?.remainingUnits) }}</p>
                 </div>
               </div>
             </div>
