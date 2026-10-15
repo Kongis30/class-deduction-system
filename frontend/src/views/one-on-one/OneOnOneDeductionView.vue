@@ -657,6 +657,13 @@
           <el-input v-model="confirmForm.notes" type="textarea" :rows="2" />
         </el-form-item>
         <el-alert
+          v-if="confirmForm.resultStatus === 'FORMAL_LEAVE' && selectedLesson"
+          :title="formalLeaveTeacherHoursHint"
+          type="warning"
+          :closable="false"
+          show-icon
+        />
+        <el-alert
           v-if="isNonAttendanceStatus(confirmForm.resultStatus)"
           :title="nonAttendanceNotice(confirmForm.resultStatus)"
           type="info"
@@ -1211,6 +1218,12 @@ const showAdminDirectConfirmWarning = computed(() =>
   && Boolean(selectedLesson.value)
   && isAwaitingTeacherConfirmation(selectedLesson.value!)
 );
+const formalLeaveTeacherHoursHint = computed(() => {
+  const lesson = selectedLesson.value;
+  if (!lesson) return '';
+  const teacherName = displayResourceName(lesson.plannedTeacherName);
+  return `Teacher allocation for this lesson: ${teacherName} · ${formatHours(lesson.plannedUnits)}h.`;
+});
 const assignmentDialogVisible = ref(false);
 const assigning = ref(false);
 const assignmentLesson = ref<OneOnOneLesson | null>(null);
