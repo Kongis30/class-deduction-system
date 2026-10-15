@@ -345,6 +345,7 @@ public class StudentServiceImpl implements StudentService {
                 .campusName(stringValue(row.get("campusName")))
                 .latestSignupDate(localDateValue(row.get("latestSignupDate")))
                 .enrollmentCount(longValue(row.get("enrollmentCount")))
+                .receiptCount(longValue(row.get("receiptCount")))
                 .enrollmentAmountDue(decimalValue(row.get("enrollmentAmountDue")))
                 .enrollmentPaidAmount(decimalValue(row.get("enrollmentPaidAmount")))
                 .enrollmentBalanceAmount(decimalValue(row.get("enrollmentBalanceAmount")))

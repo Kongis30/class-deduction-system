@@ -38,6 +38,7 @@ public record StudentListItemVO(
         String campusName,
         LocalDate latestSignupDate,
         Long enrollmentCount,
+        Long receiptCount,
         BigDecimal enrollmentAmountDue,
         BigDecimal enrollmentPaidAmount,
         BigDecimal enrollmentBalanceAmount,

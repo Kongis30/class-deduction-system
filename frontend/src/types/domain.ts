@@ -62,6 +62,7 @@ export interface StudentItem {
   campusName?: string;
   latestSignupDate?: string;
   enrollmentCount?: number;
+  receiptCount?: number;
   enrollmentAmountDue?: number;
   enrollmentPaidAmount?: number;
   enrollmentBalanceAmount?: number;

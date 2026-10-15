@@ -46,6 +46,7 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
                     c.campus_name AS campusName,
                     agg.latestSignupDate AS latestSignupDate,
                     COALESCE(agg.enrollmentCount, 0) AS enrollmentCount,
+                    COALESCE(receipts.receiptCount, 0) AS receiptCount,
                     COALESCE(agg.enrollmentAmountDue, 0.00) AS enrollmentAmountDue,
                     COALESCE(agg.enrollmentPaidAmount, 0.00) AS enrollmentPaidAmount,
                     COALESCE(agg.enrollmentBalanceAmount, 0.00) AS enrollmentBalanceAmount,
@@ -58,18 +59,19 @@ public interface StudentMapper extends BaseMapper<StudentEntity> {
                         ELSE 1
                     END AS hasEnrollmentOrder,
                     CASE
-                        WHEN EXISTS (
-                            SELECT 1
-                            FROM receipt_record rr
-                            WHERE rr.student_id = s.id
-                              AND rr.is_deleted = 0
-                        ) THEN 1
+                        WHEN receipts.receiptCount IS NOT NULL THEN 1
                         ELSE 0
                     END AS hasActiveReceipt,
                     s.created_at AS createdAt,
                     s.updated_at AS updatedAt
                 FROM student s
                 LEFT JOIN campus c ON c.id = s.campus_id AND c.is_deleted = 0
+                LEFT JOIN (
+                    SELECT student_id AS studentId, COUNT(*) AS receiptCount
+                    FROM receipt_record
+                    WHERE is_deleted = 0
+                    GROUP BY student_id
+                ) receipts ON receipts.studentId = s.id
                 LEFT JOIN (
                     SELECT
                         eo.student_id AS studentId,

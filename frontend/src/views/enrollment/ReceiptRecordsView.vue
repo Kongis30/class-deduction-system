@@ -56,7 +56,7 @@
             >
               <el-menu-item v-for="student in students" :key="student.id" :index="student.id">
                 <span class="student-name">{{ student.studentName }}</span>
-                <el-tag size="small" effect="plain">{{ student.enrollmentCount ?? 0 }}</el-tag>
+                <el-tag size="small" effect="plain">{{ student.receiptCount ?? 0 }}</el-tag>
               </el-menu-item>
             </el-menu>
 
@@ -633,6 +633,7 @@ async function confirmDeleteRefund(row: ReceiptRecordItem) {
   try {
     const response = await deleteRefundReceipt(row.id);
     ElMessage.success(response.data.message || 'Refund receipt deleted.');
+    await loadStudents();
     await loadSelectedStudentRecords();
     if (receipts.value.length === 0 && orderQuery.pageNum > 1) {
       orderQuery.pageNum -= 1;
