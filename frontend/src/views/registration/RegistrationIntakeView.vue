@@ -2624,7 +2624,8 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
     ?? order.receipts.find(receipt => receipt.templateCode === 'DEFAULT_RECEIPT');
   const isStandaloneReceipt = registrationReceipt?.templateCode !== undefined
     && registrationReceipt.templateCode !== 'DEFAULT_RECEIPT';
-  const receiptPayload = parsePayload(registrationReceipt?.receiptPayload);
+  // 有些旧订单已没有有效收据快照；此时用空快照并从订单字段恢复展示，避免详情页空指针。
+  const receiptPayload = parsePayload(registrationReceipt?.receiptPayload) ?? {};
   const campusId = getString(receiptPayload, 'campusId') || String(order.campusId ?? '');
   const campusName = getString(receiptPayload, 'campusName') || order.campusNameSnapshot || '';
   form.campusKey = resolveCampusKey(campusId, campusName);
