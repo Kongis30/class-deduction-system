@@ -11,6 +11,7 @@ public record OneOnOneTeacherHoursVO(
         String teacherName,
         Double allocatedUnits,
         Double deductedUnits,
+        Double pendingDeductionUnits,
         Double remainingUnits
 ) {
 }

@@ -348,8 +348,8 @@
               <span title="Confirmed deductions from lessons assigned to this teacher in the current schedule.">
                 <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
               </span>
-              <span title="Package-wide lesson hours awaiting admin confirmation. These hours are not included in deducted or remaining hours.">
-                <small>Pending deduction</small>{{ formatHours(activePackage.pendingDeductionUnits ?? 0) }}h
+              <span title="Lesson hours assigned to this teacher that are awaiting admin confirmation. These hours are not included in deducted or remaining hours.">
+                <small>Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
               </span>
               <span title="This teacher's current allocation minus confirmed deductions in the current schedule.">
                 <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
