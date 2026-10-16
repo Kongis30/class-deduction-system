@@ -581,18 +581,29 @@ class LessonOccurrenceServiceImplTest {
 
     @Test
     void shouldCombinePastUnconfirmedAndFutureLessonsInTeacherRemainingHours() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         LessonOccurrenceEntity pastUnconfirmed = buildOneOnOneOccurrence();
+        pastUnconfirmed.setScheduleRuleId(5001L);
+        pastUnconfirmed.setScheduleSlotId(6001L);
+        pastUnconfirmed.setPlannedStartAt(now.minusDays(2));
+        pastUnconfirmed.setPlannedEndAt(now.minusDays(2).plusHours(1));
         LessonOccurrenceEntity futureScheduled = buildOneOnOneOccurrence();
         futureScheduled.setId(4002L);
         futureScheduled.setLessonNo("O2O202610170001");
+        futureScheduled.setScheduleRuleId(5001L);
+        futureScheduled.setScheduleSlotId(6001L);
         futureScheduled.setPlannedUnits(2);
-        futureScheduled.setPlannedStartAt(AppTime.nowLocalDateTime().plusDays(1));
+        futureScheduled.setPlannedStartAt(now.plusDays(1));
         futureScheduled.setPlannedEndAt(futureScheduled.getPlannedStartAt().plusHours(1));
 
         LessonOccurrenceEntity pastConfirmed = buildOneOnOneOccurrence();
         pastConfirmed.setId(4003L);
         pastConfirmed.setLessonNo("O2O202609010003");
+        pastConfirmed.setScheduleRuleId(5001L);
+        pastConfirmed.setScheduleSlotId(6001L);
+        pastConfirmed.setPlannedStartAt(now.minusDays(4));
+        pastConfirmed.setPlannedEndAt(now.minusDays(4).plusHours(1));
         pastConfirmed.setPlannedUnits(4);
         LessonRecordEntity confirmedRecord = new LessonRecordEntity();
         confirmedRecord.setId(5003L);
@@ -600,10 +611,24 @@ class LessonOccurrenceServiceImplTest {
         confirmedRecord.setPackageId(coursePackage.getId());
         confirmedRecord.setConfirmStage("CONFIRMED");
 
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5001L);
+        currentRule.setPackageId(coursePackage.getId());
+        currentRule.setRuleStatus("ACTIVE");
+        currentRule.setCreatedAt(now.minusDays(45));
+        RecurringScheduleSlotEntity activeSlot = new RecurringScheduleSlotEntity();
+        activeSlot.setId(6001L);
+        activeSlot.setRuleId(currentRule.getId());
+        activeSlot.setTeacherId(301L);
+        activeSlot.setAllocatedUnits(5);
+        activeSlot.setCreatedAt(now.minusDays(30));
+
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
         when(lessonOccurrenceMapper.selectList(any()))
                 .thenReturn(List.of(pastUnconfirmed, futureScheduled, pastConfirmed));
         when(lessonRecordMapper.selectList(any())).thenReturn(new ArrayList<>(List.of(confirmedRecord)));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(activeSlot));
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
         when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
 
@@ -612,7 +637,132 @@ class LessonOccurrenceServiceImplTest {
 
         assertThat(teacher.students().get(0).packages().get(0).teacherHours())
                 .singleElement()
-                .satisfies(hours -> assertThat(hours.remainingUnits()).isEqualTo(2.5));
+                .satisfies(hours -> {
+                    assertThat(hours.allocatedUnits()).isEqualTo(2.5);
+                    assertThat(hours.deductedUnits()).isZero();
+                    assertThat(hours.remainingUnits()).isEqualTo(2.5);
+                });
+    }
+
+    @Test
+    void shouldUseCurrentAllocationForTeacherRemainingWhenOccurrenceRowsAreIncomplete() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity pendingPast = buildOneOnOneOccurrence();
+        pendingPast.setScheduleRuleId(5001L);
+        pendingPast.setScheduleSlotId(6001L);
+        pendingPast.setPlannedUnits(2);
+        pendingPast.setPlannedStartAt(now.minusDays(2));
+        pendingPast.setPlannedEndAt(now.minusDays(2).plusHours(1));
+        LessonOccurrenceEntity future = buildOneOnOneOccurrence();
+        future.setId(4002L);
+        future.setScheduleRuleId(5001L);
+        future.setScheduleSlotId(6001L);
+        future.setPlannedUnits(2);
+        future.setPlannedStartAt(now.plusDays(1));
+        future.setPlannedEndAt(future.getPlannedStartAt().plusHours(1));
+
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5001L);
+        currentRule.setPackageId(coursePackage.getId());
+        currentRule.setRuleStatus("ACTIVE");
+        currentRule.setCreatedAt(now.minusDays(45));
+        RecurringScheduleSlotEntity activeSlot = new RecurringScheduleSlotEntity();
+        activeSlot.setId(6001L);
+        activeSlot.setRuleId(currentRule.getId());
+        activeSlot.setTeacherId(301L);
+        activeSlot.setAllocatedUnits(10);
+        activeSlot.setCreatedAt(now.minusDays(30));
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(pendingPast, future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(activeSlot));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null).get(0);
+
+        assertThat(teacher.students().get(0).packages().get(0).teacherHours())
+                .singleElement()
+                .satisfies(hours -> {
+                    assertThat(hours.allocatedUnits()).isEqualTo(5.0);
+                    assertThat(hours.deductedUnits()).isZero();
+                    // 两条课次只覆盖 2 小时，但当前周期分配额为 5 小时，剩余应按额度账本核算。
+                    assertThat(hours.remainingUnits()).isEqualTo(5.0);
+                });
+    }
+
+    @Test
+    void shouldKeepPastUnconfirmedAllocationWithHistoricalTeacherAfterLegacyTeacherChange() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity pastUnconfirmed = buildOneOnOneOccurrence();
+        pastUnconfirmed.setScheduleRuleId(5001L);
+        pastUnconfirmed.setScheduleSlotId(6001L);
+        pastUnconfirmed.setPlannedStartAt(now.minusDays(2));
+        pastUnconfirmed.setPlannedEndAt(now.minusDays(2).plusHours(2));
+        pastUnconfirmed.setPlannedUnits(4);
+        LessonOccurrenceEntity future = buildOneOnOneOccurrence();
+        future.setId(4002L);
+        future.setScheduleRuleId(5001L);
+        future.setScheduleSlotId(6001L);
+        future.setPlannedTeacherId(302L);
+        future.setPlannedStartAt(now.plusDays(1));
+        future.setPlannedEndAt(future.getPlannedStartAt().plusHours(2));
+        future.setPlannedUnits(12);
+
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5001L);
+        currentRule.setPackageId(coursePackage.getId());
+        currentRule.setRuleStatus("ACTIVE");
+        currentRule.setCreatedAt(now.minusDays(30));
+        RecurringScheduleSlotEntity activeSlot = new RecurringScheduleSlotEntity();
+        activeSlot.setId(6001L);
+        activeSlot.setRuleId(currentRule.getId());
+        activeSlot.setTeacherId(302L);
+        activeSlot.setAllocatedUnits(16);
+        activeSlot.setCreatedAt(now.minusDays(20));
+        TeacherEntity newTeacher = buildTeacher();
+        newTeacher.setId(302L);
+        newTeacher.setTeacherName("Ms New");
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(pastUnconfirmed, future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(activeSlot));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher(), newTeacher));
+
+        List<OneOnOneTeacherVO> teachers = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(teachers).hasSize(2);
+        assertThat(teachers).anySatisfy(teacher -> {
+            assertThat(teacher.teacherName()).isEqualTo("Ms Lee");
+            assertThat(teacher.students().get(0).packages().get(0).teacherHours())
+                    .filteredOn(hours -> hours.teacherId().equals(301L))
+                    .singleElement()
+                    .satisfies(hours -> {
+                        assertThat(hours.allocatedUnits()).isEqualTo(2.0);
+                        assertThat(hours.deductedUnits()).isZero();
+                        assertThat(hours.remainingUnits()).isEqualTo(2.0);
+                    });
+        });
+        assertThat(teachers).anySatisfy(teacher -> {
+            assertThat(teacher.teacherName()).isEqualTo("Ms New");
+            assertThat(teacher.students().get(0).packages().get(0).teacherHours())
+                    .filteredOn(hours -> hours.teacherId().equals(302L))
+                    .singleElement()
+                    .satisfies(hours -> {
+                        assertThat(hours.allocatedUnits()).isEqualTo(6.0);
+                        assertThat(hours.deductedUnits()).isZero();
+                        assertThat(hours.remainingUnits()).isEqualTo(6.0);
+                    });
+        });
     }
 
     @Test

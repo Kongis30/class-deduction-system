@@ -1613,9 +1613,26 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                     .merge(historicalTeacherId, exceptionUnits, Integer::sum);
                         }
                     }
+                    boolean confirmedDeduction = record != null
+                            && !Objects.equals(record.getIsDeleted(), 1)
+                            && Objects.equals(record.getShouldDeduct(), 1)
+                            && "CONFIRMED".equals(record.getConfirmStage());
+                    boolean pastUnconfirmed = PrivateLessonAllocation.isPendingProcessing(occurrence, record, now);
+                    int units = record == null ? 0 : Math.max(0, safeUnits(record.getDeductedUnits()));
+                    Long currentTeacherId = currentSlotTeacherById.get(occurrence.getScheduleSlotId());
+                    int reservedUnits = confirmedDeduction ? units
+                            : pastUnconfirmed ? PrivateLessonAllocation.reservedUnits(occurrence, record) : 0;
+                    // 同一规则原位换老师时，当前周期内已消课或已过期未确认的课次仍归历史老师。
+                    if (currentPeriod && reservedUnits > 0 && currentTeacherId != null
+                            && historicalTeacherId != null
+                            && !Objects.equals(currentTeacherId, historicalTeacherId)
+                            && Objects.equals(currentRuleId, occurrence.getScheduleRuleId())) {
+                        reservedBySlotAndTeacher
+                                .computeIfAbsent(occurrence.getScheduleSlotId(), key -> new HashMap<>())
+                                .merge(historicalTeacherId, reservedUnits, Integer::sum);
+                    }
                     if (record == null || !Objects.equals(record.getShouldDeduct(), 1)
                             || Objects.equals(record.getIsDeleted(), 1)) continue;
-                    int units = Math.max(0, safeUnits(record.getDeductedUnits()));
                     // 老师页只展示当前周期的消课；旧版本未来保留例外在本周期上完也应计入。
                     if ("CONFIRMED".equals(record.getConfirmStage()) && historicalTeacherId != null
                             && currentPeriod) {
@@ -1624,17 +1641,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                 .merge(historicalTeacherId, units, Integer::sum);
                     }
 
-                    // 同一 slot 原位换老师时，已确认/待确认的历史部分仍归原老师，未来余额归当前老师。
-                    boolean reservesAllocation = "CONFIRMED".equals(record.getConfirmStage())
-                            || "PENDING_ADMIN".equals(record.getConfirmStage());
-                    Long currentTeacherId = currentSlotTeacherById.get(occurrence.getScheduleSlotId());
-                    if (reservesAllocation && currentTeacherId != null && historicalTeacherId != null
-                            && !Objects.equals(currentTeacherId, historicalTeacherId)
-                            && Objects.equals(currentRuleId, occurrence.getScheduleRuleId())) {
-                        reservedBySlotAndTeacher
-                                .computeIfAbsent(occurrence.getScheduleSlotId(), key -> new HashMap<>())
-                                .merge(historicalTeacherId, units, Integer::sum);
-                    }
                 }
                 Map<Long, Integer> teacherAllocations = allocatedByTeacherByPackage
                         .computeIfAbsent(packageId, key -> new HashMap<>());
@@ -1656,7 +1662,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
             }
         }
-        // 老师级 Remaining 与 Deducted 使用同一个排课周期；课包级待处理量仍覆盖全部历史。
+        // 老师级未确认课次仍单独汇总，用于保留老师入口并核对排课明细；页眉余额按额度账本计算。
         for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
             Long packageId = entry.getKey();
             List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
@@ -1943,13 +1949,15 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .map(teacherId -> {
                     int allocated = allocatedByTeacher.getOrDefault(teacherId, 0);
                     int deducted = deductedByTeacher.getOrDefault(teacherId, 0);
+                    // 当前周期未消课余额由同周期分配额扣除已确认消课得到，不能受课次生成缺漏影响。
+                    int remaining = allocated - deducted;
                     TeacherEntity teacher = teacherMap.get(teacherId);
                     return OneOnOneTeacherHoursVO.builder()
                             .teacherId(teacherId)
                             .teacherName(teacher == null ? null : teacher.getTeacherName())
                             .allocatedUnits(UnitConverter.toHoursDecimal(allocated))
                             .deductedUnits(UnitConverter.toHoursDecimal(deducted))
-                            .remainingUnits(UnitConverter.toHoursDecimal(unconfirmedByTeacher.getOrDefault(teacherId, 0)))
+                            .remainingUnits(UnitConverter.toHoursDecimal(remaining))
                             .build();
                 })
                 .sorted(Comparator.comparing(item -> item.teacherName() == null ? "" : item.teacherName(),
