@@ -104,6 +104,17 @@
         </tbody>
         <tbody v-else-if="!loading"><tr class="workbook-empty-row"><td :colspan="creditColumns.length">No available student Credit.</td></tr></tbody>
       </table>
+      <div v-if="appStore.isMobileViewport" class="student-credit-mobile-list">
+        <article v-for="group in sortedStudentGroups" :key="String(group.studentId)" class="student-credit-mobile-card">
+          <div class="student-credit-mobile-card__header">
+            <div><strong>{{ group.studentName || '—' }}</strong><span>{{ formatUsPhoneDisplay(group.guardianPhone) || 'No guardian phone' }}</span></div>
+            <el-button type="primary" link size="small" @click="openEditDialog(group)">Edit</el-button>
+          </div>
+          <div class="student-credit-mobile-card__balance"><span>Available credit</span><strong>{{ formatMoney(group.creditBalance) }}</strong></div>
+          <div class="student-credit-mobile-card__footer"><span>Last activity</span><strong>{{ formatDate(group.lastOccurredAt) }}</strong></div>
+        </article>
+        <el-empty v-if="!loading && sortedStudentGroups.length === 0" description="No available student credit" />
+      </div>
     </div>
   </div>
 
@@ -352,12 +363,28 @@ onMounted(loadBalances);
   gap: 8px;
 }
 
+.student-credit-mobile-list { display: none; }
+
 .credit-edit-amount {
   width: 100%;
 }
 
 @media (max-width: 640px) {
   .data-summary-page { gap: 10px; }
+  .student-credit-table { display: none; }
+  .student-credit-mobile-list { display: grid; gap: 10px; padding: 10px 0; }
+  .student-credit-mobile-card { padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, .05); }
+  .student-credit-mobile-card__header,
+  .student-credit-mobile-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .student-credit-mobile-card__header > div { min-width: 0; display: grid; gap: 3px; }
+  .student-credit-mobile-card__header strong { color: #1f3f36; font-size: 14px; }
+  .student-credit-mobile-card__header span,
+  .student-credit-mobile-card__footer span { color: #71808a; font-size: 11px; }
+  .student-credit-mobile-card__balance { display: flex; align-items: baseline; justify-content: space-between; margin: 14px 0; padding: 12px; border-radius: 8px; background: #f1f8f4; }
+  .student-credit-mobile-card__balance span { color: #527062; font-size: 11px; }
+  .student-credit-mobile-card__balance strong { color: #1f6b4d; font-size: 20px; font-variant-numeric: tabular-nums; }
+  .student-credit-mobile-card__footer { padding-top: 10px; border-top: 1px solid #edf1f4; }
+  .student-credit-mobile-card__footer strong { color: #40535d; font-size: 12px; }
   .credit-edit-student { padding: 12px; border-radius: 6px; background: #f8fafc; }
   .student-credit-search-form .el-button { min-height: 42px; margin: 0; }
 }
