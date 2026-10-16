@@ -336,27 +336,41 @@
             <div class="oo-student-context__metrics">
               <div class="oo-student-context__metric-group" role="group" aria-label="Package hours">
                 <span class="oo-student-context__metric">
-                  <small title="The package's full enrollment hours, including any bonus hours.">Total Hours</small>{{ formatHours(activePackage.totalUnits) }}h
+                  <el-tooltip content="Total hours purchased in this package." placement="top" :show-after="200">
+                    <small>Total Hours</small>
+                  </el-tooltip>{{ formatHours(activePackage.totalUnits) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <small title="The starting balance entered in Package Hours. Lessons and schedule edits do not change it.">Starting Hours</small>{{ formatHours(activePackage.startingHours) }}h
+                  <el-tooltip content="Starting balance entered for this package." placement="top" :show-after="200">
+                    <small>Starting Hours</small>
+                  </el-tooltip>{{ formatHours(activePackage.startingHours) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <small title="Starting Hours minus confirmed deductions. Pending lessons and schedule edits do not reduce it.">Remaining Hours</small>{{ formatHours(activePackage.remainingUnits) }}h
+                  <el-tooltip content="Package hours left after confirmed deductions." placement="top" :show-after="200">
+                    <small>Remaining Hours</small>
+                  </el-tooltip>{{ formatHours(activePackage.remainingUnits) }}h
                 </span>
               </div>
               <div class="oo-student-context__metric-group oo-student-context__metric-group--teacher" role="group" :aria-label="`Hours for ${activeTeacher?.teacherName || 'teacher'}`">
                 <span class="oo-student-context__metric">
-                  <small title="Hours allocated to this teacher in the current schedule. Completed lessons do not reduce this amount.">Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
+                  <el-tooltip content="Hours assigned to this teacher's schedule." placement="top" :show-after="200">
+                    <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>
+                  </el-tooltip>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <small title="Total hours in this teacher's future scheduled lessons that have not happened yet. Unscheduled hours are not included.">Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
+                  <el-tooltip content="Future scheduled hours for this teacher." placement="top" :show-after="200">
+                    <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>
+                  </el-tooltip>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <small title="Confirmed lesson hours attributed to this teacher. Past deductions stay with the teacher who taught them.">Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
+                  <el-tooltip content="Confirmed hours deducted for this teacher." placement="top" :show-after="200">
+                    <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>
+                  </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <small title="Past lessons for this teacher that have not received a final admin decision, including lessons the teacher has not submitted. Confirmed deductions and approved leave are excluded.">Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
+                  <el-tooltip content="Past lessons waiting for final processing." placement="top" :show-after="200">
+                    <small>Pending deduction</small>
+                  </el-tooltip>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
                 </span>
               </div>
             </div>
@@ -2236,7 +2250,6 @@ onBeforeUnmount(() => signaturePrinter.detach());
   font-size: 10px;
   font-weight: 700;
   line-height: 1.2;
-  cursor: help;
 }
 
 .oo-student-context__metrics .oo-metric--overallocated {
