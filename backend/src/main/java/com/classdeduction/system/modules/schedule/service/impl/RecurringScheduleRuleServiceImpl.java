@@ -505,33 +505,16 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         // g) Delete classified occurrences FIRST (before slot FK cleanup)
         int confirmedCount = (int) toPreserve.stream().filter(o -> recordedOccIds.contains(o.getId())).count();
         if (!toDelete.isEmpty()) {
-            lessonOccurrenceMapper.delete(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                    .in(LessonOccurrenceEntity::getId, toDelete.stream().map(LessonOccurrenceEntity::getId).toList()));
+            int deletedCount = lessonOccurrenceMapper.softDeleteFutureUnprocessed(
+                    toDelete.stream().map(LessonOccurrenceEntity::getId).toList(), AppTime.nowLocalDateTime());
+            if (deletedCount != toDelete.size()) {
+                throw new BusinessException("LESSON_CHANGED",
+                        "A lesson has started or entered the deduction process. Refresh the schedule before editing it.");
+            }
         }
 
-        // 旧课次可能只保存 slot ID。软删除旧时段前补齐科目快照，并保留历史关联供旧数据读取。
-        Set<Long> legacySlotIds = toPreserve.stream()
-                .filter(occ -> !StringUtils.hasText(occ.getSubjectName()))
-                .map(LessonOccurrenceEntity::getScheduleSlotId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        Map<Long, RecurringScheduleSlotEntity> legacySlots = legacySlotIds.isEmpty()
-                ? Collections.emptyMap()
-                : recurringScheduleSlotMapper.selectIncludingDeletedByIds(legacySlotIds).stream()
-                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
-        for (LessonOccurrenceEntity occurrence : toPreserve) {
-            if (StringUtils.hasText(occurrence.getSubjectName())) {
-                continue;
-            }
-            RecurringScheduleSlotEntity oldSlot = legacySlots.get(occurrence.getScheduleSlotId());
-            if (oldSlot == null || !StringUtils.hasText(oldSlot.getSubjectName())) {
-                continue;
-            }
-            LessonOccurrenceEntity update = new LessonOccurrenceEntity();
-            update.setId(occurrence.getId());
-            update.setSubjectName(oldSlot.getSubjectName());
-            lessonOccurrenceMapper.updateById(update);
-        }
+        // 旧课次可能只保存 slot ID。修改旧时段前补齐老师和科目快照，避免历史记录随新时段显示变化。
+        backfillPreservedOccurrenceDetails(toPreserve, existingSlotsById);
 
         RecurringScheduleRuleEntity targetRule = existingRule;
         if (startsNewPeriod) {
@@ -597,8 +580,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         ensureNoConflictsExcludingPrivateLessonGroup(newOccurrences, student.getId(),
                 id, targetRule.getPrivateLessonGroupId());
 
-        classroomUpdates.forEach(update -> lessonOccurrenceMapper.updateInheritedClassroom(
-                update.getId(), update.getPlannedClassroomId(), update.getDeliveryMode()));
+        for (LessonOccurrenceEntity update : classroomUpdates) {
+            if (lessonOccurrenceMapper.updateInheritedClassroom(update.getId(), update.getPlannedClassroomId(),
+                    update.getDeliveryMode(), AppTime.nowLocalDateTime()) != 1) {
+                throw new BusinessException("LESSON_CHANGED",
+                        "A lesson has started or entered the deduction process. Refresh the schedule before editing it.");
+            }
+        }
         newOccurrences.forEach(lessonOccurrenceMapper::insert);
 
         // k) Return result
@@ -661,6 +649,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             Long privateLessonGroupId) {
         Map<Long, RecurringScheduleSlotEntity> slotsById = currentSlots.stream()
                 .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        backfillPreservedOccurrenceDetails(occurrences, slotsById);
         Map<Long, RecurringScheduleSlotRequest> requestedById = request.getSlots().stream()
                 .collect(Collectors.toMap(RecurringScheduleSlotRequest::getSlotId, slot -> slot));
         LocalDateTime now = AppTime.nowLocalDateTime();
@@ -742,8 +731,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
         for (LessonOccurrenceEntity update : futureUpdates) {
             RecurringScheduleSlotRequest requested = requestedById.get(update.getScheduleSlotId());
-            lessonOccurrenceMapper.updateRecurringDetails(update.getId(), requested.getTeacherId(),
-                    requested.getSubjectName(), requested.getClassroomId(), requested.getDeliveryMode());
+            if (lessonOccurrenceMapper.updateRecurringDetails(update.getId(), requested.getTeacherId(),
+                    requested.getSubjectName(), requested.getClassroomId(), requested.getDeliveryMode(),
+                    AppTime.nowLocalDateTime()) != 1) {
+                throw new BusinessException("LESSON_CHANGED",
+                        "A lesson has started or entered the deduction process. Refresh the schedule before editing it.");
+            }
         }
 
         Long defaultClassroomId = request.getSlots().stream()
@@ -754,6 +747,28 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .filter(record -> "CONFIRMED".equals(record.getConfirmStage())).count();
         return new ScheduleRuleUpdateResultVO(rule.getId(), currentSlots.size(), occurrences.size(), 0,
                 0, confirmedCount, null, null);
+    }
+
+    /** 旧课次缺少独立字段时，先固化旧时段信息，再允许修改或替换时段。 */
+    private void backfillPreservedOccurrenceDetails(List<LessonOccurrenceEntity> occurrences,
+                                                     Map<Long, RecurringScheduleSlotEntity> slotsById) {
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            RecurringScheduleSlotEntity oldSlot = slotsById.get(occurrence.getScheduleSlotId());
+            if (oldSlot == null) {
+                continue;
+            }
+            LessonOccurrenceEntity update = new LessonOccurrenceEntity();
+            update.setId(occurrence.getId());
+            if (occurrence.getPlannedTeacherId() == null && oldSlot.getTeacherId() != null) {
+                update.setPlannedTeacherId(oldSlot.getTeacherId());
+            }
+            if (!StringUtils.hasText(occurrence.getSubjectName()) && StringUtils.hasText(oldSlot.getSubjectName())) {
+                update.setSubjectName(oldSlot.getSubjectName());
+            }
+            if (update.getPlannedTeacherId() != null || update.getSubjectName() != null) {
+                lessonOccurrenceMapper.updateById(update);
+            }
+        }
     }
 
     /** 为签字表保留课程信息修改前后的可读快照，不改写已生成课程的历史信息。 */

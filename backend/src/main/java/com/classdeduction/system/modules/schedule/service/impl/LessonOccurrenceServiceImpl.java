@@ -1857,15 +1857,17 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                 Map<Long, ClassroomEntity> classroomMap,
                                                 Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
                                                 Map<String, String> statusNameMap) {
-        Long plannedTeacherId = record == null ? occurrence.getPlannedTeacherId() : record.getPlannedTeacherId();
-        // 按课表还原授课老师：老数据里 occurrence/record 的 plannedTeacherId 可能缺失或与排课时段不一致，
-        // 此时以循环排课时段（slot）上配置的老师为准，保证消课列表和 Teacher Sheet 的老师与课表一致。
-        Long slotTeacherId = resolveSlotTeacherId(occurrence, recurringSlotMap);
-        if (slotTeacherId != null) {
-            plannedTeacherId = slotTeacherId;
+        // 过去课次只读取自身或消课记录快照，避免当前周排课覆盖历史老师和科目。
+        boolean started = occurrence.getPlannedStartAt() != null
+                && occurrence.getPlannedStartAt().isBefore(AppTime.nowLocalDateTime());
+        Long plannedTeacherId = record != null && record.getPlannedTeacherId() != null
+                ? record.getPlannedTeacherId() : occurrence.getPlannedTeacherId();
+        if (plannedTeacherId == null && !started) {
+            plannedTeacherId = resolveSlotTeacherId(occurrence, recurringSlotMap);
         }
         Long actualTeacherId = record == null ? null : record.getActualTeacherId();
-        Long plannedClassroomId = record == null ? occurrence.getPlannedClassroomId() : record.getPlannedClassroomId();
+        Long plannedClassroomId = record != null && record.getPlannedClassroomId() != null
+                ? record.getPlannedClassroomId() : occurrence.getPlannedClassroomId();
         String deliveryMode = occurrence.getDeliveryMode();
         Long actualClassroomId = record == null ? null : record.getActualClassroomId();
         TeacherEntity plannedTeacher = plannedTeacherId == null ? null : teacherMap.get(plannedTeacherId);
@@ -1881,7 +1883,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .scheduleRuleId(occurrence.getScheduleRuleId())
                 .plannedTeacherId(plannedTeacherId)
                 .plannedTeacherName(plannedTeacher == null ? null : plannedTeacher.getTeacherName())
-                .subjectName(resolveOccurrenceSubjectName(occurrence, recurringSlotMap))
+                .subjectName(started && !StringUtils.hasText(occurrence.getSubjectName())
+                        ? null : resolveOccurrenceSubjectName(occurrence, recurringSlotMap))
                 .deliveryMode(deliveryMode)
                 .plannedClassroomId(plannedClassroomId)
                 .plannedClassroomName("ONLINE".equals(deliveryMode) ? "Online" : plannedClassroom == null ? null : plannedClassroom.getRoomName())

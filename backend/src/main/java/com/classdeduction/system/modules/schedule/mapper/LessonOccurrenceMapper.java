@@ -23,22 +23,43 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
     @Select("SELECT * FROM lesson_occurrence WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
     LessonOccurrenceEntity selectByIdForUpdate(@Param("id") Long id);
 
+    /** 改排课只能撤销尚未开始且未进入消课流程的普通课次；条件在写入时再次校验。 */
+    @Update({"<script>",
+            "UPDATE lesson_occurrence lo SET lo.is_deleted = 1, lo.deleted_at = #{effectiveAt},",
+            "lo.updated_at = #{effectiveAt}",
+            "WHERE lo.id IN",
+            "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach>",
+            "AND lo.is_deleted = 0 AND lo.planning_status = 'SCHEDULED'",
+            "AND lo.planned_start_at &gt;= #{effectiveAt}",
+            "AND NOT EXISTS (SELECT 1 FROM lesson_record lr",
+            "WHERE lr.occurrence_id = lo.id AND lr.is_deleted = 0)",
+            "</script>"})
+    int softDeleteFutureUnprocessed(@Param("ids") List<Long> ids,
+                                    @Param("effectiveAt") LocalDateTime effectiveAt);
+
     /** 周期排课教室变更时允许显式清空旧教室，同时保留课次的其他单次调整字段。 */
-    @Update("UPDATE lesson_occurrence SET planned_classroom_id = #{classroomId}, delivery_mode = #{deliveryMode}, updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0")
+    @Update("UPDATE lesson_occurrence SET planned_classroom_id = #{classroomId}, delivery_mode = #{deliveryMode}, "
+            + "updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0 "
+            + "AND planned_start_at >= #{effectiveAt} AND planning_status = 'SCHEDULED' "
+            + "AND NOT EXISTS (SELECT 1 FROM lesson_record lr WHERE lr.occurrence_id = lesson_occurrence.id AND lr.is_deleted = 0)")
     int updateInheritedClassroom(@Param("id") Long id,
                                  @Param("classroomId") Long classroomId,
-                                 @Param("deliveryMode") String deliveryMode);
+                                 @Param("deliveryMode") String deliveryMode,
+                                 @Param("effectiveAt") LocalDateTime effectiveAt);
 
     /** 周排课信息调整只同步未来普通课次，保留单次教室覆盖和课次身份。 */
     @Update("UPDATE lesson_occurrence SET planned_teacher_id = #{teacherId}, subject_name = #{subjectName}, "
             + "delivery_mode = IF(classroom_overridden = 1, delivery_mode, #{deliveryMode}), "
             + "planned_classroom_id = IF(classroom_overridden = 1, planned_classroom_id, #{classroomId}), "
-            + "updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0")
+            + "updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0 "
+            + "AND planned_start_at >= #{effectiveAt} AND planning_status = 'SCHEDULED' "
+            + "AND NOT EXISTS (SELECT 1 FROM lesson_record lr WHERE lr.occurrence_id = lesson_occurrence.id AND lr.is_deleted = 0)")
     int updateRecurringDetails(@Param("id") Long id,
                                @Param("teacherId") Long teacherId,
                                @Param("subjectName") String subjectName,
                                @Param("classroomId") Long classroomId,
-                               @Param("deliveryMode") String deliveryMode);
+                               @Param("deliveryMode") String deliveryMode,
+                               @Param("effectiveAt") LocalDateTime effectiveAt);
 
     /**
      * 按校区统计今日待上课次数（批量GROUP BY JOIN，避免N+1）。
