@@ -1561,8 +1561,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             Map<Long, Long> currentSlotTeacherById = new HashMap<>();
             for (RecurringScheduleSlotEntity slot : currentSlots) {
                 currentSlotTeacherById.put(slot.getId(), slot.getTeacherId());
-                // 旧版本原位替换 slot 却复用 rule ID；最新有效 slot 的创建时间才是本轮分配起点。
-                if (slot.getCreatedAt() != null) {
+                // 新版本以规则创建时间为周期起点；仅旧规则复用 ID 时才用课位时间兼容历史数据。
+                RecurringScheduleRuleEntity slotRule = rulesById.get(slot.getRuleId());
+                if (slot.getCreatedAt() != null && slotRule != null
+                        && slotRule.getSupersedesRuleId() == null) {
                     periodStartByRule.merge(slot.getRuleId(), slot.getCreatedAt(),
                             (previous, createdAt) -> previous.isAfter(createdAt) ? previous : createdAt);
                 }
@@ -1580,7 +1582,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 allocatedByPackage.putIfAbsent(packageId, 0);
             }
 
-            // 历史消课归属课次快照中的老师；同一时段换老师时，将已确认或待确认部分的分配额留给原老师。
+            // 消课按课次快照归属老师；当前周期分配额仅取排课快照，不随确认状态变化。
             for (Map.Entry<Long, Long> entry : currentRuleByPackage.entrySet()) {
                 Long packageId = entry.getKey();
                 Long currentRuleId = entry.getValue();
@@ -1598,38 +1600,32 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     Long historicalTeacherId = occurrence.getPlannedTeacherId();
                     boolean currentPeriod = belongsToCurrentSchedulePeriod(occurrence, record,
                             currentRule, periodStartByRule.get(currentRuleId));
-                    // 保留的旧时段与本周期新增的临时课不在有效 slot 中，仍属于老师本周期的分配额。
+                    // 补课是请假课次的延续，不是新分配；旧时段和临时课才补入当前分配快照。
                     if (currentPeriod && historicalTeacherId != null
                             && !currentSlotTeacherById.containsKey(occurrence.getScheduleSlotId())
+                            && !"MAKEUP".equals(occurrence.getOccurrenceType())
                             && !"CANCELLED".equals(occurrence.getPlanningStatus())) {
                         int exceptionUnits = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
-                        if (record != null && "CONFIRMED".equals(record.getConfirmStage())) {
-                            exceptionUnits = Objects.equals(record.getShouldDeduct(), 1)
-                                    ? Math.max(0, safeUnits(record.getDeductedUnits())) : 0;
-                        }
                         if (exceptionUnits > 0) {
                             allocatedByPackage.merge(packageId, exceptionUnits, Integer::sum);
                             allocatedByTeacherByPackage.computeIfAbsent(packageId, key -> new HashMap<>())
                                     .merge(historicalTeacherId, exceptionUnits, Integer::sum);
                         }
                     }
-                    boolean confirmedDeduction = record != null
-                            && !Objects.equals(record.getIsDeleted(), 1)
-                            && Objects.equals(record.getShouldDeduct(), 1)
-                            && "CONFIRMED".equals(record.getConfirmStage());
-                    boolean pastUnconfirmed = PrivateLessonAllocation.isPendingProcessing(occurrence, record, now);
                     int units = record == null ? 0 : Math.max(0, safeUnits(record.getDeductedUnits()));
                     Long currentTeacherId = currentSlotTeacherById.get(occurrence.getScheduleSlotId());
-                    int reservedUnits = confirmedDeduction ? units
-                            : pastUnconfirmed ? PrivateLessonAllocation.reservedUnits(occurrence, record) : 0;
-                    // 同一规则原位换老师时，当前周期内已消课或已过期未确认的课次仍归历史老师。
-                    if (currentPeriod && reservedUnits > 0 && currentTeacherId != null
+                    // 旧规则原位换老师时，按课次计划快照转移分配额；消课状态不能再改变 Allocated。
+                    int historicalAllocatedUnits = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
+                    if (currentPeriod && historicalAllocatedUnits > 0
+                            && !"MAKEUP".equals(occurrence.getOccurrenceType())
+                            && !"CANCELLED".equals(occurrence.getPlanningStatus())
+                            && currentTeacherId != null
                             && historicalTeacherId != null
                             && !Objects.equals(currentTeacherId, historicalTeacherId)
                             && Objects.equals(currentRuleId, occurrence.getScheduleRuleId())) {
                         reservedBySlotAndTeacher
                                 .computeIfAbsent(occurrence.getScheduleSlotId(), key -> new HashMap<>())
-                                .merge(historicalTeacherId, reservedUnits, Integer::sum);
+                                .merge(historicalTeacherId, historicalAllocatedUnits, Integer::sum);
                     }
                     if (record == null || !Objects.equals(record.getShouldDeduct(), 1)
                             || Objects.equals(record.getIsDeleted(), 1)) continue;

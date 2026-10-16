@@ -336,7 +336,7 @@
             <div class="oo-student-context__metrics">
               <div class="oo-student-context__metric-group" role="group" aria-label="Package hours">
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Total hours purchased in this package." placement="top" :show-after="200">
+                  <el-tooltip content="Total package hours, including bonus hours." placement="top" :show-after="200">
                     <small>Total Hours</small>
                   </el-tooltip>{{ formatHours(activePackage.totalUnits) }}h
                 </span>
@@ -353,17 +353,17 @@
               </div>
               <div class="oo-student-context__metric-group oo-student-context__metric-group--teacher" role="group" :aria-label="`Hours for ${activeTeacher?.teacherName || 'teacher'}`">
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Hours assigned to this teacher's schedule." placement="top" :show-after="200">
+                  <el-tooltip content="Hours assigned to this teacher at the last schedule change. This value stays fixed until the schedule changes again." placement="top" :show-after="200">
                     <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Past lessons not yet finalized plus future scheduled hours for this teacher." placement="top" :show-after="200">
+                  <el-tooltip content="Current allocation minus this teacher's confirmed deductions since the last schedule change, including past unconfirmed and future hours." placement="top" :show-after="200">
                     <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Confirmed hours for this teacher in the current weekly schedule. Earlier lessons remain in the lesson history and package total." placement="top" :show-after="200">
+                  <el-tooltip content="Confirmed deductible hours for this teacher since the last schedule change. Earlier lessons remain in the lesson history and package total." placement="top" :show-after="200">
                     <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>

@@ -597,6 +597,48 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
+    void shouldKeepSlotAllocationSnapshotWhenOnlyPausingSchedule() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(40);
+        coursePackage.setRemainingUnits(40);
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        request.setRuleStatus("PAUSED");
+        RecurringScheduleSlotRequest requestedSlot = request.getSlots().get(0);
+        requestedSlot.setSlotId(6001L);
+        requestedSlot.setDeliveryMode("IN_PERSON");
+        requestedSlot.setClassroomId(4001L);
+        RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
+        currentSlot.setId(6001L);
+        currentSlot.setRuleId(rule.getId());
+        currentSlot.setTeacherId(3001L);
+        // 旧课位依赖规则默认教室；暂停时不能因此重建课位或清空默认教室。
+        currentSlot.setDeliveryMode(null);
+        currentSlot.setClassroomId(null);
+        currentSlot.setSubjectName("Math");
+        currentSlot.setWeekday(requestedSlot.getWeekday());
+        currentSlot.setStartTime(requestedSlot.getStartTime());
+        currentSlot.setEndTime(requestedSlot.getEndTime());
+        currentSlot.setPlannedUnits(requestedSlot.getPlannedUnits());
+        currentSlot.setAllocatedUnits(requestedSlot.getAllocatedUnits());
+
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        recurringScheduleRuleService.updateRule(5001L, request);
+
+        assertThat(rule.getRuleStatus()).isEqualTo("PAUSED");
+        assertThat(rule.getDefaultClassroomId()).isEqualTo(4001L);
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleSlotEntity.class));
+        verify(recurringScheduleSlotMapper, org.mockito.Mockito.never()).delete(any());
+    }
+
+    @Test
     void shouldCreateNewSchedulePeriodWhenOnlyTeacherChanges() {
         RecurringScheduleRuleEntity existing = buildExistingRule();
         CoursePackageEntity coursePackage = buildPackage();

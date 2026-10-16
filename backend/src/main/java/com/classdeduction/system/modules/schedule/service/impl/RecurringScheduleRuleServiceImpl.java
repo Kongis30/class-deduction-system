@@ -452,6 +452,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         boolean startsNewPeriod = allowNewPeriod
                 && !"ENDED".equals(newStatus)
                 && hasScheduleDefinitionChanged(existingRule, existingSlots, request, privateLessonGroupId);
+        // 暂停、恢复等状态变更不改变排课分配，必须沿用原课位及周期边界。
+        boolean reuseExistingSlots = !startsNewPeriod
+                && hasUnchangedSlotDetails(existingRule, existingSlots, request.getSlots());
         if (validateRemainingAllocation && !startsNewPeriod && !"ENDED".equals(newStatus)) {
             validateSlotAllocations(request.getSlots(), coursePackage, id);
         }
@@ -543,17 +546,21 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             existingRule.setEndDate(request.getEndDate() != null ? request.getEndDate() : existingRule.getEndDate());
             existingRule.setNotes(request.getNotes());
             recurringScheduleRuleMapper.updateById(existingRule);
-            recurringScheduleSlotMapper.delete(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
-                    .eq(RecurringScheduleSlotEntity::getRuleId, id));
+            if (!reuseExistingSlots) {
+                recurringScheduleSlotMapper.delete(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .eq(RecurringScheduleSlotEntity::getRuleId, id));
+            }
         }
 
         Long targetRuleId = targetRule.getId();
-        List<RecurringScheduleSlotEntity> newSlots = request.getSlots().stream()
-                .map(slotRequest -> toSlotEntity(targetRuleId, slotRequest))
-                .toList();
-        targetRule.setDefaultClassroomId(firstSlotClassroomId(newSlots));
-        recurringScheduleRuleMapper.updateById(targetRule);
-        newSlots.forEach(recurringScheduleSlotMapper::insert);
+        List<RecurringScheduleSlotEntity> newSlots = reuseExistingSlots
+                ? existingSlots
+                : request.getSlots().stream().map(slotRequest -> toSlotEntity(targetRuleId, slotRequest)).toList();
+        if (!reuseExistingSlots) {
+            targetRule.setDefaultClassroomId(firstSlotClassroomId(newSlots));
+            recurringScheduleRuleMapper.updateById(targetRule);
+            newSlots.forEach(recurringScheduleSlotMapper::insert);
+        }
         if (startsNewPeriod) {
             saveStartingBalances(targetRule, coursePackage, privateLessonGroupId);
         }
@@ -633,6 +640,42 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
         }
         // 无变化的保存也走原位更新，避免删除并重建同一版本的未来课次。
+        return true;
+    }
+
+    /** 状态变更时核对课位快照，完全相同时复用 ID，避免重建课位被误判为新周期。 */
+    private boolean hasUnchangedSlotDetails(RecurringScheduleRuleEntity rule,
+                                            List<RecurringScheduleSlotEntity> currentSlots,
+                                            List<RecurringScheduleSlotRequest> requestedSlots) {
+        if (currentSlots.size() != requestedSlots.size()) {
+            return false;
+        }
+        Map<Long, RecurringScheduleSlotEntity> currentById = currentSlots.stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        if (requestedSlots.stream().map(RecurringScheduleSlotRequest::getSlotId)
+                .distinct().count() != requestedSlots.size()) {
+            return false;
+        }
+        for (RecurringScheduleSlotRequest requested : requestedSlots) {
+            RecurringScheduleSlotEntity current = currentById.get(requested.getSlotId());
+            if (current == null) {
+                return false;
+            }
+            String currentMode = current.getDeliveryMode() == null ? "IN_PERSON" : current.getDeliveryMode();
+            Long currentClassroomId = "ONLINE".equals(currentMode) ? null
+                    : current.getClassroomId() != null ? current.getClassroomId() : rule.getDefaultClassroomId();
+            if (!Objects.equals(current.getTeacherId(), requested.getTeacherId())
+                    || !Objects.equals(currentMode, requested.getDeliveryMode())
+                    || !Objects.equals(currentClassroomId, requested.getClassroomId())
+                    || !Objects.equals(current.getSubjectName(), requested.getSubjectName())
+                    || !Objects.equals(current.getWeekday(), requested.getWeekday())
+                    || !Objects.equals(current.getStartTime(), requested.getStartTime())
+                    || !Objects.equals(current.getEndTime(), requested.getEndTime())
+                    || !Objects.equals(current.getPlannedUnits(), requested.getPlannedUnits())
+                    || !Objects.equals(current.getAllocatedUnits(), requested.getAllocatedUnits())) {
+                return false;
+            }
+        }
         return true;
     }
 
