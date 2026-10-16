@@ -1100,29 +1100,37 @@ const pendingTeacherCount = computed(() =>
 const pendingAdminCount = computed(() =>
   activePackage.value?.lessons.filter(row => row.confirmStage === 'PENDING_ADMIN').length ?? 0
 );
-// 课次依上课时间展示；版本切换按保存时间插入，不改动历史课次或打印所用的原始列表。
+// 按排课版本分组展示课次；过去调课可能生成早于保存时间的课次，不能用上课日期推断版本。
 const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
   const pkg = activePackage.value;
   if (!pkg) return [];
-  const lessons = [...pkg.lessons].sort((left, right) =>
-    dayjs(left.plannedStartAt).valueOf() - dayjs(right.plannedStartAt).valueOf());
   const changes = [...(pkg.scheduleChanges ?? [])].sort((left, right) =>
     scheduleChangeTimestamp(left) - scheduleChangeTimestamp(right)
       || entityKey(left.ruleId).localeCompare(entityKey(right.ruleId)));
+  const periodIndexByRule = new Map(changes.map((change, index) => [entityKey(change.ruleId), index]));
+  const lessonsByPeriod = new Map<number, OneOnOneLesson[]>();
+  for (const lesson of pkg.lessons) {
+    const periodIndex = lesson.scheduleRuleId == null
+      ? -1
+      : periodIndexByRule.get(entityKey(lesson.scheduleRuleId)) ?? -1;
+    const periodLessons = lessonsByPeriod.get(periodIndex) ?? [];
+    periodLessons.push(lesson);
+    lessonsByPeriod.set(periodIndex, periodLessons);
+  }
+  const sortByLessonDate = (lessons: OneOnOneLesson[]) => lessons.sort((left, right) =>
+    dayjs(left.plannedStartAt).valueOf() - dayjs(right.plannedStartAt).valueOf()
+      || entityKey(left.occurrenceId).localeCompare(entityKey(right.occurrenceId)));
   const rows: LessonTimelineRow[] = [];
-  let changeIndex = 0;
-  for (const lesson of lessons) {
-    const lessonTime = dayjs(lesson.plannedStartAt).valueOf();
-    while (changeIndex < changes.length && scheduleChangeTimestamp(changes[changeIndex]) <= lessonTime) {
-      const change = changes[changeIndex++];
-      rows.push({ kind: 'change', key: `change-${entityKey(change.ruleId)}`, change });
+  const appendLessons = (periodIndex: number) => {
+    for (const lesson of sortByLessonDate(lessonsByPeriod.get(periodIndex) ?? [])) {
+      rows.push({ kind: 'lesson', key: `lesson-${entityKey(lesson.occurrenceId)}`, lesson });
     }
-    rows.push({ kind: 'lesson', key: `lesson-${entityKey(lesson.occurrenceId)}`, lesson });
-  }
-  for (; changeIndex < changes.length; changeIndex++) {
-    const change = changes[changeIndex];
+  };
+  appendLessons(-1);
+  changes.forEach((change, index) => {
     rows.push({ kind: 'change', key: `change-${entityKey(change.ruleId)}`, change });
-  }
+    appendLessons(index);
+  });
   return rows;
 });
 
