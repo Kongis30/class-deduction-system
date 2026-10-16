@@ -335,28 +335,28 @@
             </div>
             <div class="oo-student-context__metrics">
               <div class="oo-student-context__metric-group" role="group" aria-label="Package hours">
-                <span class="oo-student-context__metric" title="The package's full enrollment hours, including any bonus hours.">
-                  <small>Total Hours</small>{{ formatHours(activePackage.totalUnits) }}h
+                <span class="oo-student-context__metric">
+                  <small title="The package's full enrollment hours, including any bonus hours.">Total Hours</small>{{ formatHours(activePackage.totalUnits) }}h
                 </span>
-                <span class="oo-student-context__metric" title="The starting balance entered in Package Hours. Lessons and schedule edits do not change it.">
-                  <small>Starting Hours</small>{{ formatHours(activePackage.startingHours) }}h
+                <span class="oo-student-context__metric">
+                  <small title="The starting balance entered in Package Hours. Lessons and schedule edits do not change it.">Starting Hours</small>{{ formatHours(activePackage.startingHours) }}h
                 </span>
-                <span class="oo-student-context__metric" title="Starting Hours minus confirmed deductions. Pending lessons and schedule edits do not reduce it.">
-                  <small>Remaining Hours</small>{{ formatHours(activePackage.remainingUnits) }}h
+                <span class="oo-student-context__metric">
+                  <small title="Starting Hours minus confirmed deductions. Pending lessons and schedule edits do not reduce it.">Remaining Hours</small>{{ formatHours(activePackage.remainingUnits) }}h
                 </span>
               </div>
               <div class="oo-student-context__metric-group oo-student-context__metric-group--teacher" role="group" :aria-label="`Hours for ${activeTeacher?.teacherName || 'teacher'}`">
-                <span class="oo-student-context__metric" title="Hours allocated to this teacher in the current schedule. Completed lessons do not reduce this amount.">
-                  <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
+                <span class="oo-student-context__metric">
+                  <small title="Hours allocated to this teacher in the current schedule. Completed lessons do not reduce this amount.">Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
-                <span class="oo-student-context__metric" title="Confirmed lesson hours attributed to this teacher. Past deductions stay with the teacher who taught them.">
-                  <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
+                <span class="oo-student-context__metric">
+                  <small title="Total hours in this teacher's future scheduled lessons that have not happened yet. Unscheduled hours are not included.">Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
-                <span class="oo-student-context__metric" title="Total hours in this teacher's future scheduled lessons that have not happened yet. Unscheduled hours are not included.">
-                  <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
+                <span class="oo-student-context__metric">
+                  <small title="Confirmed lesson hours attributed to this teacher. Past deductions stay with the teacher who taught them.">Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>
-                <span class="oo-student-context__metric" title="Past lessons for this teacher that have not received a final admin decision, including lessons the teacher has not submitted. Confirmed deductions and approved leave are excluded.">
-                  <small>Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
+                <span class="oo-student-context__metric">
+                  <small title="Past lessons for this teacher that have not received a final admin decision, including lessons the teacher has not submitted. Confirmed deductions and approved leave are excluded.">Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
                 </span>
               </div>
             </div>
@@ -605,7 +605,12 @@
           </el-table>
 
           <div v-else class="oo-mobile-lessons no-print">
-            <article v-for="row in activePackage.lessons" :key="`mobile-${row.occurrenceId}`" class="oo-mobile-lesson">
+            <article
+              v-for="row in activePackage.lessons"
+              :key="`mobile-${row.occurrenceId}`"
+              class="oo-mobile-lesson"
+              :class="{ 'oo-mobile-lesson--overdue-unprocessed': isPastUnprocessed(row) }"
+            >
               <div class="oo-mobile-lesson__heading">
                 <div class="oo-simple-cell">
                   <strong>{{ signatureCourseLabel(row) }}</strong>
@@ -1620,6 +1625,15 @@ function isAwaitingTeacherConfirmation(row: OneOnOneLesson) {
     && !row.resultStatus;
 }
 
+function isPastUnprocessed(row: OneOnOneLesson) {
+  const plannedEnd = Date.parse(row.plannedEndAt);
+  return Number.isFinite(plannedEnd)
+    && plannedEnd <= Date.now()
+    && row.planningStatus !== 'CANCELLED'
+    && row.planningStatus !== 'MERGED'
+    && row.confirmStage !== 'CONFIRMED';
+}
+
 function canAssignLessonResources(row: OneOnOneLesson) {
   return activePackage.value?.packageStatus === 'ACTIVE'
     && row.planningStatus !== 'CANCELLED'
@@ -1755,6 +1769,7 @@ async function submitAdjustLesson() {
 
 function lessonRowClassName({ row }: { row: OneOnOneLesson }) {
   if (nextActionLesson.value?.occurrenceId === row.occurrenceId) return 'oo-row--next';
+  if (isPastUnprocessed(row)) return 'oo-row--overdue-unprocessed';
   if (row.confirmStage === 'PENDING_ADMIN') return 'oo-row--pending-admin';
   if (isRejectedOrAbnormal(row)) return 'oo-row--issue';
   return '';
@@ -2221,6 +2236,7 @@ onBeforeUnmount(() => signaturePrinter.detach());
   font-size: 10px;
   font-weight: 700;
   line-height: 1.2;
+  cursor: help;
 }
 
 .oo-student-context__metrics .oo-metric--overallocated {
@@ -2402,6 +2418,11 @@ onBeforeUnmount(() => signaturePrinter.detach());
   border: 1px solid #d9e2ec;
   border-radius: 8px;
   background: #fff;
+}
+
+.oo-mobile-lesson--overdue-unprocessed {
+  border-color: #f2d19b;
+  background: #fffaf0;
 }
 
 .oo-mobile-lesson__heading {
@@ -3022,6 +3043,10 @@ onBeforeUnmount(() => signaturePrinter.detach());
 }
 
 :deep(.oo-row--next) {
+  --el-table-tr-bg-color: #fffaf0;
+}
+
+:deep(.oo-row--overdue-unprocessed) {
   --el-table-tr-bg-color: #fffaf0;
 }
 
