@@ -198,6 +198,27 @@
                   </template>
                 </el-table-column>
               </el-table>
+              <div v-if="appStore.isMobileViewport" class="pr-mobile-rate-list">
+                <article v-for="row in rateGroups" :key="row.key" class="pr-mobile-rate-card">
+                  <div class="pr-mobile-rate-card__header">
+                    <div><strong>{{ row.productName }}</strong><span>{{ row.subjectName || 'Course product' }}</span></div>
+                    <strong :class="{ 'pr-rate--set': row.effectiveRate > 0, 'pr-rate--unset': !row.effectiveRate }">{{ formatMoney(row.effectiveRate) }}</strong>
+                  </div>
+                  <div class="pr-mobile-rate-card__meta">Effective default rate · {{ row.exceptions.length }} special rate{{ row.exceptions.length === 1 ? '' : 's' }}</div>
+                  <div class="pr-mobile-rate-card__actions">
+                    <el-button v-if="row.baseRate" size="small" text type="primary" @click="openEditDialog(row.baseRate)">Edit default</el-button>
+                    <el-button v-else-if="row.productId" size="small" text type="primary" @click="openProductRateDialog(row)">Set product rate</el-button>
+                    <el-button size="small" type="primary" plain @click="openAddExceptionDialog(row.productId)">Add special rate</el-button>
+                  </div>
+                  <div v-if="row.exceptions.length" class="pr-mobile-exceptions">
+                    <div v-for="rate in row.exceptions" :key="rate.rateId" class="pr-mobile-exception">
+                      <div><strong>{{ scopeSummary(rate) }}</strong><span>{{ formatMoney(rate.hourlyRate) }}</span></div>
+                      <el-button text type="primary" size="small" @click="openEditDialog(rate)">Edit</el-button>
+                    </div>
+                  </div>
+                </article>
+                <el-empty v-if="!loading && rateGroups.length === 0" description="Set a standard hourly rate to begin" />
+              </div>
         </section>
       </template>
     </main>
@@ -901,6 +922,8 @@ onMounted(async () => {
   font-size: 12px;
 }
 
+.pr-mobile-rate-list { display: none; }
+
 /* ─── Edit dialog ─────────────────────────────────────── */
 
 .pr-dialog :deep(.el-dialog__body) {
@@ -996,6 +1019,21 @@ onMounted(async () => {
   .pr-sidebar__list { max-height: min(55dvh, 480px); overflow-y: auto; }
   .pr-sidebar__item { min-height: 48px; border-bottom: 1px solid #edf0f4; }
   .pr-content { width: 100%; min-width: 0; overflow: visible; }
+  .pr-table { display: none; }
+  .pr-mobile-rate-list { display: grid; gap: 10px; }
+  .pr-mobile-rate-card { padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, .05); }
+  .pr-mobile-rate-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .pr-mobile-rate-card__header > div { min-width: 0; display: grid; gap: 3px; }
+  .pr-mobile-rate-card__header strong:first-child { overflow: hidden; color: #1f3f36; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+  .pr-mobile-rate-card__header span,
+  .pr-mobile-rate-card__meta { color: #71808a; font-size: 11px; }
+  .pr-mobile-rate-card__meta { margin-top: 8px; }
+  .pr-mobile-rate-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #edf1f4; }
+  .pr-mobile-exceptions { display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #edf1f4; }
+  .pr-mobile-exception { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px; border-radius: 7px; background: #f5f8fa; }
+  .pr-mobile-exception > div { min-width: 0; display: grid; gap: 2px; }
+  .pr-mobile-exception strong { overflow: hidden; color: #40535d; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .pr-mobile-exception span { color: #1f6b4d; font-size: 12px; font-weight: 600; }
   .pr-mobile-selection { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0 0 10px; padding: 4px 8px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; }
   .pr-mobile-selection strong { overflow: hidden; color: #1f2937; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 }
