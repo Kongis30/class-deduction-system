@@ -395,6 +395,7 @@ export interface CoursePackageItem {
   consumedUnits: number;
   openingUsedHours?: number;
   pendingDeductionUnits?: number;
+  pendingAdminDeductionUnits?: number;
   remainingUnits: number;
   unresolvedPastHours?: number;
   receivedAmount: number;

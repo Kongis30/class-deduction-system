@@ -64,6 +64,8 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -173,14 +175,17 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 ? loadPackageScheduleSummaries(result.getRecords())
                 : Collections.emptyMap();
 
-        Map<Long, Integer> pendingDeductionByPackage = loadPendingDeductionUnits(
+        Map<Long, Integer> pendingAdminDeductionByPackage = loadPendingAdminDeductionUnits(
                 result.getRecords().stream().map(CoursePackageEntity::getId).toList());
         Map<Long, Integer> unresolvedPastByPackage = loadUnresolvedPastUnits(
+                result.getRecords().stream().map(CoursePackageEntity::getId).toList());
+        Map<Long, Integer> pendingProcessingByPackage = loadPendingProcessingUnits(
                 result.getRecords().stream().map(CoursePackageEntity::getId).toList());
         List<CoursePackageListItemVO> records = result.getRecords().stream()
                 .map(item -> toListItem(item, studentMap.get(item.getStudentId()), productMap.get(item.getCourseProductId()),
                         orderItemMap.get(item.getEnrollmentOrderItemId()), primaryTeacherNameMap.get(item.getId()),
-                        pendingDeductionByPackage.getOrDefault(item.getId(), 0),
+                        pendingProcessingByPackage.getOrDefault(item.getId(), 0),
+                        pendingAdminDeductionByPackage.getOrDefault(item.getId(), 0),
                         unresolvedPastByPackage.getOrDefault(item.getId(), 0), scheduleSummaryMap.get(item.getId())))
                 .toList();
         return PageResponse.of(records, result.getTotal(), result.getCurrent(), result.getSize());
@@ -682,7 +687,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
     private CoursePackageListItemVO toListItem(CoursePackageEntity item, StudentEntity student, CourseProductEntity product,
                                                EnrollmentOrderItemEntity orderItem, String primaryTeacherName,
-                                               int pendingDeductionUnits, int unresolvedPastUnits,
+                                               int pendingProcessingUnits, int pendingAdminDeductionUnits,
+                                               int unresolvedPastUnits,
                                                PackageScheduleSummary scheduleSummary) {
         return CoursePackageListItemVO.builder()
                 .id(item.getId())
@@ -701,7 +707,8 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                         safeUnits(item.getTotalUnits()) - safeUnits(item.getOpeningUsedUnits()))))
                 .consumedUnits(UnitConverter.toHoursDecimal(item.getConsumedUnits()))
                 .openingUsedHours(UnitConverter.toHoursDecimal(item.getOpeningUsedUnits()))
-                .pendingDeductionUnits(UnitConverter.toHoursDecimal(pendingDeductionUnits))
+                .pendingDeductionUnits(UnitConverter.toHoursDecimal(pendingProcessingUnits))
+                .pendingAdminDeductionUnits(UnitConverter.toHoursDecimal(pendingAdminDeductionUnits))
                 .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
                 .unresolvedPastHours(UnitConverter.toHoursDecimal(unresolvedPastUnits))
                 .receivedAmount(item.getReceivedAmount())
@@ -788,7 +795,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     }
 
     /** 批量统计等待管理员确认、且最终需要扣课的记录，供课包余额拆分展示使用。 */
-    private Map<Long, Integer> loadPendingDeductionUnits(List<Long> packageIds) {
+    private Map<Long, Integer> loadPendingAdminDeductionUnits(List<Long> packageIds) {
         if (packageIds.isEmpty()) {
             return Collections.emptyMap();
         }
@@ -802,6 +809,74 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .filter(record -> record.getPackageId() != null)
                 .collect(Collectors.groupingBy(LessonRecordEntity::getPackageId,
                         Collectors.summingInt(record -> safeUnits(record.getDeductedUnits()))));
+    }
+
+    /** 排课页展示已结束但未最终处理的课次；与待管理员扣课预留额分开，避免改变排课校验。 */
+    private Map<Long, Integer> loadPendingProcessingUnits(List<Long> packageIds) {
+        if (packageIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<PrivateLessonGroupMemberEntity> members = privateLessonGroupMemberMapper.selectList(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .in(PrivateLessonGroupMemberEntity::getPackageId, packageIds)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0));
+        Map<Long, List<Long>> packageIdsByGroup = members.stream()
+                .filter(member -> member.getPrivateLessonGroupId() != null)
+                .collect(Collectors.groupingBy(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId,
+                        Collectors.mapping(PrivateLessonGroupMemberEntity::getPackageId, Collectors.toList())));
+        Set<Long> groupIds = packageIdsByGroup.keySet();
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .and(scope -> scope.in(LessonOccurrenceEntity::getPackageId, packageIds)
+                                .or(!groupIds.isEmpty(), group -> group.in(
+                                        LessonOccurrenceEntity::getPrivateLessonGroupId, groupIds)))
+                        .le(LessonOccurrenceEntity::getPlannedEndAt, now));
+        if (occurrences.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<LessonRecordEntity> records = lessonRecordMapper.selectList(
+                new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occurrences.stream()
+                                .map(LessonOccurrenceEntity::getId).toList())
+                        .eq(LessonRecordEntity::getIsDeleted, 0));
+        records.sort(Comparator.comparing(LessonRecordEntity::getUpdatedAt,
+                        Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(LessonRecordEntity::getId, Comparator.nullsLast(Comparator.naturalOrder()))
+                .reversed());
+        Map<Long, Map<Long, LessonRecordEntity>> recordsByPackage = new LinkedHashMap<>();
+        Map<Long, LessonRecordEntity> legacyRecords = new LinkedHashMap<>();
+        for (LessonRecordEntity record : records) {
+            if (record.getPackageId() == null) {
+                legacyRecords.putIfAbsent(record.getOccurrenceId(), record);
+            } else {
+                recordsByPackage.computeIfAbsent(record.getPackageId(), key -> new LinkedHashMap<>())
+                        .putIfAbsent(record.getOccurrenceId(), record);
+            }
+        }
+        Map<Long, Integer> result = new LinkedHashMap<>();
+        Map<Long, Set<Long>> seenByPackage = new LinkedHashMap<>();
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            List<Long> ownerPackageIds = occurrence.getPrivateLessonGroupId() == null
+                    ? Collections.singletonList(occurrence.getPackageId())
+                    : packageIdsByGroup.getOrDefault(occurrence.getPrivateLessonGroupId(), Collections.emptyList());
+            for (Long packageId : ownerPackageIds) {
+                if (packageId == null || !seenByPackage.computeIfAbsent(packageId, key -> new HashSet<>())
+                        .add(occurrence.getId())) {
+                    continue;
+                }
+                LessonRecordEntity record = recordsByPackage.getOrDefault(packageId, Collections.emptyMap())
+                        .get(occurrence.getId());
+                if (record == null && occurrence.getPrivateLessonGroupId() == null) {
+                    record = legacyRecords.get(occurrence.getId());
+                }
+                if (PrivateLessonAllocation.isPendingProcessing(occurrence, record, now)) {
+                    result.merge(packageId, Math.max(0, safeUnits(occurrence.getPlannedUnits())), Integer::sum);
+                }
+            }
+        }
+        return result;
     }
 
     /** 课包列表额外返回过去未处理课次的预留额；不改动账本 remaining_units。 */

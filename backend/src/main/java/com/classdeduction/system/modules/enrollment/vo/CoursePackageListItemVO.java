@@ -30,6 +30,7 @@ public record CoursePackageListItemVO(
         Double consumedUnits,
         Double openingUsedHours,
         Double pendingDeductionUnits,
+        Double pendingAdminDeductionUnits,
         Double remainingUnits,
         Double unresolvedPastHours,
         BigDecimal receivedAmount,

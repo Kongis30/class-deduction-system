@@ -269,7 +269,7 @@
         <div class="package-hours-card__fields">
           <div><span>Total hours</span><strong>{{ packageHours(selectedPackage.totalUnits) }}h</strong></div>
           <div><span>Already deducted</span><strong>{{ confirmedDeductionHours }}h</strong></div>
-          <div><span>Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
+          <div><span title="Past lesson hours without a final admin decision, including lessons the teacher has not submitted.">Pending deduction</span><strong>{{ pendingDeductionHours }}h</strong></div>
           <label class="package-hours-card__input">
             <span>Starting Hours</span>
             <el-input-number v-model="startingHoursDraft" :min="startingHoursMin" :max="startingHoursMax" :step="0.5" :precision="1" controls-position="right" />
@@ -1175,8 +1175,9 @@ const confirmedDeductionHours = computed(() => {
   return packageHours(Math.max(0, (pkg?.consumedUnits ?? 0) - (pkg?.openingUsedHours ?? 0)));
 });
 const pendingDeductionHours = computed(() => packageHours(selectedPackage.value?.pendingDeductionUnits));
+const pendingAdminDeductionHours = computed(() => packageHours(selectedPackage.value?.pendingAdminDeductionUnits));
 const startingHoursMin = computed(() => packageHours(
-  confirmedDeductionHours.value + pendingDeductionHours.value,
+  confirmedDeductionHours.value + pendingAdminDeductionHours.value,
 ));
 const startingHoursMax = computed(() => packageHours(selectedPackage.value?.totalUnits));
 watch(selectedPackage, pkg => {
@@ -2158,7 +2159,7 @@ const otherReservedHours = computed(() => isEditing.value
 const allocatableForNewScheduleHours = computed(() => packageHours(Math.max(0, Math.min(
   remainingPackageHours.value,
   (selectedPackage.value?.remainingUnits ?? 0)
-    - pendingDeductionHours.value
+    - pendingAdminDeductionHours.value
     - otherReservedHours.value
     - (isEditing.value ? (currentRule.value?.preservedReservedHours ?? 0) : 0),
 ))));

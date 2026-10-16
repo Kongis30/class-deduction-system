@@ -56,6 +56,19 @@ public final class PrivateLessonAllocation {
         return total;
     }
 
+    /** 已结束但管理员尚未最终处理的课次；老师未提交、退回重交和待管理员审核均计入。 */
+    public static boolean isPendingProcessing(LessonOccurrenceEntity occurrence,
+                                              LessonRecordEntity record,
+                                              LocalDateTime now) {
+        if (occurrence == null || occurrence.getPlannedEndAt() == null
+                || occurrence.getPlannedEndAt().isAfter(now)
+                || "CANCELLED".equals(occurrence.getPlanningStatus())
+                || "MERGED".equals(occurrence.getPlanningStatus())) {
+            return false;
+        }
+        return record == null || !"CONFIRMED".equals(record.getConfirmStage());
+    }
+
     /** 已确认课次由课包账本扣减；待确认课次按实际待扣课时预留，其余计划课次按排课时长预留。 */
     public static int reservedUnits(LessonOccurrenceEntity occurrence, LessonRecordEntity record) {
         if (occurrence == null || "CANCELLED".equals(occurrence.getPlanningStatus())

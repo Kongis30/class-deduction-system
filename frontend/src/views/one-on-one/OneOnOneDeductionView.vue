@@ -355,7 +355,7 @@
                 <span class="oo-student-context__metric" title="Total hours in this teacher's future scheduled lessons that have not happened yet. Unscheduled hours are not included.">
                   <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
-                <span class="oo-student-context__metric" title="This teacher's lesson hours awaiting admin confirmation. They are not counted as confirmed deductions yet.">
+                <span class="oo-student-context__metric" title="Past lessons for this teacher that have not received a final admin decision, including lessons the teacher has not submitted. Confirmed deductions and approved leave are excluded.">
                   <small>Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
                 </span>
               </div>
