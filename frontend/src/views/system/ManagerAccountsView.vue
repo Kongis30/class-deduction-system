@@ -34,7 +34,7 @@
         <el-button @click="handleFilterChange">Search</el-button>
       </div>
     </section>
-    <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe horizontally to see more columns</p>
+    <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Review account status and activity, then use More to edit or delete.</p>
     <el-table :data="accounts" row-key="userId" empty-text="No manager accounts" class="manager-accounts-table">
       <el-table-column prop="displayName" label="Name" min-width="180" />
       <el-table-column prop="username" label="Username" min-width="170" />
@@ -68,6 +68,38 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <div v-if="appStore.isMobileViewport" class="manager-mobile-list">
+      <article v-for="row in accounts" :key="row.userId" class="manager-mobile-card">
+        <div class="manager-mobile-card__header">
+          <div class="manager-mobile-card__identity">
+            <strong>{{ row.displayName }}</strong>
+            <span>{{ row.username }} · {{ row.status }}</span>
+          </div>
+          <el-dropdown trigger="click" placement="bottom-end" @click.stop>
+            <el-button text circle aria-label="More manager actions" @click.stop><el-icon><MoreFilled /></el-icon></el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="openEdit(row)">Edit manager</el-dropdown-item>
+                <el-dropdown-item divided @click="handleDelete(row)">Delete manager</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </div>
+        <div class="manager-mobile-card__grid">
+          <div><span>Phone</span><strong>{{ row.mobile || '-' }}</strong></div>
+          <div><span>Email</span><strong>{{ row.email || '-' }}</strong></div>
+          <div><span>Students registered</span><strong>{{ row.uniqueStudentCount ?? 0 }}</strong></div>
+          <div><span>Registration orders</span><strong>{{ row.registrationCount ?? 0 }}</strong></div>
+          <div class="manager-mobile-card__wide"><span>Last login</span><strong>{{ dateTime(row.lastLoginAt) }}</strong></div>
+        </div>
+        <div class="manager-mobile-card__footer">
+          <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status }}</el-tag>
+          <span>{{ row.uniqueStudentCount ?? 0 }} students · {{ row.registrationCount ?? 0 }} orders</span>
+        </div>
+      </article>
+      <el-empty v-if="!loading && accounts.length === 0" description="No manager accounts" />
+    </div>
 
     <el-dialog
       v-model="deleteDialogVisible"
@@ -345,6 +377,8 @@ defineExpose({ openCreateDialog: openCreate });
 .manager-accounts-toolbar { display: flex; align-items: center; gap: 10px; }
 .manager-accounts-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: #64748b; font-size: 13px; }
 .form-hint { margin-top: 4px; color: #909399; font-size: 12px; line-height: 1.4; }
+.manager-mobile-list,
+.manager-mobile-card { display: none; }
 @media (max-width: 920px) {
   .manager-accounts-toolbar,
   .manager-accounts-footer { flex-wrap: wrap; }
@@ -352,5 +386,20 @@ defineExpose({ openCreateDialog: openCreate });
   .manager-accounts-toolbar :deep(.el-input),
   .manager-accounts-toolbar :deep(.el-select) { width: 100% !important; }
   .manager-accounts-toolbar > .el-button { width: 100%; }
+  .manager-accounts-table { display: none; }
+  .mobile-table-hint { margin: 0; color: #64748b; font-size: 12px; line-height: 1.4; }
+  .manager-mobile-list { display: grid; gap: 10px; }
+  .manager-mobile-card { display: block; padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, 0.05); }
+  .manager-mobile-card__header,
+  .manager-mobile-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .manager-mobile-card__identity { min-width: 0; display: grid; gap: 3px; }
+  .manager-mobile-card__identity strong { color: #1f3f36; font-size: 15px; }
+  .manager-mobile-card__identity span,
+  .manager-mobile-card__footer span { color: #71808a; font-size: 11px; }
+  .manager-mobile-card__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin: 12px 0; padding: 10px 0; border-top: 1px solid #edf1f4; border-bottom: 1px solid #edf1f4; }
+  .manager-mobile-card__grid > div { min-width: 0; display: grid; gap: 2px; }
+  .manager-mobile-card__wide { grid-column: 1 / -1; }
+  .manager-mobile-card__grid span { color: #87949b; font-size: 11px; }
+  .manager-mobile-card__grid strong { overflow: hidden; color: #40535d; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 }
 </style>

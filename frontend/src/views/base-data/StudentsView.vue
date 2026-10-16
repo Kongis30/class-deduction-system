@@ -75,12 +75,12 @@
         </div>
       </div>
 
-      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Swipe horizontally to see more columns</p>
+      <p v-if="appStore.isMobileViewport" class="mobile-table-hint">Tap a student to open details. Use More for account and registration actions.</p>
       <el-table
         v-loading="loading"
         :data="tableData"
         row-key="id"
-        class="product-table"
+        class="product-table people-main-table"
         :show-empty="true"
         @row-click="openStudentDetail"
       >
@@ -171,6 +171,46 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <div v-if="appStore.isMobileViewport" class="people-mobile-list">
+        <article v-for="row in tableData" :key="row.id" class="people-mobile-card" @click="openStudentDetail(row)">
+          <div class="people-mobile-card__header">
+            <div class="people-mobile-card__identity">
+              <strong>{{ row.studentName }}</strong>
+              <span>{{ row.studentNo }} · {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}</span>
+            </div>
+            <el-dropdown trigger="click" placement="bottom-end" @click.stop>
+              <el-button text circle aria-label="More student actions" @click.stop>
+                <el-icon><MoreFilled /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item @click="openStudentDetail(row)">Student details</el-dropdown-item>
+                  <el-dropdown-item @click="startRegistrationForStudent(row)">Register</el-dropdown-item>
+                  <el-dropdown-item @click="openStudentAccountDialog(row)">
+                    {{ accountForStudent(row) ? 'Edit login' : 'Create login' }}
+                  </el-dropdown-item>
+                  <el-dropdown-item @click="openStudentDialog(row)">Edit student</el-dropdown-item>
+                  <el-dropdown-item divided @click="handleDeleteStudent(row)">Delete student</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+          <div class="people-mobile-card__grid">
+            <div><span>Guardian</span><strong>{{ row.guardianName || '-' }}</strong></div>
+            <div><span>Phone</span><strong>{{ formatUsPhoneDisplay(row.guardianPhone || row.phone) || '-' }}</strong></div>
+            <div><span>Registrations</span><strong>{{ row.enrollmentCount ?? 0 }} order{{ (row.enrollmentCount ?? 0) === 1 ? '' : 's' }}</strong></div>
+            <div><span>Latest signup</span><strong>{{ formatDate(row.latestSignupDate) }}</strong></div>
+            <div><span>Payment</span><strong :class="{ 'balance-due': numeric(row.enrollmentBalanceAmount) > 0 }">{{ numeric(row.enrollmentBalanceAmount) > 0 ? `${formatMoney(row.enrollmentBalanceAmount)} due` : 'No balance' }}</strong></div>
+            <div><span>Login access</span><strong>{{ accountForStudent(row)?.username || 'No login' }}</strong></div>
+          </div>
+          <div class="people-mobile-card__footer">
+            <el-tag size="small" :type="paymentStatusType(row.aggregatePaymentStatus)">{{ paymentStatusLabel(row.aggregatePaymentStatus) }}</el-tag>
+            <span>{{ accountForStudent(row) ? accountStatusLabel(accountForStudent(row)!.status) : 'Login not enabled' }}</span>
+          </div>
+        </article>
+        <el-empty v-if="!loading && tableData.length === 0" description="No students found" />
+      </div>
 
       <div class="table-footer">
         <span>Showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }}</span>
@@ -1894,6 +1934,36 @@ onBeforeUnmount(() => {
 
 .balance-due {
   color: var(--el-color-danger);
+}
+
+.people-mobile-list,
+.people-mobile-card {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .people-main-table { display: none; }
+  .mobile-table-hint { margin: 0 0 10px; color: #64748b; font-size: 12px; line-height: 1.4; }
+  .people-mobile-list { display: grid; gap: 10px; }
+  .people-mobile-card {
+    display: block;
+    padding: 12px;
+    border: 1px solid #c9d9e2;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(31, 63, 54, 0.05);
+  }
+  .people-mobile-card__header,
+  .people-mobile-card__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .people-mobile-card__identity { min-width: 0; display: grid; gap: 3px; }
+  .people-mobile-card__identity strong { color: #1f3f36; font-size: 15px; }
+  .people-mobile-card__identity span,
+  .people-mobile-card__footer span { color: #71808a; font-size: 11px; }
+  .people-mobile-card__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin: 12px 0; padding: 10px 0; border-top: 1px solid #edf1f4; border-bottom: 1px solid #edf1f4; }
+  .people-mobile-card__grid > div { min-width: 0; display: grid; gap: 2px; }
+  .people-mobile-card__grid span { color: #87949b; font-size: 11px; }
+  .people-mobile-card__grid strong { overflow: hidden; color: #40535d; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+  .people-mobile-card__footer :deep(.el-tag) { margin: 0; }
 }
 
 .student-detail {
