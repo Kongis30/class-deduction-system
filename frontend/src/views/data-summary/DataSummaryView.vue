@@ -436,6 +436,83 @@
         </tbody>
       </table>
     </div>
+    <section v-if="isMobileViewport" class="workbook-mobile-list" aria-label="Data summary records">
+      <div v-if="sortedRows.length" class="workbook-mobile-list__section">
+        <div class="workbook-mobile-list__heading">
+          <strong>Active registrations</strong>
+          <span>{{ sortedRows.length }}</span>
+        </div>
+        <article v-for="row in sortedRows" :key="`mobile-${rowKey(row)}`" class="workbook-mobile-card">
+          <div class="workbook-mobile-card__header">
+            <div class="workbook-mobile-card__identity">
+              <strong>{{ displayText(row.studentName) }}</strong>
+              <span>{{ displayText(displayClassName(row)) }} · {{ displayText(row.campusName) }}</span>
+            </div>
+            <button
+              type="button"
+              class="workbook-mobile-card__action"
+              :aria-label="`Actions for ${displayText(row.studentName)}`"
+              @click.stop="openStudentContextMenu($event, row)"
+            >
+              <el-icon><MoreFilled /></el-icon>
+            </button>
+          </div>
+          <div class="workbook-mobile-card__summary">
+            <div>
+              <span>Paid</span>
+              <strong>{{ formatMoney(row.paidAmount) }}</strong>
+            </div>
+            <div :class="{ 'workbook-mobile-card__metric--due': Number(row.balanceAmount ?? 0) < 0 }">
+              <span>Balance</span>
+              <strong>{{ formatMoney(row.balanceAmount) }}</strong>
+            </div>
+            <div>
+              <span>Period</span>
+              <strong>{{ formatPeriod(row) }}</strong>
+            </div>
+          </div>
+          <dl class="workbook-mobile-card__details">
+            <div><dt>School</dt><dd>{{ displayText(row.school) }}</dd></div>
+            <div><dt>Grade</dt><dd>{{ displayText(row.grade) }}</dd></div>
+            <div><dt>Phone</dt><dd>{{ formatUsPhoneDisplay(row.phone) || '—' }}</dd></div>
+            <div><dt>Pickup / drop-off</dt><dd>{{ row.pickupRequired ? 'Pickup' : 'No pickup' }} · {{ row.dropoffRequired ? 'Drop-off' : 'No drop-off' }}</dd></div>
+          </dl>
+        </article>
+      </div>
+
+      <div v-if="visibleRefundRows.length" class="workbook-mobile-list__section">
+        <div class="workbook-mobile-list__heading workbook-mobile-list__heading--refund">
+          <strong>Refund students</strong>
+          <span>{{ visibleRefundRows.length }}</span>
+        </div>
+        <article v-for="row in visibleRefundRows" :key="`mobile-refund-${rowKey(row)}`" class="workbook-mobile-card workbook-mobile-card--refund">
+          <div class="workbook-mobile-card__header">
+            <div class="workbook-mobile-card__identity">
+              <strong>{{ displayText(row.studentName) }}</strong>
+              <span>{{ displayText(displayClassName(row)) }} · {{ displayText(row.campusName) }}</span>
+            </div>
+            <button
+              type="button"
+              class="workbook-mobile-card__action"
+              :aria-label="`Actions for ${displayText(row.studentName)}`"
+              @click.stop="openStudentContextMenu($event, row)"
+            >
+              <el-icon><MoreFilled /></el-icon>
+            </button>
+          </div>
+          <div class="workbook-mobile-card__summary">
+            <div><span>Paid</span><strong>{{ formatMoney(row.paidAmount) }}</strong></div>
+            <div><span>Balance</span><strong>{{ formatMoney(row.balanceAmount) }}</strong></div>
+            <div><span>Period</span><strong>{{ formatPeriod(row) }}</strong></div>
+          </div>
+        </article>
+      </div>
+
+      <div v-if="!sortedRows.length && !visibleRefundRows.length" class="workbook-mobile-empty">
+        <strong>{{ emptyMessage }}</strong>
+        <el-button v-if="hasAnyFilter" text type="primary" @click="clearAllFilters">Clear all filters</el-button>
+      </div>
+    </section>
     <section v-if="visibleStoppedRows.length" class="stopped-records">
       <div class="stopped-records__heading">
         <h3>Stopped Records</h3>
@@ -2543,6 +2620,10 @@ th.workbook-column--studentName {
   margin-right: 8px;
 }
 
+.workbook-mobile-list {
+  display: none;
+}
+
 @media (max-width: 920px) {
   .data-summary-page {
     height: calc(100dvh - 114px);
@@ -2604,6 +2685,220 @@ th.workbook-column--studentName {
 
   .data-summary-page .workbook-toolbar__export {
     display: none;
+  }
+
+  .data-summary-page .workbook-scroll {
+    display: none;
+  }
+
+  .data-summary-page .workbook-mobile-list {
+    display: grid;
+    gap: 14px;
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 10px 10px 18px;
+    overflow: auto;
+    background: #f5f8fa;
+  }
+
+  .workbook-mobile-list__section {
+    display: grid;
+    gap: 8px;
+  }
+
+  .workbook-mobile-list__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 2px;
+    color: #285b43;
+    font-size: 12px;
+  }
+
+  .workbook-mobile-list__heading span {
+    min-width: 22px;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #dcebe3;
+    color: #285b43;
+    font-size: 11px;
+    text-align: center;
+  }
+
+  .workbook-mobile-list__heading--refund {
+    color: #8f541b;
+  }
+
+  .workbook-mobile-list__heading--refund span {
+    background: #f8e4c8;
+    color: #8f541b;
+  }
+
+  .workbook-mobile-card {
+    display: grid;
+    gap: 11px;
+    padding: 13px;
+    border: 1px solid #c9d9e2;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgb(38 59 68 / 6%);
+  }
+
+  .workbook-mobile-card--refund {
+    border-color: #e6cda9;
+    background: #fffaf3;
+  }
+
+  .workbook-mobile-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .workbook-mobile-card__identity {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+  }
+
+  .workbook-mobile-card__identity strong {
+    overflow: hidden;
+    color: #1f3f36;
+    font-size: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workbook-mobile-card__identity span {
+    overflow: hidden;
+    color: #71808a;
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workbook-mobile-card__action {
+    display: inline-flex;
+    flex: 0 0 34px;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid #d5e1e7;
+    border-radius: 9px;
+    background: #f8fbfc;
+    color: #48695b;
+    cursor: pointer;
+  }
+
+  .workbook-mobile-card__action:active,
+  .workbook-mobile-card__action:focus-visible {
+    border-color: #7da891;
+    background: #eef7f1;
+    outline: none;
+  }
+
+  .workbook-mobile-card__summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .workbook-mobile-card__summary > div {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+    padding: 8px;
+    border-radius: 8px;
+    background: #f3f7f8;
+  }
+
+  .workbook-mobile-card__summary span {
+    color: #71808a;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .workbook-mobile-card__summary strong {
+    overflow: hidden;
+    color: #263b44;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workbook-mobile-card__metric--due strong {
+    color: #c52b36;
+  }
+
+  .workbook-mobile-card__details {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 12px;
+    margin: 0;
+    padding-top: 10px;
+    border-top: 1px solid #e8eef1;
+  }
+
+  .workbook-mobile-card__details div {
+    min-width: 0;
+  }
+
+  .workbook-mobile-card__details dt {
+    margin-bottom: 2px;
+    color: #87949b;
+    font-size: 10px;
+  }
+
+  .workbook-mobile-card__details dd {
+    overflow: hidden;
+    margin: 0;
+    color: #40535d;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .workbook-mobile-empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    padding: 42px 16px;
+    border: 1px dashed #c6d5dc;
+    border-radius: 12px;
+    background: #fff;
+    color: #657680;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .data-summary-page .stopped-records {
+    max-height: none;
+    margin: 0 10px 14px;
+    border-top: 1px solid #d8a36a;
+    border-radius: 10px;
+  }
+
+  .data-summary-page .stopped-records__scroll {
+    max-height: 260px;
+  }
+
+  .data-summary-page > .product-tab-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 20;
+    padding-top: 5px;
+    padding-bottom: 5px;
+    border-top: 1px solid #9eafa7;
+    background: rgb(220 232 226 / 96%);
+    box-shadow: 0 -4px 12px rgb(38 59 68 / 8%);
+  }
+
+  .data-summary-page > .product-tab-bar .product-tab {
+    min-height: 34px;
   }
 }
 
