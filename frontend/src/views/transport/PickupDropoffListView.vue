@@ -138,6 +138,23 @@
           <tbody v-if="selectedCourse.pickupRows.length && !filteredPickupRows.length"><tr class="workbook-empty-row"><td :colspan="tableColumns('pickup').length">No pickup students match these filters.</td></tr></tbody>
           </table>
         </div>
+        <div v-if="appStore.isMobileViewport" class="transport-mobile-list" aria-label="Pickup students">
+          <article v-for="row in filteredPickupRows" :key="`pickup-mobile-${rowKey(row)}`" class="transport-mobile-card">
+            <div class="transport-mobile-card__header">
+              <div>
+                <strong>{{ transportCellValue(row, 'student', 'pickup') }}</strong>
+                <span>{{ transportCellValue(row, 'class', 'pickup') }} · {{ transportCellValue(row, 'campus', 'pickup') }}</span>
+              </div>
+              <span class="transport-mobile-card__period">{{ periodLabel(row) }}</span>
+            </div>
+            <dl class="transport-mobile-card__details">
+              <div><dt>Driver</dt><dd v-if="!driverAssignmentsEditable">{{ driverNameForRow(row, 'pickup') }}</dd><dd v-else><el-select :model-value="driverIdForRow(row, 'pickup')" size="small" clearable filterable placeholder="Unassigned" @change="handleDriverChange(row, 'pickup', $event)"><el-option v-for="driver in drivers" :key="String(driver.id)" :label="driver.driverName" :value="String(driver.id)" /></el-select></dd></div>
+              <div><dt>Phone</dt><dd>{{ transportCellValue(row, 'phone', 'pickup') }}</dd></div>
+              <div class="transport-mobile-card__details--wide"><dt>Pickup address</dt><dd>{{ transportCellValue(row, 'pickupAddress', 'pickup') }}</dd></div>
+            </dl>
+          </article>
+          <div v-if="!filteredPickupRows.length" class="transport-mobile-empty">No pickup students match these filters.</div>
+        </div>
       </section>
 
       <section class="transport-roster-section transport-roster-section--dropoff">
@@ -226,6 +243,23 @@
           <tbody v-else><tr class="workbook-empty-row"><td :colspan="tableColumns('dropoff').length">No drop-off students for this course.</td></tr></tbody>
           <tbody v-if="selectedCourse.dropoffRows.length && !filteredDropoffRows.length"><tr class="workbook-empty-row"><td :colspan="tableColumns('dropoff').length">No drop-off students match these filters.</td></tr></tbody>
           </table>
+        </div>
+        <div v-if="appStore.isMobileViewport" class="transport-mobile-list" aria-label="Drop-off students">
+          <article v-for="row in filteredDropoffRows" :key="`dropoff-mobile-${rowKey(row)}`" class="transport-mobile-card">
+            <div class="transport-mobile-card__header">
+              <div>
+                <strong>{{ transportCellValue(row, 'student', 'dropoff') }}</strong>
+                <span>{{ transportCellValue(row, 'class', 'dropoff') }} · {{ transportCellValue(row, 'campus', 'dropoff') }}</span>
+              </div>
+              <span class="transport-mobile-card__period">{{ periodLabel(row) }}</span>
+            </div>
+            <dl class="transport-mobile-card__details">
+              <div><dt>Driver</dt><dd v-if="!driverAssignmentsEditable">{{ driverNameForRow(row, 'dropoff') }}</dd><dd v-else><el-select :model-value="driverIdForRow(row, 'dropoff')" size="small" clearable filterable placeholder="Unassigned" @change="handleDriverChange(row, 'dropoff', $event)"><el-option v-for="driver in drivers" :key="String(driver.id)" :label="driver.driverName" :value="String(driver.id)" /></el-select></dd></div>
+              <div><dt>Phone</dt><dd>{{ transportCellValue(row, 'phone', 'dropoff') }}</dd></div>
+              <div class="transport-mobile-card__details--wide"><dt>Drop-off address</dt><dd>{{ transportCellValue(row, 'dropoffAddress', 'dropoff') }}</dd></div>
+            </dl>
+          </article>
+          <div v-if="!filteredDropoffRows.length" class="transport-mobile-empty">No drop-off students match these filters.</div>
         </div>
       </section>
     </div>
@@ -944,6 +978,7 @@ onBeforeUnmount(() => {
 .transport-page .transport-detail-table .workbook-data-row:hover td { background: #fff; }
 .transport-page .transport-detail-table td:last-child { white-space: normal; line-height: 1.4; }
 .transport-empty { margin-top: 12px; padding: 40px; border: 1px solid #b8c5cb; border-radius: 6px; color: #52636c; text-align: center; }
+.transport-mobile-list { display: none; }
 
 @media (max-width: 640px) {
   .transport-page { min-height: 0; }
@@ -952,6 +987,25 @@ onBeforeUnmount(() => {
   .transport-roster-section__heading { align-items: flex-start; flex-direction: column; gap: 2px; }
   .transport-table-scroll { border-radius: 4px; }
   .transport-detail-table { min-width: 760px; }
+  .transport-page .transport-table-scroll { display: none; }
+  .transport-page .workbook-toolbar__export { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; width: 100%; }
+  .transport-page .workbook-toolbar__export .el-button { width: 100%; margin: 0; }
+  .transport-page .workbook-toolbar__export .el-button:last-child { grid-column: 1 / -1; }
+  .transport-mobile-list { display: grid; gap: 8px; padding: 10px; background: #f8fafb; }
+  .transport-mobile-card { display: grid; gap: 11px; padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgb(38 59 68 / 6%); }
+  .transport-mobile-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .transport-mobile-card__header > div:first-child { display: grid; min-width: 0; gap: 3px; }
+  .transport-mobile-card__header strong { overflow: hidden; color: #1f3f36; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+  .transport-mobile-card__header span { overflow: hidden; color: #71808a; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .transport-mobile-card__period { flex: 0 0 auto; max-width: 112px; color: #52636c !important; font-size: 10px !important; line-height: 1.3; text-align: right; white-space: normal !important; }
+  .transport-mobile-card__details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; padding-top: 10px; border-top: 1px solid #e8eef1; }
+  .transport-mobile-card__details--wide { grid-column: 1 / -1; }
+  .transport-mobile-card__details dt { margin-bottom: 2px; color: #87949b; font-size: 10px; }
+  .transport-mobile-card__details dd { overflow: hidden; margin: 0; color: #40535d; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .transport-mobile-card__details dd :deep(.el-select) { width: 100%; }
+  .transport-mobile-empty { padding: 20px 10px; color: #667780; font-size: 12px; text-align: center; }
+  .transport-page > .transport-tab-bar { position: sticky; bottom: 0; z-index: 20; margin: 0; padding-top: 5px; padding-bottom: 5px; border-top: 1px solid #9eafa7; background: rgb(220 232 226 / 96%); box-shadow: 0 -4px 12px rgb(38 59 68 / 8%); }
+  .transport-page > .transport-tab-bar .product-tab { min-height: 34px; }
   .transport-page .transport-driver-select { width: 150px; }
   .transport-empty { padding: 24px 14px; }
 }
