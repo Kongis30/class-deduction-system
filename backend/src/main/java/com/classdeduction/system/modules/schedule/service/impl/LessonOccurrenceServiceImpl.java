@@ -1499,48 +1499,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, Integer> pendingProcessingByPackage = new HashMap<>();
         Map<Long, Map<Long, Integer>> unconfirmedScheduledByTeacherByPackage = new HashMap<>();
         LocalDateTime now = AppTime.nowLocalDateTime();
-        // 老师级 Remaining 汇总未来有效排课与过去未最终确认课次；不从累计分配额中扣历史消课。
-        for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
-            Long packageId = entry.getKey();
-            List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
-            Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
-            Set<Long> seenOccurrenceIds = new HashSet<>();
-            for (LessonOccurrenceEntity occurrence : packageOccurrences) {
-                if (occurrence.getId() == null || !seenOccurrenceIds.add(occurrence.getId())) {
-                    continue;
-                }
-                LessonRecordEntity record = records.get(occurrence.getId());
-                if (PrivateLessonAllocation.isPendingProcessing(occurrence, record, now)) {
-                    int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
-                    pendingProcessingByPackage.merge(packageId, units, Integer::sum);
-                    if (occurrence.getPlannedTeacherId() != null) {
-                        unconfirmedScheduledByTeacherByPackage
-                                .computeIfAbsent(packageId, key -> new HashMap<>())
-                                .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
-                    }
-                }
-                if (occurrence.getPlannedTeacherId() == null
-                        || occurrence.getPlannedStartAt() == null
-                        || occurrence.getPlannedStartAt().isBefore(now)
-                        || "CANCELLED".equals(occurrence.getPlanningStatus())
-                        || "MERGED".equals(occurrence.getPlanningStatus())) {
-                    continue;
-                }
-                if (record != null && !Objects.equals(record.getIsDeleted(), 1)
-                        && ("CONFIRMED".equals(record.getConfirmStage())
-                        || "PENDING_ADMIN".equals(record.getConfirmStage())
-                        || "FORMAL_LEAVE".equalsIgnoreCase(record.getResultStatus())
-                        || "CANCELLED".equalsIgnoreCase(record.getResultStatus()))) {
-                    continue;
-                }
-                int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
-                if (units > 0) {
-                    unconfirmedScheduledByTeacherByPackage
-                            .computeIfAbsent(packageId, key -> new HashMap<>())
-                            .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
-                }
-            }
-        }
         for (LessonRecordEntity record : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
                 .in(LessonRecordEntity::getPackageId, packageIds)
                 .eq(LessonRecordEntity::getIsDeleted, 0)
@@ -1571,11 +1529,16 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, Integer> allocatedByPackage = new HashMap<>();
         Map<Long, Map<Long, Integer>> allocatedByTeacherByPackage = new HashMap<>();
         Map<Long, Long> currentRuleByPackage = new HashMap<>();
+        Map<Long, RecurringScheduleRuleEntity> rulesById = new HashMap<>();
+        Map<Long, LocalDateTime> periodStartByRule = new HashMap<>();
         Map<Long, Map<Long, Integer>> deductedByTeacherByPackage = new HashMap<>();
         if (!rules.isEmpty()) {
-            Map<Long, RecurringScheduleRuleEntity> rulesById = rules.stream()
-                    .collect(Collectors.toMap(RecurringScheduleRuleEntity::getId, Function.identity(),
-                            (first, ignored) -> first));
+            rules.forEach(rule -> {
+                rulesById.putIfAbsent(rule.getId(), rule);
+                if (rule.getCreatedAt() != null) {
+                    periodStartByRule.put(rule.getId(), rule.getCreatedAt());
+                }
+            });
             // Schedule 列表每个课包只取最新 ACTIVE 规则，避免把旧的 PAUSED 规则再次计入。
             for (RecurringScheduleRuleEntity rule : rules) {
                 if (packageIds.contains(rule.getPackageId())) {
@@ -1598,6 +1561,11 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             Map<Long, Long> currentSlotTeacherById = new HashMap<>();
             for (RecurringScheduleSlotEntity slot : currentSlots) {
                 currentSlotTeacherById.put(slot.getId(), slot.getTeacherId());
+                // 旧版本原位替换 slot 却复用 rule ID；最新有效 slot 的创建时间才是本轮分配起点。
+                if (slot.getCreatedAt() != null) {
+                    periodStartByRule.merge(slot.getRuleId(), slot.getCreatedAt(),
+                            (previous, createdAt) -> previous.isAfter(createdAt) ? previous : createdAt);
+                }
                 for (Long packageId : packageIdsByRule.getOrDefault(slot.getRuleId(), Collections.emptyList())) {
                     allocatedByPackage.merge(packageId,
                             Math.max(0, safeUnits(slot.getAllocatedUnits())), Integer::sum);
@@ -1621,15 +1589,36 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                         packageId, Collections.emptyList());
                 Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
                 Map<Long, Map<Long, Integer>> reservedBySlotAndTeacher = new HashMap<>();
+                Set<Long> countedOccurrenceIds = new HashSet<>();
                 for (LessonOccurrenceEntity occurrence : packageOccurrences) {
+                    if (occurrence.getId() == null || !countedOccurrenceIds.add(occurrence.getId())) {
+                        continue;
+                    }
                     LessonRecordEntity record = records.get(occurrence.getId());
+                    Long historicalTeacherId = occurrence.getPlannedTeacherId();
+                    boolean currentPeriod = belongsToCurrentSchedulePeriod(occurrence, record,
+                            currentRule, periodStartByRule.get(currentRuleId));
+                    // 保留的旧时段与本周期新增的临时课不在有效 slot 中，仍属于老师本周期的分配额。
+                    if (currentPeriod && historicalTeacherId != null
+                            && !currentSlotTeacherById.containsKey(occurrence.getScheduleSlotId())
+                            && !"CANCELLED".equals(occurrence.getPlanningStatus())) {
+                        int exceptionUnits = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
+                        if (record != null && "CONFIRMED".equals(record.getConfirmStage())) {
+                            exceptionUnits = Objects.equals(record.getShouldDeduct(), 1)
+                                    ? Math.max(0, safeUnits(record.getDeductedUnits())) : 0;
+                        }
+                        if (exceptionUnits > 0) {
+                            allocatedByPackage.merge(packageId, exceptionUnits, Integer::sum);
+                            allocatedByTeacherByPackage.computeIfAbsent(packageId, key -> new HashMap<>())
+                                    .merge(historicalTeacherId, exceptionUnits, Integer::sum);
+                        }
+                    }
                     if (record == null || !Objects.equals(record.getShouldDeduct(), 1)
                             || Objects.equals(record.getIsDeleted(), 1)) continue;
-                    Long historicalTeacherId = occurrence.getPlannedTeacherId();
                     int units = Math.max(0, safeUnits(record.getDeductedUnits()));
                     // 老师页只展示当前周期的消课；旧版本未来保留例外在本周期上完也应计入。
                     if ("CONFIRMED".equals(record.getConfirmStage()) && historicalTeacherId != null
-                            && belongsToCurrentSchedulePeriod(occurrence, record, currentRule)) {
+                            && currentPeriod) {
                         deductedByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
                                 .merge(historicalTeacherId, units, Integer::sum);
@@ -1667,23 +1656,80 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
             }
         }
+        // 老师级 Remaining 与 Deducted 使用同一个排课周期；课包级待处理量仍覆盖全部历史。
+        for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
+            Long packageId = entry.getKey();
+            List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
+            Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
+            Long currentRuleId = currentRuleByPackage.get(packageId);
+            RecurringScheduleRuleEntity currentRule = rulesById.get(currentRuleId);
+            Set<Long> seenOccurrenceIds = new HashSet<>();
+            for (LessonOccurrenceEntity occurrence : packageOccurrences) {
+                if (occurrence.getId() == null || !seenOccurrenceIds.add(occurrence.getId())) {
+                    continue;
+                }
+                LessonRecordEntity record = records.get(occurrence.getId());
+                boolean currentPeriod = currentRule == null || belongsToCurrentSchedulePeriod(
+                        occurrence, record, currentRule, periodStartByRule.get(currentRuleId));
+                if (PrivateLessonAllocation.isPendingProcessing(occurrence, record, now)) {
+                    int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
+                    pendingProcessingByPackage.merge(packageId, units, Integer::sum);
+                    if (currentPeriod && occurrence.getPlannedTeacherId() != null) {
+                        unconfirmedScheduledByTeacherByPackage
+                                .computeIfAbsent(packageId, key -> new HashMap<>())
+                                .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
+                    }
+                }
+                if (!currentPeriod || occurrence.getPlannedTeacherId() == null
+                        || occurrence.getPlannedStartAt() == null
+                        || occurrence.getPlannedStartAt().isBefore(now)
+                        || "CANCELLED".equals(occurrence.getPlanningStatus())
+                        || "MERGED".equals(occurrence.getPlanningStatus())) {
+                    continue;
+                }
+                if (record != null && !Objects.equals(record.getIsDeleted(), 1)
+                        && ("CONFIRMED".equals(record.getConfirmStage())
+                        || "PENDING_ADMIN".equals(record.getConfirmStage())
+                        || "FORMAL_LEAVE".equalsIgnoreCase(record.getResultStatus())
+                        || "CANCELLED".equalsIgnoreCase(record.getResultStatus()))) {
+                    continue;
+                }
+                int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
+                if (units > 0) {
+                    unconfirmedScheduledByTeacherByPackage
+                            .computeIfAbsent(packageId, key -> new HashMap<>())
+                            .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
+                }
+            }
+        }
         return new PackageHoursContext(allocatedByPackage, allocatedByTeacherByPackage,
                 deductedByTeacherByPackage, unconfirmedScheduledByTeacherByPackage, scheduledByPackage,
                 pendingAdminDeductionByPackage, pendingProcessingByPackage, unresolvedPastByPackage);
     }
 
-    /** 历史规则保留的未来例外课次在新周期发生、确认后归新周期；旧课迟确认仍归旧周期。 */
+    /** 以最近一次排课分配为周期边界；旧规则保留的未来例外课次按实际发生日期归属。 */
     private boolean belongsToCurrentSchedulePeriod(LessonOccurrenceEntity occurrence,
                                                     LessonRecordEntity record,
-                                                    RecurringScheduleRuleEntity currentRule) {
+                                                    RecurringScheduleRuleEntity currentRule,
+                                                    LocalDateTime periodStart) {
+        if (periodStart != null && (occurrence.getPlannedStartAt() == null
+                || occurrence.getPlannedStartAt().isBefore(periodStart)
+                || record != null && record.getConfirmedAt() != null
+                && record.getConfirmedAt().isBefore(periodStart))) {
+            return false;
+        }
         if (Objects.equals(currentRule.getId(), occurrence.getScheduleRuleId())) {
             return true;
         }
-        LocalDateTime periodStart = currentRule.getCreatedAt();
+        if (periodStart != null && occurrence.getScheduleRuleId() == null
+                && "ADHOC".equals(occurrence.getOccurrenceType())
+                && occurrence.getCreatedAt() != null
+                && !occurrence.getCreatedAt().isBefore(periodStart)) {
+            return true;
+        }
         return currentRule.getSupersedesRuleId() != null && periodStart != null
-                && occurrence.getPlannedStartAt() != null
-                && !occurrence.getPlannedStartAt().isBefore(periodStart)
-                && record.getConfirmedAt() != null && !record.getConfirmedAt().isBefore(periodStart);
+                && (record == null || record.getConfirmedAt() == null
+                || !record.getConfirmedAt().isBefore(periodStart));
     }
 
     /** 管理员按课包内实际排课的老师分别建立入口；老师账号查询时只保留本人入口。 */
