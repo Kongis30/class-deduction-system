@@ -335,24 +335,27 @@
             </div>
             <div class="oo-student-context__metrics">
               <div class="oo-student-context__metric-group" role="group" aria-label="Package hours">
-                <span class="oo-student-context__metric">
+                <span class="oo-student-context__metric" title="The package's full enrollment hours, including any bonus hours.">
                   <small>Total Hours</small>{{ formatHours(activePackage.totalUnits) }}h
                 </span>
-                <span class="oo-student-context__metric" title="The opening balance set in Package Hours. Lesson deductions and schedule edits do not change it.">
+                <span class="oo-student-context__metric" title="The starting balance entered in Package Hours. Lessons and schedule edits do not change it.">
                   <small>Starting Hours</small>{{ formatHours(activePackage.startingHours) }}h
                 </span>
-                <span class="oo-student-context__metric" title="The package balance after confirmed lesson deductions. Pending lessons and schedule edits do not reduce it.">
+                <span class="oo-student-context__metric" title="Starting Hours minus confirmed deductions. Pending lessons and schedule edits do not reduce it.">
                   <small>Remaining Hours</small>{{ formatHours(activePackage.remainingUnits) }}h
                 </span>
               </div>
               <div class="oo-student-context__metric-group oo-student-context__metric-group--teacher" role="group" :aria-label="`Hours for ${activeTeacher?.teacherName || 'teacher'}`">
-                <span class="oo-student-context__metric">
+                <span class="oo-student-context__metric" title="Hours allocated to this teacher in the current schedule. Completed lessons do not reduce this amount.">
                   <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
-                <span class="oo-student-context__metric" title="Confirmed deductions from lessons assigned to this teacher.">
+                <span class="oo-student-context__metric" title="Confirmed lesson hours attributed to this teacher. Past deductions stay with the teacher who taught them.">
                   <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>
-                <span class="oo-student-context__metric" title="Lesson hours assigned to this teacher that are awaiting admin confirmation. These hours have not yet been deducted from the package balance.">
+                <span class="oo-student-context__metric" title="Total hours in this teacher's future scheduled lessons that have not happened yet. Unscheduled hours are not included.">
+                  <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
+                </span>
+                <span class="oo-student-context__metric" title="This teacher's lesson hours awaiting admin confirmation. They are not counted as confirmed deductions yet.">
                   <small>Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
                 </span>
               </div>
@@ -2198,6 +2201,7 @@ onBeforeUnmount(() => signaturePrinter.detach());
 }
 
 .oo-student-context__metric-group--teacher {
+  grid-template-columns: repeat(4, minmax(82px, 1fr));
   border-left: 1px solid #cbd5e1;
   padding-left: 16px;
 }
@@ -3300,6 +3304,7 @@ onBeforeUnmount(() => signaturePrinter.detach());
   }
 
   .oo-student-context__metric-group--teacher {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     border-top: 1px solid #cbd5e1;
     border-left: 0;
     padding-top: 8px;

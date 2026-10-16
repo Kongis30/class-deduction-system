@@ -22,7 +22,7 @@
 | Deducted Hours（课包） | 进入系统后，该课包所有老师已确认且应扣除的课时合计。 | 确认、撤销或更正实际消课时变化。 |
 | Deducted by 某老师 | 历史课程记录中归属该老师的已确认、应扣课时。教师后来变更，不得改写历史归属。 | 该老师的课程消课确认、撤销或更正时变化。 |
 | Remaining Hours（课包） | 课包当前实际余额，不因只改排课而变化。 | 实际消课或人工更正起始课时时变化。 |
-| Remaining with 某老师 | 该老师名下尚未消耗、可以继续履行或转出的分配额度。 | 该老师消课或重新分配其未用额度时变化。 |
+| Remaining with 某老师（1-on-1 Lessons 页眉） | 当前课包里，未来尚未发生、仍有效且分配给该老师的排课记录课时总和。它表示已排的未来课程，不等于老师账本上的未用分配额，也不包含尚未排进日历的额度。 | 未来课程发生、取消、调整或重新分配时变化；历史课程不能改变它。 |
 | Pending deduction | 已提交但尚未最终确认的待扣课时；按课包和老师分别统计。 | 进入或退出待确认状态时变化；不能提前算入 Deducted。 |
 
 在上述范围内，必须始终满足：
@@ -30,11 +30,11 @@
 ```text
 录入前已用课时 = Total Hours − Starting Hours
 课包 Remaining Hours = Starting Hours − 进入系统后已确认消课
-老师 Remaining with = Allocated to 该老师 − Deducted by 该老师
+1-on-1 Lessons 页眉的老师 Remaining with = 该老师未来有效排课记录的 plannedUnits 合计
 课包 Allocated Hours = Σ(Allocated to 各老师)
 ```
 
-若课包课时尚未全部分配，定义 `未分配余额 = Starting − 课包 Allocated`。此时 `课包 Remaining = Σ(老师 Remaining with) + 未分配余额`。待确认课时仍包含在 Remaining 中，但应另行预留，不能再次排给其他课程。不得用 `max(0, Allocated − Deducted)` 静默隐藏负值；负值表示数据或统计范围不一致。
+若课包课时尚未全部分配，定义 `未分配余额 = Starting − 课包 Allocated`。此时课包 Remaining 是账本余额；老师级页眉 Remaining 是该老师未来有效排课总额，两者可能不同。待确认课时仍包含在课包 Remaining 中，但应另行预留，不能再次排给其他课程。不得用 `max(0, Allocated − Deducted)` 静默隐藏负值；负值表示数据或统计范围不一致。
 
 ### 与排课计划相关、但不是上述余额的数值
 
@@ -66,7 +66,7 @@ Allocated 与 Starting 不因这次消课变动。
 | 后续只确认一节 2h 课程 | 240h | 205h | 46h / 47h / 112h | 205h | 2h | 203h |
 | 这 205h 最终全部消完 | 240h | 205h | 46h / 47h / 112h | 205h | 205h | 0h |
 
-老师名下的 Remaining 只随该老师已确认消课减少。例如给 A 老师分配 100h，A 已上 50h 时，仍应显示 Allocated to A 100h、Deducted by A 50h、Remaining with A 50h，不能把 Allocated 改成 50h。
+1-on-1 Lessons 页眉的老师级 Remaining 表示当前老师未来尚未上的排课记录总课时。例如 A 老师最初分配 100h、已确认上完 50h，若未来还排了 50h，则显示 Allocated to A 100h、Deducted by A 50h、Remaining with A 50h。若这 50h 尚未排入未来课表，老师级 Remaining 显示 0h；该值不代表老师账本上的未用分配额。
 
 ### 例 C：改排课和转老师
 
@@ -74,13 +74,13 @@ Allocated 与 Starting 不因这次消课变动。
 
 | 查看范围 | Total | Starting | Allocated | Deducted | Remaining |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 王老师名下 | 100h | 100h | 20h | 10h | 10h |
-| 张老师名下 | 100h | 100h | 80h | 50h | 30h |
+| 王老师名下 | 100h | 100h | 20h | 10h | 10h（假定未来排课 10h） |
+| 张老师名下 | 100h | 100h | 80h | 50h | 30h（假定未来排课 30h） |
 | 课包整体 / 排课页 | 100h | 100h | 100h | 60h | 40h |
 
 用户已明确：13:31 的笔误只指“张老师的课表”中三处误写的“王老师”标签；Allocated 80h、Deducted 50h、Remaining 30h 均属于张老师。只有**重新排课、调整分配**时 Allocated 才可变化。转移方向也已明确：学生不再上张老师的课，把剩余 **40h 未用额度**全部改由王老师负责。历史消课仍分别归属原老师，不可改写。
 
-**待反馈确认的展示细节：**如果 1-on-1 Lessons 继续展示老师的“历次累计 Deducted”，则与之配对的累计 Allocated 应显示王老师 50h、张老师 50h，老师 Remaining 分别为 40h、0h；“新排课分配给王老师 40h”另属新版本的计划额度。若业务希望页面只显示新版本 Allocated 40h，则同一组字段中的 Deducted 也必须限定为新版本，并另处保留历史 10h/50h；不能把新版本 Allocated 40h 与历史累计 Deducted 10h 混算。用户反馈尚未明确选择这两种展示方式，后续收到实例后再定稿。
+**重新分配后的展示：**课包总消课 60h 后，把剩余 40h 未来排给王老师。1-on-1 Lessons 老师级 Remaining 显示未来排课记录中归王老师的 40h；历史消课仍归原老师。老师级 Allocated 和 Deducted 是各自的独立历史指标，不用于反推这个未来排课 Remaining。
 
 ### 例 D：Bowen Deng 当前异常
 
@@ -103,7 +103,7 @@ Allocated 与 Starting 不因这次消课变动。
 ## 5. 当前实现与规则的差距
 
 1. 后端把**当前有效规则的 slot 分配额**汇总为老师 Allocated，却从所有历史课程汇总老师 Deducted。改排课产生新版本后，两个字段范围不同：`LessonOccurrenceServiceImpl.loadPackageHoursContext()`。
-2. 老师 Remaining 使用 `max(0, allocated − deducted)`，会把计算范围错误伪装成 0h：`LessonOccurrenceServiceImpl.toTeacherHoursVOs()`。1-on-1 Lessons 页眉现已改为显示课包 `Remaining Hours`，读取课包 `remainingUnits`；老师级分配及老师级余额（包括教师打印页）仍需按历史分配记录单独修复，不能因页眉改正就宣称已全部修复。
+2. 1-on-1 Lessons 页眉的老师 Remaining 已改为统计未来有效课次的 `plannedUnits`，排除过去、已确认、待管理员确认、正式请假、取消和已合并的课次；它不再用当前排课分配额减历史消课。老师级 Allocated 与 Deducted 仍是各自独立指标，历史分配快照问题需单独处理。
 3. “只改课程信息”的分支能避免部分无谓的排课重建，但真正更换时段/额度仍建立新周期；缺少可供累计统计的老师额度转移账本：`RecurringScheduleRuleServiceImpl.updateCourseDetailsOnly()` 与 `validateNewPeriodAllocations()`。
 4. 老历史数据没有可靠、统一的老师原始分配快照。不能把 Starting、旧 slot 或当前 slot 中任意一个值直接当作老师 Allocated。
 

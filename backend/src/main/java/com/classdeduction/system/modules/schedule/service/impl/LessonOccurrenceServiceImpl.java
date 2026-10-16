@@ -1394,6 +1394,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 allocations -> teacherIds.addAll(allocations.keySet()));
         hoursContext.deductedByTeacherByPackage().values().forEach(
                 deductions -> teacherIds.addAll(deductions.keySet()));
+        hoursContext.futureScheduledByTeacherByPackage().values().forEach(
+                remaining -> teacherIds.addAll(remaining.keySet()));
         return listTeachersByIds(teacherIds);
     }
 
@@ -1434,6 +1436,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                        Map<Long, Map<Long, Integer>> allocatedByTeacherByPackage,
                                        Map<Long, Map<Long, Integer>> deductedByTeacherByPackage,
                                        Map<Long, Map<Long, Integer>> pendingByTeacherByPackage,
+                                       Map<Long, Map<Long, Integer>> futureScheduledByTeacherByPackage,
                                        Map<Long, Integer> scheduledByPackage,
                                        Map<Long, Integer> pendingByPackage,
                                        Map<Long, Integer> unresolvedPastByPackage) {}
@@ -1446,6 +1449,39 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             LatestRecordIndex recordIndex) {
         Map<Long, Integer> pendingByPackage = new HashMap<>();
         Map<Long, Map<Long, Integer>> pendingByTeacherByPackage = new HashMap<>();
+        Map<Long, Map<Long, Integer>> futureScheduledByTeacherByPackage = new HashMap<>();
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        // 老师级 Remaining 统计当前老师未来有效的课次，避免将当前排课分配额与历史消课直接相减。
+        for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
+            Long packageId = entry.getKey();
+            List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
+            Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
+            Set<Long> seenOccurrenceIds = new HashSet<>();
+            for (LessonOccurrenceEntity occurrence : packageOccurrences) {
+                if (occurrence.getId() == null || !seenOccurrenceIds.add(occurrence.getId())
+                        || occurrence.getPlannedTeacherId() == null
+                        || occurrence.getPlannedStartAt() == null
+                        || occurrence.getPlannedStartAt().isBefore(now)
+                        || "CANCELLED".equals(occurrence.getPlanningStatus())
+                        || "MERGED".equals(occurrence.getPlanningStatus())) {
+                    continue;
+                }
+                LessonRecordEntity record = records.get(occurrence.getId());
+                if (record != null && !Objects.equals(record.getIsDeleted(), 1)
+                        && ("CONFIRMED".equals(record.getConfirmStage())
+                        || "PENDING_ADMIN".equals(record.getConfirmStage())
+                        || "FORMAL_LEAVE".equalsIgnoreCase(record.getResultStatus())
+                        || "CANCELLED".equalsIgnoreCase(record.getResultStatus()))) {
+                    continue;
+                }
+                int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
+                if (units > 0) {
+                    futureScheduledByTeacherByPackage
+                            .computeIfAbsent(packageId, key -> new HashMap<>())
+                            .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
+                }
+            }
+        }
         Map<Long, Long> plannedTeacherByOccurrence = occurrencesByPackage.values().stream()
                 .flatMap(List::stream)
                 .filter(occurrence -> occurrence.getPlannedTeacherId() != null)
@@ -1581,7 +1617,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             }
         }
         return new PackageHoursContext(allocatedByPackage, allocatedByTeacherByPackage,
-                deductedByTeacherByPackage, pendingByTeacherByPackage, scheduledByPackage,
+                deductedByTeacherByPackage, pendingByTeacherByPackage, futureScheduledByTeacherByPackage, scheduledByPackage,
                 pendingByPackage, unresolvedPastByPackage);
     }
 
@@ -1599,6 +1635,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         teacherIds.addAll(hoursContext.allocatedByTeacherByPackage()
+                .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
+        teacherIds.addAll(hoursContext.futureScheduledByTeacherByPackage()
                 .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
         return teacherIds.isEmpty() ? Collections.singleton(null) : teacherIds;
     }
@@ -1783,9 +1821,12 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .getOrDefault(packageId, Collections.emptyMap());
         Map<Long, Integer> pendingByTeacher = hoursContext.pendingByTeacherByPackage()
                 .getOrDefault(packageId, Collections.emptyMap());
+        Map<Long, Integer> remainingByTeacher = hoursContext.futureScheduledByTeacherByPackage()
+                .getOrDefault(packageId, Collections.emptyMap());
         Set<Long> teacherIds = new LinkedHashSet<>(allocatedByTeacher.keySet());
         teacherIds.addAll(deductedByTeacher.keySet());
         teacherIds.addAll(pendingByTeacher.keySet());
+        teacherIds.addAll(remainingByTeacher.keySet());
         return teacherIds.stream()
                 .map(teacherId -> {
                     int allocated = allocatedByTeacher.getOrDefault(teacherId, 0);
@@ -1798,7 +1839,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             .allocatedUnits(UnitConverter.toHoursDecimal(allocated))
                             .deductedUnits(UnitConverter.toHoursDecimal(deducted))
                             .pendingDeductionUnits(UnitConverter.toHoursDecimal(pending))
-                            .remainingUnits(UnitConverter.toHoursDecimal(Math.max(0, allocated - deducted)))
+                            .remainingUnits(UnitConverter.toHoursDecimal(remainingByTeacher.getOrDefault(teacherId, 0)))
                             .build();
                 })
                 .sorted(Comparator.comparing(item -> item.teacherName() == null ? "" : item.teacherName(),
