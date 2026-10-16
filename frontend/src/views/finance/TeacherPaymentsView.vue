@@ -153,6 +153,23 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="tp-mobile-lesson-list">
+            <article v-for="row in individualLessons" :key="`mobile-${row.lessonRecordId}`" class="tp-mobile-lesson-card">
+              <div class="tp-mobile-lesson-card__header">
+                <el-checkbox :model-value="isLessonSelected(row)" :disabled="!canSelectLesson(row)" :aria-label="`Select ${row.studentName}`" @change="toggleLessonSelection(row, Boolean($event))" />
+                <div class="tp-mobile-lesson-card__identity">
+                  <strong>{{ row.participantNames?.length ? row.participantNames.join(' / ') : row.studentName }}</strong>
+                  <span>{{ formatLessonSchedule(row) }} · 1:1</span>
+                </div>
+              </div>
+              <dl class="tp-mobile-lesson-card__details">
+                <div><dt>Product</dt><dd>{{ row.productName || '—' }}</dd></div>
+                <div><dt>Hours</dt><dd>{{ row.hours }}</dd></div>
+                <div><dt>Rate</dt><dd v-if="hasPayRate(row)">${{ row.hourlyRate.toFixed(2) }}/h</dd><dd v-else class="tp-mobile-lesson-card__missing">Not set</dd></div>
+                <div><dt>Amount</dt><dd>${{ row.amount?.toFixed(2) }}</dd></div>
+              </dl>
+            </article>
+          </div>
         </section>
 
         <!-- ─── 3. Unpaid Group Class Lessons ─────────── -->
@@ -195,6 +212,23 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="tp-mobile-lesson-list">
+            <article v-for="row in groupLessons" :key="`mobile-${row.lessonRecordId}`" class="tp-mobile-lesson-card">
+              <div class="tp-mobile-lesson-card__header">
+                <el-checkbox :model-value="isLessonSelected(row)" :disabled="!canSelectLesson(row)" :aria-label="`Select ${row.className || row.productName}`" @change="toggleLessonSelection(row, Boolean($event))" />
+                <div class="tp-mobile-lesson-card__identity">
+                  <strong>{{ row.className || row.productName || 'Group class' }}</strong>
+                  <span>{{ formatLessonSchedule(row) }} · Group</span>
+                </div>
+              </div>
+              <dl class="tp-mobile-lesson-card__details">
+                <div><dt>Product</dt><dd>{{ row.productName || '—' }}</dd></div>
+                <div><dt>Hours</dt><dd>{{ row.hours }}</dd></div>
+                <div><dt>Rate</dt><dd v-if="hasPayRate(row)">${{ row.hourlyRate.toFixed(2) }}/h</dd><dd v-else class="tp-mobile-lesson-card__missing">Not set</dd></div>
+                <div><dt>Amount</dt><dd>${{ row.amount?.toFixed(2) }}</dd></div>
+              </dl>
+            </article>
+          </div>
         </section>
 
         <!-- ─── 4. Summary & Create Payment ────────────── -->
@@ -285,6 +319,22 @@
               </template>
             </el-table-column>
           </el-table>
+          <div class="tp-mobile-history-list">
+            <article v-for="row in historyData" :key="`mobile-history-${row.id}`" class="tp-mobile-history-card">
+              <div class="tp-mobile-history-card__header">
+                <div><strong>{{ row.paymentNo }}</strong><span>{{ row.periodStart }} – {{ row.periodEnd }}</span></div>
+                <el-tag :type="row.status === 'PAID' ? 'success' : 'warning'" size="small">{{ row.status }}</el-tag>
+              </div>
+              <div class="tp-mobile-history-card__summary">
+                <span>{{ row.totalHours }}h</span>
+                <strong>${{ row.totalAmount?.toFixed(2) }}</strong>
+              </div>
+              <div class="tp-mobile-history-card__actions">
+                <el-button text type="primary" size="small" @click="viewDetail(row)">Detail</el-button>
+                <el-button v-if="row.status === 'PENDING'" text type="success" size="small" @click="handleConfirm(row)">Confirm</el-button>
+              </div>
+            </article>
+          </div>
 
           <div v-if="pagination.total > pagination.size" class="tp-pagination">
             <el-pagination
@@ -474,6 +524,20 @@ function hasPayRate(row: UnpaidLessonItem) {
 
 function canSelectLesson(row: UnpaidLessonItem) {
   return hasPayRate(row);
+}
+
+// 移动端卡片与桌面表格共用同一组选中状态，确保付款提交的课次集合一致。
+function isLessonSelected(row: UnpaidLessonItem) {
+  return selectedIds.value.some((id) => String(id) === String(row.lessonRecordId));
+}
+
+function toggleLessonSelection(row: UnpaidLessonItem, checked: boolean) {
+  if (!canSelectLesson(row)) return;
+  const source = row.className ? groupSelections : individualSelections;
+  const next = source.value.filter((item) => String(item.lessonRecordId) !== String(row.lessonRecordId));
+  if (checked) next.push(row);
+  source.value = next;
+  updateMergedSelection();
 }
 
 const individualTotal = computed(() => {
@@ -909,6 +973,11 @@ onMounted(async () => {
   padding: 30px 0;
 }
 
+.tp-mobile-lesson-list,
+.tp-mobile-history-list {
+  display: none;
+}
+
 
 /* ─── Detail Dialog ───────────────────────────────────── */
 
@@ -967,7 +1036,7 @@ onMounted(async () => {
   .tp-sidebar__list { display: block; max-height: min(55dvh, 480px); overflow-y: auto; padding: 4px 0; }
   .tp-sidebar__item { min-height: 48px; border-left: 3px solid transparent; border-bottom: 1px solid #edf0f4; }
   .tp-sidebar__item--active { border-left-color: #409eff; border-bottom-color: #edf0f4; }
-  .tp-content { width: 100%; overflow: visible; }
+  .tp-content { width: 100%; overflow: visible; padding-bottom: 72px; }
   .tp-mobile-selection { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0 0 10px; padding: 4px 8px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; }
   .tp-mobile-selection strong { overflow: hidden; color: #1f2937; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 }
@@ -985,5 +1054,26 @@ onMounted(async () => {
   .tp-pagination { justify-content: center; }
   .tp-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .tp-dialog :deep(.el-dialog__body) { padding: 12px; }
+  .tp-section .tp-table { display: none; }
+  .tp-mobile-lesson-list,
+  .tp-mobile-history-list { display: grid; gap: 8px; }
+  .tp-mobile-lesson-card,
+  .tp-mobile-history-card { display: grid; gap: 10px; padding: 11px; border: 1px solid #dbe4ea; border-radius: 10px; background: #fff; }
+  .tp-mobile-lesson-card__header,
+  .tp-mobile-history-card__header { display: flex; align-items: flex-start; gap: 8px; }
+  .tp-mobile-lesson-card__identity,
+  .tp-mobile-history-card__header > div { display: grid; min-width: 0; gap: 3px; }
+  .tp-mobile-lesson-card__identity strong,
+  .tp-mobile-history-card__header strong { overflow: hidden; color: #263b44; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+  .tp-mobile-lesson-card__identity span,
+  .tp-mobile-history-card__header span { color: #7b8794; font-size: 11px; }
+  .tp-mobile-lesson-card__details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; padding-top: 9px; border-top: 1px solid #edf1f3; }
+  .tp-mobile-lesson-card__details dt { margin-bottom: 2px; color: #8a969e; font-size: 10px; }
+  .tp-mobile-lesson-card__details dd { margin: 0; color: #40535d; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .tp-mobile-lesson-card__missing { color: #d14d4d !important; font-weight: 600; }
+  .tp-mobile-history-card__header { justify-content: space-between; }
+  .tp-mobile-history-card__summary { display: flex; align-items: baseline; justify-content: space-between; padding-top: 8px; border-top: 1px solid #edf1f3; color: #52636c; font-size: 12px; }
+  .tp-mobile-history-card__summary strong { color: #263b44; font-size: 15px; }
+  .tp-mobile-history-card__actions { display: flex; justify-content: flex-end; gap: 4px; }
 }
 </style>
