@@ -1108,11 +1108,18 @@ const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
     scheduleChangeTimestamp(left) - scheduleChangeTimestamp(right)
       || entityKey(left.ruleId).localeCompare(entityKey(right.ruleId)));
   const periodIndexByRule = new Map(changes.map((change, index) => [entityKey(change.ruleId), index]));
+  const legacyBoundaryByRule = new Map(changes
+    .map((change, index) => ({ change, index }))
+    .filter(({ change }) => change.legacySlotBoundary)
+    .map(({ change, index }) => [entityKey(change.ruleId), { index, changedAt: scheduleChangeTimestamp(change) }]));
   const lessonsByPeriod = new Map<number, OneOnOneLesson[]>();
   for (const lesson of pkg.lessons) {
-    const periodIndex = lesson.scheduleRuleId == null
-      ? -1
-      : periodIndexByRule.get(entityKey(lesson.scheduleRuleId)) ?? -1;
+    const ruleKey = lesson.scheduleRuleId == null ? null : entityKey(lesson.scheduleRuleId);
+    const legacyBoundary = ruleKey == null ? undefined : legacyBoundaryByRule.get(ruleKey);
+    const lessonTime = dayjs(lesson.plannedStartAt).valueOf();
+    const periodIndex = legacyBoundary
+      ? (lessonTime >= legacyBoundary.changedAt ? legacyBoundary.index : -1)
+      : ruleKey == null ? -1 : periodIndexByRule.get(ruleKey) ?? -1;
     const periodLessons = lessonsByPeriod.get(periodIndex) ?? [];
     periodLessons.push(lesson);
     lessonsByPeriod.set(periodIndex, periodLessons);
