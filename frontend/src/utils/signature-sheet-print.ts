@@ -138,7 +138,7 @@ function renderTeacherHours(coursePackage: OneOnOnePackage, teacherKey: string, 
     <p><strong>Total Hours:</strong> ${formatHours(coursePackage.totalUnits)}</p>
     <p><strong>Starting Hours:</strong> ${formatHours(coursePackage.startingHours)}</p>
     <p><strong>Allocated to ${escapeHtml(teacherName)}:</strong> ${formatHours(hours?.allocatedUnits)}</p>
-    <p><strong>Deducted by ${escapeHtml(teacherName)}:</strong> ${formatHours(hours?.deductedUnits)}</p>
+    <p><strong>Current schedule deducted by ${escapeHtml(teacherName)}:</strong> ${formatHours(hours?.deductedUnits)}</p>
     <p><strong>Remaining with ${escapeHtml(teacherName)}:</strong> ${formatHours(hours?.remainingUnits)}</p>
   </div>`;
 }

@@ -358,19 +358,14 @@
                   </el-tooltip>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Future scheduled hours for this teacher." placement="top" :show-after="200">
+                  <el-tooltip content="Past lessons not yet finalized plus future scheduled hours for this teacher." placement="top" :show-after="200">
                     <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Confirmed hours deducted for this teacher." placement="top" :show-after="200">
+                  <el-tooltip content="Confirmed hours for this teacher in the current weekly schedule. Earlier lessons remain in the lesson history and package total." placement="top" :show-after="200">
                     <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
-                </span>
-                <span class="oo-student-context__metric">
-                  <el-tooltip content="Past lessons waiting for final processing." placement="top" :show-after="200">
-                    <small>Pending deduction</small>
-                  </el-tooltip>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
                 </span>
               </div>
             </div>
@@ -447,7 +442,7 @@
                 <strong>Total Hours:</strong> {{ formatHours(activePackage.totalUnits) }}h ·
                 <strong>Starting Hours:</strong> {{ formatHours(activePackage.startingHours) }}h ·
                 <strong>Allocated to {{ hours.teacherName }}:</strong> {{ formatHours(hours.allocatedUnits) }}h ·
-                <strong>Deducted by {{ hours.teacherName }}:</strong> {{ formatHours(hours.deductedUnits) }}h ·
+                <strong>Current schedule deducted by {{ hours.teacherName }}:</strong> {{ formatHours(hours.deductedUnits) }}h ·
                 <strong>Remaining with {{ hours.teacherName }}:</strong> {{ formatHours(hours.remainingUnits) }}h
               </p>
             </div>
@@ -1782,8 +1777,8 @@ async function submitAdjustLesson() {
 }
 
 function lessonRowClassName({ row }: { row: OneOnOneLesson }) {
-  if (nextActionLesson.value?.occurrenceId === row.occurrenceId) return 'oo-row--next';
   if (isPastUnprocessed(row)) return 'oo-row--overdue-unprocessed';
+  if (nextActionLesson.value?.occurrenceId === row.occurrenceId) return 'oo-row--next';
   if (row.confirmStage === 'PENDING_ADMIN') return 'oo-row--pending-admin';
   if (isRejectedOrAbnormal(row)) return 'oo-row--issue';
   return '';
@@ -2434,8 +2429,8 @@ onBeforeUnmount(() => signaturePrinter.detach());
 }
 
 .oo-mobile-lesson--overdue-unprocessed {
-  border-color: #f2d19b;
-  background: #fffaf0;
+  border-color: #f59e0b;
+  background: #fff3cd;
 }
 
 .oo-mobile-lesson__heading {
@@ -3060,7 +3055,11 @@ onBeforeUnmount(() => signaturePrinter.detach());
 }
 
 :deep(.oo-row--overdue-unprocessed) {
-  --el-table-tr-bg-color: #fffaf0;
+  --el-table-tr-bg-color: #fff3cd;
+}
+
+:deep(.oo-row--overdue-unprocessed > td:first-child) {
+  box-shadow: inset 4px 0 0 #f59e0b;
 }
 
 :deep(.oo-row--pending-admin) {

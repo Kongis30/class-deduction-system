@@ -3,6 +3,7 @@ package com.classdeduction.system.modules.schedule.service;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
+import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
@@ -26,6 +27,7 @@ import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotE
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
@@ -78,6 +80,12 @@ class RecurringScheduleRuleServiceImplTest {
 
     @Mock
     private LessonOccurrenceMapper lessonOccurrenceMapper;
+
+    @Mock
+    private LessonAdjustmentLogMapper lessonAdjustmentLogMapper;
+
+    @Mock
+    private JsonHelper jsonHelper;
 
     @Mock
     private ClassEnrollmentMapper classEnrollmentMapper;
@@ -134,6 +142,7 @@ class RecurringScheduleRuleServiceImplTest {
                 startingBalanceMapper,
                 recurringScheduleSlotMapper,
                 lessonOccurrenceMapper,
+                lessonAdjustmentLogMapper,
                 classEnrollmentMapper,
                 classGroupScheduleSlotMapper,
                 lessonRecordMapper,
@@ -142,7 +151,8 @@ class RecurringScheduleRuleServiceImplTest {
                 privateLessonGroupMemberMapper,
                 studentMapper,
                 teacherMapper,
-                classroomMapper
+                classroomMapper,
+                jsonHelper
         );
     }
 
@@ -552,6 +562,89 @@ class RecurringScheduleRuleServiceImplTest {
         assertThat(pausedRule.getRuleStatus()).isEqualTo("PAUSED");
         assertThat(result.generatedOccurrenceCount()).isZero();
         verify(lessonOccurrenceMapper, times(0)).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldKeepSchedulePeriodForNoOpAndCourseNameEdit() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        RecurringScheduleSlotRequest requestedSlot = request.getSlots().get(0);
+        requestedSlot.setSlotId(6001L);
+        request.setNotes(null);
+        RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
+        currentSlot.setId(6001L);
+        currentSlot.setRuleId(rule.getId());
+        currentSlot.setTeacherId(3001L);
+        currentSlot.setSubjectName("Math");
+        currentSlot.setWeekday(requestedSlot.getWeekday());
+        currentSlot.setStartTime(requestedSlot.getStartTime());
+        currentSlot.setEndTime(requestedSlot.getEndTime());
+        currentSlot.setPlannedUnits(requestedSlot.getPlannedUnits());
+        currentSlot.setAllocatedUnits(requestedSlot.getAllocatedUnits());
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+
+        assertThat(recurringScheduleRuleService.updateRule(5001L, request).ruleId()).isEqualTo(5001L);
+        requestedSlot.setSubjectName("New course name");
+        assertThat(recurringScheduleRuleService.updateRule(5001L, request).ruleId()).isEqualTo(5001L);
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleRuleEntity.class));
+        verify(lessonOccurrenceMapper, org.mockito.Mockito.never()).insert(any(LessonOccurrenceEntity.class));
+    }
+
+    @Test
+    void shouldCreateNewSchedulePeriodWhenOnlyTeacherChanges() {
+        RecurringScheduleRuleEntity existing = buildExistingRule();
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(28);
+        coursePackage.setConsumedUnits(0);
+        coursePackage.setRemainingUnits(28);
+        RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
+        request.getSlots().get(0).setSlotId(6001L);
+        request.getSlots().get(0).setTeacherId(3002L);
+        RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
+        oldSlot.setId(6001L);
+        oldSlot.setRuleId(existing.getId());
+        oldSlot.setTeacherId(3001L);
+        oldSlot.setSubjectName("Math");
+        oldSlot.setWeekday(1);
+        oldSlot.setStartTime(LocalTime.of(18, 0));
+        oldSlot.setEndTime(LocalTime.of(20, 0));
+        oldSlot.setPlannedUnits(4);
+        oldSlot.setAllocatedUnits(28);
+        oldSlot.setSlotStatus("ACTIVE");
+        TeacherEntity replacement = buildTeacher();
+        replacement.setId(3002L);
+
+        when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(existing);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3002L)).thenReturn(replacement);
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(oldSlot));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        doAnswer(invocation -> {
+            RecurringScheduleRuleEntity inserted = invocation.getArgument(0);
+            inserted.setId(5002L);
+            return 1;
+        }).when(recurringScheduleRuleMapper).insert(any(RecurringScheduleRuleEntity.class));
+        doAnswer(invocation -> {
+            RecurringScheduleSlotEntity inserted = invocation.getArgument(0);
+            inserted.setId(6002L);
+            return 1;
+        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
+
+        ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
+
+        assertThat(result.ruleId()).isEqualTo(5002L);
+        assertThat(existing.getRuleStatus()).isEqualTo("ENDED");
+        assertThat(existing.getSupersededByRuleId()).isEqualTo(5002L);
+        verify(recurringScheduleRuleMapper).insert(ruleCaptor.capture());
+        assertThat(ruleCaptor.getValue().getSupersedesRuleId()).isEqualTo(5001L);
     }
 
     @Test

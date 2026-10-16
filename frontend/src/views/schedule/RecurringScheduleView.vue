@@ -2134,7 +2134,7 @@ const allocatedHours = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
 );
 
-// 只有时段、单节时长或分配小时变化，才算重新安排；老师、教室和课程名称属于未来课程信息。
+// 时段、课时或老师变化建立新排课版本；教室和课程名称仅更新未来课次。
 const hasSchedulePlanChanges = computed(() => {
   if (!isEditing.value) return false;
   if (editForm.slots.length !== originalEditSlots.value.length) return true;
@@ -2147,6 +2147,7 @@ const hasSchedulePlanChanges = computed(() => {
       || slot.startTime !== original.startTime
       || slot.endTime !== original.endTime
       || slot.plannedUnits !== original.plannedUnits
+      || slot.teacherId !== original.teacherId
       || Number(slot.allocatedHours || 0) !== Number(original.allocatedHours || 0);
   });
 });

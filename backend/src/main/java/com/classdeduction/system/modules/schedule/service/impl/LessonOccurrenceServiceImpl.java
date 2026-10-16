@@ -1394,7 +1394,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 allocations -> teacherIds.addAll(allocations.keySet()));
         hoursContext.deductedByTeacherByPackage().values().forEach(
                 deductions -> teacherIds.addAll(deductions.keySet()));
-        hoursContext.futureScheduledByTeacherByPackage().values().forEach(
+        hoursContext.unconfirmedScheduledByTeacherByPackage().values().forEach(
                 remaining -> teacherIds.addAll(remaining.keySet()));
         return listTeachersByIds(teacherIds);
     }
@@ -1435,14 +1435,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private record PackageHoursContext(Map<Long, Integer> allocatedByPackage,
                                        Map<Long, Map<Long, Integer>> allocatedByTeacherByPackage,
                                        Map<Long, Map<Long, Integer>> deductedByTeacherByPackage,
-                                       Map<Long, Map<Long, Integer>> pendingProcessingByTeacherByPackage,
-                                       Map<Long, Map<Long, Integer>> futureScheduledByTeacherByPackage,
+                                       Map<Long, Map<Long, Integer>> unconfirmedScheduledByTeacherByPackage,
                                        Map<Long, Integer> scheduledByPackage,
                                        Map<Long, Integer> pendingAdminDeductionByPackage,
                                        Map<Long, Integer> pendingProcessingByPackage,
                                        Map<Long, Integer> unresolvedPastByPackage) {}
 
-    /** 与 Schedule 页面一样，按最新 ACTIVE 规则统计分配课时；余额和待确认课时单独计算。 */
+    /** 按最新 ACTIVE 规则统计分配课时；课包待确认余额和老师未确认课时分别统计。 */
     private PackageHoursContext loadPackageHoursContext(
             List<Long> packageIds, Map<Long, Integer> scheduledByPackage,
             Map<Long, Integer> unresolvedPastByPackage,
@@ -1450,10 +1449,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             LatestRecordIndex recordIndex) {
         Map<Long, Integer> pendingAdminDeductionByPackage = new HashMap<>();
         Map<Long, Integer> pendingProcessingByPackage = new HashMap<>();
-        Map<Long, Map<Long, Integer>> pendingProcessingByTeacherByPackage = new HashMap<>();
-        Map<Long, Map<Long, Integer>> futureScheduledByTeacherByPackage = new HashMap<>();
+        Map<Long, Map<Long, Integer>> unconfirmedScheduledByTeacherByPackage = new HashMap<>();
         LocalDateTime now = AppTime.nowLocalDateTime();
-        // 老师级 Remaining 统计当前老师未来有效的课次，避免将当前排课分配额与历史消课直接相减。
+        // 老师级 Remaining 汇总未来有效排课与过去未最终确认课次；不从累计分配额中扣历史消课。
         for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
             Long packageId = entry.getKey();
             List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
@@ -1468,7 +1466,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
                     pendingProcessingByPackage.merge(packageId, units, Integer::sum);
                     if (occurrence.getPlannedTeacherId() != null) {
-                        pendingProcessingByTeacherByPackage
+                        unconfirmedScheduledByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
                                 .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
                     }
@@ -1489,7 +1487,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
                 int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
                 if (units > 0) {
-                    futureScheduledByTeacherByPackage
+                    unconfirmedScheduledByTeacherByPackage
                             .computeIfAbsent(packageId, key -> new HashMap<>())
                             .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
                 }
@@ -1527,6 +1525,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, Long> currentRuleByPackage = new HashMap<>();
         Map<Long, Map<Long, Integer>> deductedByTeacherByPackage = new HashMap<>();
         if (!rules.isEmpty()) {
+            Map<Long, RecurringScheduleRuleEntity> rulesById = rules.stream()
+                    .collect(Collectors.toMap(RecurringScheduleRuleEntity::getId, Function.identity(),
+                            (first, ignored) -> first));
             // Schedule 列表每个课包只取最新 ACTIVE 规则，避免把旧的 PAUSED 规则再次计入。
             for (RecurringScheduleRuleEntity rule : rules) {
                 if (packageIds.contains(rule.getPackageId())) {
@@ -1567,6 +1568,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             for (Map.Entry<Long, Long> entry : currentRuleByPackage.entrySet()) {
                 Long packageId = entry.getKey();
                 Long currentRuleId = entry.getValue();
+                RecurringScheduleRuleEntity currentRule = rulesById.get(currentRuleId);
                 List<LessonOccurrenceEntity> packageOccurrences = occurrencesByPackage.getOrDefault(
                         packageId, Collections.emptyList());
                 Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
@@ -1577,7 +1579,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             || Objects.equals(record.getIsDeleted(), 1)) continue;
                     Long historicalTeacherId = occurrence.getPlannedTeacherId();
                     int units = Math.max(0, safeUnits(record.getDeductedUnits()));
-                    if ("CONFIRMED".equals(record.getConfirmStage()) && historicalTeacherId != null) {
+                    // 老师页只展示当前周期的消课；旧版本未来保留例外在本周期上完也应计入。
+                    if ("CONFIRMED".equals(record.getConfirmStage()) && historicalTeacherId != null
+                            && belongsToCurrentSchedulePeriod(occurrence, record, currentRule)) {
                         deductedByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
                                 .merge(historicalTeacherId, units, Integer::sum);
@@ -1616,9 +1620,22 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             }
         }
         return new PackageHoursContext(allocatedByPackage, allocatedByTeacherByPackage,
-                deductedByTeacherByPackage, pendingProcessingByTeacherByPackage,
-                futureScheduledByTeacherByPackage, scheduledByPackage,
+                deductedByTeacherByPackage, unconfirmedScheduledByTeacherByPackage, scheduledByPackage,
                 pendingAdminDeductionByPackage, pendingProcessingByPackage, unresolvedPastByPackage);
+    }
+
+    /** 历史规则保留的未来例外课次在新周期发生、确认后归新周期；旧课迟确认仍归旧周期。 */
+    private boolean belongsToCurrentSchedulePeriod(LessonOccurrenceEntity occurrence,
+                                                    LessonRecordEntity record,
+                                                    RecurringScheduleRuleEntity currentRule) {
+        if (Objects.equals(currentRule.getId(), occurrence.getScheduleRuleId())) {
+            return true;
+        }
+        LocalDateTime periodStart = currentRule.getCreatedAt();
+        return currentRule.getSupersedesRuleId() != null && periodStart != null
+                && occurrence.getPlannedStartAt() != null
+                && !occurrence.getPlannedStartAt().isBefore(periodStart)
+                && record.getConfirmedAt() != null && !record.getConfirmedAt().isBefore(periodStart);
     }
 
     /** 管理员按课包内实际排课的老师分别建立入口；老师账号查询时只保留本人入口。 */
@@ -1636,7 +1653,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
         teacherIds.addAll(hoursContext.allocatedByTeacherByPackage()
                 .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
-        teacherIds.addAll(hoursContext.futureScheduledByTeacherByPackage()
+        teacherIds.addAll(hoursContext.unconfirmedScheduledByTeacherByPackage()
                 .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
         return teacherIds.isEmpty() ? Collections.singleton(null) : teacherIds;
     }
@@ -1819,27 +1836,22 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .getOrDefault(packageId, Collections.emptyMap());
         Map<Long, Integer> deductedByTeacher = hoursContext.deductedByTeacherByPackage()
                 .getOrDefault(packageId, Collections.emptyMap());
-        Map<Long, Integer> pendingByTeacher = hoursContext.pendingProcessingByTeacherByPackage()
-                .getOrDefault(packageId, Collections.emptyMap());
-        Map<Long, Integer> remainingByTeacher = hoursContext.futureScheduledByTeacherByPackage()
+        Map<Long, Integer> unconfirmedByTeacher = hoursContext.unconfirmedScheduledByTeacherByPackage()
                 .getOrDefault(packageId, Collections.emptyMap());
         Set<Long> teacherIds = new LinkedHashSet<>(allocatedByTeacher.keySet());
         teacherIds.addAll(deductedByTeacher.keySet());
-        teacherIds.addAll(pendingByTeacher.keySet());
-        teacherIds.addAll(remainingByTeacher.keySet());
+        teacherIds.addAll(unconfirmedByTeacher.keySet());
         return teacherIds.stream()
                 .map(teacherId -> {
                     int allocated = allocatedByTeacher.getOrDefault(teacherId, 0);
                     int deducted = deductedByTeacher.getOrDefault(teacherId, 0);
-                    int pending = pendingByTeacher.getOrDefault(teacherId, 0);
                     TeacherEntity teacher = teacherMap.get(teacherId);
                     return OneOnOneTeacherHoursVO.builder()
                             .teacherId(teacherId)
                             .teacherName(teacher == null ? null : teacher.getTeacherName())
                             .allocatedUnits(UnitConverter.toHoursDecimal(allocated))
                             .deductedUnits(UnitConverter.toHoursDecimal(deducted))
-                            .pendingDeductionUnits(UnitConverter.toHoursDecimal(pending))
-                            .remainingUnits(UnitConverter.toHoursDecimal(remainingByTeacher.getOrDefault(teacherId, 0)))
+                            .remainingUnits(UnitConverter.toHoursDecimal(unconfirmedByTeacher.getOrDefault(teacherId, 0)))
                             .build();
                 })
                 .sorted(Comparator.comparing(item -> item.teacherName() == null ? "" : item.teacherName(),

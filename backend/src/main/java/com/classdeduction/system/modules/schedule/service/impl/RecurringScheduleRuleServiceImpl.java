@@ -597,7 +597,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 newOccurrences.size(), confirmedCount, firstStart, lastEnd);
     }
 
-    /** 判断是否只改老师、教室或课程名称；此类编辑不改变排课计划和小时分配。 */
+    /** 课程名称、教室和备注仅更新未来课次；更换老师必须建立新排课版本。 */
     private boolean isCourseDetailsOnlyChange(RecurringScheduleRuleEntity rule,
                                               List<RecurringScheduleSlotEntity> currentSlots,
                                               RecurringScheduleRuleUpdateRequest request,
@@ -617,7 +617,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .distinct().count() != request.getSlots().size()) {
             return false;
         }
-        boolean changed = !Objects.equals(rule.getNotes(), request.getNotes());
         for (RecurringScheduleSlotRequest requested : request.getSlots()) {
             if (requested.getSlotId() == null) return false;
             RecurringScheduleSlotEntity current = currentById.get(requested.getSlotId());
@@ -629,12 +628,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     || !Objects.equals(current.getAllocatedUnits(), requested.getAllocatedUnits())) {
                 return false;
             }
-            changed |= !Objects.equals(current.getTeacherId(), requested.getTeacherId())
-                    || !Objects.equals(current.getDeliveryMode(), requested.getDeliveryMode())
-                    || !Objects.equals(current.getClassroomId(), requested.getClassroomId())
-                    || !Objects.equals(current.getSubjectName(), requested.getSubjectName());
+            if (!Objects.equals(current.getTeacherId(), requested.getTeacherId())) {
+                return false;
+            }
         }
-        return changed;
+        // 无变化的保存也走原位更新，避免删除并重建同一版本的未来课次。
+        return true;
     }
 
     /** 只同步未来、未开始且未进入消课流程的课次，不删除或重建课次、不改变分配额。 */
@@ -1028,9 +1027,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             RecurringScheduleSlotEntity current = sortedCurrent.get(index);
             RecurringScheduleSlotRequest requested = sortedRequested.get(index);
             if (!Objects.equals(current.getTeacherId(), requested.getTeacherId())
-                    || !Objects.equals(current.getDeliveryMode(), requested.getDeliveryMode())
-                    || !Objects.equals(current.getClassroomId(), requested.getClassroomId())
-                    || !Objects.equals(current.getSubjectName(), requested.getSubjectName())
                     || !Objects.equals(current.getWeekday(), requested.getWeekday())
                     || !Objects.equals(current.getStartTime(), requested.getStartTime())
                     || !Objects.equals(current.getEndTime(), requested.getEndTime())
