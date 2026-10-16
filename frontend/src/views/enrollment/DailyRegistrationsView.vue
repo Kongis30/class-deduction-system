@@ -84,6 +84,18 @@
             </tbody>
           </table>
         </div>
+        <div v-if="appStore.isMobileViewport" class="daily-mobile-list daily-mobile-operators">
+          <article v-for="operator in visibleOperators" :key="String(operator.operatorUserId ?? operator.operatorName)" class="daily-mobile-card">
+            <div class="daily-mobile-card__header"><strong>{{ operator.operatorName || 'Operator not recorded' }}</strong><span>{{ operator.courseRegistrationCount }} course records</span></div>
+            <div class="daily-mobile-card__grid">
+              <div><span>Students</span><strong>{{ operator.uniqueStudentCount }}</strong></div>
+              <div><span>Orders</span><strong>{{ operator.orderCount }}</strong></div>
+              <div><span>Amount due</span><strong>{{ money(operator.amountDue) }}</strong></div>
+              <div><span>Collected</span><strong>{{ money(operator.amountCollected) }}</strong></div>
+            </div>
+          </article>
+          <el-empty v-if="!loading && visibleOperators.length === 0" description="No operator totals" />
+        </div>
       </section>
 
       <section class="daily-sheet history-sheet">
@@ -207,6 +219,20 @@
             </tbody>
           </table>
         </div>
+        <div v-if="appStore.isMobileViewport" class="daily-mobile-list">
+          <article v-for="row in filteredSortedRows" :key="rowKey(row)" class="daily-mobile-card">
+            <div class="daily-mobile-card__header"><div><strong>{{ display(row.studentName) }}</strong><span>{{ display(row.courseName) }}</span></div><span>{{ dateTime(row.savedAt) }}</span></div>
+            <div class="daily-mobile-card__meta">{{ display(row.className) }} · {{ display(row.grade) }} · {{ display(row.operatorName, 'Operator not recorded') }}</div>
+            <div class="daily-mobile-card__grid">
+              <div><span>Pay method</span><strong>{{ display(row.paymentMethod) }}</strong></div>
+              <div><span>Status</span><strong>{{ display(row.paymentStatus) }}</strong></div>
+              <div><span>Amount due</span><strong>{{ money(row.amountDue) }}</strong></div>
+              <div><span>Collected</span><strong>{{ money(row.amountCollected) }}</strong></div>
+              <div><span>Outstanding</span><strong :class="{ 'daily-registration-outstanding': Number(row.outstandingAmount ?? 0) > 0 }">{{ money(row.outstandingAmount) }}</strong></div>
+            </div>
+          </article>
+          <el-empty v-if="!loading && filteredSortedRows.length === 0" description="No registrations match the current filters" />
+        </div>
       </section>
     </div>
   </div>
@@ -219,6 +245,7 @@ import * as XLSX from 'xlsx';
 
 import { fetchDailyRegistrations, type DailyRegistrationOperatorSummary, type DailyRegistrationReport, type DailyRegistrationRow } from '@/api/daily-registrations';
 import { extractErrorMessage } from '@/api/http';
+import { useAppStore } from '@/stores/app';
 
 type ColumnKey = 'savedAt' | 'studentName' | 'courseName' | 'className' | 'grade' | 'operatorName' | 'paymentMethod' | 'paymentStatus' | 'amountDue' | 'amountCollected' | 'outstandingAmount';
 type FilterType = 'text' | 'select' | 'date' | 'number';
@@ -240,6 +267,7 @@ const columns: Column[] = [
 ];
 
 const selectedDate = ref(todayInNewYork());
+const appStore = useAppStore();
 const operatorUserId = ref('');
 const report = ref<DailyRegistrationReport>();
 const operatorOptions = ref<DailyRegistrationOperatorSummary[]>([]);
@@ -504,6 +532,7 @@ function rowKey(row: DailyRegistrationRow) {
 .daily-date-group span { margin-left: 10px; color: #76857f; font-size: 11px; font-weight: 500; }
 .daily-registration-outstanding { color: #bd2431; font-weight: 700; }
 .daily-registration-pill--refunded { background: #6b7280; color: #fff; }
+.daily-mobile-list { display: none; }
 
 @media (max-width: 900px) {
   .daily-workbook-page { height: auto; min-height: calc(100vh - 88px); }
@@ -515,6 +544,20 @@ function rowKey(row: DailyRegistrationRow) {
 }
 
 @media (max-width: 640px) {
+  .daily-sheet__scroll { display: none; }
+  .daily-mobile-list { display: grid; gap: 10px; padding: 10px; }
+  .daily-mobile-card { padding: 12px; border: 1px solid #c9d9e2; border-radius: 10px; background: #fff; box-shadow: 0 2px 8px rgba(31, 63, 54, .05); }
+  .daily-mobile-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .daily-mobile-card__header > div { min-width: 0; display: grid; gap: 3px; }
+  .daily-mobile-card__header strong { color: #1f3f36; font-size: 14px; }
+  .daily-mobile-card__header span { color: #71808a; font-size: 11px; text-align: right; }
+  .daily-mobile-card__header > div span { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .daily-mobile-card__meta { margin-top: 5px; color: #71808a; font-size: 11px; }
+  .daily-mobile-card__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid #edf1f4; }
+  .daily-mobile-card__grid > div { display: grid; gap: 2px; }
+  .daily-mobile-card__grid span { color: #87949b; font-size: 11px; }
+  .daily-mobile-card__grid strong { color: #40535d; font-size: 12px; }
+  .daily-mobile-operators { padding-top: 0; }
   .daily-workbook-toolbar__stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .daily-workbook-toolbar__stat { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0; }
   .daily-workbook-toolbar__stat em { white-space: normal; }
