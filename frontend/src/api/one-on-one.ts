@@ -77,6 +77,7 @@ export interface OneOnOneTeacherHours {
 export interface OneOnOneScheduleChange {
   ruleId: EntityId;
   changedAt?: string;
+  legacySlotBoundary?: boolean;
 }
 
 export interface OneOnOnePackage {

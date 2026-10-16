@@ -121,6 +121,7 @@ class LessonOccurrenceServiceImplTest {
                 .thenAnswer(invocation -> lessonOccurrenceMapper.selectById(invocation.getArgument(0)));
         lenient().when(classGroupMapper.selectByIdForUpdate(any()))
                 .thenAnswer(invocation -> classGroupMapper.selectById(invocation.getArgument(0)));
+        lenient().when(recurringScheduleSlotMapper.selectList(any())).thenReturn(Collections.emptyList());
         lessonOccurrenceService = new LessonOccurrenceServiceImpl(
                 lessonOccurrenceMapper,
                 lessonRecordMapper,
@@ -859,6 +860,11 @@ class LessonOccurrenceServiceImplTest {
                 new OneOnOneDeductionQuery(), null).get(0);
         assertThat(teacher.students().get(0).packages()).singleElement().satisfies(pkg -> {
             assertThat(pkg.consumedUnits()).isEqualTo(2.0);
+            assertThat(pkg.scheduleChanges()).singleElement().satisfies(change -> {
+                assertThat(change.ruleId()).isEqualTo(5001L);
+                assertThat(change.changedAt()).isEqualTo(lastAllocationEdit);
+                assertThat(change.legacySlotBoundary()).isTrue();
+            });
             assertThat(pkg.teacherHours()).singleElement().satisfies(hours -> {
                 assertThat(hours.allocatedUnits()).isEqualTo(8.0);
                 assertThat(hours.deductedUnits()).isZero();

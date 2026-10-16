@@ -1100,7 +1100,7 @@ const pendingTeacherCount = computed(() =>
 const pendingAdminCount = computed(() =>
   activePackage.value?.lessons.filter(row => row.confirmStage === 'PENDING_ADMIN').length ?? 0
 );
-// 按排课版本分组展示课次；过去调课可能生成早于保存时间的课次，不能用上课日期推断版本。
+// 优先按规则版本分组；旧数据复用规则 ID 时，使用 API 提供的课位快照边界拆分周期。
 const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
   const pkg = activePackage.value;
   if (!pkg) return [];

@@ -855,23 +855,65 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                 .or(!packageIdsByGroup.isEmpty(), group -> group.in(
                                         RecurringScheduleRuleEntity::getPrivateLessonGroupId,
                                         packageIdsByGroup.keySet())))
-                        .isNotNull(RecurringScheduleRuleEntity::getSupersedesRuleId)
-                        .orderByAsc(RecurringScheduleRuleEntity::getCreatedAt)
-                        .orderByAsc(RecurringScheduleRuleEntity::getId));
-        Map<Long, Map<Long, OneOnOneScheduleChangeVO>> changesByPackage = new HashMap<>();
+                        .eq(RecurringScheduleRuleEntity::getIsDeleted, 0)
+                        .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt)
+                        .orderByDesc(RecurringScheduleRuleEntity::getId));
+        Map<Long, RecurringScheduleRuleEntity> currentRulesByPackage = new HashMap<>();
         for (RecurringScheduleRuleEntity rule : rules) {
-            if (rule.getId() == null || rule.getSupersedesRuleId() == null) {
+            if (!"ACTIVE".equals(rule.getRuleStatus())) {
                 continue;
             }
-            OneOnOneScheduleChangeVO change = new OneOnOneScheduleChangeVO(rule.getId(), rule.getCreatedAt());
-            Set<Long> affectedPackageIds = new HashSet<>(packageIdsByGroup.getOrDefault(
-                    rule.getPrivateLessonGroupId(), Collections.emptySet()));
-            if (packageIdSet.contains(rule.getPackageId())) {
-                affectedPackageIds.add(rule.getPackageId());
+            for (Long affectedPackageId : scheduleChangeAffectedPackageIds(rule, packageIdSet,
+                    packageIdsByGroup)) {
+                currentRulesByPackage.putIfAbsent(affectedPackageId, rule);
             }
-            for (Long packageId : affectedPackageIds) {
-                changesByPackage.computeIfAbsent(packageId, ignored -> new LinkedHashMap<>())
-                        .putIfAbsent(rule.getId(), change);
+        }
+        Set<Long> currentRuleIds = currentRulesByPackage.values().stream()
+                .map(RecurringScheduleRuleEntity::getId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Map<Long, LocalDateTime> currentSlotStartsByRule = new HashMap<>();
+        if (!currentRuleIds.isEmpty()) {
+            List<RecurringScheduleSlotEntity> currentSlots = recurringScheduleSlotMapper.selectList(
+                    new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                            .in(RecurringScheduleSlotEntity::getRuleId, currentRuleIds)
+                            .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE")
+                            .eq(RecurringScheduleSlotEntity::getIsDeleted, 0));
+            for (RecurringScheduleSlotEntity slot : currentSlots) {
+                if (slot.getCreatedAt() != null) {
+                    currentSlotStartsByRule.merge(slot.getRuleId(), slot.getCreatedAt(),
+                            (previous, createdAt) -> previous.isAfter(createdAt) ? previous : createdAt);
+                }
+            }
+        }
+        Map<Long, Map<Long, OneOnOneScheduleChangeVO>> changesByPackage = new HashMap<>();
+        for (RecurringScheduleRuleEntity rule : rules) {
+            if (rule.getId() == null) {
+                continue;
+            }
+            if (rule.getSupersedesRuleId() != null) {
+                OneOnOneScheduleChangeVO change = new OneOnOneScheduleChangeVO(
+                        rule.getId(), rule.getCreatedAt(), false);
+                for (Long affectedPackageId : scheduleChangeAffectedPackageIds(rule, packageIdSet,
+                        packageIdsByGroup)) {
+                    changesByPackage.computeIfAbsent(affectedPackageId, ignored -> new LinkedHashMap<>())
+                            .putIfAbsent(rule.getId(), change);
+                }
+            }
+
+            // 老数据曾原位替换课位而复用规则 ID；用当前有效课位快照时间标出同周期余额统计的边界。
+            if (rule.getSupersedesRuleId() == null && "ACTIVE".equals(rule.getRuleStatus())) {
+                LocalDateTime slotPeriodStart = currentSlotStartsByRule.get(rule.getId());
+                if (slotPeriodStart != null && rule.getCreatedAt() != null
+                        && slotPeriodStart.isAfter(rule.getCreatedAt())) {
+                    OneOnOneScheduleChangeVO change = new OneOnOneScheduleChangeVO(
+                            rule.getId(), slotPeriodStart, true);
+                    for (Long affectedPackageId : scheduleChangeAffectedPackageIds(rule, packageIdSet,
+                            packageIdsByGroup)) {
+                        changesByPackage.computeIfAbsent(affectedPackageId, ignored -> new LinkedHashMap<>())
+                                .putIfAbsent(rule.getId(), change);
+                    }
+                }
             }
         }
         Comparator<OneOnOneScheduleChangeVO> byTime = Comparator
@@ -881,6 +923,18 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         return changesByPackage.entrySet().stream().collect(Collectors.toMap(
                 Map.Entry::getKey,
                 entry -> entry.getValue().values().stream().sorted(byTime).toList()));
+    }
+
+    /** 将排课版本映射到直接课包及同一私教组的成员课包。 */
+    private Set<Long> scheduleChangeAffectedPackageIds(RecurringScheduleRuleEntity rule,
+                                                        Set<Long> packageIds,
+                                                        Map<Long, Set<Long>> packageIdsByGroup) {
+        Set<Long> affectedPackageIds = new HashSet<>(packageIdsByGroup.getOrDefault(
+                rule.getPrivateLessonGroupId(), Collections.emptySet()));
+        if (packageIds.contains(rule.getPackageId())) {
+            affectedPackageIds.add(rule.getPackageId());
+        }
+        return affectedPackageIds;
     }
 
     private boolean isOneOnOnePackage(CoursePackageEntity coursePackage, CourseProductEntity courseProduct) {
