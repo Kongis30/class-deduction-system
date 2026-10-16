@@ -334,26 +334,28 @@
               <span>{{ activePackage.packageName }}</span>
             </div>
             <div class="oo-student-context__metrics">
-              <span>
-                <small>Total Hours</small>{{ formatHours(activePackage.totalUnits) }}h
-              </span>
-              <span title="The opening balance set in Package Hours. Lesson deductions and schedule edits do not change it.">
-                <small>Starting Hours</small>{{ formatHours(activePackage.startingHours) }}h
-              </span>
-              <span
-                title="Hours allocated to this teacher in the current schedule. Lesson deductions do not change this allocation."
-              >
-                <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
-              </span>
-              <span title="Confirmed deductions from lessons assigned to this teacher in the current schedule.">
-                <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
-              </span>
-              <span title="Lesson hours assigned to this teacher that are awaiting admin confirmation. These hours are not included in deducted or remaining hours.">
-                <small>Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
-              </span>
-              <span title="This teacher's current allocation minus confirmed deductions in the current schedule.">
-                <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
-              </span>
+              <div class="oo-student-context__metric-group" role="group" aria-label="Package hours">
+                <span class="oo-student-context__metric">
+                  <small>Total Hours</small>{{ formatHours(activePackage.totalUnits) }}h
+                </span>
+                <span class="oo-student-context__metric" title="The opening balance set in Package Hours. Lesson deductions and schedule edits do not change it.">
+                  <small>Starting Hours</small>{{ formatHours(activePackage.startingHours) }}h
+                </span>
+                <span class="oo-student-context__metric" title="The package balance after confirmed lesson deductions. Pending lessons and schedule edits do not reduce it.">
+                  <small>Remaining Hours</small>{{ formatHours(activePackage.remainingUnits) }}h
+                </span>
+              </div>
+              <div class="oo-student-context__metric-group oo-student-context__metric-group--teacher" role="group" :aria-label="`Hours for ${activeTeacher?.teacherName || 'teacher'}`">
+                <span class="oo-student-context__metric">
+                  <small>Allocated to {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
+                </span>
+                <span class="oo-student-context__metric" title="Confirmed deductions from lessons assigned to this teacher.">
+                  <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
+                </span>
+                <span class="oo-student-context__metric" title="Lesson hours assigned to this teacher that are awaiting admin confirmation. These hours have not yet been deducted from the package balance.">
+                  <small>Pending deduction</small>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
+                </span>
+              </div>
             </div>
           </div>
           <el-alert
@@ -2146,6 +2148,7 @@ onBeforeUnmount(() => signaturePrinter.detach());
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 10px;
   padding: 10px 12px;
@@ -2173,20 +2176,33 @@ onBeforeUnmount(() => signaturePrinter.detach());
   font-weight: 600;
 }
 
-.oo-student-context div > span {
+.oo-student-context > div:first-child > span {
   margin-top: 2px;
   color: #64748b;
   font-size: 12px;
 }
 
 .oo-student-context__metrics {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(82px, 1fr));
+  display: flex;
   align-items: center;
-  gap: 8px 12px;
+  gap: 16px;
+  margin-left: auto;
+  max-width: 100%;
 }
 
-.oo-student-context__metrics > span {
+.oo-student-context__metric-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(82px, 1fr));
+  align-items: center;
+  gap: 12px;
+}
+
+.oo-student-context__metric-group--teacher {
+  border-left: 1px solid #cbd5e1;
+  padding-left: 16px;
+}
+
+.oo-student-context__metric {
   color: #102a43;
   font-size: 15px;
   font-weight: 800;
@@ -3269,13 +3285,28 @@ onBeforeUnmount(() => signaturePrinter.detach());
 
   .oo-student-context__metrics {
     grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
-    gap: 8px 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
     margin-top: 10px;
+    margin-left: 0;
+    max-width: none;
   }
 
-  .oo-student-context__metrics > span {
+  .oo-student-context__metric-group {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .oo-student-context__metric-group--teacher {
+    border-top: 1px solid #cbd5e1;
+    border-left: 0;
+    padding-top: 8px;
+    padding-left: 0;
+  }
+
+  .oo-student-context__metric {
     min-width: 0;
     font-size: 13px;
     text-align: left;
