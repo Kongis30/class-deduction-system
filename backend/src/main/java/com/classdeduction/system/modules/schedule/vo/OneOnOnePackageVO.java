@@ -35,6 +35,7 @@ public record OneOnOnePackageVO(
         Integer participantCount,
         Boolean privateLessonGroupPrimary,
         List<OneOnOneParticipantVO> participants,
-        List<OneOnOneLessonVO> lessons
+        List<OneOnOneLessonVO> lessons,
+        List<OneOnOneScheduleChangeVO> scheduleChanges
 ) {
 }

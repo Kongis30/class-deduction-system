@@ -74,6 +74,11 @@ export interface OneOnOneTeacherHours {
   remainingUnits: number;
 }
 
+export interface OneOnOneScheduleChange {
+  ruleId: EntityId;
+  changedAt?: string;
+}
+
 export interface OneOnOnePackage {
   packageId: EntityId;
   packageNo: string;
@@ -103,6 +108,7 @@ export interface OneOnOnePackage {
   privateLessonGroupPrimary?: boolean;
   participants?: OneOnOneParticipant[];
   lessons: OneOnOneLesson[];
+  scheduleChanges?: OneOnOneScheduleChange[];
 }
 
 export interface OneOnOneStudent {

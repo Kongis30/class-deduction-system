@@ -30,6 +30,7 @@ import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassEnrollmentMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
@@ -394,6 +395,49 @@ class LessonOccurrenceServiceImplTest {
                     assertThat(lesson.planningStatus()).isEqualTo("SCHEDULED");
                     assertThat(lesson.plannedTeacherName()).isEqualTo("Ms Lee");
                 });
+    }
+
+    @Test
+    void shouldExposeOnlyRealScheduleVersionChangesInLessonHistory() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
+        occurrence.setScheduleRuleId(5003L);
+        RecurringScheduleRuleEntity initialRule = new RecurringScheduleRuleEntity();
+        initialRule.setId(5001L);
+        initialRule.setPackageId(coursePackage.getId());
+        initialRule.setRuleStatus("ENDED");
+        RecurringScheduleRuleEntity firstChange = new RecurringScheduleRuleEntity();
+        firstChange.setId(5002L);
+        firstChange.setPackageId(coursePackage.getId());
+        firstChange.setSupersedesRuleId(5001L);
+        firstChange.setCreatedAt(LocalDateTime.of(2026, 10, 8, 11, 30));
+        firstChange.setRuleStatus("ENDED");
+        RecurringScheduleRuleEntity secondChange = new RecurringScheduleRuleEntity();
+        secondChange.setId(5003L);
+        secondChange.setPackageId(coursePackage.getId());
+        secondChange.setSupersedesRuleId(5002L);
+        secondChange.setCreatedAt(LocalDateTime.of(2026, 10, 10, 9, 15));
+        secondChange.setRuleStatus("ACTIVE");
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(recurringScheduleRuleMapper.selectList(any()))
+                .thenReturn(List.of(secondChange, initialRule, firstChange), List.of(secondChange));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null).get(0);
+
+        assertThat(teacher.students().get(0).packages()).singleElement().satisfies(pkg -> {
+            assertThat(pkg.lessons()).hasSize(1);
+            assertThat(pkg.scheduleChanges()).extracting(change -> change.ruleId())
+                    .containsExactly(5002L, 5003L);
+            assertThat(pkg.scheduleChanges()).extracting(change -> change.changedAt())
+                    .containsExactly(LocalDateTime.of(2026, 10, 8, 11, 30),
+                            LocalDateTime.of(2026, 10, 10, 9, 15));
+        });
     }
 
     @Test

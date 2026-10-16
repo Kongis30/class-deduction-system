@@ -47,6 +47,7 @@ import com.classdeduction.system.modules.schedule.vo.ClassroomOccupancyVO;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneLessonVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOnePackageVO;
+import com.classdeduction.system.modules.schedule.vo.OneOnOneScheduleChangeVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneParticipantVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneStudentVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
@@ -767,6 +768,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         }
         packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
         Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersForView = loadPrivateGroupMembersByPackage(packageIds);
+        Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage =
+                loadOneOnOneScheduleChanges(packageIds, groupMembersForView);
         List<CoursePackageEntity> packagesForParticipantContext = new ArrayList<>(packages);
         Set<Long> relatedPackageIds = groupMembersForView.values().stream()
                 .flatMap(List::stream)
@@ -831,8 +834,53 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .map(teacherEntry -> toOneOnOneTeacherVO(teacherEntry.getKey(), teacherEntry.getValue(),
                         studentMap, teacherMap, classroomMap, courseProductMap, orderItemMap,
                         occurrenceMap, recordIndex, hoursContext, statusNameMap,
-                        groupMembersForView, resolvedPackages))
+                        groupMembersForView, resolvedPackages, scheduleChangesByPackage))
                 .toList();
+    }
+
+    /** 一次读取排课版本，按课包与共享私教组分发，避免逐个学生查询。 */
+    private Map<Long, List<OneOnOneScheduleChangeVO>> loadOneOnOneScheduleChanges(
+            List<Long> packageIds,
+            Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage) {
+        Set<Long> packageIdSet = new HashSet<>(packageIds);
+        Map<Long, Set<Long>> packageIdsByGroup = new HashMap<>();
+        groupMembersByPackage.forEach((packageId, members) -> members.stream()
+                .map(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId)
+                .filter(Objects::nonNull)
+                .forEach(groupId -> packageIdsByGroup.computeIfAbsent(groupId, ignored -> new HashSet<>())
+                        .add(packageId)));
+        List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
+                new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .and(wrapper -> wrapper.in(RecurringScheduleRuleEntity::getPackageId, packageIds)
+                                .or(!packageIdsByGroup.isEmpty(), group -> group.in(
+                                        RecurringScheduleRuleEntity::getPrivateLessonGroupId,
+                                        packageIdsByGroup.keySet())))
+                        .isNotNull(RecurringScheduleRuleEntity::getSupersedesRuleId)
+                        .orderByAsc(RecurringScheduleRuleEntity::getCreatedAt)
+                        .orderByAsc(RecurringScheduleRuleEntity::getId));
+        Map<Long, Map<Long, OneOnOneScheduleChangeVO>> changesByPackage = new HashMap<>();
+        for (RecurringScheduleRuleEntity rule : rules) {
+            if (rule.getId() == null || rule.getSupersedesRuleId() == null) {
+                continue;
+            }
+            OneOnOneScheduleChangeVO change = new OneOnOneScheduleChangeVO(rule.getId(), rule.getCreatedAt());
+            Set<Long> affectedPackageIds = new HashSet<>(packageIdsByGroup.getOrDefault(
+                    rule.getPrivateLessonGroupId(), Collections.emptySet()));
+            if (packageIdSet.contains(rule.getPackageId())) {
+                affectedPackageIds.add(rule.getPackageId());
+            }
+            for (Long packageId : affectedPackageIds) {
+                changesByPackage.computeIfAbsent(packageId, ignored -> new LinkedHashMap<>())
+                        .putIfAbsent(rule.getId(), change);
+            }
+        }
+        Comparator<OneOnOneScheduleChangeVO> byTime = Comparator
+                .comparing(OneOnOneScheduleChangeVO::changedAt,
+                        Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(OneOnOneScheduleChangeVO::ruleId);
+        return changesByPackage.entrySet().stream().collect(Collectors.toMap(
+                Map.Entry::getKey,
+                entry -> entry.getValue().values().stream().sorted(byTime).toList()));
     }
 
     private boolean isOneOnOnePackage(CoursePackageEntity coursePackage, CourseProductEntity courseProduct) {
@@ -1670,12 +1718,13 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   PackageHoursContext hoursContext,
                                                   Map<String, String> statusNameMap,
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
-                                                  List<CoursePackageEntity> allPackages) {
+                                                  List<CoursePackageEntity> allPackages,
+                                                  Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage) {
         List<OneOnOneStudentVO> students = studentPackages.entrySet().stream()
                 .map(entry -> toOneOnOneStudentVO(entry.getKey(), entry.getValue(), studentMap, teacherMap,
                         classroomMap, courseProductMap, orderItemMap, occurrenceMap, recordIndex,
                         hoursContext, statusNameMap,
-                        groupMembersByPackage, allPackages, teacherId))
+                        groupMembersByPackage, allPackages, scheduleChangesByPackage, teacherId))
                 .toList();
         TeacherEntity teacher = teacherId == null ? null : teacherMap.get(teacherId);
         int packageCount = studentPackages.values().stream().mapToInt(List::size).sum();
@@ -1709,13 +1758,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<String, String> statusNameMap,
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
                                                   List<CoursePackageEntity> allPackages,
+                                                  Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage,
                                                   Long teacherId) {
         StudentEntity student = studentMap.get(studentId);
         List<OneOnOnePackageVO> packageVOs = packages.stream()
                 .map(item -> toOneOnOnePackageVO(item, teacherMap, classroomMap, courseProductMap,
                         orderItemMap, occurrenceMap, recordIndex, hoursContext, statusNameMap,
                         groupMembersByPackage, allPackages,
-                        studentMap, teacherId))
+                        studentMap, teacherId, scheduleChangesByPackage))
                 .toList();
         UnitSummary units = summarizeUnits(packages);
         return OneOnOneStudentVO.builder()
@@ -1744,7 +1794,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
                                                   List<CoursePackageEntity> allPackages,
                                                   Map<Long, StudentEntity> studentMap,
-                                                  Long teacherId) {
+                                                  Long teacherId,
+                                                  Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage) {
         // 课包可由多位老师轮流授课；详情只返回当前老师负责的排课记录，避免跨老师混在一起。
         List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList())
                 .stream()
@@ -1826,6 +1877,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .privateLessonGroupPrimary(primary)
                 .participants(participants)
                 .lessons(lessons)
+                .scheduleChanges(scheduleChangesByPackage.getOrDefault(packageId, Collections.emptyList()))
                 .build();
     }
 

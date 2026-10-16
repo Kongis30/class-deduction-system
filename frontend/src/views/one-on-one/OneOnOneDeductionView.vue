@@ -524,35 +524,42 @@
 
           <el-table
             v-if="!appStore.isMobileViewport"
-            :data="activePackage.lessons"
+            :data="lessonTimelineRows"
             border
             stripe
             size="small"
             class="oo-table sheet-table no-print"
             :row-class-name="lessonRowClassName"
+            :span-method="lessonTimelineSpanMethod"
           >
             <el-table-column label="Course" min-width="150">
               <template #default="{ row }">
-                <div class="oo-simple-cell">
-                  <strong>{{ signatureCourseLabel(row) }}</strong>
-                  <span v-if="row.actualTeacherName || row.plannedTeacherName">
-                    {{ displayResourceName(row.actualTeacherName || row.plannedTeacherName) }}
+                <div v-if="row.kind === 'change'" class="oo-schedule-change">
+                  <span class="oo-schedule-change__line" aria-hidden="true"></span>
+                  <strong>Schedule adjusted · {{ formatScheduleChangeTime(row.change.changedAt) }}</strong>
+                  <span class="oo-schedule-change__line" aria-hidden="true"></span>
+                </div>
+                <div v-else class="oo-simple-cell">
+                  <strong>{{ signatureCourseLabel(row.lesson) }}</strong>
+                  <span v-if="row.lesson.actualTeacherName || row.lesson.plannedTeacherName">
+                    {{ displayResourceName(row.lesson.actualTeacherName || row.lesson.plannedTeacherName) }}
                   </span>
+                  <span v-if="isKeptFromPreviousSchedule(row.lesson)" class="oo-schedule-change__kept">Kept from previous schedule</span>
                 </div>
               </template>
             </el-table-column>
             <el-table-column label="Date & time" min-width="150" align="center" header-align="center">
               <template #default="{ row }">
-                <div class="oo-simple-cell oo-simple-cell--center">
-                  <strong>{{ formatDate(row.plannedStartAt) }}</strong>
-                  <span>{{ formatTimeRange(row.plannedStartAt, row.plannedEndAt) }}</span>
+                <div v-if="row.kind === 'lesson'" class="oo-simple-cell oo-simple-cell--center">
+                  <strong>{{ formatDate(row.lesson.plannedStartAt) }}</strong>
+                  <span>{{ formatTimeRange(row.lesson.plannedStartAt, row.lesson.plannedEndAt) }}</span>
                 </div>
               </template>
             </el-table-column>
             <el-table-column label="Status" min-width="155" align="center" header-align="center">
               <template #default="{ row }">
-                <el-tag class="status-pill" :class="statusPillClass(row)" size="small" :type="statusTag(row)">
-                  {{ statusLabel(row) }}
+                <el-tag v-if="row.kind === 'lesson'" class="status-pill" :class="statusPillClass(row.lesson)" size="small" :type="statusTag(row.lesson)">
+                  {{ statusLabel(row.lesson) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -566,20 +573,20 @@
               header-align="center"
             >
               <template #default="{ row }">
-                <div class="oo-action-cell">
+                <div v-if="row.kind === 'lesson'" class="oo-action-cell">
                   <div class="oo-action-slot oo-action-slot--adjust">
                     <el-button
-                      v-if="canAdjustLesson(row)"
+                      v-if="canAdjustLesson(row.lesson)"
                       size="small"
                       plain
-                      @click="openAdjustDialog(row)"
+                      @click="openAdjustDialog(row.lesson)"
                     >
                       Adjust
                     </el-button>
                   </div>
                   <div class="oo-action-slot oo-action-slot--primary">
                     <el-tooltip
-                      v-if="needsLessonResources(row)"
+                      v-if="needsLessonResources(row.lesson)"
                       content="Set a teacher before deduction."
                       placement="top"
                     >
@@ -588,25 +595,25 @@
                       </span>
                     </el-tooltip>
                     <el-button
-                      v-else-if="canAdminConfirm(row)"
+                      v-else-if="canAdminConfirm(row.lesson)"
                       class="action-primary"
                       type="warning"
                       size="small"
-                      @click="openConfirm(row, 'admin')"
+                      @click="openConfirm(row.lesson, 'admin')"
                     >
                       Review & deduct
                     </el-button>
                     <el-button
-                      v-else-if="canInitialConfirm(row)"
+                      v-else-if="canInitialConfirm(row.lesson)"
                       class="action-primary"
                       type="success"
                       size="small"
                       plain
-                      @click="openConfirm(row, 'normal')"
+                      @click="openConfirm(row.lesson, 'normal')"
                     >
                       Submit attendance
                     </el-button>
-                    <span v-else-if="!canAdjustLesson(row)" class="oo-no-action">{{ taskLabel(row) }}</span>
+                    <span v-else-if="!canAdjustLesson(row.lesson)" class="oo-no-action">{{ taskLabel(row.lesson) }}</span>
                   </div>
                 </div>
               </template>
@@ -614,32 +621,39 @@
           </el-table>
 
           <div v-else class="oo-mobile-lessons no-print">
-            <article
-              v-for="row in activePackage.lessons"
-              :key="`mobile-${row.occurrenceId}`"
-              class="oo-mobile-lesson"
-              :class="{ 'oo-mobile-lesson--overdue-unprocessed': isPastUnprocessed(row) }"
-            >
-              <div class="oo-mobile-lesson__heading">
-                <div class="oo-simple-cell">
-                  <strong>{{ signatureCourseLabel(row) }}</strong>
-                  <span>{{ displayResourceName(row.actualTeacherName || row.plannedTeacherName) }}</span>
+            <template v-for="item in lessonTimelineRows" :key="item.key">
+              <div v-if="item.kind === 'change'" class="oo-schedule-change oo-schedule-change--mobile">
+                <span class="oo-schedule-change__line" aria-hidden="true"></span>
+                <strong>Schedule adjusted · {{ formatScheduleChangeTime(item.change.changedAt) }}</strong>
+                <span class="oo-schedule-change__line" aria-hidden="true"></span>
+              </div>
+              <article
+                v-else
+                class="oo-mobile-lesson"
+                :class="{ 'oo-mobile-lesson--overdue-unprocessed': isPastUnprocessed(item.lesson) }"
+              >
+                <div class="oo-mobile-lesson__heading">
+                  <div class="oo-simple-cell">
+                    <strong>{{ signatureCourseLabel(item.lesson) }}</strong>
+                    <span>{{ displayResourceName(item.lesson.actualTeacherName || item.lesson.plannedTeacherName) }}</span>
+                    <span v-if="isKeptFromPreviousSchedule(item.lesson)" class="oo-schedule-change__kept">Kept from previous schedule</span>
+                  </div>
+                  <el-tag class="status-pill" :class="statusPillClass(item.lesson)" size="small" :type="statusTag(item.lesson)">
+                    {{ statusLabel(item.lesson) }}
+                  </el-tag>
                 </div>
-                <el-tag class="status-pill" :class="statusPillClass(row)" size="small" :type="statusTag(row)">
-                  {{ statusLabel(row) }}
-                </el-tag>
-              </div>
-              <div class="oo-mobile-lesson__time">
-                <strong>{{ formatDate(row.plannedStartAt) }}</strong>
-                <span>{{ formatTimeRange(row.plannedStartAt, row.plannedEndAt) }}</span>
-              </div>
-              <div v-if="canConfirmLessons || canManageLessonResources" class="oo-mobile-lesson__actions">
-                <el-button v-if="canAdjustLesson(row)" size="small" plain @click="openAdjustDialog(row)">Adjust</el-button>
-                <el-button v-if="!needsLessonResources(row) && canAdminConfirm(row)" class="action-primary" type="warning" @click="openConfirm(row, 'admin')">Review &amp; deduct</el-button>
-                <el-button v-else-if="!needsLessonResources(row) && canInitialConfirm(row)" class="action-primary" type="success" plain @click="openConfirm(row, 'normal')">Submit attendance</el-button>
-                <span v-else-if="!canAdjustLesson(row)" class="oo-no-action">{{ needsLessonResources(row) ? 'Set a teacher before deduction.' : taskLabel(row) }}</span>
-              </div>
-            </article>
+                <div class="oo-mobile-lesson__time">
+                  <strong>{{ formatDate(item.lesson.plannedStartAt) }}</strong>
+                  <span>{{ formatTimeRange(item.lesson.plannedStartAt, item.lesson.plannedEndAt) }}</span>
+                </div>
+                <div v-if="canConfirmLessons || canManageLessonResources" class="oo-mobile-lesson__actions">
+                  <el-button v-if="canAdjustLesson(item.lesson)" size="small" plain @click="openAdjustDialog(item.lesson)">Adjust</el-button>
+                  <el-button v-if="!needsLessonResources(item.lesson) && canAdminConfirm(item.lesson)" class="action-primary" type="warning" @click="openConfirm(item.lesson, 'admin')">Review &amp; deduct</el-button>
+                  <el-button v-else-if="!needsLessonResources(item.lesson) && canInitialConfirm(item.lesson)" class="action-primary" type="success" plain @click="openConfirm(item.lesson, 'normal')">Submit attendance</el-button>
+                  <span v-else-if="!canAdjustLesson(item.lesson)" class="oo-no-action">{{ needsLessonResources(item.lesson) ? 'Set a teacher before deduction.' : taskLabel(item.lesson) }}</span>
+                </div>
+              </article>
+            </template>
           </div>
         </section>
 
@@ -789,7 +803,7 @@ import { useRoute } from 'vue-router';
 import { fetchAllClassrooms, fetchAllTeachers, fetchStudents } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { adminConfirmLessonRecord, confirmLesson } from '@/api/lesson';
-import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory, type OneOnOneLesson, type OneOnOnePackage, type OneOnOneStudent, type OneOnOneTeacher, type PrivateSignatureHistory } from '@/api/one-on-one';
+import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory, type OneOnOneLesson, type OneOnOnePackage, type OneOnOneScheduleChange, type OneOnOneStudent, type OneOnOneTeacher, type PrivateSignatureHistory } from '@/api/one-on-one';
 import { createScheduleAdjustment } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { useAppStore } from '@/stores/app';
@@ -842,6 +856,10 @@ interface SignatureSubjectSummary {
   startDate: string;
   rows: OneOnOneLesson[];
 }
+
+type LessonTimelineRow =
+  | { kind: 'lesson'; key: string; lesson: OneOnOneLesson }
+  | { kind: 'change'; key: string; change: OneOnOneScheduleChange };
 
 const authStore = useAuthStore();
 const appStore = useAppStore();
@@ -1082,6 +1100,54 @@ const pendingTeacherCount = computed(() =>
 const pendingAdminCount = computed(() =>
   activePackage.value?.lessons.filter(row => row.confirmStage === 'PENDING_ADMIN').length ?? 0
 );
+// 课次依上课时间展示；版本切换按保存时间插入，不改动历史课次或打印所用的原始列表。
+const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
+  const pkg = activePackage.value;
+  if (!pkg) return [];
+  const lessons = [...pkg.lessons].sort((left, right) =>
+    dayjs(left.plannedStartAt).valueOf() - dayjs(right.plannedStartAt).valueOf());
+  const changes = [...(pkg.scheduleChanges ?? [])].sort((left, right) =>
+    scheduleChangeTimestamp(left) - scheduleChangeTimestamp(right)
+      || entityKey(left.ruleId).localeCompare(entityKey(right.ruleId)));
+  const rows: LessonTimelineRow[] = [];
+  let changeIndex = 0;
+  for (const lesson of lessons) {
+    const lessonTime = dayjs(lesson.plannedStartAt).valueOf();
+    while (changeIndex < changes.length && scheduleChangeTimestamp(changes[changeIndex]) <= lessonTime) {
+      const change = changes[changeIndex++];
+      rows.push({ kind: 'change', key: `change-${entityKey(change.ruleId)}`, change });
+    }
+    rows.push({ kind: 'lesson', key: `lesson-${entityKey(lesson.occurrenceId)}`, lesson });
+  }
+  for (; changeIndex < changes.length; changeIndex++) {
+    const change = changes[changeIndex];
+    rows.push({ kind: 'change', key: `change-${entityKey(change.ruleId)}`, change });
+  }
+  return rows;
+});
+
+function scheduleChangeTimestamp(change: OneOnOneScheduleChange) {
+  const time = change.changedAt ? dayjs(change.changedAt).valueOf() : Number.NaN;
+  return Number.isFinite(time) ? time : Number.POSITIVE_INFINITY;
+}
+
+function isKeptFromPreviousSchedule(lesson: OneOnOneLesson) {
+  if (!lesson.scheduleRuleId) return false;
+  const lessonTime = dayjs(lesson.plannedStartAt).valueOf();
+  const latestChange = [...(activePackage.value?.scheduleChanges ?? [])]
+    .filter(change => scheduleChangeTimestamp(change) <= lessonTime)
+    .sort((left, right) => scheduleChangeTimestamp(right) - scheduleChangeTimestamp(left))[0];
+  return latestChange != null && entityKey(lesson.scheduleRuleId) !== entityKey(latestChange.ruleId);
+}
+
+function lessonTimelineSpanMethod({ row, columnIndex }: { row: LessonTimelineRow; columnIndex: number }) {
+  if (row.kind !== 'change') return [1, 1];
+  return columnIndex === 0 ? [1, canConfirmLessons.value || canManageLessonResources.value ? 4 : 3] : [0, 0];
+}
+
+function formatScheduleChangeTime(value?: string) {
+  return value ? dayjs(value).format('MMM D, YYYY HH:mm') : 'time unavailable';
+}
 const signaturePackage = computed(() => {
   if (!activeStudent.value || !activePackage.value) return null;
   const coursePackage = findSignaturePackage(
@@ -1776,11 +1842,13 @@ async function submitAdjustLesson() {
   }
 }
 
-function lessonRowClassName({ row }: { row: OneOnOneLesson }) {
-  if (isPastUnprocessed(row)) return 'oo-row--overdue-unprocessed';
-  if (nextActionLesson.value?.occurrenceId === row.occurrenceId) return 'oo-row--next';
-  if (row.confirmStage === 'PENDING_ADMIN') return 'oo-row--pending-admin';
-  if (isRejectedOrAbnormal(row)) return 'oo-row--issue';
+function lessonRowClassName({ row }: { row: LessonTimelineRow }) {
+  if (row.kind === 'change') return 'oo-row--schedule-change';
+  const lesson = row.lesson;
+  if (isPastUnprocessed(lesson)) return 'oo-row--overdue-unprocessed';
+  if (nextActionLesson.value?.occurrenceId === lesson.occurrenceId) return 'oo-row--next';
+  if (lesson.confirmStage === 'PENDING_ADMIN') return 'oo-row--pending-admin';
+  if (isRejectedOrAbnormal(lesson)) return 'oo-row--issue';
   return '';
 }
 
@@ -2419,6 +2487,36 @@ onBeforeUnmount(() => signaturePrinter.detach());
   gap: 8px;
 }
 
+.oo-schedule-change {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 4px;
+  color: #475569;
+  font-size: 12px;
+}
+
+.oo-schedule-change strong {
+  flex: none;
+  font-weight: 600;
+}
+
+.oo-schedule-change__line {
+  flex: 1;
+  height: 1px;
+  background: #94a3b8;
+}
+
+.oo-schedule-change__kept {
+  color: #64748b !important;
+  font-size: 11px !important;
+}
+
+.oo-schedule-change--mobile {
+  padding: 10px 0;
+}
+
 .oo-mobile-lesson {
   display: grid;
   gap: 10px;
@@ -2960,6 +3058,12 @@ onBeforeUnmount(() => signaturePrinter.detach());
 
 .oo-table {
   width: 100%;
+}
+
+.oo-table :deep(.oo-row--schedule-change td) {
+  background: #f1f5f9 !important;
+  border-top: 1px solid #94a3b8;
+  border-bottom: 1px solid #cbd5e1;
 }
 
 .print-only {
