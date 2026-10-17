@@ -367,6 +367,11 @@
                     <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>
+                <span class="oo-student-context__metric">
+                  <el-tooltip content="Past lesson hours for this teacher awaiting final admin processing, including lessons not yet submitted by the teacher." placement="top" :show-after="200">
+                    <small>Pending deduction</small>
+                  </el-tooltip>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
+                </span>
               </div>
             </div>
           </div>
