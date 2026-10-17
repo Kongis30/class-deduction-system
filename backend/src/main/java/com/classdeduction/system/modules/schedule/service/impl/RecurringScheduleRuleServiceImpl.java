@@ -457,6 +457,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         // 暂停、恢复等状态变更不改变排课分配，必须沿用原课位及周期边界。
         boolean reuseExistingSlots = !startsNewPeriod
                 && hasUnchangedSlotDetails(existingRule, existingSlots, request.getSlots());
+        if (!startsNewPeriod && !reuseExistingSlots && !existingSlots.isEmpty()) {
+            freezeLegacyAllocationPeriod(existingRule, existingSlots);
+        }
         if (validateRemainingAllocation && !startsNewPeriod && !"ENDED".equals(newStatus)) {
             validateSlotAllocations(request.getSlots(), coursePackage, id);
         }
@@ -873,6 +876,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             if (slots.isEmpty()) {
                 continue;
             }
+            freezeLegacyAllocationPeriod(rule, slots);
             RecurringScheduleRuleUpdateRequest request = new RecurringScheduleRuleUpdateRequest();
             request.setPrivateLessonGroupId(rule.getPrivateLessonGroupId());
             request.setDefaultClassroomId(rule.getDefaultClassroomId());
@@ -882,22 +886,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             request.setNotes(rule.getNotes());
             request.setSlots(slots.stream().map(this::toSlotRequest).toList());
             updateRuleInternal(rule.getId(), request, false);
-            freezeLegacyAllocationPeriodBeforeRefresh(rule, slots);
         }
     }
 
-    @Override
-    @Transactional(rollbackFor = Exception.class)
-    public void setPackageStartingHours(Long packageId, int startingUnits) {
-        CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
-        if (coursePackage == null) {
-            return;
-        }
-        List<PrivateLessonGroupMemberEntity> members = privateLessonGroupMemberMapper.selectList(
-                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
-    /** 余额刷新可能重建旧课位；先固定原周期边界，避免刷新把已消课划入上一周期。 */
-    private void freezeLegacyAllocationPeriodBeforeRefresh(RecurringScheduleRuleEntity rule,
-                                                           List<RecurringScheduleSlotEntity> slots) {
+    /** 同周期重建旧课位前固定原周期边界，避免把已消课划入上一周期。 */
+    private void freezeLegacyAllocationPeriod(RecurringScheduleRuleEntity rule,
+                                              List<RecurringScheduleSlotEntity> slots) {
         if (rule.getSupersedesRuleId() != null || rule.getAllocationPeriodStartedAt() != null) {
             return;
         }
@@ -916,6 +910,15 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         rule.setAllocationPeriodStartedAt(periodStart);
     }
 
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void setPackageStartingHours(Long packageId, int startingUnits) {
+        CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
+        if (coursePackage == null) {
+            return;
+        }
+        List<PrivateLessonGroupMemberEntity> members = privateLessonGroupMemberMapper.selectList(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
                         .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
                         .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
                         .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0));
