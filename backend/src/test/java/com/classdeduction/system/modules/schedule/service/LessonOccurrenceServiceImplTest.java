@@ -875,7 +875,7 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
-    void shouldCountOnlyConfirmedLessonsInTheLatestLegacyAllocation() {
+    void shouldKeepLegacyDeductionAfterBalanceRefreshRebuildsSlots() {
         LocalDateTime now = AppTime.nowLocalDateTime();
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         LessonOccurrenceEntity previousLesson = buildOneOnOneOccurrence();
@@ -914,7 +914,7 @@ class LessonOccurrenceServiceImplTest {
         activeSlot.setRuleId(currentRule.getId());
         activeSlot.setTeacherId(301L);
         activeSlot.setAllocatedUnits(16);
-        activeSlot.setCreatedAt(now.minusDays(1));
+        activeSlot.setCreatedAt(now.minusMinutes(30));
 
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(occurrences);
@@ -965,6 +965,7 @@ class LessonOccurrenceServiceImplTest {
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(rebuiltSlot));
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
         when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+        currentRule.setAllocationPeriodStartedAt(now.minusDays(1));
 
         OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
                 new OneOnOneDeductionQuery(), null).get(0);

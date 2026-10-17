@@ -371,6 +371,20 @@
             </div>
           </div>
           <el-alert
+            v-if="hasNegativeTeacherBalance"
+            type="warning"
+            :closable="false"
+            show-icon
+            title="A teacher's current-period deductions exceed their saved allocation. Review the schedule-period history; lesson records have not been changed."
+          />
+          <el-alert
+            v-if="currentTeacherAllocationOverhang > 0"
+            type="warning"
+            :closable="false"
+            show-icon
+            :title="`Current teacher allocations exceed the package balance by ${formatHours(currentTeacherAllocationOverhang)}h. The saved schedule and lesson records have not been changed; please review the allocation history.`"
+          />
+          <el-alert
             v-if="(activePackage.scheduledReservedUnits ?? 0) > activePackage.remainingUnits"
             type="warning"
             :closable="false"
@@ -887,6 +901,18 @@ const activeTeacherHours = computed(() => {
   const name = optionKey(teacher?.teacherName);
   return hours.find(item => !item.teacherId && optionKey(item.teacherName) === name);
 });
+// 只提示当前周期额度与课包账本不一致；不截断字段，也不修改用户的排课或课次。
+const currentTeacherAllocationOverhang = computed(() => {
+  const pkg = activePackage.value;
+  if (!pkg) return 0;
+  const teacherRemaining = (pkg.teacherHours ?? []).reduce(
+    (sum, hours) => sum + (hours.remainingUnits ?? 0), 0,
+  );
+  return Math.max(0, teacherRemaining - (pkg.remainingUnits ?? 0));
+});
+const hasNegativeTeacherBalance = computed(() =>
+  (activePackage.value?.teacherHours ?? []).some(hours => (hours.remainingUnits ?? 0) < 0),
+);
 const signatureHistory = ref<PrivateSignatureHistory[]>([]);
 const signatureHistoryPackageId = ref('');
 const printAreaRef = ref<HTMLElement>();

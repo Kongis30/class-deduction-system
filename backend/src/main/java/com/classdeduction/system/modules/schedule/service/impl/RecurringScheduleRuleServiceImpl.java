@@ -882,6 +882,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             request.setNotes(rule.getNotes());
             request.setSlots(slots.stream().map(this::toSlotRequest).toList());
             updateRuleInternal(rule.getId(), request, false);
+            freezeLegacyAllocationPeriodBeforeRefresh(rule, slots);
         }
     }
 
@@ -894,6 +895,27 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
         List<PrivateLessonGroupMemberEntity> members = privateLessonGroupMemberMapper.selectList(
                 new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+    /** 余额刷新可能重建旧课位；先固定原周期边界，避免刷新把已消课划入上一周期。 */
+    private void freezeLegacyAllocationPeriodBeforeRefresh(RecurringScheduleRuleEntity rule,
+                                                           List<RecurringScheduleSlotEntity> slots) {
+        if (rule.getSupersedesRuleId() != null || rule.getAllocationPeriodStartedAt() != null) {
+            return;
+        }
+        LocalDateTime periodStart = slots.stream().map(RecurringScheduleSlotEntity::getCreatedAt)
+                .filter(Objects::nonNull).max(LocalDateTime::compareTo).orElse(rule.getCreatedAt());
+        if (periodStart == null) {
+            throw new BusinessException("SCHEDULE_PERIOD_START_MISSING",
+                    "Cannot refresh this schedule because its allocation period is unknown.");
+        }
+        RecurringScheduleRuleEntity patch = new RecurringScheduleRuleEntity();
+        patch.setId(rule.getId());
+        patch.setAllocationPeriodStartedAt(periodStart);
+        if (recurringScheduleRuleMapper.updateById(patch) != 1) {
+            throw new BusinessException("SCHEDULE_CHANGED", "The schedule changed. Please retry.");
+        }
+        rule.setAllocationPeriodStartedAt(periodStart);
+    }
+
                         .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
                         .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
                         .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0));

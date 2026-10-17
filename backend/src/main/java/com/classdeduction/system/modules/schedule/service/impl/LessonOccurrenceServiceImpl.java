@@ -903,7 +903,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
 
             // 老数据曾原位替换课位而复用规则 ID；用当前有效课位快照时间标出同周期余额统计的边界。
             if (rule.getSupersedesRuleId() == null && "ACTIVE".equals(rule.getRuleStatus())) {
-                LocalDateTime slotPeriodStart = currentSlotStartsByRule.get(rule.getId());
+                LocalDateTime slotPeriodStart = rule.getAllocationPeriodStartedAt() == null
+                        ? currentSlotStartsByRule.get(rule.getId()) : rule.getAllocationPeriodStartedAt();
                 if (slotPeriodStart != null && rule.getCreatedAt() != null
                         && slotPeriodStart.isAfter(rule.getCreatedAt())) {
                     OneOnOneScheduleChangeVO change = new OneOnOneScheduleChangeVO(
@@ -1589,7 +1590,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (!rules.isEmpty()) {
             rules.forEach(rule -> {
                 rulesById.putIfAbsent(rule.getId(), rule);
-                if (rule.getCreatedAt() != null) {
+                if (rule.getAllocationPeriodStartedAt() != null) {
+                    periodStartByRule.put(rule.getId(), rule.getAllocationPeriodStartedAt());
+                } else if (rule.getCreatedAt() != null) {
                     periodStartByRule.put(rule.getId(), rule.getCreatedAt());
                 }
             });
@@ -1618,7 +1621,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 // 新版本以规则创建时间为周期起点；仅旧规则复用 ID 时才用课位时间兼容历史数据。
                 RecurringScheduleRuleEntity slotRule = rulesById.get(slot.getRuleId());
                 if (slot.getCreatedAt() != null && slotRule != null
-                        && slotRule.getSupersedesRuleId() == null) {
+                        && slotRule.getSupersedesRuleId() == null
+                        && slotRule.getAllocationPeriodStartedAt() == null) {
                     periodStartByRule.merge(slot.getRuleId(), slot.getCreatedAt(),
                             (previous, createdAt) -> previous.isAfter(createdAt) ? previous : createdAt);
                 }

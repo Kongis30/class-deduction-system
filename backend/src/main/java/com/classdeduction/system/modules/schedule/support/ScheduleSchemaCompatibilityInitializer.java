@@ -25,6 +25,8 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "bigint DEFAULT NULL COMMENT 'Previous schedule period replaced by this rule'");
         addScheduleColumnIfMissing("recurring_schedule_rule", "superseded_by_rule_id",
                 "bigint DEFAULT NULL COMMENT 'Replacement schedule period created from this rule'");
+        addScheduleColumnIfMissing("recurring_schedule_rule", "allocation_period_started_at",
+                "datetime(3) DEFAULT NULL COMMENT 'Frozen allocation period start for legacy same-id schedule edits'");
         dropLegacyOccurrenceSlotForeignKey();
         addClassGroupColumnIfMissing("end_date",
                 "date DEFAULT NULL COMMENT 'Last date for a fixed-date grade class' AFTER start_date");

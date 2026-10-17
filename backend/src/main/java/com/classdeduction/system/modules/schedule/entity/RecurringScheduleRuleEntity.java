@@ -11,6 +11,7 @@ import lombok.Setter;
 import lombok.ToString;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * 周期排课规则实体：定义课时包的默认老师、教室和重复时段。
@@ -36,6 +37,9 @@ public class RecurringScheduleRuleEntity extends BaseEntity {
 
     /** Replacement rule created when this period was superseded. */
     private Long supersededByRuleId;
+
+    /** 旧规则复用 ID 时固定的分配周期起点，防止余额刷新重建课位后误清零消课。 */
+    private LocalDateTime allocationPeriodStartedAt;
 
     private Long primaryTeacherId;
 

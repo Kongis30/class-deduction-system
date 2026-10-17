@@ -712,6 +712,7 @@ class RecurringScheduleRuleServiceImplTest {
     @Test
     void balanceRefreshKeepsExistingTargetsAndCapsFutureLessons() {
         RecurringScheduleRuleEntity rule = buildExistingRule();
+        rule.setCreatedAt(LocalDateTime.of(2026, 9, 1, 9, 0));
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setTotalUnits(80);
         coursePackage.setConsumedUnits(32);
@@ -727,6 +728,7 @@ class RecurringScheduleRuleServiceImplTest {
         slot.setPlannedUnits(4);
         slot.setAllocatedUnits(80);
         slot.setSlotStatus("ACTIVE");
+        slot.setCreatedAt(LocalDateTime.of(2026, 10, 3, 10, 30));
         when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
         when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(rule));
         when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
@@ -735,9 +737,17 @@ class RecurringScheduleRuleServiceImplTest {
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(recurringScheduleRuleMapper.updateById(any(RecurringScheduleRuleEntity.class))).thenReturn(1);
+        doAnswer(invocation -> {
+            RecurringScheduleSlotEntity inserted = invocation.getArgument(0);
+            inserted.setId(7001L);
+            return 1;
+        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
 
         recurringScheduleRuleService.refreshPackageSchedule(1001L);
 
+        assertThat(rule.getAllocationPeriodStartedAt())
+                .isEqualTo(LocalDateTime.of(2026, 10, 3, 10, 30));
         verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
         assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(80);
         verify(lessonOccurrenceMapper, times(12)).insert(occurrenceCaptor.capture());
