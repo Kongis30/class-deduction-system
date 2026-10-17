@@ -8,7 +8,9 @@ import java.util.List;
 /** 退款窗口用的课程级已付与消耗金额预览。 */
 @Schema(description = "Refund course usage preview")
 public record RefundCoursePreviewVO(
-        List<CourseItem> items
+        List<CourseItem> items,
+        @Schema(description = "Net payment whose student or course allocation needs review before refund")
+        BigDecimal unassignedPaymentAmount
 ) {
 
     @Schema(description = "Refund course item preview")

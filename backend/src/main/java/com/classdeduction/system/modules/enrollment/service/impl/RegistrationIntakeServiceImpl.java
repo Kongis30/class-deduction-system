@@ -1786,10 +1786,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                     ? money.amountDue()
                     : grossAmount.add(participantFees).subtract(discountAmount)
                     .max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal paidAmount = creditTopUp
+            // 单学生报名的参与人快照必须与整单实收一致；付款流水可能不带 participant_index。
+            BigDecimal paidAmount = participants.size() == 1
                     ? money.paidAmount()
-                    : participantPaidAmount(request, index + 1,
-                    participants.size() > 1 ? null : money.paidAmount());
+                    : participantPaidAmount(request, index + 1, null);
             if (discountAmount.compareTo(grossAmount.add(participantFees)) > 0) {
                 throw new BusinessException("PARTICIPANT_DISCOUNT_EXCEEDS_AMOUNT",
                         "A participant's discount cannot exceed their course tuition and fees.");

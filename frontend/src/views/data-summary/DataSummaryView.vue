@@ -568,12 +568,16 @@
         Pay
       </button>
       <button
-        v-if="!isManager && canRefundFromDataSummary(studentContextMenu.row)"
+        v-if="!isManager && studentContextMenu.row?.orderPaymentStatus !== 'REFUNDED'"
         type="button"
         role="menuitem"
+        :disabled="refundPreviewStatus === 'checking' || refundPreviewStatus === 'none' || refundPreviewStatus === 'review'"
         @click="openOrderAction('refund')"
       >
-        Refund
+        {{ refundPreviewStatus === 'checking' ? 'Checking refund…'
+          : refundPreviewStatus === 'review' ? 'Review payment allocation'
+          : refundPreviewStatus === 'none' ? 'No payment to refund'
+          : 'Refund' }}
       </button>
     </div>
 
@@ -621,6 +625,7 @@ import * as XLSX from 'xlsx';
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
 import { fetchDataSummary, type DataSummaryRow } from '@/api/data-summary';
+import { fetchRefundPreview } from '@/api/enrollment';
 import { fetchAllCourseProducts, saveCourseProductTabOrder } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
 import { useAppStore } from '@/stores/app';
@@ -834,6 +839,8 @@ const studentContextMenu = reactive<{
   y: 0,
   row: null,
 });
+const refundPreviewStatus = ref<'checking' | 'available' | 'none' | 'review' | 'error'>('checking');
+let refundPreviewRequestId = 0;
 
 const knownProductIds = computed(() => new Set(products.value.map((product) => String(product.id))));
 
@@ -1277,9 +1284,26 @@ function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
   studentContextMenu.y = Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8));
   studentContextMenu.row = row;
   studentContextMenu.visible = true;
+  refundPreviewStatus.value = 'checking';
+  const requestId = ++refundPreviewRequestId;
+  if (isManager || !row.orderId || row.orderPaymentStatus === 'REFUNDED') return;
+  // 右键时只读取当前报名的退款预览；课程可退金额与提交退款使用同一接口口径。
+  void fetchRefundPreview(row.orderId, row.participantIndex ?? undefined).then(({ data }) => {
+    if (requestId !== refundPreviewRequestId) return;
+    const course = row.orderItemId == null ? null : data.data.items.find(
+      (item) => String(item.orderItemId) === String(row.orderItemId));
+    const refundable = row.orderItemId == null
+      ? data.data.items.reduce((total, item) => total + Math.max(0, item.paidAmount), 0)
+      : course?.paidAmount ?? 0;
+    refundPreviewStatus.value = refundable > 0 ? 'available'
+      : (data.data.unassignedPaymentAmount ?? 0) > 0 ? 'review' : 'none';
+  }).catch(() => {
+    if (requestId === refundPreviewRequestId) refundPreviewStatus.value = 'error';
+  });
 }
 
 function closeStudentContextMenu() {
+  refundPreviewRequestId += 1;
   studentContextMenu.visible = false;
   studentContextMenu.row = null;
 }
@@ -1302,14 +1326,6 @@ function canPayFromDataSummary(row: DataSummaryDisplayRow | null) {
     : Number(row.balanceAmount ?? 0) < 0;
 
   return hasOutstandingBalance;
-}
-
-function canRefundFromDataSummary(row: DataSummaryDisplayRow | null) {
-  return Boolean(
-    row
-      && row.orderPaymentStatus !== 'REFUNDED'
-      && Number(row.paidAmount ?? 0) > 0,
-  );
 }
 
 function openOrderAction(action: 'pay' | 'refund') {

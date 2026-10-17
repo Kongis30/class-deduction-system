@@ -3146,7 +3146,42 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                                     ? order.getStudentNameSnapshot() : selectedParticipant.getStudentNameSnapshot());
                 })
                 .toList();
-        return new RefundCoursePreviewVO(items);
+        return new RefundCoursePreviewVO(items,
+                unassignedRefundPaymentAmount(order.getId(), selectedParticipant, participantCount));
+    }
+
+    /** 预览只报告无法确认学生或课程归属的净付款；多人订单不能把这笔钱猜分给某位学生。 */
+    private BigDecimal unassignedRefundPaymentAmount(Long orderId,
+                                                     EnrollmentOrderParticipantEntity participant,
+                                                     int participantCount) {
+        List<PaymentRecordEntity> payments = paymentRecordMapper.selectList(
+                new LambdaQueryWrapper<PaymentRecordEntity>()
+                        .eq(PaymentRecordEntity::getEnrollmentOrderId, orderId));
+        if (payments == null || payments.isEmpty()) {
+            return ZERO_AMOUNT;
+        }
+        Map<Long, BigDecimal> allocationsByPaymentId = paymentAllocationMapper.selectList(
+                        new LambdaQueryWrapper<PaymentAllocationEntity>()
+                                .eq(PaymentAllocationEntity::getEnrollmentOrderId, orderId))
+                .stream().filter(allocation -> allocation.getPaymentRecordId() != null)
+                .collect(Collectors.toMap(PaymentAllocationEntity::getPaymentRecordId,
+                        allocation -> defaultAmount(allocation.getAmount()), BigDecimal::add));
+        BigDecimal unassigned = ZERO_AMOUNT;
+        for (PaymentRecordEntity payment : payments) {
+            if ("VOIDED".equalsIgnoreCase(payment.getPaymentStatus())) {
+                continue;
+            }
+            Integer paymentParticipantIndex = payment.getParticipantIndex();
+            if (participant != null && paymentParticipantIndex != null
+                    && !Objects.equals(paymentParticipantIndex, participant.getParticipantIndex())) {
+                continue;
+            }
+            BigDecimal amount = defaultAmount(payment.getAmount());
+            // 多人订单中未标学生的流水即使分到了课程，也不能据此认定属于当前学生。
+            unassigned = unassigned.add(participantCount > 1 && paymentParticipantIndex == null
+                    ? amount : amount.subtract(allocationsByPaymentId.getOrDefault(payment.getId(), ZERO_AMOUNT)));
+        }
+        return unassigned.max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
     }
 
     /** 课程退款金额以支付流水上的学生序号和课程分摊的交集为准，不能按收据总额猜测分配。 */

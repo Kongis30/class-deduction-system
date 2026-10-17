@@ -261,7 +261,7 @@
                       <el-dropdown-menu>
                         <el-dropdown-item command="detail">Detail</el-dropdown-item>
                         <el-dropdown-item v-if="canPayOrder(row, rowParticipant(row))" command="pay">Pay</el-dropdown-item>
-                        <el-dropdown-item v-if="canRefundOrder(row, rowParticipant(row))" command="refund">Refund</el-dropdown-item>
+                        <el-dropdown-item v-if="canRefundOrder(row)" command="refund">Refund</el-dropdown-item>
                         <el-dropdown-item v-if="canCancelOrder(row)" command="cancel">Cancel</el-dropdown-item>
                         <el-dropdown-item v-if="canDeleteOrder(row)" divided command="delete">Delete</el-dropdown-item>
                         <el-dropdown-item v-if="canForceVoidOrder(row)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
@@ -289,7 +289,7 @@
                     <el-dropdown-menu>
                       <el-dropdown-item command="detail">Detail</el-dropdown-item>
                       <el-dropdown-item v-if="canPayOrder(order, rowParticipant(order))" command="pay">Pay</el-dropdown-item>
-                      <el-dropdown-item v-if="canRefundOrder(order, rowParticipant(order))" command="refund">Refund</el-dropdown-item>
+                      <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
                       <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
                       <el-dropdown-item v-if="canDeleteOrder(order)" divided command="delete">Delete</el-dropdown-item>
                       <el-dropdown-item v-if="canForceVoidOrder(order)" divided command="forceVoid">Force void (admin)</el-dropdown-item>
@@ -748,7 +748,7 @@
               <template #default="{ row }">
                 <el-button text type="primary" size="small" @click="openDetailPayForParticipant(row)">Pay</el-button>
                 <el-button
-                  v-if="(row.paidAmount ?? 0) > 0"
+                  v-if="detailData?.paymentStatus !== 'REFUNDED'"
                   text
                   type="danger"
                   size="small"
@@ -1085,9 +1085,16 @@
             <span class="product-info-card__value">${{ (selectedRefundCourse?.paidAmount ?? refundReceivedAmount).toFixed(2) }}</span>
           </div>
         </div>
+        <el-alert
+          v-if="refundUnassignedPaymentAmount > 0"
+          type="warning"
+          :closable="false"
+          title="Some received payment still needs student or course allocation review. Only the assigned course amounts below can be refunded."
+          style="margin-bottom: 12px;"
+        />
         <el-form-item v-if="!refundCourseOnly && refundCourseOptions.length > 1" label="Course to refund" prop="orderItemId">
           <el-select v-model="refundForm.orderItemId" placeholder="Select a course" style="width: 100%" :loading="refundPreviewLoading" @change="handleRefundCourseChange">
-            <el-option :label="isSharedParticipantRefund ? 'All courses · full student refund' : 'Entire receipt · allocate across all courses'" value="ALL" />
+            <el-option :label="isSharedParticipantRefund ? 'All courses · full student refund' : 'Entire receipt · allocate across all courses'" value="ALL" :disabled="refundUnassignedPaymentAmount > 0" />
             <el-option
               v-for="item in refundCourseOptions"
               :key="item.orderItemId"
@@ -2453,11 +2460,7 @@ function openDetailRefundForParticipant(participant: EnrollmentOrderParticipantI
   if (!detailData.value) return;
   const order = orderSummaryFromDetail(detailData.value);
   const stored = order.participants?.find((item) => item.participantIndex === participant.participantIndex) ?? participant;
-  if (!canRefundOrder(order, stored)) {
-    ElMessage.warning('This student has no refundable payment.');
-    return;
-  }
-  openRefundDialog(order, stored);
+  void openRefundDialog(order, stored);
 }
 
 async function handleCancel(row: EnrollmentOrderItem) {
@@ -2498,9 +2501,9 @@ function canPayOrder(row: EnrollmentOrderItem, participant: EnrollmentOrderParti
     && (participant != null || row.paymentStatus !== 'PAID');
 }
 
-function canRefundOrder(row: EnrollmentOrderItem, participant: EnrollmentOrderParticipantItem | null = null) {
-  const receivedAmount = participant?.paidAmount ?? row.receivedAmount ?? 0;
-  return row.paymentStatus !== 'REFUNDED' && receivedAmount > 0;
+function canRefundOrder(row: EnrollmentOrderItem) {
+  // 入口只排除已全额退款订单；学生和课程的真实可退金额由预览接口判断。
+  return row.paymentStatus !== 'REFUNDED';
 }
 
 function canCancelOrder(row: EnrollmentOrderItem) {
@@ -2656,8 +2659,6 @@ async function openRequestedOrderAction() {
             ? Math.max(0, requestedCourseBalance)
             : undefined);
       }
-    } else if (!canRefundOrder(order, participant)) {
-      ElMessage.warning('This order has no refundable payment.');
     } else {
       await openRefundDialog(order, participant, orderItemId || undefined, courseOnly);
     }
@@ -2777,6 +2778,7 @@ const refundOrder = ref<EnrollmentOrderItem | null>(null);
 const refundParticipant = ref<EnrollmentOrderParticipantItem | null>(null);
 const refundCourseOnly = ref(false);
 const refundCourseOptions = ref<RefundCoursePreviewItem[]>([]);
+const refundUnassignedPaymentAmount = ref(0);
 const refundPreviewLoading = ref(false);
 const refundForm = reactive({
   refundAmount: 0,
@@ -2795,9 +2797,8 @@ const refundFormRules = {
   handledByName: [{ required: true, message: 'Handler name is required' }],
 };
 
-const refundReceivedAmount = computed(() => Math.max(
-  0,
-  refundParticipant.value?.paidAmount ?? refundOrder.value?.receivedAmount ?? 0,
+const refundReceivedAmount = computed(() => refundCourseOptions.value.reduce(
+  (total, item) => total + Math.max(0, item.paidAmount), 0,
 ));
 const isSharedParticipantRefund = computed(() => Boolean(
   refundParticipant.value && (refundOrder.value?.participants?.length ?? 0) > 1,
@@ -2829,9 +2830,10 @@ async function openRefundDialog(
   refundParticipant.value = participant;
   refundCourseOnly.value = courseOnly;
   refundCourseOptions.value = [];
+  refundUnassignedPaymentAmount.value = 0;
   refundFormRef.value?.resetFields();
   Object.assign(refundForm, {
-    refundAmount: participant?.paidAmount ?? row.receivedAmount ?? 0,
+    refundAmount: 0,
     orderItemId: '',
     paymentMethod: 'CASH',
     handledByName: '',
@@ -2843,6 +2845,7 @@ async function openRefundDialog(
   try {
     const response = await fetchRefundPreview(row.id, participant?.participantIndex);
     refundCourseOptions.value = response.data.data.items ?? [];
+    refundUnassignedPaymentAmount.value = response.data.data.unassignedPaymentAmount ?? 0;
     const selected = refundCourseOptions.value.find((item) =>
       requestedOrderItemId != null && String(item.orderItemId) === String(requestedOrderItemId));
     if (courseOnly && !selected) {
@@ -2856,13 +2859,22 @@ async function openRefundDialog(
       refundForm.orderItemId = initial.orderItemId;
       refundForm.refundAmount = initial.paidAmount;
       if (initial.paidAmount <= 0) {
-        ElMessage.warning('This student has no received payment allocated to the selected course.');
+        ElMessage.warning(refundUnassignedPaymentAmount.value > 0
+          ? 'A payment exists, but its student or course allocation needs review before this course can be refunded.'
+          : 'No payment remains assigned to this student and course.');
         refundDialogVisible.value = false;
         return;
       }
-    } else if (!courseOnly && refundCourseOptions.value.length > 1) {
+    } else if (!courseOnly && refundCourseOptions.value.length > 1
+      && refundUnassignedPaymentAmount.value <= 0) {
       refundForm.orderItemId = 'ALL';
       refundForm.refundAmount = refundReceivedAmount.value;
+    }
+    if (refundableCourses.length === 0) {
+      ElMessage.warning(refundUnassignedPaymentAmount.value > 0
+        ? 'A payment exists, but its student or course allocation needs review before refunding.'
+        : 'No payment remains available for refund on this enrollment.');
+      refundDialogVisible.value = false;
     }
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.message ?? 'Failed to load course refund details.');

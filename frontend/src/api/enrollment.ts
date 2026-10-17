@@ -139,8 +139,13 @@ export interface RefundCoursePreviewItem {
   studentName?: string;
 }
 
+export interface RefundCoursePreview {
+  items: RefundCoursePreviewItem[];
+  unassignedPaymentAmount: number;
+}
+
 export function fetchRefundPreview(id: string | number, participantIndex?: number) {
-  return http.get<ApiResponse<{ items: RefundCoursePreviewItem[] }>>(
+  return http.get<ApiResponse<RefundCoursePreview>>(
     `/v1/enrollment/orders/${id}/refund-preview`,
     { params: participantIndex == null ? undefined : { participantIndex } },
   );
