@@ -429,7 +429,6 @@
                   <th>Lesson name</th>
                   <th>Teacher</th>
                   <th>Date</th>
-                  <th>Status</th>
                   <th>Signature</th>
                 </tr>
               </thead>
@@ -438,7 +437,6 @@
                   <td>{{ signatureSubjectLabel(row) }}</td>
                   <td>{{ signatureLessonTeacher(row) }}</td>
                   <td>{{ signatureLessonDate(row) }}</td>
-                  <td>{{ signatureLessonStatus(row) }}</td>
                   <td>{{ row.historicalSignatureText ?? '' }}</td>
                 </tr>
               </tbody>
@@ -469,7 +467,6 @@
                   <th>Date</th>
                   <th>Time</th>
                   <th>Hours</th>
-                  <th>Status</th>
                   <th>Signature</th>
                 </tr>
               </thead>
@@ -480,7 +477,6 @@
                   <td>{{ signatureLessonDate(row) }}</td>
                   <td>{{ signatureTimeOfDayKey(row) || '—' }}</td>
                   <td>{{ formatHours(row.plannedUnits) }}</td>
-                  <td>{{ signatureLessonStatus(row) }}</td>
                   <td>{{ row.historicalSignatureText ?? '' }}</td>
                 </tr>
               </tbody>
@@ -823,7 +819,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useAppStore } from '@/stores/app';
 import { isAdminOrStaffUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
 import type { EntityId } from '@/types/domain';
-import { findSignaturePackage, signatureLessonRows, signatureLessonStatus, signatureSubjectName, withSignatureHistory } from '@/utils/one-on-one-signature-data';
+import { findSignaturePackage, signatureLessonRows, signatureSubjectName, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 import { createIsolatedPrinter } from '@/utils/isolated-print';
 
 interface PackageCandidate {
