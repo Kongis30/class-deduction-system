@@ -300,9 +300,10 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         slots.forEach(recurringScheduleSlotMapper::insert);
         saveStartingBalances(rule, coursePackage, privateLessonGroupId);
 
-        List<LessonOccurrenceEntity> generatedOccurrences = buildOccurrences(rule, slots, coursePackage, student.getId());
         List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(coursePackage.getId());
         Map<Long, LessonRecordEntity> recordByOccurrenceId = listActiveRecordsByOccurrenceId(existingOccurrences, coursePackage.getId());
+        List<LessonOccurrenceEntity> generatedOccurrences = buildOccurrences(
+                rule, slots, coursePackage, student.getId(), existingOccurrences);
         generatedOccurrences = removeOccurrencesOverlappingPreserved(generatedOccurrences, existingOccurrences);
         generatedOccurrences = capGeneratedOccurrencesToRuleAllocation(generatedOccurrences, existingOccurrences,
                 recordByOccurrenceId, slots, rule.getId());
@@ -353,7 +354,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return 0;
         }
 
-        List<LessonOccurrenceEntity> candidates = buildOccurrences(rule, slots, coursePackage, coursePackage.getStudentId());
+        List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(coursePackage.getId());
+        List<LessonOccurrenceEntity> candidates = buildOccurrences(
+                rule, slots, coursePackage, coursePackage.getStudentId(), existingOccurrences);
         if (candidates.isEmpty()) {
             return 0;
         }
@@ -369,7 +372,6 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         List<LessonOccurrenceEntity> toInsert = candidates.stream()
                 .filter(occ -> !existingStarts.contains(occ.getPlannedStartAt()))
                 .toList();
-        List<LessonOccurrenceEntity> existingOccurrences = listActivePackageOccurrences(coursePackage.getId());
         Map<Long, LessonRecordEntity> recordByOccurrenceId = listActiveRecordsByOccurrenceId(existingOccurrences, coursePackage.getId());
         toInsert = removeOccurrencesOverlappingPreserved(toInsert, existingOccurrences);
         toInsert = capGeneratedOccurrencesToRuleAllocation(toInsert, existingOccurrences,
@@ -570,7 +572,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         // must wait for the explicit resume action so its restart date is respected.
         List<LessonOccurrenceEntity> newOccurrences = Collections.emptyList();
         if ("ACTIVE".equals(coursePackage.getPackageStatus()) && "ACTIVE".equals(targetRule.getRuleStatus())) {
-            newOccurrences = buildOccurrences(targetRule, newSlots, coursePackage, student.getId());
+            newOccurrences = buildOccurrences(
+                    targetRule, newSlots, coursePackage, student.getId(), preservedForBalance);
             newOccurrences = removeOccurrencesOverlappingPreserved(newOccurrences, preservedForBalance);
             newOccurrences = capGeneratedOccurrencesToRuleAllocation(newOccurrences, toPreserve,
                     recordByOccurrenceId, newSlots, targetRule.getId());
@@ -1692,7 +1695,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private List<LessonOccurrenceEntity> buildOccurrences(RecurringScheduleRuleEntity rule,
                                                           List<RecurringScheduleSlotEntity> slots,
                                                           CoursePackageEntity coursePackage,
-                                                          Long studentId) {
+                                                          Long studentId,
+                                                          List<LessonOccurrenceEntity> preservedOccurrences) {
         LocalDateTime now = AppTime.nowLocalDateTime();
         LocalDate generationStart = Collections.max(List.of(rule.getStartDate(), now.toLocalDate()));
         LocalDate generationEnd = rule.getEndDate();
@@ -1702,6 +1706,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
         // 逐时段独立生成：每个 slot 用自己的 allocatedUnits 排满，最后一次课不足整次时只排余数。
         List<LessonOccurrenceEntity> occurrences = new ArrayList<>();
+        List<LessonOccurrenceEntity> activePreserved = preservedOccurrences.stream()
+                .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
+                .toList();
         for (RecurringScheduleSlotEntity slot : slots) {
             if (!"ACTIVE".equals(slot.getSlotStatus())) {
                 continue;
@@ -1712,6 +1719,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 continue;
             }
             int remaining = slot.getAllocatedUnits();
+            int overlapSkipped = 0;
             for (LocalDate date = generationStart;
                  remaining > 0 && (generationEnd == null || !date.isAfter(generationEnd));
                  date = date.plusDays(1)) {
@@ -1746,8 +1754,17 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 occurrence.setPlannedUnits(thisUnits);
                 occurrence.setPlanningStatus("SCHEDULED");
                 occurrence.setConflictChecked(1);
+                // 与保留课次冲突时只跳过该日期，不消耗分配额，继续向后寻找可排日期。
+                if (hasOverlap(occurrence, activePreserved)) {
+                    overlapSkipped++;
+                    continue;
+                }
                 occurrences.add(occurrence);
                 remaining -= thisUnits;
+            }
+            if (remaining > 0 && overlapSkipped > 0 && generationEnd != null) {
+                throw new BusinessException("SCHEDULE_CONFLICT",
+                        "The schedule end date does not leave enough non-overlapping dates for the allocated hours.");
             }
         }
         occurrences.sort(Comparator.comparing(LessonOccurrenceEntity::getPlannedStartAt));
