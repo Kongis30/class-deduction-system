@@ -1157,7 +1157,11 @@ const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
   };
   appendLessons(-1);
   changes.forEach((change, index) => {
-    rows.push({ kind: 'change', key: `change-${entityKey(change.ruleId)}`, change });
+    rows.push({
+      kind: 'change',
+      key: `change-${entityKey(change.ruleId)}-${scheduleChangeTimestamp(change)}`,
+      change,
+    });
     appendLessons(index);
   });
   return rows;
@@ -1278,7 +1282,7 @@ function signatureCourseLabel(row?: OneOnOneLesson) {
   if (!pkg) {
     return '—';
   }
-  const subject = row?.subjectName?.trim() || 'Unnamed lesson';
+  const subject = row?.subjectName?.trim() || 'Course name not recorded';
   const grade = pkg.gradeBand?.trim() || activeStudent.value?.grade?.trim();
   const label = [grade, subject].filter(Boolean).join(' ');
   return label || pkg.packageName;

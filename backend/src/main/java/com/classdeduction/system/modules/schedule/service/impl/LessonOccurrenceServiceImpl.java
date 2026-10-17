@@ -2068,8 +2068,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .scheduleRuleId(occurrence.getScheduleRuleId())
                 .plannedTeacherId(plannedTeacherId)
                 .plannedTeacherName(plannedTeacher == null ? null : plannedTeacher.getTeacherName())
-                .subjectName(started && !StringUtils.hasText(occurrence.getSubjectName())
-                        ? null : resolveOccurrenceSubjectName(occurrence, recurringSlotMap))
+                .subjectName(resolveOneOnOneSubjectName(occurrence, recurringSlotMap, started))
                 .deliveryMode(deliveryMode)
                 .plannedClassroomId(plannedClassroomId)
                 .plannedClassroomName("ONLINE".equals(deliveryMode) ? "Online" : plannedClassroom == null ? null : plannedClassroom.getRoomName())
@@ -2093,6 +2092,31 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .rejectReason(record == null ? null : record.getRejectReason())
                 .notes(record == null ? occurrence.getNotes() : record.getNotes())
                 .build();
+    }
+
+    /** 读取一对一课次科目：旧课次只在关联时段未晚于课次生成时才允许安全回退。 */
+    private String resolveOneOnOneSubjectName(LessonOccurrenceEntity occurrence,
+                                               Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
+                                               boolean started) {
+        if (!started || StringUtils.hasText(occurrence.getSubjectName())) {
+            return resolveOccurrenceSubjectName(occurrence, recurringSlotMap);
+        }
+
+        RecurringScheduleSlotEntity slot = recurringSlotMap.get(occurrence.getScheduleSlotId());
+        if (slot == null) {
+            return null;
+        }
+        LocalDateTime occurrenceCreatedAt = occurrence.getCreatedAt();
+        LocalDateTime slotUpdatedAt = slot.getUpdatedAt();
+        // 软删时段是历史版本；旧库缺少审计时间时也沿用该版本数据，不能用活跃时段猜测历史名称。
+        if (Integer.valueOf(1).equals(slot.getIsDeleted())
+                && (occurrenceCreatedAt == null || slotUpdatedAt == null)) {
+            return StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName() : null;
+        }
+        if (occurrenceCreatedAt == null || slotUpdatedAt == null || slotUpdatedAt.isAfter(occurrenceCreatedAt)) {
+            return null;
+        }
+        return StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName() : null;
     }
 
     private Map<Long, RecurringScheduleSlotEntity> loadRecurringSlotMap(List<LessonOccurrenceEntity> occurrences) {

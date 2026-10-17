@@ -74,6 +74,7 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE' AFTER planned_teacher_id");
         addScheduleColumnIfMissing("lesson_occurrence", "subject_name",
                 "varchar(128) DEFAULT NULL COMMENT 'Subject snapshot copied from the weekly class slot' AFTER planned_teacher_id");
+        backfillUnchangedRecurringOccurrenceSubjects();
         boolean classroomOverrideAdded = addScheduleColumnIfMissing("lesson_occurrence", "classroom_overridden",
                 "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Whether this occurrence has an explicit one-off classroom override' AFTER planned_classroom_id");
         if (classroomOverrideAdded) {
@@ -89,6 +90,28 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         addTeacherPayRateColumnIfMissing("delivery_mode",
                 "varchar(16) DEFAULT NULL COMMENT 'Optional delivery scope: ONLINE, OFFLINE, or NULL for any' AFTER grade_band");
         makeTeacherPayRateProductScopeOptional();
+    }
+
+    /** 兼容快照字段上线前创建的课次；只从生成后未改过的原排课时段补名称。 */
+    private void backfillUnchangedRecurringOccurrenceSubjects() {
+        int updatedRows = jdbcTemplate.update("""
+                UPDATE lesson_occurrence occurrence
+                JOIN recurring_schedule_slot slot ON slot.id = occurrence.schedule_slot_id
+                SET occurrence.subject_name = slot.subject_name,
+                    occurrence.updated_at = occurrence.updated_at
+                WHERE occurrence.is_deleted = 0
+                  AND occurrence.class_group_id IS NULL
+                  AND occurrence.schedule_slot_id IS NOT NULL
+                  AND (occurrence.subject_name IS NULL OR TRIM(occurrence.subject_name) = '')
+                  AND slot.subject_name IS NOT NULL
+                  AND TRIM(slot.subject_name) <> ''
+                  AND occurrence.created_at IS NOT NULL
+                  AND slot.updated_at IS NOT NULL
+                  AND slot.updated_at <= occurrence.created_at
+                """);
+        if (updatedRows > 0) {
+            log.info("Restored subject snapshots for {} unchanged recurring lesson occurrences.", updatedRows);
+        }
     }
 
     /** 历史签字行属于可选补录数据；表结构缺失不能让整张签字表返回 500。 */

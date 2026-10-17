@@ -155,7 +155,7 @@ function renderRevisionHistory(revisions: SchedulePrintRevision[]) {
     const slots = revision.slots.length
       ? revision.slots.map(slot => `<p class="revision-slot">
           ${escapeHtml(weekdayName(slot.weekday))} ${escapeHtml(formatClock(slot.startTime))}–${escapeHtml(formatClock(slot.endTime))}
-          · ${escapeHtml(slot.subjectName || 'Unnamed lesson')}
+          · ${escapeHtml(slot.subjectName || 'Course name not recorded')}
           · ${escapeHtml(slot.teacherName || 'To be assigned')}
           · ${escapeHtml(slot.deliveryMode === 'ONLINE' ? 'Online' : slot.classroomName || 'Room not set')}
           · ${formatHours(slot.allocatedHours)}

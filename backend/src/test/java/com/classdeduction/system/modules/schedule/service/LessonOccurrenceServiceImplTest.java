@@ -479,6 +479,62 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldRecoverLegacyPastSubjectWhenSlotWasNotEditedSinceOccurrenceCreation() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
+        occurrence.setScheduleSlotId(6001L);
+        occurrence.setCreatedAt(LocalDateTime.of(2026, 8, 31, 10, 0));
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setSubjectName("AMC/Algebra I");
+        slot.setTeacherId(301L);
+        slot.setIsDeleted(0);
+        slot.setUpdatedAt(LocalDateTime.of(2026, 8, 31, 9, 0));
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence), List.of(occurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(slot));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null).get(0);
+
+        assertThat(teacher.students().get(0).packages().get(0).lessons())
+                .singleElement()
+                .satisfies(lesson -> assertThat(lesson.subjectName()).isEqualTo("AMC/Algebra I"));
+    }
+
+    @Test
+    void shouldNotUseChangedCurrentSlotToNameLegacyPastOccurrence() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
+        occurrence.setScheduleSlotId(6001L);
+        occurrence.setCreatedAt(LocalDateTime.of(2026, 8, 31, 10, 0));
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setSubjectName("New subject after schedule edit");
+        slot.setTeacherId(301L);
+        slot.setIsDeleted(0);
+        slot.setUpdatedAt(LocalDateTime.of(2026, 9, 2, 9, 0));
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence), List.of(occurrence));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(slot));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null).get(0);
+
+        assertThat(teacher.students().get(0).packages().get(0).lessons())
+                .singleElement()
+                .satisfies(lesson -> assertThat(lesson.subjectName()).isNull());
+    }
+
+    @Test
     void shouldKeepAllocatedHoursPackageWideWhenLessonListHasDateFilter() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         LessonOccurrenceEntity visibleLesson = buildOneOnOneOccurrence();
@@ -909,6 +965,7 @@ class LessonOccurrenceServiceImplTest {
         currentRule.setPackageId(coursePackage.getId());
         currentRule.setRuleStatus("ACTIVE");
         currentRule.setCreatedAt(now.minusDays(30));
+        currentRule.setAllocationPeriodStartedAt(now.minusDays(1));
         RecurringScheduleSlotEntity activeSlot = new RecurringScheduleSlotEntity();
         activeSlot.setId(6001L);
         activeSlot.setRuleId(currentRule.getId());
@@ -965,7 +1022,6 @@ class LessonOccurrenceServiceImplTest {
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(rebuiltSlot));
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
         when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
-        currentRule.setAllocationPeriodStartedAt(now.minusDays(1));
 
         OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
                 new OneOnOneDeductionQuery(), null).get(0);

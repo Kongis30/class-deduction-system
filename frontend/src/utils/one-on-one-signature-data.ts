@@ -63,7 +63,7 @@ export function signatureSubjectName(row: OneOnOneLesson | undefined, coursePack
     || coursePackage?.subjectName?.trim()
     || coursePackage?.courseProductName?.trim()
     || coursePackage?.packageName
-    || 'Unnamed lesson';
+    || 'Course name not recorded';
 }
 
 /** 纸质签字表的历史日期仅用于打印展示，不成为可消课、占用老师或扣课时的正式课次。 */
