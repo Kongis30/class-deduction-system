@@ -358,12 +358,12 @@
                   </el-tooltip>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Current allocation minus this teacher's confirmed deductions since the last schedule change, including past unconfirmed and future hours." placement="top" :show-after="200">
+                  <el-tooltip content="Hours in this teacher's future scheduled lessons. Past unprocessed lessons are shown separately as pending deduction." placement="top" :show-after="200">
                     <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Confirmed deductible hours for this teacher since the last schedule change. Earlier lessons remain in the lesson history and package total." placement="top" :show-after="200">
+                  <el-tooltip content="Confirmed deductible hours for this teacher, including charged cancellations. A charged cancellation does not create a makeup lesson." placement="top" :show-after="200">
                     <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
                 </span>
@@ -371,18 +371,11 @@
             </div>
           </div>
           <el-alert
-            v-if="hasNegativeTeacherBalance"
+            v-if="currentTeacherFutureScheduleOverhang > 0"
             type="warning"
             :closable="false"
             show-icon
-            title="A teacher's current-period deductions exceed their saved allocation. Review the schedule-period history; lesson records have not been changed."
-          />
-          <el-alert
-            v-if="currentTeacherAllocationOverhang > 0"
-            type="warning"
-            :closable="false"
-            show-icon
-            :title="`Current teacher allocations exceed the package balance by ${formatHours(currentTeacherAllocationOverhang)}h. The saved schedule and lesson records have not been changed; please review the allocation history.`"
+            :title="`Future scheduled lessons exceed the remaining package balance by ${formatHours(currentTeacherFutureScheduleOverhang)}h. Review this package's schedule and pending deductions.`"
           />
           <el-alert
             v-if="(activePackage.scheduledReservedUnits ?? 0) > activePackage.remainingUnits"
@@ -688,7 +681,8 @@
           <el-select v-model="confirmForm.resultStatus" style="width: 100%">
             <el-option label="Completed" value="COMPLETED" />
             <el-option label="Formal Leave" value="FORMAL_LEAVE" />
-            <el-option label="Last minute cancel or no show" value="NO_SHOW" />
+            <el-option label="Student cancellation (deduct planned hours)" value="CANCELLED" />
+            <el-option label="No show (deduct planned hours)" value="NO_SHOW" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="confirmForm.resultStatus === 'COMPLETED'" label="Actual Start">
@@ -897,18 +891,15 @@ const activeTeacherHours = computed(() => {
   const name = optionKey(teacher?.teacherName);
   return hours.find(item => !item.teacherId && optionKey(item.teacherName) === name);
 });
-// 只提示当前周期额度与课包账本不一致；不截断字段，也不修改用户的排课或课次。
-const currentTeacherAllocationOverhang = computed(() => {
+// 老师 Remaining 是未来排课合计；若各老师的未来排课超过课包余额，提示管理员检查排课。
+const currentTeacherFutureScheduleOverhang = computed(() => {
   const pkg = activePackage.value;
   if (!pkg) return 0;
-  const teacherRemaining = (pkg.teacherHours ?? []).reduce(
+  const futureScheduledHours = (pkg.teacherHours ?? []).reduce(
     (sum, hours) => sum + (hours.remainingUnits ?? 0), 0,
   );
-  return Math.max(0, teacherRemaining - (pkg.remainingUnits ?? 0));
+  return Math.max(0, futureScheduledHours - (pkg.remainingUnits ?? 0));
 });
-const hasNegativeTeacherBalance = computed(() =>
-  (activePackage.value?.teacherHours ?? []).some(hours => (hours.remainingUnits ?? 0) < 0),
-);
 const signatureHistory = ref<PrivateSignatureHistory[]>([]);
 const signatureHistoryPackageId = ref('');
 const printAreaRef = ref<HTMLElement>();
@@ -2016,7 +2007,8 @@ function statusLabel(row: OneOnOneLesson) {
   if (row.confirmStage === 'REJECTED') return 'Rejected';
   if (row.planningStatus === 'CANCELLED') return 'Cancelled';
   if (row.confirmStage === 'CONFIRMED' && row.resultStatus === 'COMPLETED') return 'Completed';
-  if (row.resultStatus === 'NO_SHOW' || row.resultStatus === 'CANCELLED') return 'Last minute cancel or no show';
+  if (row.resultStatus === 'CANCELLED') return 'Student cancellation (charged)';
+  if (row.resultStatus === 'NO_SHOW') return 'No show (charged)';
   if (row.confirmStage === 'CONFIRMED') return row.resultStatusName || 'Completed';
   if (row.resultStatusName) return row.resultStatusName;
   if (row.resultStatus) return row.resultStatus;
@@ -2046,7 +2038,10 @@ function nonAttendanceNotice(status: string) {
   if (status === 'FORMAL_LEAVE') {
     return 'Formal Leave does not deduct hours. The system automatically appends a replacement lesson to preserve the package total.';
   }
-  return 'Last minute cancel or no show deducts the full planned hours and does not create a replacement lesson.';
+  if (status === 'CANCELLED') {
+    return 'Student cancellation deducts the full planned hours and does not create a replacement lesson.';
+  }
+  return 'No show deducts the full planned hours and does not create a replacement lesson.';
 }
 
 function isFutureScheduleReconciliationError(error: unknown) {
