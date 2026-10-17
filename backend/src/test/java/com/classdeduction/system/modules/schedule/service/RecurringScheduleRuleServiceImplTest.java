@@ -154,6 +154,8 @@ class RecurringScheduleRuleServiceImplTest {
                 classroomMapper,
                 jsonHelper
         );
+        org.mockito.Mockito.lenient().when(coursePackageMapper.selectByIdForUpdate(any()))
+                .thenAnswer(invocation -> coursePackageMapper.selectById(invocation.getArgument(0)));
     }
 
     @Test
@@ -168,6 +170,7 @@ class RecurringScheduleRuleServiceImplTest {
 
         ScheduleRuleCreateResultVO result = recurringScheduleRuleService.createRule(request);
 
+        verify(coursePackageMapper).selectByIdForUpdate(1001L);
         verify(recurringScheduleRuleMapper).insert(ruleCaptor.capture());
         verify(recurringScheduleSlotMapper, times(1)).insert(slotCaptor.capture());
         verify(lessonOccurrenceMapper, times(2)).insert(occurrenceCaptor.capture());

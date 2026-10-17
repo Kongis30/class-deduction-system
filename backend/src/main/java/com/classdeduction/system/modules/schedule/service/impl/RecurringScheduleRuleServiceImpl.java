@@ -272,6 +272,15 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         CoursePackageEntity coursePackage = requireActivePackage(request.getPackageId());
         Long privateLessonGroupId = resolvePrivateLessonGroupId(request.getPrivateLessonGroupId(), coursePackage.getId());
         coursePackage = primaryPackageForPrivateGroup(coursePackage, privateLessonGroupId);
+        // 同一主课包的排课创建串行执行，避免并发请求同时通过分配额度校验。
+        CoursePackageEntity lockedPackage = coursePackageMapper.selectByIdForUpdate(coursePackage.getId());
+        if (lockedPackage == null) {
+            throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
+        }
+        if (!"ACTIVE".equalsIgnoreCase(lockedPackage.getPackageStatus())) {
+            throw new BusinessException("PACKAGE_NOT_ACTIVE", "Only active course packages can be scheduled.");
+        }
+        coursePackage = lockedPackage;
         StudentEntity student = requireStudent(coursePackage.getStudentId());
         ClassroomEntity classroom = resolveClassroom(request.getDefaultClassroomId());
         validateRuleDates(request);
