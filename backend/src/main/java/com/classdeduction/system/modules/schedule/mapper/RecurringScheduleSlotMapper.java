@@ -26,7 +26,7 @@ public interface RecurringScheduleSlotMapper extends BaseMapper<RecurringSchedul
     /** 读取已软删除的旧时段，供保留课次继续匹配原周期配置。 */
     @Select("""
             <script>
-            SELECT id, teacher_id, subject_name, weekday, start_time, end_time
+            SELECT *
             FROM recurring_schedule_slot
             WHERE id IN
             <foreach collection="ids" item="slotId" open="(" separator="," close=")">

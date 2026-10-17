@@ -2,11 +2,14 @@ package com.classdeduction.system.modules.schedule.util;
 
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -16,6 +19,23 @@ import java.util.Set;
 public final class PrivateLessonAllocation {
 
     private PrivateLessonAllocation() {
+    }
+
+    /** 旧课位只改过名称、教室或到课模式时，其课次仍属于当前课位的固定分配额。 */
+    public static boolean hasEquivalentCurrentSlot(RecurringScheduleSlotEntity historicalSlot,
+                                                   List<RecurringScheduleSlotEntity> currentSlots,
+                                                   Long currentRuleId) {
+        if (historicalSlot == null || !Objects.equals(historicalSlot.getRuleId(), currentRuleId)) {
+            return false;
+        }
+        return currentSlots.stream().anyMatch(currentSlot ->
+                Objects.equals(currentSlot.getRuleId(), currentRuleId)
+                        && Objects.equals(historicalSlot.getTeacherId(), currentSlot.getTeacherId())
+                        && Objects.equals(historicalSlot.getWeekday(), currentSlot.getWeekday())
+                        && Objects.equals(historicalSlot.getStartTime(), currentSlot.getStartTime())
+                        && Objects.equals(historicalSlot.getEndTime(), currentSlot.getEndTime())
+                        && Objects.equals(historicalSlot.getPlannedUnits(), currentSlot.getPlannedUnits())
+                        && Objects.equals(historicalSlot.getAllocatedUnits(), currentSlot.getAllocatedUnits()));
     }
 
     /** 同一课次可能出现在多个老师或共享课成员视图中，按课次 ID 只统计一次。 */

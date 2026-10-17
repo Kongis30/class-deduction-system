@@ -66,7 +66,19 @@ occurrence_facts AS (
                              AND o.created_at >= period.period_start)
                          OR period.supersedes_rule_id IS NOT NULL)
                 THEN 1 ELSE 0 END AS in_current_period,
-           CASE WHEN active_slot.id IS NULL THEN 1 ELSE 0 END AS outside_active_slot
+           CASE WHEN active_slot.id IS NULL AND NOT EXISTS (
+                    SELECT 1
+                    FROM recurring_schedule_slot historical_slot
+                    JOIN active_slots equivalent_slot ON equivalent_slot.rule_id = period.rule_id
+                    WHERE historical_slot.id = o.schedule_slot_id
+                      AND historical_slot.rule_id = period.rule_id
+                      AND historical_slot.teacher_id <=> equivalent_slot.teacher_id
+                      AND historical_slot.weekday = equivalent_slot.weekday
+                      AND historical_slot.start_time = equivalent_slot.start_time
+                      AND historical_slot.end_time = equivalent_slot.end_time
+                      AND historical_slot.planned_units = equivalent_slot.planned_units
+                      AND historical_slot.allocated_units <=> equivalent_slot.allocated_units
+                ) THEN 1 ELSE 0 END AS outside_active_slot
     FROM lesson_occurrence o
     JOIN periods period ON period.package_id = o.package_id
     LEFT JOIN latest_records lr ON lr.package_id = o.package_id AND lr.occurrence_id = o.id

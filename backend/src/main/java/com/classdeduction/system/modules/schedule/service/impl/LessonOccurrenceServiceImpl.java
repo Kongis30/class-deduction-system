@@ -1636,6 +1636,16 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     }
                 }
             }
+            Set<Long> historicalSlotIds = occurrencesByPackage.values().stream()
+                    .flatMap(Collection::stream)
+                    .map(LessonOccurrenceEntity::getScheduleSlotId)
+                    .filter(Objects::nonNull)
+                    .filter(slotId -> !currentSlotTeacherById.containsKey(slotId))
+                    .collect(Collectors.toSet());
+            Map<Long, RecurringScheduleSlotEntity> historicalSlotsById = historicalSlotIds.isEmpty()
+                    ? Collections.emptyMap()
+                    : recurringScheduleSlotMapper.selectIncludingDeletedByIds(historicalSlotIds).stream()
+                            .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
             for (Long packageId : currentRuleByPackage.keySet()) {
                 allocatedByPackage.putIfAbsent(packageId, 0);
             }
@@ -1661,6 +1671,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     // 补课是请假课次的延续，不是新分配；旧时段和临时课才补入当前分配快照。
                     if (currentPeriod && historicalTeacherId != null
                             && !currentSlotTeacherById.containsKey(occurrence.getScheduleSlotId())
+                            && !PrivateLessonAllocation.hasEquivalentCurrentSlot(
+                                    historicalSlotsById.get(occurrence.getScheduleSlotId()),
+                                    currentSlots, currentRuleId)
                             && !"MAKEUP".equals(occurrence.getOccurrenceType())
                             && !"CANCELLED".equals(occurrence.getPlanningStatus())) {
                         int exceptionUnits = Math.max(0, safeUnits(occurrence.getPlannedUnits()));

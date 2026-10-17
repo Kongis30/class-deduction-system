@@ -2,8 +2,10 @@ package com.classdeduction.system.modules.schedule.util;
 
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 
@@ -32,6 +34,34 @@ class PrivateLessonAllocationTest {
     void shouldReleaseConfirmedLeaveWithoutDeduction() {
         LessonOccurrenceEntity leave = occurrence(1L, 4, "SCHEDULED");
         assertThat(PrivateLessonAllocation.reservedUnits(leave, record("CONFIRMED"))).isZero();
+    }
+
+    @Test
+    void rebuiltSlotWithSameAllocationDoesNotAddHistoricalLessonsAgain() {
+        RecurringScheduleSlotEntity oldSlot = recurringSlot(1L, 7, 32);
+        oldSlot.setSubjectName("ELA");
+        RecurringScheduleSlotEntity currentSlot = recurringSlot(1L, 7, 32);
+        currentSlot.setSubjectName("English");
+        currentSlot.setClassroomId(4001L);
+        currentSlot.setDeliveryMode("IN_PERSON");
+
+        assertThat(PrivateLessonAllocation.hasEquivalentCurrentSlot(oldSlot, List.of(currentSlot), 1L))
+                .isTrue();
+        currentSlot.setAllocatedUnits(28);
+        assertThat(PrivateLessonAllocation.hasEquivalentCurrentSlot(oldSlot, List.of(currentSlot), 1L))
+                .isFalse();
+    }
+
+    private RecurringScheduleSlotEntity recurringSlot(Long ruleId, int weekday, int allocatedUnits) {
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setRuleId(ruleId);
+        slot.setTeacherId(3001L);
+        slot.setWeekday(weekday);
+        slot.setStartTime(LocalTime.of(12, 0));
+        slot.setEndTime(LocalTime.of(14, 0));
+        slot.setPlannedUnits(4);
+        slot.setAllocatedUnits(allocatedUnits);
+        return slot;
     }
 
     private LessonOccurrenceEntity occurrence(Long id, int plannedUnits, String planningStatus) {
