@@ -23,6 +23,20 @@ public interface RecurringScheduleSlotMapper extends BaseMapper<RecurringSchedul
                             @Param("classroomId") Long classroomId,
                             @Param("subjectName") String subjectName);
 
+    /** 旧周期请假释放的课时进入当前课位；原位递增保证并发确认不会覆盖分配额。 */
+    @Update("UPDATE recurring_schedule_slot SET allocated_units = COALESCE(allocated_units, 0) + #{units}, "
+            + "updated_at = CURRENT_TIMESTAMP WHERE id = #{slotId} AND rule_id = #{ruleId} "
+            + "AND slot_status = 'ACTIVE' AND is_deleted = 0")
+    int addLeaveCarryover(@Param("slotId") Long slotId, @Param("ruleId") Long ruleId,
+                          @Param("units") int units);
+
+    /** 撤销同周期旧课请假时，回退对应课位的自动增加额。 */
+    @Update("UPDATE recurring_schedule_slot SET allocated_units = COALESCE(allocated_units, 0) - #{units}, "
+            + "updated_at = CURRENT_TIMESTAMP WHERE id = #{slotId} AND rule_id = #{ruleId} "
+            + "AND COALESCE(allocated_units, 0) >= #{units} AND slot_status = 'ACTIVE' AND is_deleted = 0")
+    int removeLeaveCarryover(@Param("slotId") Long slotId, @Param("ruleId") Long ruleId,
+                             @Param("units") int units);
+
     /** 读取已软删除的旧时段，供保留课次继续匹配原周期配置。 */
     @Select("""
             <script>

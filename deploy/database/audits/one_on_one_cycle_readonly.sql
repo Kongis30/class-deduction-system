@@ -77,7 +77,20 @@ occurrence_facts AS (
                       AND historical_slot.start_time = equivalent_slot.start_time
                       AND historical_slot.end_time = equivalent_slot.end_time
                       AND historical_slot.planned_units = equivalent_slot.planned_units
-                      AND historical_slot.allocated_units <=> equivalent_slot.allocated_units
+                      AND historical_slot.allocated_units <=> equivalent_slot.allocated_units - COALESCE((
+                          SELECT SUM(makeup.leave_carryover_units)
+                          FROM lesson_occurrence makeup
+                          JOIN recurring_schedule_slot makeup_slot ON makeup_slot.id = makeup.schedule_slot_id
+                          WHERE makeup.package_id = o.package_id
+                            AND makeup.schedule_rule_id = period.rule_id
+                            AND makeup.occurrence_type = 'MAKEUP'
+                            AND makeup.leave_carryover_units > 0
+                            AND makeup_slot.teacher_id <=> equivalent_slot.teacher_id
+                            AND makeup_slot.weekday = equivalent_slot.weekday
+                            AND makeup_slot.start_time = equivalent_slot.start_time
+                            AND makeup_slot.end_time = equivalent_slot.end_time
+                            AND makeup_slot.planned_units = equivalent_slot.planned_units
+                      ), 0)
                 ) THEN 1 ELSE 0 END AS outside_active_slot
     FROM lesson_occurrence o
     JOIN periods period ON period.package_id = o.package_id

@@ -56,6 +56,7 @@ import com.classdeduction.system.modules.schedule.vo.PendingClassroomAssignmentV
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
 import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
+import com.classdeduction.system.modules.schedule.util.PrivateSchedulePeriod;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -1658,6 +1659,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 List<LessonOccurrenceEntity> packageOccurrences = occurrencesByPackage.getOrDefault(
                         packageId, Collections.emptyList());
                 Map<Long, LessonRecordEntity> records = recordIndex.forPackage(packageId, packageOccurrences);
+                Map<Long, Integer> leaveCarryoverBySlot = currentSlotLeaveCarryovers(
+                        packageOccurrences, currentSlots, historicalSlotsById, currentRuleId);
                 Map<Long, Map<Long, Integer>> reservedBySlotAndTeacher = new HashMap<>();
                 Set<Long> countedOccurrenceIds = new HashSet<>();
                 for (LessonOccurrenceEntity occurrence : packageOccurrences) {
@@ -1673,7 +1676,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                             && !currentSlotTeacherById.containsKey(occurrence.getScheduleSlotId())
                             && !PrivateLessonAllocation.hasEquivalentCurrentSlot(
                                     historicalSlotsById.get(occurrence.getScheduleSlotId()),
-                                    currentSlots, currentRuleId)
+                                    currentSlots, currentRuleId, leaveCarryoverBySlot)
                             && !"MAKEUP".equals(occurrence.getOccurrenceType())
                             && !"CANCELLED".equals(occurrence.getPlanningStatus())) {
                         int exceptionUnits = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
@@ -1780,29 +1783,42 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 pendingAdminDeductionByPackage, pendingProcessingByPackage, unresolvedPastByPackage);
     }
 
+    /** 旧周期请假的额度随补课记录保存；扣除这些增量后，按原课位定义去重历史课次。 */
+    private Map<Long, Integer> currentSlotLeaveCarryovers(
+            List<LessonOccurrenceEntity> occurrences,
+            List<RecurringScheduleSlotEntity> currentSlots,
+            Map<Long, RecurringScheduleSlotEntity> historicalSlotsById,
+            Long currentRuleId) {
+        Map<Long, Integer> carryovers = new HashMap<>();
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            int units = Math.max(0, safeUnits(occurrence.getLeaveCarryoverUnits()));
+            if (units == 0 || !"MAKEUP".equals(occurrence.getOccurrenceType())
+                    || !Objects.equals(currentRuleId, occurrence.getScheduleRuleId())) {
+                continue;
+            }
+            RecurringScheduleSlotEntity sourceSlot = currentSlots.stream()
+                    .filter(slot -> Objects.equals(slot.getId(), occurrence.getScheduleSlotId()))
+                    .findFirst().orElse(historicalSlotsById.get(occurrence.getScheduleSlotId()));
+            if (sourceSlot == null) continue;
+            currentSlots.stream()
+                    .filter(slot -> Objects.equals(slot.getRuleId(), currentRuleId)
+                            && Objects.equals(sourceSlot.getTeacherId(), slot.getTeacherId())
+                            && Objects.equals(sourceSlot.getWeekday(), slot.getWeekday())
+                            && Objects.equals(sourceSlot.getStartTime(), slot.getStartTime())
+                            && Objects.equals(sourceSlot.getEndTime(), slot.getEndTime())
+                            && Objects.equals(sourceSlot.getPlannedUnits(), slot.getPlannedUnits()))
+                    .findFirst()
+                    .ifPresent(slot -> carryovers.merge(slot.getId(), units, Integer::sum));
+        }
+        return carryovers;
+    }
+
     /** 以最近一次排课分配为周期边界；旧规则保留的未来例外课次按实际发生日期归属。 */
     private boolean belongsToCurrentSchedulePeriod(LessonOccurrenceEntity occurrence,
                                                     LessonRecordEntity record,
                                                     RecurringScheduleRuleEntity currentRule,
                                                     LocalDateTime periodStart) {
-        if (periodStart != null && (occurrence.getPlannedStartAt() == null
-                || occurrence.getPlannedStartAt().isBefore(periodStart)
-                || record != null && record.getConfirmedAt() != null
-                && record.getConfirmedAt().isBefore(periodStart))) {
-            return false;
-        }
-        if (Objects.equals(currentRule.getId(), occurrence.getScheduleRuleId())) {
-            return true;
-        }
-        if (periodStart != null && occurrence.getScheduleRuleId() == null
-                && "ADHOC".equals(occurrence.getOccurrenceType())
-                && occurrence.getCreatedAt() != null
-                && !occurrence.getCreatedAt().isBefore(periodStart)) {
-            return true;
-        }
-        return currentRule.getSupersedesRuleId() != null && periodStart != null
-                && (record == null || record.getConfirmedAt() == null
-                || !record.getConfirmedAt().isBefore(periodStart));
+        return PrivateSchedulePeriod.contains(occurrence, record, currentRule, periodStart);
     }
 
     /** 管理员按课包内实际排课的老师分别建立入口；老师账号查询时只保留本人入口。 */

@@ -46,6 +46,9 @@ public class LessonOccurrenceEntity extends BaseEntity {
 
     private String occurrenceType;
 
+    /** 旧周期请假带入当前分配额的半小时数；仅自动生成的补课课次写入。 */
+    private Integer leaveCarryoverUnits;
+
     private Long plannedTeacherId;
 
     /** 课次生成时的科目快照，避免排课模板后续修改影响历史课次展示。 */

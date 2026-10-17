@@ -743,6 +743,7 @@ CREATE TABLE `lesson_occurrence` (
   `schedule_rule_id` bigint DEFAULT NULL COMMENT 'Source rule ID',
   `schedule_slot_id` bigint DEFAULT NULL COMMENT 'Source slot ID',
   `occurrence_type` varchar(32) NOT NULL COMMENT 'Occurrence type: REGULAR/MAKEUP/MANUAL',
+  `leave_carryover_units` int NOT NULL DEFAULT '0' COMMENT 'Previous-period leave hours added to the current slot',
   `planned_teacher_id` bigint DEFAULT NULL COMMENT 'Planned teacher ID',
   `delivery_mode` varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE',
   `planned_classroom_id` bigint DEFAULT NULL COMMENT 'Planned classroom ID',

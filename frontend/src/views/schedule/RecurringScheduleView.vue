@@ -2185,8 +2185,25 @@ async function openCreateDialog() {
 }
 
 async function openEditDialog() {
-  if (!currentRule.value) return;
-  const detail = currentRule.value;
+  const packageId = selectedPackageId.value;
+  const ruleId = currentRule.value?.id;
+  if (!packageId || !ruleId) return;
+  let detail: any;
+  try {
+    const latestRules = await fetchRecurringScheduleRules({ packageId, ruleStatus: 'ACTIVE', pageSize: 1 });
+    const latestRule = latestRules.data.data.records[0];
+    if (!latestRule) {
+      ElMessage.error('The schedule changed. Refresh this student before editing.');
+      return;
+    }
+    const response = await fetchRecurringScheduleRule(latestRule.id);
+    if (String(selectedPackageId.value) !== String(packageId)) return;
+    detail = { ...latestRule, ...response.data.data };
+    allPackageRules.value = { ...allPackageRules.value, [String(packageId)]: detail };
+  } catch (error) {
+    ElMessage.error(`Unable to load the latest schedule allocation. ${extractErrorMessage(error)}`);
+    return;
+  }
   await ensureScheduleResourceOptions(detail.slots || [], detail.defaultClassroomId);
   isEditing.value = true;
   editingRuleId.value = detail.id;

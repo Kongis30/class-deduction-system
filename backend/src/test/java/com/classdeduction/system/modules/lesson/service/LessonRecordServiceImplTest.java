@@ -26,8 +26,12 @@ import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMap
 import com.classdeduction.system.modules.lesson.service.impl.LessonRecordServiceImpl;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
@@ -79,6 +83,12 @@ class LessonRecordServiceImplTest {
     private LessonOccurrenceMapper lessonOccurrenceMapper;
 
     @Mock
+    private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+
+    @Mock
+    private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+
+    @Mock
     private ClassGroupMapper classGroupMapper;
 
     @Mock
@@ -127,6 +137,8 @@ class LessonRecordServiceImplTest {
         // 单元测试不启动 MyBatis 上下文，手动初始化 LambdaQueryWrapper 字段缓存。
         Configuration configuration = new Configuration();
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), LessonOccurrenceEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleRuleEntity.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(configuration, ""), RecurringScheduleSlotEntity.class);
     }
 
     @BeforeEach
@@ -138,6 +150,8 @@ class LessonRecordServiceImplTest {
                 packageBalanceSnapshotMapper,
                 lessonStatusRuleMapper,
                 lessonOccurrenceMapper,
+                recurringScheduleRuleMapper,
+                recurringScheduleSlotMapper,
                 coursePackageMapper,
                 packageTeacherAssignmentMapper,
                 privateLessonGroupMemberMapper,

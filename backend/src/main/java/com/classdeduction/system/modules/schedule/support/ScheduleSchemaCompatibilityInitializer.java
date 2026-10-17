@@ -74,6 +74,8 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "varchar(16) DEFAULT NULL COMMENT 'Delivery mode snapshot: IN_PERSON or ONLINE' AFTER planned_teacher_id");
         addScheduleColumnIfMissing("lesson_occurrence", "subject_name",
                 "varchar(128) DEFAULT NULL COMMENT 'Subject snapshot copied from the weekly class slot' AFTER planned_teacher_id");
+        addScheduleColumnIfMissing("lesson_occurrence", "leave_carryover_units",
+                "int NOT NULL DEFAULT 0 COMMENT 'Previous-period leave hours added to the current slot' AFTER occurrence_type");
         backfillUnchangedRecurringOccurrenceSubjects();
         boolean classroomOverrideAdded = addScheduleColumnIfMissing("lesson_occurrence", "classroom_overridden",
                 "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Whether this occurrence has an explicit one-off classroom override' AFTER planned_classroom_id");

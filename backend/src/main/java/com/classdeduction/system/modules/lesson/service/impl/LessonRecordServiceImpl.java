@@ -40,6 +40,11 @@ import com.classdeduction.system.modules.systemconfig.service.NotificationOutbox
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.util.PrivateSchedulePeriod;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
 import lombok.RequiredArgsConstructor;
@@ -76,6 +81,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
     private final LessonStatusRuleMapper lessonStatusRuleMapper;
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
     private final CoursePackageMapper coursePackageMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
@@ -253,8 +260,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             }
         }
         int originalPlannedUnits = occurrence.getPlannedUnits();
-        LessonOccurrenceEntity makeup = buildMakeupIfNeeded(primaryPackage, primaryStudent, occurrence,
-                originalPlannedUnits, decision);
+        MakeupPlan makeupPlan = buildMakeupIfNeeded(primaryPackage, primaryStudent, occurrence,
+                originalPlannedUnits, decision, statusRule, existingRecordByPackage.get(primaryPackage.getId()));
+        LessonOccurrenceEntity makeup = makeupPlan.occurrence();
         if (makeup != null) {
             makeup.setPrivateLessonGroupId(occurrence.getPrivateLessonGroupId());
             ensureNoConflictForMakeupOccurrence(makeup);
@@ -296,6 +304,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (makeup != null) {
             lessonOccurrenceMapper.insert(makeup);
         }
+        applyLeaveCarryover(makeupPlan);
         adjustFutureOccurrencesIfNeeded(primaryPackage.getId(), occurrence.getPrivateLessonGroupId(), originalPlannedUnits, decision);
 
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
@@ -586,8 +595,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             ensureNoConflictForConfirmedOccurrence(occurrence, decision);
         }
         int originalPlannedUnits = occurrence.getPlannedUnits();
-        LessonOccurrenceEntity makeup = buildMakeupIfNeeded(
-                coursePackage, student, occurrence, originalPlannedUnits, decision);
+        MakeupPlan makeupPlan = buildMakeupIfNeeded(
+                coursePackage, student, occurrence, originalPlannedUnits, decision, rule, record);
+        LessonOccurrenceEntity makeup = makeupPlan.occurrence();
         if (makeup != null) {
             ensureNoConflictForMakeupOccurrence(makeup);
         }
@@ -615,6 +625,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (makeup != null) {
             lessonOccurrenceMapper.insert(makeup);
         }
+        applyLeaveCarryover(makeupPlan);
         adjustFutureOccurrencesIfNeeded(coursePackage.getId(), null, originalPlannedUnits, decision);
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
         refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision,
@@ -685,13 +696,16 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
     }
 
-    private LessonOccurrenceEntity buildMakeupIfNeeded(CoursePackageEntity coursePackage,
-                                                       StudentEntity student,
-                                                       LessonOccurrenceEntity occurrence,
-                                                       int originalPlannedUnits,
-                                                       ConfirmationDecision decision) {
+    /** 请假补课沿用当前排课课位；只有旧周期请假才增加当前分配额。 */
+    private MakeupPlan buildMakeupIfNeeded(CoursePackageEntity coursePackage,
+                                           StudentEntity student,
+                                           LessonOccurrenceEntity occurrence,
+                                           int originalPlannedUnits,
+                                           ConfirmationDecision decision,
+                                           LessonStatusRuleEntity statusRule,
+                                           LessonRecordEntity record) {
         if (!decision.shouldExtendEndDate()) {
-            return null;
+            return new MakeupPlan(null, null, null, 0);
         }
         LessonOccurrenceEntity lastOccurrence = lessonOccurrenceMapper.selectOne(new LambdaQueryWrapper<LessonOccurrenceEntity>()
                 .eq(LessonOccurrenceEntity::getPackageId, coursePackage.getId())
@@ -699,25 +713,130 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 .orderByDesc(LessonOccurrenceEntity::getPlannedStartAt)
                 .last("LIMIT 1"));
         if (lastOccurrence == null) {
-            return null;
+            return new MakeupPlan(null, null, null, 0);
+        }
+        RecurringScheduleRuleEntity currentRule = "FORMAL_LEAVE".equals(statusRule.getStatusCode())
+                ? currentPrivateRule(coursePackage.getId(), occurrence.getPrivateLessonGroupId()) : null;
+        List<RecurringScheduleSlotEntity> currentSlots = currentRule == null ? List.of()
+                : recurringScheduleSlotMapper.selectList(new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                        .eq(RecurringScheduleSlotEntity::getRuleId, currentRule.getId())
+                        .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"));
+        boolean previousPeriodLeave = currentRule != null && !currentSlots.isEmpty()
+                && !PrivateSchedulePeriod.contains(occurrence, record, currentRule,
+                        PrivateSchedulePeriod.startAt(currentRule, currentSlots));
+        RecurringScheduleSlotEntity targetSlot = currentSlots.stream()
+                .filter(slot -> Objects.equals(slot.getId(), occurrence.getScheduleSlotId()))
+                .findFirst()
+                .orElseGet(() -> currentSlots.stream()
+                        .filter(slot -> Objects.equals(slot.getTeacherId(), occurrence.getPlannedTeacherId()))
+                        .findFirst().orElse(currentSlots.isEmpty() ? null : currentSlots.get(0)));
+        if (targetSlot != null && (targetSlot.getStartTime() == null || targetSlot.getWeekday() == null)) {
+            throw new BusinessException("INVALID_SCHEDULE_SLOT", "The current weekly slot needs a day and time before leave can be extended.");
+        }
+        LessonOccurrenceEntity currentTail = null;
+        if (targetSlot != null) {
+            currentTail = lessonOccurrenceMapper.selectOne(
+                    new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                            .eq(LessonOccurrenceEntity::getScheduleRuleId, currentRule.getId())
+                            .eq(LessonOccurrenceEntity::getScheduleSlotId, targetSlot.getId())
+                            .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                            .orderByDesc(LessonOccurrenceEntity::getPlannedStartAt)
+                            .last("LIMIT 1"));
+            if (currentTail != null) {
+                lastOccurrence = currentTail;
+            }
         }
         LessonOccurrenceEntity makeup = new LessonOccurrenceEntity();
         makeup.setLessonNo(BusinessNoGenerator.generateLessonOccurrenceNo());
         makeup.setPackageId(coursePackage.getId());
         makeup.setStudentId(student.getId());
-        makeup.setScheduleRuleId(lastOccurrence.getScheduleRuleId());
-        makeup.setScheduleSlotId(lastOccurrence.getScheduleSlotId());
+        makeup.setScheduleRuleId(targetSlot == null ? lastOccurrence.getScheduleRuleId() : currentRule.getId());
+        makeup.setScheduleSlotId(targetSlot == null ? lastOccurrence.getScheduleSlotId() : targetSlot.getId());
         makeup.setOccurrenceType("MAKEUP");
-        makeup.setPlannedTeacherId(lastOccurrence.getPlannedTeacherId());
-        makeup.setSubjectName(lastOccurrence.getSubjectName());
-        makeup.setPlannedClassroomId(lastOccurrence.getPlannedClassroomId());
-        makeup.setPlannedStartAt(lastOccurrence.getPlannedStartAt().plusWeeks(1));
-        makeup.setPlannedEndAt(lastOccurrence.getPlannedEndAt().plusWeeks(1));
+        makeup.setLeaveCarryoverUnits(previousPeriodLeave ? originalPlannedUnits : 0);
+        makeup.setPlannedTeacherId(targetSlot == null ? lastOccurrence.getPlannedTeacherId() : targetSlot.getTeacherId());
+        makeup.setSubjectName(targetSlot == null ? lastOccurrence.getSubjectName() : targetSlot.getSubjectName());
+        makeup.setPlannedClassroomId(targetSlot == null ? lastOccurrence.getPlannedClassroomId() : targetSlot.getClassroomId());
+        makeup.setDeliveryMode(targetSlot == null ? lastOccurrence.getDeliveryMode() : targetSlot.getDeliveryMode());
+        LocalDateTime makeupStart = lastOccurrence.getPlannedStartAt().plusWeeks(1);
+        if (targetSlot != null) {
+            LocalDateTime now = AppTime.nowLocalDateTime();
+            LocalDateTime after = currentTail == null ? now : currentTail.getPlannedStartAt();
+            LocalDate firstDate = currentRule.getStartDate() == null ? after.toLocalDate()
+                    : currentRule.getStartDate();
+            makeupStart = LocalDateTime.of(firstDate.isAfter(after.toLocalDate()) ? firstDate : after.toLocalDate(),
+                    targetSlot.getStartTime());
+            while (!makeupStart.isAfter(after)
+                    || makeupStart.getDayOfWeek().getValue() != targetSlot.getWeekday()) {
+                makeupStart = makeupStart.plusDays(1);
+            }
+        }
+        makeup.setPlannedStartAt(makeupStart);
+        makeup.setPlannedEndAt(makeupStart.plusMinutes(originalPlannedUnits * 30L));
         makeup.setPlannedUnits(originalPlannedUnits);
         makeup.setPlanningStatus("SCHEDULED");
         makeup.setSourceOccurrenceId(occurrence.getId());
         makeup.setConflictChecked(1);
-        return makeup;
+        if (targetSlot != null) {
+            // 现有排课可能在末尾占用若干周，补课顺延到首个不冲突的同一时段。
+            for (int week = 0; week < 104 && (makeup.getPlannedStartAt().isBefore(AppTime.nowLocalDateTime())
+                    || hasAnyAdjustedOccurrenceConflict(makeup)); week++) {
+                makeup.setPlannedStartAt(makeup.getPlannedStartAt().plusWeeks(1));
+                makeup.setPlannedEndAt(makeup.getPlannedEndAt().plusWeeks(1));
+            }
+            if (makeup.getPlannedStartAt().isBefore(AppTime.nowLocalDateTime())
+                    || hasAnyAdjustedOccurrenceConflict(makeup)) {
+                throw new BusinessException("MAKEUP_SLOT_UNAVAILABLE", "No available weekly time was found for the makeup lesson.");
+            }
+        }
+        return new MakeupPlan(makeup, previousPeriodLeave ? currentRule.getId() : null,
+                previousPeriodLeave ? targetSlot.getId() : null,
+                previousPeriodLeave ? originalPlannedUnits : 0);
+    }
+
+    private RecurringScheduleRuleEntity currentPrivateRule(Long packageId, Long groupId) {
+        return recurringScheduleRuleMapper.selectOne(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                .and(scope -> scope.eq(RecurringScheduleRuleEntity::getPackageId, packageId)
+                        .or(groupId != null, group -> group.eq(RecurringScheduleRuleEntity::getPrivateLessonGroupId, groupId)))
+                .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt)
+                .last("LIMIT 1"));
+    }
+
+    private void applyLeaveCarryover(MakeupPlan plan) {
+        if (plan.carryoverSlotId() == null) return;
+        if (recurringScheduleSlotMapper.addLeaveCarryover(
+                plan.carryoverSlotId(), plan.carryoverRuleId(), plan.carryoverUnits()) != 1) {
+            throw new BusinessException("SCHEDULE_CHANGED", "The schedule changed while confirming leave. Please retry.");
+        }
+    }
+
+    /** 撤销旧周期请假时同步撤回自动分配；已有后续改排课时先要求人工核对。 */
+    private void reverseLeaveCarryoverIfNeeded(LessonRecordEntity record, LessonOccurrenceEntity source) {
+        if (!"FORMAL_LEAVE".equals(record.getResultStatus()) || source == null) return;
+        List<LessonOccurrenceEntity> makeups = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getSourceOccurrenceId, source.getId()));
+        if (makeups.isEmpty()) return;
+        if (makeups.stream().anyMatch(makeup -> "MERGED".equals(makeup.getPlanningStatus()))) {
+            throw new BusinessException("MAKEUP_ALREADY_CONFIRMED",
+                    "Revoke the completed makeup lesson before revoking its source leave.");
+        }
+        LessonOccurrenceEntity makeup = makeups.stream().filter(item -> "MAKEUP".equals(item.getOccurrenceType())
+                        && safeUnits(item.getLeaveCarryoverUnits()) > 0)
+                .findFirst().orElse(null);
+        if (makeup == null) return;
+        RecurringScheduleRuleEntity currentRule = currentPrivateRule(record.getPackageId(), source.getPrivateLessonGroupId());
+        if (currentRule == null || !Objects.equals(makeup.getScheduleRuleId(), currentRule.getId())) {
+            throw new BusinessException("MAKEUP_SCHEDULE_CHANGED",
+                    "The schedule changed after this leave. Review the current allocation before revoking it.");
+        }
+        if (recurringScheduleSlotMapper.removeLeaveCarryover(makeup.getScheduleSlotId(), currentRule.getId(),
+                makeup.getLeaveCarryoverUnits()) != 1) {
+            throw new BusinessException("SCHEDULE_CHANGED", "The schedule changed while revoking leave. Please retry.");
+        }
+        makeup.setLeaveCarryoverUnits(0);
+        lessonOccurrenceMapper.updateById(makeup);
     }
 
     @Override
@@ -762,6 +881,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
         // 一对一记录：回滚课包课时 + 写冲正账本 + 恢复课次 + 作废联动补课课次。
         CoursePackageEntity coursePackage = requirePackageForRevoke(record.getPackageId());
+        reverseLeaveCarryoverIfNeeded(record, recordOccurrence);
         int deducted = record.getDeductedUnits() == null ? 0 : record.getDeductedUnits();
 
         if (deducted > 0) {
@@ -812,6 +932,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             restoreOccurrence(occurrence.getId());
             return;
         }
+        records.stream().filter(record -> CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage()))
+                .findFirst().ifPresent(record -> reverseLeaveCarryoverIfNeeded(record, occurrence));
         for (LessonRecordEntity record : records) {
             if (!CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage()) || record.getPackageId() == null) {
                 lessonRecordMapper.deleteById(record.getId());
@@ -1798,6 +1920,10 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                                         boolean shouldDeduct,
                                         int deductedUnits,
                                         boolean shouldExtendEndDate) {
+    }
+
+    private record MakeupPlan(LessonOccurrenceEntity occurrence, Long carryoverRuleId,
+                              Long carryoverSlotId, int carryoverUnits) {
     }
 
     private record PackageUpdateResult(Long ledgerId, int remainingUnits, boolean packageCompleted) {

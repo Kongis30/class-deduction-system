@@ -21,10 +21,18 @@ public final class PrivateLessonAllocation {
     private PrivateLessonAllocation() {
     }
 
-    /** 旧课位只改过名称、教室或到课模式时，其课次仍属于当前课位的固定分配额。 */
+    /** 旧课位配置未变时，其历史课次仍包含在当前分配额内；请假增量先从当前额度中还原。 */
     public static boolean hasEquivalentCurrentSlot(RecurringScheduleSlotEntity historicalSlot,
                                                    List<RecurringScheduleSlotEntity> currentSlots,
                                                    Long currentRuleId) {
+        return hasEquivalentCurrentSlot(historicalSlot, currentSlots, currentRuleId, Map.of());
+    }
+
+    /** 请假带入的分配增量不改变历史课位定义，因此比较时先还原当前课位的基础分配额。 */
+    public static boolean hasEquivalentCurrentSlot(RecurringScheduleSlotEntity historicalSlot,
+                                                   List<RecurringScheduleSlotEntity> currentSlots,
+                                                   Long currentRuleId,
+                                                   Map<Long, Integer> leaveCarryoverBySlot) {
         if (historicalSlot == null || !Objects.equals(historicalSlot.getRuleId(), currentRuleId)) {
             return false;
         }
@@ -35,7 +43,9 @@ public final class PrivateLessonAllocation {
                         && Objects.equals(historicalSlot.getStartTime(), currentSlot.getStartTime())
                         && Objects.equals(historicalSlot.getEndTime(), currentSlot.getEndTime())
                         && Objects.equals(historicalSlot.getPlannedUnits(), currentSlot.getPlannedUnits())
-                        && Objects.equals(historicalSlot.getAllocatedUnits(), currentSlot.getAllocatedUnits()));
+                        && Objects.equals(historicalSlot.getAllocatedUnits(), Math.max(0,
+                        (currentSlot.getAllocatedUnits() == null ? 0 : currentSlot.getAllocatedUnits())
+                                - leaveCarryoverBySlot.getOrDefault(currentSlot.getId(), 0))));
     }
 
     /** 同一课次可能出现在多个老师或共享课成员视图中，按课次 ID 只统计一次。 */
