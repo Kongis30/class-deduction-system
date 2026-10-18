@@ -3,8 +3,12 @@
 This repository uses a split frontend and backend structure:
 
 - `doc/`: business, UI, database, and delivery planning documents
+- `docs/`: confirmed business rules and maintenance references
 - `frontend/`: Vue 3 + Vite admin application
 - `backend/`: Spring Boot backend service
+
+The confirmed 1-on-1 teacher-hour field definitions and schedule-period rules are in
+[docs/one-on-one-hours-business-rules.md](docs/one-on-one-hours-business-rules.md).
 
 ## Local Environment
 

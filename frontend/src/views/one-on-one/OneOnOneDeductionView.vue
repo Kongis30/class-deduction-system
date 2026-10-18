@@ -358,29 +358,24 @@
                   </el-tooltip>{{ formatHours(activeTeacherHours?.allocatedUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Hours in this teacher's future scheduled lessons. Past unprocessed lessons are shown separately as pending deduction." placement="top" :show-after="200">
+                  <el-tooltip content="Current schedule allocation minus hours finally deducted by the admin. Includes future and past lessons still awaiting final processing." placement="top" :show-after="200">
                     <small>Remaining with {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.remainingUnits ?? 0) }}h
                 </span>
                 <span class="oo-student-context__metric">
-                  <el-tooltip content="Confirmed deductible hours for this teacher, including charged cancellations. A charged cancellation does not create a makeup lesson." placement="top" :show-after="200">
+                  <el-tooltip content="Hours finally deducted in the current schedule period, including student cancellations. Formal leave and pending reviews do not count." placement="top" :show-after="200">
                     <small>Deducted by {{ activeTeacher?.teacherName || 'teacher' }}</small>
                   </el-tooltip>{{ formatHours(activeTeacherHours?.deductedUnits ?? 0) }}h
-                </span>
-                <span class="oo-student-context__metric">
-                  <el-tooltip content="Past lesson hours for this teacher awaiting final admin processing, including lessons not yet submitted by the teacher." placement="top" :show-after="200">
-                    <small>Pending deduction</small>
-                  </el-tooltip>{{ formatHours(activeTeacherHours?.pendingDeductionUnits ?? 0) }}h
                 </span>
               </div>
             </div>
           </div>
           <el-alert
-            v-if="currentTeacherFutureScheduleOverhang > 0"
+            v-if="currentTeacherRemainingOverhang > 0"
             type="warning"
             :closable="false"
             show-icon
-            :title="`Future scheduled lessons exceed the remaining package balance by ${formatHours(currentTeacherFutureScheduleOverhang)}h. Review this package's schedule and pending deductions.`"
+            :title="`Teacher remaining allocations exceed the remaining package balance by ${formatHours(currentTeacherRemainingOverhang)}h. Review the allocation history.`"
           />
           <el-alert
             v-if="(activePackage.scheduledReservedUnits ?? 0) > activePackage.remainingUnits"
@@ -896,14 +891,14 @@ const activeTeacherHours = computed(() => {
   const name = optionKey(teacher?.teacherName);
   return hours.find(item => !item.teacherId && optionKey(item.teacherName) === name);
 });
-// 老师 Remaining 是未来排课合计；若各老师的未来排课超过课包余额，提示管理员检查排课。
-const currentTeacherFutureScheduleOverhang = computed(() => {
+// 老师当前周期未消课额度超过课包余额时提示核对历史分配，不改写已保存的排课。
+const currentTeacherRemainingOverhang = computed(() => {
   const pkg = activePackage.value;
   if (!pkg) return 0;
-  const futureScheduledHours = (pkg.teacherHours ?? []).reduce(
+  const teacherRemainingHours = (pkg.teacherHours ?? []).reduce(
     (sum, hours) => sum + (hours.remainingUnits ?? 0), 0,
   );
-  return Math.max(0, futureScheduledHours - (pkg.remainingUnits ?? 0));
+  return Math.max(0, teacherRemainingHours - (pkg.remainingUnits ?? 0));
 });
 const signatureHistory = ref<PrivateSignatureHistory[]>([]);
 const signatureHistoryPackageId = ref('');

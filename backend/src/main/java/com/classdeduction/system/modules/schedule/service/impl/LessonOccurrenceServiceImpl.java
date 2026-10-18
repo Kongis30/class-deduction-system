@@ -1498,8 +1498,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 allocations -> teacherIds.addAll(allocations.keySet()));
         hoursContext.deductedByTeacherByPackage().values().forEach(
                 deductions -> teacherIds.addAll(deductions.keySet()));
-        hoursContext.futureScheduledByTeacherByPackage().values().forEach(
-                remaining -> teacherIds.addAll(remaining.keySet()));
         hoursContext.unconfirmedScheduledByTeacherByPackage().values().forEach(
                 remaining -> teacherIds.addAll(remaining.keySet()));
         return listTeachersByIds(teacherIds);
@@ -1541,8 +1539,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     private record PackageHoursContext(Map<Long, Integer> allocatedByPackage,
                                        Map<Long, Map<Long, Integer>> allocatedByTeacherByPackage,
                                        Map<Long, Map<Long, Integer>> deductedByTeacherByPackage,
-                                       Map<Long, Map<Long, Integer>> futureScheduledByTeacherByPackage,
-                                       Map<Long, Map<Long, Integer>> pendingDeductionByTeacherByPackage,
                                        Map<Long, Map<Long, Integer>> unconfirmedScheduledByTeacherByPackage,
                                        Map<Long, Integer> scheduledByPackage,
                                        Map<Long, Integer> pendingAdminDeductionByPackage,
@@ -1557,8 +1553,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             LatestRecordIndex recordIndex) {
         Map<Long, Integer> pendingAdminDeductionByPackage = new HashMap<>();
         Map<Long, Integer> pendingProcessingByPackage = new HashMap<>();
-        Map<Long, Map<Long, Integer>> futureScheduledByTeacherByPackage = new HashMap<>();
-        Map<Long, Map<Long, Integer>> pendingDeductionByTeacherByPackage = new HashMap<>();
         Map<Long, Map<Long, Integer>> unconfirmedScheduledByTeacherByPackage = new HashMap<>();
         LocalDateTime now = AppTime.nowLocalDateTime();
         for (LessonRecordEntity record : lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
@@ -1738,7 +1732,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
             }
         }
-        // 老师级未确认课次仍单独汇总，用于保留老师入口并核对排课明细；页眉余额按额度账本计算。
+        // 未确认课次仅用于保留老师入口与排课校验；老师余额必须由同周期分配额减最终消课计算。
         for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
             Long packageId = entry.getKey();
             List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
@@ -1759,9 +1753,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     if (currentPeriod && occurrence.getPlannedTeacherId() != null) {
                         Long teacherId = record != null && record.getActualTeacherId() != null
                                 ? record.getActualTeacherId() : occurrence.getPlannedTeacherId();
-                        pendingDeductionByTeacherByPackage
-                                .computeIfAbsent(packageId, key -> new HashMap<>())
-                                .merge(teacherId, units, Integer::sum);
                         unconfirmedScheduledByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
                                 .merge(teacherId, units, Integer::sum);
@@ -1783,10 +1774,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
                 int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
                 if (units > 0) {
-                    // Remaining with teacher 只表示当前周期尚未开始且仍有效的课次；正式取消已由确认的扣课记录计入 Deducted。
-                    futureScheduledByTeacherByPackage
-                            .computeIfAbsent(packageId, key -> new HashMap<>())
-                            .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
                     unconfirmedScheduledByTeacherByPackage
                             .computeIfAbsent(packageId, key -> new HashMap<>())
                             .merge(occurrence.getPlannedTeacherId(), units, Integer::sum);
@@ -1794,8 +1781,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             }
         }
         return new PackageHoursContext(allocatedByPackage, allocatedByTeacherByPackage,
-                deductedByTeacherByPackage, futureScheduledByTeacherByPackage,
-                pendingDeductionByTeacherByPackage, unconfirmedScheduledByTeacherByPackage, scheduledByPackage,
+                deductedByTeacherByPackage, unconfirmedScheduledByTeacherByPackage, scheduledByPackage,
                 pendingAdminDeductionByPackage, pendingProcessingByPackage, unresolvedPastByPackage);
     }
 
@@ -1853,8 +1839,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         teacherIds.addAll(hoursContext.allocatedByTeacherByPackage()
                 .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
         teacherIds.addAll(hoursContext.unconfirmedScheduledByTeacherByPackage()
-                .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
-        teacherIds.addAll(hoursContext.futureScheduledByTeacherByPackage()
                 .getOrDefault(coursePackage.getId(), Collections.emptyMap()).keySet());
         return teacherIds.isEmpty() ? Collections.singleton(null) : teacherIds;
     }
@@ -2041,27 +2025,22 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .getOrDefault(packageId, Collections.emptyMap());
         Map<Long, Integer> deductedByTeacher = hoursContext.deductedByTeacherByPackage()
                 .getOrDefault(packageId, Collections.emptyMap());
-        Map<Long, Integer> futureScheduledByTeacher = hoursContext.futureScheduledByTeacherByPackage()
-                .getOrDefault(packageId, Collections.emptyMap());
-        Map<Long, Integer> pendingDeductionByTeacher = hoursContext.pendingDeductionByTeacherByPackage()
-                .getOrDefault(packageId, Collections.emptyMap());
         Set<Long> teacherIds = new LinkedHashSet<>(allocatedByTeacher.keySet());
         teacherIds.addAll(deductedByTeacher.keySet());
-        teacherIds.addAll(futureScheduledByTeacher.keySet());
-        teacherIds.addAll(pendingDeductionByTeacher.keySet());
+        teacherIds.addAll(hoursContext.unconfirmedScheduledByTeacherByPackage()
+                .getOrDefault(packageId, Collections.emptyMap()).keySet());
         return teacherIds.stream()
                 .map(teacherId -> {
                     int allocated = allocatedByTeacher.getOrDefault(teacherId, 0);
                     int deducted = deductedByTeacher.getOrDefault(teacherId, 0);
-                    int pendingDeduction = pendingDeductionByTeacher.getOrDefault(teacherId, 0);
-                    int remaining = futureScheduledByTeacher.getOrDefault(teacherId, 0);
+                    // 当前周期老师余额为额度账本余额，包含未来课次与已过期但未最终确认的课次。
+                    int remaining = allocated - deducted;
                     TeacherEntity teacher = teacherMap.get(teacherId);
                     return OneOnOneTeacherHoursVO.builder()
                             .teacherId(teacherId)
                             .teacherName(teacher == null ? null : teacher.getTeacherName())
                             .allocatedUnits(UnitConverter.toHoursDecimal(allocated))
                             .deductedUnits(UnitConverter.toHoursDecimal(deducted))
-                            .pendingDeductionUnits(UnitConverter.toHoursDecimal(pendingDeduction))
                             .remainingUnits(UnitConverter.toHoursDecimal(remaining))
                             .build();
                 })

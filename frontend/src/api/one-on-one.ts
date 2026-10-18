@@ -71,7 +71,6 @@ export interface OneOnOneTeacherHours {
   teacherName?: string;
   allocatedUnits: number;
   deductedUnits: number;
-  pendingDeductionUnits: number;
   remainingUnits: number;
 }
 

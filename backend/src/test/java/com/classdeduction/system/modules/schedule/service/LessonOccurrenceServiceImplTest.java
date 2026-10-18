@@ -702,6 +702,68 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldKeepPendingAdminInTeacherRemainingAndCountConfirmedChargedCancelAsDeducted() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+
+        LessonOccurrenceEntity chargedCancel = buildOneOnOneOccurrence();
+        chargedCancel.setScheduleRuleId(5001L);
+        chargedCancel.setScheduleSlotId(6001L);
+        chargedCancel.setPlannedStartAt(now.minusDays(4));
+        chargedCancel.setPlannedEndAt(now.minusDays(4).plusHours(2));
+        chargedCancel.setPlannedUnits(4);
+        LessonRecordEntity chargedCancelRecord = confirmedDeduction(5001L, chargedCancel, 4);
+        chargedCancelRecord.setResultStatus("CANCELLED");
+
+        LessonOccurrenceEntity pendingAdmin = buildOneOnOneOccurrence();
+        pendingAdmin.setId(4002L);
+        pendingAdmin.setScheduleRuleId(5001L);
+        pendingAdmin.setScheduleSlotId(6001L);
+        pendingAdmin.setPlannedStartAt(now.minusDays(2));
+        pendingAdmin.setPlannedEndAt(now.minusDays(2).plusHours(2));
+        pendingAdmin.setPlannedUnits(4);
+        LessonRecordEntity pendingRecord = confirmedDeduction(5002L, pendingAdmin, 4);
+        pendingRecord.setConfirmStage("PENDING_ADMIN");
+
+        LessonOccurrenceEntity future = buildOneOnOneOccurrence();
+        future.setId(4003L);
+        future.setScheduleRuleId(5001L);
+        future.setScheduleSlotId(6001L);
+        future.setPlannedStartAt(now.plusDays(2));
+        future.setPlannedEndAt(now.plusDays(2).plusHours(2));
+        future.setPlannedUnits(4);
+
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5001L);
+        currentRule.setPackageId(coursePackage.getId());
+        currentRule.setRuleStatus("ACTIVE");
+        currentRule.setCreatedAt(now.minusDays(30));
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setRuleId(currentRule.getId());
+        slot.setTeacherId(301L);
+        slot.setAllocatedUnits(12);
+        slot.setCreatedAt(now.minusDays(29));
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(chargedCancel, pendingAdmin, future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(chargedCancelRecord, pendingRecord));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(slot));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null).get(0);
+        assertThat(teacher.students().get(0).packages().get(0).teacherHours())
+                .singleElement().satisfies(hours -> {
+                    assertThat(hours.allocatedUnits()).isEqualTo(6.0);
+                    assertThat(hours.deductedUnits()).isEqualTo(2.0);
+                    assertThat(hours.remainingUnits()).isEqualTo(4.0);
+                });
+    }
+
+    @Test
     void shouldUseCurrentAllocationForTeacherRemainingWhenOccurrenceRowsAreIncomplete() {
         LocalDateTime now = AppTime.nowLocalDateTime();
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
