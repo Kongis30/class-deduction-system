@@ -99,19 +99,11 @@ public final class PrivateLessonAllocation {
         return record == null || !"CONFIRMED".equals(record.getConfirmStage());
     }
 
-    /** 已确认课次由课包账本扣减；待确认课次按实际待扣课时预留，其余计划课次按排课时长预留。 */
+    /** 已确认课次由课包账本处理；老师提交的任何待审核结果均按原计划课时预留。 */
     public static int reservedUnits(LessonOccurrenceEntity occurrence, LessonRecordEntity record) {
         if (occurrence == null || "CANCELLED".equals(occurrence.getPlanningStatus())
                 || record != null && "CONFIRMED".equals(record.getConfirmStage())) {
             return 0;
-        }
-        if (record != null && "PENDING_ADMIN".equals(record.getConfirmStage())) {
-            if (Integer.valueOf(0).equals(record.getShouldDeduct())) {
-                return 0;
-            }
-            if (Integer.valueOf(1).equals(record.getShouldDeduct()) && record.getDeductedUnits() != null) {
-                return Math.max(0, record.getDeductedUnits());
-            }
         }
         return Math.max(0, occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits());
     }

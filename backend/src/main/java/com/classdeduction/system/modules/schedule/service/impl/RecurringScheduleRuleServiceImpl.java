@@ -327,6 +327,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         generatedOccurrences = capGeneratedOccurrencesToRuleAllocation(generatedOccurrences, existingOccurrences,
                 recordByOccurrenceId, slots, rule);
         generatedOccurrences = capGeneratedOccurrencesToPackageBalance(generatedOccurrences, existingOccurrences, recordByOccurrenceId, coursePackage);
+        ensureAllocatedHoursWereGenerated(slots, generatedOccurrences);
         ensureNoConflictsForPrivateLessonGroup(generatedOccurrences, student.getId(), privateLessonGroupId);
         generatedOccurrences.forEach(lessonOccurrenceMapper::insert);
 
@@ -601,6 +602,9 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     recordByOccurrenceId, newSlots, targetRule);
             newOccurrences = capGeneratedOccurrencesToPackageBalance(newOccurrences,
                     preservedForBalance, balanceRecords, coursePackage);
+            if (startsNewPeriod) {
+                ensureAllocatedHoursWereGenerated(newSlots, newOccurrences);
+            }
         }
 
         // 普通未来课次会随规则重建；保留的未来例外若仍继承规则教室，也要同步到新槽位配置。
@@ -1483,41 +1487,54 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
     /** 按课次所属规则统计实际扣课，避免把其他排课或报名时录入的已用课时算进本规则。 */
     private RuleDeductionUnits ruleDeductionUnits(Long ruleId, Long packageId) {
-        List<Long> occurrenceIds = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .select(LessonOccurrenceEntity::getId)
-                        .eq(LessonOccurrenceEntity::getScheduleRuleId, ruleId))
-                .stream().map(LessonOccurrenceEntity::getId).toList();
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .select(LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getPlannedUnits)
+                        .eq(LessonOccurrenceEntity::getScheduleRuleId, ruleId));
+        List<Long> occurrenceIds = occurrences.stream().map(LessonOccurrenceEntity::getId).toList();
         if (occurrenceIds.isEmpty()) {
             return new RuleDeductionUnits(0, 0);
         }
         int confirmed = 0;
         int pending = 0;
-        for (LessonRecordEntity record : latestRecordsForPackage(occurrenceIds, packageId).values()) {
-            if (!Objects.equals(record.getShouldDeduct(), 1)
-                    || (!"CONFIRMED".equals(record.getConfirmStage())
-                    && !"PENDING_ADMIN".equals(record.getConfirmStage()))) {
+        Map<Long, LessonRecordEntity> records = latestRecordsForPackage(occurrenceIds, packageId);
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            LessonRecordEntity record = records.get(occurrence.getId());
+            if (record == null) {
                 continue;
             }
-            int units = record.getDeductedUnits() == null ? 0 : Math.max(0, record.getDeductedUnits());
             if ("CONFIRMED".equals(record.getConfirmStage())) {
-                confirmed += units;
-            } else {
-                pending += units;
+                if (Objects.equals(record.getShouldDeduct(), 1)) {
+                    confirmed += Math.max(0, safeUnits(record.getDeductedUnits()));
+                }
+            } else if ("PENDING_ADMIN".equals(record.getConfirmStage())) {
+                // 老师意见尚未生效，按原计划课时预留，不按拟议的扣课或请假结果计算。
+                pending += Math.max(0, safeUnits(occurrence.getPlannedUnits()));
             }
         }
         return new RuleDeductionUnits(confirmed, pending);
     }
 
-    /** 待管理员确认且将扣除的课时先占用余额，避免被新的时段重复分配。 */
+    /** 待管理员确认的课次仍占用原计划课时，避免老师的请假意见提前释放余额。 */
     private int pendingDeductionUnits(Long packageId) {
-        return lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                        .select(LessonRecordEntity::getDeductedUnits)
+        List<Long> occurrenceIds = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .select(LessonRecordEntity::getOccurrenceId)
                         .eq(LessonRecordEntity::getPackageId, packageId)
                         .eq(LessonRecordEntity::getConfirmStage, "PENDING_ADMIN")
-                        .eq(LessonRecordEntity::getShouldDeduct, 1)
                         .eq(LessonRecordEntity::getIsDeleted, 0))
+                .stream().map(LessonRecordEntity::getOccurrenceId).filter(Objects::nonNull).distinct().toList();
+        if (occurrenceIds.isEmpty()) {
+            return 0;
+        }
+        Map<Long, LessonRecordEntity> latestRecords = latestRecordsForPackage(occurrenceIds, packageId);
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .select(LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getPlannedUnits)
+                        .in(LessonOccurrenceEntity::getId, occurrenceIds))
                 .stream()
-                .mapToInt(record -> record.getDeductedUnits() == null ? 0 : Math.max(0, record.getDeductedUnits()))
+                .filter(occurrence -> {
+                    LessonRecordEntity record = latestRecords.get(occurrence.getId());
+                    return record != null && "PENDING_ADMIN".equals(record.getConfirmStage());
+                })
+                .mapToInt(occurrence -> Math.max(0, safeUnits(occurrence.getPlannedUnits())))
                 .sum();
     }
 
@@ -1593,8 +1610,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 usedOrReserved += Objects.equals(record.getShouldDeduct(), 1)
                         ? Math.max(0, safeUnits(record.getDeductedUnits())) : 0;
             } else if (record != null && "PENDING_ADMIN".equals(record.getConfirmStage())) {
-                usedOrReserved += Objects.equals(record.getShouldDeduct(), 1)
-                        ? Math.max(0, safeUnits(record.getDeductedUnits())) : 0;
+                usedOrReserved += Math.max(0, safeUnits(occurrence.getPlannedUnits()));
             } else if (isPreservedByScheduleEdit(occurrence, recordByOccurrenceId, now)) {
                 usedOrReserved += Math.max(0, safeUnits(occurrence.getPlannedUnits()));
             }
@@ -1949,8 +1965,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     }
 
     private int reservedAllocationUnits(LessonOccurrenceEntity occurrence, LessonRecordEntity record) {
-        if (record != null && ("CONFIRMED".equals(record.getConfirmStage())
-                || "PENDING_ADMIN".equals(record.getConfirmStage()))) {
+        // 待管理员确认的老师意见不能释放排课额度，尤其不能提前把 Formal Leave 当作已批准。
+        if (record != null && "CONFIRMED".equals(record.getConfirmStage())) {
             return Objects.equals(record.getShouldDeduct(), 1)
                     ? Math.max(0, record.getDeductedUnits() == null ? 0 : record.getDeductedUnits()) : 0;
         }
@@ -2000,6 +2016,23 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private void updateCandidatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {
         occurrence.setPlannedUnits(plannedUnits);
         occurrence.setPlannedEndAt(occurrence.getPlannedStartAt().plusMinutes(plannedUnits * 30L));
+    }
+
+    /** 新建或切换排课周期时，防止额度已保存但课次被课包余额或日期范围静默截短。 */
+    private void ensureAllocatedHoursWereGenerated(List<RecurringScheduleSlotEntity> slots,
+                                                    List<LessonOccurrenceEntity> generatedOccurrences) {
+        int allocatedUnits = slots.stream()
+                .filter(slot -> "ACTIVE".equals(slot.getSlotStatus()))
+                .mapToInt(slot -> Math.max(0, slot.getAllocatedUnits() == null ? 0 : slot.getAllocatedUnits()))
+                .sum();
+        int generatedUnits = generatedOccurrences.stream()
+                .mapToInt(occurrence -> Math.max(0,
+                        occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits()))
+                .sum();
+        if (generatedUnits != allocatedUnits) {
+            throw new BusinessException("SCHEDULE_ALLOCATION_NOT_FULLY_GENERATED",
+                    "Generated lesson hours do not match the allocated hours. Check the package balance, schedule date range, and conflicting lessons; no changes were saved.");
+        }
     }
 
     /**

@@ -37,6 +37,17 @@ class PrivateLessonAllocationTest {
     }
 
     @Test
+    void teacherProposedFormalLeaveStillReservesPlannedHours() {
+        LessonOccurrenceEntity leave = occurrence(1L, 4, "SCHEDULED");
+        LessonRecordEntity teacherProposal = record("PENDING_ADMIN");
+        teacherProposal.setResultStatus("FORMAL_LEAVE");
+        teacherProposal.setShouldDeduct(0);
+        teacherProposal.setDeductedUnits(0);
+
+        assertThat(PrivateLessonAllocation.reservedUnits(leave, teacherProposal)).isEqualTo(4);
+    }
+
+    @Test
     void rebuiltSlotWithSameAllocationDoesNotAddHistoricalLessonsAgain() {
         RecurringScheduleSlotEntity oldSlot = recurringSlot(1L, 7, 32);
         oldSlot.setSubjectName("ELA");

@@ -234,6 +234,100 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
+    void pendingTeacherLeaveDoesNotReleaseCurrentSlotAllocation() {
+        LessonOccurrenceEntity occurrence = buildRuleOccurrence(9001L,
+                LocalDate.of(2026, 10, 10), 4, "SCHEDULED");
+        LessonRecordEntity teacherProposal = buildRecord(9001L, 0);
+        teacherProposal.setResultStatus("FORMAL_LEAVE");
+
+        Integer reserved = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "reservedAllocationUnits", occurrence, teacherProposal);
+
+        assertThat(reserved).isEqualTo(4);
+    }
+
+    @Test
+    void pendingTeacherLeaveStillReservesHoursWhenRollingScheduleForward() {
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setAllocatedUnits(8);
+        LessonOccurrenceEntity occurrence = buildRuleOccurrence(9001L,
+                LocalDate.of(2026, 10, 10), 4, "SCHEDULED");
+        occurrence.setScheduleSlotId(slot.getId());
+        LessonRecordEntity teacherProposal = buildRecord(9001L, 0);
+        teacherProposal.setResultStatus("FORMAL_LEAVE");
+
+        Integer remaining = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "rolloverAllocatedUnits", slot, List.of(occurrence),
+                Map.of(occurrence.getId(), teacherProposal), LocalDateTime.of(2026, 10, 11, 0, 0));
+
+        assertThat(remaining).isEqualTo(4);
+    }
+
+    @Test
+    void pendingTeacherLeaveReservesOriginalHoursAgainstNewPeriodBalance() {
+        LessonOccurrenceEntity occurrence = buildRuleOccurrence(9001L,
+                LocalDate.of(2026, 10, 10), 4, "SCHEDULED");
+        LessonRecordEntity teacherProposal = buildRecord(9001L, 0);
+        teacherProposal.setResultStatus("FORMAL_LEAVE");
+        teacherProposal.setPackageId(1001L);
+        when(lessonRecordMapper.selectList(any()))
+                .thenReturn(List.of(teacherProposal), List.of(teacherProposal));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(occurrence));
+
+        Integer reserved = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "pendingDeductionUnits", 1001L);
+
+        assertThat(reserved).isEqualTo(4);
+    }
+
+    @Test
+    void renewalDoesNotAppendLessonWhenTeacherHasOnlyProposedLeave() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        rule.setAllocationPeriodStartedAt(LocalDateTime.of(2026, 10, 1, 0, 0));
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setRuleId(rule.getId());
+        slot.setWeekday(6);
+        slot.setStartTime(LocalTime.of(9, 0));
+        slot.setAllocatedUnits(8);
+
+        LessonOccurrenceEntity pending = buildRuleOccurrence(9001L,
+                LocalDate.of(2026, 10, 10), 4, "SCHEDULED");
+        pending.setScheduleSlotId(slot.getId());
+        LessonOccurrenceEntity future = buildRuleOccurrence(9002L,
+                LocalDate.of(2026, 10, 17), 4, "SCHEDULED");
+        future.setScheduleSlotId(slot.getId());
+        LessonOccurrenceEntity candidate = buildRuleOccurrence(9003L,
+                LocalDate.of(2026, 10, 24), 4, "SCHEDULED");
+        candidate.setScheduleSlotId(slot.getId());
+        LessonRecordEntity teacherProposal = buildRecord(pending.getId(), 0);
+        teacherProposal.setResultStatus("FORMAL_LEAVE");
+
+        @SuppressWarnings("unchecked")
+        List<LessonOccurrenceEntity> allowed = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "capGeneratedOccurrencesToRuleAllocation", List.of(candidate), List.of(pending, future),
+                Map.of(pending.getId(), teacherProposal), List.of(slot), rule);
+
+        assertThat(allowed).isEmpty();
+    }
+
+    @Test
+    void shouldRejectSavingAllocationWhenGeneratedLessonsAreCappedShort() {
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setSlotStatus("ACTIVE");
+        slot.setAllocatedUnits(32);
+        LessonOccurrenceEntity generatedOccurrence = new LessonOccurrenceEntity();
+        generatedOccurrence.setPlannedUnits(20);
+
+        assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(
+                recurringScheduleRuleService, "ensureAllocatedHoursWereGenerated",
+                List.of(slot), List.of(generatedOccurrence)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("do not match the allocated hours");
+    }
+
+    @Test
     void shouldGroupActiveOneOnOneStudentCoursesByCourseAndGrade() {
         when(coursePackageMapper.selectSchedulableOneOnOneStudentCourseGrades()).thenReturn(List.of(
                 new OneOnOneScheduleCourseRow(2001L, "Alina Chen", "Math", "G6", true,
@@ -613,11 +707,15 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
-    void shouldKeepSchedulePeriodForNoOpAndCourseNameEdit() {
+    void shouldAllowCourseNameAndClassroomEditsWithoutRegeneratingScheduleWhenBalanceIsLow() {
         RecurringScheduleRuleEntity rule = buildExistingRule();
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setRemainingUnits(20);
         RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
         RecurringScheduleSlotRequest requestedSlot = request.getSlots().get(0);
         requestedSlot.setSlotId(6001L);
+        requestedSlot.setDeliveryMode("IN_PERSON");
+        requestedSlot.setClassroomId(4001L);
         request.setNotes(null);
         RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
         currentSlot.setId(6001L);
@@ -630,7 +728,7 @@ class RecurringScheduleRuleServiceImplTest {
         currentSlot.setPlannedUnits(requestedSlot.getPlannedUnits());
         currentSlot.setAllocatedUnits(requestedSlot.getAllocatedUnits());
         when(recurringScheduleRuleMapper.selectById(5001L)).thenReturn(rule);
-        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
         when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
         when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
