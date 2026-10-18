@@ -1091,12 +1091,18 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                                                                 LessonRecordConfirmRequest request) {
         LessonRecordConfirmRequest merged = new LessonRecordConfirmRequest();
         merged.setOccurrenceId(occurrence.getId());
-        merged.setResultStatus(StringUtils.hasText(request.getResultStatus()) ? request.getResultStatus() : record.getResultStatus());
-        merged.setActualTeacherId(request.getActualTeacherId() != null ? request.getActualTeacherId() : record.getActualTeacherId());
-        merged.setActualClassroomId(request.getActualClassroomId() != null ? request.getActualClassroomId() : record.getActualClassroomId());
-        merged.setActualStartAt(request.getActualStartAt() != null ? request.getActualStartAt() : record.getActualStartAt());
-        merged.setActualEndAt(request.getActualEndAt() != null ? request.getActualEndAt() : record.getActualEndAt());
-        merged.setActualUnits(request.getActualUnits() != null ? request.getActualUnits() : record.getActualUnits());
+        String resultStatus = StringUtils.hasText(request.getResultStatus()) ? request.getResultStatus() : record.getResultStatus();
+        merged.setResultStatus(resultStatus);
+        // 管理员改为请假等未上课结果时，老师提交的实际上课快照不能继续参与复核。
+        if (COMPLETED_STATUSES.contains(resultStatus)) {
+            merged.setActualTeacherId(request.getActualTeacherId() != null ? request.getActualTeacherId() : record.getActualTeacherId());
+            merged.setActualClassroomId(request.getActualClassroomId() != null ? request.getActualClassroomId() : record.getActualClassroomId());
+            merged.setActualStartAt(request.getActualStartAt() != null ? request.getActualStartAt() : record.getActualStartAt());
+            merged.setActualEndAt(request.getActualEndAt() != null ? request.getActualEndAt() : record.getActualEndAt());
+            merged.setActualUnits(request.getActualUnits() != null ? request.getActualUnits() : record.getActualUnits());
+        } else {
+            merged.setActualUnits(0);
+        }
         // 管理员复核修改 actual hours/status 时，默认按规则重新计算扣课与顺延；
         // 只有显式传入 override 字段才保留人工覆盖，避免沿用老师提交时的旧扣课数。
         merged.setOverrideShouldDeduct(request.getOverrideShouldDeduct());
@@ -1569,8 +1575,10 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                                                LessonStatusRuleEntity rule) {
         validateManualOverride(rule, request);
         ActualLessonData actualData = normalizeActualData(request, occurrence);
-        Long actualTeacherId = normalizeActualTeacherId(request, occurrence, actualData.actualHappened());
-        Long actualClassroomId = normalizeActualClassroomId(request, occurrence, actualData.actualHappened());
+        Long actualTeacherId = actualData.actualHappened()
+                ? normalizeActualTeacherId(request, occurrence) : null;
+        Long actualClassroomId = actualData.actualHappened()
+                ? normalizeActualClassroomId(request, occurrence) : null;
 
         boolean shouldDeduct = request.getOverrideShouldDeduct() != null
                 ? request.getOverrideShouldDeduct()
@@ -1615,10 +1623,13 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     }
 
     private ActualLessonData normalizeActualData(LessonRecordConfirmRequest request, LessonOccurrenceEntity occurrence) {
+        // 未上课状态按结果规则扣课或顺延；界面中残留的实际时间、老师和课时不代表上过课。
+        if (!COMPLETED_STATUSES.contains(request.getResultStatus())) {
+            return new ActualLessonData(null, null, 0);
+        }
         LocalDateTime startAt = request.getActualStartAt();
         LocalDateTime endAt = request.getActualEndAt();
         Integer actualUnits = request.getActualUnits();
-        boolean completedLike = COMPLETED_STATUSES.contains(request.getResultStatus());
 
         if ((startAt == null) != (endAt == null)) {
             throw new BusinessException("INCOMPLETE_ACTUAL_TIME", "Actual start and end times must either both be set or both be empty.");
@@ -1638,27 +1649,23 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 throw new BusinessException("ACTUAL_UNITS_MISMATCH", "Actual units must match the provided actual time range.");
             }
         }
-        if (completedLike) {
-            if (startAt == null) {
-                startAt = occurrence.getPlannedStartAt();
-                endAt = occurrence.getPlannedEndAt();
-            }
-            if (actualUnits == null) {
-                actualUnits = occurrence.getPlannedUnits();
-            }
-            if (actualUnits <= 0) {
-                throw new BusinessException("INVALID_ACTUAL_UNITS", "Completed lesson statuses require positive actual units.");
-            }
-        } else if (actualUnits == null) {
-            actualUnits = 0;
+        if (startAt == null) {
+            startAt = occurrence.getPlannedStartAt();
+            endAt = occurrence.getPlannedEndAt();
+        }
+        if (actualUnits == null) {
+            actualUnits = occurrence.getPlannedUnits();
+        }
+        if (actualUnits <= 0) {
+            throw new BusinessException("INVALID_ACTUAL_UNITS", "Completed lesson statuses require positive actual units.");
         }
 
         return new ActualLessonData(startAt, endAt, actualUnits);
     }
 
-    private Long normalizeActualTeacherId(LessonRecordConfirmRequest request, LessonOccurrenceEntity occurrence, boolean actualHappened) {
+    private Long normalizeActualTeacherId(LessonRecordConfirmRequest request, LessonOccurrenceEntity occurrence) {
         Long actualTeacherId = request.getActualTeacherId();
-        if (actualTeacherId == null && actualHappened) {
+        if (actualTeacherId == null) {
             actualTeacherId = occurrence.getPlannedTeacherId();
         }
         if (actualTeacherId != null) {
@@ -1670,7 +1677,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         return actualTeacherId;
     }
 
-    private Long normalizeActualClassroomId(LessonRecordConfirmRequest request, LessonOccurrenceEntity occurrence, boolean actualHappened) {
+    private Long normalizeActualClassroomId(LessonRecordConfirmRequest request, LessonOccurrenceEntity occurrence) {
         Long requestedClassroomId = request.getActualClassroomId();
         if (requestedClassroomId != null) {
             // 显式选择的教室必须有效（前端下拉仅展示在用教室）。
@@ -1682,7 +1689,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
         // 未显式选择时尝试沿用计划教室；若计划教室已被删除/停用则留空，
         // 允许在没有有效教室的情况下完成确认（教室非确认必填项）。
-        if (actualHappened && occurrence.getPlannedClassroomId() != null) {
+        if (occurrence.getPlannedClassroomId() != null) {
             ClassroomEntity plannedClassroom = classroomMapper.selectById(occurrence.getPlannedClassroomId());
             if (plannedClassroom != null && "ACTIVE".equalsIgnoreCase(plannedClassroom.getStatus())) {
                 return occurrence.getPlannedClassroomId();

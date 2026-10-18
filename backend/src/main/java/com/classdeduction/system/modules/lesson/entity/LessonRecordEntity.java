@@ -1,6 +1,8 @@
 package com.classdeduction.system.modules.lesson.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.classdeduction.system.common.model.BaseEntity;
@@ -37,10 +39,13 @@ public class LessonRecordEntity extends BaseEntity {
 
     private Long plannedTeacherId;
 
+    /** 管理员把老师提交的上课结果改为请假时，更新必须清空原先的实际授课快照。 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private Long actualTeacherId;
 
     private Long plannedClassroomId;
 
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private Long actualClassroomId;
 
     private LocalDateTime plannedStartAt;
@@ -51,8 +56,10 @@ public class LessonRecordEntity extends BaseEntity {
 
     private String resultStatus;
 
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime actualStartAt;
 
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime actualEndAt;
 
     private Integer actualUnits;

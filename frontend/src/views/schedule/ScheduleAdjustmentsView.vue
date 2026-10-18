@@ -1837,19 +1837,20 @@ function isClassOccurrence(occ: ConfirmableOccurrence): occ is ClassOccurrenceIt
 }
 
 function buildConfirmPayload(occ: ConfirmableOccurrence): LessonConfirmPayload {
+  const attended = confirmForm.resultStatus === 'COMPLETED';
   const hours = confirmForm.actualHours ?? 0;
-  const startAt = confirmForm.actualStartAt || undefined;
+  const startAt = attended ? confirmForm.actualStartAt || undefined : undefined;
   const endAt = startAt && hours > 0
     ? dayjs(startAt).add(hours, 'hour').format('YYYY-MM-DDTHH:mm:ss')
     : undefined;
   return {
     occurrenceId: occ.id,
     resultStatus: confirmForm.resultStatus,
-    actualTeacherId: confirmForm.actualTeacherId,
-    actualClassroomId: confirmForm.actualClassroomId,
+    actualTeacherId: attended ? confirmForm.actualTeacherId : undefined,
+    actualClassroomId: attended ? confirmForm.actualClassroomId : undefined,
     actualStartAt: startAt,
     actualEndAt: endAt,
-    actualUnits: hours * 2,
+    actualUnits: attended ? hours * 2 : 0,
     notes: confirmForm.notes || undefined,
   };
 }
