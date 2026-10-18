@@ -201,7 +201,7 @@
                   :key="candidate.pkg.packageId"
                   type="button"
                   class="oo-package-item oo-package-item--detailed"
-                  :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
+                  :class="{ 'oo-package-item--active': isSelectedCandidate(candidate) }"
                   @click="selectCandidatePackage(candidate)"
                 >
                   <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
@@ -268,7 +268,7 @@
                           :key="candidate.pkg.packageId"
                           type="button"
                           class="oo-package-item"
-                          :class="{ 'oo-package-item--active': activePackage?.packageId === candidate.pkg.packageId }"
+                          :class="{ 'oo-package-item--active': isSelectedCandidate(candidate) }"
                           @click="selectCandidatePackage(candidate)"
                         >
                           <span>{{ candidatePackageLabel(candidate.pkg) }}</span>
@@ -1441,7 +1441,7 @@ async function loadData() {
       collapsedTeacherKeys.value = new Set(teacherGradeGroups.value.map(group => group.key));
       initializedTeacherList = true;
     }
-    keepOrSelectFirstPackage();
+    restoreSelectedPackage();
   } catch (err) {
     ElMessage.error(extractErrorMessage(err));
     teachers.value = [];
@@ -1541,23 +1541,24 @@ async function searchStudents() {
   }
 }
 
-function keepOrSelectFirstPackage() {
-  if (activePackage.value && findPackage(activePackage.value.packageId)) {
-    const found = findPackage(activePackage.value.packageId);
-    if (found) selectPackage(found.teacher, found.student, found.pkg);
-    return;
-  }
-  clearSelection();
+// 同一课包会出现在多个老师分组；刷新与列表高亮必须使用完整的选中身份。
+function isSelectedCandidate(candidate: PackageCandidate) {
+  return activeTeacher.value != null
+    && activeStudent.value != null
+    && activePackage.value != null
+    && teacherKey(candidate.teacher) === teacherKey(activeTeacher.value)
+    && sameId(candidate.student.studentId, activeStudent.value.studentId)
+    && sameId(candidate.pkg.packageId, activePackage.value.packageId);
 }
 
-function findPackage(packageId: EntityId) {
-  for (const teacher of teachers.value) {
-    for (const student of teacher.students) {
-      const pkg = student.packages.find(item => item.packageId === packageId);
-      if (pkg) return { teacher, student, pkg };
-    }
+// 消课或调整后重载列表时，优先恢复原老师下的课包；原分组消失则清空选择。
+function restoreSelectedPackage() {
+  const selected = allPackageCandidates.value.find(isSelectedCandidate);
+  if (selected) {
+    selectPackage(selected.teacher, selected.student, selected.pkg);
+  } else {
+    clearSelection();
   }
-  return null;
 }
 
 function teacherKey(teacher: OneOnOneTeacher) {
