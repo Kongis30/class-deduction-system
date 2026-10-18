@@ -517,7 +517,7 @@
             <div>
               <strong>Lesson records</strong>
               <span>
-                {{ activePackage.lessons.length }} records ·
+                {{ visibleLessons.length }} records ·
                 {{ pendingTeacherCount }} awaiting teacher ·
                 {{ pendingAdminCount }} awaiting admin
               </span>
@@ -1107,11 +1107,12 @@ const candidateEmptyMessage = computed(() => {
   }
   return 'No 1-on-1 student courses match this selection.';
 });
-const pendingTeacherCount = computed(() =>
-  activePackage.value?.lessons.filter(isAwaitingTeacherConfirmation).length ?? 0
+const visibleLessons = computed(() =>
+  activePackage.value?.lessons.filter(lesson => !isObsoleteScheduleOccurrence(lesson)) ?? []
 );
+const pendingTeacherCount = computed(() => visibleLessons.value.filter(isAwaitingTeacherConfirmation).length);
 const pendingAdminCount = computed(() =>
-  activePackage.value?.lessons.filter(row => row.confirmStage === 'PENDING_ADMIN').length ?? 0
+  visibleLessons.value.filter(row => row.confirmStage === 'PENDING_ADMIN').length
 );
 // 优先按规则版本分组；旧数据复用规则 ID 时，使用 API 提供的课位快照边界拆分周期。
 const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
@@ -1126,7 +1127,7 @@ const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
     .filter(({ change }) => change.legacySlotBoundary)
     .map(({ change, index }) => [entityKey(change.ruleId), { index, changedAt: scheduleChangeTimestamp(change) }]));
   const lessonsByPeriod = new Map<number, OneOnOneLesson[]>();
-  for (const lesson of pkg.lessons) {
+  for (const lesson of visibleLessons.value) {
     const ruleKey = lesson.scheduleRuleId == null ? null : entityKey(lesson.scheduleRuleId);
     const legacyBoundary = ruleKey == null ? undefined : legacyBoundaryByRule.get(ruleKey);
     const lessonTime = dayjs(lesson.plannedStartAt).valueOf();
@@ -1148,6 +1149,7 @@ const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
   };
   appendLessons(-1);
   changes.forEach((change, index) => {
+    if (!(lessonsByPeriod.get(index)?.length)) return;
     rows.push({
       kind: 'change',
       key: `change-${entityKey(change.ruleId)}-${scheduleChangeTimestamp(change)}`,
@@ -1157,6 +1159,11 @@ const lessonTimelineRows = computed<LessonTimelineRow[]>(() => {
   });
   return rows;
 });
+
+// 修改排课时被替换的旧课次只用于计划审计，不是待消课或已收费的课程记录。
+function isObsoleteScheduleOccurrence(lesson: OneOnOneLesson) {
+  return lesson.planningStatus === 'CANCELLED' && lesson.confirmStage !== 'CONFIRMED';
+}
 
 function scheduleChangeTimestamp(change: OneOnOneScheduleChange) {
   const time = change.changedAt ? dayjs(change.changedAt).valueOf() : Number.NaN;
