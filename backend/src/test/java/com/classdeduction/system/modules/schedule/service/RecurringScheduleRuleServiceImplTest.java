@@ -46,6 +46,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -54,6 +55,7 @@ import java.time.LocalTime;
 import java.time.temporal.TemporalAdjusters;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -186,6 +188,49 @@ class RecurringScheduleRuleServiceImplTest {
         assertThat(result.ruleId()).isEqualTo(5001L);
         assertThat(result.generatedOccurrenceCount()).isEqualTo(2);
         assertThat(result.firstGeneratedStartAt()).isBefore(result.lastGeneratedEndAt());
+    }
+
+    @Test
+    void shouldRejectSecondActiveRuleForSamePackage() {
+        RecurringScheduleRuleCreateRequest request = buildCreateRequest();
+        when(coursePackageMapper.selectById(1001L)).thenReturn(buildPackage());
+        when(recurringScheduleRuleMapper.selectCount(any())).thenReturn(1L);
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Edit the existing schedule");
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never())
+                .insert(any(RecurringScheduleRuleEntity.class));
+    }
+
+    @Test
+    void renewalDoesNotChargePreviousPeriodLessonsAgainstCurrentSlotAllocation() {
+        RecurringScheduleRuleEntity rule = buildExistingRule();
+        rule.setAllocationPeriodStartedAt(LocalDateTime.of(2026, 10, 8, 10, 0));
+        RecurringScheduleSlotEntity slot = new RecurringScheduleSlotEntity();
+        slot.setId(6001L);
+        slot.setRuleId(rule.getId());
+        slot.setWeekday(6);
+        slot.setStartTime(LocalTime.of(9, 0));
+        slot.setAllocatedUnits(8);
+
+        LessonOccurrenceEntity oldLesson = buildRuleOccurrence(9001L,
+                LocalDate.of(2026, 10, 3), 4, "MERGED");
+        oldLesson.setPlannedStartAt(LocalDateTime.of(2026, 10, 3, 9, 0));
+        LessonOccurrenceEntity currentLesson = buildRuleOccurrence(9002L,
+                LocalDate.of(2026, 10, 10), 4, "SCHEDULED");
+        currentLesson.setPlannedStartAt(LocalDateTime.of(2026, 10, 10, 9, 0));
+        LessonOccurrenceEntity candidate = buildRuleOccurrence(9003L,
+                LocalDate.of(2026, 10, 17), 4, "SCHEDULED");
+        candidate.setPlannedStartAt(LocalDateTime.of(2026, 10, 17, 9, 0));
+        candidate.setScheduleSlotId(slot.getId());
+
+        @SuppressWarnings("unchecked")
+        List<LessonOccurrenceEntity> allowed = ReflectionTestUtils.invokeMethod(recurringScheduleRuleService,
+                "capGeneratedOccurrencesToRuleAllocation", List.of(candidate),
+                List.of(oldLesson, currentLesson), Map.of(), List.of(slot), rule);
+
+        assertThat(allowed).containsExactly(candidate);
     }
 
     @Test
