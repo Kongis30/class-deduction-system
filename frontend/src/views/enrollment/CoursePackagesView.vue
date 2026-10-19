@@ -74,153 +74,163 @@
       <div v-loading="loading" class="package-group-list">
         <section v-for="group in groupedTableData" :key="group.key" class="package-group">
           <header class="package-group__header">
-            <div class="package-group__title">
-              <strong>{{ group.courseName }}</strong>
-              <span>{{ group.gradeBand }}</span>
-              <el-tag v-if="group.lowBalanceRenewal" size="small" type="danger">Renewal needed · ≤10h left</el-tag>
-            </div>
+            <button
+              type="button"
+              class="package-group__toggle"
+              :aria-expanded="!isPackageGroupCollapsed(group.key)"
+              @click="togglePackageGroup(group.key)"
+            >
+              <span class="package-group__chevron" :class="{ 'is-collapsed': isPackageGroupCollapsed(group.key) }" aria-hidden="true" />
+              <span class="package-group__title">
+                <strong>{{ group.courseName }}</strong>
+                <span>{{ group.gradeBand }}</span>
+                <el-tag v-if="group.lowBalanceRenewal" size="small" type="danger">Renewal needed · ≤10h left</el-tag>
+              </span>
+            </button>
             <small>{{ group.packages.length }} packages</small>
           </header>
-          <el-table
-            v-if="!appStore.isMobileViewport"
-            :data="group.packages"
-            row-key="id"
-            class="product-table"
-            :show-empty="false"
-            :row-class-name="oneOnOneRowClassName"
-          >
-            <el-table-column
-              label="Student"
-              min-width="150"
-              prop="studentName"
-              sortable
-              :filters="textColumnFilters(group.packages, row => row.studentName)"
-              :filter-method="filterStudentName"
-            />
-            <el-table-column
-              label="Product / Package"
-              min-width="230"
-              sortable
-              :sort-method="comparePackageNames"
-              :filters="packageNameFilters(group.packages)"
-              :filter-method="filterPackageName"
+          <div v-show="!isPackageGroupCollapsed(group.key)" class="package-group__content">
+            <el-table
+              v-if="!appStore.isMobileViewport"
+              :data="group.packages"
+              row-key="id"
+              class="product-table"
+              :show-empty="false"
+              :row-class-name="oneOnOneRowClassName"
             >
-              <template #default="{ row }">
-                <div class="package-name-cell">
-                  <strong class="package-name-cell__title">
-                    {{ row.packageName || row.courseProductName || 'Unnamed package' }}
-                  </strong>
-                  <span v-if="shouldShowProductName(row)" class="package-name-cell__context">
-                    Product · {{ row.courseProductName }}
-                  </span>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="Available"
-              min-width="145"
-              align="center"
-              sortable
-              :sort-method="compareAvailableHours"
-              :filters="availableHourFilters"
-              :filter-method="filterAvailableHours"
-            >
-              <template #default="{ row }">
-                <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(row) }">{{ formatHours(row.remainingUnits) }}</strong>
-                <span> / {{ formatHours(row.totalUnits) }}</span>
-                <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
-                <el-tag v-if="isLowBalanceRenewalDue(row)" class="renewal-reminder-tag" size="small" type="danger">
-                  Renewal needed
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="Schedule setup"
-              min-width="150"
-              align="center"
-              :filters="textColumnFilters(group.packages, row => row.scheduleStatus)"
-              :filter-method="filterScheduleStatus"
-            >
-              <template #default="{ row }">
-                <el-tag size="small" :type="scheduleStatusType(row.scheduleStatus)">
-                  {{ row.scheduleStatus }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="Next lesson"
-              min-width="180"
-              sortable
-              :sort-method="compareNextLessonDates"
-            >
-              <template #default="{ row }">
-                <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
-                <span v-else class="muted-text">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column
-              label="Package status"
-              min-width="110"
-              align="center"
-              :filters="textColumnFilters(group.packages, row => packageStatusLabel(row.packageStatus))"
-              :filter-method="filterPackageStatus"
-            >
-              <template #default="{ row }">
-                <el-tag size="small" :type="packageStatusType(row.packageStatus)">
-                  {{ packageStatusLabel(row.packageStatus) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="Actions" width="150" fixed="right">
-              <template #default="{ row }">
-                <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
-                <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+              <el-table-column
+                label="Student"
+                min-width="150"
+                prop="studentName"
+                sortable
+                :filters="textColumnFilters(group.packages, row => row.studentName)"
+                :filter-method="filterStudentName"
+              />
+              <el-table-column
+                label="Product / Package"
+                min-width="230"
+                sortable
+                :sort-method="comparePackageNames"
+                :filters="packageNameFilters(group.packages)"
+                :filter-method="filterPackageName"
+              >
+                <template #default="{ row }">
+                  <div class="package-name-cell">
+                    <strong class="package-name-cell__title">
+                      {{ row.packageName || row.courseProductName || 'Unnamed package' }}
+                    </strong>
+                    <span v-if="shouldShowProductName(row)" class="package-name-cell__context">
+                      Product · {{ row.courseProductName }}
+                    </span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="Available"
+                min-width="145"
+                align="center"
+                sortable
+                :sort-method="compareAvailableHours"
+                :filters="availableHourFilters"
+                :filter-method="filterAvailableHours"
+              >
+                <template #default="{ row }">
+                  <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(row) }">{{ formatHours(row.remainingUnits) }}</strong>
+                  <span> / {{ formatHours(row.totalUnits) }}</span>
+                  <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
+                  <el-tag v-if="isLowBalanceRenewalDue(row)" class="renewal-reminder-tag" size="small" type="danger">
+                    Renewal needed
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="Schedule setup"
+                min-width="150"
+                align="center"
+                :filters="textColumnFilters(group.packages, row => row.scheduleStatus)"
+                :filter-method="filterScheduleStatus"
+              >
+                <template #default="{ row }">
+                  <el-tag size="small" :type="scheduleStatusType(row.scheduleStatus)">
+                    {{ row.scheduleStatus }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="Next lesson"
+                min-width="180"
+                sortable
+                :sort-method="compareNextLessonDates"
+              >
+                <template #default="{ row }">
+                  <span v-if="row.nextLessonStartAt">{{ formatScheduleDate(row.nextLessonStartAt) }}</span>
+                  <span v-else class="muted-text">—</span>
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="Package status"
+                min-width="110"
+                align="center"
+                :filters="textColumnFilters(group.packages, row => packageStatusLabel(row.packageStatus))"
+                :filter-method="filterPackageStatus"
+              >
+                <template #default="{ row }">
+                  <el-tag size="small" :type="packageStatusType(row.packageStatus)">
+                    {{ packageStatusLabel(row.packageStatus) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="Actions" width="150" fixed="right">
+                <template #default="{ row }">
+                  <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
+                  <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
 
-          <div v-else class="mobile-package-list">
-            <article
-              v-for="pkg in group.packages"
-              :key="pkg.id"
-              class="mobile-package-card"
-              :class="{ 'mobile-package-card--low-balance': isLowBalanceRenewalDue(pkg) }"
-            >
-              <header class="mobile-package-card__heading">
-                <div>
-                  <strong>{{ pkg.studentName }}</strong>
-                  <span>{{ packageDisplayName(pkg) }}</span>
+            <div v-else class="mobile-package-list">
+              <article
+                v-for="pkg in group.packages"
+                :key="pkg.id"
+                class="mobile-package-card"
+                :class="{ 'mobile-package-card--low-balance': isLowBalanceRenewalDue(pkg) }"
+              >
+                <header class="mobile-package-card__heading">
+                  <div>
+                    <strong>{{ pkg.studentName }}</strong>
+                    <span>{{ packageDisplayName(pkg) }}</span>
+                  </div>
+                  <el-tag size="small" :type="packageStatusType(pkg.packageStatus)">
+                    {{ packageStatusLabel(pkg.packageStatus) }}
+                  </el-tag>
+                </header>
+                <div class="mobile-package-card__balance">
+                  <div>
+                    <span>Available hours</span>
+                    <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(pkg) }">
+                      {{ formatHours(pkg.remainingUnits) }} <small>/ {{ formatHours(pkg.totalUnits) }} hours</small>
+                    </strong>
+                  </div>
+                  <el-progress :percentage="progressPercent(pkg)" :stroke-width="8" :show-text="false" />
+                  <el-tag v-if="isLowBalanceRenewalDue(pkg)" size="small" type="danger">Renewal needed</el-tag>
                 </div>
-                <el-tag size="small" :type="packageStatusType(pkg.packageStatus)">
-                  {{ packageStatusLabel(pkg.packageStatus) }}
-                </el-tag>
-              </header>
-              <div class="mobile-package-card__balance">
-                <div>
-                  <span>Available hours</span>
-                  <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(pkg) }">
-                    {{ formatHours(pkg.remainingUnits) }} <small>/ {{ formatHours(pkg.totalUnits) }} hours</small>
-                  </strong>
+                <dl class="mobile-package-card__details">
+                  <div>
+                    <dt>Schedule</dt>
+                    <dd><el-tag size="small" :type="scheduleStatusType(pkg.scheduleStatus)">{{ pkg.scheduleStatus }}</el-tag></dd>
+                  </div>
+                  <div>
+                    <dt>Next lesson</dt>
+                    <dd>{{ pkg.nextLessonStartAt ? formatScheduleDate(pkg.nextLessonStartAt) : 'Not scheduled' }}</dd>
+                  </div>
+                </dl>
+                <div class="mobile-package-card__actions">
+                  <el-button type="primary" plain @click="openOneOnOneRenewal(pkg)">Renew</el-button>
+                  <el-button @click="openDetailDialog(pkg)">Package details</el-button>
                 </div>
-                <el-progress :percentage="progressPercent(pkg)" :stroke-width="8" :show-text="false" />
-                <el-tag v-if="isLowBalanceRenewalDue(pkg)" size="small" type="danger">Renewal needed</el-tag>
-              </div>
-              <dl class="mobile-package-card__details">
-                <div>
-                  <dt>Schedule</dt>
-                  <dd><el-tag size="small" :type="scheduleStatusType(pkg.scheduleStatus)">{{ pkg.scheduleStatus }}</el-tag></dd>
-                </div>
-                <div>
-                  <dt>Next lesson</dt>
-                  <dd>{{ pkg.nextLessonStartAt ? formatScheduleDate(pkg.nextLessonStartAt) : 'Not scheduled' }}</dd>
-                </div>
-              </dl>
-              <div class="mobile-package-card__actions">
-                <el-button type="primary" plain @click="openOneOnOneRenewal(pkg)">Renew</el-button>
-                <el-button @click="openDetailDialog(pkg)">Package details</el-button>
-              </div>
-            </article>
-            <el-empty v-if="group.packages.length === 0" description="No packages in this group." />
+              </article>
+              <el-empty v-if="group.packages.length === 0" description="No packages in this group." />
+            </div>
           </div>
         </section>
         <el-empty v-if="!loading && groupedTableData.length === 0" description="No course packages found." />
@@ -722,6 +732,7 @@ const appStore = useAppStore();
 const mobileSearchExpanded = ref(false);
 const RENEWAL_DUE_DAYS = 15;
 const LOW_BALANCE_RENEWAL_HOURS = 10;
+const PACKAGE_GROUP_COLLAPSE_STORAGE_KEY = 'course-packages.collapsed-groups.v1';
 const loading = ref(false);
 const detailDialogVisible = ref(false);
 const detailTab = ref('overview');
@@ -798,6 +809,35 @@ interface OneOnOnePackageRow extends CoursePackageItem {
 }
 
 const tableData = ref<OneOnOnePackageRow[]>([]);
+// 用分组的稳定标识记录折叠状态，切换页面或刷新后沿用用户上次的选择。
+const collapsedPackageGroups = ref<Set<string>>(readCollapsedPackageGroups());
+
+function readCollapsedPackageGroups(): Set<string> {
+  try {
+    const saved = window.localStorage.getItem(PACKAGE_GROUP_COLLAPSE_STORAGE_KEY);
+    const keys: unknown = saved ? JSON.parse(saved) : [];
+    return new Set(Array.isArray(keys) ? keys.filter((key): key is string => typeof key === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function isPackageGroupCollapsed(groupKey: string): boolean {
+  return collapsedPackageGroups.value.has(groupKey);
+}
+
+function togglePackageGroup(groupKey: string) {
+  const next = new Set(collapsedPackageGroups.value);
+  if (next.has(groupKey)) next.delete(groupKey);
+  else next.add(groupKey);
+  collapsedPackageGroups.value = next;
+  try {
+    window.localStorage.setItem(PACKAGE_GROUP_COLLAPSE_STORAGE_KEY, JSON.stringify([...next]));
+  } catch {
+    // 浏览器禁用本地存储时，当前页面中的折叠状态仍然有效。
+  }
+}
+
 // 当前分页结果按课程和年级合并成组，课包仍保留原有分页、筛选及行操作。
 const groupedTableData = computed(() => {
   const groups = new Map<string, {
@@ -1412,6 +1452,40 @@ loadTeachers();
   background: #f3f7fb;
 }
 
+.package-group__toggle {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.package-group__toggle:focus-visible {
+  outline: 2px solid #409eff;
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.package-group__chevron {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-right: 2px solid #718096;
+  border-bottom: 2px solid #718096;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.16s ease;
+}
+
+.package-group__chevron.is-collapsed {
+  transform: rotate(-45deg);
+}
+
 .package-group__title {
   display: flex;
   min-width: 0;
@@ -1442,6 +1516,8 @@ loadTeachers();
   color: #718096;
   font-size: 11px;
 }
+
+.package-group__content { min-width: 0; }
 
 .product-table {
   border-radius: 6px;

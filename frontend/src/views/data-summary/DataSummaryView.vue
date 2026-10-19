@@ -2369,6 +2369,7 @@ onMounted(() => {
 .workbook-table {
   width: max-content;
   min-width: 100%;
+  margin-right: 18px;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
@@ -2383,8 +2384,14 @@ onMounted(() => {
   overflow: hidden;
   border-right: 1px solid #c3d3df;
   border-bottom: 1px solid #c3d3df;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.workbook-table .workbook-header-button {
+  justify-content: center;
+  text-align: center;
 }
 
 .workbook-table th {
