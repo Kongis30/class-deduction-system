@@ -53,6 +53,7 @@ import com.classdeduction.system.modules.schedule.vo.OneOnOneStudentVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherVO;
 import com.classdeduction.system.modules.schedule.vo.OneOnOneTeacherHoursVO;
 import com.classdeduction.system.modules.schedule.vo.PendingClassroomAssignmentVO;
+import com.classdeduction.system.modules.schedule.vo.RecurringSlotSubjectHistoryVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.StudentScheduleSlotVO;
 import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
@@ -788,6 +789,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .flatMap(List::stream)
                 .map(LessonOccurrenceEntity::getId)
                 .collect(Collectors.toSet());
+        Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot =
+                loadRecurringSlotSubjectHistory(allocationOccurrenceMap.values().stream()
+                        .flatMap(List::stream).toList());
         LatestRecordIndex recordIndex = loadLatestRecordIndex(occurrenceIds);
         Collection<LessonRecordEntity> allRecords = recordIndex.allRecords();
         Map<Long, Integer> scheduledUnitsByPackage = allocationOccurrenceMap.entrySet().stream()
@@ -835,8 +839,41 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .map(teacherEntry -> toOneOnOneTeacherVO(teacherEntry.getKey(), teacherEntry.getValue(),
                         studentMap, teacherMap, classroomMap, courseProductMap, orderItemMap,
                         occurrenceMap, recordIndex, hoursContext, statusNameMap,
-                        groupMembersForView, resolvedPackages, scheduleChangesByPackage))
+                        groupMembersForView, resolvedPackages, scheduleChangesByPackage,
+                        subjectHistoryBySlot))
                 .toList();
+    }
+
+    /** 批量读取关联时段的名称变更日志，避免逐课次查询并支持历史名称还原。 */
+    private Map<Long, List<RecurringSlotSubjectHistoryVO>> loadRecurringSlotSubjectHistory(
+            List<LessonOccurrenceEntity> occurrences) {
+        List<Long> slotIds = occurrences.stream()
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (slotIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        try {
+            Map<Long, List<RecurringSlotSubjectHistoryVO>> historyBySlot = new HashMap<>();
+            // 控制 IN 参数规模；每批查询多个时段，避免逐课次查询。
+            for (int start = 0; start < slotIds.size(); start += 500) {
+                List<Long> batch = slotIds.subList(start, Math.min(start + 500, slotIds.size()));
+                List<RecurringSlotSubjectHistoryVO> history =
+                        lessonOccurrenceMapper.selectSubjectHistoryByScheduleSlotIds(batch);
+                if (history != null) {
+                    history.stream().collect(Collectors.groupingBy(
+                                    RecurringSlotSubjectHistoryVO::getScheduleSlotId))
+                            .forEach((slotId, changes) -> historyBySlot
+                                    .computeIfAbsent(slotId, ignored -> new ArrayList<>()).addAll(changes));
+                }
+            }
+            return historyBySlot;
+        } catch (RuntimeException ex) {
+            log.warn("Unable to load recurring slot subject history; using safe legacy fallbacks.", ex);
+            return Collections.emptyMap();
+        }
     }
 
     /** 一次读取排课版本，按课包与共享私教组分发，避免逐个学生查询。 */
@@ -1829,12 +1866,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<String, String> statusNameMap,
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
                                                   List<CoursePackageEntity> allPackages,
-                                                  Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage) {
+                                                  Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage,
+                                                  Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot) {
         List<OneOnOneStudentVO> students = studentPackages.entrySet().stream()
                 .map(entry -> toOneOnOneStudentVO(entry.getKey(), entry.getValue(), studentMap, teacherMap,
                         classroomMap, courseProductMap, orderItemMap, occurrenceMap, recordIndex,
                         hoursContext, statusNameMap,
-                        groupMembersByPackage, allPackages, scheduleChangesByPackage, teacherId))
+                        groupMembersByPackage, allPackages, scheduleChangesByPackage,
+                        subjectHistoryBySlot, teacherId))
                 .toList();
         TeacherEntity teacher = teacherId == null ? null : teacherMap.get(teacherId);
         int packageCount = studentPackages.values().stream().mapToInt(List::size).sum();
@@ -1869,13 +1908,14 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   Map<Long, List<PrivateLessonGroupMemberEntity>> groupMembersByPackage,
                                                   List<CoursePackageEntity> allPackages,
                                                   Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage,
+                                                  Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot,
                                                   Long teacherId) {
         StudentEntity student = studentMap.get(studentId);
         List<OneOnOnePackageVO> packageVOs = packages.stream()
                 .map(item -> toOneOnOnePackageVO(item, teacherMap, classroomMap, courseProductMap,
                         orderItemMap, occurrenceMap, recordIndex, hoursContext, statusNameMap,
                         groupMembersByPackage, allPackages,
-                        studentMap, teacherId, scheduleChangesByPackage))
+                        studentMap, teacherId, scheduleChangesByPackage, subjectHistoryBySlot))
                 .toList();
         UnitSummary units = summarizeUnits(packages);
         return OneOnOneStudentVO.builder()
@@ -1905,7 +1945,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                   List<CoursePackageEntity> allPackages,
                                                   Map<Long, StudentEntity> studentMap,
                                                   Long teacherId,
-                                                  Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage) {
+                                                  Map<Long, List<OneOnOneScheduleChangeVO>> scheduleChangesByPackage,
+                                                  Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot) {
         // 课包可由多位老师轮流授课；详情只返回当前老师负责的排课记录，避免跨老师混在一起。
         List<LessonOccurrenceEntity> occurrences = occurrenceMap.getOrDefault(coursePackage.getId(), Collections.emptyList())
                 .stream()
@@ -1915,7 +1956,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, RecurringScheduleSlotEntity> recurringSlotMap = loadRecurringSlotMap(occurrences);
         List<OneOnOneLessonVO> lessons = occurrences.stream()
                 .map(item -> toOneOnOneLessonVO(item, packageRecords.get(item.getId()), teacherMap, classroomMap,
-                        recurringSlotMap, statusNameMap))
+                        recurringSlotMap, subjectHistoryBySlot, statusNameMap))
                 .toList();
         EnrollmentOrderItemEntity orderItem = orderItemMap.get(coursePackage.getEnrollmentOrderItemId());
         int totalUnitsRaw = safeUnits(coursePackage.getTotalUnits());
@@ -2031,6 +2072,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                                                 Map<Long, TeacherEntity> teacherMap,
                                                 Map<Long, ClassroomEntity> classroomMap,
                                                 Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
+                                                Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot,
                                                 Map<String, String> statusNameMap) {
         // 过去课次只读取自身或消课记录快照，避免当前周排课覆盖历史老师和科目。
         boolean started = occurrence.getPlannedStartAt() != null
@@ -2058,7 +2100,8 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 .scheduleRuleId(occurrence.getScheduleRuleId())
                 .plannedTeacherId(plannedTeacherId)
                 .plannedTeacherName(plannedTeacher == null ? null : plannedTeacher.getTeacherName())
-                .subjectName(resolveOneOnOneSubjectName(occurrence, recurringSlotMap, started))
+                .subjectName(resolveOneOnOneSubjectName(occurrence, recurringSlotMap,
+                        subjectHistoryBySlot, started))
                 .deliveryMode(deliveryMode)
                 .plannedClassroomId(plannedClassroomId)
                 .plannedClassroomName("ONLINE".equals(deliveryMode) ? "Online" : plannedClassroom == null ? null : plannedClassroom.getRoomName())
@@ -2087,6 +2130,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
     /** 读取一对一课次科目：旧课次只在关联时段未晚于课次生成时才允许安全回退。 */
     private String resolveOneOnOneSubjectName(LessonOccurrenceEntity occurrence,
                                                Map<Long, RecurringScheduleSlotEntity> recurringSlotMap,
+                                               Map<Long, List<RecurringSlotSubjectHistoryVO>> subjectHistoryBySlot,
                                                boolean started) {
         if (!started || StringUtils.hasText(occurrence.getSubjectName())) {
             return resolveOccurrenceSubjectName(occurrence, recurringSlotMap);
@@ -2096,17 +2140,50 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         if (slot == null) {
             return null;
         }
-        LocalDateTime occurrenceCreatedAt = occurrence.getCreatedAt();
+        String historicalName = resolveSubjectNameAtLessonTime(occurrence,
+                subjectHistoryBySlot.getOrDefault(occurrence.getScheduleSlotId(), Collections.emptyList()));
+        if (StringUtils.hasText(historicalName)) {
+            return historicalName;
+        }
+        LocalDateTime lessonStartAt = occurrence.getPlannedStartAt();
         LocalDateTime slotUpdatedAt = slot.getUpdatedAt();
         // 软删时段是历史版本；旧库缺少审计时间时也沿用该版本数据，不能用活跃时段猜测历史名称。
         if (Integer.valueOf(1).equals(slot.getIsDeleted())
-                && (occurrenceCreatedAt == null || slotUpdatedAt == null)) {
+                && (lessonStartAt == null || slotUpdatedAt == null)) {
             return StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName() : null;
         }
-        if (occurrenceCreatedAt == null || slotUpdatedAt == null || slotUpdatedAt.isAfter(occurrenceCreatedAt)) {
+        if (lessonStartAt == null || slotUpdatedAt == null || slotUpdatedAt.isAfter(lessonStartAt)) {
             return null;
         }
         return StringUtils.hasText(slot.getSubjectName()) ? slot.getSubjectName() : null;
+    }
+
+    /** 根据排课变更前后快照还原课次开始时有效的名称，而不是依赖时段任意字段的更新时间。 */
+    private String resolveSubjectNameAtLessonTime(LessonOccurrenceEntity occurrence,
+                                                  List<RecurringSlotSubjectHistoryVO> history) {
+        LocalDateTime lessonStart = occurrence.getPlannedStartAt();
+        if (lessonStart == null || history.isEmpty()) {
+            return null;
+        }
+        RecurringSlotSubjectHistoryVO latestBeforeLesson = null;
+        RecurringSlotSubjectHistoryVO firstAfterLesson = null;
+        for (RecurringSlotSubjectHistoryVO change : history) {
+            if (change.getAdjustedAt() == null) {
+                continue;
+            }
+            if (!change.getAdjustedAt().isAfter(lessonStart)) {
+                latestBeforeLesson = change;
+            } else if (firstAfterLesson == null) {
+                firstAfterLesson = change;
+            }
+        }
+        if (latestBeforeLesson != null && StringUtils.hasText(latestBeforeLesson.getAfterSubjectName())) {
+            return latestBeforeLesson.getAfterSubjectName();
+        }
+        if (firstAfterLesson != null && StringUtils.hasText(firstAfterLesson.getBeforeSubjectName())) {
+            return firstAfterLesson.getBeforeSubjectName();
+        }
+        return null;
     }
 
     private Map<Long, RecurringScheduleSlotEntity> loadRecurringSlotMap(List<LessonOccurrenceEntity> occurrences) {

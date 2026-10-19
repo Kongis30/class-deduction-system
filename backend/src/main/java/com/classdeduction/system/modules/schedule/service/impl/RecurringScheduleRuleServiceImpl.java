@@ -833,13 +833,28 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             if (occurrence.getPlannedTeacherId() == null && oldSlot.getTeacherId() != null) {
                 update.setPlannedTeacherId(oldSlot.getTeacherId());
             }
-            if (!StringUtils.hasText(occurrence.getSubjectName()) && StringUtils.hasText(oldSlot.getSubjectName())) {
+            if (!StringUtils.hasText(occurrence.getSubjectName())
+                    && StringUtils.hasText(oldSlot.getSubjectName())
+                    && isSlotSubjectSnapshotSafe(occurrence, oldSlot)) {
                 update.setSubjectName(oldSlot.getSubjectName());
             }
             if (update.getPlannedTeacherId() != null || update.getSubjectName() != null) {
                 lessonOccurrenceMapper.updateById(update);
             }
         }
+    }
+
+    /** 只有时段最后修改时间不晚于上课时间，才可将当前时段名称视作该课次的历史快照。 */
+    private boolean isSlotSubjectSnapshotSafe(LessonOccurrenceEntity occurrence,
+                                              RecurringScheduleSlotEntity slot) {
+        LocalDateTime lessonStartAt = occurrence.getPlannedStartAt();
+        LocalDateTime slotUpdatedAt = slot.getUpdatedAt();
+        if (Integer.valueOf(1).equals(slot.getIsDeleted())
+                && (lessonStartAt == null || slotUpdatedAt == null)) {
+            return true;
+        }
+        return lessonStartAt != null && slotUpdatedAt != null
+                && !slotUpdatedAt.isAfter(lessonStartAt);
     }
 
     /** 为签字表保留课程信息修改前后的可读快照，不改写已生成课程的历史信息。 */

@@ -2,8 +2,11 @@ package com.classdeduction.system.modules.schedule.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.vo.RecurringSlotSubjectHistoryVO;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Result;
+import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
@@ -60,6 +63,26 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
                                @Param("classroomId") Long classroomId,
                                @Param("deliveryMode") String deliveryMode,
                                @Param("effectiveAt") LocalDateTime effectiveAt);
+
+    /** 读取排课时段的课程名称变更链，用于还原快照缺失的历史课次名称。 */
+    @Select({"<script>",
+            "SELECT occurrence.schedule_slot_id AS schedule_slot_id, log.adjusted_at AS adjusted_at,",
+            "JSON_UNQUOTE(JSON_EXTRACT(log.before_snapshot, '$.subjectName')) AS before_subject_name,",
+            "JSON_UNQUOTE(JSON_EXTRACT(log.after_snapshot, '$.subjectName')) AS after_subject_name",
+            "FROM lesson_adjustment_log log",
+            "JOIN lesson_occurrence occurrence ON occurrence.id = log.occurrence_id",
+            "WHERE occurrence.schedule_slot_id IN",
+            "<foreach collection='slotIds' item='slotId' open='(' separator=',' close=')'>#{slotId}</foreach>",
+            "AND log.adjustment_type = 'SCHEDULE_DETAILS_UPDATE'",
+            "ORDER BY log.adjusted_at, log.id",
+            "</script>"})
+    @Results(id = "recurringSlotSubjectHistory", value = {
+            @Result(property = "scheduleSlotId", column = "schedule_slot_id"),
+            @Result(property = "adjustedAt", column = "adjusted_at"),
+            @Result(property = "beforeSubjectName", column = "before_subject_name"),
+            @Result(property = "afterSubjectName", column = "after_subject_name")
+    })
+    List<RecurringSlotSubjectHistoryVO> selectSubjectHistoryByScheduleSlotIds(@Param("slotIds") List<Long> slotIds);
 
     /**
      * 按校区统计今日待上课次数（批量GROUP BY JOIN，避免N+1）。
