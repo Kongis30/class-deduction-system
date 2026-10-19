@@ -751,6 +751,8 @@ CREATE TABLE `lesson_occurrence` (
   `student_id` bigint DEFAULT NULL COMMENT 'Student ID (null for class group occurrences)',
   `schedule_rule_id` bigint DEFAULT NULL COMMENT 'Source rule ID',
   `schedule_slot_id` bigint DEFAULT NULL COMMENT 'Source slot ID',
+  `allocation_owner_teacher_id` bigint DEFAULT NULL COMMENT 'Teacher whose recurring slot owns this occurrence allocation',
+  `allocation_anchor_date` date DEFAULT NULL COMMENT 'Original recurring date retained when this occurrence is adjusted',
   `occurrence_type` varchar(32) NOT NULL COMMENT 'Occurrence type: REGULAR/MAKEUP/MANUAL',
   `planned_teacher_id` bigint DEFAULT NULL COMMENT 'Planned teacher ID',
   `subject_name` varchar(128) DEFAULT NULL COMMENT 'Subject snapshot copied from the weekly class slot',
@@ -1234,6 +1236,7 @@ DROP TABLE IF EXISTS `recurring_schedule_slot`;
 CREATE TABLE `recurring_schedule_slot` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `rule_id` bigint NOT NULL COMMENT 'Rule ID',
+  `slot_lineage_id` bigint DEFAULT NULL COMMENT 'Stable weekly slot identity across schedule versions',
   `teacher_id` bigint DEFAULT NULL COMMENT 'Teacher assigned to this recurring weekly slot',
   `delivery_mode` varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE',
   `classroom_id` bigint DEFAULT NULL COMMENT 'Classroom assigned to this weekly slot',

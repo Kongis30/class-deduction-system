@@ -180,6 +180,8 @@ export interface ScheduleAdjustmentPayload {
   adjustmentType: 'RESCHEDULE' | 'CHANGE_ROOM' | 'CHANGE_TEACHER' | 'ASSIGN_RESOURCES' | 'MAKEUP_CREATE';
   plannedTeacherId?: string | number;
   plannedClassroomId?: string | number;
+  subjectName?: string;
+  deliveryMode?: 'IN_PERSON' | 'ONLINE';
   plannedStartAt?: string;
   plannedEndAt?: string;
   plannedUnits?: number;

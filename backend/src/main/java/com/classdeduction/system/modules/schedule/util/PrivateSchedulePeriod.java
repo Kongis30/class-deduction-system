@@ -24,8 +24,11 @@ public final class PrivateSchedulePeriod {
     /** 保留的旧规则课次按实际课次日期归属，历史确认不能混入本周期。 */
     public static boolean contains(LessonOccurrenceEntity occurrence, LessonRecordEntity record,
                                    RecurringScheduleRuleEntity currentRule, LocalDateTime periodStart) {
-        if (periodStart != null && (occurrence.getPlannedStartAt() == null
-                || occurrence.getPlannedStartAt().isBefore(periodStart)
+        boolean occurrencePredatesPeriod = periodStart != null
+                && (occurrence.getAllocationAnchorDate() != null
+                ? occurrence.getAllocationAnchorDate().isBefore(periodStart.toLocalDate())
+                : occurrence.getPlannedStartAt() == null || occurrence.getPlannedStartAt().isBefore(periodStart));
+        if (periodStart != null && (occurrencePredatesPeriod
                 || record != null && record.getConfirmedAt() != null
                 && record.getConfirmedAt().isBefore(periodStart))) {
             return false;

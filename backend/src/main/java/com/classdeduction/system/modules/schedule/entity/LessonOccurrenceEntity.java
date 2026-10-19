@@ -11,6 +11,7 @@ import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -43,6 +44,12 @@ public class LessonOccurrenceEntity extends BaseEntity {
     private Long scheduleRuleId;
 
     private Long scheduleSlotId;
+
+    /** 分配额度归属快照；单课临时代课只能改变 plannedTeacherId，不能改此值。 */
+    private Long allocationOwnerTeacherId;
+
+    /** 周期课位对应的原计划日期；单课改期后仍用于续排识别该周已占用的课位。 */
+    private LocalDate allocationAnchorDate;
 
     private String occurrenceType;
 

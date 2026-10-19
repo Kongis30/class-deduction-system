@@ -20,6 +20,8 @@ export interface OneOnOneLesson {
   scheduleRuleId?: EntityId;
   plannedTeacherId?: EntityId;
   plannedTeacherName?: string;
+  allocationOwnerTeacherId?: EntityId;
+  allocationOwnerTeacherName?: string;
   subjectName?: string;
   deliveryMode?: 'IN_PERSON' | 'ONLINE' | string;
   plannedClassroomId?: EntityId;

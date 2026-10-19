@@ -547,6 +547,12 @@
                   <span v-if="row.lesson.actualTeacherName || row.lesson.plannedTeacherName">
                     {{ displayResourceName(row.lesson.actualTeacherName || row.lesson.plannedTeacherName) }}
                   </span>
+                  <small
+                    v-if="row.lesson.allocationOwnerTeacherName
+                      && String(row.lesson.allocationOwnerTeacherId) !== String(row.lesson.actualTeacherId || row.lesson.plannedTeacherId)"
+                  >
+                    Hours remain allocated to {{ displayResourceName(row.lesson.allocationOwnerTeacherName) }}
+                  </small>
                   <span v-if="isKeptFromPreviousSchedule(row.lesson)" class="oo-schedule-change__kept">Kept from previous schedule</span>
                 </div>
               </template>
@@ -649,6 +655,12 @@
                   <div class="oo-simple-cell">
                     <strong>{{ signatureCourseLabel(item.lesson) }}</strong>
                     <span>{{ displayResourceName(item.lesson.actualTeacherName || item.lesson.plannedTeacherName) }}</span>
+                    <small
+                      v-if="item.lesson.allocationOwnerTeacherName
+                        && String(item.lesson.allocationOwnerTeacherId) !== String(item.lesson.actualTeacherId || item.lesson.plannedTeacherId)"
+                    >
+                      Hours remain allocated to {{ displayResourceName(item.lesson.allocationOwnerTeacherName) }}
+                    </small>
                     <span v-if="isKeptFromPreviousSchedule(item.lesson)" class="oo-schedule-change__kept">Kept from previous schedule</span>
                   </div>
                   <el-tag class="status-pill" :class="statusPillClass(item.lesson)" size="small" :type="statusTag(item.lesson)">
@@ -761,8 +773,8 @@
     <el-dialog v-model="adjustDialogVisible" title="Adjust Lesson" width="560px" :fullscreen="appStore.isMobileViewport" :close-on-click-modal="false" class="no-print">
       <p class="oo-form-hint">
         {{ isTeacher
-          ? "Change this lesson's time. Only your own unconfirmed lesson can be adjusted."
-          : "Change only this lesson's time or teacher. The recurring schedule will not be changed." }}
+          ? "Change the time or duration of your own unconfirmed lesson. Duration changes may rebalance future unprocessed lessons in the same slot."
+          : "Change this lesson's time, teacher, course name, or classroom. The recurring schedule and allocated hours stay unchanged. Changing duration may rebalance future unprocessed lessons in this same time slot." }}
       </p>
       <el-form :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '110px'">
         <el-form-item v-if="!isTeacher" label="Teacher">
@@ -779,6 +791,22 @@
         <el-form-item v-else label="Teacher">
           <span>{{ displayResourceName(adjustLesson?.plannedTeacherName) }}</span>
         </el-form-item>
+        <template v-if="!isTeacher">
+          <el-form-item label="Course name">
+            <el-input v-model="adjustForm.subjectName" maxlength="128" />
+          </el-form-item>
+          <el-form-item label="Delivery">
+            <el-select v-model="adjustForm.deliveryMode" style="width: 100%">
+              <el-option label="Online / no classroom" value="ONLINE" />
+              <el-option label="In person" value="IN_PERSON" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="adjustForm.deliveryMode === 'IN_PERSON'" label="Classroom">
+            <el-select v-model="adjustForm.classroomId" filterable clearable placeholder="Optional" style="width: 100%">
+              <el-option v-for="classroom in classrooms" :key="classroom.id" :label="classroom.roomName" :value="classroom.id" />
+            </el-select>
+          </el-form-item>
+        </template>
         <el-form-item label="Start Time" required>
           <el-date-picker
             v-model="adjustForm.plannedStartAt"
@@ -1427,6 +1455,9 @@ const assignmentForm = reactive({
 });
 const adjustForm = reactive({
   teacherId: undefined as EntityId | undefined,
+  subjectName: '',
+  deliveryMode: 'ONLINE' as 'ONLINE' | 'IN_PERSON',
+  classroomId: undefined as EntityId | undefined,
   plannedStartAt: '',
   plannedEndAt: '',
   reason: '',
@@ -1857,6 +1888,9 @@ function openAssignmentDialog(row: OneOnOneLesson) {
 function openAdjustDialog(row: OneOnOneLesson) {
   adjustLesson.value = row;
   adjustForm.teacherId = findSelectableResourceId(teacherOptions.value, row.plannedTeacherId);
+  adjustForm.subjectName = row.subjectName || '';
+  adjustForm.deliveryMode = row.deliveryMode === 'IN_PERSON' || row.plannedClassroomId ? 'IN_PERSON' : 'ONLINE';
+  adjustForm.classroomId = findSelectableResourceId(classrooms.value, row.plannedClassroomId);
   adjustForm.plannedStartAt = row.plannedStartAt;
   adjustForm.plannedEndAt = row.plannedEndAt;
   adjustForm.reason = '';
@@ -1925,12 +1959,15 @@ async function submitAdjustLesson() {
       occurrenceId: adjustLesson.value.occurrenceId,
       adjustmentType: 'RESCHEDULE',
       plannedTeacherId: adjustForm.teacherId,
+      subjectName: adjustForm.subjectName,
+      deliveryMode: adjustForm.deliveryMode,
+      plannedClassroomId: adjustForm.deliveryMode === 'IN_PERSON' ? adjustForm.classroomId : undefined,
       plannedStartAt: adjustForm.plannedStartAt,
       plannedEndAt: adjustForm.plannedEndAt,
       plannedUnits,
       reason,
     });
-    ElMessage.success('Lesson time adjusted.');
+    ElMessage.success('Lesson adjustment saved.');
     adjustDialogVisible.value = false;
     await loadData();
   } catch (err) {

@@ -28,6 +28,9 @@ public class RecurringScheduleSlotEntity extends BaseEntity {
 
     private Long ruleId;
 
+    /** 同一每周课位跨排课版本保持不变，用于新老师接手完整课程时间线。 */
+    private Long slotLineageId;
+
     private Long teacherId;
 
     private String deliveryMode;

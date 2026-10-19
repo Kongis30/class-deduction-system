@@ -4,12 +4,13 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
 /**
- * 调课请求：支持调时间、换老师、换教室和创建补课。
+ * 单课调整请求：修改课次计划快照，不变更周期排课配置和分配额。
  */
 @Data
 @Schema(description = "Schedule adjustment request")
@@ -29,6 +30,13 @@ public class ScheduleAdjustmentRequest {
 
     @Schema(description = "New planned classroom ID", example = "1880000000000000003")
     private Long plannedClassroomId;
+
+    @Size(max = 128, message = "Subject name must be 128 characters or fewer")
+    @Schema(description = "One-off course/subject name snapshot")
+    private String subjectName;
+
+    @Schema(description = "Explicit classroom mode: IN_PERSON or ONLINE")
+    private String deliveryMode;
 
     @Schema(description = "New planned start time", example = "2026-04-12T18:00:00")
     private LocalDateTime plannedStartAt;

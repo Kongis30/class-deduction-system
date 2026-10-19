@@ -54,6 +54,10 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "varchar(128) DEFAULT NULL COMMENT 'Course/subject name taught in this recurring weekly slot'");
         addSlotColumnIfMissing("allocated_units",
                 "int DEFAULT NULL COMMENT 'Units (1 unit = 0.5h) allocated to this slot; existing schedules must be completed before further generation'");
+        addSlotColumnIfMissing("slot_lineage_id",
+                "bigint DEFAULT NULL COMMENT 'Stable weekly slot identity across schedule versions'");
+        jdbcTemplate.update("UPDATE recurring_schedule_slot SET slot_lineage_id = id WHERE slot_lineage_id IS NULL");
+        backfillRecurringSlotLineages();
         addScheduleColumnIfMissing("recurring_schedule_slot", "delivery_mode",
                 "varchar(16) DEFAULT NULL COMMENT 'IN_PERSON or ONLINE' AFTER teacher_id");
         addScheduleColumnIfMissing("recurring_schedule_slot", "classroom_id",
@@ -76,6 +80,11 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
                 "varchar(128) DEFAULT NULL COMMENT 'Subject snapshot copied from the weekly class slot' AFTER planned_teacher_id");
         addScheduleColumnIfMissing("lesson_occurrence", "leave_carryover_units",
                 "int NOT NULL DEFAULT 0 COMMENT 'Previous-period leave hours added to the current slot' AFTER occurrence_type");
+        addScheduleColumnIfMissing("lesson_occurrence", "allocation_owner_teacher_id",
+                "bigint DEFAULT NULL COMMENT 'Teacher whose recurring slot owns this occurrence allocation' AFTER schedule_slot_id");
+        addScheduleColumnIfMissing("lesson_occurrence", "allocation_anchor_date",
+                "date DEFAULT NULL COMMENT 'Original recurring date retained when this occurrence is adjusted' AFTER allocation_owner_teacher_id");
+        backfillOccurrenceAllocationSnapshots();
         backfillUnchangedRecurringOccurrenceSubjects();
         boolean classroomOverrideAdded = addScheduleColumnIfMissing("lesson_occurrence", "classroom_overridden",
                 "tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Whether this occurrence has an explicit one-off classroom override' AFTER planned_classroom_id");
@@ -92,6 +101,36 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
         addTeacherPayRateColumnIfMissing("delivery_mode",
                 "varchar(16) DEFAULT NULL COMMENT 'Optional delivery scope: ONLINE, OFFLINE, or NULL for any' AFTER grade_band");
         makeTeacherPayRateProductScopeOptional();
+    }
+
+    /** 旧课次优先从原课位和首次调整日志还原额度老师及周次锚点，不用临时代课老师猜额度归属。 */
+    private void backfillOccurrenceAllocationSnapshots() {
+        jdbcTemplate.update("""
+                UPDATE lesson_occurrence occurrence
+                JOIN recurring_schedule_slot slot ON slot.id = occurrence.schedule_slot_id
+                SET occurrence.allocation_owner_teacher_id = slot.teacher_id
+                WHERE occurrence.is_deleted = 0
+                  AND occurrence.allocation_owner_teacher_id IS NULL
+                  AND slot.teacher_id IS NOT NULL
+                """);
+        jdbcTemplate.update("""
+                UPDATE lesson_occurrence occurrence
+                SET occurrence.allocation_anchor_date = COALESCE(
+                    (
+                        SELECT DATE(STR_TO_DATE(
+                            REPLACE(JSON_UNQUOTE(JSON_EXTRACT(log.before_snapshot, '$.plannedStartAt')), 'T', ' '),
+                            '%Y-%m-%d %H:%i:%s'))
+                        FROM lesson_adjustment_log log
+                        WHERE log.occurrence_id = occurrence.id
+                          AND log.adjustment_type IN ('RESCHEDULE', 'WEEKLY_TEMP_UPDATE')
+                          AND JSON_EXTRACT(log.before_snapshot, '$.plannedStartAt') IS NOT NULL
+                        ORDER BY log.adjusted_at, log.id
+                        LIMIT 1
+                    ), DATE(occurrence.planned_start_at))
+                WHERE occurrence.is_deleted = 0
+                  AND occurrence.schedule_slot_id IS NOT NULL
+                  AND occurrence.allocation_anchor_date IS NULL
+                """);
     }
 
     /** 兼容快照字段上线前创建的课次；只从生成后未改过的原排课时段补名称。 */
@@ -223,6 +262,51 @@ public class ScheduleSchemaCompatibilityInitializer implements ApplicationRunner
 
     private void addSlotColumnIfMissing(String columnName, String columnDefinition) {
         addScheduleColumnIfMissing("recurring_schedule_slot", columnName, columnDefinition);
+    }
+
+    /** 旧版本没有 lineage 时，只把相邻版本中唯一匹配的周课位串起来；歧义记录保持独立供人工核查。 */
+    private void backfillRecurringSlotLineages() {
+        String sql = """
+                UPDATE recurring_schedule_slot historical
+                JOIN recurring_schedule_rule next_rule
+                  ON next_rule.supersedes_rule_id = historical.rule_id
+                 AND next_rule.is_deleted = 0
+                JOIN recurring_schedule_slot current_slot
+                  ON current_slot.rule_id = next_rule.id
+                 AND current_slot.is_deleted = 0
+                 AND current_slot.slot_status = 'ACTIVE'
+                 AND current_slot.weekday = historical.weekday
+                 AND current_slot.start_time = historical.start_time
+                 AND current_slot.end_time = historical.end_time
+                 AND current_slot.planned_units = historical.planned_units
+                JOIN (SELECT rule_id, weekday, start_time, end_time, planned_units, COUNT(*) AS slot_count
+                      FROM recurring_schedule_slot
+                      GROUP BY rule_id, weekday, start_time, end_time, planned_units) historical_count
+                  ON historical_count.rule_id = historical.rule_id
+                 AND historical_count.weekday = historical.weekday
+                 AND historical_count.start_time = historical.start_time
+                 AND historical_count.end_time = historical.end_time
+                 AND historical_count.planned_units = historical.planned_units
+                 AND historical_count.slot_count = 1
+                JOIN (SELECT rule_id, weekday, start_time, end_time, planned_units, COUNT(*) AS slot_count
+                      FROM recurring_schedule_slot
+                      WHERE is_deleted = 0 AND slot_status = 'ACTIVE'
+                      GROUP BY rule_id, weekday, start_time, end_time, planned_units) current_count
+                  ON current_count.rule_id = current_slot.rule_id
+                 AND current_count.weekday = current_slot.weekday
+                 AND current_count.start_time = current_slot.start_time
+                 AND current_count.end_time = current_slot.end_time
+                 AND current_count.planned_units = current_slot.planned_units
+                 AND current_count.slot_count = 1
+                SET historical.slot_lineage_id = current_slot.slot_lineage_id
+                WHERE historical.slot_lineage_id <> current_slot.slot_lineage_id
+                """;
+        int updated;
+        int passes = 0;
+        do {
+            updated = jdbcTemplate.update(sql);
+            passes++;
+        } while (updated > 0 && passes < 100);
     }
 
     private boolean addScheduleColumnIfMissing(String tableName, String columnName, String columnDefinition) {

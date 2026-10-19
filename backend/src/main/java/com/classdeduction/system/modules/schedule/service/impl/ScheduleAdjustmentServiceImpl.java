@@ -31,6 +31,7 @@ import com.classdeduction.system.modules.schedule.mapper.LessonAdjustmentLogMapp
 import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.service.ScheduleAdjustmentService;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
+import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import com.classdeduction.system.modules.schedule.vo.LessonOccurrenceVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleConflictDetailVO;
 import com.classdeduction.system.modules.schedule.vo.ScheduleAdjustmentResultVO;
@@ -83,6 +84,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
     private final ClassroomMapper classroomMapper;
     private final JsonHelper jsonHelper;
     private final ClassHolidayService classHolidayService;
+    private final RecurringScheduleRuleService recurringScheduleRuleService;
 
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
@@ -135,7 +137,13 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
             int unitDelta = (targetOccurrence.getPlannedUnits() == null ? 0 : targetOccurrence.getPlannedUnits())
                     - (source.getPlannedUnits() == null ? 0 : source.getPlannedUnits());
             if (unitDelta != 0 && source.getPackageId() != null) {
-                adjustFutureOccurrences(source.getPackageId(), targetOccurrence.getPlannedEndAt(), -unitDelta);
+                if (source.getScheduleSlotId() == null || !"REGULAR".equals(source.getOccurrenceType())) {
+                    throw new BusinessException("LESSON_SLOT_REQUIRED",
+                            "This lesson cannot change duration from Adjust. Change its time, teacher, or classroom, or edit the recurring schedule.");
+                }
+                // 先在原课位未来未处理课次间平衡差额，再校准该课位缺失日期；不跨老师或重置周期。
+                rebalanceFutureSlotOccurrences(source, unitDelta, request.getAdjustedBy());
+                recurringScheduleRuleService.reconcileScheduleSlot(source.getPackageId(), source.getScheduleSlotId());
             }
         }
 
@@ -148,6 +156,9 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         log.setAdjustedBy(request.getAdjustedBy());
         log.setAdjustedAt(AppTime.nowLocalDateTime());
         lessonAdjustmentLogMapper.insert(log);
+        if (source.getPackageId() != null) {
+            refreshPackageEstimatedEndDate(source.getPackageId());
+        }
 
         return ScheduleAdjustmentResultVO.builder()
                 .adjustmentLogId(log.getId())
@@ -348,6 +359,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         newOccurrence.setStudentId(source.getStudentId());
         newOccurrence.setScheduleRuleId(source.getScheduleRuleId());
         newOccurrence.setScheduleSlotId(source.getScheduleSlotId());
+        newOccurrence.setAllocationOwnerTeacherId(source.getAllocationOwnerTeacherId());
         newOccurrence.setOccurrenceType("MAKEUP");
         newOccurrence.setSubjectName(source.getSubjectName());
         newOccurrence.setSourceOccurrenceId(source.getId());
@@ -372,6 +384,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         updated.setStudentId(source.getStudentId());
         updated.setScheduleRuleId(source.getScheduleRuleId());
         updated.setScheduleSlotId(source.getScheduleSlotId());
+        updated.setAllocationOwnerTeacherId(source.getAllocationOwnerTeacherId());
+        updated.setAllocationAnchorDate(source.getAllocationAnchorDate());
         updated.setOccurrenceType(source.getOccurrenceType());
         updated.setSubjectName(source.getSubjectName());
         updated.setSourceOccurrenceId(source.getSourceOccurrenceId());
@@ -389,12 +403,30 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
     private void applyRequestedPlanningFields(LessonOccurrenceEntity target, LessonOccurrenceEntity source, ScheduleAdjustmentRequest request) {
         target.setPlannedTeacherId(request.getPlannedTeacherId() != null ? request.getPlannedTeacherId() : source.getPlannedTeacherId());
-        target.setPlannedClassroomId(request.getPlannedClassroomId() != null ? request.getPlannedClassroomId() : source.getPlannedClassroomId());
-        if (request.getPlannedClassroomId() != null) {
-            target.setClassroomOverridden(1);
+        target.setSubjectName(request.getSubjectName() != null ? request.getSubjectName().trim() : source.getSubjectName());
+        String requestedMode = request.getDeliveryMode() == null ? null : request.getDeliveryMode().trim().toUpperCase();
+        if (requestedMode != null && !List.of("IN_PERSON", "ONLINE").contains(requestedMode)) {
+            throw new BusinessException("INVALID_DELIVERY_MODE", "Choose either in-person or online lesson delivery.");
         }
-        target.setDeliveryMode(target.getPlannedClassroomId() == null
-                ? source.getDeliveryMode() : "IN_PERSON");
+        if ("ONLINE".equals(requestedMode)) {
+            if (request.getPlannedClassroomId() != null) {
+                throw new BusinessException("ONLINE_CLASSROOM_NOT_ALLOWED", "Online lessons cannot be assigned a classroom.");
+            }
+            target.setPlannedClassroomId(null);
+            target.setDeliveryMode("ONLINE");
+            target.setClassroomOverridden(1);
+        } else if ("IN_PERSON".equals(requestedMode)) {
+            target.setPlannedClassroomId(request.getPlannedClassroomId());
+            target.setDeliveryMode("IN_PERSON");
+            target.setClassroomOverridden(1);
+        } else if (request.getPlannedClassroomId() != null) {
+            target.setPlannedClassroomId(request.getPlannedClassroomId());
+            target.setDeliveryMode("IN_PERSON");
+            target.setClassroomOverridden(1);
+        } else {
+            target.setPlannedClassroomId(source.getPlannedClassroomId());
+            target.setDeliveryMode(source.getDeliveryMode());
+        }
         target.setPlannedStartAt(request.getPlannedStartAt() != null ? request.getPlannedStartAt() : source.getPlannedStartAt());
         target.setPlannedEndAt(request.getPlannedEndAt() != null ? request.getPlannedEndAt() : source.getPlannedEndAt());
         target.setPlannedUnits(request.getPlannedUnits() != null ? request.getPlannedUnits() : source.getPlannedUnits());
@@ -706,6 +738,8 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         adjusted.setStudentId(source.getStudentId());
         adjusted.setScheduleRuleId(source.getScheduleRuleId());
         adjusted.setScheduleSlotId(source.getScheduleSlotId());
+        adjusted.setAllocationOwnerTeacherId(source.getAllocationOwnerTeacherId());
+        adjusted.setAllocationAnchorDate(source.getAllocationAnchorDate());
         adjusted.setOccurrenceType(source.getOccurrenceType());
         adjusted.setSubjectName(source.getSubjectName());
         adjusted.setSourceOccurrenceId(source.getSourceOccurrenceId());
@@ -828,97 +862,151 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         return delta;
     }
 
-    /**
-     * 将本周调课产生的课时差额分摊到后续课次，确保课包的未来计划总时长不会漂移。
-     * delta > 0 表示需要增加后续课时；delta < 0 表示需要减少后续课时。
-     */
-    private void adjustFutureOccurrences(Long packageId, LocalDateTime startAfter, int delta) {
-        if (delta == 0) {
-            return;
-        }
-        List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getPackageId, packageId)
-                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
-                        .ge(LessonOccurrenceEntity::getPlannedStartAt, startAfter)
-                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
-        futureOccurrences = excludeRecordedOccurrences(futureOccurrences);
-        if (futureOccurrences.isEmpty()) {
-            throw new BusinessException("FUTURE_SCHEDULE_NOT_ENOUGH", "No future lesson occurrences are available to keep the package schedule balanced.");
-        }
-
-        if (delta > 0) {
-            increaseFutureOccurrenceWithoutConflict(futureOccurrences, delta);
-            return;
-        }
-
-        int toReduce = -delta;
-        for (int i = futureOccurrences.size() - 1; i >= 0 && toReduce > 0; i--) {
-            LessonOccurrenceEntity occurrence = futureOccurrences.get(i);
-            int currentUnits = occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits();
-            if (currentUnits <= toReduce) {
-                occurrence.setPlanningStatus("CANCELLED");
-                lessonOccurrenceMapper.updateById(occurrence);
-                toReduce -= currentUnits;
-                continue;
-            }
-            updatePlannedUnits(occurrence, currentUnits - toReduce);
-            lessonOccurrenceMapper.updateById(occurrence);
-            toReduce = 0;
-        }
-        if (toReduce > 0) {
-            throw new BusinessException("FUTURE_SCHEDULE_NOT_ENOUGH", "Future lesson occurrences are not enough to keep the package schedule balanced.");
-        }
-    }
-
     private void updatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {
         occurrence.setPlannedUnits(plannedUnits);
         occurrence.setPlannedEndAt(occurrence.getPlannedStartAt().plusMinutes(plannedUnits * 30L));
     }
 
-    private void increaseFutureOccurrenceWithoutConflict(List<LessonOccurrenceEntity> futureOccurrences, int delta) {
-        for (int i = futureOccurrences.size() - 1; i >= 0; i--) {
-            LessonOccurrenceEntity occurrence = futureOccurrences.get(i);
-            int originalUnits = occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits();
-            LocalDateTime originalEndAt = occurrence.getPlannedEndAt();
-            updatePlannedUnits(occurrence, originalUnits + delta);
-            if (!hasAnyConflict(occurrence, occurrence.getId())) {
-                lessonOccurrenceMapper.updateById(occurrence);
-                return;
+    /** 单课时长变化在同一课位内守恒，只触碰尚无消课记录的未来普通课次。 */
+    private void rebalanceFutureSlotOccurrences(LessonOccurrenceEntity source,
+                                                int unitDelta,
+                                                Long adjustedBy) {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        List<LessonOccurrenceEntity> future = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getPackageId, source.getPackageId())
+                        .eq(LessonOccurrenceEntity::getScheduleRuleId, source.getScheduleRuleId())
+                        .eq(LessonOccurrenceEntity::getScheduleSlotId, source.getScheduleSlotId())
+                        .eq(LessonOccurrenceEntity::getOccurrenceType, "REGULAR")
+                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, now)
+                        .ne(LessonOccurrenceEntity::getId, source.getId())
+                        .orderByDesc(LessonOccurrenceEntity::getPlannedStartAt));
+        if (future.isEmpty()) {
+            throw new BusinessException("FUTURE_SCHEDULE_NOT_ENOUGH",
+                    "This lesson's duration cannot change because no unprocessed future lessons remain in its original schedule slot.");
+        }
+        Set<Long> occurrenceIds = future.stream().map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
+        Set<Long> recordedIds = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                        .in(LessonRecordEntity::getOccurrenceId, occurrenceIds))
+                .stream().map(LessonRecordEntity::getOccurrenceId).filter(Objects::nonNull).collect(Collectors.toSet());
+        future = future.stream().filter(item -> !recordedIds.contains(item.getId())).toList();
+        if (future.isEmpty()) {
+            throw new BusinessException("FUTURE_SCHEDULE_NOT_ENOUGH",
+                    "This lesson's duration cannot change because all future lessons in its original slot have records.");
+        }
+
+        if (unitDelta > 0) {
+            int toReduce = unitDelta;
+            for (LessonOccurrenceEntity occurrence : future) {
+                if (toReduce <= 0) break;
+                LessonOccurrenceEntity before = copyForAdjustment(occurrence);
+                int units = safeUnits(occurrence.getPlannedUnits());
+                int reduction = Math.min(units, toReduce);
+                if (reduction == units) {
+                    occurrence.setPlanningStatus("CANCELLED");
+                } else {
+                    updatePlannedUnits(occurrence, units - reduction);
+                }
+                if (lessonOccurrenceMapper.updateById(occurrence) != 1) {
+                    throw new BusinessException("LESSON_CHANGED", "A future lesson changed during adjustment. Refresh and try again.");
+                }
+                insertAdjustmentLog(occurrence.getId(), "ONE_OFF_DURATION_BALANCE", toSnapshot(before),
+                        toSnapshot(occurrence), "Balanced a one-off duration increase within its original schedule slot.", adjustedBy);
+                toReduce -= reduction;
             }
-            occurrence.setPlannedUnits(originalUnits);
-            occurrence.setPlannedEndAt(originalEndAt);
+            if (toReduce > 0) {
+                throw new BusinessException("FUTURE_SCHEDULE_NOT_ENOUGH",
+                        "There are not enough unprocessed future hours in this schedule slot to cover the increase.");
+            }
+            return;
+        }
+
+        int toAdd = -unitDelta;
+        for (LessonOccurrenceEntity occurrence : future) {
+            LessonOccurrenceEntity before = copyForAdjustment(occurrence);
+            int originalUnits = safeUnits(occurrence.getPlannedUnits());
+            LocalDateTime originalEnd = occurrence.getPlannedEndAt();
+            updatePlannedUnits(occurrence, originalUnits + toAdd);
+            try {
+                ensureNoConflicts(occurrence, occurrence.getId());
+                lockAdjustmentResources(studentIdsForOccurrence(occurrence), setOf(occurrence.getPlannedTeacherId()),
+                        setOf(occurrence.getPlannedClassroomId()));
+                if (lessonOccurrenceMapper.updateById(occurrence) != 1) {
+                    throw new BusinessException("LESSON_CHANGED", "A future lesson changed during adjustment. Refresh and try again.");
+                }
+                insertAdjustmentLog(occurrence.getId(), "ONE_OFF_DURATION_BALANCE", toSnapshot(before),
+                        toSnapshot(occurrence), "Balanced a one-off duration decrease within its original schedule slot.", adjustedBy);
+                return;
+            } catch (BusinessException conflict) {
+                occurrence.setPlannedUnits(originalUnits);
+                occurrence.setPlannedEndAt(originalEnd);
+                if (!"SCHEDULE_CONFLICT".equals(conflict.getCode())) throw conflict;
+            }
         }
         throw new BusinessException("FUTURE_SCHEDULE_CONFLICT",
-                "No future lesson has enough free time to keep the package schedule balanced.");
+                "No unprocessed future lesson in this schedule slot can safely absorb the released hours.");
     }
 
-    private boolean hasAnyConflict(LessonOccurrenceEntity occurrence, Long ignoredOccurrenceId) {
-        return hasConflict(occurrence, LessonOccurrenceEntity::getStudentId, occurrence.getStudentId(), ignoredOccurrenceId)
-                || (occurrence.getPlannedTeacherId() != null
-                && hasConflict(occurrence, LessonOccurrenceEntity::getPlannedTeacherId, occurrence.getPlannedTeacherId(), ignoredOccurrenceId))
-                || (occurrence.getPlannedClassroomId() != null
-                && hasConflict(occurrence, LessonOccurrenceEntity::getPlannedClassroomId, occurrence.getPlannedClassroomId(), ignoredOccurrenceId));
+    private LessonOccurrenceEntity copyForAdjustment(LessonOccurrenceEntity source) {
+        LessonOccurrenceEntity copy = new LessonOccurrenceEntity();
+        copy.setId(source.getId());
+        copy.setLessonNo(source.getLessonNo());
+        copy.setPackageId(source.getPackageId());
+        copy.setScheduleRuleId(source.getScheduleRuleId());
+        copy.setScheduleSlotId(source.getScheduleSlotId());
+        copy.setAllocationOwnerTeacherId(source.getAllocationOwnerTeacherId());
+        copy.setAllocationAnchorDate(source.getAllocationAnchorDate());
+        copy.setPlannedTeacherId(source.getPlannedTeacherId());
+        copy.setPlannedClassroomId(source.getPlannedClassroomId());
+        copy.setDeliveryMode(source.getDeliveryMode());
+        copy.setSubjectName(source.getSubjectName());
+        copy.setPlannedStartAt(source.getPlannedStartAt());
+        copy.setPlannedEndAt(source.getPlannedEndAt());
+        copy.setPlannedUnits(source.getPlannedUnits());
+        copy.setPlanningStatus(source.getPlanningStatus());
+        return copy;
     }
 
-    private List<LessonOccurrenceEntity> excludeRecordedOccurrences(List<LessonOccurrenceEntity> occurrences) {
-        if (occurrences.isEmpty()) {
-            return occurrences;
+    /** 单课调课后按该课包所有有效课次更新预计结束日，供课包及 Data Summary 共用。 */
+    private void refreshPackageEstimatedEndDate(Long packageId) {
+        CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
+        if (coursePackage == null) {
+            return;
         }
-        Set<Long> occurrenceIds = occurrences.stream()
-                .map(LessonOccurrenceEntity::getId)
-                .collect(Collectors.toSet());
-        List<LessonRecordEntity> records = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                .in(LessonRecordEntity::getOccurrenceId, occurrenceIds));
-        Set<Long> recordedOccurrenceIds = (records == null ? Collections.<LessonRecordEntity>emptyList() : records).stream()
-                .map(LessonRecordEntity::getOccurrenceId)
-                .collect(Collectors.toSet());
-        if (recordedOccurrenceIds.isEmpty()) {
-            return occurrences;
+        LocalDate latestEndDate = lessonOccurrenceMapper.selectList(
+                        new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                                .eq(LessonOccurrenceEntity::getPackageId, packageId)
+                                .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"))
+                .stream()
+                .map(LessonOccurrenceEntity::getPlannedEndAt)
+                .filter(Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .max(LocalDate::compareTo)
+                .orElse(null);
+        if (latestEndDate != null && !Objects.equals(latestEndDate, coursePackage.getEstimatedEndDate())) {
+            coursePackage.setEstimatedEndDate(latestEndDate);
+            coursePackageMapper.updateById(coursePackage);
         }
-        return occurrences.stream()
-                .filter(occurrence -> !recordedOccurrenceIds.contains(occurrence.getId()))
-                .toList();
+        PrivateLessonGroupMemberEntity membership = privateLessonGroupMemberMapper.selectOne(
+                new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                        .eq(PrivateLessonGroupMemberEntity::getPackageId, packageId)
+                        .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                        .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0)
+                        .last("LIMIT 1"));
+        if (latestEndDate != null && membership != null) {
+            for (PrivateLessonGroupMemberEntity member : privateLessonGroupMemberMapper.selectList(
+                    new LambdaQueryWrapper<PrivateLessonGroupMemberEntity>()
+                            .eq(PrivateLessonGroupMemberEntity::getPrivateLessonGroupId, membership.getPrivateLessonGroupId())
+                            .eq(PrivateLessonGroupMemberEntity::getMemberStatus, "ACTIVE")
+                            .eq(PrivateLessonGroupMemberEntity::getIsDeleted, 0))) {
+                CoursePackageEntity memberPackage = coursePackageMapper.selectById(member.getPackageId());
+                if (memberPackage != null && !Objects.equals(memberPackage.getEstimatedEndDate(), latestEndDate)) {
+                    memberPackage.setEstimatedEndDate(latestEndDate);
+                    coursePackageMapper.updateById(memberPackage);
+                }
+            }
+        }
     }
 
     private void validateAdjustmentType(String adjustmentType) {
@@ -1351,7 +1439,12 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         snapshot.put("classGroupId", occurrence.getClassGroupId());
         snapshot.put("studentId", occurrence.getStudentId());
         snapshot.put("occurrenceType", occurrence.getOccurrenceType());
+        snapshot.put("scheduleRuleId", occurrence.getScheduleRuleId());
+        snapshot.put("scheduleSlotId", occurrence.getScheduleSlotId());
+        snapshot.put("allocationOwnerTeacherId", occurrence.getAllocationOwnerTeacherId());
+        snapshot.put("allocationAnchorDate", occurrence.getAllocationAnchorDate());
         snapshot.put("plannedTeacherId", occurrence.getPlannedTeacherId());
+        snapshot.put("subjectName", occurrence.getSubjectName());
         snapshot.put("deliveryMode", occurrence.getDeliveryMode());
         snapshot.put("plannedClassroomId", occurrence.getPlannedClassroomId());
         snapshot.put("plannedStartAt", occurrence.getPlannedStartAt());

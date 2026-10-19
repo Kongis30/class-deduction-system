@@ -371,6 +371,7 @@
                   v-model="slot.teacherId"
                   filterable
                   placeholder="Select teacher"
+                  @change="onEditSlotTeacherChanged(slot)"
                 >
                   <el-option v-for="teacher in teachers" :key="String(teacher.id)" :label="teacher.teacherName" :value="String(teacher.id)" />
                 </el-select>
@@ -415,7 +416,7 @@
                 <span class="slot-teacher-row__hours-control">
                   <el-input-number
                     v-model="slot.allocatedHours"
-                    :min="0.5"
+                    :min="isEditing && hasTeacherHandoffChanges && slot.rolloverAllocatedHours === 0 ? 0 : 0.5"
                     :step="0.5"
                     :precision="1"
                     controls-position="right"
@@ -440,6 +441,13 @@
             · Remaining {{ remainingPackageHours.toFixed(1) }}h
           </span>
         </div>
+        <el-alert
+          v-if="hasTeacherHandoffChanges"
+          class="edit-schedule__change-hint"
+          type="info"
+          :closable="false"
+          title="The new teacher takes over this slot’s remaining unreserved hours and full lesson history. Past lessons keep their original teacher; unresolved past lessons can still be processed from the new teacher’s 1-on-1 Lessons page."
+        />
         <el-alert
           v-if="isEditing && !hasSchedulePlanChanges"
           class="edit-schedule__change-hint"
@@ -2247,9 +2255,48 @@ function submitForm() {
 }
 
 function validateSlotAllocations(): boolean {
-  const incompleteSlot = editForm.slots.find(slot =>
-    !slot.teacherId || !slot.subjectName?.trim() || !slot.allocatedHours || slot.allocatedHours <= 0
-  );
+  const incompleteSlot = editForm.slots.find(slot => {
+    const emptyHandoffSlot = isEditing.value && hasTeacherHandoffChanges.value
+      && slot.rolloverAllocatedHours === 0 && slot.allocatedHours === 0;
+    return !slot.teacherId || !slot.subjectName?.trim()
+      || (!emptyHandoffSlot && (!slot.allocatedHours || slot.allocatedHours <= 0));
+  });
+const hasTeacherHandoffChanges = computed(() => editForm.slots.some(slot => {
+  if (slot.slotId == null) return false;
+  const original = originalEditSlots.value.find(item => String(item.slotId) === String(slot.slotId));
+  return Boolean(original && slot.teacherId !== original.teacherId);
+}));
+
+function onEditSlotTeacherChanged(slot: SlotDef & {
+  slotId?: EntityId;
+  teacherId?: EntityId;
+  allocatedHours?: number;
+  rolloverAllocatedHours?: number;
+}) {
+  if (!isEditing.value || slot.slotId == null) return;
+  const original = originalEditSlots.value.find(item => String(item.slotId) === String(slot.slotId));
+  if (!original || slot.teacherId === original.teacherId) return;
+  // 老师交接会建立新周期；保留用户手动改过的输入，其余旧 slot 显示可转入新周期的余额。
+  const sameWeeklySlots = editForm.slots.length === originalEditSlots.value.length
+    && editForm.slots.every(current => {
+      if (current.slotId == null) return false;
+      const previous = originalEditSlots.value.find(item => String(item.slotId) === String(current.slotId));
+      return Boolean(previous
+        && current.weekday === previous.weekday
+        && current.startTime === previous.startTime
+        && current.endTime === previous.endTime
+        && current.plannedUnits === previous.plannedUnits);
+    });
+  if (!sameWeeklySlots) return;
+  for (const current of editForm.slots) {
+    if (current.slotId == null) continue;
+    const previous = originalEditSlots.value.find(item => String(item.slotId) === String(current.slotId));
+    if (previous && Number(current.allocatedHours || 0) === Number(previous.allocatedHours || 0)
+        && current.rolloverAllocatedHours != null) {
+      current.allocatedHours = current.rolloverAllocatedHours;
+    }
+  }
+}
   if (!incompleteSlot) return true;
   ElMessage.warning('Each time slot requires a teacher, lesson name, and schedule total hours.');
   return false;

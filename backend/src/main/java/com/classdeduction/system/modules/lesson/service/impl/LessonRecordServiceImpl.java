@@ -16,10 +16,8 @@ import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
-import com.classdeduction.system.modules.enrollment.entity.PackageTeacherAssignmentEntity;
 import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMemberEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
-import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.finance.mapper.TeacherPaymentItemMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
@@ -52,6 +50,7 @@ import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEn
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
+import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import com.classdeduction.system.modules.schedule.util.PrivateSchedulePeriod;
 import com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper;
 import com.classdeduction.system.modules.systemconfig.entity.NotificationTriggerRuleEntity;
@@ -94,8 +93,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
     private final RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+    private final RecurringScheduleRuleService recurringScheduleRuleService;
     private final CoursePackageMapper coursePackageMapper;
-    private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final TeacherPaymentItemMapper teacherPaymentItemMapper;
     private final StudentMapper studentMapper;
@@ -318,8 +317,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             recordGeneratedMakeup(records.get(0), makeup);
         }
         applyLeaveCarryover(makeupPlan);
-        adjustFutureOccurrencesIfNeeded(primaryPackage.getId(), occurrence.getPrivateLessonGroupId(),
-                originalPlannedUnits, decision, records.get(0).getId());
+        reconcileScheduleAfterConfirmation(primaryPackage.getId());
 
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
         for (int index = 0; index < members.size(); index++) {
@@ -641,8 +639,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             recordGeneratedMakeup(record, makeup);
         }
         applyLeaveCarryover(makeupPlan);
-        adjustFutureOccurrencesIfNeeded(coursePackage.getId(), null,
-                originalPlannedUnits, decision, record.getId());
+        reconcileScheduleAfterConfirmation(coursePackage.getId());
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
         refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision,
                 packageUpdate, makeupEndDate);
@@ -768,6 +765,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         makeup.setStudentId(student.getId());
         makeup.setScheduleRuleId(targetSlot == null ? lastOccurrence.getScheduleRuleId() : currentRule.getId());
         makeup.setScheduleSlotId(targetSlot == null ? lastOccurrence.getScheduleSlotId() : targetSlot.getId());
+        makeup.setAllocationOwnerTeacherId(targetSlot == null
+                ? lastOccurrence.getAllocationOwnerTeacherId() : targetSlot.getTeacherId());
         makeup.setOccurrenceType("MAKEUP");
         makeup.setLeaveCarryoverUnits(previousPeriodLeave ? originalPlannedUnits : 0);
         makeup.setPlannedTeacherId(targetSlot == null ? lastOccurrence.getPlannedTeacherId() : targetSlot.getTeacherId());
@@ -940,6 +939,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         writeRevokeAudit(record, request.getReason(), currentUser);
         lessonRecordMapper.deleteById(record.getId());
         restoreOccurrence(record);
+        recurringScheduleRuleService.reconcilePackageSchedule(coursePackage.getId());
     }
 
     private void revokePrivateLessonGroup(LessonOccurrenceEntity occurrence,
@@ -1002,6 +1002,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             lessonRecordMapper.deleteById(record.getId());
         }
         restoreOccurrence(occurrence.getId());
+        if (!packageIds.isEmpty()) {
+            recurringScheduleRuleService.reconcilePackageSchedule(packageIds.get(0));
+        }
     }
 
     private List<PrivateLessonGroupMemberEntity> activePrivateLessonGroupMembers(Long groupId) {
@@ -1039,14 +1042,51 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         if (!ALLOWED_TEACHER_CONFIRM_STATUSES.contains(request.getResultStatus())) {
             throw new BusinessException("TEACHER_STATUS_NOT_ALLOWED", "Teachers can only confirm completed, no-show, or formal-leave results.");
         }
-        if (!currentUser.teacherId().equals(occurrence.getPlannedTeacherId())) {
-            throw new BusinessException("FORBIDDEN", "Teachers can only confirm their own planned lessons.");
+        if (!canTeacherHandleOccurrence(currentUser.teacherId(), occurrence)) {
+            throw new BusinessException("FORBIDDEN", "Teachers can only confirm lessons assigned to them or handed over to them.");
         }
 
         LocalDateTime now = AppTime.nowLocalDateTime();
         if (occurrence.getPlannedStartAt().isAfter(now.plusDays(TEACHER_FUTURE_CONFIRM_WINDOW_DAYS))) {
             throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Lesson confirmation is available 14 days before the planned start time.");
         }
+    }
+
+    /** 老师提交考勤时按当前 slot 接手人授权；课次原老师快照和消课归属不随授权变化。 */
+    private boolean canTeacherHandleOccurrence(Long teacherId, LessonOccurrenceEntity occurrence) {
+        if (teacherId == null || occurrence.getScheduleSlotId() == null) {
+            return Objects.equals(teacherId, occurrence.getPlannedTeacherId());
+        }
+        RecurringScheduleSlotEntity sourceSlot = recurringScheduleSlotMapper
+                .selectIncludingDeletedByIds(List.of(occurrence.getScheduleSlotId()))
+                .stream().findFirst().orElse(null);
+        if (sourceSlot == null) {
+            return Objects.equals(teacherId, occurrence.getPlannedTeacherId());
+        }
+        Long lineageId = sourceSlot.getSlotLineageId() == null
+                ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
+        LambdaQueryWrapper<RecurringScheduleRuleEntity> ruleQuery = new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                .and(scope -> scope.eq(RecurringScheduleRuleEntity::getPackageId, occurrence.getPackageId())
+                        .or(occurrence.getPrivateLessonGroupId() != null,
+                                group -> group.eq(RecurringScheduleRuleEntity::getPrivateLessonGroupId,
+                                        occurrence.getPrivateLessonGroupId())));
+        List<Long> activeRuleIds = recurringScheduleRuleMapper.selectList(ruleQuery).stream()
+                .map(RecurringScheduleRuleEntity::getId).filter(Objects::nonNull).toList();
+        if (!activeRuleIds.isEmpty()) {
+            List<RecurringScheduleSlotEntity> currentSlots = recurringScheduleSlotMapper.selectList(
+                    new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                            .in(RecurringScheduleSlotEntity::getRuleId, activeRuleIds)
+                            .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"));
+            List<RecurringScheduleSlotEntity> sameLineage = currentSlots.stream()
+                    .filter(slot -> Objects.equals(lineageId,
+                            slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId()))
+                    .toList();
+            if (!sameLineage.isEmpty()) {
+                return sameLineage.stream().anyMatch(slot -> Objects.equals(slot.getTeacherId(), teacherId));
+            }
+        }
+        return Objects.equals(teacherId, occurrence.getPlannedTeacherId());
     }
 
     private LessonRecordEntity findPendingRecordByOccurrenceId(Long occurrenceId) {
@@ -1186,56 +1226,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         );
     }
 
-    private void adjustFutureOccurrencesIfNeeded(Long packageId,
-                                                Long privateLessonGroupId,
-                                                int originalPlannedUnits,
-                                                ConfirmationDecision decision,
-                                                Long sourceLessonRecordId) {
-        // 实际扣课与计划课时有差异时，终确认阶段才调整未来课次。
-        int adjustmentDelta = decision.shouldDeduct()
-                ? originalPlannedUnits - decision.deductedUnits()
-                : 0;
-        if (adjustmentDelta != 0) {
-            Map<Long, LessonOccurrenceEntity> before = futureOccurrencesForBalance(packageId, privateLessonGroupId).stream()
-                    .collect(Collectors.toMap(LessonOccurrenceEntity::getId, item -> item));
-            adjustFutureOccurrences(packageId, privateLessonGroupId, adjustmentDelta);
-            Map<Long, LessonOccurrenceEntity> after = lessonOccurrenceMapper.selectBatchIds(before.keySet()).stream()
-                    .collect(Collectors.toMap(LessonOccurrenceEntity::getId, item -> item));
-            for (LessonOccurrenceEntity original : before.values()) {
-                LessonOccurrenceEntity changed = after.get(original.getId());
-                if (changed == null || Objects.equals(original.getPlanningStatus(), changed.getPlanningStatus())
-                        && Objects.equals(original.getPlannedStartAt(), changed.getPlannedStartAt())
-                        && Objects.equals(original.getPlannedEndAt(), changed.getPlannedEndAt())
-                        && Objects.equals(original.getPlannedUnits(), changed.getPlannedUnits())) {
-                    continue;
-                }
-                LessonRecordScheduleEffectEntity effect = new LessonRecordScheduleEffectEntity();
-                effect.setSourceLessonRecordId(sourceLessonRecordId);
-                effect.setAffectedOccurrenceId(original.getId());
-                effect.setBeforePlanningStatus(original.getPlanningStatus());
-                effect.setBeforePlannedStartAt(original.getPlannedStartAt());
-                effect.setBeforePlannedEndAt(original.getPlannedEndAt());
-                effect.setBeforePlannedUnits(original.getPlannedUnits());
-                effect.setAfterPlanningStatus(changed.getPlanningStatus());
-                effect.setAfterPlannedStartAt(changed.getPlannedStartAt());
-                effect.setAfterPlannedEndAt(changed.getPlannedEndAt());
-                effect.setAfterPlannedUnits(changed.getPlannedUnits());
-                lessonRecordScheduleEffectMapper.insert(effect);
-            }
-        }
-    }
-
-    /** 读取确认时可能被平衡调整的未来课次，与调整器使用相同过滤条件。 */
-    private List<LessonOccurrenceEntity> futureOccurrencesForBalance(Long packageId, Long privateLessonGroupId) {
-        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, packageId)
-                                .or(privateLessonGroupId != null,
-                                        group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId, privateLessonGroupId)))
-                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
-                        .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
-                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
-        return excludeRecordedOccurrences(occurrences);
+    private void reconcileScheduleAfterConfirmation(Long packageId) {
+        // 以每个当前课位保存的 Allocated 为准补齐或裁减，不跨老师挪动未来课次。
+        recurringScheduleRuleService.reconcilePackageSchedule(packageId);
     }
 
     private void refreshEstimatedEndDateAfterScheduleChange(CoursePackageEntity coursePackage,
@@ -1463,8 +1456,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                                                              LessonRecordEntity record,
                                                              Long operatorId,
                                                              ConfirmationDecision decision) {
-        validateTeacherAllocation(
-                coursePackage.getId(), record.getId(), decision.actualTeacherId(), decision.actualUnits());
+        // 实际授课老师可能是单课代课老师；余额由课包账本与原课位额度核对，不能按代课老师旧分配表拦截。
         int newConsumedUnits = coursePackage.getConsumedUnits() + decision.deductedUnits();
         int newRemainingUnits = coursePackage.getRemainingUnits() - decision.deductedUnits();
         boolean packageCompleted = newRemainingUnits == 0;
@@ -1500,41 +1492,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
         upsertBalanceSnapshot(coursePackage, ledger.getId());
         return new PackageUpdateResult(ledger.getId(), newRemainingUnits, packageCompleted);
-    }
-
-    private void validateTeacherAllocation(Long packageId,
-                                           Long currentRecordId,
-                                           Long teacherId,
-                                           int actualUnits) {
-        if (teacherId == null || actualUnits <= 0) {
-            return;
-        }
-        PackageTeacherAssignmentEntity assignment = packageTeacherAssignmentMapper.selectOne(
-                new LambdaQueryWrapper<PackageTeacherAssignmentEntity>()
-                        .eq(PackageTeacherAssignmentEntity::getPackageId, packageId)
-                        .eq(PackageTeacherAssignmentEntity::getTeacherId, teacherId)
-                        .eq(PackageTeacherAssignmentEntity::getAssignmentStatus, "ACTIVE")
-                        .isNotNull(PackageTeacherAssignmentEntity::getAllocatedUnits)
-                        .orderByDesc(PackageTeacherAssignmentEntity::getEffectiveFrom)
-                        .last("LIMIT 1"));
-        if (assignment == null) {
-            return;
-        }
-        int consumedUnits = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                        .eq(LessonRecordEntity::getPackageId, packageId)
-                        .eq(LessonRecordEntity::getActualTeacherId, teacherId)
-                        .ne(currentRecordId != null, LessonRecordEntity::getId, currentRecordId)
-                        .eq(LessonRecordEntity::getConfirmStage, CONFIRM_STAGE_CONFIRMED)
-                        .eq(LessonRecordEntity::getIsDeleted, 0))
-                .stream()
-                .map(LessonRecordEntity::getActualUnits)
-                .filter(Objects::nonNull)
-                .mapToInt(Integer::intValue)
-                .sum();
-        if (consumedUnits + actualUnits > assignment.getAllocatedUnits()) {
-            throw new BusinessException("TEACHER_ALLOCATION_EXCEEDED",
-                    "This lesson exceeds the teacher's allocated hours. Adjust the teacher allocation first.");
-        }
     }
 
     /**
@@ -1578,103 +1535,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             }
         }
         return candidateDate;
-    }
-
-    /**
-     * Redistribute a surplus or deficit from the confirmed lesson across future scheduled occurrences.
-     * Surplus (confirmed lesson used fewer units than planned) is added to the last occurrence.
-     * Deficit (confirmed lesson used more units than planned) is subtracted from the last occurrence(s);
-     * if a tail occurrence is fully consumed by the deficit, it is cancelled.
-     */
-    private void adjustFutureOccurrences(Long packageId, Long privateLessonGroupId, int delta) {
-        if (delta == 0) return;
-        List<LessonOccurrenceEntity> futureOccurrences = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, packageId)
-                                .or(privateLessonGroupId != null,
-                                        group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId, privateLessonGroupId)))
-                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
-                        .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
-                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
-        futureOccurrences = excludeRecordedOccurrences(futureOccurrences);
-
-        if (futureOccurrences.isEmpty()) {
-            throw futureScheduleReconciliationRequired("no future scheduled lesson is available");
-        }
-
-        if (delta > 0) {
-            // Surplus: add to the latest future occurrence that still has free time.
-            increaseFutureOccurrenceWithoutConflict(futureOccurrences, delta);
-        } else {
-            // Deficit: reduce from tail occurrences; cancel a future occurrence if its units are fully absorbed.
-            int toReduce = -delta;
-            for (int i = futureOccurrences.size() - 1; i >= 0 && toReduce > 0; i--) {
-                LessonOccurrenceEntity occ = futureOccurrences.get(i);
-                int current = occ.getPlannedUnits();
-                if (current <= toReduce) {
-                    occ.setPlanningStatus("CANCELLED");
-                    lessonOccurrenceMapper.updateById(occ);
-                    toReduce -= current;
-                    continue;
-                }
-                updatePlannedUnits(occ, current - toReduce);
-                lessonOccurrenceMapper.updateById(occ);
-                toReduce = 0;
-            }
-            if (toReduce > 0) {
-                throw futureScheduleReconciliationRequired("future scheduled lessons do not have enough hours");
-            }
-        }
-    }
-
-    private BusinessException futureScheduleReconciliationRequired(String reason) {
-        return new BusinessException(
-                "FUTURE_SCHEDULE_RECONCILIATION_REQUIRED",
-                "Actual lesson duration cannot be confirmed because " + reason
-                        + " to rebalance the package. Adjust the future schedule, renew the package, or reject this change."
-        );
-    }
-
-    private void updatePlannedUnits(LessonOccurrenceEntity occurrence, int plannedUnits) {
-        occurrence.setPlannedUnits(plannedUnits);
-        occurrence.setPlannedEndAt(occurrence.getPlannedStartAt().plusMinutes(plannedUnits * 30L));
-    }
-
-    private void increaseFutureOccurrenceWithoutConflict(List<LessonOccurrenceEntity> futureOccurrences, int delta) {
-        for (int i = futureOccurrences.size() - 1; i >= 0; i--) {
-            LessonOccurrenceEntity occurrence = futureOccurrences.get(i);
-            int originalUnits = occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits();
-            LocalDateTime originalEndAt = occurrence.getPlannedEndAt();
-            updatePlannedUnits(occurrence, originalUnits + delta);
-            if (!hasAnyAdjustedOccurrenceConflict(occurrence)) {
-                lessonOccurrenceMapper.updateById(occurrence);
-                return;
-            }
-            occurrence.setPlannedUnits(originalUnits);
-            occurrence.setPlannedEndAt(originalEndAt);
-        }
-        throw new BusinessException("FUTURE_SCHEDULE_CONFLICT",
-                "No future lesson has enough free time to keep the package schedule balanced.");
-    }
-
-    private List<LessonOccurrenceEntity> excludeRecordedOccurrences(List<LessonOccurrenceEntity> occurrences) {
-        if (occurrences.isEmpty()) {
-            return occurrences;
-        }
-        Set<Long> occurrenceIds = occurrences.stream()
-                .map(LessonOccurrenceEntity::getId)
-                .collect(Collectors.toSet());
-        List<LessonRecordEntity> records = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                .in(LessonRecordEntity::getOccurrenceId, occurrenceIds));
-        Set<Long> recordedOccurrenceIds = (records == null ? Collections.<LessonRecordEntity>emptyList() : records).stream()
-                .map(LessonRecordEntity::getOccurrenceId)
-                .collect(Collectors.toSet());
-        if (recordedOccurrenceIds.isEmpty()) {
-            return occurrences;
-        }
-        return occurrences.stream()
-                .filter(occurrence -> !recordedOccurrenceIds.contains(occurrence.getId()))
-                .toList();
     }
 
     private void ensureNoConflictForAdjustedOccurrence(LessonOccurrenceEntity occurrence) {

@@ -16,6 +16,8 @@ public record OneOnOneLessonVO(
         Long scheduleRuleId,
         Long plannedTeacherId,
         String plannedTeacherName,
+        Long allocationOwnerTeacherId,
+        String allocationOwnerTeacherName,
         String subjectName,
         String deliveryMode,
         Long plannedClassroomId,
