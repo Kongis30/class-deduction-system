@@ -15,12 +15,16 @@ import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
+import com.classdeduction.system.modules.lesson.dto.LessonRecordRevokeRequest;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonStatusRuleEntity;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMakeupEffectMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordRevokeAuditMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordScheduleEffectMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.lesson.service.impl.LessonRecordServiceImpl;
@@ -33,6 +37,8 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.finance.mapper.TeacherPaymentItemMapper;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordScheduleEffectEntity;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -69,6 +75,15 @@ class LessonRecordServiceImplTest {
 
     @Mock
     private LessonRecordMapper lessonRecordMapper;
+
+    @Mock
+    private LessonRecordRevokeAuditMapper lessonRecordRevokeAuditMapper;
+
+    @Mock
+    private LessonRecordScheduleEffectMapper lessonRecordScheduleEffectMapper;
+
+    @Mock
+    private LessonRecordMakeupEffectMapper lessonRecordMakeupEffectMapper;
 
     @Mock
     private HourLedgerMapper hourLedgerMapper;
@@ -113,6 +128,9 @@ class LessonRecordServiceImplTest {
     private NotificationOutboxService notificationOutboxService;
 
     @Mock
+    private TeacherPaymentItemMapper teacherPaymentItemMapper;
+
+    @Mock
     private com.classdeduction.system.modules.systemconfig.mapper.NotificationTriggerRuleMapper notificationTriggerRuleMapper;
 
     @Captor
@@ -145,6 +163,9 @@ class LessonRecordServiceImplTest {
     void setUp() {
         lessonRecordService = new LessonRecordServiceImpl(
                 lessonRecordMapper,
+                lessonRecordRevokeAuditMapper,
+                lessonRecordScheduleEffectMapper,
+                lessonRecordMakeupEffectMapper,
                 classGroupMapper,
                 hourLedgerMapper,
                 packageBalanceSnapshotMapper,
@@ -155,6 +176,7 @@ class LessonRecordServiceImplTest {
                 coursePackageMapper,
                 packageTeacherAssignmentMapper,
                 privateLessonGroupMemberMapper,
+                teacherPaymentItemMapper,
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
@@ -792,6 +814,7 @@ class LessonRecordServiceImplTest {
     void shouldReverseFutureBalanceAndRestorePlannedSnapshotWhenRevokingConfirmedRecord() {
         LessonRecordEntity confirmedRecord = buildPendingRecord();
         confirmedRecord.setConfirmStage("CONFIRMED");
+        confirmedRecord.setVersion(1);
         confirmedRecord.setActualEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
         confirmedRecord.setActualUnits(3);
         confirmedRecord.setDeductedUnits(3);
@@ -806,15 +829,35 @@ class LessonRecordServiceImplTest {
         mergedOccurrence.setPlannedTeacherId(702L);
         mergedOccurrence.setPlannedClassroomId(802L);
         LessonOccurrenceEntity balancedFuture = buildFutureOccurrence(2002L, LocalDate.of(2026, 4, 20), 5);
+        balancedFuture.setPlannedUnits(4);
+        balancedFuture.setPlannedEndAt(LocalDate.of(2026, 4, 20).atTime(20, 0));
+        LessonRecordScheduleEffectEntity effect = new LessonRecordScheduleEffectEntity();
+        effect.setSourceLessonRecordId(2001L);
+        effect.setAffectedOccurrenceId(2002L);
+        effect.setBeforePlanningStatus("SCHEDULED");
+        effect.setBeforePlannedStartAt(LocalDate.of(2026, 4, 20).atTime(18, 0));
+        effect.setBeforePlannedEndAt(LocalDate.of(2026, 4, 20).atTime(20, 30));
+        effect.setBeforePlannedUnits(5);
+        effect.setAfterPlanningStatus("SCHEDULED");
+        effect.setAfterPlannedStartAt(balancedFuture.getPlannedStartAt());
+        effect.setAfterPlannedEndAt(balancedFuture.getPlannedEndAt());
+        effect.setAfterPlannedUnits(4);
         when(lessonRecordMapper.selectById(2001L)).thenReturn(confirmedRecord);
-        when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 3));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(balancedFuture), List.of());
+        when(lessonRecordMapper.selectByIdForUpdate(2001L)).thenReturn(confirmedRecord);
+        when(coursePackageMapper.selectByIdForUpdate(501L)).thenReturn(buildPackage(10, 3));
+        when(lessonOccurrenceMapper.selectByIdForUpdate(1001L)).thenReturn(mergedOccurrence);
+        when(lessonOccurrenceMapper.selectByIdForUpdate(2002L)).thenReturn(balancedFuture);
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        when(lessonRecordScheduleEffectMapper.findBySourceLessonRecordId(2001L)).thenReturn(List.of(effect));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(mergedOccurrence);
         when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
         stubLedgerInsertedId(3001L);
 
-        lessonRecordService.revokeLesson(2001L, currentAdminUser());
+        LessonRecordRevokeRequest revokeRequest = new LessonRecordRevokeRequest();
+        revokeRequest.setReason("Correction");
+        revokeRequest.setExpectedVersion(1);
+        lessonRecordService.revokeLesson(2001L, revokeRequest, currentAdminUser());
 
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
         LessonOccurrenceEntity shortenedFuture = occurrenceCaptor.getAllValues().stream()
@@ -841,6 +884,7 @@ class LessonRecordServiceImplTest {
         classRecord.setPackageId(null);
         classRecord.setClassEnrollmentId(7101L);
         classRecord.setConfirmStage("CONFIRMED");
+        classRecord.setVersion(1);
         classRecord.setDeductedUnits(0);
         LessonOccurrenceEntity classOccurrence = buildOccurrence();
         classOccurrence.setClassGroupId(7001L);
@@ -858,7 +902,10 @@ class LessonRecordServiceImplTest {
         when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
         when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
 
-        lessonRecordService.revokeLesson(2001L, currentAdminUser());
+        LessonRecordRevokeRequest revokeRequest = new LessonRecordRevokeRequest();
+        revokeRequest.setReason("Correction");
+        revokeRequest.setExpectedVersion(1);
+        lessonRecordService.revokeLesson(2001L, revokeRequest, currentAdminUser());
 
         var lockOrder = org.mockito.Mockito.inOrder(classGroupMapper, lessonRecordMapper, lessonOccurrenceMapper);
         lockOrder.verify(classGroupMapper).selectByIdForUpdate(7001L);

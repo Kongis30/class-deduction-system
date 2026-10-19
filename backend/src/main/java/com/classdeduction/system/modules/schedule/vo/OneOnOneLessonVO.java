@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 public record OneOnOneLessonVO(
         Long occurrenceId,
         Long lessonRecordId,
+        Integer recordVersion,
         String lessonNo,
         Long packageId,
         Long scheduleRuleId,

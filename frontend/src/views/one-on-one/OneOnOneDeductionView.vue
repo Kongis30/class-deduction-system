@@ -569,7 +569,7 @@
             <el-table-column
               v-if="canConfirmLessons || canManageLessonResources"
               label="Action"
-              width="280"
+              width="350"
               fixed="right"
               class-name="no-print"
               align="center"
@@ -617,6 +617,16 @@
                       Submit attendance
                     </el-button>
                     <span v-else-if="!canAdjustLesson(row.lesson)" class="oo-no-action">{{ taskLabel(row.lesson) }}</span>
+                    <el-button
+                      v-if="canRevokeLesson(row.lesson)"
+                      class="oo-revoke-button"
+                      size="small"
+                      type="danger"
+                      plain
+                      @click="openRevokeDialog(row.lesson)"
+                    >
+                      Undo
+                    </el-button>
                   </div>
                 </div>
               </template>
@@ -653,7 +663,8 @@
                   <el-button v-if="canAdjustLesson(item.lesson)" size="small" plain @click="openAdjustDialog(item.lesson)">Adjust</el-button>
                   <el-button v-if="!needsLessonResources(item.lesson) && canAdminConfirm(item.lesson)" class="action-primary" type="warning" @click="openConfirm(item.lesson, 'admin')">Review &amp; deduct</el-button>
                   <el-button v-else-if="!needsLessonResources(item.lesson) && canInitialConfirm(item.lesson)" class="action-primary" type="success" plain @click="openConfirm(item.lesson, 'normal')">Submit attendance</el-button>
-                  <span v-else-if="!canAdjustLesson(item.lesson)" class="oo-no-action">{{ needsLessonResources(item.lesson) ? 'Set a teacher before deduction.' : taskLabel(item.lesson) }}</span>
+                  <el-button v-if="canRevokeLesson(item.lesson)" size="small" type="danger" plain @click="openRevokeDialog(item.lesson)">Undo</el-button>
+                  <span v-if="!canAdjustLesson(item.lesson) && !canAdminConfirm(item.lesson) && !canInitialConfirm(item.lesson) && !canRevokeLesson(item.lesson)" class="oo-no-action">{{ needsLessonResources(item.lesson) ? 'Set a teacher before deduction.' : taskLabel(item.lesson) }}</span>
                 </div>
               </article>
             </template>
@@ -722,6 +733,28 @@
       <template #footer>
         <el-button @click="confirmDialogVisible = false">Cancel</el-button>
         <el-button type="primary" :loading="submitting" @click="submitConfirm">{{ confirmDialogSubmitLabel }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="revokeDialogVisible" title="Undo lesson decision" width="520px" :fullscreen="appStore.isMobileViewport" :close-on-click-modal="false" class="no-print">
+      <el-alert
+        v-if="revokeLesson"
+        :title="revokeImpactMessage(revokeLesson)"
+        type="warning"
+        :closable="false"
+        show-icon
+      />
+      <p v-if="revokeLesson" class="oo-form-hint">
+        {{ formatDate(revokeLesson.plannedStartAt) }} · {{ signatureCourseLabel(revokeLesson) }}
+      </p>
+      <el-form :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '100px'">
+        <el-form-item label="Reason (optional)">
+          <el-input v-model="revokeReason" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="Add a note if helpful" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="revokeDialogVisible = false">Keep decision</el-button>
+        <el-button type="danger" :loading="revoking" @click="submitRevoke">Undo decision</el-button>
       </template>
     </el-dialog>
 
@@ -806,12 +839,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'v
 import { useRoute } from 'vue-router';
 import { fetchAllClassrooms, fetchAllTeachers, fetchStudents } from '@/api/base-data';
 import { extractErrorMessage } from '@/api/http';
-import { adminConfirmLessonRecord, confirmLesson } from '@/api/lesson';
+import { adminConfirmLessonRecord, confirmLesson, revokeLessonRecord } from '@/api/lesson';
 import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory, type OneOnOneLesson, type OneOnOnePackage, type OneOnOneScheduleChange, type OneOnOneStudent, type OneOnOneTeacher, type PrivateSignatureHistory } from '@/api/one-on-one';
 import { createScheduleAdjustment } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { useAppStore } from '@/stores/app';
-import { isAdminOrStaffUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
+import { isAdminOrStaffUser, isAdminUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
 import type { EntityId } from '@/types/domain';
 import { findSignaturePackage, signatureLessonRows, signatureSubjectName, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 import { createIsolatedPrinter } from '@/utils/isolated-print';
@@ -871,6 +904,7 @@ const route = useRoute();
 const isTeacher = computed(() => isTeacherUser(authStore.currentUser));
 const isStudent = computed(() => isStudentUser(authStore.currentUser));
 const isAdmin = computed(() => isAdminOrStaffUser(authStore.currentUser) || isManagerUser(authStore.currentUser));
+const canUndoAdminDecision = computed(() => isAdminUser(authStore.currentUser));
 const canConfirmLessons = computed(() => isTeacher.value || isAdmin.value);
 const canManageLessonResources = computed(() => !isTeacher.value && !isStudent.value);
 
@@ -1403,6 +1437,10 @@ const confirmForm = reactive({
   actualHours: 2,
   notes: '',
 });
+const revokeDialogVisible = ref(false);
+const revoking = ref(false);
+const revokeLesson = ref<OneOnOneLesson | null>(null);
+const revokeReason = ref('');
 
 const computedActualEndAt = computed(() => {
   if (!confirmForm.actualStartAt || confirmForm.actualHours == null) return '';
@@ -1724,6 +1762,26 @@ function canAdminConfirm(row: OneOnOneLesson) {
   return isAwaitingTeacherConfirmation(row);
 }
 
+function canRevokeLesson(row: OneOnOneLesson) {
+  return canUndoAdminDecision.value
+    && row.confirmStage === 'CONFIRMED'
+    && Boolean(row.lessonRecordId)
+    && row.recordVersion != null;
+}
+
+function revokeImpactMessage(row: OneOnOneLesson) {
+  const sharedLesson = activePackage.value?.privateLessonGroupId != null;
+  const sharedNote = sharedLesson ? ' All student records in this shared lesson will be undone together.' : '';
+  if (row.resultStatus === 'FORMAL_LEAVE') {
+    return `The approved leave will be undone and its unprocessed makeup lesson removed. The original lesson will return to the review queue.${sharedNote}`;
+  }
+  const hours = formatHours(row.deductedUnits ?? 0);
+  const packageCredit = Number(row.deductedUnits ?? 0) > 0
+    ? `${hours}h will be returned to the package. `
+    : '';
+  return `${packageCredit}This lesson will return to the review queue.${sharedNote}`;
+}
+
 function canInitialConfirm(row: OneOnOneLesson) {
   if (!isTeacher.value || !canConfirmPackageLessons.value) return false;
   if (row.planningStatus === 'CANCELLED') return false;
@@ -1954,6 +2012,32 @@ async function submitConfirm() {
       : extractErrorMessage(err));
   } finally {
     submitting.value = false;
+  }
+}
+
+function openRevokeDialog(row: OneOnOneLesson) {
+  if (!canRevokeLesson(row)) return;
+  revokeLesson.value = row;
+  revokeReason.value = '';
+  revokeDialogVisible.value = true;
+}
+
+async function submitRevoke() {
+  const row = revokeLesson.value;
+  if (!row?.lessonRecordId || row.recordVersion == null) return;
+  revoking.value = true;
+  try {
+    await revokeLessonRecord(row.lessonRecordId, {
+      reason: revokeReason.value.trim() || undefined,
+      expectedVersion: row.recordVersion,
+    });
+    revokeDialogVisible.value = false;
+    ElMessage.success('Lesson decision undone. The lesson is available for review again.');
+    await loadData();
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    revoking.value = false;
   }
 }
 
@@ -3137,9 +3221,9 @@ onBeforeUnmount(() => signaturePrinter.detach());
 
 .oo-action-cell {
   display: inline-grid;
-  grid-template-columns: 96px 148px;
+  grid-template-columns: 96px minmax(0, 1fr);
   align-items: center;
-  justify-content: center;
+  justify-content: stretch;
   gap: 8px;
   width: 100%;
 }
@@ -3155,7 +3239,8 @@ onBeforeUnmount(() => signaturePrinter.detach());
 }
 
 .oo-action-slot--primary {
-  justify-content: flex-start;
+  justify-content: center;
+  gap: 8px;
 }
 
 .oo-action-cell :deep(.el-button) {
@@ -3169,6 +3254,10 @@ onBeforeUnmount(() => signaturePrinter.detach());
 
 .oo-action-slot--primary :deep(.el-button) {
   min-width: 148px;
+}
+
+.oo-action-slot--primary :deep(.el-button.oo-revoke-button) {
+  min-width: 78px;
 }
 
 .oo-no-action {

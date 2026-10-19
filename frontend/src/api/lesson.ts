@@ -64,6 +64,15 @@ export function rejectLessonRecord(id: string | number, data: LessonRejectPayloa
   return http.post<ApiResponse<null>>(`/v1/lessons/records/${id}/reject`, data);
 }
 
+export interface LessonRevokePayload {
+  reason?: string;
+  expectedVersion: number;
+}
+
+export function revokeLessonRecord(id: string | number, data: LessonRevokePayload) {
+  return http.post<ApiResponse<null>>(`/v1/lessons/records/${id}/revoke`, data);
+}
+
 // ─── Hour Ledger ────────────────────────────────────
 export interface HourLedgerItem {
   id: EntityId;

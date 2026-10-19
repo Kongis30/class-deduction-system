@@ -14,6 +14,7 @@ export interface OneOnOneDeductionQuery {
 export interface OneOnOneLesson {
   occurrenceId: EntityId;
   lessonRecordId?: EntityId;
+  recordVersion?: number;
   lessonNo: string;
   packageId: EntityId;
   scheduleRuleId?: EntityId;

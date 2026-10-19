@@ -314,7 +314,9 @@ public class TeacherPaymentServiceImpl implements TeacherPaymentService {
             throw new BusinessException("TEACHER_NOT_AVAILABLE", "Teacher not found or inactive.");
         }
 
-        List<LessonRecordEntity> records = lessonRecordMapper.selectBatchIds(request.getLessonRecordIds());
+        // 撤销消课也锁同一批记录；确保付款与撤销只能有一个事务先完成。
+        List<LessonRecordEntity> records = lessonRecordMapper.selectByIdsForUpdate(
+                request.getLessonRecordIds().stream().distinct().sorted().toList());
         if (records.size() != request.getLessonRecordIds().size()) {
             throw new BusinessException("LESSON_RECORD_NOT_FOUND", "Some lesson records not found.");
         }

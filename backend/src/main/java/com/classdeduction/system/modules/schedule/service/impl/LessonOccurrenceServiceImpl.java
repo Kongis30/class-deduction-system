@@ -2095,6 +2095,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         return OneOnOneLessonVO.builder()
                 .occurrenceId(occurrence.getId())
                 .lessonRecordId(record == null ? null : record.getId())
+                .recordVersion(record == null ? null : record.getVersion())
                 .lessonNo(occurrence.getLessonNo())
                 .packageId(occurrence.getPackageId())
                 .scheduleRuleId(occurrence.getScheduleRuleId())

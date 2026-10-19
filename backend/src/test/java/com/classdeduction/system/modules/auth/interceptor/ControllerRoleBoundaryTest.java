@@ -86,7 +86,10 @@ class ControllerRoleBoundaryTest {
                         com.classdeduction.system.common.dto.CurrentUserResponse.class)
                 .getAnnotation(RequireRoles.class);
         RequireRoles revoke = LessonRecordController.class
-                .getMethod("revokeLesson", Long.class, com.classdeduction.system.common.dto.CurrentUserResponse.class)
+                .getMethod("revokeLesson",
+                        Long.class,
+                        com.classdeduction.system.modules.lesson.dto.LessonRecordRevokeRequest.class,
+                        com.classdeduction.system.common.dto.CurrentUserResponse.class)
                 .getAnnotation(RequireRoles.class);
 
         // 普通确认接口需允许管理员/运营直确认，也允许老师初确认。

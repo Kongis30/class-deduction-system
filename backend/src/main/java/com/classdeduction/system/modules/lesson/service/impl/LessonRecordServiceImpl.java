@@ -21,15 +21,23 @@ import com.classdeduction.system.modules.enrollment.entity.PrivateLessonGroupMem
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PrivateLessonGroupMemberMapper;
+import com.classdeduction.system.modules.finance.mapper.TeacherPaymentItemMapper;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
+import com.classdeduction.system.modules.lesson.dto.LessonRecordRevokeRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordRevokeAuditEntity;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordScheduleEffectEntity;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordMakeupEffectEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonStatusRuleEntity;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordRevokeAuditMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordScheduleEffectMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMakeupEffectMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.lesson.service.LessonRecordService;
@@ -76,6 +84,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private static final int MAX_CONFIRM_QUERY_DAYS = 180;
 
     private final LessonRecordMapper lessonRecordMapper;
+    private final LessonRecordRevokeAuditMapper lessonRecordRevokeAuditMapper;
+    private final LessonRecordScheduleEffectMapper lessonRecordScheduleEffectMapper;
+    private final LessonRecordMakeupEffectMapper lessonRecordMakeupEffectMapper;
     private final ClassGroupMapper classGroupMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final PackageBalanceSnapshotMapper packageBalanceSnapshotMapper;
@@ -86,6 +97,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private final CoursePackageMapper coursePackageMapper;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
+    private final TeacherPaymentItemMapper teacherPaymentItemMapper;
     private final StudentMapper studentMapper;
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
@@ -303,9 +315,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         lessonOccurrenceMapper.updateById(occurrence);
         if (makeup != null) {
             lessonOccurrenceMapper.insert(makeup);
+            recordGeneratedMakeup(records.get(0), makeup);
         }
         applyLeaveCarryover(makeupPlan);
-        adjustFutureOccurrencesIfNeeded(primaryPackage.getId(), occurrence.getPrivateLessonGroupId(), originalPlannedUnits, decision);
+        adjustFutureOccurrencesIfNeeded(primaryPackage.getId(), occurrence.getPrivateLessonGroupId(),
+                originalPlannedUnits, decision, records.get(0).getId());
 
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
         for (int index = 0; index < members.size(); index++) {
@@ -624,9 +638,11 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         PackageUpdateResult packageUpdate = applyPackageAndLedgerChanges(coursePackage, occurrence, rule, record, currentUser.userId(), decision);
         if (makeup != null) {
             lessonOccurrenceMapper.insert(makeup);
+            recordGeneratedMakeup(record, makeup);
         }
         applyLeaveCarryover(makeupPlan);
-        adjustFutureOccurrencesIfNeeded(coursePackage.getId(), null, originalPlannedUnits, decision);
+        adjustFutureOccurrencesIfNeeded(coursePackage.getId(), null,
+                originalPlannedUnits, decision, record.getId());
         LocalDate makeupEndDate = makeup == null ? null : makeup.getPlannedEndAt().toLocalDate();
         refreshEstimatedEndDateAfterScheduleChange(coursePackage, originalPlannedUnits, decision,
                 packageUpdate, makeupEndDate);
@@ -814,19 +830,9 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     /** 撤销旧周期请假时同步撤回自动分配；已有后续改排课时先要求人工核对。 */
     private void reverseLeaveCarryoverIfNeeded(LessonRecordEntity record, LessonOccurrenceEntity source) {
         if (!"FORMAL_LEAVE".equals(record.getResultStatus()) || source == null) return;
-        List<LessonOccurrenceEntity> makeups = lessonOccurrenceMapper.selectList(
-                new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                        .eq(LessonOccurrenceEntity::getSourceOccurrenceId, source.getId()));
-        if (makeups.isEmpty()) return;
-        if (makeups.stream().anyMatch(makeup -> "MERGED".equals(makeup.getPlanningStatus()))) {
-            throw new BusinessException("MAKEUP_ALREADY_CONFIRMED",
-                    "Revoke the completed makeup lesson before revoking its source leave.");
-        }
-        LessonOccurrenceEntity makeup = makeups.stream().filter(item -> "MAKEUP".equals(item.getOccurrenceType())
-                        && safeUnits(item.getLeaveCarryoverUnits()) > 0)
-                .findFirst().orElse(null);
-        if (makeup == null) return;
-        RecurringScheduleRuleEntity currentRule = currentPrivateRule(record.getPackageId(), source.getPrivateLessonGroupId());
+        LessonOccurrenceEntity makeup = generatedMakeup(record);
+        if (makeup == null || safeUnits(makeup.getLeaveCarryoverUnits()) <= 0) return;
+        RecurringScheduleRuleEntity currentRule = currentPrivateRule(makeup.getPackageId(), source.getPrivateLessonGroupId());
         if (currentRule == null || !Objects.equals(makeup.getScheduleRuleId(), currentRule.getId())) {
             throw new BusinessException("MAKEUP_SCHEDULE_CHANGED",
                     "The schedule changed after this leave. Review the current allocation before revoking it.");
@@ -841,10 +847,13 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
     @Override
     @Transactional(rollbackFor = Exception.class, isolation = Isolation.READ_COMMITTED)
-    public void revokeLesson(Long recordId, CurrentUserResponse currentUser) {
+    public void revokeLesson(Long recordId, LessonRecordRevokeRequest request, CurrentUserResponse currentUser) {
         currentUser = defaultAdminIfMissing(currentUser);
         LessonRecordEntity record = requireRecord(recordId);
         LessonOccurrenceEntity recordOccurrence = lessonOccurrenceMapper.selectById(record.getOccurrenceId());
+        if (recordOccurrence == null) {
+            throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
+        }
         if (recordOccurrence != null && recordOccurrence.getClassGroupId() != null) {
             // 班课撤销会恢复共享课次，先锁实际班级，再锁记录和课次，与确认/退款保持一致。
             Long classGroupId = recordOccurrence.getClassGroupId();
@@ -860,34 +869,53 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                     || !Objects.equals(classGroupId, recordOccurrence.getClassGroupId())) {
                 throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
             }
+        } else {
+            recordOccurrence = lessonOccurrenceMapper.selectByIdForUpdate(record.getOccurrenceId());
+            if (recordOccurrence == null) {
+                throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
+            }
         }
         if (recordOccurrence != null && recordOccurrence.getPrivateLessonGroupId() != null) {
-            revokePrivateLessonGroup(recordOccurrence, currentUser);
+            List<LessonRecordEntity> groupRecords = lessonRecordMapper.selectByOccurrenceIdForUpdate(recordOccurrence.getId());
+            record = groupRecords.stream().filter(item -> Objects.equals(item.getId(), recordId)).findFirst()
+                    .orElseThrow(() -> new BusinessException("LESSON_RECORD_NOT_FOUND", "Lesson record not found."));
+            validateRevokeVersion(record, request);
+            revokePrivateLessonGroup(recordOccurrence, groupRecords, recordId, currentUser, request);
             return;
         }
 
-        if (!CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage())) {
-            lessonRecordMapper.deleteById(record.getId());
-            restoreOccurrenceIfNoRecords(record.getOccurrenceId());
-            return;
+        record = lessonRecordMapper.selectByIdForUpdate(recordId);
+        if (record == null) {
+            throw new BusinessException("LESSON_RECORD_NOT_FOUND", "Lesson record not found.");
         }
+        validateRevokeVersion(record, request);
+        if (!CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage())) {
+            throw new BusinessException("LESSON_NOT_FINALIZED", "Only an admin-finalized lesson result can be revoked.");
+        }
+        validateOccurrenceForRevoke(recordOccurrence, record);
+        validateNotSettled(List.of(record));
 
         // 班课记录（不关联课包、不扣课时）：仅作废记录并按需恢复课次。
         if (record.getPackageId() == null) {
+            writeRevokeAudit(record, request.getReason(), currentUser);
             lessonRecordMapper.deleteById(record.getId());
-            restoreOccurrenceIfNoRecords(record.getOccurrenceId());
+            restoreOccurrence(record);
             return;
         }
 
         // 一对一记录：回滚课包课时 + 写冲正账本 + 恢复课次 + 作废联动补课课次。
         CoursePackageEntity coursePackage = requirePackageForRevoke(record.getPackageId());
-        reverseLeaveCarryoverIfNeeded(record, recordOccurrence);
+        if ("FORMAL_LEAVE".equals(record.getResultStatus())) {
+            validateGeneratedMakeupsCanBeCancelled(record);
+            reverseLeaveCarryoverIfNeeded(record, recordOccurrence);
+            cancelGeneratedMakeups(record);
+        }
         int deducted = record.getDeductedUnits() == null ? 0 : record.getDeductedUnits();
+        reverseFutureScheduleEffects(record);
 
         if (deducted > 0) {
             int newConsumed = Math.max(0, coursePackage.getConsumedUnits() - deducted);
             int newRemaining = coursePackage.getRemainingUnits() + deducted;
-            reverseFutureBalanceForRevokedRecord(coursePackage.getId(), null, record);
 
             HourLedgerEntity reversal = new HourLedgerEntity();
             reversal.setPackageId(coursePackage.getId());
@@ -905,48 +933,53 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
             coursePackage.setConsumedUnits(newConsumed);
             coursePackage.setRemainingUnits(newRemaining);
-            // 课时回退后课包重新可用（撤销前可能已 COMPLETED）。
-            coursePackage.setPackageStatus("ACTIVE");
-            coursePackage.setCompletedAt(null);
-            coursePackage.setEstimatedEndDate(recomputeEstimatedEndDate(coursePackage.getId(), newRemaining));
-            int updated = coursePackageMapper.updateById(coursePackage);
-            if (updated != 1) {
-                throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
-            }
             upsertBalanceSnapshot(coursePackage, reversal.getId());
         }
+        updatePackageAfterRevoke(coursePackage);
 
-        // 作废由本次确认联动生成、且尚未确认的补课课次（来源指向被撤销的 occurrence）。
-        cancelGeneratedMakeups(record.getOccurrenceId());
-
-        // 删除课次记录并把原计划课次恢复为可再次确认。
+        writeRevokeAudit(record, request.getReason(), currentUser);
         lessonRecordMapper.deleteById(record.getId());
         restoreOccurrence(record);
     }
 
-    private void revokePrivateLessonGroup(LessonOccurrenceEntity occurrence, CurrentUserResponse currentUser) {
-        List<LessonRecordEntity> records = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
-                .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())
-                .eq(LessonRecordEntity::getIsDeleted, 0));
+    private void revokePrivateLessonGroup(LessonOccurrenceEntity occurrence,
+                                          List<LessonRecordEntity> records,
+                                          Long targetRecordId,
+                                          CurrentUserResponse currentUser,
+                                          LessonRecordRevokeRequest request) {
         if (records.isEmpty()) {
-            restoreOccurrence(occurrence.getId());
-            return;
+            throw new BusinessException("LESSON_RECORD_NOT_FOUND", "No active lesson records exist for this shared lesson.");
         }
-        records.stream().filter(record -> CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage()))
-                .findFirst().ifPresent(record -> reverseLeaveCarryoverIfNeeded(record, occurrence));
+        if (records.stream().anyMatch(record -> !CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage()))) {
+            throw new BusinessException("PRIVATE_GROUP_NOT_FINALIZED", "All students in a shared lesson must have a finalized result before it can be revoked.");
+        }
+        validateOccurrenceForRevoke(occurrence, records.get(0));
+        validateNotSettled(records);
+        List<Long> packageIds = records.stream().map(LessonRecordEntity::getPackageId).filter(Objects::nonNull)
+                .distinct().sorted().toList();
+        Map<Long, CoursePackageEntity> packages = new LinkedHashMap<>();
+        for (Long packageId : packageIds) packages.put(packageId, requirePackageForRevoke(packageId));
+        boolean formalLeave = records.stream().anyMatch(record -> "FORMAL_LEAVE".equals(record.getResultStatus()));
+        if (formalLeave) {
+            LessonRecordEntity sourceRecord = records.stream()
+                    .filter(record -> !lessonRecordMakeupEffectMapper.findBySourceLessonRecordId(record.getId()).isEmpty())
+                    .findFirst().orElse(records.get(0));
+            validateGeneratedMakeupsCanBeCancelled(sourceRecord);
+            reverseLeaveCarryoverIfNeeded(sourceRecord, occurrence);
+            cancelGeneratedMakeups(sourceRecord);
+        }
+        // 共享课同一课次只会调整一次公共排课；先精确恢复一次，再分别冲正各成员课包。
+        LessonRecordEntity scheduleEffectSource = records.stream()
+                .filter(record -> !lessonRecordScheduleEffectMapper.findBySourceLessonRecordId(record.getId()).isEmpty())
+                .findFirst().orElse(records.get(0));
+        reverseFutureScheduleEffects(scheduleEffectSource);
         for (LessonRecordEntity record : records) {
-            if (!CONFIRM_STAGE_CONFIRMED.equals(record.getConfirmStage()) || record.getPackageId() == null) {
-                lessonRecordMapper.deleteById(record.getId());
-                continue;
-            }
-            CoursePackageEntity coursePackage = requirePackageForRevoke(record.getPackageId());
+            if (Objects.equals(record.getId(), targetRecordId)) validateRevokeVersion(record, request);
+            CoursePackageEntity coursePackage = packages.get(record.getPackageId());
             int deducted = record.getDeductedUnits() == null ? 0 : record.getDeductedUnits();
             if (deducted > 0) {
                 int newConsumed = Math.max(0, safeUnits(coursePackage.getConsumedUnits()) - deducted);
                 int newRemaining = safeUnits(coursePackage.getRemainingUnits()) + deducted;
-                if (Objects.equals(record.getPackageId(), occurrence.getPackageId())) {
-                    reverseFutureBalanceForRevokedRecord(coursePackage.getId(), occurrence.getPrivateLessonGroupId(), record);
-                }
                 HourLedgerEntity reversal = new HourLedgerEntity();
                 reversal.setPackageId(coursePackage.getId());
                 reversal.setLessonRecordId(record.getId());
@@ -962,15 +995,12 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                 hourLedgerMapper.insert(reversal);
                 coursePackage.setConsumedUnits(newConsumed);
                 coursePackage.setRemainingUnits(newRemaining);
-                coursePackage.setPackageStatus("ACTIVE");
-                coursePackage.setCompletedAt(null);
-                coursePackage.setEstimatedEndDate(recomputeEstimatedEndDate(coursePackage.getId(), newRemaining));
-                coursePackageMapper.updateById(coursePackage);
                 upsertBalanceSnapshot(coursePackage, reversal.getId());
             }
+            updatePackageAfterRevoke(coursePackage);
+            writeRevokeAudit(record, request.getReason(), currentUser);
             lessonRecordMapper.deleteById(record.getId());
         }
-        cancelGeneratedMakeups(occurrence.getId());
         restoreOccurrence(occurrence.getId());
     }
 
@@ -1159,14 +1189,53 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private void adjustFutureOccurrencesIfNeeded(Long packageId,
                                                 Long privateLessonGroupId,
                                                 int originalPlannedUnits,
-                                                ConfirmationDecision decision) {
+                                                ConfirmationDecision decision,
+                                                Long sourceLessonRecordId) {
         // 实际扣课与计划课时有差异时，终确认阶段才调整未来课次。
         int adjustmentDelta = decision.shouldDeduct()
                 ? originalPlannedUnits - decision.deductedUnits()
                 : 0;
         if (adjustmentDelta != 0) {
+            Map<Long, LessonOccurrenceEntity> before = futureOccurrencesForBalance(packageId, privateLessonGroupId).stream()
+                    .collect(Collectors.toMap(LessonOccurrenceEntity::getId, item -> item));
             adjustFutureOccurrences(packageId, privateLessonGroupId, adjustmentDelta);
+            Map<Long, LessonOccurrenceEntity> after = lessonOccurrenceMapper.selectBatchIds(before.keySet()).stream()
+                    .collect(Collectors.toMap(LessonOccurrenceEntity::getId, item -> item));
+            for (LessonOccurrenceEntity original : before.values()) {
+                LessonOccurrenceEntity changed = after.get(original.getId());
+                if (changed == null || Objects.equals(original.getPlanningStatus(), changed.getPlanningStatus())
+                        && Objects.equals(original.getPlannedStartAt(), changed.getPlannedStartAt())
+                        && Objects.equals(original.getPlannedEndAt(), changed.getPlannedEndAt())
+                        && Objects.equals(original.getPlannedUnits(), changed.getPlannedUnits())) {
+                    continue;
+                }
+                LessonRecordScheduleEffectEntity effect = new LessonRecordScheduleEffectEntity();
+                effect.setSourceLessonRecordId(sourceLessonRecordId);
+                effect.setAffectedOccurrenceId(original.getId());
+                effect.setBeforePlanningStatus(original.getPlanningStatus());
+                effect.setBeforePlannedStartAt(original.getPlannedStartAt());
+                effect.setBeforePlannedEndAt(original.getPlannedEndAt());
+                effect.setBeforePlannedUnits(original.getPlannedUnits());
+                effect.setAfterPlanningStatus(changed.getPlanningStatus());
+                effect.setAfterPlannedStartAt(changed.getPlannedStartAt());
+                effect.setAfterPlannedEndAt(changed.getPlannedEndAt());
+                effect.setAfterPlannedUnits(changed.getPlannedUnits());
+                lessonRecordScheduleEffectMapper.insert(effect);
+            }
         }
+    }
+
+    /** 读取确认时可能被平衡调整的未来课次，与调整器使用相同过滤条件。 */
+    private List<LessonOccurrenceEntity> futureOccurrencesForBalance(Long packageId, Long privateLessonGroupId) {
+        List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .and(scope -> scope.eq(LessonOccurrenceEntity::getPackageId, packageId)
+                                .or(privateLessonGroupId != null,
+                                        group -> group.eq(LessonOccurrenceEntity::getPrivateLessonGroupId, privateLessonGroupId)))
+                        .eq(LessonOccurrenceEntity::getPlanningStatus, "SCHEDULED")
+                        .gt(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
+                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt));
+        return excludeRecordedOccurrences(occurrences);
     }
 
     private void refreshEstimatedEndDateAfterScheduleChange(CoursePackageEntity coursePackage,
@@ -1191,30 +1260,161 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
     }
 
-    private void reverseFutureBalanceForRevokedRecord(Long packageId,
-                                                      Long privateLessonGroupId,
-                                                      LessonRecordEntity record) {
-        if (record.getShouldDeduct() == null || record.getShouldDeduct() != 1) {
-            return;
+    /** 只还原本次确认实际改动过的后续课次；其间任何人改过这些课次时整笔撤销失败。 */
+    private void reverseFutureScheduleEffects(LessonRecordEntity record) {
+        int originalPlannedUnits = record.getPlannedUnits() == null ? safeUnits(record.getDeductedUnits()) : record.getPlannedUnits();
+        int deductedUnits = safeUnits(record.getDeductedUnits());
+        boolean scheduleWasRebalanced = Objects.equals(record.getShouldDeduct(), 1)
+                && originalPlannedUnits != deductedUnits;
+        List<LessonRecordScheduleEffectEntity> effects = lessonRecordScheduleEffectMapper
+                .findBySourceLessonRecordId(record.getId());
+        if (scheduleWasRebalanced && effects.isEmpty()) {
+            throw new BusinessException("SCHEDULE_EFFECT_NOT_REVERSIBLE",
+                    "This lesson changed future schedule hours before undo history was recorded. Review the schedule manually before reversing it.");
         }
-        int originalPlannedUnits = record.getPlannedUnits() == null
-                ? (record.getDeductedUnits() == null ? 0 : record.getDeductedUnits())
-                : record.getPlannedUnits();
-        int deductedUnits = record.getDeductedUnits() == null ? 0 : record.getDeductedUnits();
-        int originalAdjustmentDelta = originalPlannedUnits - deductedUnits;
-        if (originalAdjustmentDelta != 0) {
-            // 终确认时对后续课次做过的平衡调整，撤销时按相反方向恢复总量守恒。
-            adjustFutureOccurrences(packageId, privateLessonGroupId, -originalAdjustmentDelta);
+        for (LessonRecordScheduleEffectEntity effect : effects) {
+            LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectByIdForUpdate(effect.getAffectedOccurrenceId());
+            if (occurrence == null
+                    || !Objects.equals(occurrence.getPlanningStatus(), effect.getAfterPlanningStatus())
+                    || !Objects.equals(occurrence.getPlannedStartAt(), effect.getAfterPlannedStartAt())
+                    || !Objects.equals(occurrence.getPlannedEndAt(), effect.getAfterPlannedEndAt())
+                    || !Objects.equals(occurrence.getPlannedUnits(), effect.getAfterPlannedUnits())) {
+                throw new BusinessException("SCHEDULE_CHANGED_AFTER_CONFIRMATION",
+                        "A future lesson changed after this confirmation. Adjust the schedule manually before undoing this result.");
+            }
+            occurrence.setPlanningStatus(effect.getBeforePlanningStatus());
+            occurrence.setPlannedStartAt(effect.getBeforePlannedStartAt());
+            occurrence.setPlannedEndAt(effect.getBeforePlannedEndAt());
+            occurrence.setPlannedUnits(effect.getBeforePlannedUnits());
+            if (lessonOccurrenceMapper.updateById(occurrence) != 1) {
+                throw new BusinessException("SCHEDULE_CHANGED", "The schedule changed while undoing this result. Please retry.");
+            }
         }
     }
 
-    private void cancelGeneratedMakeups(Long sourceOccurrenceId) {
-        List<LessonOccurrenceEntity> makeups = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
-                .eq(LessonOccurrenceEntity::getSourceOccurrenceId, sourceOccurrenceId)
-                .notIn(LessonOccurrenceEntity::getPlanningStatus, "MERGED", "CANCELLED"));
-        for (LessonOccurrenceEntity makeup : makeups) {
-            makeup.setPlanningStatus("CANCELLED");
-            lessonOccurrenceMapper.updateById(makeup);
+    private void validateRevokeVersion(LessonRecordEntity record, LessonRecordRevokeRequest request) {
+        if (request.getExpectedVersion() == null || !Objects.equals(record.getVersion(), request.getExpectedVersion())) {
+            throw new BusinessException("LESSON_RECORD_CHANGED", "This lesson record changed. Refresh the page and try again.");
+        }
+    }
+
+    private void validateOccurrenceForRevoke(LessonOccurrenceEntity occurrence, LessonRecordEntity record) {
+        if (occurrence == null || !"MERGED".equals(occurrence.getPlanningStatus())) {
+            throw new BusinessException("LESSON_OCCURRENCE_CHANGED", "The planned lesson is no longer in its finalized state.");
+        }
+        if (occurrence.getPrivateLessonGroupId() == null) return;
+        RecurringScheduleRuleEntity currentRule = currentPrivateRule(record.getPackageId(), occurrence.getPrivateLessonGroupId());
+        boolean oldPeriodLeave = false;
+        if ("FORMAL_LEAVE".equals(record.getResultStatus())) {
+            oldPeriodLeave = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                            .eq(LessonOccurrenceEntity::getSourceOccurrenceId, occurrence.getId())
+                            .gt(LessonOccurrenceEntity::getLeaveCarryoverUnits, 0))
+                    .size() > 0;
+        }
+        if (currentRule == null || !oldPeriodLeave && !Objects.equals(currentRule.getId(), occurrence.getScheduleRuleId())) {
+            throw new BusinessException("SCHEDULE_PERIOD_CHANGED",
+                    "The schedule period changed after this lesson. Review the historical schedule before undoing it.");
+        }
+    }
+
+    private void validateNotSettled(List<LessonRecordEntity> records) {
+        for (LessonRecordEntity record : records) {
+            if (teacherPaymentItemMapper.countByLessonRecordId(record.getId()) > 0) {
+                throw new BusinessException("LESSON_ALREADY_SETTLED",
+                        "This lesson is included in teacher payroll and cannot be undone until that settlement is corrected.");
+            }
+        }
+    }
+
+    private LessonOccurrenceEntity generatedMakeup(LessonRecordEntity record) {
+        return lessonRecordMakeupEffectMapper.findBySourceLessonRecordId(record.getId()).stream()
+                .findFirst()
+                .map(effect -> lessonOccurrenceMapper.selectById(effect.getMakeupOccurrenceId()))
+                .orElse(null);
+    }
+
+    private void recordGeneratedMakeup(LessonRecordEntity sourceRecord, LessonOccurrenceEntity makeup) {
+        LessonRecordMakeupEffectEntity effect = new LessonRecordMakeupEffectEntity();
+        effect.setSourceLessonRecordId(sourceRecord.getId());
+        effect.setMakeupOccurrenceId(makeup.getId());
+        effect.setGeneratedVersion(makeup.getVersion() == null ? 0 : makeup.getVersion());
+        lessonRecordMakeupEffectMapper.insert(effect);
+    }
+
+    private void validateGeneratedMakeupsCanBeCancelled(LessonRecordEntity sourceRecord) {
+        List<LessonRecordMakeupEffectEntity> effects = lessonRecordMakeupEffectMapper
+                .findBySourceLessonRecordId(sourceRecord.getId());
+        if (effects.isEmpty()) {
+            boolean hasUntrackedMakeup = lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                            .eq(LessonOccurrenceEntity::getSourceOccurrenceId, sourceRecord.getOccurrenceId())
+                            .eq(LessonOccurrenceEntity::getOccurrenceType, "MAKEUP")
+                            .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"))
+                    .size() > 0;
+            if (hasUntrackedMakeup) {
+                throw new BusinessException("MAKEUP_HISTORY_NOT_REVERSIBLE",
+                        "This leave predates makeup undo tracking. Review its linked schedule manually before undoing it.");
+            }
+            return;
+        }
+        for (LessonRecordMakeupEffectEntity effect : effects) {
+            LessonOccurrenceEntity makeup = lessonOccurrenceMapper.selectByIdForUpdate(effect.getMakeupOccurrenceId());
+            if (makeup == null || !Objects.equals(makeup.getVersion(), effect.getGeneratedVersion())
+                    || !"MAKEUP".equals(makeup.getOccurrenceType())
+                    || !Objects.equals(makeup.getSourceOccurrenceId(), sourceRecord.getOccurrenceId())) {
+                throw new BusinessException("MAKEUP_SCHEDULE_CHANGED",
+                        "The makeup lesson changed after this leave. Review the schedule before undoing it.");
+            }
+            if ("MERGED".equals(makeup.getPlanningStatus())) {
+                throw new BusinessException("MAKEUP_ALREADY_CONFIRMED",
+                        "Revoke the processed makeup lesson before undoing its source leave.");
+            }
+            if ("CANCELLED".equals(makeup.getPlanningStatus())) continue;
+            if (lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
+                    .eq(LessonRecordEntity::getOccurrenceId, makeup.getId())
+                    .eq(LessonRecordEntity::getIsDeleted, 0)) > 0) {
+                throw new BusinessException("MAKEUP_HAS_RECORD", "The makeup lesson has an attendance record and cannot be removed automatically.");
+            }
+        }
+    }
+
+    private void updatePackageAfterRevoke(CoursePackageEntity coursePackage) {
+        String status = coursePackage.getPackageStatus();
+        if (status == null || !Set.of("ACTIVE", "PAUSED", "COMPLETED").contains(status)) {
+            throw new BusinessException("PACKAGE_NOT_REVERSIBLE", "This course package is not active for lesson reversal.");
+        }
+        if ("COMPLETED".equals(status) && coursePackage.getRemainingUnits() > 0) {
+            coursePackage.setPackageStatus("ACTIVE");
+            coursePackage.setCompletedAt(null);
+        }
+        coursePackage.setEstimatedEndDate(recomputeEstimatedEndDate(
+                coursePackage.getId(), safeUnits(coursePackage.getRemainingUnits())));
+        if (coursePackageMapper.updateById(coursePackage) != 1) {
+            throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
+        }
+    }
+
+    private void writeRevokeAudit(LessonRecordEntity record, String reason, CurrentUserResponse currentUser) {
+        LessonRecordRevokeAuditEntity audit = new LessonRecordRevokeAuditEntity();
+        audit.setLessonRecordId(record.getId());
+        audit.setOccurrenceId(record.getOccurrenceId());
+        audit.setPackageId(record.getPackageId());
+        audit.setResultStatus(record.getResultStatus());
+        audit.setDeductedUnits(safeUnits(record.getDeductedUnits()));
+        audit.setReason(reason == null ? "" : reason.trim());
+        audit.setRevokedByUserId(currentUser.userId());
+        audit.setRevokedAt(AppTime.nowLocalDateTime());
+        lessonRecordRevokeAuditMapper.insert(audit);
+    }
+
+    private void cancelGeneratedMakeups(LessonRecordEntity sourceRecord) {
+        List<LessonRecordMakeupEffectEntity> effects = lessonRecordMakeupEffectMapper
+                .findBySourceLessonRecordId(sourceRecord.getId());
+        for (LessonRecordMakeupEffectEntity effect : effects) {
+            LessonOccurrenceEntity makeup = lessonOccurrenceMapper.selectByIdForUpdate(effect.getMakeupOccurrenceId());
+            if (makeup != null && !"CANCELLED".equals(makeup.getPlanningStatus())) {
+                makeup.setPlanningStatus("CANCELLED");
+                lessonOccurrenceMapper.updateById(makeup);
+            }
         }
     }
 
@@ -1249,16 +1449,8 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         lessonOccurrenceMapper.updateById(occurrence);
     }
 
-    private void restoreOccurrenceIfNoRecords(Long occurrenceId) {
-        long remaining = lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
-                .eq(LessonRecordEntity::getOccurrenceId, occurrenceId));
-        if (remaining == 0) {
-            restoreOccurrence(occurrenceId);
-        }
-    }
-
     private CoursePackageEntity requirePackageForRevoke(Long id) {
-        CoursePackageEntity coursePackage = coursePackageMapper.selectById(id);
+        CoursePackageEntity coursePackage = coursePackageMapper.selectByIdForUpdate(id);
         if (coursePackage == null) {
             throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
         }

@@ -4,6 +4,7 @@ import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
+import com.classdeduction.system.modules.lesson.dto.LessonRecordRevokeRequest;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordDetailVO;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordListItemVO;
@@ -39,5 +40,5 @@ public interface LessonRecordService {
     /**
      * 撤销已确认的课次记录：回滚课包课时（含账本冲正）、恢复课次为可再次确认状态、作废联动生成的补课课次。
      */
-    void revokeLesson(Long recordId, CurrentUserResponse currentUser);
+    void revokeLesson(Long recordId, LessonRecordRevokeRequest request, CurrentUserResponse currentUser);
 }

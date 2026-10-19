@@ -7,6 +7,7 @@ import com.classdeduction.system.modules.auth.annotation.RequireRoles;
 import com.classdeduction.system.modules.auth.interceptor.AuthInterceptor;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
+import com.classdeduction.system.modules.lesson.dto.LessonRecordRevokeRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordRejectRequest;
 import com.classdeduction.system.modules.lesson.service.LessonRecordService;
 import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
@@ -82,12 +83,13 @@ public class LessonRecordController {
 
     @PostMapping("/{id}/revoke")
     @RequireRoles({"ADMIN"})
-    @Operation(summary = "Revoke a confirmed lesson record and roll back the deducted units")
+    @Operation(summary = "Revoke an admin-finalized lesson record")
     public ApiResponse<Void> revokeLesson(
             @PathVariable Long id,
+            @Valid @RequestBody LessonRecordRevokeRequest request,
             @RequestAttribute(value = AuthInterceptor.CURRENT_USER_ATTRIBUTE, required = false) CurrentUserResponse currentUser
     ) {
-        lessonRecordService.revokeLesson(id, currentUser);
+        lessonRecordService.revokeLesson(id, request, currentUser);
         return ApiResponse.success("Revoked successfully.", null);
     }
 }
