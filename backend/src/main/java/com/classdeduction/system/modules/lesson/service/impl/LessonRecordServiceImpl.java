@@ -723,7 +723,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                         .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"));
         boolean previousPeriodLeave = currentRule != null && !currentSlots.isEmpty()
                 && !PrivateSchedulePeriod.contains(occurrence, record, currentRule,
-                        PrivateSchedulePeriod.startAt(currentRule, currentSlots));
+                        PrivateSchedulePeriod.startAt(currentRule));
         RecurringScheduleSlotEntity targetSlot = currentSlots.stream()
                 .filter(slot -> Objects.equals(slot.getId(), occurrence.getScheduleSlotId()))
                 .findFirst()

@@ -32,11 +32,7 @@ active_slots AS (
 ),
 periods AS (
     SELECT r.package_id, r.id AS rule_id, r.supersedes_rule_id,
-           CASE WHEN r.allocation_period_started_at IS NOT NULL
-                THEN r.allocation_period_started_at
-                WHEN r.supersedes_rule_id IS NULL
-                THEN GREATEST(r.created_at, COALESCE(MAX(s.created_at), r.created_at))
-                ELSE r.created_at END AS period_start,
+           COALESCE(r.allocation_period_started_at, r.created_at) AS period_start,
            COUNT(s.id) AS slot_count,
            COALESCE(SUM(GREATEST(COALESCE(s.allocated_units, 0), 0)), 0) AS slot_allocated_units
     FROM current_rules r

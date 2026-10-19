@@ -764,6 +764,51 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldNotInferLegacyScheduleChangeFromSlotCreationTime() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LessonOccurrenceEntity lesson = buildOneOnOneOccurrence();
+        lesson.setScheduleRuleId(5001L);
+        lesson.setScheduleSlotId(6001L);
+        lesson.setPlannedStartAt(now.minusDays(2));
+        lesson.setPlannedUnits(4);
+        lesson.setPlanningStatus("MERGED");
+        LessonRecordEntity record = confirmedDeduction(5001L, lesson, 4);
+        record.setConfirmedAt(now.minusDays(2));
+
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5001L);
+        currentRule.setPackageId(coursePackage.getId());
+        currentRule.setRuleStatus("ACTIVE");
+        currentRule.setCreatedAt(now.minusDays(30));
+        RecurringScheduleSlotEntity activeSlot = new RecurringScheduleSlotEntity();
+        activeSlot.setId(6001L);
+        activeSlot.setRuleId(currentRule.getId());
+        activeSlot.setTeacherId(301L);
+        activeSlot.setAllocatedUnits(4);
+        activeSlot.setCreatedAt(now.minusDays(1));
+
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(lesson));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(activeSlot));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        OneOnOneTeacherVO teacher = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null).get(0);
+        assertThat(teacher.students().get(0).packages()).singleElement().satisfies(pkg -> {
+            assertThat(pkg.scheduleChanges()).isEmpty();
+            assertThat(pkg.teacherHours()).singleElement().satisfies(hours -> {
+                assertThat(hours.allocatedUnits()).isEqualTo(4.0);
+                assertThat(hours.deductedUnits()).isEqualTo(2.0);
+                assertThat(hours.remainingUnits()).isEqualTo(2.0);
+            });
+        });
+    }
+
+    @Test
     void shouldUseCurrentAllocationForTeacherRemainingWhenOccurrenceRowsAreIncomplete() {
         LocalDateTime now = AppTime.nowLocalDateTime();
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
@@ -959,6 +1004,7 @@ class LessonOccurrenceServiceImplTest {
         currentRule.setPackageId(coursePackage.getId());
         currentRule.setRuleStatus("ACTIVE");
         currentRule.setCreatedAt(now.minusDays(30));
+        currentRule.setAllocationPeriodStartedAt(lastAllocationEdit);
         RecurringScheduleSlotEntity activeSlot = new RecurringScheduleSlotEntity();
         activeSlot.setId(6001L);
         activeSlot.setRuleId(currentRule.getId());

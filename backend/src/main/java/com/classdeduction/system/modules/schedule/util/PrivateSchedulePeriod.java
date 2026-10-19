@@ -3,10 +3,8 @@ package com.classdeduction.system.modules.schedule.util;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
 import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
-import com.classdeduction.system.modules.schedule.entity.RecurringScheduleSlotEntity;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Objects;
 
 /** 私教排课周期边界：消课统计和请假顺延使用同一口径。 */
@@ -15,22 +13,12 @@ public final class PrivateSchedulePeriod {
     private PrivateSchedulePeriod() {
     }
 
-    /** 旧规则复用 ID 时，以最后创建的有效课位作为最后一次改排课的起点。 */
-    public static LocalDateTime startAt(RecurringScheduleRuleEntity rule,
-                                        List<RecurringScheduleSlotEntity> currentSlots) {
+    /** 只读取明确保存的周期边界；课位写入时间可能来自刷新或元数据编辑，不能推断改排课。 */
+    public static LocalDateTime startAt(RecurringScheduleRuleEntity rule) {
         if (rule.getAllocationPeriodStartedAt() != null) {
             return rule.getAllocationPeriodStartedAt();
         }
-        LocalDateTime start = rule.getCreatedAt();
-        if (rule.getSupersedesRuleId() == null) {
-            for (RecurringScheduleSlotEntity slot : currentSlots) {
-                if (Objects.equals(rule.getId(), slot.getRuleId()) && slot.getCreatedAt() != null
-                        && (start == null || slot.getCreatedAt().isAfter(start))) {
-                    start = slot.getCreatedAt();
-                }
-            }
-        }
-        return start;
+        return rule.getCreatedAt();
     }
 
     /** 保留的旧规则课次按实际课次日期归属，历史确认不能混入本周期。 */

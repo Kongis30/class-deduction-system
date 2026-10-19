@@ -478,7 +478,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         boolean reuseExistingSlots = !startsNewPeriod
                 && hasUnchangedSlotDetails(existingRule, existingSlots, request.getSlots());
         if (!startsNewPeriod && !reuseExistingSlots && !existingSlots.isEmpty()) {
-            freezeLegacyAllocationPeriod(existingRule, existingSlots);
+            freezeLegacyAllocationPeriod(existingRule);
         }
         if (validateRemainingAllocation && !startsNewPeriod && !"ENDED".equals(newStatus)) {
             validateSlotAllocations(request.getSlots(), coursePackage, id);
@@ -899,7 +899,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             if (slots.isEmpty()) {
                 continue;
             }
-            freezeLegacyAllocationPeriod(rule, slots);
+            freezeLegacyAllocationPeriod(rule);
             RecurringScheduleRuleUpdateRequest request = new RecurringScheduleRuleUpdateRequest();
             request.setPrivateLessonGroupId(rule.getPrivateLessonGroupId());
             request.setDefaultClassroomId(rule.getDefaultClassroomId());
@@ -912,14 +912,13 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         }
     }
 
-    /** 同周期重建旧课位前固定原周期边界，避免把已消课划入上一周期。 */
-    private void freezeLegacyAllocationPeriod(RecurringScheduleRuleEntity rule,
-                                              List<RecurringScheduleSlotEntity> slots) {
+    /** 同周期重建旧课位前固定周期起点；课位创建时间不作为排课变更证据。 */
+    private void freezeLegacyAllocationPeriod(RecurringScheduleRuleEntity rule) {
         if (rule.getSupersedesRuleId() != null || rule.getAllocationPeriodStartedAt() != null) {
             return;
         }
-        LocalDateTime periodStart = slots.stream().map(RecurringScheduleSlotEntity::getCreatedAt)
-                .filter(Objects::nonNull).max(LocalDateTime::compareTo).orElse(rule.getCreatedAt());
+        // 新规则的创建时间就是周期起点；旧规则缺少可靠历史边界时不从课位写入时间猜测。
+        LocalDateTime periodStart = rule.getCreatedAt();
         if (periodStart == null) {
             throw new BusinessException("SCHEDULE_PERIOD_START_MISSING",
                     "Cannot refresh this schedule because its allocation period is unknown.");
@@ -1920,7 +1919,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         if (candidates.isEmpty()) {
             return candidates;
         }
-        LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule, slots);
+        LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
         Map<String, Long> slotIdByTime = slots.stream().collect(Collectors.toMap(
                 slot -> slot.getWeekday() + ":" + slot.getStartTime(),
                 RecurringScheduleSlotEntity::getId));

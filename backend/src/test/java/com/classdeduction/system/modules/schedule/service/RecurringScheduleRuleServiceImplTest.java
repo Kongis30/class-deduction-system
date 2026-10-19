@@ -787,6 +787,8 @@ class RecurringScheduleRuleServiceImplTest {
     @Test
     void shouldKeepLegacyPeriodWhenSameScheduleRebuildsSlot() {
         RecurringScheduleRuleEntity rule = buildExistingRule();
+        LocalDateTime originalPeriodStart = LocalDateTime.of(2026, 9, 1, 9, 0);
+        rule.setCreatedAt(originalPeriodStart);
         rule.setRuleStatus("PAUSED");
         CoursePackageEntity coursePackage = buildPackage();
         coursePackage.setPackageStatus("PAUSED");
@@ -820,7 +822,7 @@ class RecurringScheduleRuleServiceImplTest {
         ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
 
         assertThat(result.ruleId()).isEqualTo(5001L);
-        assertThat(rule.getAllocationPeriodStartedAt()).isEqualTo(currentSlot.getCreatedAt());
+        assertThat(rule.getAllocationPeriodStartedAt()).isEqualTo(originalPeriodStart);
         verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleRuleEntity.class));
         verify(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
     }
@@ -934,7 +936,7 @@ class RecurringScheduleRuleServiceImplTest {
         recurringScheduleRuleService.refreshPackageSchedule(1001L);
 
         assertThat(rule.getAllocationPeriodStartedAt())
-                .isEqualTo(LocalDateTime.of(2026, 10, 3, 10, 30));
+                .isEqualTo(rule.getCreatedAt());
         verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
         assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(80);
         verify(lessonOccurrenceMapper, times(12)).insert(occurrenceCaptor.capture());

@@ -4,7 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 
 import java.time.LocalDateTime;
 
-/** 排课周期边界；兼容旧规则复用 ID 时，可由新课位快照推断边界。 */
+/** 排课周期边界；旧规则复用 ID 时，边界必须来自已持久化的周期起点。 */
 @Schema(description = "One-on-one schedule change")
 public record OneOnOneScheduleChangeVO(Long ruleId, LocalDateTime changedAt, boolean legacySlotBoundary) {
 }

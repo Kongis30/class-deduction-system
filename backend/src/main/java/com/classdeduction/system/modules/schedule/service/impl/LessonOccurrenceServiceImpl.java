@@ -869,24 +869,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 currentRulesByPackage.putIfAbsent(affectedPackageId, rule);
             }
         }
-        Set<Long> currentRuleIds = currentRulesByPackage.values().stream()
-                .map(RecurringScheduleRuleEntity::getId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        Map<Long, LocalDateTime> currentSlotStartsByRule = new HashMap<>();
-        if (!currentRuleIds.isEmpty()) {
-            List<RecurringScheduleSlotEntity> currentSlots = recurringScheduleSlotMapper.selectList(
-                    new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
-                            .in(RecurringScheduleSlotEntity::getRuleId, currentRuleIds)
-                            .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE")
-                            .eq(RecurringScheduleSlotEntity::getIsDeleted, 0));
-            for (RecurringScheduleSlotEntity slot : currentSlots) {
-                if (slot.getCreatedAt() != null) {
-                    currentSlotStartsByRule.merge(slot.getRuleId(), slot.getCreatedAt(),
-                            (previous, createdAt) -> previous.isAfter(createdAt) ? previous : createdAt);
-                }
-            }
-        }
         Map<Long, Map<Long, OneOnOneScheduleChangeVO>> changesByPackage = new HashMap<>();
         for (RecurringScheduleRuleEntity rule : rules) {
             if (rule.getId() == null) {
@@ -902,10 +884,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
             }
 
-            // 老数据曾原位替换课位而复用规则 ID；用当前有效课位快照时间标出同周期余额统计的边界。
+            // 仅使用明确保存的周期起点；课位写入时间不代表管理员修改过排课。
             if (rule.getSupersedesRuleId() == null && "ACTIVE".equals(rule.getRuleStatus())) {
-                LocalDateTime slotPeriodStart = rule.getAllocationPeriodStartedAt() == null
-                        ? currentSlotStartsByRule.get(rule.getId()) : rule.getAllocationPeriodStartedAt();
+                LocalDateTime slotPeriodStart = rule.getAllocationPeriodStartedAt();
                 if (slotPeriodStart != null && rule.getCreatedAt() != null
                         && slotPeriodStart.isAfter(rule.getCreatedAt())) {
                     OneOnOneScheduleChangeVO change = new OneOnOneScheduleChangeVO(
@@ -1619,14 +1600,6 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             Map<Long, Long> currentSlotTeacherById = new HashMap<>();
             for (RecurringScheduleSlotEntity slot : currentSlots) {
                 currentSlotTeacherById.put(slot.getId(), slot.getTeacherId());
-                // 新版本以规则创建时间为周期起点；仅旧规则复用 ID 时才用课位时间兼容历史数据。
-                RecurringScheduleRuleEntity slotRule = rulesById.get(slot.getRuleId());
-                if (slot.getCreatedAt() != null && slotRule != null
-                        && slotRule.getSupersedesRuleId() == null
-                        && slotRule.getAllocationPeriodStartedAt() == null) {
-                    periodStartByRule.merge(slot.getRuleId(), slot.getCreatedAt(),
-                            (previous, createdAt) -> previous.isAfter(createdAt) ? previous : createdAt);
-                }
                 for (Long packageId : packageIdsByRule.getOrDefault(slot.getRuleId(), Collections.emptyList())) {
                     allocatedByPackage.merge(packageId,
                             Math.max(0, safeUnits(slot.getAllocatedUnits())), Integer::sum);
