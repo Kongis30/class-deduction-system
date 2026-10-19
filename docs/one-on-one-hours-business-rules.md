@@ -204,13 +204,17 @@ Allocated 与 Starting 不因这次消课变动。
 | Elly Qu | Mr. Derek 12 → 10；Ms. Sophia 12 不变 | 已确认的正式请假及补课均保留 |
 | Gloria Deng | Mr. Angel 46 → 42；Ms. Zhou 112 → 104.5；Ms. Jiaxin 47 → 43 | 旧周期预计扣课 13.5h 及已扣 2h 保留 |
 | Jennie Yu | Ms. Claudia 72 → 70 | Ms. Kiko 的已扣临时课保留 |
-| Jinghe Hu | Ms. Claudia 18 → 16；Mr. Derek 20 不变 | 旧周期已扣 2h 保留 |
+| Jinghe Hu | Ms. Claudia 18 → 16 → 18；Mr. Derek 20 → 18 | 历史消课保留；后续按当前老师分配分别修正 |
 
 其余存在超排或待管理员最终确认请假的课包不得通过直接改小 Allocated 掩盖问题；须先核对现有排课是否为用户意图，再处理课次或正常补足课时。
 
 #### 2026-10-19 用户补充确认：Jinghe Hu / Mr. Derek
 
 用户后续明确更正了 Jinghe Hu 的起始课时及 Mr. Derek 分配额，覆盖上表“Mr. Derek 20h 不变”的旧核对结论。线上数据已按精确状态条件修复：Opening Used 22h→24h，因此 Starting 38h→36h；Mr. Derek Allocated 20h→18h，保留已扣 8h，剩余有效未来排课为 10h。原 11/29 09:00–12:00 的 3h 待上课没有对应消课记录，超出本次确认的额度，已标记为技术取消；未改动已消课记录。课包当前周期共有 15h 最终扣课，因此课包 Remaining 为 21h（36h−15h），与 Mr. Derek 的老师级 Remaining 10h 是不同口径。修复脚本：`docs/data-repair/2026-10-19/jinghe-hu-derek-allocation.sql`。
+
+#### 2026-10-19 用户确认：Jinghe Hu / Ms. Claudia
+
+用户指出 Ms. Claudia 的原始分配应为 18h。线上 slot 快照错误为 16h，已确认消课 7h，因而页面显示老师剩余 9h；未来有效排课只有 10h，与原始 18h 扣除 7h 后应有的 11h 也不一致。将 slot Allocated 从 16h 恢复为 18h，并补入 2026-11-28 11:00–12:00 的最后 1h 课次；未改写 10/17 已确认的 1h 历史记录。Ms. Claudia 当前为 Allocated 18h、Deducted 7h、未来排课 11h；Mr. Derek 为 Allocated 18h、Deducted 8h、未来排课 10h。两位老师未来排课合计 21h，与课包 Remaining 21h 一致。预计结束日同步由 2026-11-22 更新为 2026-11-28。修复脚本：`docs/data-repair/2026-10-19/jinghe-hu-claudia-allocation.sql`。
 
 #### 2026-10-19 用户确认：Zhen Shen Zou / Mr. Derek
 
