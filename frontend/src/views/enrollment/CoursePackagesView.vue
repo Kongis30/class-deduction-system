@@ -261,12 +261,22 @@
       width="900px"
       :close-on-click-modal="false"
       class="package-dialog"
+      @closed="closeOneOnOnePrintPreview"
     >
       <template #header>
-        <h3>Package Detail</h3>
+        <h3>{{ printPreviewMode ? `${printPreviewMode === 'parent' ? 'Parent' : 'Teacher'} Sheet Preview` : 'Package Detail' }}</h3>
       </template>
 
-      <el-tabs v-if="detailData" v-model="detailTab" class="detail-tabs">
+      <div v-if="printPreviewHtml" class="package-print-preview">
+        <iframe
+          ref="signaturePreviewFrame"
+          :srcdoc="printPreviewHtml"
+          class="package-print-preview__frame"
+          title="Signature sheet print preview"
+        />
+      </div>
+
+      <el-tabs v-else-if="detailData" v-model="detailTab" class="detail-tabs">
         <!-- Tab 1: Basic Info -->
         <el-tab-pane label="Overview" name="overview">
           <div class="package-detail">
@@ -512,10 +522,16 @@
       </el-tabs>
 
       <template #footer>
-        <div class="dialog-footer">
+        <div v-if="printPreviewHtml" class="dialog-footer">
+          <el-button @click="closeOneOnOnePrintPreview">Back to package detail</el-button>
+          <el-button type="primary" @click="printOneOnOnePreview">Print Sheet</el-button>
+          <el-button @click="detailDialogVisible = false">Close</el-button>
+        </div>
+        <div v-else class="dialog-footer">
           <el-button
             v-if="detailData"
             plain
+            :loading="printPreviewLoading"
             @click="openOneOnOnePrintSheet('parent')"
           >
             Print Parent Sheet
@@ -523,6 +539,7 @@
           <el-button
             v-if="detailData"
             plain
+            :loading="printPreviewLoading"
             @click="openOneOnOnePrintSheet('teacher')"
           >
             Print Teacher Sheet
@@ -759,6 +776,10 @@ const loading = ref(false);
 const detailDialogVisible = ref(false);
 const detailTab = ref('overview');
 const detailData = ref<CoursePackageItem | null>(null);
+const printPreviewHtml = ref('');
+const printPreviewMode = ref<'parent' | 'teacher' | null>(null);
+const printPreviewLoading = ref(false);
+const signaturePreviewFrame = ref<HTMLIFrameElement | null>(null);
 
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const teachers = ref<TeacherItem[]>([]);
@@ -1239,17 +1260,9 @@ async function openDetailDialog(row: CoursePackageItem) {
 /** 在课包详情直接加载同一套签字表数据并打开预览，不依赖消课页路由。 */
 async function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
   const coursePackage = detailData.value;
-  if (!coursePackage) return;
+  if (!coursePackage || printPreviewLoading.value) return;
 
-  const preview = window.open('', '_blank');
-  if (!preview) {
-    ElMessage.warning('Allow pop-ups to open the signature sheet preview.');
-    return;
-  }
-  preview.opener = null;
-  preview.document.write('<!doctype html><html><head><title>Loading signature sheet</title></head><body style="font:16px Arial;padding:32px">Loading signature sheet…</body></html>');
-  preview.document.close();
-
+  printPreviewLoading.value = true;
   try {
     const [deductions, history] = await Promise.allSettled([
       fetchOneOnOneDeductions({
@@ -1274,20 +1287,34 @@ async function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
       ? withSignatureHistory(match.coursePackage, history.value.data.data)
       : match.coursePackage;
 
-    if (preview.closed) return;
-    preview.document.open();
-    preview.document.write(renderOneOnOneSignatureSheetDocument(
+    printPreviewMode.value = mode;
+    printPreviewHtml.value = renderOneOnOneSignatureSheetDocument(
       match.student,
       printPackage,
       mode,
       '__all__',
-    ));
-    preview.document.close();
-    preview.focus();
+      { embedded: true },
+    );
   } catch (error) {
-    if (preview.closed) return;
-    preview.document.body.textContent = extractErrorMessage(error);
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    printPreviewLoading.value = false;
   }
+}
+
+function closeOneOnOnePrintPreview() {
+  printPreviewHtml.value = '';
+  printPreviewMode.value = null;
+}
+
+function printOneOnOnePreview() {
+  const previewWindow = signaturePreviewFrame.value?.contentWindow;
+  if (!previewWindow) {
+    ElMessage.error('The print preview is not ready yet.');
+    return;
+  }
+  previewWindow.focus();
+  previewWindow.print();
 }
 
 async function reloadPackageDetail() {
@@ -1828,6 +1855,20 @@ loadTeachers();
 .package-dialog :deep(.el-dialog__footer) {
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
+}
+.package-print-preview {
+  height: min(72vh, 900px);
+  min-height: 360px;
+  overflow: auto;
+  background: #f4f6f8;
+}
+.package-print-preview__frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  border: 0;
+  background: #f4f6f8;
 }
 
 .detail-tabs :deep(.el-tabs__header) { margin: 0 0 -1px 0; padding: 0 16px; }

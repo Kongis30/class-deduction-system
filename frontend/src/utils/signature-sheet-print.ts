@@ -81,6 +81,7 @@ export function renderOneOnOneSignatureSheetDocument(
   coursePackage: OneOnOnePackage,
   mode: SheetMode,
   teacherKey = '__all__',
+  options: { embedded?: boolean } = {},
 ): string {
   const allLessons = signatureLessonRows(coursePackage);
   const lessons = mode === 'teacher' && teacherKey !== '__all__'
@@ -92,6 +93,7 @@ export function renderOneOnOneSignatureSheetDocument(
       || currentTeacherName(left).localeCompare(currentTeacherName(right)));
   }
   const studentName = escapeHtml(currentStudentDisplayName(student, coursePackage));
+  const embeddedClass = options.embedded ? ' class="embedded-preview"' : '';
   const content = mode === 'parent'
     ? renderCurrentParentSheet(studentName, coursePackage, allLessons)
     : renderCurrentTeacherSheet(studentName, coursePackage, lessons, teacherKey);
@@ -102,7 +104,9 @@ export function renderOneOnOneSignatureSheetDocument(
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; padding: 24px; color: #111; font-family: Arial, Helvetica, sans-serif; background: #f4f6f8; }
+  body.embedded-preview { padding: 12px; }
   .toolbar { display: flex; justify-content: flex-end; gap: 8px; max-width: 1000px; margin: 0 auto 16px; }
+  body.embedded-preview .toolbar { display: none; }
   .toolbar button { padding: 9px 16px; border: 1px solid #c8d3df; border-radius: 5px; background: #fff; color: #24364b; cursor: pointer; font-size: 14px; }
   .toolbar button.primary { border-color: #3688ea; background: #3688ea; color: #fff; }
   .oo-signature-sheet { max-width: 1000px; margin: 0 auto 12px; padding: 14px 16px; border: 1px solid #111; border-radius: 6px; background: #fff; color: #111; font-family: Arial, Helvetica, sans-serif; }
@@ -142,7 +146,7 @@ export function renderOneOnOneSignatureSheetDocument(
     .oo-signature-table thead { display: table-header-group; }
     .oo-signature-table tr { break-inside: avoid; }
   }
-</style></head><body>
+</style></head><body${embeddedClass}>
 <div class="toolbar"><button onclick="window.close()">Close</button><button class="primary" onclick="window.print()">Print</button></div>
 ${content}
 </body></html>`;
