@@ -16,7 +16,7 @@
     />
     <div class="app-shell__main">
       <AppHeader />
-      <main class="app-shell__content">
+      <main class="app-shell__content" :class="{ 'app-shell__content--one-on-one': appStore.isMobileViewport && route.name === 'one-on-one-deduction' }">
         <router-view />
       </main>
       <MobileTabBar v-if="appStore.isMobileViewport" />

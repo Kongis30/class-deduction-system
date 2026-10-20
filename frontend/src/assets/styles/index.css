@@ -1008,6 +1008,13 @@ a {
     padding: 14px 12px calc(78px + env(safe-area-inset-bottom));
   }
 
+  .app-shell__content--one-on-one {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
   .app-header {
     gap: 8px 12px;
     padding: 8px 12px;

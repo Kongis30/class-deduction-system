@@ -149,7 +149,7 @@
 
     <main class="oo-workspace" v-loading="loading">
       <div class="oo-split-workspace" :class="{ 'oo-split-workspace--collapsed': packagePanelCollapsed }">
-        <aside v-if="!packagePanelCollapsed" ref="packagePanelRef" class="oo-package-panel">
+        <aside v-show="!packagePanelCollapsed" class="oo-package-panel">
           <div class="oo-package-panel__heading">
             <div>
               <strong>Student courses</strong>
@@ -162,7 +162,7 @@
                 class="oo-filter-toggle"
                 :aria-label="mobileFiltersExpanded ? 'Search and filters are open' : 'Open search and filters'"
                 :aria-expanded="mobileFiltersExpanded"
-                @click="mobileFiltersExpanded = !mobileFiltersExpanded"
+                @click="toggleMobileFilters"
               >
                 <el-icon><Search /></el-icon>
               </button>
@@ -292,7 +292,7 @@
               class="oo-filter-toggle"
               :aria-label="mobileFiltersExpanded ? 'Search and filters are open' : 'Open search and filters'"
               :aria-expanded="mobileFiltersExpanded"
-              @click="mobileFiltersExpanded = !mobileFiltersExpanded"
+              @click="toggleMobileFilters"
             >
               <el-icon><Search /></el-icon>
             </button>
@@ -313,7 +313,7 @@
         </div>
 
         <section
-          v-if="activePackage && activeStudent"
+          v-if="activePackage && activeStudent && (!appStore.isMobileViewport || packagePanelCollapsed)"
           class="oo-print-area oo-record-panel"
           ref="printAreaRef"
         >
@@ -576,7 +576,7 @@
           </div>
         </section>
 
-        <section v-else class="oo-record-panel oo-record-panel--empty">
+        <section v-else-if="!appStore.isMobileViewport" class="oo-record-panel oo-record-panel--empty">
           <div class="oo-empty empty-state">
             Choose a student course on the left to view its lesson records.
           </div>
@@ -848,7 +848,6 @@ const currentTeacherRemainingOverhang = computed(() => {
 const signatureHistory = ref<PrivateSignatureHistory[]>([]);
 const signatureHistoryPackageId = ref('');
 const printAreaRef = ref<HTMLElement>();
-const packagePanelRef = ref<HTMLElement>();
 const selectedTeacherPrintKey = ref<string>('__all__');
 const selectedTeacherId = ref<EntityId>();
 const selectedCourseType = ref<string>();
@@ -1287,6 +1286,7 @@ function selectRouteDeductionTarget() {
 }
 
 async function searchStudents() {
+  if (appStore.isMobileViewport) packagePanelCollapsed.value = false;
   const keyword = studentSearchKeyword.value.trim();
   if (!keyword) {
     clearStudentSearch();
@@ -1442,19 +1442,19 @@ function selectCandidatePackage(candidate: PackageCandidate) {
   selectPackage(candidate.teacher, candidate.student, candidate.pkg);
   if (!appStore.isMobileViewport) return;
 
+  mobileFiltersExpanded.value = false;
   packagePanelCollapsed.value = true;
-  // 等课次明细渲染完成后滚动到选中信息，用户进入列表时仍能确认当前学生和课程。
-  void nextTick(() => {
-    printAreaRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
 }
 
-/** 移动端从课次记录返回课程名单，并将新展开的名单滚入视口。 */
+/** 移动端打开查找时切回课程列表，让筛选结果立即可见。 */
+function toggleMobileFilters() {
+  if (!mobileFiltersExpanded.value) packagePanelCollapsed.value = false;
+  mobileFiltersExpanded.value = !mobileFiltersExpanded.value;
+}
+
+/** 移动端在课次记录与课程名单间切换，保留当前课包选择和列表滚动位置。 */
 function showCourseList() {
   packagePanelCollapsed.value = false;
-  void nextTick(() => {
-    packagePanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
 }
 
 function toggleTeacherGroup(groupKey: string) {
@@ -3295,6 +3295,117 @@ onMounted(async () => {
 
   :deep(.el-dialog.is-fullscreen .el-dialog__footer) {
     padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 920px) {
+  :global(.app-shell__content--one-on-one) .oo-page {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-workspace {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+    padding: 6px;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-split-workspace {
+    display: flex;
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-package-panel,
+  :global(.app-shell__content--one-on-one) .oo-record-panel {
+    min-height: 0;
+    flex: 1 1 0;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-package-list {
+    min-height: 0;
+    max-height: none;
+    flex: 1 1 0;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-teacher-group {
+    border: 0;
+    border-bottom: 1px solid #dbe4ee;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-teacher-toggle {
+    min-height: 46px;
+    padding: 9px 8px;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-teacher-grades {
+    gap: 2px;
+    padding: 2px 0 5px 8px;
+    border-top: 0;
+    border-left: 2px solid #e6edf4;
+    margin-left: 8px;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-grade-band-group {
+    border: 0;
+    border-radius: 0;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-grade-band-toggle {
+    min-height: 42px;
+    padding: 7px 8px;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-grade-band-students {
+    gap: 0;
+    padding: 1px 0 3px 7px;
+    border-top: 0;
+    border-left: 1px solid #edf2f7;
+    margin-left: 8px;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-student-group {
+    border: 0;
+    border-bottom: 1px solid #edf2f7;
+    border-radius: 0;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-student-group__toggle {
+    min-height: 44px;
+    padding: 7px 8px;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-student-group__packages {
+    gap: 3px;
+    padding: 3px 4px 5px;
+    border-top: 0;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-package-item {
+    min-height: 44px;
+    padding: 8px 9px;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-record-panel {
+    height: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  :global(.app-shell__content--one-on-one) .oo-collapsed-tools {
+    flex: 0 0 auto;
   }
 }
 
