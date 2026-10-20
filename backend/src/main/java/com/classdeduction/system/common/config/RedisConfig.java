@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
+import com.fasterxml.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,10 +43,10 @@ public class RedisConfig implements CachingConfigurer {
     private static final Logger log = LoggerFactory.getLogger(RedisConfig.class);
 
     /**
-     * 缓存 key 的版本前缀。序列化格式变更时递增（如 v1 -> v2），
+     * 缓存 key 的版本前缀。序列化格式变更时递增，
      * 使旧格式的缓存值自然失效，避免反序列化异常。
      */
-    private static final String CACHE_KEY_VERSION_PREFIX = "v2::";
+    private static final String CACHE_KEY_VERSION_PREFIX = "v3::";
 
     private final RedisProperties redisProperties;
 
@@ -203,17 +203,24 @@ public class RedisConfig implements CachingConfigurer {
     }
 
     /**
-     * 创建共享的 ObjectMapper 实例，配置 Jackson2JsonRedisSerializer 所需的类型信息。
+     * 创建缓存读写共用的 ObjectMapper，并限制可还原的应用类型范围。
      */
     private static ObjectMapper createObjectMapper() {
+        BasicPolymorphicTypeValidator typeValidator = BasicPolymorphicTypeValidator.builder()
+                .allowIfSubType("com.classdeduction.system.")
+                .allowIfSubType("java.util.")
+                .allowIfSubType("java.time.")
+                .allowIfSubType("java.lang.")
+                .allowIfSubType("java.math.")
+                .build();
+
         return new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
-                .activateDefaultTyping(
-                        LaissezFaireSubTypeValidator.instance,
-                        ObjectMapper.DefaultTyping.NON_FINAL,
-                        JsonTypeInfo.As.PROPERTY
-                );
+                // CacheManager 以 Object.class 读写；EVERYTHING 会给 final 不可变集合补上根类型信息。
+                .activateDefaultTyping(typeValidator,
+                        ObjectMapper.DefaultTyping.EVERYTHING,
+                        JsonTypeInfo.As.PROPERTY);
     }
 }
