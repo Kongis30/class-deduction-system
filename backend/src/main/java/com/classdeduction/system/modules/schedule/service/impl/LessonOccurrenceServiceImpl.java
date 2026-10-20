@@ -1714,11 +1714,24 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     }
                     boolean currentPeriod = belongsToCurrentSchedulePeriod(occurrence, record,
                             currentRule, periodStartByRule.get(currentRuleId));
-                    // 补课是请假课次的延续，不是新分配；旧时段和临时课才补入当前分配快照。
+                    RecurringScheduleSlotEntity historicalSlot = historicalSlotsById.get(
+                            occurrence.getScheduleSlotId());
+                    Long historicalLineageId = historicalSlot == null ? null
+                            : historicalSlot.getSlotLineageId() == null
+                            ? historicalSlot.getId() : historicalSlot.getSlotLineageId();
+                    boolean representedByCurrentSchedule = historicalLineageId != null
+                            && currentSlotTeacherByLineageByPackage
+                            .getOrDefault(packageId, Collections.emptyMap())
+                            .containsKey(historicalLineageId)
+                            || PrivateLessonAllocation.hasCurrentSlotForSameRecurringTime(
+                            historicalSlot, currentSlots, currentRuleId);
+                    // 补课是请假课次的延续，不是新分配；当前排课已接续的旧课位课次也已包含在最新分配快照中。
+                    // 仅仍脱离当前课位 lineage 的真实例外课次，才额外占用当前周期分配。
                     if (currentPeriod && allocationTeacherId != null
                             && !currentSlotTeacherById.containsKey(occurrence.getScheduleSlotId())
+                            && !representedByCurrentSchedule
                             && !PrivateLessonAllocation.hasEquivalentCurrentSlot(
-                                    historicalSlotsById.get(occurrence.getScheduleSlotId()),
+                                    historicalSlot,
                                     currentSlots, currentRuleId, leaveCarryoverBySlot)
                             && !"MAKEUP".equals(occurrence.getOccurrenceType())
                             && !"CANCELLED".equals(occurrence.getPlanningStatus())) {

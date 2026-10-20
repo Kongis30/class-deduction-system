@@ -48,6 +48,21 @@ public final class PrivateLessonAllocation {
                                 - leaveCarryoverBySlot.getOrDefault(currentSlot.getId(), 0))));
     }
 
+    /** 分配额或老师调整不改变重复课位的时间身份；旧版本对应课次已由当前快照覆盖。 */
+    public static boolean hasCurrentSlotForSameRecurringTime(RecurringScheduleSlotEntity historicalSlot,
+                                                              List<RecurringScheduleSlotEntity> currentSlots,
+                                                              Long currentRuleId) {
+        if (historicalSlot == null || !Objects.equals(historicalSlot.getRuleId(), currentRuleId)) {
+            return false;
+        }
+        return currentSlots.stream().anyMatch(currentSlot ->
+                Objects.equals(currentSlot.getRuleId(), currentRuleId)
+                        && Objects.equals(historicalSlot.getWeekday(), currentSlot.getWeekday())
+                        && Objects.equals(historicalSlot.getStartTime(), currentSlot.getStartTime())
+                        && Objects.equals(historicalSlot.getEndTime(), currentSlot.getEndTime())
+                        && Objects.equals(historicalSlot.getPlannedUnits(), currentSlot.getPlannedUnits()));
+    }
+
     /** 同一课次可能出现在多个老师或共享课成员视图中，按课次 ID 只统计一次。 */
     public static int reservedUnits(Collection<LessonOccurrenceEntity> occurrences,
                                     Map<Long, LessonRecordEntity> recordsByOccurrenceId) {
