@@ -449,7 +449,7 @@
                   <span class="oo-schedule-change__line" aria-hidden="true"></span>
                 </div>
                 <div v-else class="oo-simple-cell">
-                  <strong>{{ signatureCourseLabel(row.lesson) }}</strong>
+                  <strong>{{ lessonSubjectName(row.lesson) }}</strong>
                   <span v-if="row.lesson.actualTeacherName || row.lesson.plannedTeacherName">
                     {{ displayResourceName(row.lesson.actualTeacherName || row.lesson.plannedTeacherName) }}
                   </span>
@@ -559,7 +559,7 @@
               >
                 <div class="oo-mobile-lesson__heading">
                   <div class="oo-simple-cell">
-                    <strong>{{ signatureCourseLabel(item.lesson) }}</strong>
+                    <strong>{{ lessonSubjectName(item.lesson) }}</strong>
                     <span>{{ displayResourceName(item.lesson.actualTeacherName || item.lesson.plannedTeacherName) }}</span>
                     <small
                       v-if="item.lesson.allocationOwnerTeacherName
@@ -663,7 +663,7 @@
         show-icon
       />
       <p v-if="revokeLesson" class="oo-form-hint">
-        {{ formatDate(revokeLesson.plannedStartAt) }} · {{ signatureCourseLabel(revokeLesson) }}
+        {{ formatDate(revokeLesson.plannedStartAt) }} · {{ lessonSubjectName(revokeLesson) }}
       </p>
       <el-form :label-position="appStore.isMobileViewport ? 'top' : 'right'" :label-width="appStore.isMobileViewport ? 'auto' : '100px'">
         <el-form-item label="Reason (optional)">
@@ -699,7 +699,8 @@
         </el-form-item>
         <template v-if="!isTeacher">
           <el-form-item label="Course name">
-            <el-input v-model="adjustForm.subjectName" maxlength="128" />
+            <el-input v-model="adjustForm.subjectName" maxlength="128" placeholder="Leave blank to keep the current course name" />
+            <div class="oo-form-hint">Enter a name to correct or change it. A blank value keeps the existing name.</div>
           </el-form-item>
           <el-form-item label="Delivery">
             <el-select v-model="adjustForm.deliveryMode" style="width: 100%">
@@ -1175,15 +1176,8 @@ const teacherPrintOptions = computed(() => {
   }
   return Array.from(options.values()).sort((left, right) => left.teacher.localeCompare(right.teacher));
 });
-function signatureCourseLabel(row?: OneOnOneLesson) {
-  const pkg = activePackage.value;
-  if (!pkg) {
-    return '—';
-  }
-  const subject = row?.subjectName?.trim() || 'Course name not recorded';
-  const grade = pkg.gradeBand?.trim() || activeStudent.value?.grade?.trim();
-  const label = [grade, subject].filter(Boolean).join(' ');
-  return label || pkg.packageName;
+function lessonSubjectName(row?: OneOnOneLesson) {
+  return row?.subjectName?.trim() || 'Course name not recorded';
 }
 const workflowComplete = computed(() => !nextActionLesson.value
   && !nextArrangementLesson.value
@@ -1750,7 +1744,7 @@ async function submitAdjustLesson() {
       occurrenceId: adjustLesson.value.occurrenceId,
       adjustmentType: 'RESCHEDULE',
       plannedTeacherId: adjustForm.teacherId,
-      subjectName: adjustForm.subjectName,
+      subjectName: adjustForm.subjectName.trim() || undefined,
       deliveryMode: adjustForm.deliveryMode,
       plannedClassroomId: adjustForm.deliveryMode === 'IN_PERSON' ? adjustForm.classroomId : undefined,
       plannedStartAt: adjustForm.plannedStartAt,
@@ -2998,6 +2992,11 @@ onMounted(async () => {
   margin-left: 10px;
   color: #909399;
   font-size: 12px;
+}
+
+:deep(.el-form-item__content > .oo-form-hint) {
+  flex-basis: 100%;
+  margin-left: 0;
 }
 
 @media (max-width: 1200px) {

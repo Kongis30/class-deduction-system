@@ -693,6 +693,19 @@
             <span v-if="selectedRow.rowType === 'EXISTING'">{{ formatDate(selectedRow.original?.plannedStartAt) }}</span>
           </div>
           <div class="weekly-editor__grid">
+            <div v-if="selectedRow.rowType === 'NEW'" class="weekly-editor__field">
+              <label>Course name</label>
+              <el-select
+                v-model="selectedRow.subjectName"
+                filterable
+                allow-create
+                default-first-option
+                placeholder="Select or enter course name"
+              >
+                <el-option v-for="name in weeklySubjectOptions" :key="name" :label="name" :value="name" />
+              </el-select>
+              <span class="weekly-editor__hint">Choose a course from this package, or enter its name.</span>
+            </div>
             <div class="weekly-editor__field">
               <label>Day</label>
               <el-date-picker
@@ -1002,6 +1015,7 @@ interface WeeklyAdjustmentRow {
   plannedStartAt: string;
   plannedEndAt: string;
   plannedHours: number;
+  subjectName?: string;
   plannedTeacherId?: EntityId;
   classroomSelection?: string;
 
@@ -1201,6 +1215,11 @@ const selectedWeekStartDate = ref(currentNaturalWeekStartDate());
 const weeklyLoadedWeekStartDate = ref(selectedWeekStartDate.value);
 const allWeeklyPackageOccurrences = ref<LessonOccurrenceItem[]>([]);
 const selectedFutureReleaseIds = ref<string[]>([]);
+
+const weeklySubjectOptions = computed(() => [...new Set([
+  selectedPackage.value?.subjectName,
+  ...(currentRule.value?.slots ?? []).map(slot => slot.subjectName),
+].map(name => name?.trim()).filter((name): name is string => Boolean(name)))]);
 
 // ─── Weekly adjustment calendar (Sat→Fri) ──────────────────
 
@@ -2546,6 +2565,7 @@ function buildWeeklyItem(row: WeeklyAdjustmentRow): WeeklyScheduleAdjustmentItem
   if (row.rowType === 'NEW') {
     return {
       action: 'CREATE',
+      subjectName: row.subjectName?.trim(),
       plannedStartAt: row.plannedStartAt,
       plannedEndAt: row.plannedEndAt,
       plannedUnits: Math.round(row.plannedHours * 2),
@@ -2685,6 +2705,7 @@ function addWeeklyNewRow(startAt?: dayjs.Dayjs, hours = 1): WeeklyAdjustmentRow 
     plannedStartAt: base.format('YYYY-MM-DDTHH:mm:ss'),
     plannedEndAt: base.add(hours, 'hour').format('YYYY-MM-DDTHH:mm:ss'),
     plannedHours: hours,
+    subjectName: weeklySubjectOptions.value.length === 1 ? weeklySubjectOptions.value[0] : '',
     plannedTeacherId: currentRule.value?.slots?.[0]?.teacherId,
     classroomSelection: defaultWeeklyClassroomSelection(),
     markedForDelete: false,
@@ -2724,6 +2745,9 @@ function validateWeeklyRows(): string {
     const endDate = row.plannedEndAt.slice(0, 10);
     if (row.rowType === 'NEW' && (startDate < weekStartDate || startDate >= weekEndDate)) {
       return 'Adjusted lessons must stay in the selected natural week.';
+    }
+    if (row.rowType === 'NEW' && !row.subjectName?.trim()) {
+      return 'Choose or enter a course name for each new lesson.';
     }
     if (!endAt.isAfter(startAt)) {
       return 'End time must be later than start time.';

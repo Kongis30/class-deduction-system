@@ -5,6 +5,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.time.LocalDate;
@@ -57,6 +58,10 @@ public class WeeklyScheduleAdjustmentRequest {
 
         @Schema(description = "Lesson delivery mode: IN_PERSON or ONLINE", example = "ONLINE")
         private String deliveryMode;
+
+        @Size(max = 128, message = "Subject name must be 128 characters or fewer")
+        @Schema(description = "Course/subject name; required for CREATE when the package has multiple courses")
+        private String subjectName;
 
         @Schema(description = "Adjusted planned start time", example = "2026-04-13T18:00:00")
         private LocalDateTime plannedStartAt;

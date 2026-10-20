@@ -209,6 +209,7 @@ export interface WeeklyScheduleAdjustmentItemPayload {
   plannedTeacherId?: string | number;
   plannedClassroomId?: string | number;
   deliveryMode?: 'IN_PERSON' | 'ONLINE';
+  subjectName?: string;
   itemReason?: string;
 }
 

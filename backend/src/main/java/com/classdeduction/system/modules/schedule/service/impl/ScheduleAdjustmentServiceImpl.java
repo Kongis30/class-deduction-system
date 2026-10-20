@@ -39,6 +39,7 @@ import com.classdeduction.system.modules.schedule.vo.WeeklyScheduleAdjustmentRes
 import com.classdeduction.system.modules.schedule.util.PrivateLessonAllocation;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -366,6 +367,10 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         newOccurrence.setPlanningStatus("SCHEDULED");
         newOccurrence.setConflictChecked(1);
         applyRequestedPlanningFields(newOccurrence, source, request);
+        if (!StringUtils.hasText(newOccurrence.getSubjectName())) {
+            throw new BusinessException("LESSON_SUBJECT_REQUIRED",
+                    "Enter the course name before creating a makeup lesson because the original lesson has no recorded course name.");
+        }
         validatePlannedWindow(newOccurrence.getPlannedStartAt(), newOccurrence.getPlannedEndAt(), newOccurrence.getPlannedUnits());
         validateTeacher(newOccurrence.getPlannedTeacherId());
         validateClassroom(newOccurrence.getPlannedClassroomId());
@@ -403,7 +408,7 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
 
     private void applyRequestedPlanningFields(LessonOccurrenceEntity target, LessonOccurrenceEntity source, ScheduleAdjustmentRequest request) {
         target.setPlannedTeacherId(request.getPlannedTeacherId() != null ? request.getPlannedTeacherId() : source.getPlannedTeacherId());
-        target.setSubjectName(request.getSubjectName() != null ? request.getSubjectName().trim() : source.getSubjectName());
+        target.setSubjectName(resolveAdjustedSubjectName(request.getSubjectName(), source.getSubjectName()));
         String requestedMode = request.getDeliveryMode() == null ? null : request.getDeliveryMode().trim().toUpperCase();
         if (requestedMode != null && !List.of("IN_PERSON", "ONLINE").contains(requestedMode)) {
             throw new BusinessException("INVALID_DELIVERY_MODE", "Choose either in-person or online lesson delivery.");
@@ -430,6 +435,11 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         target.setPlannedStartAt(request.getPlannedStartAt() != null ? request.getPlannedStartAt() : source.getPlannedStartAt());
         target.setPlannedEndAt(request.getPlannedEndAt() != null ? request.getPlannedEndAt() : source.getPlannedEndAt());
         target.setPlannedUnits(request.getPlannedUnits() != null ? request.getPlannedUnits() : source.getPlannedUnits());
+    }
+
+    /** 单课调整中的空课程名代表未修改；只有明确提交非空名称才覆盖课次快照。 */
+    private String resolveAdjustedSubjectName(String requestedSubjectName, String sourceSubjectName) {
+        return StringUtils.hasText(requestedSubjectName) ? requestedSubjectName.trim() : sourceSubjectName;
     }
 
     private String resolveAction(WeeklyScheduleAdjustmentRequest.Item item) {
@@ -777,7 +787,12 @@ public class ScheduleAdjustmentServiceImpl implements ScheduleAdjustmentService 
         created.setScheduleRuleId(null);
         created.setScheduleSlotId(null);
         created.setOccurrenceType("ADHOC");
-        created.setSubjectName(subjectName);
+        String resolvedSubjectName = resolveAdjustedSubjectName(item.getSubjectName(), subjectName);
+        if (!StringUtils.hasText(resolvedSubjectName)) {
+            throw new BusinessException("LESSON_SUBJECT_REQUIRED",
+                    "No course name can be inferred for this package. Choose or enter the course name before adding a lesson.");
+        }
+        created.setSubjectName(resolvedSubjectName);
         created.setPlanningStatus("SCHEDULED");
         created.setConflictChecked(1);
         created.setPlannedTeacherId(item.getPlannedTeacherId());
