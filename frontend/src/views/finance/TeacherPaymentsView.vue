@@ -4,13 +4,18 @@
       <div>
         <span class="table-page-header__eyebrow">Finance</span>
         <h2>Teacher payroll</h2>
-        <p>Select a teacher, review confirmed unpaid lessons, then create and confirm the payment.</p>
+        <p class="tp-page-description">Select a teacher, review confirmed unpaid lessons, then create and confirm the payment.</p>
       </div>
     </section>
 
     <div class="tp-page">
       <aside class="tp-sidebar" :class="{ 'tp-sidebar--mobile-hidden': appStore.isMobileViewport && selectedTeacherId }">
-      <div v-if="appStore.isMobileViewport" class="mobile-search-toggle-row">
+      <div v-if="appStore.isMobileViewport" class="tp-mobile-list-header">
+        <div>
+          <strong>Teacher list</strong>
+          <span v-if="teachersLoading">Loading teachers…</span>
+          <span v-else>{{ filteredTeachers.length }} teachers</span>
+        </div>
         <button
           type="button"
           class="mobile-search-trigger"
@@ -54,6 +59,7 @@
       <div v-if="appStore.isMobileViewport && selectedTeacher" class="tp-mobile-selection">
         <el-button text @click="selectedTeacherId = null">← Teacher list</el-button>
         <strong>{{ selectedTeacher.teacherName }}</strong>
+        <small>{{ selectedTeacher.teacherNo }}</small>
       </div>
       <div v-if="!selectedTeacherId" class="tp-content__placeholder">
         Select a teacher from the left panel to view their payment records.
@@ -79,6 +85,7 @@
                 start-placeholder="Start"
                 end-placeholder="End"
                 value-format="YYYY-MM-DD"
+                class="tp-period-picker"
                 style="width: 260px;"
               />
             </div>
@@ -119,6 +126,8 @@
           </div>
 
           <el-table
+            v-if="!appStore.isMobileViewport"
+            ref="individualLessonTable"
             v-loading="unpaidLoading"
             :data="individualLessons"
             row-key="lessonRecordId"
@@ -153,6 +162,29 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-else v-loading="unpaidLoading" class="tp-mobile-lesson-list">
+            <article v-for="lesson in individualLessons" :key="lesson.lessonRecordId" class="tp-mobile-lesson-card">
+              <header>
+                <el-checkbox
+                  :model-value="isLessonSelected(lesson.lessonRecordId)"
+                  :disabled="!canSelectLesson(lesson)"
+                  :aria-label="`Select lesson on ${formatLessonSchedule(lesson)}`"
+                  @change="setLessonSelected(lesson, 'individual', Boolean($event))"
+                />
+                <strong>{{ formatLessonSchedule(lesson) }}</strong>
+                <el-tag size="small" type="primary">1:1</el-tag>
+              </header>
+              <div class="tp-mobile-lesson-card__identity">
+                <strong>{{ lesson.participantNames?.length ? lesson.participantNames.join(' / ') : lesson.studentName }}</strong>
+                <span>{{ lesson.productName }}</span>
+              </div>
+              <div class="tp-mobile-lesson-card__metrics">
+                <div><small>Hours</small><strong>{{ lesson.hours }}</strong></div>
+                <div><small>Rate</small><strong v-if="hasPayRate(lesson)">${{ lesson.hourlyRate.toFixed(2) }}</strong><el-tag v-else type="danger" size="small">Not set</el-tag></div>
+                <div><small>Amount</small><strong>${{ lesson.amount?.toFixed(2) }}</strong></div>
+              </div>
+            </article>
+          </div>
         </section>
 
         <!-- ─── 3. Unpaid Group Class Lessons ─────────── -->
@@ -165,6 +197,8 @@
           </div>
 
           <el-table
+            v-if="!appStore.isMobileViewport"
+            ref="groupLessonTable"
             v-loading="unpaidLoading"
             :data="groupLessons"
             row-key="lessonRecordId"
@@ -195,6 +229,29 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-else v-loading="unpaidLoading" class="tp-mobile-lesson-list">
+            <article v-for="lesson in groupLessons" :key="lesson.lessonRecordId" class="tp-mobile-lesson-card">
+              <header>
+                <el-checkbox
+                  :model-value="isLessonSelected(lesson.lessonRecordId)"
+                  :disabled="!canSelectLesson(lesson)"
+                  :aria-label="`Select group lesson on ${formatLessonSchedule(lesson)}`"
+                  @change="setLessonSelected(lesson, 'group', Boolean($event))"
+                />
+                <strong>{{ formatLessonSchedule(lesson) }}</strong>
+                <el-tag size="small" type="warning">Group</el-tag>
+              </header>
+              <div class="tp-mobile-lesson-card__identity">
+                <strong>{{ lesson.className }}</strong>
+                <span>{{ lesson.productName }}<template v-if="lesson.participantNames?.length"> · {{ lesson.participantNames.join(' / ') }}</template></span>
+              </div>
+              <div class="tp-mobile-lesson-card__metrics">
+                <div><small>Hours</small><strong>{{ lesson.hours }}</strong></div>
+                <div><small>Rate</small><strong v-if="hasPayRate(lesson)">${{ lesson.hourlyRate.toFixed(2) }}</strong><el-tag v-else type="danger" size="small">Not set</el-tag></div>
+                <div><small>Amount</small><strong>${{ lesson.amount?.toFixed(2) }}</strong></div>
+              </div>
+            </article>
+          </div>
         </section>
 
         <!-- ─── 4. Summary & Create Payment ────────────── -->
@@ -210,7 +267,7 @@
               :loading="creatingPayment"
               @click="handleCreatePayment"
             >
-              Pay
+              {{ appStore.isMobileViewport ? 'Create payment' : 'Pay' }}
             </el-button>
           </div>
         </section>
@@ -243,6 +300,7 @@
           </div>
 
           <el-table
+            v-if="!appStore.isMobileViewport"
             v-loading="historyLoading"
             :data="historyData"
             row-key="id"
@@ -285,13 +343,31 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-else v-loading="historyLoading" class="tp-mobile-history-list">
+            <article v-for="payment in historyData" :key="payment.id" class="tp-mobile-history-card">
+              <header>
+                <div><strong>{{ payment.paymentNo }}</strong><small>{{ payment.periodStart }} – {{ payment.periodEnd }}</small></div>
+                <el-tag :type="payment.status === 'PAID' ? 'success' : 'warning'" size="small">{{ payment.status === 'PAID' ? 'Paid' : 'Pending' }}</el-tag>
+              </header>
+              <div class="tp-mobile-history-card__totals">
+                <span><small>Hours</small><strong>{{ payment.totalHours }}</strong></span>
+                <span><small>Amount</small><strong>${{ payment.totalAmount?.toFixed(2) }}</strong></span>
+                <span v-if="payment.paidAt"><small>Paid at</small><strong>{{ formatDateTime(payment.paidAt) }}</strong></span>
+              </div>
+              <div class="tp-mobile-history-card__actions">
+                <el-button size="small" type="primary" plain @click="viewDetail(payment)">View details</el-button>
+                <el-button v-if="payment.status === 'PENDING'" size="small" type="success" @click="handleConfirm(payment)">Confirm payment</el-button>
+              </div>
+            </article>
+            <el-empty v-if="!historyData.length" :image-size="44" description="No payment history" />
+          </div>
 
           <div v-if="pagination.total > pagination.size" class="tp-pagination">
             <el-pagination
               v-model:current-page="pagination.page"
               v-model:page-size="pagination.size"
               background
-              layout="prev, pager, next, sizes"
+              :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
               :page-sizes="[10, 20, 50]"
               :total="pagination.total"
               @current-change="loadHistory"
@@ -308,7 +384,7 @@
 
     <el-dialog
       v-model="detailVisible"
-      width="750px"
+      :width="appStore.isMobileViewport ? 'calc(100vw - 24px)' : '750px'"
       :close-on-click-modal="false"
       class="tp-dialog"
     >
@@ -349,7 +425,7 @@
         </div>
 
         <el-table
-          v-if="detailData.items?.length"
+          v-if="!appStore.isMobileViewport && detailData.items?.length"
           :data="detailData.items"
           row-key="id"
           class="tp-table"
@@ -374,6 +450,23 @@
             <template #default="{ row }">${{ row.amount?.toFixed(2) }}</template>
           </el-table-column>
         </el-table>
+        <div v-if="appStore.isMobileViewport && detailData.items?.length" class="tp-mobile-detail-list">
+          <article v-for="item in detailData.items" :key="item.id" class="tp-mobile-detail-card">
+            <header>
+              <el-tag v-if="item.className" size="small" type="warning">Group</el-tag>
+              <el-tag v-else size="small" type="primary">1:1</el-tag>
+              <strong>{{ item.packageName || item.productName }}</strong>
+            </header>
+            <span v-if="item.className || item.productName" class="tp-mobile-detail-card__context">
+              {{ item.productName }}<template v-if="item.className"> · {{ item.className }}</template>
+            </span>
+            <div class="tp-mobile-lesson-card__metrics">
+              <div><small>Hours</small><strong>{{ item.hours }}</strong></div>
+              <div><small>Rate</small><strong>${{ item.hourlyRate?.toFixed(2) }}</strong></div>
+              <div><small>Amount</small><strong>${{ item.amount?.toFixed(2) }}</strong></div>
+            </div>
+          </article>
+        </div>
       </template>
 
       <template #footer>
@@ -427,10 +520,8 @@ async function selectTeacher(id: EntityId) {
 
   dateRange.value = currentMonthRange();
   searched.value = false;
+  clearUnpaidSelections();
   unpaidLessons.value = [];
-  individualSelections.value = [];
-  groupSelections.value = [];
-  selectedIds.value = [];
   loadHistory(1);
   loadUnpaidLessons();
 }
@@ -452,6 +543,8 @@ function currentMonthRange(): [string, string] {
 const unpaidLoading = ref(false);
 const searched = ref(false);
 const unpaidLessons = ref<UnpaidLessonItem[]>([]);
+const individualLessonTable = ref<{ clearSelection: () => void }>();
+const groupLessonTable = ref<{ clearSelection: () => void }>();
 const individualSelections = ref<UnpaidLessonItem[]>([]);
 const groupSelections = ref<UnpaidLessonItem[]>([]);
 const selectedIds = ref<EntityId[]>([]);
@@ -495,6 +588,30 @@ function updateMergedSelection() {
   selectedIds.value = allRows.map(r => r.lessonRecordId);
 }
 
+function clearUnpaidSelections() {
+  individualLessonTable.value?.clearSelection();
+  groupLessonTable.value?.clearSelection();
+  individualSelections.value = [];
+  groupSelections.value = [];
+  selectedIds.value = [];
+}
+
+function isLessonSelected(lessonRecordId: EntityId) {
+  return selectedIds.value.some(id => String(id) === String(lessonRecordId));
+}
+
+// 移动卡片与桌面表格共用相同的选择集合，确保支付汇总和提交明细一致。
+function setLessonSelected(row: UnpaidLessonItem, lessonType: 'individual' | 'group', selected: boolean) {
+  const selections = lessonType === 'individual' ? individualSelections.value : groupSelections.value;
+  const alreadySelected = selections.some(item => String(item.lessonRecordId) === String(row.lessonRecordId));
+  if (selected && !alreadySelected) selections.push(row);
+  if (!selected && alreadySelected) {
+    const index = selections.findIndex(item => String(item.lessonRecordId) === String(row.lessonRecordId));
+    selections.splice(index, 1);
+  }
+  updateMergedSelection();
+}
+
 const selectedTotalHours = computed(() => {
   const allRows = [...individualSelections.value, ...groupSelections.value];
   return allRows.reduce((s, r) => s + r.hours, 0).toFixed(1);
@@ -515,8 +632,8 @@ async function loadUnpaidLessons() {
       startDate: dateRange.value?.[0],
       endDate: dateRange.value?.[1],
     });
+    clearUnpaidSelections();
     unpaidLessons.value = res.data.data;
-    selectedIds.value = [];
   } catch {
     ElMessage.error('Failed to load unpaid lessons.');
   } finally {
@@ -961,29 +1078,90 @@ onMounted(async () => {
 
 @media (max-width: 920px) {
   .tp-page { flex-direction: column; }
-  .tp-sidebar { width: 100%; height: auto; min-height: min(55dvh, 480px); max-height: none; }
+  .tp-page { height: calc(100dvh - 214px); min-height: 0; align-items: stretch; }
+  .tp-sidebar { width: 100%; height: 100%; min-height: 0; max-height: none; border-color: #d5deea; border-radius: 10px; box-shadow: 0 2px 8px rgb(33 53 77 / 5%); }
   .tp-sidebar--mobile-hidden,
   .tp-content--mobile-hidden { display: none; }
-  .tp-sidebar__list { display: block; max-height: min(55dvh, 480px); overflow-y: auto; padding: 4px 0; }
-  .tp-sidebar__item { min-height: 48px; border-left: 3px solid transparent; border-bottom: 1px solid #edf0f4; }
+  .tp-sidebar__list { display: block; flex: 1; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; padding: 4px 0; }
+  .tp-mobile-list-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:58px; padding:9px 12px; border-bottom:1px solid #e1e8f0; background:#f8fafc; }
+  .tp-mobile-list-header > div { display:grid; gap:2px; }
+  .tp-mobile-list-header strong { color:#27384b; font-size:14px; }
+  .tp-mobile-list-header span { color:#8190a2; font-size:11px; }
+  .tp-mobile-list-header .mobile-search-trigger { flex:none; }
+  .tp-sidebar__item { min-height:58px; padding:10px 14px; border-left:3px solid transparent; border-bottom:1px solid #e7edf3; }
   .tp-sidebar__item--active { border-left-color: #409eff; border-bottom-color: #edf0f4; }
   .tp-content { width: 100%; overflow: visible; }
   .tp-mobile-selection { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0 0 10px; padding: 4px 8px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; }
   .tp-mobile-selection strong { overflow: hidden; color: #1f2937; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+  .tp-mobile-selection small { flex:none; color:#8491a3; font-size:11px; }
 }
 
 @media (max-width: 640px) {
-  .tp-view { gap: 10px; }
-  .tp-section, .tp-section--card, .tp-section--filters { padding: 12px; }
-  .tp-content__header { padding: 12px 14px; }
-  .tp-filters { display: grid; grid-template-columns: 1fr; gap: 10px; }
-  .tp-filters__group, .tp-filters__group > * { width: 100%; }
-  .tp-filters__actions { display: grid; grid-template-columns: 1fr 1fr; }
-  .tp-section__header { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .tp-section__header-left { align-items: flex-start; flex-direction: column; gap: 2px; }
-  .tp-summary { align-items: flex-start; flex-direction: column; gap: 8px; }
-  .tp-pagination { justify-content: center; }
-  .tp-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tp-view { gap: 8px; }
+  .tp-view > .table-page-header { padding: 8px 12px; border: 0; border-bottom: 1px solid #e7edf3; border-radius: 0; }
+  .tp-view > .table-page-header .table-page-header__eyebrow,
+  .tp-page-description { display: none; }
+  .tp-view > .table-page-header h2 { font-size: 16px; }
+  .tp-content__header { display:none; }
+  .tp-page { gap: 8px; }
+  .tp-sidebar { border-radius: 10px; }
+  .tp-content { gap: 8px; }
+  .tp-mobile-selection { min-height: 38px; margin-bottom: 4px; padding: 3px 7px; border-radius: 8px; }
+  .tp-mobile-selection .el-button { min-height: 30px; margin: 0; padding: 0 5px; font-size: 12px; }
+  .tp-mobile-selection strong { font-size: 13px; }
+  .tp-section, .tp-section--card, .tp-section--filters { padding: 10px; border-radius: 9px; }
+  .tp-section--filters { padding: 10px; }
+  .tp-filters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .tp-filters__group { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 8px; }
+  .tp-filters__label { margin: 0; font-size: 12px; }
+  .tp-filters__group .tp-period-picker { width: 100% !important; }
+  .tp-filters__group .tp-period-picker :deep(.el-range-editor) { width: 100%; }
+  .tp-filters__actions { display: block; }
+  .tp-filters__actions .el-button { width: 100%; min-height: 36px; margin: 0; }
+  .tp-section__header { align-items: center; flex-direction: row; justify-content: space-between; gap: 8px; }
+  .tp-section__title { font-size: 14px; }
+  .tp-section__subtitle { color: #748397; font-size: 11px; text-align: right; }
+  .tp-section__header-left { align-items: center; flex-direction: row; gap: 7px; }
+  .tp-history-filters .el-select { width: 104px !important; }
+  .tp-rate-alert { padding: 8px; }
+  .tp-mobile-lesson-list,
+  .tp-mobile-history-list,
+  .tp-mobile-detail-list { display: grid; gap: 7px; min-width: 0; }
+  .tp-mobile-lesson-card,
+  .tp-mobile-history-card,
+  .tp-mobile-detail-card { min-width: 0; padding: 9px; border: 1px solid #e0e7ef; border-radius: 8px; background: #fff; }
+  .tp-mobile-lesson-card > header,
+  .tp-mobile-history-card > header,
+  .tp-mobile-detail-card > header { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .tp-mobile-lesson-card > header > strong { flex: 1; min-width: 0; color: #334155; font-size: 12px; line-height: 1.35; }
+  .tp-mobile-lesson-card > header .el-tag { flex:none; }
+  .tp-mobile-lesson-card__identity { display: grid; gap: 2px; min-width: 0; margin: 7px 0; }
+  .tp-mobile-lesson-card__identity > strong { overflow-wrap: anywhere; color: #25384d; font-size: 13px; }
+  .tp-mobile-lesson-card__identity > span { overflow-wrap: anywhere; color: #768498; font-size: 11px; line-height: 1.4; }
+  .tp-mobile-lesson-card__metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; padding: 7px 8px; border-radius: 6px; background: #f5f7fa; }
+  .tp-mobile-lesson-card__metrics > div { display: grid; align-content: start; gap: 3px; min-width: 0; }
+  .tp-mobile-lesson-card__metrics small { color: #8491a2; font-size: 10px; }
+  .tp-mobile-lesson-card__metrics strong { overflow-wrap: anywhere; color: #35485f; font-size: 12px; }
+  .tp-mobile-lesson-card__metrics .el-tag { justify-self: start; }
+  .tp-summary { position: sticky; bottom: 72px; z-index: 5; align-items: center; flex-direction: row; gap: 8px; margin: 0; padding: 9px 10px; border: 1px solid #dce5ef; background: #f8fafc; box-shadow: 0 3px 12px rgb(32 51 74 / 10%); font-size: 11px; }
+  .tp-summary > span { min-width: 0; line-height: 1.45; }
+  .tp-summary .el-button { flex:none; min-height: 34px; margin: 0; padding: 0 11px; }
+  .tp-mobile-history-card > header { align-items: flex-start; justify-content: space-between; }
+  .tp-mobile-history-card > header > div { display: grid; gap: 3px; min-width: 0; }
+  .tp-mobile-history-card > header strong { overflow-wrap: anywhere; color: #334155; font-size: 12px; }
+  .tp-mobile-history-card > header small { color: #7b8797; font-size: 10px; }
+  .tp-mobile-history-card__totals { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+  .tp-mobile-history-card__totals > span { display: grid; gap: 2px; }
+  .tp-mobile-history-card__totals small { color: #8491a2; font-size: 10px; }
+  .tp-mobile-history-card__totals strong { color: #35485f; font-size: 12px; }
+  .tp-mobile-history-card__actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .tp-mobile-history-card__actions .el-button { min-height: 30px; margin: 0; padding: 0 9px; font-size: 11px; }
+  .tp-detail-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 9px; }
+  .tp-detail-summary__item .value { overflow-wrap: anywhere; font-size: 12px; }
+  .tp-mobile-detail-card__context { display: block; margin: 5px 0 8px; color: #78869a; font-size: 11px; line-height: 1.4; }
+  .tp-pagination { justify-content: center; overflow-x: auto; }
   .tp-dialog :deep(.el-dialog__body) { padding: 12px; }
+  .tp-dialog :deep(.el-dialog__header),
+  .tp-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
 }
 </style>

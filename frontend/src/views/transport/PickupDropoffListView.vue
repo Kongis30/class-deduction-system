@@ -5,15 +5,18 @@
         <template v-if="appStore.isMobileViewport">
           <div class="mobile-search-heading">
             <span class="workbook-toolbar__label">Transport roster</span>
-            <button
-              type="button"
-              class="mobile-search-trigger"
-              :aria-expanded="mobileSearchExpanded"
-              aria-label="Search the transport roster"
-              @click="mobileSearchExpanded = !mobileSearchExpanded"
-            >
-              <el-icon><Search /></el-icon>
-            </button>
+            <div class="mobile-toolbar-actions">
+              <button type="button" class="mobile-search-trigger" :aria-expanded="mobileSearchExpanded" aria-label="Search the transport roster" @click="mobileSearchExpanded = !mobileSearchExpanded"><el-icon><Search /></el-icon></button>
+              <el-dropdown trigger="click" @command="handleMobileAction">
+                <button type="button" class="mobile-search-trigger" aria-label="More transport actions"><el-icon><MoreFilled /></el-icon></button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="drivers">Manage drivers</el-dropdown-item>
+                    <el-dropdown-item command="export" :disabled="!selectedCourse">Export Excel</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </div>
           <section v-show="mobileSearchExpanded" class="mobile-search-panel">
             <div class="mobile-search-panel__header">
@@ -26,6 +29,11 @@
             <el-select v-model="classFilter" clearable filterable placeholder="All classes">
               <el-option v-for="className in classOptions" :key="className" :label="className" :value="className" />
             </el-select>
+            <div class="workbook-toolbar__stats">
+              <span class="workbook-toolbar__stat"><em>Courses</em><strong>{{ courseTabs.length }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Pickup</em><strong>{{ selectedCourse?.pickupRows.length ?? 0 }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Drop-off</em><strong>{{ selectedCourse?.dropoffRows.length ?? 0 }}</strong></span>
+            </div>
           </section>
         </template>
         <template v-else>
@@ -36,12 +44,12 @@
           </el-select>
         </template>
       </div>
-      <div class="workbook-toolbar__stats">
+      <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__stats">
         <span class="workbook-toolbar__stat"><em>Courses</em><strong>{{ courseTabs.length }}</strong></span>
         <span class="workbook-toolbar__stat"><em>Pickup</em><strong>{{ selectedCourse?.pickupRows.length ?? 0 }}</strong></span>
         <span class="workbook-toolbar__stat"><em>Drop-off</em><strong>{{ selectedCourse?.dropoffRows.length ?? 0 }}</strong></span>
       </div>
-      <div class="workbook-toolbar__export">
+      <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__export">
         <el-button size="small" @click="openDriverDialog">Manage drivers</el-button>
         <el-button type="primary" size="small" :disabled="!selectedCourse" @click="exportExcel">Export Excel</el-button>
       </div>
@@ -53,8 +61,8 @@
           <strong>Pickup</strong>
           <span>{{ selectedCourse.pickupRows.length }} students need pickup</span>
         </div>
-        <div class="transport-table-scroll" role="region" aria-label="Pickup table, scroll horizontally">
-          <table class="workbook-table transport-detail-table">
+        <div ref="pickupScrollRef" class="transport-table-scroll mobile-pinch-scroll" role="region" aria-label="Pickup table, scroll horizontally">
+          <table class="workbook-table transport-detail-table" :style="{ zoom: appStore.isMobileViewport ? pickupTableScale : undefined }">
           <colgroup><col v-for="column in tableColumns('pickup')" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>
           <thead>
             <tr>
@@ -141,8 +149,8 @@
           <strong>Drop-off</strong>
           <span>{{ selectedCourse.dropoffRows.length }} students need drop-off</span>
         </div>
-        <div class="transport-table-scroll" role="region" aria-label="Drop-off table, scroll horizontally">
-          <table class="workbook-table transport-detail-table">
+        <div ref="dropoffScrollRef" class="transport-table-scroll mobile-pinch-scroll" role="region" aria-label="Drop-off table, scroll horizontally">
+          <table class="workbook-table transport-detail-table" :style="{ zoom: appStore.isMobileViewport ? dropoffTableScale : undefined }">
           <colgroup><col v-for="column in tableColumns('dropoff')" :key="column.key" :style="{ width: `${column.width}px` }" /></colgroup>
           <thead>
             <tr>
@@ -289,13 +297,14 @@ import {
   type TransportDriver,
 } from '@/api/transport';
 import { extractErrorMessage } from '@/api/http';
-import { Close, Delete, EditPen, Search } from '@element-plus/icons-vue';
+import { Close, Delete, EditPen, MoreFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { useAuthStore } from '@/stores/auth';
 import { isAdminUser } from '@/types/auth';
 import type { CourseProductItem } from '@/types/domain';
 import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
 import { useAppStore } from '@/stores/app';
+import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 
 type TransportTable = 'pickup' | 'dropoff';
 type TransportColumnKey = 'period' | 'campus' | 'student' | 'grade' | 'class' | 'phone' | 'driver' | 'pickupAddress' | 'dropoffAddress';
@@ -342,6 +351,10 @@ const keyword = ref('');
 const classFilter = ref('');
 const appStore = useAppStore();
 const mobileSearchExpanded = ref(false);
+const pickupScrollRef = ref<HTMLElement | null>(null);
+const dropoffScrollRef = ref<HTMLElement | null>(null);
+const { scale: pickupTableScale } = useMobileTablePinchZoom(pickupScrollRef, computed(() => appStore.isMobileViewport));
+const { scale: dropoffTableScale } = useMobileTablePinchZoom(dropoffScrollRef, computed(() => appStore.isMobileViewport));
 const activeCourseKey = ref('');
 const loading = ref(false);
 const savingOrder = ref(false);
@@ -513,6 +526,11 @@ function exportExcel() {
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows(filteredPickupRows.value, 'pickupAddress', 'Pickup address')), 'Pickup');
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(exportRows(filteredDropoffRows.value, 'dropoffAddress', 'Drop-off address')), 'Drop-off');
   XLSX.writeFile(workbook, `transport-${course.course}.xlsx`);
+}
+
+function handleMobileAction(command: string) {
+  if (command === 'drivers') openDriverDialog();
+  if (command === 'export') exportExcel();
 }
 
 function ensureActiveCourse() {
@@ -945,6 +963,9 @@ onBeforeUnmount(() => {
   .transport-roster-section { min-width: 0; }
   .transport-roster-section__heading { align-items: flex-start; flex-direction: column; gap: 2px; }
   .transport-table-scroll { border-radius: 4px; }
+  .mobile-pinch-scroll { touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+  .mobile-toolbar-actions { display: inline-flex; align-items: center; gap: 8px; }
+  .mobile-search-panel .workbook-toolbar__stats { display: flex; flex-wrap: wrap; gap: 12px 18px; margin-top: 12px; }
   .transport-detail-table { min-width: 760px; }
   .transport-page .transport-driver-select { width: 150px; }
   .transport-empty { padding: 24px 14px; }

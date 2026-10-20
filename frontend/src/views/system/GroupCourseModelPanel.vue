@@ -1,6 +1,25 @@
 <template>
   <div class="group-model-layout">
-    <aside class="group-model-products">
+    <div v-if="appStore.isMobileViewport" class="mobile-product-switcher">
+      <label for="mobile-group-product">Course</label>
+      <el-select
+        id="mobile-group-product"
+        :model-value="selectedProductId"
+        filterable
+        aria-label="Choose group class course"
+        placeholder="Choose a course"
+        @change="selectProduct"
+      >
+        <el-option
+          v-for="product in products"
+          :key="product.id"
+          :label="product.productName"
+          :value="product.id"
+        />
+      </el-select>
+    </div>
+
+    <aside v-if="!appStore.isMobileViewport" class="group-model-products">
       <span class="group-model-products__label">Group class products</span>
       <button
         v-for="product in products"
@@ -30,9 +49,9 @@
               </el-tooltip>
             </div>
             <h2>{{ setup.productName }}</h2>
-            <p>Set up teaching projects, shared class schedules, and the plans families can purchase.</p>
+            <p class="group-model-header__description">Set up projects, registration plans, and class schedules.</p>
           </div>
-          <el-button type="primary" @click="openProjectDialog()">Add teaching project</el-button>
+          <el-button type="primary" @click="openProjectDialog()"><span class="desktop-project-action">Add teaching project</span><span class="mobile-project-action">Add project</span></el-button>
         </header>
 
         <el-empty v-if="setup.projects.length === 0" description="Create a teaching project to start setting up this course." />
@@ -42,11 +61,24 @@
               <div class="group-project-card__title">
                 <h3>{{ project.projectName }}</h3>
                 <el-tag v-if="project.status !== 'ACTIVE'" type="info" effect="plain">Inactive</el-tag>
+                <button
+                  v-if="appStore.isMobileViewport"
+                  class="mobile-project-toggle"
+                  type="button"
+                  :aria-expanded="isProjectExpanded(project.id)"
+                  :aria-label="`${isProjectExpanded(project.id) ? 'Collapse' : 'Expand'} ${project.projectName}`"
+                  @click="toggleProject(project.id)"
+                >
+                  <el-icon :class="{ 'mobile-project-toggle__icon--expanded': isProjectExpanded(project.id) }"><ArrowDown /></el-icon>
+                </button>
               </div>
               <p v-if="project.description">{{ project.description }}</p>
-              <small>{{ project.classes.length }} actual classes · {{ project.plans.length }} registration plans</small>
+              <small>
+                <span class="desktop-project-summary">{{ project.classes.length }} actual classes · {{ project.plans.length }} registration plans</span>
+                <span class="mobile-project-summary">{{ project.plans.length }} plans · {{ project.classes.length }} classes</span>
+              </small>
             </div>
-            <div class="group-project-card__actions">
+            <div v-if="!appStore.isMobileViewport" class="group-project-card__actions">
               <el-button size="small" @click="openProjectDialog(project)">Edit project</el-button>
               <el-button size="small" @click="openHolidayDialog(project)">Manage holidays</el-button>
               <el-button size="small" type="primary" plain @click="openPlanDialog(project)">Add plan</el-button>
@@ -60,12 +92,34 @@
                 @click="removeProject(project)"
               >{{ projectDeleteButtonText(project) }}</el-button>
             </div>
+            <div v-else class="mobile-project-actions">
+              <el-button size="small" type="primary" plain @click="openPlanDialog(project)">Add plan</el-button>
+              <el-button size="small" @click="openClassDialog(project)">Add class</el-button>
+              <el-dropdown trigger="click">
+                <el-button size="small" class="mobile-project-actions__more" aria-label="More project actions">
+                  <el-icon><MoreFilled /></el-icon>
+                </el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item @click="openProjectDialog(project)">Edit project</el-dropdown-item>
+                    <el-dropdown-item @click="openHolidayDialog(project)">Manage holidays</el-dropdown-item>
+                    <el-dropdown-item
+                      divided
+                      class="danger-menu-item"
+                      :disabled="!projectDeleteReady(project) || deletingProjectId === String(project.id)"
+                      @click="removeProject(project)"
+                    >{{ projectDeleteButtonText(project) }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </header>
 
+          <div v-show="!appStore.isMobileViewport || isProjectExpanded(project.id)" class="group-project-details">
           <section class="group-project-section">
             <div class="group-project-section__heading">
               <h4>Registration plans</h4>
-              <span>Plans control the dates and price a student receives.</span>
+              <span class="group-project-section__description">Plans control the dates and price a student receives.</span>
             </div>
             <el-table v-if="!appStore.isMobileViewport && project.plans.length" :data="project.plans" row-key="id" border size="small">
               <el-table-column prop="planName" label="Plan" min-width="190" />
@@ -102,7 +156,7 @@
                 <span>{{ coverageLabel(plan) }}</span>
                 <small v-if="plan.coverageStartDate || plan.coverageEndDate">{{ plan.coverageStartDate || '—' }} to {{ plan.coverageEndDate || '—' }}</small>
                 <dl><div><dt>Quantity</dt><dd>{{ plan.packageQuantity }} {{ plan.packageUnit === 'MONTH' ? 'months' : 'sessions' }}</dd></div><div><dt>Full day</dt><dd>{{ money(plan.fullDayPrice) }}</dd></div><div><dt>Half day</dt><dd>{{ plan.halfDayPrice == null ? '—' : money(plan.halfDayPrice) }}</dd></div></dl>
-                <div class="mobile-model-card__actions"><el-button type="primary" plain @click="openPlanDialog(project, plan)">Edit plan</el-button><el-button text type="danger" @click="removePlan(plan)">Delete</el-button></div>
+                <div class="mobile-model-card__actions"><el-button type="primary" plain @click="openPlanDialog(project, plan)">Edit</el-button><el-dropdown trigger="click"><el-button text aria-label="More plan actions"><el-icon><MoreFilled /></el-icon></el-button><template #dropdown><el-dropdown-menu><el-dropdown-item class="danger-menu-item" @click="removePlan(plan)">Delete plan</el-dropdown-item></el-dropdown-menu></template></el-dropdown></div>
               </article>
             </div>
             <el-empty v-if="!project.plans.length" :image-size="38" description="No registration plans yet" />
@@ -140,6 +194,7 @@
             </div>
             <el-empty v-if="!project.classes.length" :image-size="38" description="No actual classes yet" />
           </section>
+          </div>
         </section>
       </template>
       <el-empty v-else-if="!loading" description="Select a group class product." />
@@ -320,6 +375,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { ArrowDown, MoreFilled } from '@element-plus/icons-vue';
 import { useAppStore } from '@/stores/app';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { fetchAllClassrooms, fetchAllTeachers, fetchCampuses } from '@/api/base-data';
@@ -373,6 +429,7 @@ const products = computed(() => props.products
     numeric: true,
   })));
 const selectedProductId = ref<EntityId>();
+const expandedProjectIds = ref(new Set<string>());
 const setup = ref<GroupCourseProductSetup>();
 const campuses = ref<CampusItem[]>([]);
 const loading = ref(false);
@@ -471,7 +528,21 @@ onUnmounted(() => {
 async function selectProduct(id: EntityId) {
   if (String(id) === String(selectedProductId.value)) return;
   selectedProductId.value = id;
+  expandedProjectIds.value = new Set();
   await loadSetup();
+}
+
+// 移动端项目默认收起，点击项目标题后再展开报名方案和实际班级。
+function isProjectExpanded(projectId: EntityId) {
+  return expandedProjectIds.value.has(String(projectId));
+}
+
+function toggleProject(projectId: EntityId) {
+  const next = new Set(expandedProjectIds.value);
+  const id = String(projectId);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedProjectIds.value = next;
 }
 
 async function loadSetup() {
@@ -912,6 +983,7 @@ function errorMessage(error: any) {
 .group-model-product--active { border-color:var(--el-color-primary-light-5); background:var(--el-color-primary-light-9); }
 .group-model-product small,.group-project-card__header small,.group-project-section__heading span,.group-cell-subtitle { color:var(--el-text-color-secondary); font-size:12px; }
 .group-model-content { min-width:0; }
+.mobile-project-action,.mobile-project-summary { display:none; }
 .group-model-header { display:flex; justify-content:space-between; align-items:center; gap:20px; margin:2px 0 16px; }
 .group-model-header h2 { margin:4px 0; font-size:22px; }
 .group-model-header p,.group-project-card__header p { margin:4px 0; color:var(--el-text-color-secondary); }
@@ -943,4 +1015,45 @@ function errorMessage(error: any) {
 .group-class-schedule-slot__anchor :deep(.el-date-editor) { width:100%; }
 @media (max-width:900px) { .group-model-layout { grid-template-columns:1fr; } .group-model-products { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); } .group-model-products__label { grid-column:1/-1; } .group-model-header,.group-project-card__header { align-items:flex-start; flex-direction:column; } .group-project-card__actions { justify-content:flex-start; } }
 @media (max-width:700px) { .plan-form__row,.group-class-schedule-slot__fields { grid-template-columns:1fr; } .group-class-schedule-slot__anchor { grid-column:auto; max-width:none; } }
+
+@media (max-width:640px) {
+  .group-model-layout { display:flex; flex-direction:column; gap:10px; min-height:0; }
+  .mobile-product-switcher { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:10px; }
+  .mobile-product-switcher > label { color:var(--el-text-color-secondary); font-size:12px; font-weight:600; }
+  .mobile-product-switcher :deep(.el-select__wrapper) { min-height:38px; }
+  .group-model-header { display:flex; flex-direction:row; align-items:center; gap:8px; margin:2px 0 8px; }
+  .group-model-header h2 { margin:0; font-size:16px; line-height:1.3; }
+  .group-model-header__description,.group-model-eyebrow { display:none; }
+  .group-model-header > .el-button { flex:none; min-height:34px; padding:0 10px; }
+  .desktop-project-action,.desktop-project-summary { display:none; }
+  .mobile-project-action,.mobile-project-summary { display:inline; }
+  .group-project-card { margin-top:8px; padding:12px; border-color:#e5eaf1; border-radius:10px; box-shadow:0 1px 2px rgb(28 55 85 / 4%); }
+  .group-project-card__header { display:grid; grid-template-columns:minmax(0,1fr); gap:9px; padding-bottom:0; border-bottom:0; }
+  .group-project-card__title { min-width:0; gap:7px; }
+  .group-project-card__title h3 { overflow:hidden; font-size:14px; text-overflow:ellipsis; white-space:nowrap; }
+  .group-project-card__header p { display:none; }
+  .group-project-card__header small { font-size:11px; }
+  .mobile-project-toggle { display:inline-flex; flex:none; align-items:center; justify-content:center; width:28px; height:28px; margin-left:auto; padding:0; border:1px solid #dbe3ed; border-radius:7px; background:#fff; color:#53657a; cursor:pointer; }
+  .mobile-project-toggle__icon--expanded { transform:rotate(180deg); }
+  .mobile-project-actions { display:flex; align-items:center; gap:6px; }
+  .mobile-project-actions .el-button { min-height:32px; margin:0; padding:0 10px; font-size:12px; }
+  .mobile-project-actions .mobile-project-actions__more { width:34px; padding:0; }
+  .group-project-details { margin-top:12px; padding-top:2px; border-top:1px solid #edf1f5; }
+  .group-project-section { padding-top:12px; }
+  .group-project-section + .group-project-section { margin-top:12px; border-top:1px solid #edf1f5; }
+  .group-project-section__heading { gap:4px; margin-bottom:8px; }
+  .group-project-section__heading h4 { font-size:13px; }
+  .group-project-section__description { display:none; }
+  .mobile-model-card { padding:10px; border-color:#e6ebf2; border-radius:8px; }
+  .mobile-model-card + .mobile-model-card { margin-top:7px; }
+  .mobile-model-card > header { gap:8px; }
+  .mobile-model-card > header strong { min-width:0; font-size:13px; }
+  .mobile-model-card > span { font-size:12px; }
+  .mobile-model-card > small { font-size:11px; }
+  .mobile-model-card dl { gap:6px; margin:8px 0 0; }
+  .mobile-model-card dl dt { font-size:10px; }
+  .mobile-model-card dl dd { font-size:12px; }
+  .mobile-model-card__actions { align-items:center; gap:4px; margin-top:7px; }
+  .mobile-model-card__actions .el-button { min-height:30px; padding:0 9px; font-size:12px; }
+}
 </style>

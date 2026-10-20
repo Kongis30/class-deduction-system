@@ -73,7 +73,22 @@
 
       <div v-loading="loading" class="package-group-list">
         <section v-for="group in groupedTableData" :key="group.key" class="package-group">
-          <header class="package-group__header">
+          <button
+            v-if="appStore.isMobileViewport"
+            type="button"
+            class="package-group__header package-group__mobile-toggle"
+            :aria-expanded="isPackageGroupExpanded(group.key)"
+            @click="togglePackageGroup(group.key)"
+          >
+            <div class="package-group__title">
+              <strong>{{ group.courseName }}</strong>
+              <span>{{ group.gradeBand }}</span>
+              <el-tag v-if="group.lowBalanceRenewal" size="small" type="danger">Renewal needed · ≤10h left</el-tag>
+            </div>
+            <small>{{ group.packages.length }} packages</small>
+            <el-icon :class="{ 'package-group__caret--expanded': isPackageGroupExpanded(group.key) }"><ArrowDown /></el-icon>
+          </button>
+          <header v-else class="package-group__header">
             <div class="package-group__title">
               <strong>{{ group.courseName }}</strong>
               <span>{{ group.gradeBand }}</span>
@@ -81,6 +96,7 @@
             </div>
             <small>{{ group.packages.length }} packages</small>
           </header>
+          <div v-if="!appStore.isMobileViewport || isPackageGroupExpanded(group.key)" class="package-group__content">
           <el-table
             v-if="!appStore.isMobileViewport"
             :data="group.packages"
@@ -183,50 +199,54 @@
             <article
               v-for="pkg in group.packages"
               :key="pkg.id"
-              class="mobile-package-card"
-              :class="{ 'mobile-package-card--low-balance': isLowBalanceRenewalDue(pkg) }"
+              class="mobile-package-row"
+              :class="{ 'mobile-package-row--low-balance': isLowBalanceRenewalDue(pkg) }"
             >
-              <header class="mobile-package-card__heading">
-                <div>
-                  <strong>{{ pkg.studentName }}</strong>
-                  <span>{{ packageDisplayName(pkg) }}</span>
-                </div>
+              <header class="mobile-package-row__heading">
+                <strong>{{ pkg.studentName }}</strong>
+                <span class="mobile-package-row__balance" :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(pkg) }">
+                  {{ formatHours(pkg.remainingUnits) }}<small> / {{ formatHours(pkg.totalUnits) }}h</small>
+                </span>
                 <el-tag size="small" :type="packageStatusType(pkg.packageStatus)">
                   {{ packageStatusLabel(pkg.packageStatus) }}
                 </el-tag>
               </header>
-              <div class="mobile-package-card__balance">
-                <div>
-                  <span>Available hours</span>
-                  <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(pkg) }">
-                    {{ formatHours(pkg.remainingUnits) }} <small>/ {{ formatHours(pkg.totalUnits) }} hours</small>
-                  </strong>
-                </div>
-                <el-progress :percentage="progressPercent(pkg)" :stroke-width="8" :show-text="false" />
-                <el-tag v-if="isLowBalanceRenewalDue(pkg)" size="small" type="danger">Renewal needed</el-tag>
+              <div v-if="shouldShowProductName(pkg)" class="mobile-package-row__package-name">
+                {{ packageDisplayName(pkg) }}
               </div>
-              <dl class="mobile-package-card__details">
-                <div>
-                  <dt>Schedule</dt>
-                  <dd><el-tag size="small" :type="scheduleStatusType(pkg.scheduleStatus)">{{ pkg.scheduleStatus }}</el-tag></dd>
+              <el-progress class="mobile-package-row__progress" :percentage="remainingProgressPercent(pkg)" :stroke-width="4" :show-text="false" />
+              <div class="mobile-package-row__footer">
+                <div class="mobile-package-row__meta">
+                  <span :class="{ 'mobile-package-row__meta--warning': isLowBalanceRenewalDue(pkg) }">
+                    <template v-if="isLowBalanceRenewalDue(pkg)">Renewal needed · </template>{{ pkg.scheduleStatus }}
+                  </span>
+                  <span>{{ pkg.nextLessonStartAt ? formatScheduleDate(pkg.nextLessonStartAt) : 'No upcoming lesson' }}</span>
                 </div>
-                <div>
-                  <dt>Next lesson</dt>
-                  <dd>{{ pkg.nextLessonStartAt ? formatScheduleDate(pkg.nextLessonStartAt) : 'Not scheduled' }}</dd>
+                <div class="mobile-package-row__actions">
+                  <el-button link type="primary" @click="openOneOnOneRenewal(pkg)">Renew</el-button>
+                  <el-button link @click="openDetailDialog(pkg)">Details</el-button>
                 </div>
-              </dl>
-              <div class="mobile-package-card__actions">
-                <el-button type="primary" plain @click="openOneOnOneRenewal(pkg)">Renew</el-button>
-                <el-button @click="openDetailDialog(pkg)">Package details</el-button>
               </div>
             </article>
             <el-empty v-if="group.packages.length === 0" description="No packages in this group." />
+          </div>
           </div>
         </section>
         <el-empty v-if="!loading && groupedTableData.length === 0" description="No course packages found." />
       </div>
 
-      <div class="table-footer">
+      <div
+        v-if="appStore.isMobileViewport && mobileHasMore"
+        ref="mobileLoadMoreSentinel"
+        class="mobile-load-more"
+        aria-live="polite"
+      >
+        <el-button link :loading="loadingMore" @click="loadMoreMobile">
+          {{ loadingMore ? 'Loading more packages…' : mobileLoadMoreFailed ? 'Load more packages' : `Showing ${tableData.length} of ${pagination.total} packages · tap to load more` }}
+        </el-button>
+      </div>
+
+      <div v-if="!appStore.isMobileViewport" class="table-footer">
         <span>Showing {{ pagination.start }}–{{ pagination.end }} of {{ pagination.total }}</span>
         <el-pagination
           v-model:current-page="pagination.page"
@@ -235,8 +255,8 @@
           :layout="appStore.isMobileViewport ? 'prev, pager, next' : 'prev, pager, next, sizes'"
           :page-sizes="[10, 20, 50, 100]"
           :total="pagination.total"
-          @current-change="loadData"
-          @size-change="loadData"
+          @current-change="() => loadData()"
+          @size-change="() => loadData()"
         />
       </div>
     </section>
@@ -683,9 +703,9 @@
 </template>
 
 <script setup lang="ts">
-import { Close, Search } from '@element-plus/icons-vue';
+import { ArrowDown, Close, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
 import {
@@ -782,7 +802,7 @@ const filters = reactive({
 
 const pagination = reactive({
   page: 1,
-  size: appStore.isMobileViewport ? 20 : 100,
+  size: appStore.isMobileViewport ? 200 : 100,
   total: 0,
   get start() {
     return this.total === 0 ? 0 : (this.page - 1) * this.size + 1;
@@ -798,6 +818,13 @@ interface OneOnOnePackageRow extends CoursePackageItem {
 }
 
 const tableData = ref<OneOnOnePackageRow[]>([]);
+const expandedPackageGroupKeys = ref(new Set<string>());
+const mobilePage = ref(1);
+const mobileHasMore = ref(false);
+const loadingMore = ref(false);
+const mobileLoadMoreFailed = ref(false);
+const mobileLoadMoreSentinel = ref<HTMLElement | null>(null);
+let mobileLoadMoreObserver: IntersectionObserver | undefined;
 // 当前分页结果按课程和年级合并成组，课包仍保留原有分页、筛选及行操作。
 const groupedTableData = computed(() => {
   const groups = new Map<string, {
@@ -833,6 +860,41 @@ const groupedTableData = computed(() => {
       || left.courseName.localeCompare(right.courseName)
       || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
 });
+
+function isPackageGroupExpanded(groupKey: string): boolean {
+  return expandedPackageGroupKeys.value.has(groupKey);
+}
+
+function togglePackageGroup(groupKey: string): void {
+  const next = new Set(expandedPackageGroupKeys.value);
+  if (next.has(groupKey)) {
+    next.delete(groupKey);
+  } else {
+    next.add(groupKey);
+  }
+  expandedPackageGroupKeys.value = next;
+}
+
+function loadMoreMobile(): void {
+  mobileLoadMoreFailed.value = false;
+  void loadData(true);
+}
+
+watch(
+  [mobileLoadMoreSentinel, () => appStore.isMobileViewport, mobileHasMore, loadingMore, mobileLoadMoreFailed, () => tableData.value.length],
+  ([sentinel, isMobile, hasMore, isLoadingMore, hasLoadMoreFailed]) => {
+    mobileLoadMoreObserver?.disconnect();
+    if (!sentinel || !isMobile || !hasMore || isLoadingMore || hasLoadMoreFailed || typeof IntersectionObserver === 'undefined') return;
+
+    mobileLoadMoreObserver = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) loadMoreMobile();
+    }, { rootMargin: '240px 0px' });
+    mobileLoadMoreObserver.observe(sentinel);
+  },
+  { flush: 'post' },
+);
+
+onBeforeUnmount(() => mobileLoadMoreObserver?.disconnect());
 
 type TableFilterOption = { text: string; value: string };
 
@@ -1024,6 +1086,10 @@ function progressPercent(row: { totalUnits: number; consumedUnits: number }): nu
   return row.totalUnits > 0 ? Math.round((row.consumedUnits / row.totalUnits) * 100) : 0;
 }
 
+function remainingProgressPercent(row: { totalUnits: number; remainingUnits: number }): number {
+  return row.totalUnits > 0 ? Math.round((row.remainingUnits / row.totalUnits) * 100) : 0;
+}
+
 function parseDateValue(value?: string): number | undefined {
   if (!value) return undefined;
   const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
@@ -1084,8 +1150,24 @@ function packageStatusLabel(status: string) {
 }
 
 // ─── Load Data ──────────────────────────────────────
-async function loadData() {
-  loading.value = true;
+async function loadData(appendMobile = false) {
+  const isMobile = appStore.isMobileViewport;
+  const shouldAppendMobile = appendMobile && isMobile;
+  if (shouldAppendMobile && (loadingMore.value || !mobileHasMore.value)) return;
+
+  if (shouldAppendMobile) {
+    loadingMore.value = true;
+  } else {
+    loading.value = true;
+    if (isMobile) {
+      mobilePage.value = 1;
+      mobileHasMore.value = false;
+      mobileLoadMoreFailed.value = false;
+    }
+    expandedPackageGroupKeys.value = new Set();
+  }
+
+  const requestedPage = isMobile ? (shouldAppendMobile ? mobilePage.value + 1 : 1) : pagination.page;
   try {
     const res = await fetchCoursePackages({
       keyword: filters.keyword || undefined,
@@ -1095,19 +1177,29 @@ async function loadData() {
       renewalDueWithinDays: filters.onlyRenewalDue ? RENEWAL_DUE_DAYS : undefined,
       includeScheduleSummary: true,
       prioritizeLowBalance: true,
-      pageNum: pagination.page,
-      pageSize: pagination.size,
+      pageNum: requestedPage,
+      pageSize: isMobile ? 200 : pagination.size,
     });
     const data = res.data.data;
     pagination.total = data.total;
-    tableData.value = data.records.map((pkg) => ({
+    const records = data.records.map((pkg) => ({
       ...pkg,
       scheduleStatus: pkg.scheduleStatus ?? 'Needs setup',
     }));
+    tableData.value = shouldAppendMobile ? [...tableData.value, ...records] : records;
+    if (isMobile) {
+      mobilePage.value = requestedPage;
+      mobileHasMore.value = records.length > 0 && tableData.value.length < data.total;
+    }
   } catch {
+    if (shouldAppendMobile) mobileLoadMoreFailed.value = true;
     ElMessage.error('Failed to load packages.');
   } finally {
-    loading.value = false;
+    if (shouldAppendMobile) {
+      loadingMore.value = false;
+    } else {
+      loading.value = false;
+    }
   }
 }
 
@@ -1320,7 +1412,7 @@ watch(detailTab, (tab) => {
 });
 
 watch(() => appStore.isMobileViewport, (isMobile) => {
-  const nextSize = isMobile ? 20 : 100;
+  const nextSize = isMobile ? 200 : 100;
   if (pagination.size === nextSize) return;
   pagination.size = nextSize;
   pagination.page = 1;
@@ -1412,6 +1504,25 @@ loadTeachers();
   background: #f3f7fb;
 }
 
+.package-group__mobile-toggle {
+  width: 100%;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.package-group__mobile-toggle > .el-icon {
+  flex: none;
+  color: #718096;
+  transition: transform 0.15s ease;
+}
+
+.package-group__mobile-toggle > .package-group__caret--expanded {
+  transform: rotate(180deg);
+}
+
 .package-group__title {
   display: flex;
   min-width: 0;
@@ -1467,120 +1578,122 @@ loadTeachers();
 
 .mobile-package-list {
   display: grid;
-  gap: 10px;
-  padding: 10px;
+  gap: 0;
+  padding: 0 10px;
 }
 
-.mobile-package-card {
+.mobile-package-row {
   min-width: 0;
-  padding: 14px;
-  border: 1px solid #e1e8f0;
-  border-radius: 12px;
+  padding: 10px 2px;
+  border-bottom: 1px solid #e8edf2;
   background: #fff;
 }
 
-.mobile-package-card--low-balance {
-  border-color: #f1b7b7;
-  background: #fffafa;
+.mobile-package-row--low-balance {
+  box-shadow: inset 3px 0 #e87979;
+  padding-left: 9px;
 }
 
-.mobile-package-card__heading {
+.mobile-package-row__heading {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: center;
+  gap: 7px;
 }
 
-.mobile-package-card__heading > div {
-  display: grid;
+.mobile-package-row__heading > strong {
+  flex: 1;
   min-width: 0;
-  gap: 4px;
-}
-
-.mobile-package-card__heading strong,
-.mobile-package-card__heading span {
   overflow-wrap: anywhere;
-}
-
-.mobile-package-card__heading strong {
   color: #26384c;
-  font-size: 15px;
-}
-
-.mobile-package-card__heading span {
-  color: #667085;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.35;
 }
 
-.mobile-package-card__balance {
-  display: grid;
-  gap: 8px;
-  margin-top: 12px;
-  padding: 10px;
-  border-radius: 9px;
-  background: #f5f8fc;
+.mobile-package-row__heading :deep(.el-tag) {
+  flex: none;
+  height: 20px;
+  padding: 0 5px;
+  font-size: 10px;
 }
 
-.mobile-package-card__balance > div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.mobile-package-card__balance > div > span,
-.mobile-package-card__details dt {
-  color: #718096;
-  font-size: 12px;
-}
-
-.mobile-package-card__balance strong {
-  color: #253b53;
-  font-size: 16px;
+.mobile-package-row__balance {
+  flex: none;
+  color: #26384c;
+  font-size: 14px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
-.mobile-package-card__balance strong small {
+.mobile-package-row__balance small {
   color: #718096;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 400;
 }
 
-.mobile-package-card__details {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin: 12px 0 0;
-}
-
-.mobile-package-card__details > div {
-  display: grid;
-  min-width: 0;
-  align-content: start;
-  gap: 5px;
-}
-
-.mobile-package-card__details dd {
-  min-width: 0;
-  margin: 0;
-  color: #334155;
-  font-size: 13px;
-  line-height: 1.4;
+.mobile-package-row__package-name {
+  margin-top: 2px;
+  color: #718096;
+  font-size: 11px;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
-.mobile-package-card__actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 14px;
+.mobile-package-row__progress {
+  margin-top: 6px;
 }
 
-.mobile-package-card__actions .el-button {
-  width: 100%;
-  min-height: 42px;
+.mobile-package-row__progress :deep(.el-progress-bar__outer) {
+  background: #edf1f5;
+}
+
+.mobile-package-row__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.mobile-package-row__meta {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  color: #718096;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.mobile-package-row__meta > span {
+  overflow-wrap: anywhere;
+}
+
+.mobile-package-row__meta--warning {
+  color: #c24141;
+  font-weight: 600;
+}
+
+.mobile-package-row__actions {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.mobile-package-row__actions .el-button {
+  min-height: 32px;
   margin: 0;
+  padding: 0 4px;
+  font-size: 11px;
+}
+
+.package-group__title :deep(.el-tag) {
+  height: 20px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+
+.package-group__header small {
+  color: #718096;
+  font-size: 10px;
 }
 
 .low-balance-renewal-text {
@@ -1632,6 +1745,20 @@ loadTeachers();
   margin-top: 10px;
   font-size: 12px;
   color: #909399;
+}
+
+.mobile-load-more {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  color: #718096;
+  font-size: 12px;
+}
+
+.mobile-load-more .el-button {
+  min-height: 40px;
+  white-space: normal;
 }
 
 /* Dialog */
@@ -1769,8 +1896,10 @@ loadTeachers();
     text-align: left;
   }
   .filters :deep(.el-form-item__content) { width: 100%; margin-left: 0 !important; }
-  .package-group__header { flex-direction: column; }
-  .package-group__header > * { max-width: 100%; }
+  .package-group__header { width: 100%; flex-direction: row; align-items: center; gap: 6px; padding: 7px 9px; }
+  .package-group__title { flex: 1; min-width: 0; flex-wrap: wrap; gap: 5px; }
+  .package-group__title strong { font-size: 12px; }
+  .package-group__header > small { flex: none; white-space: nowrap; }
   .detail-grid { grid-template-columns: 1fr; }
   .dialog-footer { flex-wrap: wrap; }
   .table-footer { align-items: stretch; flex-direction: column; gap: 8px; }

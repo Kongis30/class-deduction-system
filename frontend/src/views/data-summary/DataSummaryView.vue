@@ -23,7 +23,7 @@
           </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="export-excel" :disabled="sortedRows.length === 0">Export Excel</el-dropdown-item>
+              <el-dropdown-item command="export-excel" :disabled="sortedRows.length + visibleRefundRows.length === 0">Export Excel</el-dropdown-item>
               <el-dropdown-item command="print-roster" :disabled="rosterPrintGroups.length === 0">Print class roster</el-dropdown-item>
               <template v-if="isSaturdayProductTab">
                 <el-dropdown-item command="roster-fall">Fall roster</el-dropdown-item>
@@ -84,7 +84,7 @@
         <el-button
           size="small"
           type="primary"
-          :disabled="sortedRows.length === 0"
+          :disabled="sortedRows.length + visibleRefundRows.length === 0"
           @click="exportExcel"
         >
           Export Excel
@@ -107,17 +107,23 @@
           clearable
           placeholder="Select a class"
         >
-          <el-option
-            v-for="group in rosterPrintGroups"
-            :key="group.key"
-            :label="rosterPrintOptionLabel(group)"
-            :value="group.key"
+          <el-option-group
+            v-for="campusGroup in rosterPrintCampusGroups"
+            :key="campusGroup.key"
+            :label="campusGroup.campusName"
           >
-            <div class="roster-print-picker__option">
-              <strong>{{ group.className }}</strong>
-              <span>{{ group.projectName }} · {{ group.campusName }}</span>
-            </div>
-          </el-option>
+            <el-option
+              v-for="group in campusGroup.groups"
+              :key="group.key"
+              :label="rosterPrintOptionLabel(group)"
+              :value="group.key"
+            >
+              <div class="roster-print-picker__option">
+                <strong>{{ group.className }}</strong>
+                <span>{{ group.projectName }}</span>
+              </div>
+            </el-option>
+          </el-option-group>
         </el-select>
         <span v-if="selectedRosterPrintGroup" class="roster-print-picker__count">
           {{ selectedRosterPrintGroup.students.length }} students will be printed
@@ -131,21 +137,28 @@
       </template>
     </el-dialog>
     <div class="roster-print" aria-hidden="true">
-      <section v-for="group in selectedRosterPrintGroups" :key="group.key" class="roster-print__page">
-        <h1>{{ group.projectName }}</h1>
-        <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
-        <p class="roster-print__campus">{{ group.campusName }}</p>
-        <table>
-          <thead>
-            <tr><th>Student</th><th>School</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="student in group.students" :key="student.key">
-              <td>{{ student.name }}</td>
-              <td>{{ student.school }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <section
+        v-for="group in selectedRosterPrintGroups"
+        :key="group.key"
+        class="roster-print__page"
+        :style="rosterPrintPageStyle(group.students.length)"
+      >
+        <div class="roster-print__content">
+          <h1>{{ group.projectName }}</h1>
+          <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
+          <p class="roster-print__campus">{{ group.campusName }}</p>
+          <table>
+            <thead>
+              <tr><th>Student</th><th>School</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="student in group.students" :key="student.key">
+                <td>{{ student.name }}</td>
+                <td>{{ student.school }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
     <div ref="workbookScrollRef" class="workbook-scroll" :class="{ 'workbook-scroll--pinch-zoom': isMobileViewport }" data-testid="data-summary-workbook">
@@ -348,7 +361,7 @@
           </template>
         </tbody>
 
-        <tbody v-else-if="!loading">
+        <tbody v-else-if="!loading && !visibleRefundRows.length">
           <tr class="workbook-empty-row">
             <td :colspan="columns.length">
               <span>{{ emptyMessage }}</span>
@@ -389,6 +402,42 @@
                 </span>
                 <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(stoppedColumnValue(row, column.key)) }}</span>
                 <span v-else>{{ displayText(stoppedColumnValue(row, column.key)) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section v-if="visibleRefundRows.length" class="refund-records">
+      <div class="refund-records__heading">
+        <h3>Refund Student</h3>
+        <span>{{ visibleRefundRows.length }} record(s)</span>
+      </div>
+      <div class="refund-records__scroll">
+        <table class="refund-records__table workbook-table">
+          <thead>
+            <tr>
+              <th v-for="column in columns" :key="column.key" :style="{ minWidth: `${column.width}px` }">
+                {{ column.label }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in visibleRefundRows" :key="rowKey(row)">
+              <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
+                <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+                <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
+                <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
+                <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
+                <span v-else-if="column.key === 'pickup' || column.key === 'dropoff'" :class="['workbook-pill', columnValue(row, column.key) === 'Yes' ? 'workbook-pill--yes' : 'workbook-pill--no']">
+                  {{ columnValue(row, column.key) }}
+                </span>
+                <span v-else-if="column.key === 'paymentMethod'" :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
+                  {{ displayText(row.paymentMethod) }}
+                </span>
+                <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(columnValue(row, column.key)) }}</span>
+                <span v-else>{{ displayText(columnValue(row, column.key)) }}</span>
               </td>
             </tr>
           </tbody>
@@ -636,7 +685,7 @@ const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 
 const loading = ref(false);
 const workbookScrollRef = ref<HTMLDivElement | null>(null);
-const mobileTableScale = ref(1);
+const mobileTableScale = ref(0.8);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
@@ -713,14 +762,22 @@ const productRows = computed(() => {
   return rows.value.filter((row) => String(row.courseProductId ?? '') === activeTabId.value);
 });
 
-const stoppedProductRows = computed(() => productRows.value.filter((row) => row.itemStatus === 'STOPPED'));
-const activeProductRows = computed(() => productRows.value.filter((row) => row.itemStatus !== 'STOPPED'));
+const refundedProductRows = computed(() => productRows.value.filter((row) => row.refunded));
+const stoppedProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus === 'STOPPED'));
+const activeProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus !== 'STOPPED'));
 const displayStoppedRows = computed(() => isSaturdayProductTab.value
   ? filterSaturdayRosterRows(stoppedProductRows.value, saturdayRosterView.value)
   : stoppedProductRows.value);
+const displayRefundRows = computed(() => isSaturdayProductTab.value
+  ? filterSaturdayRosterRows(refundedProductRows.value, saturdayRosterView.value)
+  : refundedProductRows.value);
 const visibleStoppedRows = computed(() => displayStoppedRows.value.filter((row) =>
   selectedMonth.value === 'ALL' || monthKey(row) === selectedMonth.value,
 ));
+const visibleRefundRows = computed(() => sortDataRows(displayRefundRows.value.filter((row) =>
+  (selectedMonth.value === 'ALL' || monthKey(row) === selectedMonth.value)
+    && columns.every((column) => matchesColumnFilter(row, column)),
+)));
 
 /** 周六班特殊显示的名称回退识别：产品/班级名里出现「周六」或「Saturday」即视为周六班。 */
 const SATURDAY_NAME_PATTERN = /saturday|周六/i;
@@ -761,7 +818,8 @@ const selectOptions = computed<Record<ColumnKey, string[]>>(() => {
     if (column.filterType !== 'select') {
       return [column.key, []];
     }
-    const values = displayProductRows.value.map((row) => selectValue(row, column.key));
+    const values = [...displayProductRows.value, ...displayRefundRows.value]
+      .map((row) => selectValue(row, column.key));
     return [column.key, [...new Set(values)].sort(naturalCompare)];
   })) as Record<ColumnKey, string[]>;
 });
@@ -773,7 +831,7 @@ function monthKey(row: DataSummaryRow) {
 
 const availableMonths = computed(() => {
   const keys = new Set<string>();
-  [...displayProductRows.value, ...displayStoppedRows.value].forEach((row) => {
+  [...displayProductRows.value, ...displayStoppedRows.value, ...displayRefundRows.value].forEach((row) => {
     const key = monthKey(row);
     if (key) {
       keys.add(key);
@@ -796,8 +854,9 @@ const filteredRows = computed<DataSummaryDisplayRow[]>(() => monthFilteredRows.v
 }));
 
 const monthStats = computed(() => {
-  // 汇总跟随月份、课程和表格筛选；周六班拆分行仍按原始报名记录计数。
-  return uniqueSourceRows(filteredRows.value).reduce(
+  // 汇总跟随月份、课程和表格筛选；退款行按退款后的净收款计入。
+  const rowsToSummarize = [...filteredRows.value, ...visibleRefundRows.value];
+  return uniqueSourceRows(rowsToSummarize).reduce(
     (acc, row) => {
       acc.count += 1;
       acc.paid += Number(row.paidAmount ?? 0);
@@ -809,7 +868,11 @@ const monthStats = computed(() => {
 });
 
 const sortedRows = computed<DataSummaryDisplayRow[]>(() => {
-  const source = [...filteredRows.value];
+  return sortDataRows(filteredRows.value);
+});
+
+function sortDataRows(rows: DataSummaryDisplayRow[]): DataSummaryDisplayRow[] {
+  const source = [...rows];
   if (!sortState.key) {
     const oneOnOneGroupNames = oneOnOneSortGroupNames(source);
     return source.sort((left, right) => compareRowsByBusinessGroup(left, right, oneOnOneGroupNames));
@@ -826,7 +889,7 @@ const sortedRows = computed<DataSummaryDisplayRow[]>(() => {
     }
     return naturalCompare(String(leftValue), String(rightValue)) * direction;
   });
-});
+}
 
 /** 不再分页：每个 Tab 一次性渲染全部数据行。 */
 const pagedRows = computed(() => sortedRows.value);
@@ -914,6 +977,28 @@ const rosterPrintGroups = computed<RosterPrintGroup[]>(() => {
       || naturalCompare(left.campusName, right.campusName));
 });
 
+const rosterPrintCampusGroups = computed(() => {
+  const campuses = new Map<string, { key: string; campusName: string; groups: RosterPrintGroup[] }>();
+  rosterPrintGroups.value.forEach((group) => {
+    const campusName = group.campusName || 'Campus not specified';
+    const campusGroup = campuses.get(campusName) ?? {
+      key: campusName,
+      campusName,
+      groups: [],
+    };
+    campusGroup.groups.push(group);
+    campuses.set(campusName, campusGroup);
+  });
+
+  return [...campuses.values()]
+    .map((campusGroup) => ({
+      ...campusGroup,
+      groups: [...campusGroup.groups].sort((left, right) => naturalCompare(left.className, right.className)
+        || naturalCompare(left.projectName, right.projectName)),
+    }))
+    .sort((left, right) => naturalCompare(left.campusName, right.campusName));
+});
+
 function printClassRoster() {
   if (!rosterPrintGroups.value.length) return;
   selectedRosterPrintKey.value = '';
@@ -930,6 +1015,20 @@ const selectedRosterPrintGroups = computed(() =>
 
 function rosterPrintOptionLabel(group: RosterPrintGroup) {
   return [group.projectName, group.className, group.campusName].join(' · ');
+}
+
+/** 按名单人数缩放整张打印页，避免同一班级被浏览器拆到下一页。 */
+function rosterPrintPageStyle(studentCount: number) {
+  const scale = rosterPrintScale(studentCount);
+  return {
+    '--roster-print-scale': scale.toFixed(3),
+    '--roster-print-content-width': `${(100 / scale).toFixed(3)}%`,
+  };
+}
+
+function rosterPrintScale(studentCount: number) {
+  const estimatedHeightMm = 52 + studentCount * 14;
+  return Math.min(1, 230 / estimatedHeightMm);
 }
 
 async function confirmPrintClassRoster() {
@@ -1601,7 +1700,8 @@ const EXPORT_NUMERIC_COLUMNS: ReadonlySet<ColumnKey> = new Set([
 
 function exportExcel() {
   const dataRows = sortedRows.value;
-  if (dataRows.length === 0) {
+  const refundRows = visibleRefundRows.value;
+  if (dataRows.length === 0 && refundRows.length === 0) {
     ElMessage.warning('No rows to export.');
     return;
   }
@@ -1609,12 +1709,19 @@ function exportExcel() {
   dataRows.forEach((row) => {
     aoa.push(columns.map((column) => exportCell(row, column.key)));
   });
+  if (refundRows.length) {
+    aoa.push(['Refund Student']);
+    refundRows.forEach((row) => {
+      aoa.push(columns.map((column) => exportCell(row, column.key)));
+    });
+  }
   const sheet = XLSX.utils.aoa_to_sheet(aoa);
   // Excel 保留原始分值用于计算，仅将金额单元格的显示格式设为整数。
   columns.forEach((column, columnIndex) => {
     if (!EXPORT_NUMERIC_COLUMNS.has(column.key)) return;
-    dataRows.forEach((_, rowIndex) => {
-      const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex + 1, c: columnIndex })];
+    [...dataRows, ...refundRows].forEach((_, rowIndex) => {
+      const rowOffset = rowIndex + 1 + (refundRows.length && rowIndex >= dataRows.length ? 1 : 0);
+      const cell = sheet[XLSX.utils.encode_cell({ r: rowOffset, c: columnIndex })];
       if (cell) cell.z = '$#,##0;-$#,##0';
     });
   });
@@ -2007,6 +2114,59 @@ onMounted(() => {
   font-weight: 700;
 }
 
+.refund-records {
+  flex: 0 0 auto;
+  max-height: 300px;
+  border: 1px solid #d5dfea;
+  border-top: 0;
+  background: #f8fbff;
+}
+
+.refund-records__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px 6px;
+}
+
+.refund-records__heading h3 {
+  margin: 0;
+  color: #3d5d80;
+  font-size: 13px;
+}
+
+.refund-records__heading span {
+  color: #738398;
+  font-size: 11px;
+}
+
+.refund-records__scroll {
+  max-height: 255px;
+  overflow: auto;
+}
+
+.refund-records__table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #405267;
+  font-size: 12px;
+}
+
+.refund-records__table th,
+.refund-records__table td {
+  padding: 7px 10px;
+  border-top: 1px solid #dce5ef;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.refund-records__table th {
+  position: sticky;
+  top: 0;
+  background: #edf4fb;
+  font-weight: 700;
+}
+
 .workbook-table {
   width: max-content;
   min-width: 100%;
@@ -2345,9 +2505,21 @@ th.workbook-column--studentName {
   }
 
   .roster-print__page {
-    min-height: 250mm;
+    display: flex;
+    justify-content: center;
+    height: 240mm;
+    overflow: hidden;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
     break-after: page;
     page-break-after: always;
+  }
+
+  .roster-print__content {
+    flex: none;
+    width: var(--roster-print-content-width, 100%);
+    transform: scale(var(--roster-print-scale, 1));
+    transform-origin: top center;
   }
 
   .roster-print__page:last-child {
@@ -2363,46 +2535,50 @@ th.workbook-column--studentName {
   }
 
   .roster-print h1 {
-    padding-top: 8mm;
-    font-size: 32pt;
+    padding-top: 5mm;
+    font-size: 26pt;
   }
 
   .roster-print h2 {
-    margin-top: 12mm;
-    font-size: 25pt;
+    margin-top: 7mm;
+    font-size: 20pt;
   }
 
   .roster-print__campus {
-    margin: 5mm 0 3mm;
+    margin: 3mm 0 2mm;
     text-align: center;
-    font-size: 12pt;
+    font-size: 10pt;
     color: #555;
   }
 
   .roster-print table {
     width: 84%;
-    margin: 10mm auto 0;
+    margin: 6mm auto 0;
     border-collapse: collapse;
-    font-size: 16pt;
+    table-layout: fixed;
+    font-size: 14pt;
   }
 
   .roster-print th {
-    padding: 4mm;
+    padding: 2mm;
     border: 1px solid #b8c7d4;
     background: #e9f1f8;
     text-align: left;
-    font-size: 12pt;
+    font-size: 11pt;
   }
 
   .roster-print td {
-    padding: 4mm;
+    padding: 2mm;
     border: 1px solid #b8c7d4;
     background: #d2e4f4;
     vertical-align: middle;
   }
 
-  .roster-print td:first-child {
-    width: 68%;
+  .roster-print th:first-child,
+  .roster-print td:first-child,
+  .roster-print th:last-child,
+  .roster-print td:last-child {
+    width: 50%;
   }
 }
 </style>
