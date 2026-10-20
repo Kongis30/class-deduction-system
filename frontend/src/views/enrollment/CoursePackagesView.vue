@@ -84,7 +84,7 @@
               <span class="package-group__title">
                 <strong>{{ group.courseName }}</strong>
                 <span>{{ group.gradeBand }}</span>
-                <el-tag v-if="group.lowBalanceRenewal" size="small" type="danger">Renewal needed · ≤10h left</el-tag>
+                <el-tag v-if="group.pinned" size="small" type="danger">Pinned</el-tag>
               </span>
             </button>
             <small>{{ group.packages.length }} packages</small>
@@ -137,11 +137,11 @@
                 <template #default="{ row }">
                   <div class="available-cell">
                     <div class="available-cell__value">
-                      <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(row) }">{{ formatHours(row.remainingUnits) }}</strong>
+                      <strong :class="{ 'low-balance-renewal-text': isLowBalancePinned(row) }">{{ formatHours(row.remainingUnits) }}</strong>
                       <span>/ {{ formatHours(row.totalUnits) }}</span>
                     </div>
                     <el-progress class="available-cell__progress" :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
-                    <el-tag v-if="isLowBalanceRenewalDue(row)" class="renewal-reminder-tag" size="small" type="danger">
+                    <el-tag v-if="isLowBalancePinned(row)" class="renewal-reminder-tag" size="small" type="danger">
                       Renewal needed
                     </el-tag>
                   </div>
@@ -184,10 +184,42 @@
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="Actions" width="150" fixed="right">
+              <el-table-column
+                label="Actions"
+                width="104"
+                fixed="right"
+                align="center"
+                label-class-name="package-actions-column-header"
+              >
                 <template #default="{ row }">
-                  <el-button class="row-action-button" text type="primary" @click="openOneOnOneRenewal(row)">Renew</el-button>
-                  <el-button class="row-action-button" text type="primary" @click="openDetailDialog(row)">Detail</el-button>
+                  <el-dropdown trigger="click" placement="bottom-end" @click.stop>
+                    <el-button class="package-actions-trigger" text circle :aria-label="`More actions for ${row.studentName}`" @click.stop>
+                      <el-icon><MoreFilled /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                      <el-dropdown-menu>
+                        <el-dropdown-item @click="openOneOnOneRenewal(row)">Renew</el-dropdown-item>
+                        <el-dropdown-item @click="openDetailDialog(row)">Detail</el-dropdown-item>
+                        <el-dropdown-item
+                          v-if="isPackagePinned(row)"
+                          divided
+                          class="package-actions-menu__unpin"
+                          :disabled="updatingPriorityPackageId !== null"
+                          @click="setPackagePinned(row, false)"
+                        >
+                          Unpin
+                        </el-dropdown-item>
+                        <el-dropdown-item
+                          v-else
+                          divided
+                          :disabled="updatingPriorityPackageId !== null"
+                          @click="setPackagePinned(row, true)"
+                        >
+                          Pin
+                        </el-dropdown-item>
+                      </el-dropdown-menu>
+                    </template>
+                  </el-dropdown>
                 </template>
               </el-table-column>
             </el-table>
@@ -197,26 +229,49 @@
                 v-for="pkg in group.packages"
                 :key="pkg.id"
                 class="mobile-package-card"
-                :class="{ 'mobile-package-card--low-balance': isLowBalanceRenewalDue(pkg) }"
+                :class="{ 'mobile-package-card--low-balance': isLowBalancePinned(pkg) }"
               >
                 <header class="mobile-package-card__heading">
                   <div>
                     <strong>{{ pkg.studentName }}</strong>
                     <span>{{ packageDisplayName(pkg) }}</span>
                   </div>
-                  <el-tag size="small" :type="packageStatusType(pkg.packageStatus)">
-                    {{ packageStatusLabel(pkg.packageStatus) }}
-                  </el-tag>
+                  <div class="mobile-package-card__heading-actions">
+                    <el-tag size="small" :type="packageStatusType(pkg.packageStatus)">
+                      {{ packageStatusLabel(pkg.packageStatus) }}
+                    </el-tag>
+                    <el-dropdown trigger="click" placement="bottom-end" @click.stop>
+                      <el-button class="package-actions-trigger" text circle :aria-label="`More actions for ${pkg.studentName}`" @click.stop>
+                        <el-icon><MoreFilled /></el-icon>
+                      </el-button>
+                      <template #dropdown>
+                        <el-dropdown-menu>
+                          <el-dropdown-item @click="openOneOnOneRenewal(pkg)">Renew</el-dropdown-item>
+                          <el-dropdown-item @click="openDetailDialog(pkg)">Package details</el-dropdown-item>
+                          <el-dropdown-item
+                            v-if="isPackagePinned(pkg)"
+                            divided
+                            class="package-actions-menu__unpin"
+                            :disabled="updatingPriorityPackageId !== null"
+                            @click="setPackagePinned(pkg, false)"
+                          >
+                            Unpin
+                          </el-dropdown-item>
+                          <el-dropdown-item v-else divided :disabled="updatingPriorityPackageId !== null" @click="setPackagePinned(pkg, true)">Pin</el-dropdown-item>
+                        </el-dropdown-menu>
+                      </template>
+                    </el-dropdown>
+                  </div>
                 </header>
                 <div class="mobile-package-card__balance">
                   <div>
                     <span>Available hours</span>
-                    <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(pkg) }">
+                    <strong :class="{ 'low-balance-renewal-text': isLowBalancePinned(pkg) }">
                       {{ formatHours(pkg.remainingUnits) }} <small>/ {{ formatHours(pkg.totalUnits) }} hours</small>
                     </strong>
                   </div>
                   <el-progress :percentage="progressPercent(pkg)" :stroke-width="8" :show-text="false" />
-                  <el-tag v-if="isLowBalanceRenewalDue(pkg)" size="small" type="danger">Renewal needed</el-tag>
+                  <el-tag v-if="isLowBalancePinned(pkg)" size="small" type="danger">Renewal needed</el-tag>
                 </div>
                 <dl class="mobile-package-card__details">
                   <div>
@@ -228,10 +283,6 @@
                     <dd>{{ pkg.nextLessonStartAt ? formatScheduleDate(pkg.nextLessonStartAt) : 'Not scheduled' }}</dd>
                   </div>
                 </dl>
-                <div class="mobile-package-card__actions">
-                  <el-button type="primary" plain @click="openOneOnOneRenewal(pkg)">Renew</el-button>
-                  <el-button @click="openDetailDialog(pkg)">Package details</el-button>
-                </div>
               </article>
               <el-empty v-if="group.packages.length === 0" description="No packages in this group." />
             </div>
@@ -736,7 +787,7 @@
 </template>
 
 <script setup lang="ts">
-import { Close, Search } from '@element-plus/icons-vue';
+import { Close, MoreFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -748,6 +799,7 @@ import {
   fetchCoursePackages,
   pauseCoursePackage,
   resumeCoursePackage,
+  setCoursePackageRenewalPriority,
 } from '@/api/enrollment';
 import {
   fetchLessonRecord,
@@ -778,7 +830,7 @@ const router = useRouter();
 const appStore = useAppStore();
 const mobileSearchExpanded = ref(false);
 const RENEWAL_DUE_DAYS = 15;
-const LOW_BALANCE_RENEWAL_HOURS = 10;
+const AUTO_PIN_BALANCE_THRESHOLD_HOURS = 10;
 const PACKAGE_GROUP_COLLAPSE_STORAGE_KEY = 'course-packages.collapsed-groups.v1';
 const loading = ref(false);
 const detailDialogVisible = ref(false);
@@ -786,6 +838,7 @@ const detailTab = ref('overview');
 const detailData = ref<CoursePackageItem | null>(null);
 const signaturePrintLoading = ref(false);
 const signaturePrintFrame = ref<HTMLIFrameElement | null>(null);
+const updatingPriorityPackageId = ref<string | null>(null);
 const detailTeacherPrintOptions = computed(() => {
   const options = new Map<string, { key: string; teacher: string }>();
   for (const assignment of detailData.value?.teacherAssignments ?? []) {
@@ -908,18 +961,18 @@ const groupedTableData = computed(() => {
     key: string;
     courseName: string;
     gradeBand: string;
-    lowBalanceRenewal: boolean;
+    pinned: boolean;
     packages: OneOnOnePackageRow[];
   }>();
 
   for (const pkg of tableData.value) {
     const courseName = pkg.courseProductName?.trim() || pkg.packageName?.trim() || 'Unassigned course';
     const gradeBand = pkg.gradeBand?.trim() || 'General';
-    const lowBalanceRenewal = isLowBalanceRenewalDue(pkg);
-    const key = JSON.stringify([normalizeLabel(courseName), normalizeLabel(gradeBand), lowBalanceRenewal]);
+    const pinned = isPackagePinned(pkg);
+    const key = JSON.stringify([normalizeLabel(courseName), normalizeLabel(gradeBand), pinned]);
     let group = groups.get(key);
     if (!group) {
-      group = { key, courseName, gradeBand, lowBalanceRenewal, packages: [] };
+      group = { key, courseName, gradeBand, pinned, packages: [] };
       groups.set(key, group);
     }
     group.packages.push(pkg);
@@ -929,11 +982,11 @@ const groupedTableData = computed(() => {
     .map(group => ({
       ...group,
       packages: [...group.packages].sort((left, right) =>
-        (group.lowBalanceRenewal ? Number(left.remainingUnits) - Number(right.remainingUnits) : 0)
+        (group.pinned ? Number(left.remainingUnits) - Number(right.remainingUnits) : 0)
         || left.studentName.localeCompare(right.studentName)
         || left.packageName.localeCompare(right.packageName)),
     }))
-    .sort((left, right) => Number(right.lowBalanceRenewal) - Number(left.lowBalanceRenewal)
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned)
       || left.courseName.localeCompare(right.courseName)
       || left.gradeBand.localeCompare(right.gradeBand, undefined, { numeric: true }));
 });
@@ -1154,14 +1207,40 @@ function isOneOnOneRenewalDue(row: CoursePackageItem): boolean {
   return row.packageStatus === 'ACTIVE' && isRenewalDueByDate(row.estimatedEndDate);
 }
 
-function isLowBalanceRenewalDue(row: CoursePackageItem): boolean {
+function isPackagePinned(row: CoursePackageItem): boolean {
+  if (row.renewalPriorityOverride != null) return row.renewalPriorityOverride;
+  return isBelowAutoPinBalanceThreshold(row);
+}
+
+function isBelowAutoPinBalanceThreshold(row: CoursePackageItem): boolean {
   const remainingHours = Number(row.remainingUnits);
-  return Number.isFinite(remainingHours) && remainingHours <= LOW_BALANCE_RENEWAL_HOURS;
+  return Number.isFinite(remainingHours) && remainingHours <= AUTO_PIN_BALANCE_THRESHOLD_HOURS;
+}
+
+function isLowBalancePinned(row: CoursePackageItem): boolean {
+  return isPackagePinned(row) && isBelowAutoPinBalanceThreshold(row);
 }
 
 function oneOnOneRowClassName({ row }: { row: OneOnOnePackageRow }) {
-  if (isLowBalanceRenewalDue(row)) return 'low-balance-renewal-row';
+  if (isLowBalancePinned(row)) return 'low-balance-renewal-row';
+  if (isPackagePinned(row)) return '';
   return isOneOnOneRenewalDue(row) ? 'renewal-due-row' : '';
+}
+
+// 保存手动覆盖值后同步更新当前行，列表刷新时仍按服务端的优先级状态展示。
+async function setPackagePinned(row: OneOnOnePackageRow, pinned: boolean) {
+  const packageId = String(row.id);
+  if (isPackagePinned(row) === pinned || updatingPriorityPackageId.value) return;
+  updatingPriorityPackageId.value = packageId;
+  try {
+    await setCoursePackageRenewalPriority(row.id, pinned);
+    row.renewalPriorityOverride = pinned;
+    ElMessage.success(pinned ? 'Package pinned.' : 'Package unpinned.');
+  } catch (error) {
+    ElMessage.error(extractErrorMessage(error));
+  } finally {
+    updatingPriorityPackageId.value = null;
+  }
 }
 
 function normalizeLabel(value?: string | null): string {
@@ -1819,17 +1898,32 @@ loadTeachers();
   overflow-wrap: anywhere;
 }
 
-.mobile-package-card__actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 14px;
+.mobile-package-card__heading-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
 }
 
-.mobile-package-card__actions .el-button {
-  width: 100%;
-  min-height: 42px;
-  margin: 0;
+.package-actions-trigger {
+  width: 34px;
+  height: 34px;
+  color: #52657d;
+  font-size: 18px;
+}
+
+.product-table :deep(.package-actions-column-header .cell) {
+  white-space: nowrap;
+}
+
+.package-actions-trigger:hover,
+.package-actions-trigger:focus-visible {
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+:global(.package-actions-menu__unpin) {
+  color: #dc2626;
 }
 
 .low-balance-renewal-text {
@@ -1838,17 +1932,6 @@ loadTeachers();
 
 .renewal-reminder-tag {
   margin-top: 4px;
-}
-
-.row-action-button {
-  height: 26px;
-  border-radius: 999px;
-  font-weight: 500;
-  padding: 0 10px;
-}
-
-.row-action-button:hover {
-  background: #eff6ff;
 }
 
 .package-name-cell {

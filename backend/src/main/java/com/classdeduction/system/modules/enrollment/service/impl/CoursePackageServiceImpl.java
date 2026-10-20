@@ -135,9 +135,11 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         }
 
         if (Boolean.TRUE.equals(query.getPrioritizeLowBalance())) {
-            // remaining_units 使用半小时为单位，10 小时等于 20 units；排序放在分页查询中保障低余额包位于列表前页。
-            wrapper.last("ORDER BY CASE WHEN COALESCE(remaining_units, 0) <= 20 THEN 0 ELSE 1 END, "
-                    + "CASE WHEN COALESCE(remaining_units, 0) <= 20 THEN COALESCE(remaining_units, 0) END ASC, created_at DESC");
+            // 手动置顶状态优先于余额阈值；自动优先级在分页前计算，确保各页排序一致。
+            String effectivePinned = "COALESCE(renewal_priority_override, CASE WHEN COALESCE(remaining_units, 0) <= 20 THEN 1 ELSE 0 END)";
+            wrapper.last("ORDER BY CASE WHEN " + effectivePinned + " = 1 THEN 0 ELSE 1 END, "
+                    + "CASE WHEN " + effectivePinned + " = 1 THEN COALESCE(remaining_units, 0) END ASC, "
+                    + "created_at DESC");
         } else {
             // Apply user-specified sort before default createdAt sort
             if (StringUtils.hasText(query.getSortBy())) {
@@ -329,6 +331,25 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .createdAt(coursePackage.getCreatedAt())
                 .updatedAt(coursePackage.getUpdatedAt())
                 .build();
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void setRenewalPriority(Long id, boolean pinned, Long operatorId) {
+        CoursePackageEntity coursePackage = requireCoursePackage(id);
+        if (Boolean.valueOf(pinned).equals(coursePackage.getRenewalPriorityOverride())) {
+            return;
+        }
+        coursePackage.setRenewalPriorityOverride(pinned);
+        coursePackage.setUpdatedBy(operatorId);
+        if (coursePackageMapper.updateById(coursePackage) == 0) {
+            CoursePackageEntity latest = requireCoursePackage(id);
+            if (Boolean.valueOf(pinned).equals(latest.getRenewalPriorityOverride())) {
+                return;
+            }
+            throw new BusinessException("PACKAGE_UPDATE_CONFLICT",
+                    "The package changed while processing. Refresh and try again.");
+        }
     }
 
     private PrivateLessonGroupEntity loadPrivateLessonGroupByPackageId(Long packageId) {
@@ -710,6 +731,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 .pendingDeductionUnits(UnitConverter.toHoursDecimal(pendingProcessingUnits))
                 .pendingAdminDeductionUnits(UnitConverter.toHoursDecimal(pendingAdminDeductionUnits))
                 .remainingUnits(UnitConverter.toHoursDecimal(item.getRemainingUnits()))
+                .renewalPriorityOverride(item.getRenewalPriorityOverride())
                 .unresolvedPastHours(UnitConverter.toHoursDecimal(unresolvedPastUnits))
                 .receivedAmount(item.getReceivedAmount())
                 .packageStatus(item.getPackageStatus())

@@ -415,6 +415,10 @@ export function fetchCoursePackage(id: string | number) {
   return http.get<ApiResponse<CoursePackageItem>>(`/v1/enrollment/packages/${id}`);
 }
 
+export function setCoursePackageRenewalPriority(id: string | number, pinned: boolean) {
+  return http.put(`/v1/enrollment/packages/${id}/renewal-priority`, { pinned });
+}
+
 export function pauseCoursePackage(id: string | number) {
   return http.post(`/v1/enrollment/packages/${id}/pause`);
 }

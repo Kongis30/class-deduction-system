@@ -397,6 +397,7 @@ export interface CoursePackageItem {
   pendingDeductionUnits?: number;
   pendingAdminDeductionUnits?: number;
   remainingUnits: number;
+  renewalPriorityOverride?: boolean | null;
   unresolvedPastHours?: number;
   receivedAmount: number;
   packageStatus: string;

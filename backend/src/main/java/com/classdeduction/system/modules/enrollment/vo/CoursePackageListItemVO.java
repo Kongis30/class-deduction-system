@@ -32,6 +32,7 @@ public record CoursePackageListItemVO(
         Double pendingDeductionUnits,
         Double pendingAdminDeductionUnits,
         Double remainingUnits,
+        Boolean renewalPriorityOverride,
         Double unresolvedPastHours,
         BigDecimal receivedAmount,
         String packageStatus,

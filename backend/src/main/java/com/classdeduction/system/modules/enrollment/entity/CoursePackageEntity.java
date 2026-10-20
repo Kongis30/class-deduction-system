@@ -58,6 +58,9 @@ public class CoursePackageEntity extends BaseEntity {
 
     private Integer remainingUnits;
 
+    /** 手动置顶覆盖值；为空时按余额阈值自动判断，true/false 分别表示手动置顶/取消置顶。 */
+    private Boolean renewalPriorityOverride;
+
     private BigDecimal originalAmount;
 
     private BigDecimal discountAmount;

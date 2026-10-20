@@ -10,6 +10,7 @@ import com.classdeduction.system.modules.enrollment.dto.CoursePackagePageQuery;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageHoursAdjustmentRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageDeductedHoursRequest;
 import com.classdeduction.system.modules.enrollment.dto.CoursePackageUpdateRequest;
+import com.classdeduction.system.modules.enrollment.dto.CoursePackageRenewalPriorityRequest;
 import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageDetailVO;
 import com.classdeduction.system.modules.enrollment.vo.CoursePackageListItemVO;
@@ -75,6 +76,16 @@ public class CoursePackageController {
     @Operation(summary = "查询课时包详情")
     public ApiResponse<CoursePackageDetailVO> getPackage(@PathVariable Long id) {
         return ApiResponse.success(coursePackageService.getPackage(id));
+    }
+
+    @PutMapping("/{id}/renewal-priority")
+    @Operation(summary = "Set a course package's manual renewal priority")
+    public ApiResponse<Void> setRenewalPriority(
+            @PathVariable Long id,
+            @Valid @RequestBody CoursePackageRenewalPriorityRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        coursePackageService.setRenewalPriority(id, request.pinned(), currentUser.userId());
+        return ApiResponse.success("Renewal priority updated.", null);
     }
 
     @PutMapping("/{id}")

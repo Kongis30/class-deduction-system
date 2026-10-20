@@ -34,6 +34,9 @@ public interface CoursePackageService {
      */
     CoursePackageDetailVO getPackage(Long id);
 
+    /** 保存课包的手动置顶状态；为空的自动状态按余额阈值计算。 */
+    void setRenewalPriority(Long id, boolean pinned, Long operatorId);
+
     /**
      * 更新课时包。
      */
