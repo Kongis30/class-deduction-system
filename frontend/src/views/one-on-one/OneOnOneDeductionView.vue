@@ -880,7 +880,7 @@ let initializedTeacherList = false;
 
 const studentEntries = computed<StudentEntry[]>(() => teachers.value.flatMap(teacher =>
   teacher.students
-    .filter(student => student.packages.some(pkg => !isEndedPackage(pkg)))
+    .filter(student => student.packages.some(isActivePackage))
     .map(student => ({ teacher, student })),
 ));
 const allPackageCandidates = computed<PackageCandidate[]>(() => {
@@ -902,9 +902,9 @@ const allPackageCandidates = computed<PackageCandidate[]>(() => {
   }
   return candidates;
 });
-// 已结束课包仍由接口保留供历史追溯，但不进入消课页左侧的可选菜单。
+// 消课页左侧只列进行中的课包；停课和结课课包仍保留在详情与历史数据中。
 const menuPackageCandidates = computed(() =>
-  allPackageCandidates.value.filter(({ pkg }) => !isEndedPackage(pkg)),
+  allPackageCandidates.value.filter(({ pkg }) => isActivePackage(pkg)),
 );
 const teacherFilterOptions = computed(() => {
   const availableTeacherKeys = new Set(menuPackageCandidates.value.map(({ teacher }) => teacherKey(teacher)));
@@ -1434,9 +1434,9 @@ function courseTypeLabel(pkg: OneOnOnePackage) {
   return pkg.courseProductName?.trim() || pkg.packageName;
 }
 
-function isEndedPackage(pkg: OneOnOnePackage) {
+function isActivePackage(pkg: OneOnOnePackage) {
   const status = String(pkg.packageStatus ?? '').trim().toUpperCase();
-  return status === 'COMPLETED' || status === 'CLOSED';
+  return status === 'ACTIVE';
 }
 
 function candidatePackageLabel(pkg: OneOnOnePackage) {
