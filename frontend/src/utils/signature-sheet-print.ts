@@ -1,6 +1,6 @@
 import type { OneOnOneLesson, OneOnOnePackage, OneOnOneStudent } from '@/api/one-on-one';
 import type { SchedulePrintRevision } from '@/api/schedule';
-import { signatureLessonRows, signatureLessonStatus, signatureSubjectName } from '@/utils/one-on-one-signature-data';
+import { signatureLessonRows, signatureSubjectName } from '@/utils/one-on-one-signature-data';
 
 type SheetMode = 'parent' | 'teacher';
 
@@ -182,13 +182,12 @@ function renderLessonSection(rows: OneOnOneLesson[], coursePackage: OneOnOnePack
   const teacherColumns = mode === 'teacher' ? '<th>Time</th><th>Hours</th>' : '';
   return `<h2>Lesson records</h2>
     <table class="lesson-table"><thead><tr>
-      <th>Lesson name</th><th>Teacher</th><th>Date</th>${teacherColumns}<th>Status</th><th>Signature</th>
+      <th>Lesson name</th><th>Teacher</th><th>Date</th>${teacherColumns}<th>Signature</th>
     </tr></thead><tbody>${rows.map(row => `<tr>
         <td>${escapeHtml(signatureSubjectName(row, coursePackage))}</td>
         <td>${escapeHtml(teacherName(row))}</td>
         <td>${escapeHtml(formatDate(row.plannedStartAt))}</td>
         ${mode === 'teacher' ? `<td>${escapeHtml(formatLessonTime(row))}</td><td>${formatHours(row.plannedUnits)}</td>` : ''}
-        <td>${escapeHtml(signatureLessonStatus(row))}</td>
         <td>${escapeHtml(row.historicalSignatureText ?? '')}</td>
       </tr>`).join('')}</tbody></table>`;
 }

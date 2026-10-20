@@ -127,7 +127,7 @@
               </el-table-column>
               <el-table-column
                 label="Available"
-                min-width="145"
+                min-width="210"
                 align="center"
                 sortable
                 :sort-method="compareAvailableHours"
@@ -135,12 +135,16 @@
                 :filter-method="filterAvailableHours"
               >
                 <template #default="{ row }">
-                  <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(row) }">{{ formatHours(row.remainingUnits) }}</strong>
-                  <span> / {{ formatHours(row.totalUnits) }}</span>
-                  <el-progress :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
-                  <el-tag v-if="isLowBalanceRenewalDue(row)" class="renewal-reminder-tag" size="small" type="danger">
-                    Renewal needed
-                  </el-tag>
+                  <div class="available-cell">
+                    <div class="available-cell__value">
+                      <strong :class="{ 'low-balance-renewal-text': isLowBalanceRenewalDue(row) }">{{ formatHours(row.remainingUnits) }}</strong>
+                      <span>/ {{ formatHours(row.totalUnits) }}</span>
+                    </div>
+                    <el-progress class="available-cell__progress" :percentage="progressPercent(row)" :stroke-width="8" :show-text="false" />
+                    <el-tag v-if="isLowBalanceRenewalDue(row)" class="renewal-reminder-tag" size="small" type="danger">
+                      Renewal needed
+                    </el-tag>
+                  </div>
                 </template>
               </el-table-column>
               <el-table-column
@@ -523,13 +527,13 @@
           >
             Print Teacher Sheet
           </el-button>
-          <el-button @click="detailDialogVisible = false">Close</el-button>
           <el-button v-if="detailData?.packageStatus === 'ACTIVE'" :disabled="packageStatusSaving" @click="pauseConfirmationVisible = true">
             Pause Package
           </el-button>
           <el-button v-if="detailData?.packageStatus === 'PAUSED'" type="primary" @click="openResumePackage">
             Resume Package
           </el-button>
+          <el-button @click="detailDialogVisible = false">Close</el-button>
         </div>
       </template>
     </el-dialog>
@@ -712,6 +716,7 @@ import { ElMessage } from 'element-plus';
 import { computed, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 
+import { extractErrorMessage } from '@/api/http';
 import {
   adjustCoursePackageHours,
   fetchCoursePackage,
@@ -725,8 +730,15 @@ import {
   type LessonRecordQuery,
 } from '@/api/lesson';
 import { fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
-import { fetchRecurringScheduleRule, fetchRecurringScheduleRules } from '@/api/schedule';
+import {
+  fetchRecurringScheduleRule,
+  fetchRecurringScheduleRules,
+  fetchSchedulePrintHistory,
+} from '@/api/schedule';
+import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory } from '@/api/one-on-one';
 import { scheduleEndTimeForDisplay } from '@/utils/schedule-time';
+import { renderSignatureSheetDocument } from '@/utils/signature-sheet-print';
+import { findSignaturePackage, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import { useAppStore } from '@/stores/app';
@@ -1228,20 +1240,60 @@ async function openDetailDialog(row: CoursePackageItem) {
   }
 }
 
-/** 通过消课页已有打印路由生成同一套签字课次表，兼容已结束且已从消课菜单隐藏的课包。 */
-function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
+/** 在课包详情直接加载同一套签字表数据并打开预览，不依赖消课页路由。 */
+async function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
   const coursePackage = detailData.value;
   if (!coursePackage) return;
 
-  const printRoute = router.resolve({
-    name: 'one-on-one-deduction',
-    query: {
-      studentId: String(coursePackage.studentId),
-      packageId: String(coursePackage.id),
-      printSheet: mode,
-    },
-  });
-  window.open(printRoute.href, '_blank', 'noopener,noreferrer');
+  const preview = window.open('', '_blank');
+  if (!preview) {
+    ElMessage.warning('Allow pop-ups to open the signature sheet preview.');
+    return;
+  }
+  preview.opener = null;
+  preview.document.write('<!doctype html><html><head><title>Loading signature sheet</title></head><body style="font:16px Arial;padding:32px">Loading signature sheet…</body></html>');
+  preview.document.close();
+
+  try {
+    const [deductions, history, revisions] = await Promise.allSettled([
+      fetchOneOnOneDeductions({
+        studentId: coursePackage.studentId,
+        packageId: coursePackage.id,
+      }),
+      fetchPrivateSignatureHistory(coursePackage.id),
+      fetchSchedulePrintHistory(coursePackage.id),
+    ]);
+    if (deductions.status === 'rejected') throw deductions.reason;
+
+    const match = findSignaturePackage(
+      deductions.value.data.data,
+      coursePackage.studentId,
+      coursePackage.id,
+    );
+    if (!match) throw new Error('No signature sheet is available for this course.');
+
+    const warnings: string[] = [];
+    if (history.status === 'rejected') warnings.push('Verified historical signature entries could not be loaded.');
+    if (revisions.status === 'rejected') warnings.push('Schedule change history could not be loaded.');
+    const printPackage = history.status === 'fulfilled'
+      ? withSignatureHistory(match.coursePackage, history.value.data.data)
+      : match.coursePackage;
+
+    if (preview.closed) return;
+    preview.document.open();
+    preview.document.write(renderSignatureSheetDocument(
+      match.student,
+      printPackage,
+      mode,
+      revisions.status === 'fulfilled' ? revisions.value.data.data : [],
+      warnings,
+    ));
+    preview.document.close();
+    preview.focus();
+  } catch (error) {
+    if (preview.closed) return;
+    preview.document.body.textContent = extractErrorMessage(error);
+  }
 }
 
 async function reloadPackageDetail() {
@@ -1553,6 +1605,36 @@ loadTeachers();
   border-radius: 6px;
   overflow: hidden;
   border: 0;
+}
+
+.available-cell {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+}
+
+.available-cell__value {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+}
+
+.available-cell__value strong {
+  font-size: 16px;
+}
+
+.available-cell__value span {
+  color: #606266;
+}
+
+.available-cell__progress {
+  width: 100%;
+  max-width: 180px;
+  margin: 4px auto 0;
 }
 
 .product-table :deep(.renewal-due-row > td) {
