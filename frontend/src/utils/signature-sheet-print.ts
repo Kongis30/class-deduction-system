@@ -75,6 +75,267 @@ ${content}
 </body></html>`;
 }
 
+/** 1-on-1 消课页与课包详情共用的正式签字表模板，字段和打印样式以消课页为准。 */
+export function renderOneOnOneSignatureSheetDocument(
+  student: OneOnOneStudent,
+  coursePackage: OneOnOnePackage,
+  mode: SheetMode,
+  teacherKey = '__all__',
+): string {
+  const allLessons = signatureLessonRows(coursePackage);
+  const lessons = mode === 'teacher' && teacherKey !== '__all__'
+    ? allLessons.filter(row => signatureTeacherKey(row) === teacherKey)
+    : allLessons;
+  if (mode === 'teacher') {
+    lessons.sort((left, right) => Date.parse(left.plannedStartAt) - Date.parse(right.plannedStartAt)
+      || signatureSubjectName(left, coursePackage).localeCompare(signatureSubjectName(right, coursePackage))
+      || currentTeacherName(left).localeCompare(currentTeacherName(right)));
+  }
+  const studentName = escapeHtml(currentStudentDisplayName(student, coursePackage));
+  const content = mode === 'parent'
+    ? renderCurrentParentSheet(studentName, coursePackage, allLessons)
+    : renderCurrentTeacherSheet(studentName, coursePackage, lessons, teacherKey);
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${mode === 'parent' ? 'Parent' : 'Teacher'} Signature Sheet - ${studentName}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; color: #111; font-family: Arial, Helvetica, sans-serif; background: #f4f6f8; }
+  .toolbar { display: flex; justify-content: flex-end; gap: 8px; max-width: 1000px; margin: 0 auto 16px; }
+  .toolbar button { padding: 9px 16px; border: 1px solid #c8d3df; border-radius: 5px; background: #fff; color: #24364b; cursor: pointer; font-size: 14px; }
+  .toolbar button.primary { border-color: #3688ea; background: #3688ea; color: #fff; }
+  .oo-signature-sheet { max-width: 1000px; margin: 0 auto 12px; padding: 14px 16px; border: 1px solid #111; border-radius: 6px; background: #fff; color: #111; font-family: Arial, Helvetica, sans-serif; }
+  .oo-signature-sheet__meta { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }
+  .oo-signature-sheet__meta p { margin: 0; color: #111; font-size: 16px; line-height: 1.22; }
+  .oo-signature-sheet__meta strong { font-weight: 800; }
+  .oo-signature-hours { display: flex; flex: 1 0 100%; gap: 10px; }
+  .oo-signature-hours__group { display: flex; flex: 1; flex-direction: column; flex-wrap: nowrap; align-items: flex-start; gap: 4px; padding: 7px 10px; border: 1px solid #777; border-radius: 4px; }
+  .oo-signature-hours__group p { white-space: nowrap; }
+  .oo-signature-hours__group--balance { border-left: 3px solid #222; background: #f2f2f2; }
+  .oo-signature-subjects { display: grid; gap: 2px; margin-bottom: 30px; }
+  .oo-signature-subject-line { display: grid; grid-template-columns: 1.2fr 1fr 1.45fr 1fr 1fr; gap: 16px; color: #111; font-size: 15px; font-weight: 600; }
+  .oo-signature-table { width: 100%; border-collapse: collapse; table-layout: fixed; color: #111; font-size: 14px; }
+  .oo-signature-table th, .oo-signature-table td { height: 22px; padding: 2px 4px; border: 1px solid #111; text-align: left; vertical-align: middle; word-break: break-word; }
+  .oo-signature-table th { font-weight: 700; }
+  .oo-teacher-sheet__meta { display: grid; grid-template-columns: auto auto auto; gap: 6px 36px; margin-bottom: 32px; }
+  .oo-teacher-sheet__meta p { margin: 0; color: #111; font-size: 16px; font-weight: 600; line-height: 1.35; }
+  .oo-teacher-sheet__meta p:first-child { grid-column: 1 / -1; }
+  .oo-teacher-sheet__meta p:nth-child(4) { grid-column: 1; }
+  .empty { padding: 24px; border: 1px solid #bbb; text-align: center; color: #555; }
+  @media (max-width: 700px) {
+    body { padding: 12px; }
+    .oo-signature-hours { flex-direction: column; }
+    .oo-signature-hours__group p { white-space: normal; }
+    .oo-signature-subject-line { grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+    .oo-teacher-sheet__meta { grid-template-columns: 1fr; gap: 6px; }
+    .oo-teacher-sheet__meta p:first-child, .oo-teacher-sheet__meta p:nth-child(4) { grid-column: auto; }
+    .oo-signature-table { font-size: 12px; }
+  }
+  @media print {
+    @page { size: letter portrait; margin: 0.5in 0.5in 0.5in 0.75in; }
+    body { padding: 0; background: #fff; }
+    .toolbar { display: none; }
+    .oo-signature-sheet { width: 100%; max-width: none; margin: 0; padding: 0; border: 0; border-radius: 0; break-inside: avoid; }
+    .oo-signature-subjects { margin-bottom: 28px; }
+    .oo-signature-table { margin-top: 6px; font-size: 14px; }
+    .oo-signature-table thead { display: table-header-group; }
+    .oo-signature-table tr { break-inside: avoid; }
+  }
+</style></head><body>
+<div class="toolbar"><button onclick="window.close()">Close</button><button class="primary" onclick="window.print()">Print</button></div>
+${content}
+</body></html>`;
+}
+
+function renderCurrentParentSheet(studentName: string, coursePackage: OneOnOnePackage, lessons: OneOnOneLesson[]) {
+  const lessonRows = lessons.map(row => `<tr>
+    <td>${escapeHtml(signatureSubjectName(row, coursePackage))}</td>
+    <td>${escapeHtml(currentTeacherName(row))}</td>
+    <td>${escapeHtml(currentLessonDate(row))}</td>
+    <td>${escapeHtml(row.historicalSignatureText ?? '')}</td>
+  </tr>`).join('');
+  const summaries = currentSubjectSummaries(lessons, coursePackage).map(summary => `<div class="oo-signature-subject-line">
+    <span><strong>Lesson name:</strong> ${escapeHtml(summary.subject)}</span>
+    <span><strong>Teacher:</strong> ${escapeHtml(summary.teacher)}</span>
+    <span><strong>Classtime:</strong> ${escapeHtml(summary.classTime)}</span>
+    <span><strong>Hours on sheet:</strong> ${formatNumber(summary.hours)}</span>
+    <span><strong>Starting Date:</strong> ${escapeHtml(summary.startDate)}</span>
+  </div>`).join('');
+
+  return `<section class="oo-signature-sheet oo-parent-signature-sheet">
+    <div class="oo-signature-sheet__meta">
+      <p><strong>Student:</strong> ${studentName}</p>
+      <div class="oo-signature-hours">
+        <div class="oo-signature-hours__group">
+          <p><strong>Lessons on this sheet:</strong> ${formatNumber(lessons.reduce((total, row) => total + Number(row.plannedUnits ?? 0), 0))}</p>
+          <p><strong>Package hours:</strong> ${formatNumber(coursePackage.totalUnits)}</p>
+          <p><strong>Purchased Hours:</strong> ${formatNumber(coursePackage.purchasedUnits ?? coursePackage.totalUnits)}</p>
+          <p><strong>Bonus Hours:</strong> ${formatNumber(coursePackage.bonusUnits ?? 0)}</p>
+        </div>
+        <div class="oo-signature-hours__group oo-signature-hours__group--balance">
+          <p><strong>Already deducted:</strong> ${formatNumber(coursePackage.consumedUnits)}</p>
+          <p><strong>Remaining:</strong> ${formatNumber(coursePackage.remainingUnits)}</p>
+        </div>
+      </div>
+    </div>
+    <div class="oo-signature-subjects">${summaries}</div>
+    <table class="oo-signature-table oo-signature-table--detail"><thead><tr>
+      <th>Lesson name</th><th>Teacher</th><th>Date</th><th>Signature</th>
+    </tr></thead><tbody>${lessonRows || '<tr><td colspan="4">No lessons on this sheet.</td></tr>'}</tbody></table>
+  </section>`;
+}
+
+function currentStudentDisplayName(student: OneOnOneStudent, coursePackage: OneOnOnePackage) {
+  const participantNames = (coursePackage.participants ?? [])
+    .map(item => item.studentName?.trim())
+    .filter((name): name is string => Boolean(name));
+  return participantNames.length ? participantNames.join(' / ') : student.studentName;
+}
+
+function renderCurrentTeacherSheet(
+  studentName: string,
+  coursePackage: OneOnOnePackage,
+  lessons: OneOnOneLesson[],
+  teacherKey: string,
+) {
+  const teacherOptions = currentTeacherOptions(coursePackage);
+  const summaries = teacherOptions
+    .filter(item => teacherKey === '__all__' || item.key === teacherKey)
+    .map(item => {
+      const hours = coursePackage.teacherHours?.find(row => String(row.teacherId) === item.key)
+        ?? coursePackage.teacherHours?.find(row => !row.teacherId && normalizeTeacher(row.teacherName) === item.key);
+      return `<p><strong>Total Hours:</strong> ${formatNumber(coursePackage.totalUnits)}h ·
+        <strong>Starting Hours:</strong> ${formatNumber(coursePackage.startingHours)}h ·
+        <strong>Allocated to ${escapeHtml(item.teacher)}:</strong> ${formatNumber(hours?.allocatedUnits)}h ·
+        <strong>Current schedule deducted by ${escapeHtml(item.teacher)}:</strong> ${formatNumber(hours?.deductedUnits)}h ·
+        <strong>Remaining with ${escapeHtml(item.teacher)}:</strong> ${formatNumber(hours?.remainingUnits)}h</p>`;
+    }).join('');
+  const teacherNames = Array.from(new Set(lessons.map(row => row.plannedTeacherName?.trim() || currentTeacherName(row))));
+  const rows = lessons.map(row => `<tr>
+    <td>${escapeHtml(signatureSubjectName(row, coursePackage))}</td>
+    <td>${escapeHtml(currentTeacherName(row))}</td>
+    <td>${escapeHtml(currentLessonDate(row))}</td>
+    <td>${escapeHtml(currentTimeOfDay(row) || '—')}</td>
+    <td>${formatNumber(row.plannedUnits)}</td>
+    <td>${escapeHtml(row.historicalSignatureText ?? '')}</td>
+  </tr>`).join('');
+  const startDate = lessons.length ? currentLessonDate(lessons[0]) : '—';
+
+  return `<section class="oo-signature-sheet oo-teacher-signature-sheet">
+    <div class="oo-teacher-sheet__meta">
+      <p><strong>Student:</strong> ${studentName}</p>
+      <p><strong>Course:</strong> ${escapeHtml(coursePackage.packageName)}</p>
+      <p><strong>Teacher(s):</strong> ${escapeHtml(teacherNames.join(', ') || '—')}</p>
+      <p><strong>Classtime:</strong> ${escapeHtml(currentClassTime(lessons))}</p>
+      <p><strong>Starting Date:</strong> ${escapeHtml(startDate)}</p>
+      ${summaries}
+    </div>
+    <table class="oo-signature-table oo-signature-table--teacher"><thead><tr>
+      <th>Lesson name</th><th>Teacher</th><th>Date</th><th>Time</th><th>Hours</th><th>Signature</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="6">No lessons on this sheet.</td></tr>'}</tbody></table>
+  </section>`;
+}
+
+function currentSubjectSummaries(lessons: OneOnOneLesson[], coursePackage: OneOnOnePackage) {
+  const groups = new Map<string, { subject: string; teacher: string; rows: OneOnOneLesson[]; hours: number }>();
+  for (const row of lessons) {
+    const subject = signatureSubjectName(row, coursePackage);
+    const teacher = currentTeacherName(row);
+    const teacherId = row.confirmStage === 'CONFIRMED'
+      ? row.actualTeacherId || row.plannedTeacherId
+      : row.plannedTeacherId;
+    const key = `${subject}__${teacherId == null || String(teacherId).trim() === ''
+      ? normalizeTeacher(teacher)
+      : String(teacherId)}`;
+    const group = groups.get(key) ?? { subject, teacher, rows: [], hours: 0 };
+    group.rows.push(row);
+    group.hours += Number(row.plannedUnits ?? 0);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(group => ({
+    ...group,
+    classTime: currentClassTime(group.rows),
+    startDate: currentLessonDate(group.rows[0]),
+  }));
+}
+
+function currentTeacherOptions(coursePackage: OneOnOnePackage) {
+  const options = new Map<string, { key: string; teacher: string }>();
+  for (const row of signatureLessonRows(coursePackage)) {
+    const teacher = row.plannedTeacherName?.trim() || currentTeacherName(row);
+    const key = currentScheduleTeacherKey(row);
+    if (!options.has(key)) options.set(key, { key, teacher });
+  }
+  return [...options.values()].sort((left, right) => left.teacher.localeCompare(right.teacher));
+}
+
+function signatureTeacherKey(row: OneOnOneLesson) {
+  return currentScheduleTeacherKey(row);
+}
+
+function currentScheduleTeacherKey(row: OneOnOneLesson) {
+  return String(row.plannedTeacherId ?? '').trim().toLowerCase()
+    || normalizeTeacher(row.plannedTeacherName);
+}
+
+function normalizeTeacher(value?: string) {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+function currentTeacherName(row: OneOnOneLesson) {
+  const name = row.confirmStage === 'CONFIRMED' ? row.actualTeacherName || row.plannedTeacherName : row.plannedTeacherName;
+  return name?.split(/\r?\n/)[0]?.trim() || 'To be assigned';
+}
+
+function currentLessonDate(row: OneOnOneLesson) {
+  if (row.signatureHistory) {
+    const [year, month, day] = row.plannedStartAt.slice(0, 10).split('-');
+    return year && month && day ? `${Number(month)}/${Number(day)}/${year}` : '—';
+  }
+  return formatDate(row.plannedStartAt);
+}
+
+function currentTimeOfDay(row: OneOnOneLesson) {
+  if (row.signatureHistory || !row.plannedStartAt || !row.plannedEndAt) return '';
+  const start = formatClock(row.plannedStartAt.slice(11, 16)).toLowerCase();
+  const end = formatClock(row.plannedEndAt.slice(11, 16)).toLowerCase().replace(':00', '');
+  return `${start}-${end}`;
+}
+
+function currentClassTime(lessons: OneOnOneLesson[]) {
+  const schedules = new Map<string, Set<number>>();
+  for (const row of lessons) {
+    const time = currentTimeOfDay(row);
+    const date = dateKeyInTimeZone(row.plannedStartAt);
+    if (!time || !date) continue;
+    const [year, month, day] = date.split('-').map(Number);
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    const days = schedules.get(time) ?? new Set<number>();
+    days.add(weekday);
+    schedules.set(time, days);
+  }
+  if (!schedules.size) return 'To be scheduled';
+  const weekdayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return [...schedules.entries()].map(([time, days]) =>
+    `${[...days].sort((a, b) => a - b).map(day => weekdayNames[day]).join('&')} ${time}`,
+  ).join(', ');
+}
+
+function formatNumber(value?: number) {
+  return Number(value ?? 0).toFixed(1);
+}
+
+function dateKeyInTimeZone(value: string) {
+  if (!value) return '';
+  if (!value.endsWith('Z') && !/[+-]\d{2}:\d{2}$/.test(value)) return value.slice(0, 10);
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date);
+}
+
 
 function renderParentSheet(
   student: OneOnOneStudent,

@@ -730,14 +730,10 @@ import {
   type LessonRecordQuery,
 } from '@/api/lesson';
 import { fetchAllStudents, fetchAllTeachers } from '@/api/base-data';
-import {
-  fetchRecurringScheduleRule,
-  fetchRecurringScheduleRules,
-  fetchSchedulePrintHistory,
-} from '@/api/schedule';
+import { fetchRecurringScheduleRule, fetchRecurringScheduleRules } from '@/api/schedule';
 import { fetchOneOnOneDeductions, fetchPrivateSignatureHistory } from '@/api/one-on-one';
 import { scheduleEndTimeForDisplay } from '@/utils/schedule-time';
-import { renderSignatureSheetDocument } from '@/utils/signature-sheet-print';
+import { renderOneOnOneSignatureSheetDocument } from '@/utils/signature-sheet-print';
 import { findSignaturePackage, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 import PauseConfirmationDialog from '@/components/shared/PauseConfirmationDialog.vue';
 import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
@@ -1255,13 +1251,12 @@ async function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
   preview.document.close();
 
   try {
-    const [deductions, history, revisions] = await Promise.allSettled([
+    const [deductions, history] = await Promise.allSettled([
       fetchOneOnOneDeductions({
         studentId: coursePackage.studentId,
         packageId: coursePackage.id,
       }),
       fetchPrivateSignatureHistory(coursePackage.id),
-      fetchSchedulePrintHistory(coursePackage.id),
     ]);
     if (deductions.status === 'rejected') throw deductions.reason;
 
@@ -1272,21 +1267,20 @@ async function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
     );
     if (!match) throw new Error('No signature sheet is available for this course.');
 
-    const warnings: string[] = [];
-    if (history.status === 'rejected') warnings.push('Verified historical signature entries could not be loaded.');
-    if (revisions.status === 'rejected') warnings.push('Schedule change history could not be loaded.');
+    if (history.status === 'rejected') {
+      ElMessage.warning('Historical signature entries could not be loaded. The sheet will include scheduled lessons only.');
+    }
     const printPackage = history.status === 'fulfilled'
       ? withSignatureHistory(match.coursePackage, history.value.data.data)
       : match.coursePackage;
 
     if (preview.closed) return;
     preview.document.open();
-    preview.document.write(renderSignatureSheetDocument(
+    preview.document.write(renderOneOnOneSignatureSheetDocument(
       match.student,
       printPackage,
       mode,
-      revisions.status === 'fulfilled' ? revisions.value.data.data : [],
-      warnings,
+      '__all__',
     ));
     preview.document.close();
     preview.focus();
