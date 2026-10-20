@@ -261,22 +261,21 @@
       width="900px"
       :close-on-click-modal="false"
       class="package-dialog"
-      @closed="closeOneOnOnePrintPreview"
+      @closed="clearOneOnOnePrintFrame"
     >
       <template #header>
-        <h3>{{ printPreviewMode ? `${printPreviewMode === 'parent' ? 'Parent' : 'Teacher'} Sheet Preview` : 'Package Detail' }}</h3>
+        <h3>Package Detail</h3>
       </template>
 
-      <div v-if="printPreviewHtml" class="package-print-preview">
-        <iframe
-          ref="signaturePreviewFrame"
-          :srcdoc="printPreviewHtml"
-          class="package-print-preview__frame"
-          title="Signature sheet print preview"
-        />
-      </div>
+      <iframe
+        ref="signaturePrintFrame"
+        class="package-signature-print-frame"
+        title="Signature sheet print document"
+        aria-hidden="true"
+        tabindex="-1"
+      />
 
-      <el-tabs v-else-if="detailData" v-model="detailTab" class="detail-tabs">
+      <el-tabs v-if="detailData" v-model="detailTab" class="detail-tabs">
         <!-- Tab 1: Basic Info -->
         <el-tab-pane label="Overview" name="overview">
           <div class="package-detail">
@@ -522,25 +521,20 @@
       </el-tabs>
 
       <template #footer>
-        <div v-if="printPreviewHtml" class="dialog-footer">
-          <el-button @click="closeOneOnOnePrintPreview">Back to package detail</el-button>
-          <el-button type="primary" @click="printOneOnOnePreview">Print Sheet</el-button>
-          <el-button @click="detailDialogVisible = false">Close</el-button>
-        </div>
-        <div v-else class="dialog-footer">
+        <div class="dialog-footer">
           <el-button
             v-if="detailData"
             plain
-            :loading="printPreviewLoading"
-            @click="openOneOnOnePrintSheet('parent')"
+            :loading="signaturePrintLoading"
+            @click="printOneOnOneSheet('parent')"
           >
             Print Parent Sheet
           </el-button>
           <el-button
             v-if="detailData"
             plain
-            :loading="printPreviewLoading"
-            @click="openOneOnOnePrintSheet('teacher')"
+            :loading="signaturePrintLoading"
+            @click="printOneOnOneSheet('teacher')"
           >
             Print Teacher Sheet
           </el-button>
@@ -776,10 +770,8 @@ const loading = ref(false);
 const detailDialogVisible = ref(false);
 const detailTab = ref('overview');
 const detailData = ref<CoursePackageItem | null>(null);
-const printPreviewHtml = ref('');
-const printPreviewMode = ref<'parent' | 'teacher' | null>(null);
-const printPreviewLoading = ref(false);
-const signaturePreviewFrame = ref<HTMLIFrameElement | null>(null);
+const signaturePrintLoading = ref(false);
+const signaturePrintFrame = ref<HTMLIFrameElement | null>(null);
 
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const teachers = ref<TeacherItem[]>([]);
@@ -1257,12 +1249,12 @@ async function openDetailDialog(row: CoursePackageItem) {
   }
 }
 
-/** 在课包详情直接加载同一套签字表数据并打开预览，不依赖消课页路由。 */
-async function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
+/** 课包详情按钮直接调用浏览器打印；打印内容仍复用 1-on-1 签字表模板。 */
+async function printOneOnOneSheet(mode: 'parent' | 'teacher') {
   const coursePackage = detailData.value;
-  if (!coursePackage || printPreviewLoading.value) return;
+  if (!coursePackage || signaturePrintLoading.value) return;
 
-  printPreviewLoading.value = true;
+  signaturePrintLoading.value = true;
   try {
     const [deductions, history] = await Promise.allSettled([
       fetchOneOnOneDeductions({
@@ -1287,34 +1279,48 @@ async function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
       ? withSignatureHistory(match.coursePackage, history.value.data.data)
       : match.coursePackage;
 
-    printPreviewMode.value = mode;
-    printPreviewHtml.value = renderOneOnOneSignatureSheetDocument(
+    const frame = signaturePrintFrame.value;
+    if (!frame) throw new Error('The print document is not ready.');
+    const printWindow = await loadSignaturePrintDocument(frame, renderOneOnOneSignatureSheetDocument(
       match.student,
       printPackage,
       mode,
       '__all__',
       { embedded: true },
-    );
+    ));
+    printWindow.focus();
+    printWindow.print();
   } catch (error) {
     ElMessage.error(extractErrorMessage(error));
   } finally {
-    printPreviewLoading.value = false;
+    signaturePrintLoading.value = false;
   }
 }
 
-function closeOneOnOnePrintPreview() {
-  printPreviewHtml.value = '';
-  printPreviewMode.value = null;
+/** 等隐藏 iframe 完成文档加载，再让浏览器直接打开这份签字表的打印预览。 */
+function loadSignaturePrintDocument(frame: HTMLIFrameElement, html: string): Promise<Window> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      frame.removeEventListener('load', handleLoad);
+      reject(new Error('The print document took too long to load.'));
+    }, 15000);
+    const handleLoad = () => {
+      window.clearTimeout(timeout);
+      const printWindow = frame.contentWindow;
+      if (!printWindow) {
+        reject(new Error('The print document is not available.'));
+        return;
+      }
+      resolve(printWindow);
+    };
+
+    frame.addEventListener('load', handleLoad, { once: true });
+    frame.srcdoc = html;
+  });
 }
 
-function printOneOnOnePreview() {
-  const previewWindow = signaturePreviewFrame.value?.contentWindow;
-  if (!previewWindow) {
-    ElMessage.error('The print preview is not ready yet.');
-    return;
-  }
-  previewWindow.focus();
-  previewWindow.print();
+function clearOneOnOnePrintFrame() {
+  if (signaturePrintFrame.value) signaturePrintFrame.value.srcdoc = '';
 }
 
 async function reloadPackageDetail() {
@@ -1856,19 +1862,13 @@ loadTeachers();
   border-top: 1px solid #ebeef5;
   padding: 12px 20px;
 }
-.package-print-preview {
-  height: min(72vh, 900px);
-  min-height: 360px;
-  overflow: auto;
-  background: #f4f6f8;
-}
-.package-print-preview__frame {
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-height: 360px;
+.package-signature-print-frame {
+  position: fixed;
+  top: 0;
+  left: -10000px;
+  width: 1000px;
+  height: 900px;
   border: 0;
-  background: #f4f6f8;
 }
 
 .detail-tabs :deep(.el-tabs__header) { margin: 0 0 -1px 0; padding: 0 16px; }
