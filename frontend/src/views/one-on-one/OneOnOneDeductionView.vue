@@ -2013,7 +2013,7 @@ function openConfirm(row: OneOnOneLesson, mode: 'normal' | 'admin') {
 }
 
 async function submitConfirm() {
-  if (!selectedLesson.value) return;
+  if (submitting.value || !selectedLesson.value) return;
   const nonAttendance = isNonAttendanceStatus(confirmForm.resultStatus);
   if (!nonAttendance && !confirmForm.actualStartAt) {
     ElMessage.error('Actual start time is required for a completed lesson.');
