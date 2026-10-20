@@ -985,9 +985,10 @@ const expandedStudentGroupKeys = ref(new Set<string>());
 let initializedTeacherList = false;
 
 const studentEntries = computed<StudentEntry[]>(() => teachers.value.flatMap(teacher =>
-  teacher.students.map(student => ({ teacher, student })),
+  teacher.students
+    .filter(student => student.packages.some(pkg => !isEndedPackage(pkg)))
+    .map(student => ({ teacher, student })),
 ));
-const teacherFilterOptions = computed(() => teachers.value.filter(teacher => Boolean(teacher.teacherId)));
 const allPackageCandidates = computed<PackageCandidate[]>(() => {
   const candidates: PackageCandidate[] = [];
   for (const teacher of teachers.value) {
@@ -1007,6 +1008,15 @@ const allPackageCandidates = computed<PackageCandidate[]>(() => {
   }
   return candidates;
 });
+// 已结束课包仍由接口保留供历史追溯，但不进入消课页左侧的可选菜单。
+const menuPackageCandidates = computed(() =>
+  allPackageCandidates.value.filter(({ pkg }) => !isEndedPackage(pkg)),
+);
+const teacherFilterOptions = computed(() => {
+  const availableTeacherKeys = new Set(menuPackageCandidates.value.map(({ teacher }) => teacherKey(teacher)));
+  return teachers.value.filter(teacher =>
+    Boolean(teacher.teacherId) && availableTeacherKeys.has(teacherKey(teacher)));
+});
 const activeStudentSearch = computed(() => appliedStudentSearch.value.trim());
 const searchedStudentKeys = computed(() => new Set(
   matchedSearchStudentIds.value,
@@ -1018,14 +1028,14 @@ const activePackageStudentNames = computed(() => (activePackage.value?.participa
 const selectedTeacherKey = computed(() => entityKey(selectedTeacherId.value));
 const courseTypeOptions = computed(() => {
   const options = new Set<string>();
-  for (const candidate of allPackageCandidates.value) {
+  for (const candidate of menuPackageCandidates.value) {
     options.add(courseTypeLabel(candidate.pkg));
   }
   return Array.from(options).sort((left, right) => left.localeCompare(right));
 });
 const gradeOptions = computed(() => {
   const grades = new Set<string>();
-  for (const candidate of allPackageCandidates.value) {
+  for (const candidate of menuPackageCandidates.value) {
     if (selectedCourseType.value && candidate.courseProductKey !== optionKey(selectedCourseType.value)) continue;
     grades.add(normalizedGradeBand(candidate.pkg.gradeBand));
   }
@@ -1036,8 +1046,8 @@ const hasActiveFilters = computed(() => Boolean(
 ));
 const filteredPackageCandidates = computed(() =>
   hasActiveFilters.value
-    ? allPackageCandidates.value.filter(matchesCandidateFilters)
-    : allPackageCandidates.value,
+    ? menuPackageCandidates.value.filter(matchesCandidateFilters)
+    : menuPackageCandidates.value,
 );
 const teacherGradeGroups = computed<TeacherGradeGroup[]>(() => {
   const teacherGroups = new Map<string, {
@@ -1532,7 +1542,7 @@ function selectRouteDeductionTarget() {
   const { focus, studentId, packageId } = route.query;
   if (focus !== 'deduction' || typeof studentId !== 'string' || typeof packageId !== 'string') return;
 
-  const candidate = allPackageCandidates.value.find(({ student, pkg }) =>
+  const candidate = menuPackageCandidates.value.find(({ student, pkg }) =>
     String(student.studentId) === studentId && String(pkg.packageId) === packageId);
   if (!candidate) {
     ElMessage.warning('The selected student course is not available in the deduction list.');
@@ -1622,7 +1632,7 @@ function isSelectedCandidate(candidate: PackageCandidate) {
 
 // 消课或调整后重载列表时，优先恢复原老师下的课包；原分组消失则清空选择。
 function restoreSelectedPackage() {
-  const selected = allPackageCandidates.value.find(isSelectedCandidate);
+  const selected = menuPackageCandidates.value.find(isSelectedCandidate);
   if (selected) {
     selectPackage(selected.teacher, selected.student, selected.pkg);
   } else {
@@ -1652,6 +1662,11 @@ function normalizedGradeBand(value?: string) {
 
 function courseTypeLabel(pkg: OneOnOnePackage) {
   return pkg.courseProductName?.trim() || pkg.packageName;
+}
+
+function isEndedPackage(pkg: OneOnOnePackage) {
+  const status = String(pkg.packageStatus ?? '').trim().toUpperCase();
+  return status === 'COMPLETED' || status === 'CLOSED';
 }
 
 function candidatePackageLabel(pkg: OneOnOnePackage) {

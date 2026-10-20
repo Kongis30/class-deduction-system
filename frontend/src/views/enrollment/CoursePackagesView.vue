@@ -509,6 +509,20 @@
 
       <template #footer>
         <div class="dialog-footer">
+          <el-button
+            v-if="detailData"
+            plain
+            @click="openOneOnOnePrintSheet('parent')"
+          >
+            Print Parent Sheet
+          </el-button>
+          <el-button
+            v-if="detailData"
+            plain
+            @click="openOneOnOnePrintSheet('teacher')"
+          >
+            Print Teacher Sheet
+          </el-button>
           <el-button @click="detailDialogVisible = false">Close</el-button>
           <el-button v-if="detailData?.packageStatus === 'ACTIVE'" :disabled="packageStatusSaving" @click="pauseConfirmationVisible = true">
             Pause Package
@@ -1212,6 +1226,22 @@ async function openDetailDialog(row: CoursePackageItem) {
   } catch {
     ElMessage.error('Failed to load package detail.');
   }
+}
+
+/** 通过消课页已有打印路由生成同一套签字课次表，兼容已结束且已从消课菜单隐藏的课包。 */
+function openOneOnOnePrintSheet(mode: 'parent' | 'teacher') {
+  const coursePackage = detailData.value;
+  if (!coursePackage) return;
+
+  const printRoute = router.resolve({
+    name: 'one-on-one-deduction',
+    query: {
+      studentId: String(coursePackage.studentId),
+      packageId: String(coursePackage.id),
+      printSheet: mode,
+    },
+  });
+  window.open(printRoute.href, '_blank', 'noopener,noreferrer');
 }
 
 async function reloadPackageDetail() {
