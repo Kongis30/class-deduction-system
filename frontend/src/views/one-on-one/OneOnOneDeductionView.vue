@@ -7,7 +7,7 @@
       </div>
       <div class="oo-actions">
         <el-button v-if="!appStore.isMobileViewport" class="action-primary oo-refresh" type="primary" :loading="loading" @click="loadData">Refresh</el-button>
-        <el-button v-if="!appStore.isMobileViewport" class="action-print" :disabled="!activePackage" @click="printCurrentPackage('parent')">Print Parent Sheet</el-button>
+        <el-button v-if="!appStore.isMobileViewport" class="action-print" :disabled="!activePackage" @click="printCurrentPackage('parent')">Print Student Sheet</el-button>
         <el-dropdown
           v-if="!appStore.isMobileViewport"
           trigger="click"
@@ -382,31 +382,18 @@
             :title="`Scheduled and pending lesson hours exceed the remaining package balance by ${formatHours((activePackage.scheduledReservedUnits ?? 0) - activePackage.remainingUnits)}h. Review this package's schedule and pending lessons.`"
           />
 
-          <div
-            v-if="!appStore.isMobileViewport || nextArrangementLesson"
-            class="oo-action-line no-print"
-            :class="{ 'oo-action-line--done': workflowComplete }"
-          >
+          <div v-if="nextArrangementLesson" class="oo-action-line no-print">
             <span class="oo-action-line__marker" aria-hidden="true"></span>
             <div>
-              <strong>{{ nextActionTitle }}</strong>
-              <span>{{ nextActionHint }}</span>
+              <strong>Set teacher before deduction</strong>
+              <span>
+                {{ formatDate(nextArrangementLesson.plannedStartAt) }}
+                {{ formatTimeRange(nextArrangementLesson.plannedStartAt, nextArrangementLesson.plannedEndAt) }}
+                has no assigned teacher.
+              </span>
             </div>
-            <el-button
-              v-if="nextArrangementLesson"
-              class="action-primary"
-              type="primary"
-              @click="openAssignmentDialog(nextArrangementLesson)"
-            >
+            <el-button class="action-primary" type="primary" @click="openAssignmentDialog(nextArrangementLesson)">
               Set teacher
-            </el-button>
-            <el-button
-              v-else-if="nextActionLesson && canConfirmLessons"
-              class="action-primary"
-              :type="nextActionMode === 'admin' ? 'warning' : 'success'"
-              @click="openConfirm(nextActionLesson, nextActionMode)"
-            >
-              {{ nextActionButtonLabel }}
             </el-button>
           </div>
 
@@ -1179,11 +1166,6 @@ const teacherPrintOptions = computed(() => {
 function lessonSubjectName(row?: OneOnOneLesson) {
   return row?.subjectName?.trim() || 'Course name not recorded';
 }
-const workflowComplete = computed(() => !nextActionLesson.value
-  && !nextArrangementLesson.value
-  && pendingTeacherCount.value === 0
-  && pendingAdminCount.value === 0
-);
 const nextArrangementLesson = computed(() => {
   if (!canManageLessonResources.value) return null;
   return activePackage.value?.lessons.find(row =>
@@ -1196,41 +1178,6 @@ const nextActionLesson = computed(() => {
     ?? lessons.find(row => canInitialConfirm(row))
     ?? null;
 });
-const nextActionMode = computed<'normal' | 'admin'>(() =>
-  nextActionLesson.value && canAdminConfirm(nextActionLesson.value) ? 'admin' : 'normal'
-);
-const nextActionTitle = computed(() => {
-  if (!activePackage.value) return 'Select a student sheet';
-  if (nextArrangementLesson.value) return 'Set teacher before deduction';
-  if (nextActionLesson.value) {
-    return nextActionMode.value === 'admin' ? 'Review lesson and deduct hours' : 'Submit lesson attendance';
-  }
-  if (isAdmin.value && pendingTeacherCount.value > 0) return 'Waiting for teacher confirmation';
-  if (isTeacher.value && pendingAdminCount.value > 0) return 'Waiting for admin review';
-  return 'No lesson needs confirmation';
-});
-const nextActionHint = computed(() => {
-  if (!activePackage.value) return 'Choose a course above to start.';
-  if (nextArrangementLesson.value) {
-    const row = nextArrangementLesson.value;
-    return `${formatDate(row.plannedStartAt)} ${formatTimeRange(row.plannedStartAt, row.plannedEndAt)} has no assigned teacher. Set a teacher before attendance or deduction can continue.`;
-  }
-  const row = nextActionLesson.value;
-  if (!row) {
-    if (isAdmin.value && pendingTeacherCount.value > 0) {
-      return 'The teacher must submit attendance before this lesson can be reviewed and deducted.';
-    }
-    if (isTeacher.value && pendingAdminCount.value > 0) {
-      return 'The admin must review the lesson before hours are deducted.';
-    }
-    return 'All visible lessons are confirmed, cancelled, or waiting for a schedule update.';
-  }
-  return `${formatDate(row.plannedStartAt)} ${formatTimeRange(row.plannedStartAt, row.plannedEndAt)} · ${statusLabel(row)}`;
-});
-const nextActionButtonLabel = computed(() =>
-  nextActionMode.value === 'admin' ? 'Review & deduct' : 'Submit attendance'
-);
-
 const confirmDialogVisible = ref(false);
 const confirmMode = ref<'normal' | 'admin'>('normal');
 const selectedLesson = ref<OneOnOneLesson | null>(null);

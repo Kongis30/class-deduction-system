@@ -167,7 +167,7 @@
                           >
                             Package hours
                           </el-dropdown-item>
-                          <el-dropdown-item command="print-parent">Print student sheet</el-dropdown-item>
+                          <el-dropdown-item command="print-parent">Print Student Sheet</el-dropdown-item>
                           <el-dropdown-item command="print-teacher">Print teacher sheets</el-dropdown-item>
                           <el-dropdown-item v-if="currentRule" command="detail">Schedule details</el-dropdown-item>
                           <el-dropdown-item

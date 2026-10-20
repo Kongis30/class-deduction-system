@@ -528,16 +528,30 @@
             :loading="signaturePrintLoading"
             @click="printOneOnOneSheet('parent')"
           >
-            Print Parent Sheet
+            Print Student Sheet
           </el-button>
-          <el-button
+          <el-dropdown
             v-if="detailData"
-            plain
-            :loading="signaturePrintLoading"
-            @click="printOneOnOneSheet('teacher')"
+            trigger="click"
+            :disabled="signaturePrintLoading || detailTeacherPrintOptions.length === 0"
+            @command="printTeacherSheet"
           >
-            Print Teacher Sheet
-          </el-button>
+            <el-button plain :loading="signaturePrintLoading" :disabled="detailTeacherPrintOptions.length === 0">
+              Print Teacher Sheet
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="__all__">All teachers — one sheet</el-dropdown-item>
+                <el-dropdown-item
+                  v-for="option in detailTeacherPrintOptions"
+                  :key="option.key"
+                  :command="option.key"
+                >
+                  {{ option.teacher }}
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button v-if="detailData?.packageStatus === 'ACTIVE'" :disabled="packageStatusSaving" @click="pauseConfirmationVisible = true">
             Pause Package
           </el-button>
@@ -772,6 +786,21 @@ const detailTab = ref('overview');
 const detailData = ref<CoursePackageItem | null>(null);
 const signaturePrintLoading = ref(false);
 const signaturePrintFrame = ref<HTMLIFrameElement | null>(null);
+const detailTeacherPrintOptions = computed(() => {
+  const options = new Map<string, { key: string; teacher: string }>();
+  for (const assignment of detailData.value?.teacherAssignments ?? []) {
+    const teacher = assignment.teacherName?.trim();
+    if (!teacher) continue;
+    const key = String(assignment.teacherId || '').trim() || teacher.toLowerCase();
+    if (!options.has(key)) options.set(key, { key, teacher });
+  }
+  const primaryTeacher = detailData.value?.primaryTeacherName?.trim();
+  if (primaryTeacher) {
+    const key = primaryTeacher.toLowerCase();
+    if (!options.has(key)) options.set(key, { key, teacher: primaryTeacher });
+  }
+  return [...options.values()].sort((left, right) => left.teacher.localeCompare(right.teacher));
+});
 
 const students = ref<{ id: EntityId; studentName: string }[]>([]);
 const teachers = ref<TeacherItem[]>([]);
@@ -1250,7 +1279,7 @@ async function openDetailDialog(row: CoursePackageItem) {
 }
 
 /** 课包详情按钮直接调用浏览器打印；打印内容仍复用 1-on-1 签字表模板。 */
-async function printOneOnOneSheet(mode: 'parent' | 'teacher') {
+async function printOneOnOneSheet(mode: 'parent' | 'teacher', teacherKey = '__all__') {
   const coursePackage = detailData.value;
   if (!coursePackage || signaturePrintLoading.value) return;
 
@@ -1285,7 +1314,7 @@ async function printOneOnOneSheet(mode: 'parent' | 'teacher') {
       match.student,
       printPackage,
       mode,
-      '__all__',
+      teacherKey,
       { embedded: true },
     ));
     printWindow.focus();
@@ -1295,6 +1324,11 @@ async function printOneOnOneSheet(mode: 'parent' | 'teacher') {
   } finally {
     signaturePrintLoading.value = false;
   }
+}
+
+/** 课包详情按所选老师打印；All teachers 保留合并打印入口。 */
+function printTeacherSheet(command: string | number | object) {
+  void printOneOnOneSheet('teacher', String(command || '__all__'));
 }
 
 /** 等隐藏 iframe 完成文档加载，再让浏览器直接打开这份签字表的打印预览。 */
