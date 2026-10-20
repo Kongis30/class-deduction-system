@@ -3336,6 +3336,37 @@ function normalizeSlotAttendance(value?: string) {
 }
 
 @media (max-width: 640px) {
+  .config-panel {
+    padding: 10px 12px 14px;
+    border-radius: 0;
+  }
+
+  .config-panel__header {
+    justify-content: flex-end;
+    margin-bottom: 6px;
+  }
+
+  .config-panel__header > div:first-child {
+    display: none;
+  }
+
+  .header-actions .el-button {
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 0;
+    color: #64748b;
+    font-size: 12px;
+  }
+
+  .pricing-mode-tabs {
+    margin-bottom: 10px;
+  }
+
+  .pricing-mode-tab {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
   .registration-option-dialog :deep(.el-dialog__body) {
     padding: 12px;
   }

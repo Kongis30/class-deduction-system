@@ -322,20 +322,6 @@ function paymentMethodLabel(method: string) {
   font-size: 12px;
 }
 
-@media (max-width: 640px) {
-  .refund-receipt-paper {
-    padding: 26px 20px;
-  }
-
-  .refund-receipt-details {
-    grid-template-columns: 1fr;
-  }
-
-  .refund-receipt-footer {
-    flex-direction: column;
-  }
-}
-
 @media print {
   :global(body) {
     background: #fff !important;

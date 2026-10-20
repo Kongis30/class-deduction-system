@@ -2,7 +2,12 @@
   <div class="pr-page">
 
     <aside class="pr-sidebar" :class="{ 'pr-sidebar--mobile-hidden': appStore.isMobileViewport && selectedTeacherId }">
-      <div v-if="appStore.isMobileViewport" class="mobile-search-toggle-row">
+      <div v-if="appStore.isMobileViewport" class="pr-mobile-list-header">
+        <div>
+          <strong>Teacher list</strong>
+          <span v-if="teachersLoading">Loading teachers…</span>
+          <span v-else>{{ filteredTeachers.length }} teachers</span>
+        </div>
         <button
           type="button"
           class="mobile-search-trigger"
@@ -46,6 +51,7 @@
       <div v-if="appStore.isMobileViewport && selectedTeacher" class="pr-mobile-selection">
         <el-button text @click="selectedTeacherId = null">← Teacher list</el-button>
         <strong>{{ selectedTeacher.teacherName }}</strong>
+        <small>{{ selectedTeacher.teacherNo }}</small>
       </div>
       <div v-if="!selectedTeacherId" class="pr-content__placeholder">
         Select a teacher from the left panel to set their hourly rates.
@@ -85,6 +91,10 @@
             <span>Used only when a matching scope exists.</span>
           </div>
         </div>
+        <details v-if="appStore.isMobileViewport" class="pr-mobile-rule-guide">
+          <summary>How rate rules work</summary>
+          <p><strong>Teacher standard</strong> applies by default. A product rate overrides it for that course. A special rate applies when its grade, delivery, or student scope matches.</p>
+        </details>
 
         <section class="pr-section">
               <div class="pr-section__heading">
@@ -102,6 +112,7 @@
                 </div>
               </div>
               <el-table
+                v-if="!appStore.isMobileViewport"
                 v-loading="loading"
                 :data="rateGroups"
                 row-key="key"
@@ -226,7 +237,7 @@
 
     <el-dialog
       v-model="editDialogVisible"
-      width="400px"
+      :width="appStore.isMobileViewport ? 'calc(100vw - 24px)' : '400px'"
       :close-on-click-modal="false"
       class="pr-dialog"
     >
@@ -319,7 +330,7 @@
 </template>
 
 <script setup lang="ts">
-import { Close, Search } from '@element-plus/icons-vue';
+import { ArrowDown, Close, MoreFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, ref } from 'vue';
 
@@ -368,6 +379,7 @@ interface RateGroup {
 
 const defaultRate = ref<RateRow | null>(null);
 const rateExceptionRows = ref<RateRow[]>([]);
+const expandedExceptionGroups = ref(new Set<string>());
 const savingProductId = ref<EntityId | null>(null);
 const removingRateId = ref<EntityId | null>(null);
 
@@ -608,6 +620,31 @@ function formatDelivery(value?: string) {
   if (value === 'ONLINE') return 'Online';
   if (value === 'OFFLINE') return 'In person';
   return 'Any delivery';
+}
+
+function effectiveRateSource(group: RateGroup) {
+  if (group.key === 'all-courses') return defaultRate.value ? 'Teacher standard' : 'Not set';
+  if (group.baseRate) return 'Course-specific rate';
+  return defaultRate.value ? 'Uses teacher standard' : 'Rate not set';
+}
+
+function specialRateScope(rate: RateRow) {
+  return [
+    rate.gradeBand || 'Any grade',
+    formatDelivery(rate.deliveryMode),
+    rate.studentName || (rate.studentId ? 'Selected student' : 'All students'),
+  ].join(' · ');
+}
+
+function isExceptionListExpanded(groupKey: string) {
+  return expandedExceptionGroups.value.has(groupKey);
+}
+
+function toggleExceptionList(groupKey: string) {
+  const next = new Set(expandedExceptionGroups.value);
+  if (next.has(groupKey)) next.delete(groupKey);
+  else next.add(groupKey);
+  expandedExceptionGroups.value = next;
 }
 
 function scopeSummary(row: RateRow) {
@@ -1012,12 +1049,17 @@ onMounted(async () => {
 }
 
 @media (max-width: 920px) {
-  .pr-page { gap: 10px; }
-  .pr-sidebar { min-height: min(55dvh, 480px); max-height: none; }
+  .pr-page { height: calc(100dvh - 176px); min-height: 0; align-items: stretch; gap: 10px; }
+  .pr-sidebar { height: 100%; min-height: 0; max-height: none; border-color: #d5deea; border-radius: 10px; box-shadow: 0 2px 8px rgb(33 53 77 / 5%); }
   .pr-sidebar--mobile-hidden,
   .pr-content--mobile-hidden { display: none; }
-  .pr-sidebar__list { max-height: min(55dvh, 480px); overflow-y: auto; }
-  .pr-sidebar__item { min-height: 48px; border-bottom: 1px solid #edf0f4; }
+  .pr-sidebar__list { flex: 1; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+  .pr-mobile-list-header { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:58px; padding:9px 12px; border-bottom:1px solid #e1e8f0; background:#f8fafc; }
+  .pr-mobile-list-header > div { display:grid; gap:2px; }
+  .pr-mobile-list-header strong { color:#27384b; font-size:14px; }
+  .pr-mobile-list-header span { color:#8190a2; font-size:11px; }
+  .pr-mobile-list-header .mobile-search-trigger { flex:none; }
+  .pr-sidebar__item { min-height:58px; padding:10px 14px; border-bottom:1px solid #e7edf3; border-left:3px solid transparent; }
   .pr-content { width: 100%; min-width: 0; overflow: visible; }
   .pr-table { display: none; }
   .pr-mobile-rate-list { display: grid; gap: 10px; }
@@ -1036,5 +1078,56 @@ onMounted(async () => {
   .pr-mobile-exception span { color: #1f6b4d; font-size: 12px; font-weight: 600; }
   .pr-mobile-selection { display: flex; align-items: center; gap: 10px; min-height: 44px; margin: 0 0 10px; padding: 4px 8px; border: 1px solid #e1e8f0; border-radius: 10px; background: #fff; }
   .pr-mobile-selection strong { overflow: hidden; color: #1f2937; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+  .pr-mobile-selection small { color: #8491a3; font-size: 11px; }
+  .pr-content { padding: 12px; }
+  .pr-content__header { gap: 8px; margin-bottom: 10px; }
+  .pr-content__header > div:first-child { display: none; }
+  .pr-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; justify-content: stretch; }
+  .pr-summary span { min-width: 0; padding: 8px; line-height: 1.3; }
+  .pr-rule-strip { display: none; }
+  .pr-mobile-rule-guide { margin: 0 0 12px; border: 1px solid #e2e9f1; border-radius: 8px; background: #f8fafc; color: #536273; }
+  .pr-mobile-rule-guide summary { padding: 9px 11px; color: #3f5267; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .pr-mobile-rule-guide p { margin: 0; padding: 0 11px 10px; font-size: 12px; line-height: 1.5; }
+  .pr-section { gap: 8px; }
+  .pr-section__heading { display: grid; gap: 8px; }
+  .pr-section__heading strong { font-size: 15px; }
+  .pr-section__heading > div:first-child > span { display: none; }
+  .pr-section__actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .pr-section__actions .el-button { min-width: 0; min-height: 36px; margin: 0; padding: 0 7px; font-size: 12px; }
+  .mobile-rate-list { display: grid; gap: 8px; min-width: 0; }
+  .mobile-rate-card { min-width: 0; padding: 11px; border: 1px solid #dce5ef; border-radius: 9px; background: #fff; }
+  .mobile-rate-card__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .mobile-rate-card__product { display: grid; gap: 3px; min-width: 0; }
+  .mobile-rate-card__product strong { overflow-wrap: anywhere; color: #27384b; font-size: 13px; line-height: 1.35; }
+  .mobile-rate-card__product small { color: #8793a1; font-size: 11px; }
+  .mobile-rate-card__header .el-tag { flex: none; }
+  .mobile-rate-card__effective { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 9px; padding: 9px; border-radius: 7px; background: #f4f7fb; }
+  .mobile-rate-card__effective > div { display: grid; gap: 2px; }
+  .mobile-rate-card__effective small { color: #758397; font-size: 10px; }
+  .mobile-rate-card__effective strong { color: #223b57; font-size: 17px; line-height: 1.2; }
+  .mobile-rate-card__effective strong span { margin-left: 3px; color: #748397; font-size: 11px; font-weight: 500; }
+  .mobile-rate-card__source { max-width: 45%; color: #55708d; font-size: 10px; text-align: right; }
+  .mobile-rate-card__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+  .mobile-rate-card__actions .el-button { min-height: 30px; margin: 0; padding: 0 8px; font-size: 11px; }
+  .mobile-rate-card__actions :deep(.el-icon) { margin-left: 3px; transition: transform .15s ease; }
+  .mobile-rate-card__chevron--expanded { transform: rotate(180deg); }
+  .mobile-special-rates { margin-top: 9px; padding-top: 9px; border-top: 1px solid #e9eef4; }
+  .mobile-special-rates__heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; color: #42556b; font-size: 12px; }
+  .mobile-special-rates__heading .el-button { min-height: 28px; margin: 0; }
+  .mobile-special-rate-list { display: grid; gap: 6px; }
+  .mobile-special-rate { padding: 8px; border-left: 3px solid #9bb8d8; border-radius: 5px; background: #f8fafc; }
+  .mobile-special-rate__summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .mobile-special-rate__summary > div { display: grid; gap: 3px; min-width: 0; }
+  .mobile-special-rate__summary strong { color: #27384b; font-size: 13px; }
+  .mobile-special-rate__summary strong span { color: #7d8999; font-size: 10px; font-weight: 400; }
+  .mobile-special-rate__summary small { overflow-wrap: anywhere; color: #758397; font-size: 10px; line-height: 1.4; }
+  .mobile-special-rate__summary .el-button { min-height: 28px; margin: 0; }
+  .mobile-special-rate__scopes { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .mobile-special-rate__scopes span { padding: 2px 6px; border-radius: 4px; background: #eaf0f7; color: #53677e; font-size: 10px; }
+  .mobile-special-rates__empty { margin: 0; color: #8995a3; font-size: 11px; line-height: 1.45; }
+  .pr-dialog { max-width: calc(100vw - 24px); }
+  .pr-dialog :deep(.el-dialog__body) { padding: 12px; }
+  .pr-dialog :deep(.el-dialog__header),
+  .pr-dialog :deep(.el-dialog__footer) { padding-right: 14px; padding-left: 14px; }
 }
 </style>

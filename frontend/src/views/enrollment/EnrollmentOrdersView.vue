@@ -577,65 +577,85 @@
 
           <div v-else v-loading="loadingClasses" class="mobile-group-products">
             <article v-for="product in groupClassTree" :key="product.productId" class="mobile-group-product">
-              <header class="mobile-group-product__heading">
+              <button
+                type="button"
+                class="mobile-group-product__toggle"
+                :aria-expanded="isProductExpanded(product.productId)"
+                @click="toggleProduct(product.productId)"
+              >
                 <strong>{{ product.productName }}</strong>
                 <span>{{ product.projects.reduce((sum, project) => sum + project.classes.length, 0) }} classes</span>
-              </header>
-              <section v-for="project in product.projects" :key="project.key" class="mobile-group-project">
-                <h3 v-if="!project.hideHeading">
-                  {{ project.projectName }} <small>{{ project.classes.length }} classes</small>
-                </h3>
-                <article v-for="classInfo in project.classes" :key="classInfo.id" class="mobile-group-class">
+                <el-icon :class="{ 'mobile-group-product__caret--expanded': isProductExpanded(product.productId) }"><ArrowDown /></el-icon>
+              </button>
+              <div v-if="isProductExpanded(product.productId)" class="mobile-group-product__content">
+                <section v-for="project in product.projects" :key="project.key" class="mobile-group-project">
                   <button
+                    v-if="!project.hideHeading"
                     type="button"
-                    class="mobile-group-class__toggle"
-                    :aria-expanded="isClassExpanded(classInfo.id)"
-                    @click="toggleMobileClassOrders(classInfo)"
+                    class="mobile-group-project__toggle"
+                    :aria-expanded="isProjectExpanded(project.key)"
+                    @click="toggleProject(project.key)"
                   >
-                    <strong class="mobile-group-class__name">{{ classInfo.className }}<small v-if="classInfo.campusName" class="group-class-campus">{{ classInfo.campusName }}</small></strong>
-                    <span class="mobile-group-class__summary">
-                      <small>{{ classInfo.activeStudentCount ?? 0 }} students</small>
-                      <el-icon :class="{ 'mobile-group-class__caret--expanded': isClassExpanded(classInfo.id) }"><ArrowDown /></el-icon>
-                    </span>
-                    <small class="mobile-group-class__schedule">{{ classInfo.scheduleDesc || 'Schedule not set' }}</small>
+                    <strong>{{ project.projectName }}</strong>
+                    <span>{{ project.classes.length }} classes</span>
+                    <el-icon :class="{ 'mobile-group-project__caret--expanded': isProjectExpanded(project.key) }"><ArrowDown /></el-icon>
                   </button>
-                  <dl class="mobile-group-class__details">
-                    <div><dt>Teacher</dt><dd>{{ classInfo.teacherName || 'Not assigned' }}</dd></div>
-                    <div><dt>Room</dt><dd>{{ classInfo.classroomName || 'Not assigned' }}</dd></div>
-                  </dl>
-                  <div v-if="isClassExpanded(classInfo.id)" class="mobile-group-class__orders">
-                    <p v-if="expandedClassLoading[String(classInfo.id)]">Loading orders…</p>
-                    <template v-else>
-                      <section v-for="campusGroup in campusOrderGroups(expandedClassOrders[String(classInfo.id)] ?? [])" :key="campusGroup.key">
-                        <h4>{{ campusGroup.campusName }} <small>{{ campusGroup.orders.length }} students</small></h4>
-                        <article v-for="order in campusGroup.orders" :key="orderRowKey(order)" class="mobile-group-order">
-                          <strong>{{ order.studentName }}</strong>
-                          <div>
-                            <el-tag size="small" :type="paymentStatusType(order.paymentStatus)">{{ paymentStatusLabel(order.paymentStatus) }}</el-tag>
-                            <el-tag size="small" :type="orderStatusType(order.orderStatus)">{{ orderStatusLabel(order.orderStatus) }}</el-tag>
-                          </div>
-                          <span>Received ${{ order.receivedAmount?.toFixed(2) }}</span>
-                          <div class="mobile-group-order__actions">
-                            <el-button text type="primary" @click.stop="openReceipt(order)">Receipt</el-button>
-                            <el-dropdown trigger="click" @command="handleOrderAction($event, order)">
-                              <el-button text type="primary">More</el-button>
-                              <template #dropdown>
-                                <el-dropdown-menu>
-                                  <el-dropdown-item command="detail">Detail</el-dropdown-item>
-                                  <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
-                                  <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
-                                  <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
-                                </el-dropdown-menu>
-                              </template>
-                            </el-dropdown>
-                          </div>
-                        </article>
-                      </section>
-                      <el-empty v-if="!(expandedClassOrders[String(classInfo.id)] ?? []).length" description="No enrollment orders for this class." :image-size="48" />
-                    </template>
+                  <div v-if="project.hideHeading || isProjectExpanded(project.key)">
+                    <article v-for="classInfo in project.classes" :key="classInfo.id" class="mobile-group-class">
+                      <button
+                        type="button"
+                        class="mobile-group-class__toggle"
+                        :aria-expanded="isClassExpanded(classInfo.id)"
+                        @click="toggleMobileClassOrders(classInfo)"
+                      >
+                        <strong class="mobile-group-class__name">{{ classInfo.className }}<small v-if="classInfo.campusName" class="group-class-campus">{{ classInfo.campusName }}</small></strong>
+                        <span class="mobile-group-class__summary">
+                          <small>{{ classInfo.activeStudentCount ?? 0 }} students</small>
+                          <el-icon :class="{ 'mobile-group-class__caret--expanded': isClassExpanded(classInfo.id) }"><ArrowDown /></el-icon>
+                        </span>
+                      </button>
+                      <dl class="mobile-group-class__details">
+                        <div><dt>Teacher</dt><dd>{{ classInfo.teacherName || 'Not assigned' }}</dd></div>
+                        <div><dt>Room</dt><dd>{{ classInfo.classroomName || 'Not assigned' }}</dd></div>
+                      </dl>
+                      <div v-if="isClassExpanded(classInfo.id)" class="mobile-group-class__orders">
+                        <p v-if="expandedClassLoading[String(classInfo.id)]">Loading orders…</p>
+                        <template v-else>
+                          <section v-for="campusGroup in campusOrderGroups(expandedClassOrders[String(classInfo.id)] ?? [])" :key="campusGroup.key">
+                            <h4 class="mobile-group-campus-heading">
+                              <span><small>Campus</small>{{ campusGroup.campusName }}</span>
+                              <small>{{ campusGroup.orders.length }} students</small>
+                            </h4>
+                            <article v-for="order in campusGroup.orders" :key="orderRowKey(order)" class="mobile-group-order">
+                              <strong>{{ order.studentName }}</strong>
+                              <div>
+                                <el-tag size="small" :type="paymentStatusType(order.paymentStatus)">{{ paymentStatusLabel(order.paymentStatus) }}</el-tag>
+                                <el-tag size="small" :type="orderStatusType(order.orderStatus)">{{ orderStatusLabel(order.orderStatus) }}</el-tag>
+                              </div>
+                              <span>Received ${{ order.receivedAmount?.toFixed(2) }}</span>
+                              <div class="mobile-group-order__actions">
+                                <el-button text type="primary" @click.stop="openReceipt(order)">Receipt</el-button>
+                                <el-dropdown trigger="click" @command="handleOrderAction($event, order)">
+                                  <el-button text type="primary">More</el-button>
+                                  <template #dropdown>
+                                    <el-dropdown-menu>
+                                      <el-dropdown-item command="detail">Detail</el-dropdown-item>
+                                      <el-dropdown-item v-if="canPayOrder(order)" command="pay">Pay</el-dropdown-item>
+                                      <el-dropdown-item v-if="canRefundOrder(order)" command="refund">Refund</el-dropdown-item>
+                                      <el-dropdown-item v-if="canCancelOrder(order)" command="cancel">Cancel</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                  </template>
+                                </el-dropdown>
+                              </div>
+                            </article>
+                          </section>
+                          <el-empty v-if="!(expandedClassOrders[String(classInfo.id)] ?? []).length" description="No enrollment orders for this class." :image-size="48" />
+                        </template>
+                      </div>
+                    </article>
                   </div>
-                </article>
-              </section>
+                </section>
+              </div>
             </article>
             <el-empty v-if="!loadingClasses && groupClassTree.length === 0" description="No active group classes." />
           </div>
@@ -3336,21 +3356,40 @@ void initializePage();
 .mobile-enrollment-row__amounts dd { margin: 0; color: #334155; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .mobile-enrollment-row__footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
 .mobile-enrollment-row__footer .el-button { min-height: 32px; margin: 0; padding: 0 10px; }
-.mobile-group-product__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.mobile-group-product__heading strong { color: #26384c; font-size: 15px; }
-.mobile-group-product__heading span,
-.mobile-group-project h3 small,
+.mobile-group-product__toggle,
+.mobile-group-project__toggle {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+.mobile-group-product__toggle { min-height: 44px; padding: 7px 0; }
+.mobile-group-product__toggle strong { min-width: 0; overflow-wrap: anywhere; color: #26384c; font-size: 14px; }
+.mobile-group-product__toggle > span,
+.mobile-group-project__toggle > span,
 .mobile-group-class__toggle small,
 .mobile-group-class__details dt,
 .mobile-group-class__orders h4 small { color: #718096; font-size: 12px; font-weight: 400; }
-.mobile-group-project { margin-top: 8px; }
-.mobile-group-project h3 { margin: 0 0 4px; color: #34465a; font-size: 12px; }
+.mobile-group-product__toggle > span,
+.mobile-group-project__toggle > span { white-space: nowrap; font-size: 11px; }
+.mobile-group-product__toggle .el-icon,
+.mobile-group-project__toggle .el-icon { color: #718096; transition: transform 0.15s ease; }
+.mobile-group-product__toggle .mobile-group-product__caret--expanded,
+.mobile-group-project__toggle .mobile-group-project__caret--expanded { transform: rotate(180deg); }
+.mobile-group-product__content { padding-left: 8px; border-top: 1px solid #edf1f5; }
+.mobile-group-project { margin: 0; }
+.mobile-group-project__toggle { min-height: 38px; padding: 6px 0; }
+.mobile-group-project__toggle strong { min-width: 0; overflow-wrap: anywhere; color: #475569; font-size: 12px; }
 .mobile-group-class { padding: 7px 0; border-top: 1px solid #edf1f5; }
-.mobile-group-class__toggle { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: center; column-gap: 8px; row-gap: 2px; padding: 2px 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.mobile-group-class__toggle { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 8px; padding: 2px 0; border: 0; background: transparent; color: inherit; text-align: left; }
 .mobile-group-class__name { grid-column: 1; grid-row: 1; min-width: 0; overflow-wrap: anywhere; color: #26384c; font-size: 13px; }
 .mobile-group-class__summary { display: flex; grid-column: 2; grid-row: 1; align-items: center; gap: 7px; color: #718096; }
 .mobile-group-class__summary small { color: #718096; font-size: 11px; font-weight: 500; white-space: nowrap; }
-.mobile-group-class__schedule { grid-column: 1 / -1; grid-row: 2; min-width: 0; color: #718096; font-size: 11px; font-weight: 400; line-height: 1.3; overflow-wrap: anywhere; }
 .mobile-group-class__summary .el-icon { transition: transform 0.15s ease; }
 .mobile-group-class__summary .mobile-group-class__caret--expanded { transform: rotate(180deg); }
 .mobile-group-class__details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 9px 0 0; }
@@ -4382,9 +4421,89 @@ void initializePage();
   .enrollment-tabs :deep(.el-tabs__header) { display: none; }
 
   .mobile-enrollment-list { gap: 0; }
-  .mobile-group-products { gap: 6px; }
+  .mobile-group-products { gap: 8px; }
 
-  .mobile-group-product { padding: 10px; border-radius: 9px; }
+  .mobile-group-product { padding: 0; border: 0; border-radius: 9px; background: transparent; }
+
+  .mobile-group-product__toggle { padding: 8px 10px; border-radius: 8px; background: #f2f5f9; }
+
+  .mobile-group-product__content { margin: 3px 0 0 8px; padding-left: 8px; border-top: 0; }
+
+  .mobile-group-project__toggle { min-height: 36px; padding: 5px 7px; }
+
+  .mobile-group-class { margin: 3px 0; padding: 7px 8px; border: 0; border-radius: 7px; background: #f8fafc; }
+
+  .mobile-group-class__details { display: flex; flex-wrap: wrap; gap: 3px 12px; margin-top: 4px; }
+
+  .mobile-group-class__details > div { display: flex; gap: 4px; }
+
+  .mobile-group-class__details dt,
+  .mobile-group-class__details dd { font-size: 10px; line-height: 1.35; }
+
+  .mobile-group-class__orders { display: block; margin: 5px 0 1px; padding: 0 0 0 8px; border-radius: 0; border-left: 2px solid #e5ebf2; background: transparent; }
+
+  .mobile-group-campus-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin: 3px 0 2px;
+    padding: 4px 7px;
+    border-radius: 6px;
+    background: #eaf0f7;
+  }
+
+  .mobile-group-campus-heading > span {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    min-width: 0;
+    color: #334155;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .mobile-group-campus-heading > span > small {
+    color: #718096;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .mobile-group-campus-heading > small {
+    flex: none;
+    padding: 2px 5px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.7);
+    color: #718096;
+    font-size: 10px;
+  }
+
+  .mobile-group-order {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    gap: 2px 8px;
+    padding: 5px 2px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .mobile-group-campus-heading ~ .mobile-group-order { margin-left: 6px; }
+
+  .mobile-group-order + .mobile-group-order { margin-top: 2px; }
+
+  .mobile-group-order > strong { grid-column: 1; grid-row: 1; font-size: 12px; }
+
+  .mobile-group-order > div:not(.mobile-group-order__actions) { grid-column: 2; grid-row: 1; align-items: center; }
+
+  .mobile-group-order > span { grid-column: 1; grid-row: 2; align-self: center; font-size: 10px; }
+
+  .mobile-group-order__actions { grid-column: 2; grid-row: 2; align-items: center; }
+
+  .mobile-group-order__actions .el-button { min-height: 26px; margin: 0; padding: 0 5px; font-size: 11px; }
 
   .mobile-enrollment-row { padding: 12px 0; }
   .mobile-enrollment-row__footer .el-button { min-height: 36px; }
@@ -4433,14 +4552,13 @@ void initializePage();
 
   .group-toolbar__input :deep(.el-input__wrapper) { min-height: 36px; }
 
-  .mobile-group-class__details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .mobile-group-class__details { margin-top: 5px; gap: 6px; }
+  .mobile-group-class__details { gap: 3px 12px; }
 
-  .mobile-group-order { grid-template-columns: minmax(0, 1fr); }
+  .mobile-group-order { grid-template-columns: minmax(0, 1fr) auto; }
 
-  .mobile-group-order > div:not(.mobile-group-order__actions) { justify-content: flex-start; }
+  .mobile-group-order > div:not(.mobile-group-order__actions) { justify-content: flex-end; }
 
-  .mobile-group-order__actions { justify-content: flex-start; }
+  .mobile-group-order__actions { justify-content: flex-end; }
 
 }
 

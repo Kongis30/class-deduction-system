@@ -2,33 +2,64 @@
   <div class="data-summary-page daily-workbook-page" v-loading="loading">
     <div class="workbook-toolbar">
       <div class="workbook-toolbar__month daily-workbook-toolbar__filters">
-        <span class="workbook-toolbar__label">Saved date</span>
-        <el-button-group class="daily-date-navigation">
-          <el-button size="small" aria-label="Previous day" title="Previous day" @click="shiftSelectedDate(-1)">‹</el-button>
-          <el-date-picker
-            v-model="selectedDate"
-            type="date"
-            value-format="YYYY-MM-DD"
-            :clearable="false"
-            :editable="false"
-            size="small"
-            aria-label="Registration date"
-            @change="loadReport"
-          />
-          <el-button size="small" :disabled="selectedDate === todayInNewYork()" @click="selectToday">Today</el-button>
-          <el-button size="small" aria-label="Next day" title="Next day" @click="shiftSelectedDate(1)">›</el-button>
-        </el-button-group>
-        <el-select v-model="operatorUserId" clearable placeholder="All operators" class="operator-filter" size="small" @change="loadReport">
-          <el-option
-            v-for="operator in operatorOptions"
-            :key="String(operator.operatorUserId ?? operator.operatorName)"
-            :label="operator.operatorName || 'Operator not recorded'"
-            :value="String(operator.operatorUserId ?? '')"
-          />
-        </el-select>
+        <template v-if="appStore.isMobileViewport">
+          <div class="mobile-search-heading">
+            <span class="workbook-toolbar__label">Daily Registrations</span>
+            <div class="mobile-toolbar-actions">
+              <button type="button" class="mobile-search-trigger" :aria-expanded="mobileFiltersExpanded" aria-label="Show registration filters" @click="mobileFiltersExpanded = !mobileFiltersExpanded"><el-icon><Search /></el-icon></button>
+              <el-dropdown trigger="click" @command="handleMobileAction">
+                <button type="button" class="mobile-search-trigger" aria-label="More registration actions"><el-icon><MoreFilled /></el-icon></button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="clear" :disabled="!hasAnyColumnFilter">Clear filters</el-dropdown-item>
+                    <el-dropdown-item command="export" :disabled="filteredRows.length === 0">Export Excel</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
+          </div>
+          <section v-show="mobileFiltersExpanded" class="mobile-search-panel">
+            <div class="mobile-search-panel__header">
+              <span>Date & operator</span>
+              <button type="button" aria-label="Close filters" @click="mobileFiltersExpanded = false"><el-icon><Close /></el-icon></button>
+            </div>
+            <div class="daily-mobile-filter-controls">
+              <span class="workbook-toolbar__label">Saved date</span>
+              <el-button-group class="daily-date-navigation">
+                <el-button size="small" aria-label="Previous day" title="Previous day" @click="shiftSelectedDate(-1)">‹</el-button>
+                <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" :clearable="false" :editable="false" size="small" aria-label="Registration date" @change="loadReport" />
+                <el-button size="small" :disabled="selectedDate === todayInNewYork()" @click="selectToday">Today</el-button>
+                <el-button size="small" aria-label="Next day" title="Next day" @click="shiftSelectedDate(1)">›</el-button>
+              </el-button-group>
+              <el-select v-model="operatorUserId" clearable placeholder="All operators" class="operator-filter" size="small" @change="loadReport">
+                <el-option v-for="operator in operatorOptions" :key="String(operator.operatorUserId ?? operator.operatorName)" :label="operator.operatorName || 'Operator not recorded'" :value="String(operator.operatorUserId ?? '')" />
+              </el-select>
+            </div>
+            <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
+              <span class="workbook-toolbar__stat"><em>Course records</em><strong>{{ filteredStats.courses }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Due</em><strong>{{ money(filteredStats.due) }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Collected</em><strong>{{ money(filteredStats.collected) }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
+            </div>
+          </section>
+        </template>
+        <template v-else>
+          <span class="workbook-toolbar__label">Saved date</span>
+          <el-button-group class="daily-date-navigation">
+            <el-button size="small" aria-label="Previous day" title="Previous day" @click="shiftSelectedDate(-1)">‹</el-button>
+            <el-date-picker v-model="selectedDate" type="date" value-format="YYYY-MM-DD" :clearable="false" :editable="false" size="small" aria-label="Registration date" @change="loadReport" />
+            <el-button size="small" :disabled="selectedDate === todayInNewYork()" @click="selectToday">Today</el-button>
+            <el-button size="small" aria-label="Next day" title="Next day" @click="shiftSelectedDate(1)">›</el-button>
+          </el-button-group>
+          <el-select v-model="operatorUserId" clearable placeholder="All operators" class="operator-filter" size="small" @change="loadReport">
+            <el-option v-for="operator in operatorOptions" :key="String(operator.operatorUserId ?? operator.operatorName)" :label="operator.operatorName || 'Operator not recorded'" :value="String(operator.operatorUserId ?? '')" />
+          </el-select>
+        </template>
       </div>
 
-      <div class="workbook-toolbar__stats daily-workbook-toolbar__stats">
+      <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__stats daily-workbook-toolbar__stats">
         <span class="workbook-toolbar__stat"><em>Course records</em><strong>{{ filteredStats.courses }}</strong></span>
         <span class="workbook-toolbar__stat"><em>Orders</em><strong>{{ filteredStats.orders }}</strong></span>
         <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ filteredStats.students }}</strong></span>
@@ -37,7 +68,7 @@
         <span class="workbook-toolbar__stat"><em>Outstanding</em><strong>{{ money(filteredStats.outstanding) }}</strong></span>
       </div>
 
-      <div class="workbook-toolbar__export daily-workbook-toolbar__actions">
+      <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__export daily-workbook-toolbar__actions">
         <el-button size="small" :disabled="!hasAnyColumnFilter" @click="clearAllFilters">Clear filters</el-button>
         <el-button size="small" type="primary" :disabled="filteredRows.length === 0" @click="exportExcel">Export Excel</el-button>
       </div>
@@ -49,8 +80,8 @@
           <strong>Operator totals</strong>
           <span>Registrations saved on {{ formatDay(selectedDate) }}.</span>
         </div>
-        <div class="workbook-scroll daily-sheet__scroll daily-sheet__scroll--compact">
-          <table class="workbook-table operator-table">
+        <div ref="operatorScrollRef" class="workbook-scroll daily-sheet__scroll daily-sheet__scroll--compact mobile-pinch-scroll">
+          <table class="workbook-table operator-table" :style="{ zoom: appStore.isMobileViewport ? operatorTableScale : undefined }">
             <colgroup>
               <col style="width: 220px">
               <col style="width: 125px">
@@ -103,8 +134,8 @@
           <strong>Registration history</strong>
           <span>{{ filteredRows.length }} course record(s) saved on {{ formatDay(selectedDate) }}, ordered by saved time</span>
         </div>
-        <div class="workbook-scroll daily-sheet__scroll history-sheet__scroll" data-testid="daily-registration-workbook">
-          <table class="workbook-table history-table">
+        <div ref="historyScrollRef" class="workbook-scroll daily-sheet__scroll history-sheet__scroll mobile-pinch-scroll" data-testid="daily-registration-workbook">
+          <table class="workbook-table history-table" :style="{ zoom: appStore.isMobileViewport ? historyTableScale : undefined }">
             <colgroup>
               <col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }">
             </colgroup>
@@ -242,6 +273,7 @@
 import { ElMessage } from 'element-plus';
 import { computed, onMounted, reactive, ref } from 'vue';
 import * as XLSX from 'xlsx';
+import { Close, MoreFilled, Search } from '@element-plus/icons-vue';
 
 import { fetchDailyRegistrations, type DailyRegistrationOperatorSummary, type DailyRegistrationReport, type DailyRegistrationRow } from '@/api/daily-registrations';
 import { extractErrorMessage } from '@/api/http';
@@ -446,6 +478,11 @@ function exportExcel() {
   XLSX.writeFile(workbook, `Daily_Registrations_${selectedDate.value}.xlsx`);
 }
 
+function handleMobileAction(command: string) {
+  if (command === 'clear') clearAllFilters();
+  if (command === 'export') exportExcel();
+}
+
 function todayInNewYork() {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -562,5 +599,7 @@ function rowKey(row: DailyRegistrationRow) {
   .daily-workbook-toolbar__stat { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0; }
   .daily-workbook-toolbar__stat em { white-space: normal; }
   .daily-workbook-toolbar__stat strong { flex: 0 0 auto; }
+  .mobile-pinch-scroll { touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+  .daily-sheet__scroll--compact { max-height: 200px; }
 }
 </style>

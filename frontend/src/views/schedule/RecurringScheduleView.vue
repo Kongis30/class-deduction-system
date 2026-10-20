@@ -7,27 +7,49 @@
 
       <div class="schedule-panel__body">
         <!-- Column 1: Students -->
-        <aside class="col-panel col-students">
-          <div class="col-panel__header schedule-student-search">
-            <button
-              v-if="appStore.isMobileViewport"
-              type="button"
-              class="mobile-search-trigger"
-              :aria-expanded="mobileStudentSearchExpanded"
-              aria-label="Search students"
-              @click="mobileStudentSearchExpanded = !mobileStudentSearchExpanded"
-            >
-              <el-icon><Search /></el-icon>
-            </button>
-            <el-input
-              v-show="!appStore.isMobileViewport || mobileStudentSearchExpanded"
-              v-model="studentSearch"
-              placeholder="Search students..."
-              clearable
-              :prefix-icon="Search"
-            />
-          </div>
-          <div class="col-panel__body">
+        <aside
+          class="col-panel col-students"
+          :class="{ 'col-panel--mobile-collapsed': appStore.isMobileViewport && selectedStudentId && !mobileStudentListExpanded }"
+        >
+          <button
+            v-if="appStore.isMobileViewport && selectedStudentId && !mobileStudentListExpanded"
+            type="button"
+            class="mobile-selection-summary"
+            aria-label="Change selected student"
+            aria-controls="mobile-schedule-student-list"
+            :aria-expanded="mobileStudentListExpanded"
+            @click="mobileStudentListExpanded = true"
+          >
+            <span class="mobile-selection-summary__step">STUDENT · CHANGE</span>
+            <strong>{{ selectedStudentName }}</strong>
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+          <div id="mobile-schedule-student-list" v-show="!appStore.isMobileViewport || !selectedStudentId || mobileStudentListExpanded" class="mobile-selection-list">
+            <div class="col-panel__header schedule-student-search">
+              <div v-if="appStore.isMobileViewport" class="schedule-student-list-heading">
+                <span class="mobile-step-label">STEP 1</span>
+                <strong>Choose a student and course</strong>
+                <small>Select a course to view its weekly schedule.</small>
+              </div>
+              <button
+                v-if="appStore.isMobileViewport"
+                type="button"
+                class="mobile-search-trigger"
+                :aria-expanded="mobileStudentSearchExpanded"
+                aria-label="Search students"
+                @click="mobileStudentSearchExpanded = !mobileStudentSearchExpanded"
+              >
+                <el-icon><Search /></el-icon>
+              </button>
+              <el-input
+                v-show="!appStore.isMobileViewport || mobileStudentSearchExpanded"
+                v-model="studentSearch"
+                placeholder="Search students..."
+                clearable
+                :prefix-icon="Search"
+              />
+            </div>
+            <div class="col-panel__body">
             <div v-if="studentListLoading && students.length === 0" class="col-panel__empty">Loading...</div>
             <div v-else-if="studentListError && students.length === 0" class="col-panel__empty">
               Could not load students. <el-button link type="primary" @click="refreshScheduleStudentList">Retry</el-button>
@@ -70,12 +92,34 @@
                 </template>
               </section>
             </template>
+            </div>
           </div>
         </aside>
 
         <!-- Column 2: Packages -->
-        <aside class="col-panel col-packages" :class="{ 'col-panel--mobile-hidden': !selectedStudentId }">
-          <div class="col-panel__body">
+        <aside
+          class="col-panel col-packages"
+          :class="{
+            'col-panel--mobile-hidden': !selectedStudentId,
+            'col-panel--mobile-collapsed': appStore.isMobileViewport && selectedPackageId && !mobilePackageListExpanded,
+          }"
+        >
+          <button
+            v-if="appStore.isMobileViewport && selectedPackageId && !mobilePackageListExpanded"
+            type="button"
+            class="mobile-selection-summary"
+            aria-label="Change selected course package"
+            aria-controls="mobile-schedule-package-list"
+            :aria-expanded="mobilePackageListExpanded"
+            @click="mobilePackageListExpanded = true"
+          >
+            <span class="mobile-selection-summary__step">COURSE PACKAGE · CHANGE</span>
+            <strong>{{ selectedPackageName }}</strong>
+            <small>{{ selectedPackage?.packageStatus }} · {{ selectedPackage ? projectedRemainingForPackage(selectedPackage) : 0 }}h remaining</small>
+            <el-icon><ArrowRight /></el-icon>
+          </button>
+          <div id="mobile-schedule-package-list" v-show="!appStore.isMobileViewport || !selectedPackageId || mobilePackageListExpanded" class="col-panel__body">
+            <div v-if="appStore.isMobileViewport" class="mobile-step-label mobile-step-label--package">2 · COURSE PACKAGE</div>
             <div v-if="!selectedStudentId" class="col-panel__hint">
               <el-icon :size="28" color="#c0c4cc"><ArrowLeft /></el-icon>
               <span>Select a student</span>
@@ -229,13 +273,20 @@
 
               <!-- Weekly calendar -->
               <div v-if="currentPackageOccupiedSlots.length > 0 || currentRule" class="schedule-calendar">
-                <div class="schedule-calendar__label">Weekly Schedule</div>
+                <div class="schedule-calendar__heading">
+                  <div>
+                    <span class="schedule-calendar__eyebrow">3 · WEEKLY PLAN</span>
+                    <strong class="schedule-calendar__label">Weekly Schedule</strong>
+                  </div>
+                  <span v-if="currentRuleSlots.length" class="schedule-calendar__count">{{ currentRuleSlots.length }} weekly slot(s)</span>
+                </div>
                 <WeeklyTimeSelector
                   v-model="emptySlots"
                   :occupied-slots="currentPackageOccupiedSlots"
                   :week-start-date="displayMonday"
                   :readonly="true"
                   :hide-hint="true"
+                  :pinch-zoom-enabled="appStore.isMobileViewport"
                 />
               </div>
               <div v-else class="schedule-none">
@@ -1179,6 +1230,8 @@ const currentWeekOccurrences = ref<LessonOccurrenceItem[]>([]);
 const studentSearch = ref('');
 const appStore = useAppStore();
 const mobileStudentSearchExpanded = ref(false);
+const mobileStudentListExpanded = ref(true);
+const mobilePackageListExpanded = ref(true);
 const selectedStudentId = ref<EntityId | null>(null);
 const selectedPackageId = ref<EntityId | null>(null);
 const pausingPackageId = ref<EntityId | null>(null);
@@ -1572,6 +1625,13 @@ const studentSections = computed(() => {
     }));
 });
 
+// 课程列表加载或筛选结果变化时默认收起所有分组，用户可按需展开查看学生。
+watch([studentSections, () => appStore.isMobileViewport], ([sections, isMobile]) => {
+  collapsedCourseGradeKeys.value = isMobile
+    ? new Set(sections.flatMap(section => section.groups.map(group => `${section.key}:${group.key}`)))
+    : new Set();
+}, { immediate: true });
+
 function toggleCourseGradeGroup(groupKey: string) {
   const next = new Set(collapsedCourseGradeKeys.value);
   if (next.has(groupKey)) next.delete(groupKey);
@@ -1813,6 +1873,9 @@ async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
   // 快速切换学生时丢弃较晚返回的旧请求，避免覆盖当前选择。
   const requestSequence = ++packageLoadSequence;
   selectedStudentId.value = id;
+  mobileStudentListExpanded.value = false;
+  mobileStudentSearchExpanded.value = false;
+  mobilePackageListExpanded.value = true;
   selectedPackageId.value = null;
   studentPackages.value = [];
   allPackageRules.value = {};
@@ -1826,6 +1889,7 @@ async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
     selectedPackageId.value = preferredPackageId == null
       ? null
       : studentPackages.value.find(pkg => String(pkg.id) === String(preferredPackageId))?.id ?? null;
+    if (selectedPackageId.value != null) mobilePackageListExpanded.value = false;
     loadingPackages.value = false;
     // 排课规则用于冲突检查，后台加载即可，不阻塞已取得的课包列表。
     void loadAllPackageRules(studentPackages.value, requestSequence);
@@ -1905,6 +1969,7 @@ watch(selectedPackageId, () => { void loadCurrentWeekOccurrences(); });
 // ─── Package selection ─────────────────────────
 function onPackageSelect(pkg: CoursePackageItem) {
   selectedPackageId.value = pkg.id;
+  mobilePackageListExpanded.value = false;
 }
 
 // 打开停课确认窗；停课保留已开始课次，取消所有未来排课。
@@ -3044,6 +3109,13 @@ function disabledPastDate(date: Date) {
   overflow-y: auto;
 }
 
+.mobile-selection-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
 .col-panel__empty,
 .col-panel__hint {
   display: flex;
@@ -3953,32 +4025,58 @@ function disabledPastDate(date: Date) {
 }
 
 @media (max-width: 920px) {
-  .schedule-panel {
+  .schedule-page {
+    height: auto;
     min-height: 0;
-    padding: 12px;
+    overflow: visible;
+    padding-bottom: 12px;
+  }
+
+  .schedule-panel {
+    flex: 0 0 auto;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
     overflow: visible;
   }
 
   .schedule-panel__body {
     display: flex;
-    flex: initial;
+    flex: 0 0 auto;
     flex-direction: column;
-    gap: 8px;
-    overflow: visible;
+    gap: 10px;
     border: 0;
+    overflow: visible;
     background: transparent;
   }
 
   .col-panel {
     width: 100%;
     flex: none;
-    max-height: min(45vh, 340px);
-    border: 1px solid #e8edf2;
-    border-radius: 6px;
+    max-height: none;
+    overflow: hidden;
+    border: 1px solid #d3deea;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgb(25 48 74 / 5%);
   }
 
   .col-panel--mobile-hidden {
     display: none;
+  }
+
+  .col-panel--mobile-collapsed {
+    min-height: 62px;
+    overflow: hidden;
+  }
+
+  .col-students:not(.col-panel--mobile-collapsed) {
+    min-height: min(58dvh, 520px);
+    max-height: calc(100dvh - 220px);
+  }
+
+  .col-packages:not(.col-panel--mobile-collapsed) {
+    max-height: min(32dvh, 250px);
   }
 
   .col-students,
@@ -3986,43 +4084,271 @@ function disabledPastDate(date: Date) {
     width: 100%;
   }
 
-  .schedule-student-search {
+  .mobile-selection-list {
     display: flex;
-    justify-content: flex-end;
-    padding: 8px;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
   }
 
-  .schedule-student-search .el-input { width: 100%; }
+  .mobile-selection-list .col-panel__body,
+  .col-packages > .col-panel__body {
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .mobile-selection-summary {
+    position: relative;
+    display: flex;
+    min-height: 62px;
+    width: 100%;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 3px;
+    padding: 8px 46px 8px 14px;
+    border: 0;
+    background: #fff;
+    color: #25364c;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .mobile-selection-summary__step,
+  .mobile-step-label {
+    color: #60758f;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+  }
+
+  .mobile-selection-summary strong {
+    max-width: 100%;
+    overflow: hidden;
+    color: #1d3048;
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-selection-summary small {
+    color: #687b91;
+    font-size: 11px;
+  }
+
+  .mobile-selection-summary > .el-icon {
+    position: absolute;
+    top: 50%;
+    right: 14px;
+    color: #6481a0;
+    transform: translateY(-50%);
+  }
+
+  .schedule-panel__header {
+    margin: 0 2px 8px;
+  }
+
+  .schedule-panel__title {
+    color: #203652;
+    font-size: 15px;
+  }
+
+  .schedule-student-search {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    align-items: start;
+    gap: 6px 8px;
+    min-height: 68px;
+    padding: 9px 10px;
+    border-color: #e1e8f0;
+  }
+
+  .schedule-student-list-heading {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .schedule-student-list-heading strong {
+    color: #263b53;
+    font-size: 13px;
+    line-height: 1.3;
+  }
+
+  .schedule-student-list-heading small {
+    color: #708198;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .schedule-student-search .mobile-search-trigger { grid-column: 2; grid-row: 1; }
+  .schedule-student-search .el-input { grid-column: 1 / -1; width: 100%; grid-row: 2; }
+
+  .mobile-step-label--package {
+    padding: 10px 12px 7px;
+  }
+
+  .schedule-student-section-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 8px 10px;
+    border-bottom: 1px solid #d8e2ec;
+    background: #f1f5f9;
+    color: #40566f;
+  }
+
+  .schedule-student-group__toggle,
+  .schedule-student-group__students .col-item,
+  .col-packages .col-item {
+    min-height: 44px;
+  }
 
   .col-schedule {
-    min-height: 280px;
+    min-height: 0;
     max-height: none;
     overflow: visible;
+    border-color: #cbd8e6;
+    border-radius: 10px;
   }
 
   .col-schedule .col-panel__body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
     overflow: visible;
   }
 
+  .schedule-info {
+    padding: 12px;
+    border: 1px solid #d6e0eb;
+    border-radius: 9px;
+    background: #fff;
+  }
+
   .schedule-info__header {
+    align-items: flex-start;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .schedule-info__title {
+    min-width: 0;
+    color: #1e334d;
+    font-size: 16px;
+    line-height: 1.35;
   }
 
   .schedule-info__actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
     max-width: none;
-    justify-content: flex-start;
+    justify-content: stretch;
+    gap: 8px;
   }
 
   .schedule-info__actions > .el-button,
   .schedule-info__actions > .el-dropdown {
     min-width: 0;
-    flex: 0 1 auto;
+    margin: 0;
+  }
+
+  .schedule-info__actions > .el-dropdown {
+    width: auto;
+    justify-self: start;
   }
 
   .schedule-info__actions > .el-dropdown > .el-button {
-    width: auto;
+    width: 112px;
+  }
+
+  .schedule-summary {
+    gap: 0 10px;
+  }
+
+  .summary-field {
+    min-width: 0;
+    padding: 8px 0;
+    border-top: 1px solid #edf1f5;
+  }
+
+  .summary-field label {
+    color: #73849a;
+    font-size: 11px;
+  }
+
+  .summary-field span {
+    color: #334861;
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .schedule-calendar {
+    min-width: 0;
+    padding: 12px;
+    border: 1px solid #d3deea;
+    border-radius: 9px;
+    background: #fff;
+  }
+
+  .schedule-calendar__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .schedule-calendar__eyebrow {
+    display: block;
+    margin-bottom: 3px;
+    color: #70849b;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .06em;
+  }
+
+  .schedule-calendar__label {
+    display: block;
+    margin: 0;
+    color: #243a55;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .schedule-calendar__count {
+    color: #60758f;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+
+  .schedule-calendar :deep(.wts-grid-scroll--pinch) {
+    max-height: min(52dvh, 480px);
+    border: 1px solid #d8e2ec;
+    border-radius: 7px;
+    background: #fff;
+  }
+
+  .schedule-none {
+    border: 1px dashed #cbd8e6;
+    border-radius: 9px;
+    background: #f8fafc;
+  }
+
+  .schedule-info__participants {
+    color: #536981;
+    line-height: 1.45;
   }
 
   .schedule-dialog :deep(.el-dialog__body) {

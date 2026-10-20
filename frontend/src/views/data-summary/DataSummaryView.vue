@@ -176,21 +176,28 @@
       </template>
     </el-dialog>
     <div class="roster-print" aria-hidden="true">
-      <section v-for="group in selectedRosterPrintGroups" :key="group.key" class="roster-print__page">
-        <h1>{{ group.projectName }}</h1>
-        <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
-        <p class="roster-print__campus">{{ group.campusName }}</p>
-        <table>
-          <thead>
-            <tr><th>Student</th><th>School</th></tr>
-          </thead>
-          <tbody>
-            <tr v-for="student in group.students" :key="student.key">
-              <td>{{ student.name }}</td>
-              <td>{{ student.school }}</td>
-            </tr>
-          </tbody>
-        </table>
+      <section
+        v-for="group in selectedRosterPrintGroups"
+        :key="group.key"
+        class="roster-print__page"
+        :style="rosterPrintPageStyle(group.students.length)"
+      >
+        <div class="roster-print__content">
+          <h1>{{ group.projectName }}</h1>
+          <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
+          <p class="roster-print__campus">{{ group.campusName }}</p>
+          <table>
+            <thead>
+              <tr><th>Student</th><th>School</th></tr>
+            </thead>
+            <tbody>
+              <tr v-for="student in group.students" :key="student.key">
+                <td>{{ student.name }}</td>
+                <td>{{ student.school }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
     <div ref="workbookScrollRef" class="workbook-scroll" :class="{ 'workbook-scroll--pinch-zoom': isMobileViewport }" data-testid="data-summary-workbook">
@@ -549,6 +556,42 @@
       </div>
     </section>
 
+    <section v-if="visibleRefundRows.length" class="refund-records">
+      <div class="refund-records__heading">
+        <h3>Refund Student</h3>
+        <span>{{ visibleRefundRows.length }} record(s)</span>
+      </div>
+      <div class="refund-records__scroll">
+        <table class="refund-records__table workbook-table">
+          <thead>
+            <tr>
+              <th v-for="column in columns" :key="column.key" :style="{ minWidth: `${column.width}px` }">
+                {{ column.label }}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in visibleRefundRows" :key="rowKey(row)">
+              <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
+                <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
+                <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
+                <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
+                <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
+                <span v-else-if="column.key === 'pickup' || column.key === 'dropoff'" :class="['workbook-pill', columnValue(row, column.key) === 'Yes' ? 'workbook-pill--yes' : 'workbook-pill--no']">
+                  {{ columnValue(row, column.key) }}
+                </span>
+                <span v-else-if="column.key === 'paymentMethod'" :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
+                  {{ displayText(row.paymentMethod) }}
+                </span>
+                <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(columnValue(row, column.key)) }}</span>
+                <span v-else>{{ displayText(columnValue(row, column.key)) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <div
       v-if="studentContextMenu.visible"
       class="student-context-menu"
@@ -799,7 +842,7 @@ const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 
 const loading = ref(false);
 const workbookScrollRef = ref<HTMLDivElement | null>(null);
-const mobileTableScale = ref(1);
+const mobileTableScale = ref(0.8);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
@@ -1152,6 +1195,20 @@ const selectedRosterPrintGroups = computed(() =>
 
 function rosterPrintOptionLabel(group: RosterPrintGroup) {
   return [group.className, group.projectName].join(' · ');
+}
+
+/** 按名单人数缩放整张打印页，避免同一班级被浏览器拆到下一页。 */
+function rosterPrintPageStyle(studentCount: number) {
+  const scale = rosterPrintScale(studentCount);
+  return {
+    '--roster-print-scale': scale.toFixed(3),
+    '--roster-print-content-width': `${(100 / scale).toFixed(3)}%`,
+  };
+}
+
+function rosterPrintScale(studentCount: number) {
+  const estimatedHeightMm = 52 + studentCount * 14;
+  return Math.min(1, 230 / estimatedHeightMm);
 }
 
 async function confirmPrintClassRoster() {
@@ -2981,13 +3038,13 @@ th.workbook-column--studentName {
   .data-summary-page .roster-print__campus {
     margin: 5mm 0 3mm;
     text-align: center;
-    font-size: 12pt;
+    font-size: 10pt;
     color: #555;
   }
 
   .data-summary-page .roster-print table {
     width: 84%;
-    margin: 10mm auto 0;
+    margin: 6mm auto 0;
     border-collapse: collapse;
     table-layout: fixed;
     font-size: 16pt;
@@ -2999,7 +3056,7 @@ th.workbook-column--studentName {
     border: 1px solid #b8c7d4;
     background: #e9f1f8;
     text-align: left;
-    font-size: 12pt;
+    font-size: 11pt;
   }
 
   .data-summary-page .roster-print td {

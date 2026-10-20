@@ -77,12 +77,66 @@ test.describe('mobile responsive workspace', () => {
     await expect(page.locator('.mobile-registration-review')).toBeVisible();
   });
 
-  test('course packages use readable cards and reachable actions on mobile', async ({ page }, testInfo) => {
+  test('mobile navigation mirrors sidebar links and scrolls horizontally', async ({ page }) => {
+    const navigation = page.locator('.mobile-tab-bar');
+    await expect(navigation.locator('a')).toHaveCount(7);
+    await expect(page.getByRole('button', { name: 'Menu' })).toHaveCount(0);
+    expect(await navigation.evaluate(element => element.scrollWidth)).toBeGreaterThan(
+      await navigation.evaluate(element => element.clientWidth),
+    );
+
+    await navigation.getByRole('link', { name: 'Daily reg.' }).click();
+    await expect(page).toHaveURL(/\/daily-registrations$/);
+  });
+
+  test('saved registration receipts scale the desktop canvas on mobile while registration stays mobile-first', async ({ page }, testInfo) => {
+    await page.goto('/registration');
+    const registrationPage = page.locator('.registration-page');
+    await expect(registrationPage).not.toHaveClass(/registration-page--receipt-preview/);
+
+    await page.goto('/registration?orderId=2104065853844115458');
+    await expect(registrationPage).toHaveClass(/registration-page--receipt-preview/);
+    await expect(page.locator('.registration-desk')).toBeHidden();
+    await expect(page.locator('.private-lesson-switcher')).toBeHidden();
+    await expect(page.locator('.mobile-registration-review')).toBeHidden();
+    await expect(page.getByText('Enrollment order not found')).toHaveCount(0);
+    const paperForm = page.locator('.paper-form');
+    const previewStyles = await paperForm.evaluate(element => {
+      const style = getComputedStyle(element);
+      return {
+        fontSize: style.fontSize,
+        padding: style.padding,
+        canvasWidth: Number.parseFloat(style.width),
+        zoom: Number.parseFloat(style.zoom),
+        visibleWidth: element.getBoundingClientRect().width,
+        viewportWidth: element.parentElement?.clientWidth ?? 0,
+      };
+    });
+    expect(previewStyles.fontSize).toBe('16px');
+    expect(previewStyles.padding).toBe('30px 34px 24px');
+    expect(previewStyles.canvasWidth).toBe(920);
+    expect(previewStyles.zoom).toBeGreaterThan(0);
+    expect(previewStyles.zoom).toBeLessThan(1);
+    expect(previewStyles.visibleWidth).toBeLessThanOrEqual(previewStyles.viewportWidth);
+    await page.screenshot({ path: testInfo.outputPath('saved-receipt-mobile.png'), fullPage: true });
+
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.mobile-tab-bar')).toBeHidden();
+    await expect(page.locator('.mobile-registration-actions')).toBeHidden();
+    await expect(page.locator('.mobile-registration-review')).toBeHidden();
+    const printStyles = await paperForm.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { fontSize: style.fontSize, padding: style.padding };
+    });
+    expect(printStyles).toEqual({ fontSize: '11.5px', padding: '0px' });
+  });
+
+  test('course packages use readable rows and reachable actions on mobile', async ({ page }, testInfo) => {
     await page.goto('/enrollment/packages');
     await expect(page.locator('.mobile-package-list').first()).toBeVisible();
-    await expect(page.locator('.mobile-package-card').first()).toBeVisible();
+    await expect(page.locator('.mobile-package-row').first()).toBeVisible();
     await expect(page.locator('.package-group .product-table')).toHaveCount(0);
-    await expect(page.locator('.mobile-package-card__actions').first().getByRole('button', { name: 'Renew' })).toBeVisible();
+    await expect(page.locator('.mobile-package-row__actions').first().getByRole('button', { name: 'Renew' })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath('course-packages-mobile.png') });
   });
 

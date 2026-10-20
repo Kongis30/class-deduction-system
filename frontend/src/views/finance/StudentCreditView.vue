@@ -5,15 +5,17 @@
         <template v-if="appStore.isMobileViewport">
           <div class="mobile-search-heading">
             <span class="workbook-toolbar__label">Student Credit</span>
-            <button
-              type="button"
-              class="mobile-search-trigger"
-              :aria-expanded="mobileSearchExpanded"
-              aria-label="Search students"
-              @click="mobileSearchExpanded = !mobileSearchExpanded"
-            >
-              <el-icon><Search /></el-icon>
-            </button>
+            <div class="mobile-toolbar-actions">
+              <button type="button" class="mobile-search-trigger" :aria-expanded="mobileSearchExpanded" aria-label="Search students" @click="mobileSearchExpanded = !mobileSearchExpanded">
+                <el-icon><Search /></el-icon>
+              </button>
+              <el-dropdown trigger="click" @command="handleMobileAction">
+                <button type="button" class="mobile-search-trigger" aria-label="More student credit actions"><el-icon><MoreFilled /></el-icon></button>
+                <template #dropdown>
+                  <el-dropdown-menu><el-dropdown-item command="export" :disabled="studentGroups.length === 0">Export Excel</el-dropdown-item></el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </div>
           <section v-show="mobileSearchExpanded" class="mobile-search-panel">
             <div class="mobile-search-panel__header">
@@ -26,6 +28,10 @@
               <el-input v-model="keyword" clearable placeholder="Search student or phone" @keyup.enter="loadBalances" />
               <el-button type="primary" @click="loadBalances">Search</el-button>
             </div>
+            <div class="workbook-toolbar__stats">
+              <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ studentGroups.length }}</strong></span>
+              <span class="workbook-toolbar__stat"><em>Available Credit</em><strong>{{ formatMoney(totalCredit) }}</strong></span>
+            </div>
           </section>
         </template>
         <template v-else>
@@ -34,17 +40,17 @@
           <el-button type="primary" size="small" @click="loadBalances">Search</el-button>
         </template>
       </div>
-      <div class="workbook-toolbar__stats">
+      <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__stats">
         <span class="workbook-toolbar__stat"><em>Students</em><strong>{{ studentGroups.length }}</strong></span>
         <span class="workbook-toolbar__stat"><em>Available Credit</em><strong>{{ formatMoney(totalCredit) }}</strong></span>
       </div>
-      <div class="workbook-toolbar__export">
+      <div v-if="!appStore.isMobileViewport" class="workbook-toolbar__export">
         <el-button type="primary" size="small" :disabled="studentGroups.length === 0" @click="exportExcel">Export Excel</el-button>
       </div>
     </div>
 
-    <div class="workbook-scroll">
-      <table class="workbook-table student-credit-table">
+    <div ref="creditScrollRef" class="workbook-scroll mobile-pinch-scroll">
+      <table class="workbook-table student-credit-table" :style="{ zoom: appStore.isMobileViewport ? mobileTableScale : undefined }">
         <colgroup>
           <col v-for="column in creditColumns" :key="column.key" :style="{ width: `${column.width}px` }" />
         </colgroup>
@@ -147,12 +153,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import * as XLSX from 'xlsx';
-import { Close, EditPen, Search } from '@element-plus/icons-vue';
+import { Close, EditPen, MoreFilled, Search } from '@element-plus/icons-vue';
 import { adjustStudentCredit, fetchStudentCreditBalances, type StudentCreditBalanceItem } from '@/api/student-credit';
 import { extractErrorMessage } from '@/api/http';
 import { ElMessage } from 'element-plus';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
 import { useAppStore } from '@/stores/app';
+import { useMobileTablePinchZoom } from '@/composables/useMobileTablePinchZoom';
 
 type StudentCreditGroup = Omit<StudentCreditBalanceItem, 'studentNo' | 'grade' | 'studentClass'>;
 type CreditColumnKey = 'student' | 'phone' | 'balance' | 'activity';
@@ -174,6 +181,8 @@ const creditColumns: CreditColumn[] = [
 const studentGroups = ref<StudentCreditGroup[]>([]);
 const appStore = useAppStore();
 const mobileSearchExpanded = ref(false);
+const creditScrollRef = ref<HTMLElement | null>(null);
+const { scale: mobileTableScale } = useMobileTablePinchZoom(creditScrollRef, computed(() => appStore.isMobileViewport));
 const keyword = ref('');
 const loading = ref(false);
 const editDialogVisible = ref(false);
@@ -309,6 +318,10 @@ function exportExcel() {
   XLSX.writeFile(workbook, 'student-credit.xlsx');
 }
 
+function handleMobileAction(command: string) {
+  if (command === 'export') exportExcel();
+}
+
 onMounted(loadBalances);
 </script>
 
@@ -387,6 +400,9 @@ onMounted(loadBalances);
   .student-credit-mobile-card__footer strong { color: #40535d; font-size: 12px; }
   .credit-edit-student { padding: 12px; border-radius: 6px; background: #f8fafc; }
   .student-credit-search-form .el-button { min-height: 42px; margin: 0; }
+  .mobile-toolbar-actions { display: inline-flex; align-items: center; gap: 8px; }
+  .mobile-pinch-scroll { touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; }
+  .mobile-search-panel .workbook-toolbar__stats { display: flex; flex-wrap: wrap; gap: 12px 18px; margin-top: 12px; }
 }
 
 </style>
