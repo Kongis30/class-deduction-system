@@ -24,7 +24,6 @@ import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMakeupEffectMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordRevokeAuditMapper;
-import com.classdeduction.system.modules.lesson.mapper.LessonRecordScheduleEffectMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
 import com.classdeduction.system.modules.lesson.service.impl.LessonRecordServiceImpl;
@@ -37,8 +36,8 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
 import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
+import com.classdeduction.system.modules.schedule.service.RecurringScheduleRuleService;
 import com.classdeduction.system.modules.finance.mapper.TeacherPaymentItemMapper;
-import com.classdeduction.system.modules.lesson.entity.LessonRecordScheduleEffectEntity;
 import com.classdeduction.system.modules.systemconfig.service.NotificationOutboxService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -80,9 +79,6 @@ class LessonRecordServiceImplTest {
     private LessonRecordRevokeAuditMapper lessonRecordRevokeAuditMapper;
 
     @Mock
-    private LessonRecordScheduleEffectMapper lessonRecordScheduleEffectMapper;
-
-    @Mock
     private LessonRecordMakeupEffectMapper lessonRecordMakeupEffectMapper;
 
     @Mock
@@ -102,6 +98,9 @@ class LessonRecordServiceImplTest {
 
     @Mock
     private RecurringScheduleSlotMapper recurringScheduleSlotMapper;
+
+    @Mock
+    private RecurringScheduleRuleService recurringScheduleRuleService;
 
     @Mock
     private ClassGroupMapper classGroupMapper;
@@ -164,7 +163,6 @@ class LessonRecordServiceImplTest {
         lessonRecordService = new LessonRecordServiceImpl(
                 lessonRecordMapper,
                 lessonRecordRevokeAuditMapper,
-                lessonRecordScheduleEffectMapper,
                 lessonRecordMakeupEffectMapper,
                 classGroupMapper,
                 hourLedgerMapper,
@@ -173,8 +171,8 @@ class LessonRecordServiceImplTest {
                 lessonOccurrenceMapper,
                 recurringScheduleRuleMapper,
                 recurringScheduleSlotMapper,
+                recurringScheduleRuleService,
                 coursePackageMapper,
-                packageTeacherAssignmentMapper,
                 privateLessonGroupMemberMapper,
                 teacherPaymentItemMapper,
                 studentMapper,
@@ -811,16 +809,16 @@ class LessonRecordServiceImplTest {
     }
 
     @Test
-    void shouldReverseFutureBalanceAndRestorePlannedSnapshotWhenRevokingConfirmedRecord() {
+    void shouldReverseDeductedHoursAndReconcileCurrentScheduleWhenRevokingConfirmedRecord() {
         LessonRecordEntity confirmedRecord = buildPendingRecord();
         confirmedRecord.setConfirmStage("CONFIRMED");
         confirmedRecord.setVersion(1);
         confirmedRecord.setActualEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
-        confirmedRecord.setActualUnits(3);
-        confirmedRecord.setDeductedUnits(3);
+        confirmedRecord.setActualUnits(4);
+        confirmedRecord.setDeductedUnits(4);
         confirmedRecord.setPlannedStartAt(LocalDateTime.of(2026, 4, 12, 18, 0));
         confirmedRecord.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 20, 0));
-        confirmedRecord.setPlannedUnits(4);
+        confirmedRecord.setPlannedUnits(3);
         LessonOccurrenceEntity mergedOccurrence = buildOccurrence();
         mergedOccurrence.setPlanningStatus("MERGED");
         mergedOccurrence.setPlannedEndAt(LocalDateTime.of(2026, 4, 12, 19, 30));
@@ -828,27 +826,11 @@ class LessonRecordServiceImplTest {
         // 确认阶段已把课次改成实际老师/教室（与原计划 701/801 不同），撤销后应恢复原计划。
         mergedOccurrence.setPlannedTeacherId(702L);
         mergedOccurrence.setPlannedClassroomId(802L);
-        LessonOccurrenceEntity balancedFuture = buildFutureOccurrence(2002L, LocalDate.of(2026, 4, 20), 5);
-        balancedFuture.setPlannedUnits(4);
-        balancedFuture.setPlannedEndAt(LocalDate.of(2026, 4, 20).atTime(20, 0));
-        LessonRecordScheduleEffectEntity effect = new LessonRecordScheduleEffectEntity();
-        effect.setSourceLessonRecordId(2001L);
-        effect.setAffectedOccurrenceId(2002L);
-        effect.setBeforePlanningStatus("SCHEDULED");
-        effect.setBeforePlannedStartAt(LocalDate.of(2026, 4, 20).atTime(18, 0));
-        effect.setBeforePlannedEndAt(LocalDate.of(2026, 4, 20).atTime(20, 30));
-        effect.setBeforePlannedUnits(5);
-        effect.setAfterPlanningStatus("SCHEDULED");
-        effect.setAfterPlannedStartAt(balancedFuture.getPlannedStartAt());
-        effect.setAfterPlannedEndAt(balancedFuture.getPlannedEndAt());
-        effect.setAfterPlannedUnits(4);
         when(lessonRecordMapper.selectById(2001L)).thenReturn(confirmedRecord);
         when(lessonRecordMapper.selectByIdForUpdate(2001L)).thenReturn(confirmedRecord);
-        when(coursePackageMapper.selectByIdForUpdate(501L)).thenReturn(buildPackage(10, 3));
+        when(coursePackageMapper.selectByIdForUpdate(501L)).thenReturn(buildPackage(10, 4));
         when(lessonOccurrenceMapper.selectByIdForUpdate(1001L)).thenReturn(mergedOccurrence);
-        when(lessonOccurrenceMapper.selectByIdForUpdate(2002L)).thenReturn(balancedFuture);
         when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
-        when(lessonRecordScheduleEffectMapper.findBySourceLessonRecordId(2001L)).thenReturn(List.of(effect));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(mergedOccurrence);
         when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
@@ -859,23 +841,26 @@ class LessonRecordServiceImplTest {
         revokeRequest.setExpectedVersion(1);
         lessonRecordService.revokeLesson(2001L, revokeRequest, currentAdminUser());
 
-        verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).updateById(occurrenceCaptor.capture());
-        LessonOccurrenceEntity shortenedFuture = occurrenceCaptor.getAllValues().stream()
-                .filter(item -> Objects.equals(item.getId(), 2002L))
-                .findFirst()
-                .orElseThrow();
+        verify(lessonOccurrenceMapper).updateById(occurrenceCaptor.capture());
         LessonOccurrenceEntity restoredOccurrence = occurrenceCaptor.getAllValues().stream()
                 .filter(item -> Objects.equals(item.getId(), 1001L))
                 .findFirst()
                 .orElseThrow();
-        assertThat(shortenedFuture.getPlannedUnits()).isEqualTo(4);
-        assertThat(shortenedFuture.getPlannedEndAt()).isEqualTo(LocalDate.of(2026, 4, 20).atTime(20, 0));
         assertThat(restoredOccurrence.getPlanningStatus()).isEqualTo("SCHEDULED");
-        assertThat(restoredOccurrence.getPlannedUnits()).isEqualTo(4);
+        assertThat(restoredOccurrence.getPlannedUnits()).isEqualTo(3);
         assertThat(restoredOccurrence.getPlannedEndAt()).isEqualTo(LocalDateTime.of(2026, 4, 12, 20, 0));
         // 撤销确认必须把课次的老师/教室恢复为确认前的原计划，避免日历与后续冲突检测错误占用。
         assertThat(restoredOccurrence.getPlannedTeacherId()).isEqualTo(701L);
         assertThat(restoredOccurrence.getPlannedClassroomId()).isEqualTo(801L);
+        verify(hourLedgerMapper).insert(ledgerCaptor.capture());
+        assertThat(ledgerCaptor.getValue().getLedgerType()).isEqualTo("REVOKE");
+        assertThat(ledgerCaptor.getValue().getChangeUnits()).isEqualTo(4);
+        verify(coursePackageMapper, org.mockito.Mockito.atLeastOnce()).updateById(packageCaptor.capture());
+        CoursePackageEntity finalPackage = packageCaptor.getAllValues().get(packageCaptor.getAllValues().size() - 1);
+        assertThat(finalPackage.getConsumedUnits()).isZero();
+        assertThat(finalPackage.getRemainingUnits()).isEqualTo(14);
+        verify(recurringScheduleSlotMapper, never()).updateById(any(RecurringScheduleSlotEntity.class));
+        verify(recurringScheduleRuleService).reconcilePackageSchedule(501L);
     }
 
     @Test

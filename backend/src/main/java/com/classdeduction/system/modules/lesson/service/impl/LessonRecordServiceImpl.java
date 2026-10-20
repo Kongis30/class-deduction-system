@@ -27,14 +27,12 @@ import com.classdeduction.system.modules.lesson.dto.LessonRecordPageQuery;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordRevokeAuditEntity;
-import com.classdeduction.system.modules.lesson.entity.LessonRecordScheduleEffectEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordMakeupEffectEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonStatusRuleEntity;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordRevokeAuditMapper;
-import com.classdeduction.system.modules.lesson.mapper.LessonRecordScheduleEffectMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonRecordMakeupEffectMapper;
 import com.classdeduction.system.modules.lesson.mapper.LessonStatusRuleMapper;
 import com.classdeduction.system.modules.lesson.mapper.PackageBalanceSnapshotMapper;
@@ -84,7 +82,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
 
     private final LessonRecordMapper lessonRecordMapper;
     private final LessonRecordRevokeAuditMapper lessonRecordRevokeAuditMapper;
-    private final LessonRecordScheduleEffectMapper lessonRecordScheduleEffectMapper;
     private final LessonRecordMakeupEffectMapper lessonRecordMakeupEffectMapper;
     private final ClassGroupMapper classGroupMapper;
     private final HourLedgerMapper hourLedgerMapper;
@@ -910,8 +907,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             cancelGeneratedMakeups(record);
         }
         int deducted = record.getDeductedUnits() == null ? 0 : record.getDeductedUnits();
-        reverseFutureScheduleEffects(record);
-
+        // 撤销只冲正本次实际扣课；未来课次由当前排课规则校准，不能回放旧快照覆盖后来安排。
         if (deducted > 0) {
             int newConsumed = Math.max(0, coursePackage.getConsumedUnits() - deducted);
             int newRemaining = coursePackage.getRemainingUnits() + deducted;
@@ -968,11 +964,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             reverseLeaveCarryoverIfNeeded(sourceRecord, occurrence);
             cancelGeneratedMakeups(sourceRecord);
         }
-        // 共享课同一课次只会调整一次公共排课；先精确恢复一次，再分别冲正各成员课包。
-        LessonRecordEntity scheduleEffectSource = records.stream()
-                .filter(record -> !lessonRecordScheduleEffectMapper.findBySourceLessonRecordId(record.getId()).isEmpty())
-                .findFirst().orElse(records.get(0));
-        reverseFutureScheduleEffects(scheduleEffectSource);
+        // 共享课的公共排课不回滚历史快照；成员课包冲正后按当前规则统一校准。
         for (LessonRecordEntity record : records) {
             if (Objects.equals(record.getId(), targetRecordId)) validateRevokeVersion(record, request);
             CoursePackageEntity coursePackage = packages.get(record.getPackageId());
@@ -1262,38 +1254,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             throw new BusinessException("PACKAGE_CONCURRENT_UPDATE", "The package was updated by another request. Please retry.");
         }
         coursePackage.setEstimatedEndDate(estimatedEndDate);
-    }
-
-    /** 只还原本次确认实际改动过的后续课次；其间任何人改过这些课次时整笔撤销失败。 */
-    private void reverseFutureScheduleEffects(LessonRecordEntity record) {
-        int originalPlannedUnits = record.getPlannedUnits() == null ? safeUnits(record.getDeductedUnits()) : record.getPlannedUnits();
-        int deductedUnits = safeUnits(record.getDeductedUnits());
-        boolean scheduleWasRebalanced = Objects.equals(record.getShouldDeduct(), 1)
-                && originalPlannedUnits != deductedUnits;
-        List<LessonRecordScheduleEffectEntity> effects = lessonRecordScheduleEffectMapper
-                .findBySourceLessonRecordId(record.getId());
-        if (scheduleWasRebalanced && effects.isEmpty()) {
-            throw new BusinessException("SCHEDULE_EFFECT_NOT_REVERSIBLE",
-                    "This lesson changed future schedule hours before undo history was recorded. Review the schedule manually before reversing it.");
-        }
-        for (LessonRecordScheduleEffectEntity effect : effects) {
-            LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectByIdForUpdate(effect.getAffectedOccurrenceId());
-            if (occurrence == null
-                    || !Objects.equals(occurrence.getPlanningStatus(), effect.getAfterPlanningStatus())
-                    || !Objects.equals(occurrence.getPlannedStartAt(), effect.getAfterPlannedStartAt())
-                    || !Objects.equals(occurrence.getPlannedEndAt(), effect.getAfterPlannedEndAt())
-                    || !Objects.equals(occurrence.getPlannedUnits(), effect.getAfterPlannedUnits())) {
-                throw new BusinessException("SCHEDULE_CHANGED_AFTER_CONFIRMATION",
-                        "A future lesson changed after this confirmation. Adjust the schedule manually before undoing this result.");
-            }
-            occurrence.setPlanningStatus(effect.getBeforePlanningStatus());
-            occurrence.setPlannedStartAt(effect.getBeforePlannedStartAt());
-            occurrence.setPlannedEndAt(effect.getBeforePlannedEndAt());
-            occurrence.setPlannedUnits(effect.getBeforePlannedUnits());
-            if (lessonOccurrenceMapper.updateById(occurrence) != 1) {
-                throw new BusinessException("SCHEDULE_CHANGED", "The schedule changed while undoing this result. Please retry.");
-            }
-        }
     }
 
     private void validateRevokeVersion(LessonRecordEntity record, LessonRecordRevokeRequest request) {
