@@ -267,7 +267,6 @@
                     range-separator="-"
                     value-format="YYYY-MM-DD"
                     unlink-panels
-                    :append-to="`.workbook-filter-popper--${column.key}`"
                   />
 
                   <div class="workbook-filter-section">
