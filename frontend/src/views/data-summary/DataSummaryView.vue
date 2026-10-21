@@ -1164,29 +1164,33 @@ function restoreState(state: ProductViewState) {
 
 async function loadPage() {
   loading.value = true;
-  const [productsResult, summaryResult] = await Promise.allSettled([
-    fetchAllCourseProducts(),
-    fetchDataSummary(),
-  ]);
+  try {
+    const [productsResult, summaryResult] = await Promise.allSettled([
+      fetchAllCourseProducts(),
+      fetchDataSummary(),
+    ]);
 
-  if (productsResult.status === 'fulfilled') {
-    products.value = productsResult.value.data.data ?? [];
-    savedOrderProducts = [...products.value];
-  } else {
-    // 产品列表失败时保留空 Tab 并继续展示汇总，顺序不回写。
-    products.value = [];
-    ElMessage.error(extractErrorMessage(productsResult.reason));
+    if (productsResult.status === 'fulfilled') {
+      products.value = productsResult.value.data.data ?? [];
+      savedOrderProducts = [...products.value];
+    } else {
+      // 产品列表失败时保留空 Tab 并继续展示汇总，顺序不回写。
+      products.value = [];
+      ElMessage.error(extractErrorMessage(productsResult.reason));
+    }
+
+    if (summaryResult.status === 'fulfilled') {
+      rows.value = summaryResult.value.data.data.rows ?? [];
+    } else {
+      rows.value = [];
+      ElMessage.error(extractErrorMessage(summaryResult.reason));
+    }
+
+    ensureActiveTab();
+  } finally {
+    // 任一结果处理或 Tab 初始化抛错时，也必须释放页面点击遮罩。
+    loading.value = false;
   }
-
-  if (summaryResult.status === 'fulfilled') {
-    rows.value = summaryResult.value.data.data.rows ?? [];
-  } else {
-    rows.value = [];
-    ElMessage.error(extractErrorMessage(summaryResult.reason));
-  }
-
-  loading.value = false;
-  ensureActiveTab();
 }
 
 function ensureActiveTab() {

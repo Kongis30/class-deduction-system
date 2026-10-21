@@ -510,39 +510,43 @@ function rowKey(row: DataSummaryRow) {
 
 async function loadRows() {
   loading.value = true;
-  const [productsResult, rowsResult, driversResult, assignmentsResult] = await Promise.allSettled([
-    fetchAllCourseProducts(),
-    fetchDataSummary({ transportOnly: true }),
-    fetchTransportDrivers(),
-    fetchTransportDriverAssignments(),
-  ]);
-  if (productsResult.status === 'fulfilled') {
-    products.value = productsResult.value.data.data ?? [];
-    savedOrderProducts = [...products.value];
-  } else {
-    products.value = [];
-    ElMessage.error(extractErrorMessage(productsResult.reason));
+  try {
+    const [productsResult, rowsResult, driversResult, assignmentsResult] = await Promise.allSettled([
+      fetchAllCourseProducts(),
+      fetchDataSummary({ transportOnly: true }),
+      fetchTransportDrivers(),
+      fetchTransportDriverAssignments(),
+    ]);
+    if (productsResult.status === 'fulfilled') {
+      products.value = productsResult.value.data.data ?? [];
+      savedOrderProducts = [...products.value];
+    } else {
+      products.value = [];
+      ElMessage.error(extractErrorMessage(productsResult.reason));
+    }
+    if (rowsResult.status === 'fulfilled') {
+      rows.value = rowsResult.value.data.data?.rows ?? [];
+    } else {
+      rows.value = [];
+      ElMessage.error(extractErrorMessage(rowsResult.reason));
+    }
+    if (driversResult.status === 'fulfilled') {
+      drivers.value = driversResult.value.data.data ?? [];
+    } else {
+      drivers.value = [];
+      ElMessage.error(extractErrorMessage(driversResult.reason));
+    }
+    if (assignmentsResult.status === 'fulfilled') {
+      replaceDriverAssignments(assignmentsResult.value.data.data ?? []);
+    } else {
+      clearDriverAssignments();
+      ElMessage.error(extractErrorMessage(assignmentsResult.reason));
+    }
+    ensureActiveCourse();
+  } finally {
+    // 数据整理异常时仍释放页面点击遮罩，避免必须刷新才能继续操作。
+    loading.value = false;
   }
-  if (rowsResult.status === 'fulfilled') {
-    rows.value = rowsResult.value.data.data?.rows ?? [];
-  } else {
-    rows.value = [];
-    ElMessage.error(extractErrorMessage(rowsResult.reason));
-  }
-  if (driversResult.status === 'fulfilled') {
-    drivers.value = driversResult.value.data.data ?? [];
-  } else {
-    drivers.value = [];
-    ElMessage.error(extractErrorMessage(driversResult.reason));
-  }
-  if (assignmentsResult.status === 'fulfilled') {
-    replaceDriverAssignments(assignmentsResult.value.data.data ?? []);
-  } else {
-    clearDriverAssignments();
-    ElMessage.error(extractErrorMessage(assignmentsResult.reason));
-  }
-  loading.value = false;
-  ensureActiveCourse();
 }
 
 function exportExcel() {
