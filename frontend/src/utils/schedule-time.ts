@@ -1,3 +1,10 @@
+/** 所有周排课日历共用的显示范围；24:00 是结束边界，不是可选开课时间。 */
+export const SCHEDULE_DAY_START_MINUTES = 6 * 60 + 30;
+export const SCHEDULE_DAY_END_MINUTES = 24 * 60;
+export const SCHEDULE_SLOT_MINUTES = 30;
+export const SCHEDULE_DAY_START_TIME = '06:30';
+export const SCHEDULE_LAST_SLOT_START_TIME = '23:30';
+
 /** 将周排课中的次日 00:00 边界统一显示为当天 24:00。 */
 export function scheduleEndTimeForDisplay(startTime: string, endTime: string): string {
   const start = normalizeTime(startTime);

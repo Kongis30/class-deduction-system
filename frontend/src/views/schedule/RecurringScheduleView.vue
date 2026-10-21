@@ -778,8 +778,8 @@
               <label>Start</label>
               <el-time-select
                 :model-value="rowStartTime(selectedRow)"
-                start="07:30"
-                end="23:30"
+                :start="SCHEDULE_DAY_START_TIME"
+                :end="SCHEDULE_LAST_SLOT_START_TIME"
                 step="00:30"
                 :disabled="selectedRow.markedForDelete"
                 @update:model-value="(v: string) => setRowStartTime(selectedRow!, v)"
@@ -1052,7 +1052,16 @@ import WeeklyTimeSelector from '@/components/WeeklyTimeSelector.vue';
 import type { OccupiedSlotDef, SlotDef } from '@/components/WeeklyTimeSelector.vue';
 import { APP_TIMEZONE } from '@/config/app-config';
 import { calendarWeekRange } from '@/utils/calendar-week';
-import { scheduleEndTimeForDisplay, scheduleEndTimeForApi, scheduleOccurrenceTimeRange } from '@/utils/schedule-time';
+import {
+  SCHEDULE_DAY_END_MINUTES,
+  SCHEDULE_DAY_START_MINUTES,
+  SCHEDULE_DAY_START_TIME,
+  SCHEDULE_LAST_SLOT_START_TIME,
+  SCHEDULE_SLOT_MINUTES,
+  scheduleEndTimeForDisplay,
+  scheduleEndTimeForApi,
+  scheduleOccurrenceTimeRange,
+} from '@/utils/schedule-time';
 import { renderSignatureSheetDocument } from '@/utils/signature-sheet-print';
 import { findSignaturePackage, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 
@@ -1276,9 +1285,6 @@ const weeklySubjectOptions = computed(() => [...new Set([
 
 // ─── Weekly adjustment calendar (Sat→Fri) ──────────────────
 
-const CAL_START_MINUTES = 7 * 60 + 30;
-const CAL_END_MINUTES = 24 * 60;
-const CAL_SLOT_MINUTES = 30;
 const CAL_SLOT_HEIGHT = 28;
 
 const selectedRowKey = ref<string | null>(null);
@@ -1317,7 +1323,7 @@ const weekDays = computed(() => {
 
 const calendarRows = computed(() => {
   const rows: { label: string; minutes: number }[] = [];
-  for (let minutes = CAL_START_MINUTES; minutes < CAL_END_MINUTES; minutes += CAL_SLOT_MINUTES) {
+  for (let minutes = SCHEDULE_DAY_START_MINUTES; minutes < SCHEDULE_DAY_END_MINUTES; minutes += SCHEDULE_SLOT_MINUTES) {
     const hour = Math.floor(minutes / 60);
     const minute = minutes % 60;
     rows.push({
@@ -1383,25 +1389,42 @@ const futureReleasePreview = computed(() => {
 function rowsForDay(dayIndex: number): WeeklyAdjustmentRow[] {
   const date = weekDays.value[dayIndex]?.date;
   if (!date) return [];
-  return weeklyRows.value.filter(r => dayjs(r.plannedStartAt).format('YYYY-MM-DD') === date);
+  return weeklyRows.value.filter(r =>
+    dayjs(r.plannedStartAt).format('YYYY-MM-DD') === date && occurrenceOverlapsCalendar(r.plannedStartAt, r.plannedEndAt));
 }
 
 
 function busyForDay(dayIndex: number): BusyOccurrence[] {
   const date = weekDays.value[dayIndex]?.date;
   if (!date) return [];
-  return weeklyBusyOccurrences.value.filter(o => dayjs(o.plannedStartAt).format('YYYY-MM-DD') === date);
+  return weeklyBusyOccurrences.value.filter(o =>
+    dayjs(o.plannedStartAt).format('YYYY-MM-DD') === date && occurrenceOverlapsCalendar(o.plannedStartAt, o.plannedEndAt));
+}
+
+// 将超出日历显示范围的课次裁切到可见区间，避免 06:30 前的课程被负 top 值遮掉。
+function occurrenceOverlapsCalendar(startAt: string, endAt: string): boolean {
+  const start = dayjs(startAt);
+  const end = dayjs(endAt);
+  const startMinutes = start.hour() * 60 + start.minute();
+  const endMinutes = startMinutes + end.diff(start, 'minute');
+  return endMinutes > SCHEDULE_DAY_START_MINUTES && startMinutes < SCHEDULE_DAY_END_MINUTES;
+}
+
+function calendarOccurrenceStyle(startAt: string, endAt: string) {
+  const start = dayjs(startAt);
+  const end = dayjs(endAt);
+  const startMinutes = start.hour() * 60 + start.minute();
+  const endMinutes = startMinutes + end.diff(start, 'minute');
+  const visibleStart = Math.max(startMinutes, SCHEDULE_DAY_START_MINUTES);
+  const visibleEnd = Math.min(endMinutes, SCHEDULE_DAY_END_MINUTES);
+  const top = ((visibleStart - SCHEDULE_DAY_START_MINUTES) / SCHEDULE_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
+  const height = Math.max(((visibleEnd - visibleStart) / SCHEDULE_SLOT_MINUTES) * CAL_SLOT_HEIGHT, 1);
+  return { top: `${top}px`, height: `${Math.max(height - 2, 1)}px` };
 }
 
 
 function busyStyle(occ: LessonOccurrenceItem) {
-  const start = dayjs(occ.plannedStartAt);
-  const end = dayjs(occ.plannedEndAt);
-  const startMin = start.hour() * 60 + start.minute();
-  const durationMinutes = end.diff(start, 'minute');
-  const top = ((startMin - CAL_START_MINUTES) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
-  const height = Math.max((durationMinutes / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
-  return { top: `${top}px`, height: `${height - 2}px` };
+  return calendarOccurrenceStyle(occ.plannedStartAt, occ.plannedEndAt);
 }
 
 function busyLabel(occ: BusyOccurrence): string {
@@ -1410,13 +1433,7 @@ function busyLabel(occ: BusyOccurrence): string {
 
 
 function eventStyle(row: WeeklyAdjustmentRow) {
-  const start = dayjs(row.plannedStartAt);
-  const end = dayjs(row.plannedEndAt);
-  const startMin = start.hour() * 60 + start.minute();
-  const durationMinutes = end.diff(start, 'minute');
-  const top = ((startMin - CAL_START_MINUTES) / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT;
-  const height = Math.max((durationMinutes / CAL_SLOT_MINUTES) * CAL_SLOT_HEIGHT, CAL_SLOT_HEIGHT);
-  return { top: `${top}px`, height: `${height - 2}px` };
+  return calendarOccurrenceStyle(row.plannedStartAt, row.plannedEndAt);
 }
 
 function eventTimeLabel(row: WeeklyAdjustmentRow): string {
@@ -1554,7 +1571,7 @@ function onCalMouseUp() {
   const lo = Math.min(dragStartSlot.value!, dragEndSlot.value!);
   const hi = Math.max(dragStartSlot.value!, dragEndSlot.value!);
   const slotCount = hi - lo + 1;
-  const hours = (slotCount * CAL_SLOT_MINUTES) / 60;
+  const hours = (slotCount * SCHEDULE_SLOT_MINUTES) / 60;
   const date = weekDays.value[dragDayIndex.value].date;
   const startMinutes = calendarRows.value[lo].minutes;
   const startAt = dayjs(`${date}T00:00:00`).add(startMinutes, 'minute');

@@ -142,7 +142,13 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref } from 'vue';
-import { scheduleEndTimeForDisplay, scheduleTimeMinutes } from '@/utils/schedule-time';
+import {
+  SCHEDULE_DAY_END_MINUTES,
+  SCHEDULE_DAY_START_MINUTES,
+  SCHEDULE_SLOT_MINUTES,
+  scheduleEndTimeForDisplay,
+  scheduleTimeMinutes,
+} from '@/utils/schedule-time';
 
 export interface SlotDef {
   weekday: number;   // 1=Mon..7=Sun
@@ -279,15 +285,17 @@ const dayLabelsWithDates = computed(() => {
 });
 
 // ─── Grid config ─────────────────────────────
-const GRID_START_MINUTES = 7 * 60 + 30;
-const GRID_END_MINUTES = 24 * 60;
-
 const timeSlots = computed(() => {
   const rows: { label: string; hour: number; minute: number; isLastSlot: boolean }[] = [];
-  for (let minutes = GRID_START_MINUTES; minutes < GRID_END_MINUTES; minutes += 30) {
+  for (let minutes = SCHEDULE_DAY_START_MINUTES; minutes < SCHEDULE_DAY_END_MINUTES; minutes += SCHEDULE_SLOT_MINUTES) {
     const hour = Math.floor(minutes / 60);
     const minute = minutes % 60;
-    rows.push({ label: formatTime(minutes), hour, minute, isLastSlot: minutes === GRID_END_MINUTES - 30 });
+    rows.push({
+      label: formatTime(minutes),
+      hour,
+      minute,
+      isLastSlot: minutes === SCHEDULE_DAY_END_MINUTES - SCHEDULE_SLOT_MINUTES,
+    });
   }
   return rows;
 });
@@ -319,9 +327,11 @@ const occupiedMap = computed(() => {
     const endMin = parseEndTimeToMin(slot.startTime, slot.endTime);
     // A lesson may start off-grid (for example 17:15). Mark every 30-minute
     // calendar cell touched by the lesson so overlaps are not silently missed.
-    const firstCellMin = Math.floor(startMin / 30) * 30;
-    for (let m = firstCellMin; m < endMin; m += 30) {
-      if (m + 30 <= startMin) continue;
+    // 只映射日历可见范围；早于 06:30 的课程若延续到可见时段，仍从首行显示。
+    const firstCellMin = Math.max(Math.floor(startMin / SCHEDULE_SLOT_MINUTES) * SCHEDULE_SLOT_MINUTES, SCHEDULE_DAY_START_MINUTES);
+    const lastVisibleMin = Math.min(endMin, SCHEDULE_DAY_END_MINUTES);
+    for (let m = firstCellMin; m < lastVisibleMin; m += SCHEDULE_SLOT_MINUTES) {
+      if (m + SCHEDULE_SLOT_MINUTES <= startMin) continue;
       const key = `${slot.weekday}:${m}`;
       map.set(key, [...(map.get(key) || []), slot]);
     }
@@ -368,12 +378,17 @@ function occupiedEvent(day: number, hour: number, minute: number): OccupiedEvent
     };
   }
   const slot = slots[0];
-  if (minuteVal === Math.floor(parseTimeToMin(slot.startTime) / 30) * 30) {
+  const visibleStartMin = Math.max(
+    Math.floor(parseTimeToMin(slot.startTime) / SCHEDULE_SLOT_MINUTES) * SCHEDULE_SLOT_MINUTES,
+    SCHEDULE_DAY_START_MINUTES,
+  );
+  if (minuteVal === visibleStartMin) {
     const endMin = parseEndTimeToMin(slot.startTime, slot.endTime);
     const durationMinutes = endMin - parseTimeToMin(slot.startTime);
     const coveredCells = Math.max(
       1,
-      Math.ceil(endMin / 30) - Math.floor(parseTimeToMin(slot.startTime) / 30),
+      Math.ceil(Math.min(endMin, SCHEDULE_DAY_END_MINUTES) / SCHEDULE_SLOT_MINUTES)
+        - Math.floor(visibleStartMin / SCHEDULE_SLOT_MINUTES),
     );
     return {
       title: occupiedSlotTitle(slot),
@@ -471,7 +486,7 @@ function onCellClick(weekday: number, hour: number, minute: number) {
 
 function onMouseDown(weekday: number, hour: number, minute: number) {
   if (props.readonly) return;
-  if (timeToMinutes(hour, minute) >= GRID_END_MINUTES) return;
+  if (timeToMinutes(hour, minute) >= SCHEDULE_DAY_END_MINUTES) return;
   anchor.value = { weekday, hour, minute };
   currentHover.value = anchor.value;
   selecting.value = true;
