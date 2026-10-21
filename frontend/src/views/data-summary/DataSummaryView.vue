@@ -129,6 +129,39 @@
         </el-button>
       </div>
     </div>
+    <nav
+      v-if="tabs.length"
+      class="product-tab-bar"
+      data-testid="product-tab-bar"
+      aria-label="Course product tabs"
+    >
+      <button
+        v-for="tab in tabs"
+        :key="tab.id"
+        type="button"
+        class="product-tab"
+        :class="{
+          'product-tab--active': tab.id === activeTabId,
+          'product-tab--global': tab.global,
+          'product-tab--unassigned': tab.unassigned,
+          'product-tab--private': tab.privateLesson,
+          'product-tab--dragging': dragState.fromId === tab.id,
+          'product-tab--drop-target': dragState.overId === tab.id && dragState.fromId !== tab.id,
+        }"
+        :draggable="canMoveProductTab(tab)"
+        :title="tab.global ? 'All registration data' : tab.unassigned ? 'Rows not linked to a current course product' : tab.label"
+        :data-testid="`product-tab-${tab.id}`"
+        :aria-current="tab.id === activeTabId ? 'page' : undefined"
+        @click="selectTab(tab.id)"
+        @dragstart="handleDragStart(tab, $event)"
+        @dragenter.prevent="handleDragEnter(tab)"
+        @dragover.prevent="handleDragOver(tab)"
+        @drop.prevent="handleDrop(tab)"
+        @dragend="handleDragEnd"
+      >
+        <span class="product-tab__label">{{ tab.label }}</span>
+      </button>
+    </nav>
     <el-dialog
       v-model="rosterPrintDialogVisible"
       title="Print class roster"
@@ -193,6 +226,7 @@
         </table>
       </section>
     </div>
+    <div class="workbook-content-scroll">
     <div ref="workbookScrollRef" class="workbook-scroll" :class="{ 'workbook-scroll--pinch-zoom': isMobileViewport }" data-testid="data-summary-workbook" aria-label="Data summary spreadsheet">
       <table class="workbook-table" :style="{ zoom: isMobileViewport ? mobileTableScale : undefined }">
         <colgroup>
@@ -481,6 +515,7 @@
         </table>
       </div>
     </section>
+    </div>
 
     <div
       v-if="studentContextMenu.visible"
@@ -514,39 +549,6 @@
       </button>
     </div>
 
-    <nav
-      v-if="tabs.length"
-      class="product-tab-bar"
-      data-testid="product-tab-bar"
-      aria-label="Course product tabs"
-    >
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        type="button"
-        class="product-tab"
-        :class="{
-          'product-tab--active': tab.id === activeTabId,
-          'product-tab--global': tab.global,
-          'product-tab--unassigned': tab.unassigned,
-          'product-tab--private': tab.privateLesson,
-          'product-tab--dragging': dragState.fromId === tab.id,
-          'product-tab--drop-target': dragState.overId === tab.id && dragState.fromId !== tab.id,
-        }"
-        :draggable="canMoveProductTab(tab)"
-        :title="tab.global ? 'All registration data' : tab.unassigned ? 'Rows not linked to a current course product' : tab.label"
-        :data-testid="`product-tab-${tab.id}`"
-        :aria-current="tab.id === activeTabId ? 'page' : undefined"
-        @click="selectTab(tab.id)"
-        @dragstart="handleDragStart(tab, $event)"
-        @dragenter.prevent="handleDragEnter(tab)"
-        @dragover.prevent="handleDragOver(tab)"
-        @drop.prevent="handleDrop(tab)"
-        @dragend="handleDragEnd"
-      >
-        <span class="product-tab__label">{{ tab.label }}</span>
-      </button>
-    </nav>
   </div>
 </template>
 
@@ -2259,6 +2261,10 @@ onMounted(() => {
   background: #fff;
 }
 
+.workbook-content-scroll {
+  display: contents;
+}
+
 .workbook-scroll--pinch-zoom {
   touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
@@ -2634,6 +2640,21 @@ th.workbook-column--studentName {
     padding-bottom: 0;
   }
 
+  .data-summary-page > .product-tab-bar {
+    position: relative;
+    z-index: 8;
+    flex: 0 0 auto;
+  }
+
+  .data-summary-page .workbook-content-scroll {
+    display: block;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .data-summary-page .workbook-toolbar {
     flex: 0 0 auto;
     align-items: center;
@@ -2751,6 +2772,7 @@ th.workbook-column--studentName {
 
   .data-summary-page .workbook-scroll {
     display: block;
+    width: 100%;
     flex: 0 0 auto;
     overflow-x: auto;
     overflow-y: hidden;
