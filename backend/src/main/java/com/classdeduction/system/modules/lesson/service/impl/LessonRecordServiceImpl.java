@@ -1302,6 +1302,20 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         effect.setSourceLessonRecordId(sourceRecord.getId());
         effect.setMakeupOccurrenceId(makeup.getId());
         effect.setGeneratedVersion(makeup.getVersion() == null ? 0 : makeup.getVersion());
+        effect.setPlannedStartAt(makeup.getPlannedStartAt());
+        effect.setPlannedEndAt(makeup.getPlannedEndAt());
+        effect.setPlannedUnits(makeup.getPlannedUnits());
+        effect.setScheduleRuleId(makeup.getScheduleRuleId());
+        effect.setScheduleSlotId(makeup.getScheduleSlotId());
+        effect.setAllocationOwnerTeacherId(makeup.getAllocationOwnerTeacherId());
+        effect.setAllocationAnchorDate(makeup.getAllocationAnchorDate());
+        effect.setPlannedTeacherId(makeup.getPlannedTeacherId());
+        effect.setSubjectName(makeup.getSubjectName());
+        effect.setDeliveryMode(makeup.getDeliveryMode());
+        effect.setPlannedClassroomId(makeup.getPlannedClassroomId());
+        effect.setLeaveCarryoverUnits(makeup.getLeaveCarryoverUnits());
+        effect.setPlanningStatus(makeup.getPlanningStatus());
+        effect.setSourceOccurrenceId(makeup.getSourceOccurrenceId());
         lessonRecordMakeupEffectMapper.insert(effect);
     }
 
@@ -1322,8 +1336,7 @@ public class LessonRecordServiceImpl implements LessonRecordService {
         }
         for (LessonRecordMakeupEffectEntity effect : effects) {
             LessonOccurrenceEntity makeup = lessonOccurrenceMapper.selectByIdForUpdate(effect.getMakeupOccurrenceId());
-            if (makeup == null || !Objects.equals(makeup.getVersion(), effect.getGeneratedVersion())
-                    || !"MAKEUP".equals(makeup.getOccurrenceType())
+            if (makeup == null || !"MAKEUP".equals(makeup.getOccurrenceType())
                     || !Objects.equals(makeup.getSourceOccurrenceId(), sourceRecord.getOccurrenceId())) {
                 throw new BusinessException("MAKEUP_SCHEDULE_CHANGED",
                         "The makeup lesson changed after this leave. Review the schedule before undoing it.");
@@ -1333,12 +1346,38 @@ public class LessonRecordServiceImpl implements LessonRecordService {
                         "Revoke the processed makeup lesson before undoing its source leave.");
             }
             if ("CANCELLED".equals(makeup.getPlanningStatus())) continue;
+            if (!matchesGeneratedMakeupSnapshot(effect, makeup)) {
+                throw new BusinessException("MAKEUP_SCHEDULE_CHANGED",
+                        "The makeup lesson changed after this leave. Review the schedule before undoing it.");
+            }
             if (lessonRecordMapper.selectCount(new LambdaQueryWrapper<LessonRecordEntity>()
                     .eq(LessonRecordEntity::getOccurrenceId, makeup.getId())
                     .eq(LessonRecordEntity::getIsDeleted, 0)) > 0) {
                 throw new BusinessException("MAKEUP_HAS_RECORD", "The makeup lesson has an attendance record and cannot be removed automatically.");
             }
         }
+    }
+
+    /** 以业务排课快照判断人工变更；旧记录没有快照时保留原版本号保护。 */
+    private boolean matchesGeneratedMakeupSnapshot(LessonRecordMakeupEffectEntity effect,
+                                                    LessonOccurrenceEntity makeup) {
+        if (effect.getPlannedStartAt() == null) {
+            return Objects.equals(makeup.getVersion(), effect.getGeneratedVersion());
+        }
+        return Objects.equals(makeup.getPlannedStartAt(), effect.getPlannedStartAt())
+                && Objects.equals(makeup.getPlannedEndAt(), effect.getPlannedEndAt())
+                && Objects.equals(makeup.getPlannedUnits(), effect.getPlannedUnits())
+                && Objects.equals(makeup.getScheduleRuleId(), effect.getScheduleRuleId())
+                && Objects.equals(makeup.getScheduleSlotId(), effect.getScheduleSlotId())
+                && Objects.equals(makeup.getAllocationOwnerTeacherId(), effect.getAllocationOwnerTeacherId())
+                && Objects.equals(makeup.getAllocationAnchorDate(), effect.getAllocationAnchorDate())
+                && Objects.equals(makeup.getPlannedTeacherId(), effect.getPlannedTeacherId())
+                && Objects.equals(makeup.getSubjectName(), effect.getSubjectName())
+                && Objects.equals(makeup.getDeliveryMode(), effect.getDeliveryMode())
+                && Objects.equals(makeup.getPlannedClassroomId(), effect.getPlannedClassroomId())
+                && Objects.equals(makeup.getLeaveCarryoverUnits(), effect.getLeaveCarryoverUnits())
+                && Objects.equals(makeup.getPlanningStatus(), effect.getPlanningStatus())
+                && Objects.equals(makeup.getSourceOccurrenceId(), effect.getSourceOccurrenceId());
     }
 
     private void updatePackageAfterRevoke(CoursePackageEntity coursePackage) {

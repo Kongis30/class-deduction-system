@@ -18,6 +18,8 @@ import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordRevokeRequest;
 import com.classdeduction.system.modules.lesson.entity.HourLedgerEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordMakeupEffectEntity;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordRevokeAuditEntity;
 import com.classdeduction.system.modules.lesson.entity.LessonStatusRuleEntity;
 import com.classdeduction.system.modules.lesson.entity.PackageBalanceSnapshotEntity;
 import com.classdeduction.system.modules.lesson.mapper.HourLedgerMapper;
@@ -605,10 +607,16 @@ class LessonRecordServiceImplTest {
 
         verify(hourLedgerMapper).insert(ledgerCaptor.capture());
         verify(lessonOccurrenceMapper).insert(occurrenceCaptor.capture());
+        ArgumentCaptor<LessonRecordMakeupEffectEntity> effectCaptor = ArgumentCaptor.forClass(LessonRecordMakeupEffectEntity.class);
+        verify(lessonRecordMakeupEffectMapper).insert(effectCaptor.capture());
         assertThat(ledgerCaptor.getValue().getLedgerType()).isEqualTo("NO_DEDUCT_AUDIT");
         assertThat(ledgerCaptor.getValue().getChangeUnits()).isZero();
         assertThat(occurrenceCaptor.getValue().getOccurrenceType()).isEqualTo("MAKEUP");
         assertThat(occurrenceCaptor.getValue().getPlannedUnits()).isEqualTo(4);
+        assertThat(effectCaptor.getValue().getPlannedStartAt()).isEqualTo(occurrenceCaptor.getValue().getPlannedStartAt());
+        assertThat(effectCaptor.getValue().getPlannedEndAt()).isEqualTo(occurrenceCaptor.getValue().getPlannedEndAt());
+        assertThat(effectCaptor.getValue().getPlannedUnits()).isEqualTo(4);
+        assertThat(effectCaptor.getValue().getSourceOccurrenceId()).isEqualTo(1001L);
         assertThat(result.deductedUnits()).isZero();
         assertThat(result.remainingUnits()).isPositive();
         assertThat(result.packageCompleted()).isFalse();
@@ -861,6 +869,153 @@ class LessonRecordServiceImplTest {
         assertThat(finalPackage.getRemainingUnits()).isEqualTo(14);
         verify(recurringScheduleSlotMapper, never()).updateById(any(RecurringScheduleSlotEntity.class));
         verify(recurringScheduleRuleService).reconcilePackageSchedule(501L);
+    }
+
+    @Test
+    void shouldAllowRevokingLeaveWhenMakeupVersionChangedButItsScheduleDidNot() {
+        LessonRecordEntity leaveRecord = buildPendingRecord();
+        leaveRecord.setConfirmStage("CONFIRMED");
+        leaveRecord.setResultStatus("FORMAL_LEAVE");
+        leaveRecord.setShouldDeduct(0);
+        leaveRecord.setDeductedUnits(0);
+        leaveRecord.setShouldExtendEndDate(1);
+        leaveRecord.setVersion(3);
+        LessonOccurrenceEntity source = buildOccurrence();
+        source.setPlanningStatus("MERGED");
+        LessonOccurrenceEntity makeup = buildGeneratedMakeup();
+        makeup.setVersion(2); // 后续自动校准只增加了通用行版本。
+        LessonRecordMakeupEffectEntity effect = snapshotOf(makeup);
+        effect.setGeneratedVersion(0);
+
+        stubFormalLeaveRevoke(leaveRecord, source, makeup, effect, true);
+        LessonRecordRevokeRequest request = new LessonRecordRevokeRequest();
+        request.setExpectedVersion(3);
+
+        lessonRecordService.revokeLesson(leaveRecord.getId(), request, currentAdminUser());
+
+        verify(lessonRecordMapper).deleteById(leaveRecord.getId());
+        verify(lessonRecordRevokeAuditMapper).insert(any(LessonRecordRevokeAuditEntity.class));
+        verify(lessonOccurrenceMapper).updateById(makeup);
+    }
+
+    @Test
+    void shouldKeepBlockingLeaveRevokeWhenMakeupScheduleWasActuallyChanged() {
+        LessonRecordEntity leaveRecord = buildPendingRecord();
+        leaveRecord.setConfirmStage("CONFIRMED");
+        leaveRecord.setResultStatus("FORMAL_LEAVE");
+        leaveRecord.setShouldDeduct(0);
+        leaveRecord.setDeductedUnits(0);
+        leaveRecord.setShouldExtendEndDate(1);
+        leaveRecord.setVersion(3);
+        LessonOccurrenceEntity source = buildOccurrence();
+        source.setPlanningStatus("MERGED");
+        LessonOccurrenceEntity makeup = buildGeneratedMakeup();
+        makeup.setVersion(2);
+        makeup.setPlannedStartAt(makeup.getPlannedStartAt().plusWeeks(1));
+        LessonRecordMakeupEffectEntity effect = snapshotOf(buildGeneratedMakeup());
+
+        stubFormalLeaveRevoke(leaveRecord, source, makeup, effect, false);
+        LessonRecordRevokeRequest request = new LessonRecordRevokeRequest();
+        request.setExpectedVersion(3);
+
+        assertThatThrownBy(() -> lessonRecordService.revokeLesson(leaveRecord.getId(), request, currentAdminUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("The makeup lesson changed after this leave. Review the schedule before undoing it.");
+
+        verify(lessonRecordMapper, never()).deleteById(leaveRecord.getId());
+        verify(lessonRecordRevokeAuditMapper, never()).insert(any(LessonRecordRevokeAuditEntity.class));
+    }
+
+    @Test
+    void shouldKeepVersionGuardForLegacyMakeupEffectsWithoutSnapshot() {
+        LessonRecordEntity leaveRecord = buildPendingRecord();
+        leaveRecord.setConfirmStage("CONFIRMED");
+        leaveRecord.setResultStatus("FORMAL_LEAVE");
+        leaveRecord.setShouldDeduct(0);
+        leaveRecord.setDeductedUnits(0);
+        leaveRecord.setShouldExtendEndDate(1);
+        leaveRecord.setVersion(3);
+        LessonOccurrenceEntity source = buildOccurrence();
+        source.setPlanningStatus("MERGED");
+        LessonOccurrenceEntity makeup = buildGeneratedMakeup();
+        makeup.setVersion(2);
+        LessonRecordMakeupEffectEntity legacyEffect = new LessonRecordMakeupEffectEntity();
+        legacyEffect.setSourceLessonRecordId(leaveRecord.getId());
+        legacyEffect.setMakeupOccurrenceId(makeup.getId());
+        legacyEffect.setGeneratedVersion(0);
+
+        stubFormalLeaveRevoke(leaveRecord, source, makeup, legacyEffect, false);
+        LessonRecordRevokeRequest request = new LessonRecordRevokeRequest();
+        request.setExpectedVersion(3);
+
+        assertThatThrownBy(() -> lessonRecordService.revokeLesson(leaveRecord.getId(), request, currentAdminUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("The makeup lesson changed after this leave. Review the schedule before undoing it.");
+        verify(lessonRecordMapper, never()).deleteById(leaveRecord.getId());
+    }
+
+    private void stubFormalLeaveRevoke(LessonRecordEntity record,
+                                       LessonOccurrenceEntity source,
+                                       LessonOccurrenceEntity makeup,
+                                       LessonRecordMakeupEffectEntity effect,
+                                       boolean completeRevoke) {
+        when(lessonRecordMapper.selectById(record.getId())).thenReturn(record);
+        when(lessonRecordMapper.selectByIdForUpdate(record.getId())).thenReturn(record);
+        when(lessonOccurrenceMapper.selectById(record.getOccurrenceId())).thenReturn(source);
+        when(lessonOccurrenceMapper.selectByIdForUpdate(record.getOccurrenceId())).thenReturn(source);
+        when(coursePackageMapper.selectByIdForUpdate(record.getPackageId())).thenReturn(buildPackage(10, 2));
+        when(lessonRecordMakeupEffectMapper.findBySourceLessonRecordId(record.getId())).thenReturn(List.of(effect));
+        when(lessonOccurrenceMapper.selectByIdForUpdate(makeup.getId())).thenReturn(makeup);
+        if (completeRevoke) {
+            when(lessonRecordMapper.selectCount(any())).thenReturn(0L);
+            when(coursePackageMapper.updateById(any(CoursePackageEntity.class))).thenReturn(1);
+            when(lessonOccurrenceMapper.updateById(any(LessonOccurrenceEntity.class))).thenReturn(1);
+            when(lessonRecordMapper.selectList(any())).thenReturn(List.of());
+            when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of());
+        }
+    }
+
+    private LessonOccurrenceEntity buildGeneratedMakeup() {
+        LessonOccurrenceEntity makeup = new LessonOccurrenceEntity();
+        makeup.setId(4001L);
+        makeup.setOccurrenceType("MAKEUP");
+        makeup.setSourceOccurrenceId(1001L);
+        makeup.setPlanningStatus("SCHEDULED");
+        makeup.setPlannedStartAt(LocalDateTime.of(2026, 11, 5, 17, 30));
+        makeup.setPlannedEndAt(LocalDateTime.of(2026, 11, 5, 19, 30));
+        makeup.setPlannedUnits(4);
+        makeup.setScheduleRuleId(5001L);
+        makeup.setScheduleSlotId(5002L);
+        makeup.setAllocationOwnerTeacherId(701L);
+        makeup.setAllocationAnchorDate(LocalDate.of(2026, 11, 5));
+        makeup.setPlannedTeacherId(701L);
+        makeup.setSubjectName("SHSAT ELA");
+        makeup.setDeliveryMode("IN_PERSON");
+        makeup.setPlannedClassroomId(801L);
+        makeup.setLeaveCarryoverUnits(0);
+        return makeup;
+    }
+
+    private LessonRecordMakeupEffectEntity snapshotOf(LessonOccurrenceEntity makeup) {
+        LessonRecordMakeupEffectEntity effect = new LessonRecordMakeupEffectEntity();
+        effect.setSourceLessonRecordId(2001L);
+        effect.setMakeupOccurrenceId(makeup.getId());
+        effect.setGeneratedVersion(0);
+        effect.setPlannedStartAt(makeup.getPlannedStartAt());
+        effect.setPlannedEndAt(makeup.getPlannedEndAt());
+        effect.setPlannedUnits(makeup.getPlannedUnits());
+        effect.setScheduleRuleId(makeup.getScheduleRuleId());
+        effect.setScheduleSlotId(makeup.getScheduleSlotId());
+        effect.setAllocationOwnerTeacherId(makeup.getAllocationOwnerTeacherId());
+        effect.setAllocationAnchorDate(makeup.getAllocationAnchorDate());
+        effect.setPlannedTeacherId(makeup.getPlannedTeacherId());
+        effect.setSubjectName(makeup.getSubjectName());
+        effect.setDeliveryMode(makeup.getDeliveryMode());
+        effect.setPlannedClassroomId(makeup.getPlannedClassroomId());
+        effect.setLeaveCarryoverUnits(makeup.getLeaveCarryoverUnits());
+        effect.setPlanningStatus(makeup.getPlanningStatus());
+        effect.setSourceOccurrenceId(makeup.getSourceOccurrenceId());
+        return effect;
     }
 
     @Test
