@@ -175,32 +175,25 @@
         </el-button>
       </template>
     </el-dialog>
-    <div class="roster-print" aria-hidden="true">
-      <section
-        v-for="group in selectedRosterPrintGroups"
-        :key="group.key"
-        class="roster-print__page"
-        :style="rosterPrintPageStyle(group.students.length)"
-      >
-        <div class="roster-print__content">
-          <h1>{{ group.projectName }}</h1>
-          <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
-          <p class="roster-print__campus">{{ group.campusName }}</p>
-          <table>
-            <thead>
-              <tr><th>Student</th><th>School</th></tr>
-            </thead>
-            <tbody>
-              <tr v-for="student in group.students" :key="student.key">
-                <td>{{ student.name }}</td>
-                <td>{{ student.school }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+    <div ref="rosterPrintRef" class="roster-print" aria-hidden="true">
+      <section v-for="group in selectedRosterPrintGroups" :key="group.key" class="roster-print__page">
+        <h1>{{ group.projectName }}</h1>
+        <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
+        <p class="roster-print__campus">{{ group.campusName }}</p>
+        <table>
+          <thead>
+            <tr><th>Student</th><th>School</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="student in group.students" :key="student.key">
+              <td>{{ student.name }}</td>
+              <td>{{ student.school }}</td>
+            </tr>
+          </tbody>
+        </table>
       </section>
     </div>
-    <div ref="workbookScrollRef" class="workbook-scroll" :class="{ 'workbook-scroll--pinch-zoom': isMobileViewport }" data-testid="data-summary-workbook">
+    <div ref="workbookScrollRef" class="workbook-scroll" :class="{ 'workbook-scroll--pinch-zoom': isMobileViewport }" data-testid="data-summary-workbook" aria-label="Data summary spreadsheet">
       <table class="workbook-table" :style="{ zoom: isMobileViewport ? mobileTableScale : undefined }">
         <colgroup>
           <col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }" />
@@ -363,6 +356,15 @@
                   <span class="workbook-student-name">
                     {{ displayText(row.studentName) }}
                   </span>
+                  <button
+                    v-if="isMobileViewport"
+                    type="button"
+                    class="workbook-student-actions"
+                    :aria-label="`Actions for ${displayText(row.studentName)}`"
+                    @click.stop="openStudentContextMenu($event, row)"
+                  >
+                    <el-icon><MoreFilled /></el-icon>
+                  </button>
                 </td>
                 <td>{{ displayText(row.school) }}</td>
                 <td class="workbook-cell--center">{{ displayText(row.grade) }}</td>
@@ -445,83 +447,6 @@
         </tbody>
       </table>
     </div>
-    <section v-if="isMobileViewport" class="workbook-mobile-list" aria-label="Data summary records">
-      <div v-if="sortedRows.length" class="workbook-mobile-list__section">
-        <div class="workbook-mobile-list__heading">
-          <strong>Active registrations</strong>
-          <span>{{ sortedRows.length }}</span>
-        </div>
-        <article v-for="row in sortedRows" :key="`mobile-${rowKey(row)}`" class="workbook-mobile-card">
-          <div class="workbook-mobile-card__header">
-            <div class="workbook-mobile-card__identity">
-              <strong>{{ displayText(row.studentName) }}</strong>
-              <span>{{ displayText(displayClassName(row)) }} · {{ displayText(row.campusName) }}</span>
-            </div>
-            <button
-              type="button"
-              class="workbook-mobile-card__action"
-              :aria-label="`Actions for ${displayText(row.studentName)}`"
-              @click.stop="openStudentContextMenu($event, row)"
-            >
-              <el-icon><MoreFilled /></el-icon>
-            </button>
-          </div>
-          <div class="workbook-mobile-card__summary">
-            <div>
-              <span>Paid</span>
-              <strong>{{ formatMoney(row.paidAmount) }}</strong>
-            </div>
-            <div :class="{ 'workbook-mobile-card__metric--due': Number(row.balanceAmount ?? 0) < 0 }">
-              <span>Balance</span>
-              <strong>{{ formatMoney(row.balanceAmount) }}</strong>
-            </div>
-            <div>
-              <span>Period</span>
-              <strong>{{ formatPeriod(row) }}</strong>
-            </div>
-          </div>
-          <dl class="workbook-mobile-card__details">
-            <div><dt>School</dt><dd>{{ displayText(row.school) }}</dd></div>
-            <div><dt>Grade</dt><dd>{{ displayText(row.grade) }}</dd></div>
-            <div><dt>Phone</dt><dd>{{ formatUsPhoneDisplay(row.phone) || '—' }}</dd></div>
-            <div><dt>Pickup / drop-off</dt><dd>{{ row.pickupRequired ? 'Pickup' : 'No pickup' }} · {{ row.dropoffRequired ? 'Drop-off' : 'No drop-off' }}</dd></div>
-          </dl>
-        </article>
-      </div>
-
-      <div v-if="visibleRefundRows.length" class="workbook-mobile-list__section">
-        <div class="workbook-mobile-list__heading workbook-mobile-list__heading--refund">
-          <strong>Refund students</strong>
-          <span>{{ visibleRefundRows.length }}</span>
-        </div>
-        <article v-for="row in visibleRefundRows" :key="`mobile-refund-${rowKey(row)}`" class="workbook-mobile-card workbook-mobile-card--refund">
-          <div class="workbook-mobile-card__header">
-            <div class="workbook-mobile-card__identity">
-              <strong>{{ displayText(row.studentName) }}</strong>
-              <span>{{ displayText(displayClassName(row)) }} · {{ displayText(row.campusName) }}</span>
-            </div>
-            <button
-              type="button"
-              class="workbook-mobile-card__action"
-              :aria-label="`Actions for ${displayText(row.studentName)}`"
-              @click.stop="openStudentContextMenu($event, row)"
-            >
-              <el-icon><MoreFilled /></el-icon>
-            </button>
-          </div>
-          <div class="workbook-mobile-card__summary">
-            <div><span>Paid</span><strong>{{ formatMoney(row.paidAmount) }}</strong></div>
-            <div><span>Balance</span><strong>{{ formatMoney(row.balanceAmount) }}</strong></div>
-            <div><span>Period</span><strong>{{ formatPeriod(row) }}</strong></div>
-          </div>
-        </article>
-      </div>
-
-      <div v-if="!sortedRows.length && !visibleRefundRows.length" class="workbook-mobile-empty">
-        <strong>{{ emptyMessage }}</strong>
-        <el-button v-if="hasAnyFilter" text type="primary" @click="clearAllFilters">Clear all filters</el-button>
-      </div>
-    </section>
     <section v-if="visibleStoppedRows.length" class="stopped-records">
       <div class="stopped-records__heading">
         <h3>Stopped Records</h3>
@@ -551,42 +476,6 @@
                 </span>
                 <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(stoppedColumnValue(row, column.key)) }}</span>
                 <span v-else>{{ displayText(stoppedColumnValue(row, column.key)) }}</span>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section v-if="visibleRefundRows.length" class="refund-records">
-      <div class="refund-records__heading">
-        <h3>Refund Student</h3>
-        <span>{{ visibleRefundRows.length }} record(s)</span>
-      </div>
-      <div class="refund-records__scroll">
-        <table class="refund-records__table workbook-table">
-          <thead>
-            <tr>
-              <th v-for="column in columns" :key="column.key" :style="{ minWidth: `${column.width}px` }">
-                {{ column.label }}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="row in visibleRefundRows" :key="rowKey(row)">
-              <td v-for="column in columns" :key="column.key" :class="stoppedCellClass(column.key)">
-                <span v-if="column.key === 'period'">{{ formatPeriod(row) }}</span>
-                <span v-else-if="column.key === 'signupDate'">{{ formatDate(row.signupDate) }}</span>
-                <span v-else-if="column.key === 'phone'">{{ formatUsPhoneDisplay(row.phone) || '—' }}</span>
-                <span v-else-if="column.key === 'phone2'">{{ formatUsPhoneDisplay(row.phone2) || '—' }}</span>
-                <span v-else-if="column.key === 'pickup' || column.key === 'dropoff'" :class="['workbook-pill', columnValue(row, column.key) === 'Yes' ? 'workbook-pill--yes' : 'workbook-pill--no']">
-                  {{ columnValue(row, column.key) }}
-                </span>
-                <span v-else-if="column.key === 'paymentMethod'" :class="['workbook-pill', paymentMethodClass(row.paymentMethod)]">
-                  {{ displayText(row.paymentMethod) }}
-                </span>
-                <span v-else-if="isMoneyColumn(column.key)">{{ formatMoney(columnValue(row, column.key)) }}</span>
-                <span v-else>{{ displayText(columnValue(row, column.key)) }}</span>
               </td>
             </tr>
           </tbody>
@@ -681,6 +570,7 @@ import { useRouter } from 'vue-router';
 import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
 import { formatRoundedUsd } from '@/utils/money-display';
 import { countUnclassifiedSaturdayRows, filterSaturdayRosterRows } from '@/utils/saturday-roster';
+import { createIsolatedPrinter } from '@/utils/isolated-print';
 
 type ColumnKey =
   | 'campus'
@@ -792,6 +682,7 @@ const ALL_TAB_ID = '__ALL__';
 const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
 const ORDER_SAVE_DEBOUNCE_MS = 300;
 const MIN_MOBILE_TABLE_SCALE = 0.3;
+const DEFAULT_MOBILE_TABLE_SCALE = 0.72;
 const MAX_MOBILE_TABLE_SCALE = 1.6;
 const PERIOD_RENEWAL_WARNING_DAYS = 10;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
@@ -845,12 +736,13 @@ const canDragTabs = computed(() => isAdmin.value && !savingOrder.value);
 
 const loading = ref(false);
 const workbookScrollRef = ref<HTMLDivElement | null>(null);
-const mobileTableScale = ref(0.8);
+const mobileTableScale = ref(DEFAULT_MOBILE_TABLE_SCALE);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
 const products = ref<CourseProductItem[]>([]);
 const activeTabId = ref<string>('');
 const rosterPrintDialogVisible = ref(false);
+const rosterPrintRef = ref<HTMLElement | null>(null);
 const selectedRosterPrintKey = ref('');
 const selectedMonth = ref<string>('ALL');
 const saturdayRosterView = ref<SaturdayRosterView>('ALL');
@@ -1196,29 +1088,16 @@ const selectedRosterPrintGroups = computed(() =>
   selectedRosterPrintGroup.value ? [selectedRosterPrintGroup.value] : [],
 );
 
+const rosterPrinter = createIsolatedPrinter(() => rosterPrintRef.value);
+
 function rosterPrintOptionLabel(group: RosterPrintGroup) {
   return [group.className, group.projectName].join(' · ');
 }
 
-/** 按名单人数缩放整张打印页，避免同一班级被浏览器拆到下一页。 */
-function rosterPrintPageStyle(studentCount: number) {
-  const scale = rosterPrintScale(studentCount);
-  return {
-    '--roster-print-scale': scale.toFixed(3),
-    '--roster-print-content-width': `${(100 / scale).toFixed(3)}%`,
-  };
-}
-
-function rosterPrintScale(studentCount: number) {
-  const estimatedHeightMm = 52 + studentCount * 14;
-  return Math.min(1, 230 / estimatedHeightMm);
-}
-
-async function confirmPrintClassRoster() {
+function confirmPrintClassRoster() {
   if (!selectedRosterPrintGroup.value) return;
+  rosterPrinter.print();
   rosterPrintDialogVisible.value = false;
-  await nextTick();
-  window.print();
 }
 
 const hasAnyFilter = computed(() => columns.some((column) => hasColumnFilter(column.key)));
@@ -1557,6 +1436,7 @@ async function persistTabOrder() {
 }
 
 onBeforeUnmount(() => {
+  rosterPrinter.detach();
   window.clearTimeout(orderSaveTimer);
   window.removeEventListener('keydown', handleStudentContextMenuKeydown);
   const scroll = workbookScrollRef.value;
@@ -2117,6 +1997,7 @@ watch(tabs, () => {
 });
 
 onMounted(() => {
+  rosterPrinter.attach();
   void loadPage();
   window.addEventListener('keydown', handleStudentContextMenuKeydown);
   const scroll = workbookScrollRef.value;
@@ -2189,18 +2070,38 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  padding: 3px 6px;
-  border: 1px solid #c7d7cd;
-  border-radius: 6px;
+  padding: 3px 5px;
+  border: 1px solid #c5d4cc;
+  border-radius: 8px;
   background: #fff;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.student-find:focus-within {
+  border-color: #6e9c83;
+  box-shadow: 0 0 0 2px rgb(74 125 96 / 12%);
 }
 
 .student-find__input {
-  width: 220px;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+}
+
+.student-find__input :deep(.el-input__wrapper) {
+  height: 30px;
+  min-height: 30px;
+  padding: 0 7px;
+  box-shadow: none;
+}
+
+.student-find__input :deep(.el-input__inner) {
+  font-size: 12px;
 }
 
 .student-find__count {
-  min-width: 38px;
+  flex: 0 0 auto;
+  min-width: 48px;
   color: #64756c;
   font-size: 11px;
   text-align: center;
@@ -2208,7 +2109,26 @@ onMounted(() => {
 }
 
 .student-find__navigation :deep(.el-button) {
-  padding: 6px 8px;
+  width: 30px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-color: #d7e1dc;
+  background: #f7faf8;
+  color: #496c59;
+}
+
+.student-find__navigation {
+  flex: 0 0 auto;
+}
+
+.student-find > :deep(.el-button.is-text) {
+  width: 30px;
+  height: 28px;
+  min-height: 28px;
+  margin: 0;
+  padding: 0;
+  color: #687a70;
 }
 
 .workbook-toolbar__label {
@@ -2420,7 +2340,7 @@ onMounted(() => {
   border-spacing: 0;
   table-layout: fixed;
   color: #263b44;
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .workbook-table th,
@@ -2449,7 +2369,7 @@ onMounted(() => {
   border-color: #517768;
   background: #376451;
   color: #fff;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
 }
 
@@ -2697,17 +2617,22 @@ th.workbook-column--studentName {
   margin-right: 8px;
 }
 
-.workbook-mobile-list {
+.workbook-student-actions {
   display: none;
 }
 
 @media (max-width: 920px) {
   .data-summary-page {
-    height: calc(100dvh - 114px);
-    min-height: 360px;
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+    padding-bottom: 0;
   }
 
   .data-summary-page .workbook-toolbar {
+    flex: 0 0 auto;
     align-items: center;
     flex-direction: row;
     gap: 6px 10px;
@@ -2718,6 +2643,7 @@ th.workbook-column--studentName {
     display: flex;
     flex: 0 0 auto;
     align-items: center;
+    flex-wrap: nowrap;
     gap: 6px;
     min-width: 0;
   }
@@ -2726,11 +2652,43 @@ th.workbook-column--studentName {
     order: 3;
     flex: 1 1 100%;
     width: 100%;
+    flex-wrap: nowrap;
+    gap: 4px;
+    min-height: 36px;
+    padding: 2px 4px;
   }
 
   .data-summary-page .student-find__input {
-    flex: 1 1 auto;
-    width: auto;
+    flex: 1 1 0;
+    width: 0;
+    min-width: 0;
+  }
+
+  .data-summary-page .student-find__count {
+    flex: 0 0 48px;
+    min-width: 48px;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+
+  .data-summary-page .student-find :deep(.el-input__wrapper) {
+    height: 30px;
+    min-height: 30px;
+  }
+
+  .data-summary-page .student-find__navigation :deep(.el-button) {
+    width: 30px;
+    height: 28px;
+    min-height: 28px;
+    padding: 0;
+  }
+
+  .data-summary-page .student-find > :deep(.el-button.is-text) {
+    width: 30px;
+    height: 28px;
+    min-height: 28px;
+    margin: 0;
+    padding: 0;
   }
 
   .data-summary-page .workbook-toolbar__label {
@@ -2738,9 +2696,33 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page .workbook-toolbar__select {
-    width: 150px;
+    width: clamp(110px, 34vw, 150px);
     min-width: 0;
-    flex: 0 1 150px;
+    flex: 0 1 clamp(110px, 34vw, 150px);
+  }
+
+  .data-summary-page .workbook-toolbar__select :deep(.el-select__wrapper) {
+    min-height: 36px;
+    padding: 0 8px;
+  }
+
+  .data-summary-page .student-find-trigger {
+    width: 68px;
+    height: 36px;
+    min-height: 36px;
+    flex: 0 0 68px;
+    gap: 4px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 12px;
+  }
+
+  .data-summary-page .workbook-mobile-more {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    flex-basis: 36px;
+    border-radius: 8px;
   }
 
   .data-summary-page .workbook-toolbar__stats {
@@ -2765,194 +2747,102 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page .workbook-scroll {
-    display: none;
+    display: block;
+    flex: 0 0 auto;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
   }
 
-  .data-summary-page .workbook-mobile-list {
-    display: grid;
-    gap: 14px;
-    flex: 1 1 auto;
-    min-height: 0;
-    padding: 10px 10px 18px;
-    overflow: auto;
-    background: #f5f8fa;
-  }
-
-  .workbook-mobile-list__section {
-    display: grid;
-    gap: 8px;
-  }
-
-  .workbook-mobile-list__heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 2px;
-    color: #285b43;
-    font-size: 12px;
-  }
-
-  .workbook-mobile-list__heading span {
-    min-width: 22px;
-    padding: 2px 7px;
-    border-radius: 999px;
-    background: #dcebe3;
-    color: #285b43;
+  .data-summary-page .workbook-table {
     font-size: 11px;
-    text-align: center;
   }
 
-  .workbook-mobile-list__heading--refund {
-    color: #8f541b;
-  }
-
-  .workbook-mobile-list__heading--refund span {
-    background: #f8e4c8;
-    color: #8f541b;
-  }
-
-  .workbook-mobile-card {
-    display: grid;
-    gap: 11px;
-    padding: 13px;
-    border: 1px solid #c9d9e2;
-    border-radius: 12px;
-    background: #fff;
-    box-shadow: 0 2px 8px rgb(38 59 68 / 6%);
-  }
-
-  .workbook-mobile-card--refund {
-    border-color: #e6cda9;
-    background: #fffaf3;
-  }
-
-  .workbook-mobile-card__header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-  }
-
-  .workbook-mobile-card__identity {
-    display: grid;
-    min-width: 0;
-    gap: 3px;
-  }
-
-  .workbook-mobile-card__identity strong {
-    overflow: hidden;
-    color: #1f3f36;
-    font-size: 15px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .workbook-mobile-card__identity span {
-    overflow: hidden;
-    color: #71808a;
+  .data-summary-page .workbook-table th {
     font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
-  .workbook-mobile-card__action {
+  .data-summary-page .workbook-table th,
+  .data-summary-page .workbook-table td {
+    height: 34px;
+    padding: 6px 7px;
+  }
+
+  .data-summary-page .workbook-table th {
+    height: 38px;
+  }
+
+  .data-summary-page .workbook-column--campus,
+  .data-summary-page .workbook-column--studentClass {
+    position: static;
+  }
+
+  .data-summary-page th.workbook-column--campus,
+  .data-summary-page th.workbook-column--studentClass {
+    position: sticky;
+    top: 0;
+    left: auto;
+    z-index: 6;
+  }
+
+  .data-summary-page .workbook-column--studentName {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: #dcebf8;
+    box-shadow: 2px 0 0 rgb(81 119 104 / 25%);
+  }
+
+  .data-summary-page .workbook-data-row:hover .workbook-column--studentName {
+    background: #d1e5f6;
+  }
+
+  .data-summary-page .workbook-data-row--find-match .workbook-column--studentName {
+    background: #fff4c2;
+  }
+
+  .data-summary-page .workbook-data-row--find-current .workbook-column--studentName,
+  .data-summary-page .workbook-data-row--find-current:hover .workbook-column--studentName {
+    background: #ffe18a;
+  }
+
+  .data-summary-page th.workbook-column--studentName {
+    z-index: 7;
+    background: #376451;
+  }
+
+  .data-summary-page .workbook-student-name {
+    display: inline-block;
+    max-width: calc(100% - 26px);
+    overflow: hidden;
+    vertical-align: middle;
+    text-overflow: ellipsis;
+  }
+
+  .data-summary-page .workbook-student-actions {
     display: inline-flex;
-    flex: 0 0 34px;
     align-items: center;
     justify-content: center;
-    width: 34px;
-    height: 34px;
+    width: 24px;
+    height: 24px;
+    margin-left: 2px;
     padding: 0;
-    border: 1px solid #d5e1e7;
-    border-radius: 9px;
-    background: #f8fbfc;
-    color: #48695b;
-    cursor: pointer;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #376451;
+    vertical-align: middle;
   }
 
-  .workbook-mobile-card__action:active,
-  .workbook-mobile-card__action:focus-visible {
-    border-color: #7da891;
-    background: #eef7f1;
-    outline: none;
-  }
-
-  .workbook-mobile-card__summary {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-  }
-
-  .workbook-mobile-card__summary > div {
-    display: grid;
-    gap: 4px;
-    min-width: 0;
-    padding: 8px;
-    border-radius: 8px;
-    background: #f3f7f8;
-  }
-
-  .workbook-mobile-card__summary span {
-    color: #71808a;
-    font-size: 10px;
-    white-space: nowrap;
-  }
-
-  .workbook-mobile-card__summary strong {
-    overflow: hidden;
-    color: #263b44;
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .workbook-mobile-card__metric--due strong {
-    color: #c52b36;
-  }
-
-  .workbook-mobile-card__details {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px 12px;
-    margin: 0;
-    padding-top: 10px;
-    border-top: 1px solid #e8eef1;
-  }
-
-  .workbook-mobile-card__details div {
-    min-width: 0;
-  }
-
-  .workbook-mobile-card__details dt {
-    margin-bottom: 2px;
-    color: #87949b;
-    font-size: 10px;
-  }
-
-  .workbook-mobile-card__details dd {
-    overflow: hidden;
-    margin: 0;
-    color: #40535d;
-    font-size: 12px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .workbook-mobile-empty {
-    display: grid;
-    justify-items: center;
-    gap: 6px;
-    padding: 42px 16px;
-    border: 1px dashed #c6d5dc;
-    border-radius: 12px;
-    background: #fff;
-    color: #657680;
-    font-size: 13px;
-    text-align: center;
+  .data-summary-page .workbook-student-actions:focus-visible {
+    outline: 2px solid #376451;
+    outline-offset: 1px;
   }
 
   .data-summary-page .stopped-records {
+    flex: 0 1 auto;
     max-height: none;
     margin: 0 10px 14px;
     border-top: 1px solid #d8a36a;
@@ -2964,9 +2854,9 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page > .product-tab-bar {
-    position: sticky;
-    bottom: 0;
-    z-index: 20;
+    position: static;
+    flex: 0 0 auto;
+    min-height: 46px;
     padding-top: 5px;
     padding-bottom: 5px;
     border-top: 1px solid #9eafa7;
@@ -2975,6 +2865,7 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page > .product-tab-bar .product-tab {
+    flex: 0 0 auto;
     min-height: 34px;
   }
 }
@@ -2985,78 +2876,72 @@ th.workbook-column--studentName {
     margin: 16mm;
   }
 
-  .data-summary-page * {
-    visibility: hidden !important;
-  }
-
-  .data-summary-page .roster-print,
-  .data-summary-page .roster-print * {
+  .roster-print,
+  .roster-print * {
     visibility: visible !important;
   }
 
-  .data-summary-page .roster-print {
+  .roster-print {
     display: block !important;
-    position: absolute;
-    inset: 0;
     width: 100%;
     page: data-summary-roster;
     color: #111;
     font-family: Arial, sans-serif;
   }
 
-  .data-summary-page .roster-print__page {
+  .roster-print__page {
     min-height: 250mm;
     break-after: page;
     page-break-after: always;
   }
 
-  .data-summary-page .roster-print__page:last-child {
+  .roster-print__page:last-child {
     break-after: auto;
     page-break-after: auto;
   }
 
-  .data-summary-page .roster-print h1,
-  .data-summary-page .roster-print h2 {
+  .roster-print h1,
+  .roster-print h2 {
     margin: 0;
     text-align: center;
     font-weight: 700;
   }
 
-  .data-summary-page .roster-print h1 {
+  .roster-print h1 {
     padding-top: 8mm;
     font-size: 32pt;
   }
 
-  .data-summary-page .roster-print h2 {
+  .roster-print h2 {
     margin-top: 12mm;
     font-size: 25pt;
   }
 
-  .data-summary-page .roster-print__campus {
+  .roster-print__campus {
     margin: 5mm 0 3mm;
     text-align: center;
-    font-size: 10pt;
+    font-size: 12pt;
     color: #555;
   }
 
-  .data-summary-page .roster-print table {
+  .roster-print table {
     width: 84%;
-    margin: 6mm auto 0;
+    margin: 10mm auto 0;
     border-collapse: collapse;
     table-layout: fixed;
     font-size: 16pt;
   }
 
-  .data-summary-page .roster-print th {
+  .roster-print th {
     width: 50%;
     padding: 4mm;
     border: 1px solid #b8c7d4;
     background: #e9f1f8;
     text-align: left;
-    font-size: 11pt;
+    font-size: 12pt;
   }
 
-  .data-summary-page .roster-print td {
+  .roster-print td {
     width: 50%;
     padding: 4mm;
     border: 1px solid #b8c7d4;
