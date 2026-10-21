@@ -201,6 +201,9 @@ class EnrollmentOrderServiceImplTest {
     @Mock
     private com.classdeduction.system.modules.schedule.service.ClassHolidayService classHolidayService;
 
+    @Mock
+    private com.classdeduction.system.modules.finance.mapper.StudentCreditLedgerMapper studentCreditLedgerMapper;
+
     @Captor
     private ArgumentCaptor<EnrollmentOrderEntity> orderCaptor;
 
@@ -300,7 +303,8 @@ class EnrollmentOrderServiceImplTest {
                 groupCourseProjectMapper,
                 groupRegistrationPlanMapper,
                 paymentMethodMapper,
-                classHolidayService
+                classHolidayService,
+                studentCreditLedgerMapper
         );
         ReflectionTestUtils.setField(enrollmentOrderService, "studentCreditService", studentCreditService);
         lenient().when(enrollmentOrderItemMapper.selectList(any())).thenReturn(Collections.emptyList());
@@ -853,6 +857,41 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldAllowReceiptCorrectionWhenUnchangedPlanWasReducedAfterPurchase() {
+        // 订单购买时的方案上限是 13；管理员后来把当前方案上限调到 3，旧收据仍可编辑其他字段。
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 4, new BigDecimal("3"));
+        stubSavedSessionReceipt(4);
+
+        enrollmentOrderService.correctOrder(2001L, request);
+
+        verify(enrollmentOrderItemMapper).updateById(any(EnrollmentOrderItemEntity.class));
+        verify(classEnrollmentMapper, never()).updateById(any(ClassEnrollmentEntity.class));
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
+    }
+
+    @Test
+    void shouldRejectChangedPackageQuantityAboveCurrentPlanLimit() {
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 4, new BigDecimal("3"));
+        request.getItems().get(0).setPackageQuantity(new BigDecimal("4"));
+
+        assertThatThrownBy(() -> enrollmentOrderService.correctOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("GROUP_V2_PLAN_MISMATCH");
+        verify(enrollmentOrderItemMapper, never()).updateById(any(EnrollmentOrderItemEntity.class));
+    }
+
+    @Test
+    void shouldRejectChangedSelectedSessionsAboveCurrentPlanLimit() {
+        EnrollmentOrderCorrectionRequest request = stubSessionCorrection(4, 5, new BigDecimal("3"));
+        stubSavedSessionReceipt(4);
+
+        assertThatThrownBy(() -> enrollmentOrderService.correctOrder(2001L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code").isEqualTo("GROUP_V2_PLAN_MISMATCH");
+        verify(enrollmentOrderItemMapper, never()).updateById(any(EnrollmentOrderItemEntity.class));
+    }
+
+    @Test
     void shouldRecomputeSessionEnrollmentUsingSelectedSessionsWhenCountChanges() {
         EnrollmentOrderCorrectionRequest request = stubSessionCorrection(2, 3);
         ClassGroupScheduleSlotEntity slot = new ClassGroupScheduleSlotEntity();
@@ -929,6 +968,11 @@ class EnrollmentOrderServiceImplTest {
     }
 
     private EnrollmentOrderCorrectionRequest stubSessionCorrection(int previousSessions, int selectedSessions) {
+        return stubSessionCorrection(previousSessions, selectedSessions, new BigDecimal("13"));
+    }
+
+    private EnrollmentOrderCorrectionRequest stubSessionCorrection(int previousSessions, int selectedSessions,
+                                                                    BigDecimal currentPlanQuantity) {
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setOrderStatus("CONFIRMED");
@@ -951,7 +995,7 @@ class EnrollmentOrderServiceImplTest {
         plan.setProjectId(910L);
         plan.setCoverageType("SESSION_COUNT");
         plan.setPackageUnit("SESSION");
-        plan.setPackageQuantity(new BigDecimal("13"));
+        plan.setPackageQuantity(currentPlanQuantity);
         plan.setStatus("ACTIVE");
 
         EnrollmentOrderItemEntity item = new EnrollmentOrderItemEntity();

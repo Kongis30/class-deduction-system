@@ -1772,7 +1772,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         "Select a class for each group-class course before saving the receipt.");
             }
             if (isGroupItem(item)) {
-                validateCorrectedV2GroupSelection(payload, campusId, validateCampus, previous,
+                validateCorrectedV2GroupSelection(order.getId(), payload, campusId, validateCampus, previous,
                         lockedClass(lockedGroupClasses, payload.getClassId()));
             }
             boolean classChanged = !Objects.equals(oldClassId, payload.getClassId());
@@ -1858,7 +1858,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     /** 编辑班课收据时沿用 V2 的项目、方案、实际班三级归属；不再接受旧价格行反推班级。 */
-    private void validateCorrectedV2GroupSelection(RegistrationIntakeRequest.CourseItemPayload payload,
+    private void validateCorrectedV2GroupSelection(Long orderId,
+                                                   RegistrationIntakeRequest.CourseItemPayload payload,
                                                    Long campusId,
                                                    boolean validateCampus,
                                                    ClassItemBefore previous,
@@ -1878,15 +1879,34 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("GROUP_V2_SELECTION_MISMATCH",
                     "The selected plan and actual class must belong to the same teaching project.");
         }
-        if (!Objects.equals(plan.getPackageUnit(), payload.getPackageUnit())
-                || plan.getPackageQuantity() == null || payload.getPackageQuantity() == null
-                || payload.getPackageQuantity().signum() <= 0
-                || payload.getPackageQuantity().compareTo(plan.getPackageQuantity()) > 0) {
+        boolean projectOrPlanChanged = !Objects.equals(previous.groupProjectId(), payload.getGroupProjectId())
+                || !Objects.equals(previous.groupRegistrationPlanId(), payload.getGroupRegistrationPlanId());
+        boolean packageTermsChanged = !Objects.equals(previous.packageUnit(), payload.getPackageUnit())
+                || !sameQuantity(previous.packageQuantity(), payload.getPackageQuantity());
+        Integer selectedCount = "SESSION".equalsIgnoreCase(payload.getPackageUnit())
+                ? payload.getSessions()
+                : "MONTH".equalsIgnoreCase(payload.getPackageUnit()) ? payload.getPurchasedMonths() : null;
+        Integer previousSelectedCount = "SESSION".equalsIgnoreCase(previous.packageUnit())
+                ? originalReceiptSessions(orderId, previous.lineNo())
+                : "MONTH".equalsIgnoreCase(previous.packageUnit())
+                ? originalReceiptPurchasedMonths(orderId, previous.lineNo()) : null;
+        if (previousSelectedCount == null) {
+            previousSelectedCount = wholeNumber(previous.packageQuantity());
+        }
+        boolean selectedCountChanged = selectedCount != null
+                && !Objects.equals(selectedCount, previousSelectedCount);
+        BigDecimal quantityToValidate = selectedCount == null
+                ? payload.getPackageQuantity() : BigDecimal.valueOf(selectedCount);
+        // 历史订单保存的是购买时的方案条款。方案后来调整上限后，编辑收据中的姓名、金额等字段
+        // 不应被当前方案配置挡住；只有变更方案或购买条款时才按当前配置重新校验。
+        if ((projectOrPlanChanged || packageTermsChanged || selectedCountChanged)
+                && (!Objects.equals(plan.getPackageUnit(), payload.getPackageUnit())
+                || plan.getPackageQuantity() == null || quantityToValidate == null
+                || quantityToValidate.signum() <= 0
+                || quantityToValidate.compareTo(plan.getPackageQuantity()) > 0)) {
             throw new BusinessException("GROUP_V2_PLAN_MISMATCH",
                     "The purchased quantity must fit within the selected registration plan.");
         }
-        boolean projectOrPlanChanged = !Objects.equals(previous.groupProjectId(), payload.getGroupProjectId())
-                || !Objects.equals(previous.groupRegistrationPlanId(), payload.getGroupRegistrationPlanId());
         if (projectOrPlanChanged && (!"ACTIVE".equals(project.getStatus()) || !"ACTIVE".equals(plan.getStatus()))) {
             throw new BusinessException("GROUP_V2_SELECTION_INACTIVE",
                     "Choose an active teaching project and registration plan when changing the course.");
