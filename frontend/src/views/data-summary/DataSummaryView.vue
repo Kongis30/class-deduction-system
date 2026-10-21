@@ -220,7 +220,7 @@
                 placement="bottom-start"
                 trigger="click"
                 :width="column.filterType === 'date' ? 330 : column.filterType === 'number' ? 300 : 260"
-                popper-class="workbook-filter-popper"
+                :popper-class="['workbook-filter-popper', `workbook-filter-popper--${column.key}`]"
               >
                 <template #reference>
                   <button
@@ -274,6 +274,7 @@
                     range-separator="-"
                     value-format="YYYY-MM-DD"
                     unlink-panels
+                    :append-to="`.workbook-filter-popper--${column.key}`"
                   />
 
                   <div class="workbook-filter-section">
