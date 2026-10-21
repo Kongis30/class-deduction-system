@@ -336,6 +336,7 @@
                 :key="rowKey(row)"
                 class="workbook-data-row"
                 :class="{
+                  'workbook-data-row--period-due': isPeriodRenewalDue(row),
                   'workbook-data-row--find-match': isStudentFindMatch(row),
                   'workbook-data-row--find-current': isCurrentStudentFindMatch(row),
                 }"
@@ -792,6 +793,7 @@ const UNASSIGNED_TAB_ID = '__UNASSIGNED__';
 const ORDER_SAVE_DEBOUNCE_MS = 300;
 const MIN_MOBILE_TABLE_SCALE = 0.3;
 const MAX_MOBILE_TABLE_SCALE = 1.6;
+const PERIOD_RENEWAL_WARNING_DAYS = 10;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
 
 interface PinchZoomGesture {
@@ -1898,28 +1900,14 @@ function isPeriodRenewalDue(row: DataSummaryRow) {
   if (isPrivateLessonRow(row) || !row.periodEndDate) {
     return false;
   }
-  return remainingBusinessDays(row.periodEndDate) <= 7;
-}
-
-function remainingBusinessDays(endDateValue: string) {
+  // Period 按自然日提醒；到期当天仍算剩余 0 天，已过期不属于续期倒计时。
   const today = dayjs().startOf('day');
-  const endDate = dayjs(endDateValue).startOf('day');
+  const endDate = dayjs(row.periodEndDate).startOf('day');
   if (!endDate.isValid()) {
-    return Number.POSITIVE_INFINITY;
+    return false;
   }
-  if (endDate.isBefore(today)) {
-    return 0;
-  }
-  let days = 0;
-  let cursor = today;
-  while (cursor.isBefore(endDate) || cursor.isSame(endDate, 'day')) {
-    const day = cursor.day();
-    if (day !== 0 && day !== 6) {
-      days += 1;
-    }
-    cursor = cursor.add(1, 'day');
-  }
-  return days;
+  const remainingDays = endDate.diff(today, 'day');
+  return remainingDays >= 0 && remainingDays <= PERIOD_RENEWAL_WARNING_DAYS;
 }
 
 function formatMoney(value?: number) {
@@ -2530,6 +2518,14 @@ onMounted(() => {
 
 .workbook-data-row:hover td {
   background: #d1e5f6;
+}
+
+.workbook-data-row--period-due:not(.workbook-data-row--find-match):not(.workbook-data-row--find-current) td:not(.workbook-cell--merged) {
+  background: #ffe4e6;
+}
+
+.workbook-data-row--period-due:not(.workbook-data-row--find-match):not(.workbook-data-row--find-current):hover td:not(.workbook-cell--merged) {
+  background: #ffd7db;
 }
 
 .workbook-data-row--find-match td {
