@@ -1507,9 +1507,13 @@ async function reloadPackageDetail() {
 async function loadPackageSchedule(packageId: EntityId) {
   scheduleLoading.value = true;
   try {
+    // 详情仅展示当前可用计划；停课后结束的旧规则属于历史，复课需重新设置。
+    if (detailData.value?.packageStatus === 'PAUSED') {
+      packageScheduleRule.value = null;
+      return;
+    }
     const result = await fetchRecurringScheduleRules({ packageId, pageNum: 1, pageSize: 10 });
-    const rules = result.data.data.records;
-    const rule = rules.find(item => item.ruleStatus === 'ACTIVE' || item.ruleStatus === 'PAUSED') ?? rules[0];
+    const rule = result.data.data.records.find(item => item.ruleStatus === 'ACTIVE' || item.ruleStatus === 'PAUSED');
     packageScheduleRule.value = rule
       ? (await fetchRecurringScheduleRule(rule.id)).data.data
       : null;

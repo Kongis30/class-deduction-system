@@ -760,11 +760,13 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         List<RecurringScheduleRuleEntity> rules = recurringScheduleRuleMapper.selectList(
                 new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
                         .in(RecurringScheduleRuleEntity::getPackageId, packageIds)
+                        .in(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE", "PAUSED")
                         .orderByDesc(RecurringScheduleRuleEntity::getCreatedAt));
         if (rules.isEmpty()) {
             return oneOnOnePackages.stream().collect(Collectors.toMap(
                     CoursePackageEntity::getId,
-                    item -> new PackageScheduleSummary("Needs setup", null)));
+                    item -> new PackageScheduleSummary("PAUSED".equals(item.getPackageStatus())
+                            ? "Paused" : "Needs setup", null)));
         }
 
         List<Long> ruleIds = rules.stream().map(RecurringScheduleRuleEntity::getId).toList();
@@ -794,10 +796,11 @@ public class CoursePackageServiceImpl implements CoursePackageService {
         Map<Long, PackageScheduleSummary> result = new LinkedHashMap<>();
         for (CoursePackageEntity coursePackage : oneOnOnePackages) {
             List<RecurringScheduleRuleEntity> packageRules = rulesByPackageId.getOrDefault(coursePackage.getId(), Collections.emptyList());
-            // Keep the list's existing rule choice: the schedule page selected the newest rule first.
+            // 已结束的规则只保留历史，不参与当前排课状态。
             RecurringScheduleRuleEntity rule = packageRules.isEmpty() ? null : packageRules.get(0);
             if (rule == null) {
-                result.put(coursePackage.getId(), new PackageScheduleSummary("Needs setup", null));
+                result.put(coursePackage.getId(), new PackageScheduleSummary(
+                        "PAUSED".equals(coursePackage.getPackageStatus()) ? "Paused" : "Needs setup", null));
                 continue;
             }
 
@@ -1139,10 +1142,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
                 coursePackage.setPackageStatus("PAUSED");
                 coursePackageMapper.updateById(coursePackage);
             }
-            recurringScheduleRuleMapper.update(null, new LambdaUpdateWrapper<RecurringScheduleRuleEntity>()
-                    .eq(RecurringScheduleRuleEntity::getPackageId, coursePackage.getId())
-                    .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
-                    .set(RecurringScheduleRuleEntity::getRuleStatus, "PAUSED"));
+            endPackageScheduleRules(coursePackage.getId());
             cancelFutureOccurrencesWhenPaused(coursePackage.getId());
         }
     }
@@ -1161,8 +1161,11 @@ public class CoursePackageServiceImpl implements CoursePackageService {
             throw new BusinessException("PACKAGE_NO_REMAINING_HOURS", "This package has no remaining hours to schedule.");
         }
 
-        // 恢复只重新开放成员课包；旧规则继续暂停，避免自动按过期时段生成课次。
+        // 兼容旧停课数据：恢复前结束仍标为暂停的旧规则，复课后必须重新排课。
         for (CoursePackageEntity coursePackage : packages) {
+            if ("PAUSED".equals(coursePackage.getPackageStatus())) {
+                endPackageScheduleRules(coursePackage.getId());
+            }
             coursePackage.setCompletedAt(null);
             coursePackage.setEstimatedEndDate(null);
             coursePackage.setPackageStatus("ACTIVE");
@@ -1275,6 +1278,14 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
     private int safeUnits(Integer units) {
         return units == null ? 0 : Math.max(0, units);
+    }
+
+    /** 课包停课后原排课计划永久结束；恢复课包不能再占用这些规则的分配额度。 */
+    private void endPackageScheduleRules(Long packageId) {
+        recurringScheduleRuleMapper.update(null, new LambdaUpdateWrapper<RecurringScheduleRuleEntity>()
+                .eq(RecurringScheduleRuleEntity::getPackageId, packageId)
+                .in(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE", "PAUSED")
+                .set(RecurringScheduleRuleEntity::getRuleStatus, "ENDED"));
     }
 
     /** 停课释放所有未来课次的老师和教室占用；待审核消课同时退回，已确认记录保留供追溯。 */

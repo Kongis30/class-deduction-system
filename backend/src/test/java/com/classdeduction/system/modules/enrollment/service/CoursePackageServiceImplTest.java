@@ -278,6 +278,33 @@ class CoursePackageServiceImplTest {
     }
 
     @Test
+    void shouldRequireNewScheduleAfterPreviousRuleEnded() {
+        CoursePackagePageQuery query = new CoursePackagePageQuery();
+        query.setPageNum(1);
+        query.setPageSize(10);
+        query.setTeachingMode("ONE_ON_ONE");
+        query.setIncludeScheduleSummary(true);
+
+        CoursePackageEntity coursePackage = buildOneOnOnePackage("ACTIVE", 20);
+        Page<CoursePackageEntity> page = new Page<>(1, 10);
+        page.setRecords(List.of(coursePackage));
+        page.setTotal(1);
+        when(coursePackageMapper.selectPage(any(Page.class), any())).thenReturn(page);
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of());
+
+        PageResponse<CoursePackageListItemVO> result = coursePackageService.pagePackages(query);
+
+        assertThat(result.records().get(0).scheduleStatus()).isEqualTo("Needs setup");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<LambdaQueryWrapper<RecurringScheduleRuleEntity>> queryCaptor =
+                ArgumentCaptor.forClass(LambdaQueryWrapper.class);
+        verify(recurringScheduleRuleMapper).selectList(queryCaptor.capture());
+        assertThat(queryCaptor.getValue().getSqlSegment()).contains("ruleStatus");
+        assertThat(queryCaptor.getValue().getParamNameValuePairs().values())
+                .contains("ACTIVE", "PAUSED");
+    }
+
+    @Test
     void shouldIncludePendingDeductionHoursInPackageList() {
         CoursePackagePageQuery query = new CoursePackagePageQuery();
         query.setPageNum(1);
@@ -521,7 +548,13 @@ class CoursePackageServiceImplTest {
 
         assertThat(coursePackage.getPackageStatus()).isEqualTo("PAUSED");
         verify(coursePackageMapper).updateById(coursePackage);
-        verify(recurringScheduleRuleMapper).update(any(), any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<RecurringScheduleRuleEntity>> ruleCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(recurringScheduleRuleMapper).update(any(), ruleCaptor.capture());
+        assertThat(ruleCaptor.getValue().getSqlSegment()).contains("ruleStatus");
+        assertThat(ruleCaptor.getValue().getParamNameValuePairs().values())
+                .contains(101L, "ACTIVE", "PAUSED", "ENDED");
         @SuppressWarnings("unchecked")
         ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<LessonOccurrenceEntity>> updateCaptor =
                 ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
@@ -551,6 +584,13 @@ class CoursePackageServiceImplTest {
         assertThat(coursePackage.getEstimatedEndDate()).isNull();
         verify(coursePackageMapper).updateById(coursePackage);
         verify(recurringScheduleRuleMapper, never()).updateById(any(RecurringScheduleRuleEntity.class));
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<RecurringScheduleRuleEntity>> ruleCaptor =
+                ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper.class);
+        verify(recurringScheduleRuleMapper).update(any(), ruleCaptor.capture());
+        assertThat(ruleCaptor.getValue().getSqlSegment()).contains("ruleStatus");
+        assertThat(ruleCaptor.getValue().getParamNameValuePairs().values())
+                .contains(101L, "ACTIVE", "PAUSED", "ENDED");
         verify(lessonOccurrenceMapper, never()).insert(any(LessonOccurrenceEntity.class));
     }
 
