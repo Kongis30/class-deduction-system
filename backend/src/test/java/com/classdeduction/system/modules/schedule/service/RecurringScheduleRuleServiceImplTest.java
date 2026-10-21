@@ -53,6 +53,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.temporal.TemporalAdjusters;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -531,6 +532,82 @@ class RecurringScheduleRuleServiceImplTest {
         verify(lessonOccurrenceMapper, org.mockito.Mockito.atLeastOnce()).insert(occurrenceCaptor.capture());
         assertThat(occurrenceCaptor.getAllValues().stream().mapToInt(LessonOccurrenceEntity::getPlannedUnits).sum())
                 .isEqualTo(48);
+    }
+
+    @Test
+    void shouldReproduceAllocationErrorWhileCancelledOldPlanRemainsPaused() {
+        // 线上案例：余额 54h，已取消课次的旧规则仍以 PAUSED 状态预留 28h + 26h。
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(
+                buildSlot(4, LocalTime.of(18, 0), 4, 36),
+                buildSlot(5, LocalTime.of(18, 0), 4, 36),
+                buildSlot(6, LocalTime.of(16, 0), 4, 36)));
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(240);
+        coursePackage.setConsumedUnits(132);
+        coursePackage.setRemainingUnits(108);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+
+        RecurringScheduleRuleEntity oldRule = buildExistingRule();
+        oldRule.setRuleStatus("PAUSED");
+        RecurringScheduleSlotEntity thursday = new RecurringScheduleSlotEntity();
+        thursday.setAllocatedUnits(56);
+        thursday.setSlotStatus("ACTIVE");
+        RecurringScheduleSlotEntity saturday = new RecurringScheduleSlotEntity();
+        saturday.setAllocatedUnits(52);
+        saturday.setSlotStatus("ACTIVE");
+        List<LessonOccurrenceEntity> cancelledLessons = new ArrayList<>();
+        for (long id = 1; id <= 27; id++) {
+            LessonOccurrenceEntity occurrence = new LessonOccurrenceEntity();
+            occurrence.setId(id);
+            occurrence.setPlanningStatus("CANCELLED");
+            cancelledLessons.add(occurrence);
+        }
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(oldRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(thursday, saturday));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(cancelledLessons);
+
+        assertThatThrownBy(() -> recurringScheduleRuleService.createRule(request))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("after other schedules are accounted for");
+        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never()).insert(any(RecurringScheduleRuleEntity.class));
+    }
+
+    @Test
+    void shouldCreateScheduleAfterPackagePauseEndsOldRule() {
+        RecurringScheduleRuleCreateRequest request = buildCreateRequestWithSlots(List.of(
+                buildSlot(4, LocalTime.of(18, 0), 4, 36),
+                buildSlot(5, LocalTime.of(18, 0), 4, 36),
+                buildSlot(6, LocalTime.of(16, 0), 4, 36)));
+        CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(240);
+        coursePackage.setConsumedUnits(132);
+        coursePackage.setRemainingUnits(108);
+        when(coursePackageMapper.selectById(1001L)).thenReturn(coursePackage);
+        when(studentMapper.selectById(2001L)).thenReturn(buildStudent());
+        when(teacherMapper.selectById(3001L)).thenReturn(buildTeacher());
+        when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(Collections.emptyList());
+        doAnswer(invocation -> {
+            RecurringScheduleRuleEntity rule = invocation.getArgument(0);
+            rule.setId(5001L);
+            return 1;
+        }).when(recurringScheduleRuleMapper).insert(any(RecurringScheduleRuleEntity.class));
+        long[] nextSlotId = {6000L};
+        doAnswer(invocation -> {
+            RecurringScheduleSlotEntity slot = invocation.getArgument(0);
+            slot.setId(++nextSlotId[0]);
+            return 1;
+        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
+        doAnswer(invocation -> 1).when(lessonOccurrenceMapper).insert(any(LessonOccurrenceEntity.class));
+
+        ScheduleRuleCreateResultVO result = recurringScheduleRuleService.createRule(request);
+
+        assertThat(result.slotCount()).isEqualTo(3);
+        assertThat(result.generatedOccurrenceCount()).isEqualTo(27);
+        verify(lessonOccurrenceMapper, times(27)).insert(any(LessonOccurrenceEntity.class));
     }
 
     @Test
