@@ -2341,9 +2341,9 @@ onMounted(() => {
 .workbook-scroll {
   width: 100%;
   height: auto;
-  flex: 1 1 0;
-  min-height: 0;
-  overflow: auto;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid #9eafa7;
   background: #fff;
 }
