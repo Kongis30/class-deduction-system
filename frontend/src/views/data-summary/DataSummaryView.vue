@@ -129,39 +129,6 @@
         </el-button>
       </div>
     </div>
-    <nav
-      v-if="tabs.length"
-      class="product-tab-bar"
-      data-testid="product-tab-bar"
-      aria-label="Course product tabs"
-    >
-      <button
-        v-for="tab in tabs"
-        :key="tab.id"
-        type="button"
-        class="product-tab"
-        :class="{
-          'product-tab--active': tab.id === activeTabId,
-          'product-tab--global': tab.global,
-          'product-tab--unassigned': tab.unassigned,
-          'product-tab--private': tab.privateLesson,
-          'product-tab--dragging': dragState.fromId === tab.id,
-          'product-tab--drop-target': dragState.overId === tab.id && dragState.fromId !== tab.id,
-        }"
-        :draggable="canMoveProductTab(tab)"
-        :title="tab.global ? 'All registration data' : tab.unassigned ? 'Rows not linked to a current course product' : tab.label"
-        :data-testid="`product-tab-${tab.id}`"
-        :aria-current="tab.id === activeTabId ? 'page' : undefined"
-        @click="selectTab(tab.id)"
-        @dragstart="handleDragStart(tab, $event)"
-        @dragenter.prevent="handleDragEnter(tab)"
-        @dragover.prevent="handleDragOver(tab)"
-        @drop.prevent="handleDrop(tab)"
-        @dragend="handleDragEnd"
-      >
-        <span class="product-tab__label">{{ tab.label }}</span>
-      </button>
-    </nav>
     <el-dialog
       v-model="rosterPrintDialogVisible"
       title="Print class roster"
@@ -226,8 +193,8 @@
         </table>
       </section>
     </div>
-    <div class="workbook-content-scroll">
-    <div ref="workbookScrollRef" class="workbook-scroll" :class="{ 'workbook-scroll--pinch-zoom': isMobileViewport }" data-testid="data-summary-workbook" aria-label="Data summary spreadsheet">
+    <div ref="workbookScrollRef" class="workbook-content-scroll" :class="{ 'workbook-content-scroll--pinch-zoom': isMobileViewport }">
+    <div class="workbook-scroll" data-testid="data-summary-workbook" aria-label="Data summary spreadsheet">
       <table class="workbook-table" :style="{ zoom: isMobileViewport ? mobileTableScale : undefined }">
         <colgroup>
           <col v-for="column in columns" :key="column.key" :style="{ width: `${column.width}px` }" />
@@ -516,6 +483,40 @@
       </div>
     </section>
     </div>
+
+    <nav
+      v-if="tabs.length"
+      class="product-tab-bar"
+      data-testid="product-tab-bar"
+      aria-label="Course product tabs"
+    >
+      <button
+        v-for="tab in tabs"
+        :key="tab.id"
+        type="button"
+        class="product-tab"
+        :class="{
+          'product-tab--active': tab.id === activeTabId,
+          'product-tab--global': tab.global,
+          'product-tab--unassigned': tab.unassigned,
+          'product-tab--private': tab.privateLesson,
+          'product-tab--dragging': dragState.fromId === tab.id,
+          'product-tab--drop-target': dragState.overId === tab.id && dragState.fromId !== tab.id,
+        }"
+        :draggable="canMoveProductTab(tab)"
+        :title="tab.global ? 'All registration data' : tab.unassigned ? 'Rows not linked to a current course product' : tab.label"
+        :data-testid="`product-tab-${tab.id}`"
+        :aria-current="tab.id === activeTabId ? 'page' : undefined"
+        @click="selectTab(tab.id)"
+        @dragstart="handleDragStart(tab, $event)"
+        @dragenter.prevent="handleDragEnter(tab)"
+        @dragover.prevent="handleDragOver(tab)"
+        @drop.prevent="handleDrop(tab)"
+        @dragend="handleDragEnd"
+      >
+        <span class="product-tab__label">{{ tab.label }}</span>
+      </button>
+    </nav>
 
     <div
       v-if="studentContextMenu.visible"
@@ -1902,14 +1903,17 @@ function touchDistance(touches: TouchList) {
 // 移动端两指缩放只作用于工作表，并将手指中心对应的单元格固定在视口中。
 function handleWorkbookTouchStart(event: TouchEvent) {
   const scroll = workbookScrollRef.value;
-  if (!isMobileViewport.value || !scroll || event.touches.length !== 2) {
+  if (!isMobileViewport.value || !scroll || event.touches.length !== 2
+      || !(event.target instanceof Element) || !event.target.closest('.workbook-scroll')) {
     pinchZoomGesture = null;
+    scroll?.removeEventListener('touchmove', handleWorkbookTouchMove);
     return;
   }
 
   const startDistance = touchDistance(event.touches);
   if (startDistance < 1) {
     pinchZoomGesture = null;
+    scroll.removeEventListener('touchmove', handleWorkbookTouchMove);
     return;
   }
   const rect = scroll.getBoundingClientRect();
@@ -1921,6 +1925,8 @@ function handleWorkbookTouchStart(event: TouchEvent) {
     contentX: (scroll.scrollLeft + viewportX) / mobileTableScale.value,
     contentY: (scroll.scrollTop + viewportY) / mobileTableScale.value,
   };
+  // 单指拖动保持浏览器原生滚动；仅双指缩放期间拦截 touchmove。
+  scroll.addEventListener('touchmove', handleWorkbookTouchMove, { passive: false });
 }
 
 function scheduleMobileTableScroll() {
@@ -1960,7 +1966,10 @@ function handleWorkbookTouchMove(event: TouchEvent) {
 }
 
 function handleWorkbookTouchEnd(event: TouchEvent) {
-  if (event.touches.length < 2) pinchZoomGesture = null;
+  if (event.touches.length < 2) {
+    pinchZoomGesture = null;
+    workbookScrollRef.value?.removeEventListener('touchmove', handleWorkbookTouchMove);
+  }
 }
 
 function setMobileTableScale(scale: number) {
@@ -2007,7 +2016,6 @@ onMounted(() => {
   window.addEventListener('keydown', handleStudentContextMenuKeydown);
   const scroll = workbookScrollRef.value;
   scroll?.addEventListener('touchstart', handleWorkbookTouchStart, { passive: true });
-  scroll?.addEventListener('touchmove', handleWorkbookTouchMove, { passive: false });
   scroll?.addEventListener('touchend', handleWorkbookTouchEnd, { passive: true });
   scroll?.addEventListener('touchcancel', handleWorkbookTouchEnd, { passive: true });
 });
@@ -2015,12 +2023,11 @@ onMounted(() => {
 
 <style scoped>
 .data-summary-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   min-width: 0;
   height: calc(100vh - 88px);
-  overflow-x: hidden;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+  overflow: hidden;
   background: #fff;
 }
 
@@ -2252,22 +2259,28 @@ onMounted(() => {
 }
 
 .workbook-scroll {
-  width: 100%;
-  height: auto;
-  flex: 0 0 auto;
-  overflow-x: auto;
-  overflow-y: hidden;
+  width: max-content;
+  min-width: 100%;
   border: 1px solid #9eafa7;
   background: #fff;
 }
 
 .workbook-content-scroll {
-  display: contents;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
-.workbook-scroll--pinch-zoom {
+.workbook-content-scroll--pinch-zoom {
   touch-action: pan-x pan-y;
-  -webkit-overflow-scrolling: touch;
+}
+
+.data-summary-page > .product-tab-bar {
+  min-width: 0;
+  border-top: 1px solid #9eafa7;
+  border-bottom: 1px solid #9eafa7;
 }
 
 .stopped-records {
@@ -2632,29 +2645,21 @@ th.workbook-column--studentName {
 
 @media (max-width: 920px) {
   .data-summary-page {
-    display: grid;
     width: 100%;
     height: auto;
     min-height: 0;
     flex: 1 1 0;
-    grid-template-rows: auto auto minmax(0, 1fr);
     overflow: hidden;
     padding-bottom: 0;
   }
 
   .data-summary-page > .product-tab-bar {
-    position: relative;
+    position: static;
     z-index: 8;
-    flex: 0 0 auto;
   }
 
   .data-summary-page .workbook-content-scroll {
-    display: block;
-    min-height: 0;
-    height: 100%;
-    overflow: auto;
-    overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
+    width: 100%;
   }
 
   .data-summary-page .workbook-toolbar {
@@ -2773,14 +2778,10 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page .workbook-scroll {
-    display: block;
-    width: 100%;
-    flex: 0 0 auto;
-    overflow-x: auto;
-    overflow-y: hidden;
-    overscroll-behavior-x: contain;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
+    width: max-content;
+    min-width: 100%;
+    max-width: none;
+    overflow: visible;
   }
 
   .data-summary-page .workbook-table {

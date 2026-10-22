@@ -161,7 +161,7 @@ async function mockSummary(page: import('@playwright/test').Page, rows: unknown[
   });
 }
 
-test('Data Summary 应在表格上方显示 Product Tab 并按产品过滤数据', async ({ page }) => {
+test('Data Summary 应在表格下方显示 Product Tab 并按产品过滤数据', async ({ page }) => {
   await loginAsAdmin(page);
   await mockProducts(page);
   await mockSummary(page, baseRows);
@@ -173,10 +173,10 @@ test('Data Summary 应在表格上方显示 Product Tab 并按产品过滤数据
   await expect(workbook).toBeVisible();
   await expect(tabBar).toBeVisible();
 
-  // Tab 栏固定在表格上方，切换产品时不需要先滚到数据底部。
+  // Tab 栏固定在表格下方，切换产品时不需要先滚到数据底部。
   const workbookBox = await workbook.boundingBox();
   const tabBarBox = await tabBar.boundingBox();
-  expect(tabBarBox!.y).toBeLessThan(workbookBox!.y);
+  expect(tabBarBox!.y).toBeGreaterThan(workbookBox!.y);
 
   await expect(page.locator('.product-tab')).toHaveCount(4);
   await expect(page.getByTestId('product-tab-8001')).toHaveText('After School G1');
@@ -210,7 +210,7 @@ test('Data Summary 应在表格上方显示 Product Tab 并按产品过滤数据
   await expect(workbook.getByText('-$2,000')).toBeVisible();
 });
 
-test('Data Summary 移动端应显示表格并允许在固定页签下滚动长列表', async ({ page }) => {
+test('Data Summary 移动端应在固定页签上方流畅滚动长表格', async ({ page }) => {
   const admin = { userId: '1', username: 'admin', displayName: 'Admin', userType: 'ADMIN', roleCodes: ['ADMIN'] };
   await page.addInitScript((user) => {
     localStorage.setItem('jbt_auth_token', 'test-token');
@@ -246,15 +246,47 @@ test('Data Summary 移动端应显示表格并允许在固定页签下滚动长�
     scrollTop: element.scrollTop,
     scrollHeight: element.scrollHeight,
     clientHeight: element.clientHeight,
+    scrollWidth: element.scrollWidth,
+    clientWidth: element.clientWidth,
   }));
   expect(before.scrollHeight).toBeGreaterThan(before.clientHeight);
+  expect(before.scrollWidth).toBeGreaterThan(before.clientWidth);
+  await expect(workbook).toHaveCSS('overflow-x', 'visible');
 
-  await contentScroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await contentScroller.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.scrollLeft = element.scrollWidth;
+  });
   await expect.poll(() => contentScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => contentScroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
   await expect(tabBar).toBeVisible();
   const tabBox = await tabBar.boundingBox();
   const scrollBox = await contentScroller.boundingBox();
-  expect(tabBox!.y).toBeLessThan(scrollBox!.y);
+  expect(tabBox!.y).toBeGreaterThan(scrollBox!.y);
+  const header = workbook.locator('thead th.workbook-column--studentName');
+  await expect(header).toBeVisible();
+  const headerBox = await header.boundingBox();
+  expect(Math.abs(headerBox!.y - scrollBox!.y)).toBeLessThan(4);
+
+  const table = workbook.locator('.workbook-table');
+  const initialZoom = await table.evaluate((element) => Number(getComputedStyle(element).zoom));
+  await table.evaluate((element) => {
+    const touch = (identifier: number, clientX: number) => new Touch({
+      identifier, target: element, clientX, clientY: 300,
+    });
+    const start = [touch(1, 100), touch(2, 200)];
+    const moved = [touch(1, 60), touch(2, 240)];
+    element.dispatchEvent(new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: start, changedTouches: start }));
+    element.dispatchEvent(new TouchEvent('touchmove', { bubbles: true, cancelable: true, touches: moved, changedTouches: moved }));
+    element.dispatchEvent(new TouchEvent('touchend', { bubbles: true, cancelable: true, touches: [], changedTouches: moved }));
+  });
+  await expect.poll(() => table.evaluate((element) => Number(getComputedStyle(element).zoom))).toBeGreaterThan(initialZoom);
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(tabBar).toBeVisible();
+  const desktopTabBox = await tabBar.boundingBox();
+  const desktopScrollBox = await contentScroller.boundingBox();
+  expect(desktopTabBox!.y).toBeGreaterThan(desktopScrollBox!.y);
 });
 
 test('打印班级名单前必须选择一个班级，且只打印所选班级', async ({ page }) => {
