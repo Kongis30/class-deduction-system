@@ -21,7 +21,6 @@
             autocapitalize="none"
             autocorrect="off"
             spellcheck="false"
-            @keyup.enter="submitLogin"
           />
         </el-form-item>
         <el-form-item label="Password" prop="password">
@@ -32,10 +31,9 @@
             autocapitalize="none"
             autocorrect="off"
             show-password
-            @keyup.enter="submitLogin"
           />
         </el-form-item>
-        <el-button type="primary" class="login-card__submit" :loading="authStore.loading" @click="submitLogin">
+        <el-button type="primary" native-type="submit" class="login-card__submit" :loading="submitting">
           Sign in
         </el-button>
       </el-form>
@@ -58,6 +56,7 @@ const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const formRef = ref<FormInstance>();
+const submitting = ref(false);
 const logoUrl = `${import.meta.env.BASE_URL}logo.jpg`;
 
 const form = reactive<LoginPayload>({
@@ -83,26 +82,40 @@ const rules: FormRules<LoginPayload> = {
 };
 
 async function submitLogin() {
+  if (submitting.value) return;
+  submitting.value = true;
   try {
-    await formRef.value?.validate();
-  } catch {
-    return; // form validation failed, do not submit
-  }
-  try {
-    await authStore.signIn(form);
+    try {
+      await formRef.value?.validate();
+    } catch {
+      return; // form validation failed, do not submit
+    }
+
+    try {
+      await authStore.signIn(form);
+    } catch (error) {
+      const apiError = error as AxiosError<ApiResponse<null>>;
+      const message = apiError.response?.data?.message
+        ?? (apiError.response
+          ? `Sign-in request failed (HTTP ${apiError.response.status}).`
+          : apiError.request
+            ? 'Cannot reach the sign-in service. Check this device’s Wi-Fi connection and try again.'
+            : 'Unable to sign in right now.');
+      ElMessage.error(message);
+      return;
+    }
+
     ElMessage.success('Signed in successfully.');
     const fallbackPath = getDefaultLandingPath(authStore.currentUser);
     const redirectPath = typeof route.query.redirect === 'string' ? route.query.redirect : fallbackPath;
-    await router.push(redirectPath);
-  } catch (error) {
-    const apiError = error as AxiosError<ApiResponse<null>>;
-    const message = apiError.response?.data?.message
-      ?? (apiError.response
-        ? `Sign-in request failed (HTTP ${apiError.response.status}).`
-        : apiError.request
-          ? 'Cannot reach the sign-in service. Check this device’s Wi-Fi connection and try again.'
-          : 'Unable to sign in right now.');
-    ElMessage.error(message);
+    try {
+      await router.push(redirectPath);
+    } catch (error) {
+      console.error('[auth] Sign-in succeeded, but page navigation failed.', error);
+      ElMessage.warning('Signed in, but the next page could not be loaded. Refresh the page to continue.');
+    }
+  } finally {
+    submitting.value = false;
   }
 }
 </script>
