@@ -937,6 +937,13 @@ interface OneOnOnePackageRow extends CoursePackageItem {
 }
 
 const tableData = ref<OneOnOnePackageRow[]>([]);
+// 移动端加载更多状态：模板哨兵、观察器与分页请求共享这组响应式引用。
+const mobilePage = ref(1);
+const mobileHasMore = ref(false);
+const loadingMore = ref(false);
+const mobileLoadMoreFailed = ref(false);
+const mobileLoadMoreSentinel = ref<HTMLElement | null>(null);
+let mobileLoadMoreObserver: IntersectionObserver | null = null;
 // 用分组的稳定标识记录折叠状态，切换页面或刷新后沿用用户上次的选择。
 const collapsedPackageGroups = ref<Set<string>>(readCollapsedPackageGroups());
 
