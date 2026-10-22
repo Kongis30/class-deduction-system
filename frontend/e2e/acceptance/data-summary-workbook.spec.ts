@@ -284,9 +284,12 @@ test('Data Summary 移动端应在固定页签上方流畅滚动长表格', asyn
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect(tabBar).toBeVisible();
-  const desktopTabBox = await tabBar.boundingBox();
   const desktopScrollBox = await contentScroller.boundingBox();
+  const desktopTabBox = await tabBar.boundingBox();
   expect(desktopTabBox!.y).toBeGreaterThan(desktopScrollBox!.y);
+  const fixedTabY = desktopTabBox!.y;
+  await contentScroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect.poll(() => tabBar.boundingBox()).toMatchObject({ y: fixedTabY });
 });
 
 test('打印班级名单前必须选择一个班级，且只打印所选班级', async ({ page }) => {

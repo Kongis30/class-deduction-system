@@ -2283,6 +2283,20 @@ onMounted(() => {
   border-bottom: 1px solid #9eafa7;
 }
 
+@media (min-width: 921px) {
+  .data-summary-page {
+    height: calc(100dvh - 88px);
+    min-height: 0;
+  }
+
+  .data-summary-page > .product-tab-bar {
+    position: relative;
+    z-index: 2;
+    background: #edf4f1;
+    box-shadow: 0 -2px 8px rgb(38 59 68 / 8%);
+  }
+}
+
 .stopped-records {
   flex: 0 0 auto;
   max-height: 260px;
