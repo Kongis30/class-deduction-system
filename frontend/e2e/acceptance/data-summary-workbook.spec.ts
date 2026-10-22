@@ -161,7 +161,7 @@ async function mockSummary(page: import('@playwright/test').Page, rows: unknown[
   });
 }
 
-test('Data Summary 应在表格底部显示 Product Tab 并按产品过滤数据', async ({ page }) => {
+test('Data Summary 应在表格上方显示 Product Tab 并按产品过滤数据', async ({ page }) => {
   await loginAsAdmin(page);
   await mockProducts(page);
   await mockSummary(page, baseRows);
@@ -173,10 +173,10 @@ test('Data Summary 应在表格底部显示 Product Tab 并按产品过滤数据
   await expect(workbook).toBeVisible();
   await expect(tabBar).toBeVisible();
 
-  // Tab 栏必须位于表格下方。
+  // Tab 栏固定在表格上方，切换产品时不需要先滚到数据底部。
   const workbookBox = await workbook.boundingBox();
   const tabBarBox = await tabBar.boundingBox();
-  expect(tabBarBox!.y).toBeGreaterThan(workbookBox!.y);
+  expect(tabBarBox!.y).toBeLessThan(workbookBox!.y);
 
   await expect(page.locator('.product-tab')).toHaveCount(4);
   await expect(page.getByTestId('product-tab-8001')).toHaveText('After School G1');
@@ -208,6 +208,53 @@ test('Data Summary 应在表格底部显示 Product Tab 并按产品过滤数据
   // 余额高亮规则在产品页签内保持不变。
   await page.getByTestId('product-tab-8002').click();
   await expect(workbook.getByText('-$2,000')).toBeVisible();
+});
+
+test('Data Summary 移动端应显示表格并允许在固定页签下滚动长列表', async ({ page }) => {
+  const admin = { userId: '1', username: 'admin', displayName: 'Admin', userType: 'ADMIN', roleCodes: ['ADMIN'] };
+  await page.addInitScript((user) => {
+    localStorage.setItem('jbt_auth_token', 'test-token');
+    localStorage.setItem('jbt_auth_user', JSON.stringify(user));
+  }, admin);
+  await page.route('**/api/v1/auth/me', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, code: 'OK', data: admin }),
+    });
+  });
+  await mockProducts(page, products.slice(0, 1));
+  const rows = buildPagedRows(131).map((row, index) => ({
+    ...row,
+    courseProductId: '8001',
+    courseProductName: 'After School G1',
+    studentName: `Student ${index + 1}`,
+  }));
+  await mockSummary(page, rows);
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  await page.goto('/data-summary');
+
+  const workbook = page.getByTestId('data-summary-workbook');
+  const tabBar = page.getByTestId('product-tab-bar');
+  const contentScroller = page.locator('.workbook-content-scroll');
+  await expect(workbook).toBeVisible();
+  await expect(workbook.locator('.workbook-data-row').first()).toBeVisible();
+  await expect(contentScroller).toHaveCSS('overflow-y', 'auto');
+
+  const before = await contentScroller.evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    scrollHeight: element.scrollHeight,
+    clientHeight: element.clientHeight,
+  }));
+  expect(before.scrollHeight).toBeGreaterThan(before.clientHeight);
+
+  await contentScroller.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect.poll(() => contentScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(tabBar).toBeVisible();
+  const tabBox = await tabBar.boundingBox();
+  const scrollBox = await contentScroller.boundingBox();
+  expect(tabBox!.y).toBeLessThan(scrollBox!.y);
 });
 
 test('打印班级名单前必须选择一个班级，且只打印所选班级', async ({ page }) => {

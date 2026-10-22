@@ -2632,10 +2632,12 @@ th.workbook-column--studentName {
 
 @media (max-width: 920px) {
   .data-summary-page {
+    display: grid;
     width: 100%;
     height: auto;
     min-height: 0;
     flex: 1 1 0;
+    grid-template-rows: auto auto minmax(0, 1fr);
     overflow: hidden;
     padding-bottom: 0;
   }
@@ -2649,7 +2651,7 @@ th.workbook-column--studentName {
   .data-summary-page .workbook-content-scroll {
     display: block;
     min-height: 0;
-    flex: 1 1 0;
+    height: 100%;
     overflow: auto;
     overscroll-behavior: contain;
     -webkit-overflow-scrolling: touch;
