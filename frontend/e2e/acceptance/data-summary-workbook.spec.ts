@@ -252,6 +252,23 @@ test('Data Summary 移动端应在固定页签上方流畅滚动长表格', asyn
   expect(before.scrollHeight).toBeGreaterThan(before.clientHeight);
   expect(before.scrollWidth).toBeGreaterThan(before.clientWidth);
   await expect(workbook).toHaveCSS('overflow-x', 'visible');
+  await expect(workbook).toHaveCSS('overflow-y', 'visible');
+
+  await contentScroller.evaluate((element) => { element.scrollTop = 0; });
+  const scrollBox = await contentScroller.boundingBox();
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ id: 1, x: scrollBox!.x + scrollBox!.width / 2, y: scrollBox!.y + scrollBox!.height * 0.8 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ id: 1, x: scrollBox!.x + scrollBox!.width / 2, y: scrollBox!.y + scrollBox!.height * 0.35 }],
+  });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await expect.poll(() => contentScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await cdp.detach();
 
   await contentScroller.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
@@ -261,12 +278,12 @@ test('Data Summary 移动端应在固定页签上方流畅滚动长表格', asyn
   await expect.poll(() => contentScroller.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
   await expect(tabBar).toBeVisible();
   const tabBox = await tabBar.boundingBox();
-  const scrollBox = await contentScroller.boundingBox();
-  expect(tabBox!.y).toBeGreaterThan(scrollBox!.y);
+  const currentScrollBox = await contentScroller.boundingBox();
+  expect(tabBox!.y).toBeGreaterThan(currentScrollBox!.y);
   const header = workbook.locator('thead th.workbook-column--studentName');
   await expect(header).toBeVisible();
   const headerBox = await header.boundingBox();
-  expect(Math.abs(headerBox!.y - scrollBox!.y)).toBeLessThan(4);
+  expect(Math.abs(headerBox!.y - currentScrollBox!.y)).toBeLessThan(4);
 
   const table = workbook.locator('.workbook-table');
   const initialZoom = await table.evaluate((element) => Number(getComputedStyle(element).zoom));
