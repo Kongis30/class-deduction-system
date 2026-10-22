@@ -845,9 +845,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             alerts.add("LOW_ONE_ON_ONE_HOURS");
         }
 
-        String studentName = primaryParticipant
-                ? firstText(order.getStudentNameSnapshot(), student == null ? null : student.getStudentName())
-                : firstText(student == null ? null : student.getStudentName(), participant.getStudentNameSnapshot());
+        // Data Summary 与学生账号页共用当前学生主档姓名；历史报名快照仅作为学生记录缺失时的兜底。
+        String studentName = firstText(student == null ? null : student.getStudentName(),
+                primaryParticipant ? order.getStudentNameSnapshot()
+                        : participant == null ? null : participant.getStudentNameSnapshot());
         String studentClass = primaryParticipant
                 ? firstText(student == null ? null : student.getStudentClass(), order.getStudentClassSnapshot())
                 : firstText(student == null ? null : student.getStudentClass());
