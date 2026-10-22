@@ -2261,6 +2261,12 @@ const hasSchedulePlanChanges = computed(() => {
   });
 });
 
+const hasTeacherHandoffChanges = computed(() => editForm.slots.some(slot => {
+  if (slot.slotId == null) return false;
+  const original = originalEditSlots.value.find(item => String(item.slotId) === String(slot.slotId));
+  return Boolean(original && slot.teacherId !== original.teacherId);
+}));
+
 const remainingPackageHours = computed(() => selectedPackage.value
   ? remainingForPackage(selectedPackage.value) : 0);
 const otherReservedHours = computed(() => isEditing.value
@@ -2362,11 +2368,10 @@ function validateSlotAllocations(): boolean {
     return !slot.teacherId || !slot.subjectName?.trim()
       || (!emptyHandoffSlot && (!slot.allocatedHours || slot.allocatedHours <= 0));
   });
-const hasTeacherHandoffChanges = computed(() => editForm.slots.some(slot => {
-  if (slot.slotId == null) return false;
-  const original = originalEditSlots.value.find(item => String(item.slotId) === String(slot.slotId));
-  return Boolean(original && slot.teacherId !== original.teacherId);
-}));
+  if (!incompleteSlot) return true;
+  ElMessage.warning('Each time slot requires a teacher, lesson name, and schedule total hours.');
+  return false;
+}
 
 function onEditSlotTeacherChanged(slot: SlotDef & {
   slotId?: EntityId;
@@ -2397,10 +2402,6 @@ function onEditSlotTeacherChanged(slot: SlotDef & {
       current.allocatedHours = current.rolloverAllocatedHours;
     }
   }
-}
-  if (!incompleteSlot) return true;
-  ElMessage.warning('Each time slot requires a teacher, lesson name, and schedule total hours.');
-  return false;
 }
 
 async function submitCreateForm() {
