@@ -3,6 +3,7 @@
     class="app-shell"
     :class="{
       'app-shell--mobile': appStore.isMobileViewport,
+      'app-shell--data-summary': route.name === 'data-summary',
       'app-shell--desktop-override': appStore.layoutPreference === 'desktop' && appStore.detectedMobileViewport,
     }"
   >

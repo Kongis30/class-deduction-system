@@ -2661,6 +2661,27 @@ th.workbook-column--studentName {
 }
 
 @media (max-width: 920px) {
+  :global(.app-shell--mobile.app-shell--data-summary) {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :global(.app-shell--mobile.app-shell--data-summary .app-shell__main) {
+    height: 100%;
+    min-height: 0;
+  }
+
+  :global(.app-shell--mobile.app-shell--data-summary .app-shell__content) {
+    display: flex;
+    height: 0;
+    flex: 1 1 0;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+    padding-bottom: calc(60px + env(safe-area-inset-bottom));
+  }
+
   .data-summary-page {
     width: 100%;
     height: auto;

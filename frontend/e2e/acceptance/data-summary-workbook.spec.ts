@@ -258,15 +258,14 @@ test('Data Summary 移动端应在固定页签上方流畅滚动长表格', asyn
   const scrollBox = await contentScroller.boundingBox();
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [{ id: 1, x: scrollBox!.x + scrollBox!.width / 2, y: scrollBox!.y + scrollBox!.height * 0.8 }],
+  await cdp.send('Input.synthesizeScrollGesture', {
+    x: scrollBox!.x + scrollBox!.width / 2,
+    y: scrollBox!.y + scrollBox!.height * 0.8,
+    yDistance: -Math.min(300, scrollBox!.height * 0.45),
+    xDistance: 0,
+    speed: 800,
+    gestureSourceType: 'touch',
   });
-  await cdp.send('Input.dispatchTouchEvent', {
-    type: 'touchMove',
-    touchPoints: [{ id: 1, x: scrollBox!.x + scrollBox!.width / 2, y: scrollBox!.y + scrollBox!.height * 0.35 }],
-  });
-  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect.poll(() => contentScroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
   await cdp.detach();
 
