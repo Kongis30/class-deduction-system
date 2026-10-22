@@ -2274,7 +2274,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if ("FIXED_DATES".equals(coverage)) {
             end = plan.getCoverageEndDate();
         } else if ("ROLLING_MONTHS".equals(coverage) && "MONTH".equals(unit)) {
-            end = GroupRegistrationCoverage.rollingMonthEnd(start, quantity);
+            end = GroupRegistrationCoverage.monthPackageEndDate(start, quantity);
         } else {
             end = classEnd == null ? start.plusYears(3) : classEnd;
         }
@@ -2300,7 +2300,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
         LocalDate enrollmentDate = scheduledDates.get(0);
         if ("MONTH".equals(unit)) {
-            end = GroupRegistrationCoverage.rollingMonthEnd(enrollmentDate, quantity);
+            end = GroupRegistrationCoverage.monthPackageEndDate(enrollmentDate, quantity);
             if (classEnd != null && end.isAfter(classEnd)) end = classEnd;
             if (end.isBefore(enrollmentDate)) {
                 throw new BusinessException("GROUP_PLAN_DATES_INVALID",
@@ -2350,7 +2350,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType())) {
             end = plan.getCoverageEndDate();
         } else if ("MONTH".equals(unit)) {
-            end = GroupRegistrationCoverage.rollingMonthEnd(start, quantity);
+            end = GroupRegistrationCoverage.monthPackageEndDate(start, quantity);
         } else {
             end = targetClass.getEndDate() != null ? targetClass.getEndDate() : start.plusYears(3);
         }

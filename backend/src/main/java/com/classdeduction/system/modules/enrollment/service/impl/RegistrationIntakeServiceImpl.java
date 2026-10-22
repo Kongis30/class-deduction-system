@@ -1057,11 +1057,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if ("MONTH".equals(plan.getPackageUnit())) {
             // 有效期从系统确认的第一节实际课程起算，订单项会保存同一日期供改收据复用。
             LocalDate requestedStart = line.entitlementStartDate;
-            LocalDate rollingEnd = "FIXED_DATES".equals(plan.getCoverageType())
+            LocalDate coverageEnd = "FIXED_DATES".equals(plan.getCoverageType())
                     ? plan.getCoverageEndDate()
-                    : GroupRegistrationCoverage.rollingMonthEnd(requestedStart, selectedQuantity);
-            if (classEnd != null && rollingEnd.isAfter(classEnd)) rollingEnd = classEnd;
-            line.entitlementExpiryDate = rollingEnd;
+                    : GroupRegistrationCoverage.monthPackageEndDate(requestedStart, selectedQuantity);
+            if (classEnd != null && coverageEnd.isAfter(classEnd)) coverageEnd = classEnd;
+            line.entitlementExpiryDate = coverageEnd;
         } else {
             line.entitlementExpiryDate = availableDates.get(selectedQuantity - 1);
         }
@@ -1108,9 +1108,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if ("FIXED_DATES".equals(coverageType)) {
             end = fixedEnd;
         } else if ("ROLLING_MONTHS".equals(coverageType)) {
-            // 月包覆盖到相应月份的最后一天，再取实际排好的上课日。
-            int monthCount = limit;
-            end = start.plusMonths(monthCount).minusDays(1);
+            // 报名月计为第一个月，候选排课范围与权益到期日共用同一月末规则。
+            end = GroupRegistrationCoverage.monthPackageEndDate(start, limit);
         } else {
             end = classEnd;
             if (end == null) end = start.plusYears(3);

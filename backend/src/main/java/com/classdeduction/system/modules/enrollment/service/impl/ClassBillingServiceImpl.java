@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
+import com.classdeduction.system.modules.enrollment.util.GroupRegistrationCoverage;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
@@ -16,7 +17,6 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -78,8 +78,7 @@ public class ClassBillingServiceImpl implements ClassBillingService {
                     "Enrollment start date must be within the class date range.");
         }
         if ("MONTH".equals(unit)) {
-            YearMonth selectedEnd = YearMonth.from(enrollmentDate).plusMonths(quantity - 1L);
-            expiryDate = selectedEnd.atEndOfMonth();
+            expiryDate = GroupRegistrationCoverage.monthPackageEndDate(enrollmentDate, quantity);
         } else if ("WEEK".equals(unit)) {
             expiryDate = enrollmentDate.plusWeeks(quantity).minusDays(1);
         } else if ("SESSION".equals(unit)) {

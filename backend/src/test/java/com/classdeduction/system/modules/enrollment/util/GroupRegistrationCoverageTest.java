@@ -10,22 +10,28 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GroupRegistrationCoverageTest {
 
     @Test
-    void shouldCalculateRollingMonthEndFromTheSelectedStartDate() {
-        assertThat(GroupRegistrationCoverage.rollingMonthEnd(LocalDate.of(2026, 10, 15), 2))
-                .isEqualTo(LocalDate.of(2026, 12, 14));
+    void shouldCountStartMonthAsTheFirstPurchasedMonth() {
+        assertThat(GroupRegistrationCoverage.monthPackageEndDate(LocalDate.of(2026, 9, 15), 2))
+                .isEqualTo(LocalDate.of(2026, 10, 31));
+        assertThat(GroupRegistrationCoverage.monthPackageEndDate(LocalDate.of(2026, 10, 22), 2))
+                .isEqualTo(LocalDate.of(2026, 11, 30));
+        assertThat(GroupRegistrationCoverage.monthPackageEndDate(LocalDate.of(2026, 11, 2), 2))
+                .isEqualTo(LocalDate.of(2026, 12, 31));
     }
 
     @Test
-    void shouldHandleMonthEndStartDatesConsistently() {
-        assertThat(GroupRegistrationCoverage.rollingMonthEnd(LocalDate.of(2027, 1, 31), 1))
-                .isEqualTo(LocalDate.of(2027, 2, 27));
+    void shouldReturnStartMonthEndForOneMonthAndHandleLeapYears() {
+        assertThat(GroupRegistrationCoverage.monthPackageEndDate(LocalDate.of(2026, 10, 22), 1))
+                .isEqualTo(LocalDate.of(2026, 10, 31));
+        assertThat(GroupRegistrationCoverage.monthPackageEndDate(LocalDate.of(2028, 1, 31), 2))
+                .isEqualTo(LocalDate.of(2028, 2, 29));
     }
 
     @Test
     void shouldRejectInvalidMonthCoverageInput() {
-        assertThatThrownBy(() -> GroupRegistrationCoverage.rollingMonthEnd(null, 1))
+        assertThatThrownBy(() -> GroupRegistrationCoverage.monthPackageEndDate(null, 1))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> GroupRegistrationCoverage.rollingMonthEnd(LocalDate.of(2026, 1, 1), 0))
+        assertThatThrownBy(() -> GroupRegistrationCoverage.monthPackageEndDate(LocalDate.of(2026, 1, 1), 0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 }
