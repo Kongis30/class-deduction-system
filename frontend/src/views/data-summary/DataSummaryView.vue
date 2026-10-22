@@ -52,13 +52,13 @@
           class="student-find__input"
           size="small"
           clearable
-          placeholder="Find student in this course"
+          placeholder="Student name"
           aria-label="Find student name"
           @keydown.enter.prevent="stepStudentFind($event.shiftKey ? -1 : 1)"
           @keydown.esc.stop.prevent="closeStudentFind"
         />
         <span class="student-find__count" aria-live="polite">
-          {{ studentFindQuery.trim() ? `${studentFindMatches.length ? studentFindIndex + 1 : 0} / ${studentFindMatches.length}` : 'Type a name' }}
+          {{ studentFindQuery.trim() ? `${studentFindMatches.length ? studentFindIndex + 1 : 0} / ${studentFindMatches.length}` : '0 matches' }}
         </span>
         <el-button-group class="student-find__navigation">
           <el-button size="small" :disabled="!studentFindMatches.length" aria-label="Previous match" title="Previous match (Shift+Enter)" @click="stepStudentFind(-1)">
@@ -2080,9 +2080,11 @@ onMounted(() => {
 .student-find {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-width: 0;
-  padding: 3px 5px;
+  flex: 0 1 340px;
+  width: min(340px, 100%);
+  min-width: 300px;
+  gap: 5px;
+  padding: 4px 6px;
   border: 1px solid #c5d4cc;
   border-radius: 8px;
   background: #fff;
@@ -2095,9 +2097,9 @@ onMounted(() => {
 }
 
 .student-find__input {
-  flex: 1 1 0;
-  width: 0;
-  min-width: 0;
+  flex: 1 1 120px;
+  width: auto;
+  min-width: 120px;
 }
 
 .student-find__input :deep(.el-input__wrapper) {
@@ -2113,7 +2115,7 @@ onMounted(() => {
 
 .student-find__count {
   flex: 0 0 auto;
-  min-width: 48px;
+  min-width: 60px;
   color: #64756c;
   font-size: 11px;
   text-align: center;
@@ -2718,9 +2720,10 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page .student-find {
-    order: 3;
+    order: 1;
     flex: 1 1 100%;
     width: 100%;
+    min-width: 0;
     flex-wrap: nowrap;
     gap: 4px;
     min-height: 36px;
@@ -2728,16 +2731,20 @@ th.workbook-column--studentName {
   }
 
   .data-summary-page .student-find__input {
-    flex: 1 1 0;
-    width: 0;
-    min-width: 0;
+    flex: 1 1 120px;
+    width: auto;
+    min-width: 80px;
   }
 
   .data-summary-page .student-find__count {
-    flex: 0 0 48px;
-    min-width: 48px;
+    flex: 0 0 54px;
+    min-width: 54px;
     font-size: 10px;
     white-space: nowrap;
+  }
+
+  .data-summary-page .workbook-toolbar__stats {
+    order: 2;
   }
 
   .data-summary-page .student-find :deep(.el-input__wrapper) {
