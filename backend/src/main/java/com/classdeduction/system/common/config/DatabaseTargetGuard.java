@@ -27,12 +27,30 @@ public class DatabaseTargetGuard implements BeanFactoryPostProcessor, Environmen
         if (!environment.matchesProfiles("group-course-v2")) {
             return;
         }
-        String url = environment.getProperty("spring.datasource.url", "");
+        String configuredUrl = environment.getProperty("spring.datasource.url", "");
+        String url = environment.resolveRequiredPlaceholders(configuredUrl);
         String requiredName = environment.getProperty("app.database.required-name", "class_deduction_system_v2");
         if (!isLocalV2Database(url, requiredName)) {
             throw new IllegalStateException(
-                    "The group-course-v2 profile can only start against the local " + requiredName + " database."
+                    "The group-course-v2 profile can only start against the local " + requiredName
+                            + " database; resolved datasource target is " + describeTarget(url) + "."
             );
+        }
+    }
+
+    /** 输出不含账号、密码和连接参数的目标摘要，便于定位启动配置问题。 */
+    private String describeTarget(String jdbcUrl) {
+        if (jdbcUrl == null || !jdbcUrl.startsWith("jdbc:mysql://")) {
+            return "unrecognized JDBC URL";
+        }
+        try {
+            URI uri = URI.create(jdbcUrl.substring("jdbc:".length()));
+            String host = uri.getHost();
+            String database = uri.getPath();
+            return "host=" + (host == null ? "unknown" : host)
+                    + ", database=" + (database == null ? "unknown" : database);
+        } catch (IllegalArgumentException ex) {
+            return "invalid MySQL URL";
         }
     }
 
