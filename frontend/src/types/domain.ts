@@ -296,6 +296,7 @@ export interface EnrollmentOrderDetailItem {
   payments: PaymentRecordItem[];
   packages: CoursePackageItem[];
   receipts: ReceiptRecordItem[];
+  version?: number;
   createdAt: string;
   updatedAt?: string;
 }
@@ -342,7 +343,7 @@ export interface EnrollmentOrderLineItem {
   periodLabel?: string;
   timeSlotLabel?: string;
   startDate?: string;
-  /** 学生实际购买的 SESSION 次数；packageQuantity 是定价选项上限。 */
+  /** 本次报名实际购买的 SESSION 次数；packageQuantity 同样表示实购数量。 */
   sessions?: number;
   purchasedMonths?: number;
   packageUnit?: string;
@@ -350,6 +351,9 @@ export interface EnrollmentOrderLineItem {
   packageTotalPrice?: number;
   attendanceOption?: string;
   attendanceScheduleJson?: string;
+  entitlementPurchasedQuantity?: number;
+  entitlementExpiryDate?: string;
+  entitlementStatus?: string;
   priceAmount?: number;
   originalPriceAmount?: number;
   manualPriceOverride?: boolean;
@@ -358,6 +362,7 @@ export interface EnrollmentOrderLineItem {
   paidAmount?: number;
   balanceAmount?: number;
   oneOnOneHours?: number;
+  openingUsedHours?: number;
   oneOnOneUnits?: number;
   pickupRequiredSnapshot?: boolean;
   pickupAddressSnapshot?: string;

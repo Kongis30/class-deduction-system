@@ -17,15 +17,28 @@
         <li v-for="item in validationErrors" :key="item">{{ item }}</li>
       </ul>
     </el-alert>
+    <el-alert
+      v-if="editingCorrection && correctionDataWarnings.length"
+      type="warning"
+      :closable="false"
+      class="validation-alert no-print"
+      title="Registration data needs review"
+    >
+      <ul class="validation-list">
+        <li v-for="warning in correctionDataWarnings" :key="warning">{{ warning }}</li>
+      </ul>
+    </el-alert>
 
     <section v-if="!appStore.isMobileViewport || isReadOnly" class="registration-desk no-print">
       <div>
         <strong>{{ isReadOnly ? 'Saved receipt' : 'Registration desk' }}</strong>
         <p>{{ isReadOnly && !editingCorrection
           ? (canCorrectReceipt
-            ? 'This is the saved receipt. Click Edit Receipt to correct all fields and keep the original registration.'
+            ? 'This is the saved receipt. Click Edit Receipt to correct the original registration.'
             : 'This is the saved receipt. This account can view and print it.')
-          : 'Fill the familiar paper form, save the record, then print the receipt when ready.' }}</p>
+          : editingCorrection
+            ? 'Correct the original registration. Name and contact changes also update the student account.'
+            : 'Fill the familiar paper form, save the record, then print the receipt when ready.' }}</p>
       </div>
       <div class="registration-desk__actions">
         <el-button type="primary" @click="startNewRegistration">New Registration</el-button>
@@ -401,7 +414,7 @@
                       </el-option-group>
                     </el-select>
                     <button
-                      v-if="receiptEditingEnabled && !isPrivateAllReceiptView && !isRenewalMode && (line.courseProductId || courseLines.length > 1)"
+                      v-if="receiptEditingEnabled && !editingCorrection && !isPrivateAllReceiptView && !isRenewalMode && (line.courseProductId || courseLines.length > 1)"
                       type="button"
                       class="remove-row no-print"
                       aria-label="Clear course"
@@ -515,7 +528,7 @@
                         <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'SESSION'" class="course-control">
                           <span>Sessions</span>
                           <el-select v-model="line.groupSessionCount" class="table-select" :disabled="!receiptEditingEnabled || !line.classId || !line.startDate || line.groupScheduleDatesLoading" @change="() => handleGroupSessionCountChange(line)">
-                            <el-option v-for="quantity in availableGroupPlanQuantities(line)" :key="quantity" :label="`${quantity} sessions`" :value="quantity" />
+                            <el-option v-for="quantity in correctionSessionChoices(line)" :key="quantity" :label="`${quantity} sessions`" :value="quantity" />
                           </el-select>
                         </label>
                         <label v-if="line.groupRegistrationPlanId && line.packageUnit === 'MONTH'" class="course-control">
@@ -524,7 +537,7 @@
                             v-model="line.groupPurchasedMonths"
                             class="table-price"
                             :min="1"
-                            :max="groupPlanQuantity(line)"
+                            :max="editingCorrection ? Math.max(groupPlanQuantity(line), line.groupPurchasedMonths ?? 0) : groupPlanQuantity(line)"
                             :step="1"
                             :precision="0"
                             :disabled="!receiptEditingEnabled || !line.classId || !line.startDate || line.groupScheduleDatesLoading"
@@ -827,7 +840,7 @@
       </section>
 
       <section v-if="!isReadOnly && !isPrivateAllReceiptView" class="paper-actions no-print" data-mobile-steps="2">
-        <el-button v-if="!isRenewalMode" class="action-secondary" @click="addCourseLine">Add course row</el-button>
+        <el-button v-if="!isRenewalMode && !editingCorrection" class="action-secondary" @click="addCourseLine">Add course row</el-button>
       </section>
 
       <section v-if="receiptEditingEnabled && !isPrivateAllReceiptView" class="intake-adjustment-panel no-print" data-mobile-steps="3 4">
@@ -1012,7 +1025,7 @@
                         placeholder="Date"
                       />
                       <el-button
-                        v-if="activePaymentLines.length > 1 && canEditCoursePaymentDetails(payment, line.rowKey)"
+                        v-if="!editingCorrection && activePaymentLines.length > 1 && canEditCoursePaymentDetails(payment, line.rowKey)"
                         class="remove-adjustment-row"
                         text
                         type="danger"
@@ -1040,7 +1053,7 @@
                   <span v-if="courseRefundAmount(line.rowKey) > 0" class="course-payment-refund-total">
                     Refunded {{ formatMoney(courseRefundAmount(line.rowKey)) }}
                   </span>
-                  <el-button class="action-secondary" text @click="addActivePaymentLine(line.rowKey)">Add payment</el-button>
+                  <el-button v-if="!editingCorrection" class="action-secondary" text @click="addActivePaymentLine(line.rowKey)">Add payment</el-button>
                   <strong>Balance {{ formatMoney(activeCourseAmountDue(line, lineIndex) - coursePaymentAllocationTotal(line.rowKey)) }}</strong>
                 </footer>
               </article>
@@ -1312,12 +1325,12 @@
 <script setup lang="ts">
 import { QuestionFilled } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox, ElNotification } from 'element-plus';
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { fetchActiveCoursePriceOptions, fetchAllStudents, fetchAllTeachers, fetchCampuses, fetchCourseCategories, fetchCourseProducts, fetchDiscountPresets, fetchProductGradeConfigs, fetchReusableStudent, fetchStudent } from '@/api/base-data';
 import { extractErrorMessage, preprocessLargeIds } from '@/api/http';
-import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult, type RegistrationParticipantBillingPayload } from '@/api/enrollment';
+import { fetchActivePaymentMethods, fetchCoursePackage, fetchEnrollmentOrder, fetchGroupClassStudentProgress, submitRegistrationIntake, correctEnrollmentOrder, type EnrollmentOrderCorrectionPayload, type RegistrationIntakePayload, type RegistrationIntakeResult, type RegistrationParticipantBillingPayload, type RegistrationPaymentPayload } from '@/api/enrollment';
 import { fetchGroupClassScheduledDates, fetchGroupCourseProductSetup } from '@/api/group-course-model';
 import type { GroupCourseProductSetup, GroupCourseProject, GroupRegistrationPlan } from '@/api/group-course-model';
 import { fetchStudentCreditBalance } from '@/api/student-credit';
@@ -1333,7 +1346,7 @@ import { calculateProratedSessionPrice } from '@/utils/session-price';
 import { useAppStore } from '@/stores/app';
 import { useMobileKeyboardState } from '@/composables/useMobileKeyboardState';
 import MoneyAmountInput from '@/components/MoneyAmountInput.vue';
-import { paymentDraftAmount, sumPaymentAllocations } from './payment-draft';
+import { sumPaymentAllocations } from './payment-draft';
 
 type ReuseStatus = 'idle' | 'loading' | 'existing' | 'new';
 
@@ -1351,6 +1364,7 @@ interface CampusChoice {
 interface RegistrationCourseLine {
   rowKey: string;
   orderItemId?: EntityId;
+  orderLineNo?: number;
   courseType: string;
   gradeBand: string;
   periodKey: string;
@@ -1427,9 +1441,11 @@ interface DiscountLine extends MoneyLine {
 
 interface PaymentLine {
   rowKey: string;
+  paymentId?: EntityId;
   paymentMethod: string;
   amount: number;
   paidAt: string;
+  originalPaidAt?: string;
   isCreditTopUp?: boolean;
   /** 历史流水标记：编辑收据时仍允许修改正向付款，但退款流水保持只读。 */
   isHistorical?: boolean;
@@ -1629,8 +1645,14 @@ const renewClassEnrollmentId = computed(() => getQueryValue(route.query.renewCla
 const isRenewalMode = computed(() => Boolean(renewPackageId.value || renewClassEnrollmentId.value));
 const editingCorrection = ref(false);
 const savingCorrection = ref(false);
+const correctionBaseline = ref<EnrollmentOrderCorrectionPayload | null>(null);
 const correctionSetupLoading = ref(false);
 const historicalOrder = ref<EnrollmentOrderDetailItem | null>(null);
+const correctionDataWarnings = computed(() => (historicalOrder.value?.items ?? []).flatMap((item) => {
+  if (!item.packageUnit || item.packageQuantity == null || item.entitlementPurchasedQuantity == null
+      || Number(item.packageQuantity) === Number(item.entitlementPurchasedQuantity)) return [];
+  return [`Course ${item.lineNo}: receipt records ${item.packageQuantity} ${item.packageUnit.toLowerCase()}(s), but the current class enrollment records ${item.entitlementPurchasedQuantity}. This difference will not be changed automatically.`];
+}));
 const wholeDollarForm = computed(() => !isReadOnly.value || historicalOrder.value?.billingPolicy === 'WHOLE_DOLLAR_V1');
 // Contact fields are editable when creating a new registration or when correcting a saved one.
 const contactLocked = computed(() => isReadOnly.value && !editingCorrection.value);
@@ -2380,6 +2402,7 @@ async function startCorrection() {
     if (historicalOrder.value) {
       // 基础选项加载完成后重建一次编辑模型，把已停用课程与价格映射到可编辑表单。
       applyHistoricalOrder(historicalOrder.value);
+      editingCorrection.value = true;
       await Promise.all(courseLines.value
         .filter((line) => line.groupCourseModelV2 && line.courseProductId)
         .map((line) => loadGroupCourseSetup(line.courseProductId!, true, true)));
@@ -2389,30 +2412,26 @@ async function startCorrection() {
       });
       await Promise.all(courseLines.value
         .filter((line) => line.groupCourseModelV2 && line.classId && line.groupRegistrationPlanId)
-        .map((line) => loadGroupClassDates(line)));
-      initializeCorrectionPayments();
+        .map((line) => loadGroupClassDates(line, true)));
     }
-    editingCorrection.value = true;
+    correctionBaseline.value = structuredClone(buildCurrentCorrectionPayload());
+  } catch (error) {
+    editingCorrection.value = false;
+    correctionBaseline.value = null;
+    ElMessage.error(extractErrorMessage(error));
   } finally {
     correctionSetupLoading.value = false;
   }
 }
 
-// 编辑收据以本次表单的课程付款为准，历史流水金额只用于填充没有课程分配的旧付款。
-function initializeCorrectionPayments() {
-  const useCourseAmounts = (payment: PaymentLine) => {
-    payment.amount = paymentDraftAmount(payment, courseLines.value.length);
-  };
-  payments.value.forEach(useCourseAmounts);
-  participantBillings.value.forEach((billing) => billing.payments.forEach(useCourseAmounts));
-}
-
 function cancelCorrection() {
   editingCorrection.value = false;
+  correctionBaseline.value = null;
   void loadHistoricalOrder();
 }
 
 async function saveCorrection() {
+  if (savingCorrection.value) return;
   const orderId = Array.isArray(route.query.orderId) ? route.query.orderId[0] : route.query.orderId;
   if (!orderId) {
     return;
@@ -2421,37 +2440,220 @@ async function saveCorrection() {
     ElMessage.warning('Student name cannot be empty.');
     return;
   }
+  const correction = changedCorrectionPayload(buildCurrentCorrectionPayload());
+  if (!correction) {
+    return;
+  }
+  for (const item of correction.items ?? []) {
+    if (!(item.correctionChangedFields ?? []).includes('priceAmount')) continue;
+    if (numeric(item.priceAmount) <= 0) {
+      ElMessage.warning(`Course ${item.lineNo}: price must be greater than zero.`);
+      return;
+    }
+    if (item.manualPriceOverride && !item.remark?.trim()) {
+      ElMessage.warning(`Course ${item.lineNo}: enter a reason for the manual price.`);
+      return;
+    }
+  }
   savingCorrection.value = true;
   try {
-    await correctEnrollmentOrder(orderId, {
-      studentName: fullStudentName.value.trim(),
-      grade: form.student.grade,
-      studentClass: form.student.studentClass,
-      school: form.student.school,
-      guardianPhone: form.student.guardianPhone,
-      guardianPhone2: form.student.guardianPhone2,
-      campusId: selectedCampus.value?.campusId,
-      campusName: selectedCampus.value?.campusName,
-      campusAddress: selectedCampus.value?.address,
-      campusPhone: selectedCampus.value?.phone,
-      taxId: selectedCampus.value?.taxId ?? '',
-      pickupRequired: form.student.pickupRequired,
-      pickupAddress: form.student.pickupAddress,
-      dropoffRequired: form.student.dropoffRequired,
-      dropoffAddress: form.student.dropoffAddress,
-      signupDate: form.signupDate || undefined,
-      handledByName: form.handledByName || undefined,
-      remark: form.remark || undefined,
-      ...buildCorrectionPayload(),
-    });
+    const paymentsChanged = correction.payments !== undefined
+      || (correction.participantBillings ?? []).some((billing) =>
+        (billing.payments ?? []).some((payment) => (payment.correctionChangedFields ?? []).length > 0));
+    if (paymentsChanged) {
+      const answer = await ElMessageBox.prompt(
+        'Record why these original payment details need correction. New money received or refunded belongs in the payment or refund workflow.',
+        'Payment correction reason',
+        { confirmButtonText: 'Continue', cancelButtonText: 'Keep editing', inputValidator: (value) => Boolean(value.trim()) || 'Enter a reason.' },
+      );
+      correction.correctionReason = answer.value.trim();
+    }
+    const impact = correctionImpactSummary(correction);
+    if (impact.length) {
+      await ElMessageBox.confirm(
+        h('div', { style: 'white-space: pre-line' }, impact.join('\n')),
+        'Review changes to this registration',
+        { confirmButtonText: 'Save correction', cancelButtonText: 'Keep editing', type: 'warning' },
+      );
+    }
+    await correctEnrollmentOrder(orderId, correction);
     ElMessage.success('Receipt details updated.');
     editingCorrection.value = false;
+    correctionBaseline.value = null;
     await loadHistoricalOrder();
   } catch (error) {
-    ElMessage.error(extractErrorMessage(error));
+    if (error !== 'cancel' && error !== 'close') ElMessage.error(extractErrorMessage(error));
   } finally {
     savingCorrection.value = false;
   }
+}
+
+// 保存前只提示会改变课程权益、价格或付款的项目；普通资料补正不增加确认步骤。
+function correctionImpactSummary(changes: EnrollmentOrderCorrectionPayload): string[] {
+  const original = correctionBaseline.value;
+  if (!original) return [];
+  const previousItems = new Map((original.items ?? []).map((item) => [String(item.orderItemId), item]));
+  const impact: string[] = [];
+  for (const item of changes.items ?? []) {
+    const before = previousItems.get(String(item.orderItemId));
+    if (!before) continue;
+    const label = `Course ${item.lineNo}`;
+    if (String(item.classId ?? '') !== String(before.classId ?? '')) impact.push(`${label}: class will change.`);
+    if (item.startDate !== before.startDate) impact.push(`${label}: first lesson ${before.startDate ?? '—'} → ${item.startDate ?? '—'}.`);
+    const oldQuantity = before.purchasedMonths ?? before.sessions ?? before.packageQuantity;
+    const newQuantity = item.purchasedMonths ?? item.sessions ?? item.packageQuantity;
+    if (newQuantity !== oldQuantity) impact.push(`${label}: purchased quantity ${oldQuantity ?? '—'} → ${newQuantity ?? '—'}.`);
+    if (item.priceAmount !== before.priceAmount) impact.push(`${label}: price ${formatMoney(before.priceAmount ?? 0)} → ${formatMoney(item.priceAmount ?? 0)}.`);
+    if (item.attendanceOption !== before.attendanceOption) {
+      impact.push(`${label}: Attendance changed. Confirm the saved price is still correct.`);
+    }
+  }
+  if (changes.payments) impact.push('Payment records will be corrected. Confirm the amounts and methods.');
+  if (changes.participantBillings || changes.discountAmount !== undefined || changes.extraFees || changes.pickupFeeAmount !== undefined || changes.dropoffFeeAmount !== undefined) {
+    impact.push('Fees or discounts will be recalculated; review the resulting balance.');
+  }
+  const financialChange = (changes.items ?? []).some((item) =>
+    (item.correctionChangedFields ?? []).some((field) =>
+      ['priceAmount', 'discountAmount', 'pickupFeeAmount', 'dropoffFeeAmount', 'serviceFees'].includes(field)))
+    || changes.payments !== undefined || changes.participantBillings !== undefined
+    || changes.discountAmount !== undefined || changes.extraFees !== undefined
+    || changes.pickupFeeAmount !== undefined || changes.dropoffFeeAmount !== undefined;
+  if (financialChange && historicalOrder.value) {
+    impact.push(`Amount due: ${formatMoney(historicalOrder.value.amountDue ?? 0)} → ${formatMoney(amountDue.value)}.`);
+    impact.push(`Received: ${formatMoney(historicalOrder.value.receivedAmount)} → ${formatMoney(paidAmount.value)}.`);
+    impact.push(`Balance: ${formatMoney(historicalOrder.value.balanceAmount ?? 0)} → ${formatMoney(balanceAmount.value)}.`);
+    if (balanceAmount.value < 0) {
+      impact.push(`Overpaid ${formatMoney(-balanceAmount.value)}. Handle any actual return through Refund or Student Credit.`);
+    }
+  }
+  return impact;
+}
+
+// 更正只提交相对打开页面时实际改变的字段，避免历史订单被当前方案和付款草稿重放。
+function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): EnrollmentOrderCorrectionPayload | null {
+  const original = correctionBaseline.value;
+  if (!original) return null;
+  const changes: EnrollmentOrderCorrectionPayload = { expectedVersion: original.expectedVersion };
+  for (const key of Object.keys(current) as Array<keyof EnrollmentOrderCorrectionPayload>) {
+    if (key === 'expectedVersion') continue;
+    if (key === 'items') {
+      const previousItems = original.items ?? [];
+      const currentItems = current.items ?? [];
+      const previousById = new Map(previousItems.map((item) => [String(item.orderItemId), item]));
+      if (JSON.stringify(currentItems) === JSON.stringify(previousItems)) continue;
+      if (currentItems.length !== previousItems.length
+          || currentItems.some((item) => !item.orderItemId || !previousById.has(String(item.orderItemId)))) {
+        ElMessage.warning('Course rows cannot be added or removed in Edit Receipt.');
+        return null;
+      }
+      const changedItems = currentItems.filter((item) =>
+        JSON.stringify(item) !== JSON.stringify(previousById.get(String(item.orderItemId)))).map((item) => {
+        const before = previousById.get(String(item.orderItemId));
+        if (!before) return item;
+        const changedFields = Object.keys(item).filter((key) =>
+          JSON.stringify(item[key as keyof typeof item]) !== JSON.stringify(before[key as keyof typeof before]));
+        return { ...item, correctionChangedFields: changedFields };
+      });
+      if (changedItems.length > 0) changes.items = changedItems;
+      continue;
+    }
+    if (key === 'participants' && JSON.stringify(current.participants) !== JSON.stringify(original.participants)) {
+      const currentParticipants = current.participants ?? [];
+      const previousParticipants = original.participants ?? [];
+      if (currentParticipants.length !== previousParticipants.length
+          || currentParticipants.some((participant, index) =>
+            String(participant.studentId) !== String(previousParticipants[index]?.studentId))) {
+        ElMessage.warning('Participants cannot be added or replaced in Edit Receipt.');
+        return null;
+      }
+      changes.participants = currentParticipants.map((participant, index) => ({
+        ...participant,
+        correctionChangedFields: Object.keys(participant).filter((field) =>
+          JSON.stringify(participant[field as keyof typeof participant])
+            !== JSON.stringify(previousParticipants[index]?.[field as keyof typeof participant])),
+      }));
+      continue;
+    }
+    if (key === 'payments' && JSON.stringify(current.payments) !== JSON.stringify(original.payments)) {
+      if (!sameCorrectionPaymentIds(current.payments ?? [], original.payments ?? [])) {
+        ElMessage.warning('New payments and refunds must use their own workflow.');
+        return null;
+      }
+      changes.payments = annotateCorrectionPayments(current.payments ?? [], original.payments ?? []);
+      continue;
+    }
+    if (key === 'participantBillings' && JSON.stringify(current.participantBillings) !== JSON.stringify(original.participantBillings)) {
+      const currentBillings = current.participantBillings ?? [];
+      const previousBillings = original.participantBillings ?? [];
+      if (currentBillings.length !== previousBillings.length
+          || currentBillings.some((billing) => !previousBillings.some((before) => before.participantIndex === billing.participantIndex))) {
+        ElMessage.warning('Participants cannot be added or removed in Edit Receipt.');
+        return null;
+      }
+      if (currentBillings.some((billing) => {
+        const before = previousBillings.find((item) => item.participantIndex === billing.participantIndex);
+        return !sameCorrectionPaymentIds(billing.payments ?? [], before?.payments ?? []);
+      })) {
+        ElMessage.warning('New payments and refunds must use their own workflow.');
+        return null;
+      }
+      changes.participantBillings = currentBillings.map((billing) => {
+        const before = (original.participantBillings ?? []).find((item) => item.participantIndex === billing.participantIndex);
+        return {
+          ...billing,
+          payments: annotateCorrectionPayments(billing.payments ?? [], before?.payments ?? []),
+        };
+      });
+      continue;
+    }
+    if (JSON.stringify(current[key]) !== JSON.stringify(original[key])) {
+      Object.assign(changes, { [key]: current[key] });
+    }
+  }
+  if (Object.keys(changes).length === 1) ElMessage.info('No changes to save.');
+  return Object.keys(changes).length > 1 ? changes : null;
+}
+
+function sameCorrectionPaymentIds(current: RegistrationPaymentPayload[], previous: RegistrationPaymentPayload[]) {
+  const previousIds = new Set(previous.map((payment) => String(payment.paymentId)));
+  return current.length === previous.length && current.every((payment) =>
+    payment.paymentId && previousIds.has(String(payment.paymentId)));
+}
+
+function annotateCorrectionPayments(current: RegistrationPaymentPayload[], previous: RegistrationPaymentPayload[]) {
+  const previousById = new Map(previous.map((payment) => [String(payment.paymentId), payment]));
+  return current.map((payment) => {
+    const before = previousById.get(String(payment.paymentId));
+    const correctionChangedFields = Object.keys(payment).filter((key) =>
+      JSON.stringify(payment[key as keyof RegistrationPaymentPayload])
+        !== JSON.stringify(before?.[key as keyof RegistrationPaymentPayload]));
+    return { ...payment, correctionChangedFields };
+  });
+}
+
+function buildCurrentCorrectionPayload(): EnrollmentOrderCorrectionPayload {
+  return {
+    expectedVersion: historicalOrder.value?.version,
+    studentName: fullStudentName.value.trim(),
+    grade: form.student.grade,
+    studentClass: form.student.studentClass,
+    school: form.student.school,
+    guardianPhone: form.student.guardianPhone,
+    guardianPhone2: form.student.guardianPhone2,
+    campusId: selectedCampus.value?.campusId,
+    campusName: selectedCampus.value?.campusName,
+    campusAddress: selectedCampus.value?.address,
+    campusPhone: selectedCampus.value?.phone,
+    taxId: selectedCampus.value?.taxId ?? '',
+    pickupRequired: form.student.pickupRequired,
+    pickupAddress: form.student.pickupAddress,
+    dropoffRequired: form.student.dropoffRequired,
+    dropoffAddress: form.student.dropoffAddress,
+    signupDate: form.signupDate || undefined,
+    handledByName: form.handledByName || undefined,
+    remark: form.remark || undefined,
+    ...buildCorrectionPayload(),
+  };
 }
 
 function buildCorrectionPayload(): EnrollmentOrderCorrectionPayload {
@@ -2667,18 +2869,18 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
   form.dropoffFeeCharged = getBoolean(receiptPayload, 'dropoffFeeCharged', form.dropoffFeeAmount > 0);
   form.remark = order.remark ?? '';
   historicalPrimaryStudentId.value = order.studentId;
-  setStudentName(getString(receiptPayload, 'studentName') || order.studentNameSnapshot || order.studentName || '');
-  form.student.grade = getString(receiptPayload, 'grade') || order.gradeSnapshot || '';
-  form.student.studentClass = getString(receiptPayload, 'studentClass') || order.studentClassSnapshot || '';
-  form.student.school = getString(receiptPayload, 'school') || order.schoolSnapshot || '';
+  setStudentName(order.studentNameSnapshot || order.studentName || getString(receiptPayload, 'studentName') || '');
+  form.student.grade = order.gradeSnapshot ?? getString(receiptPayload, 'grade');
+  form.student.studentClass = order.studentClassSnapshot ?? getString(receiptPayload, 'studentClass');
+  form.student.school = order.schoolSnapshot ?? getString(receiptPayload, 'school');
   form.student.guardianName = '';
-  form.student.guardianPhone = getString(receiptPayload, 'guardianPhone') || order.parentPhoneSnapshot || '';
-  form.student.guardianPhone2 = getString(receiptPayload, 'guardianPhone2') || order.parentPhone2Snapshot || '';
+  form.student.guardianPhone = order.parentPhoneSnapshot ?? getString(receiptPayload, 'guardianPhone');
+  form.student.guardianPhone2 = order.parentPhone2Snapshot ?? getString(receiptPayload, 'guardianPhone2');
   form.student.guardianEmail = '';
-  form.student.pickupRequired = getBoolean(receiptPayload, 'pickupRequired', order.pickupRequiredSnapshot);
-  form.student.pickupAddress = getString(receiptPayload, 'pickupAddress') || order.pickupAddressSnapshot || '';
-  form.student.dropoffRequired = getBoolean(receiptPayload, 'dropoffRequired', order.dropoffRequiredSnapshot);
-  form.student.dropoffAddress = getString(receiptPayload, 'dropoffAddress') || order.dropoffAddressSnapshot || '';
+  form.student.pickupRequired = order.pickupRequiredSnapshot ?? getBoolean(receiptPayload, 'pickupRequired', false);
+  form.student.pickupAddress = order.pickupAddressSnapshot ?? getString(receiptPayload, 'pickupAddress');
+  form.student.dropoffRequired = order.dropoffRequiredSnapshot ?? getBoolean(receiptPayload, 'dropoffRequired', false);
+  form.student.dropoffAddress = order.dropoffAddressSnapshot ?? getString(receiptPayload, 'dropoffAddress');
   const historicalParticipants: Record<string, unknown>[] = order.participants?.length
     ? order.participants.map((participant) => ({
       studentId: participant.studentId,
@@ -2731,9 +2933,11 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         || (index === 0 && (payment.participantIndex == null || payment.participantIndex === '')))
       .map((payment) => ({
         rowKey: `payment-${payment.id}`,
+        paymentId: payment.id,
         paymentMethod: payment.paymentMethod,
         amount: numeric(payment.amount),
         paidAt: normalizeDate(payment.paidAt),
+        originalPaidAt: payment.paidAt,
         isHistorical: true,
         courseAllocations: Object.fromEntries((payment.allocations ?? []).map((allocation) => [
           String(allocation.enrollmentOrderItemId), numeric(allocation.amount),
@@ -2847,9 +3051,11 @@ function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
         && Math.abs(roundMoney(numeric(payment.amount) - numeric(courseAllocations[onlyCourseAllocation.rowKey]))) <= 0.01;
       return {
         rowKey: `payment-${payment.id}`,
+        paymentId: payment.id,
         paymentMethod: payment.paymentMethod,
         amount: numeric(payment.amount),
         paidAt: normalizeDate(payment.paidAt),
+        originalPaidAt: payment.paidAt,
         isHistorical: true,
         courseRowKey: allocatedCourses.length === 1 && allocationMatchesPayment ? onlyCourseAllocation?.rowKey : undefined,
         participantIndex: payment.participantIndex,
@@ -3017,18 +3223,18 @@ function toHistoricalCourseLine(
   index: number,
   fallback?: EnrollmentOrderDetailItem['items'][number],
 ): RegistrationCourseLine {
-  const periodLabel = getString(item, 'periodLabel') || getString(fallback, 'periodLabel');
-  const pickupFeeAmount = firstPositiveNumber(getNumber(item, 'pickupFeeAmount'), getNumber(fallback, 'pickupFeeAmount'));
-  const dropoffFeeAmount = firstPositiveNumber(getNumber(item, 'dropoffFeeAmount'), getNumber(fallback, 'dropoffFeeAmount'));
+  const periodLabel = getString(fallback, 'periodLabel') || getString(item, 'periodLabel');
+  const pickupFeeAmount = optionalNumber(fallback, 'pickupFeeAmount') ?? getNumber(item, 'pickupFeeAmount');
+  const dropoffFeeAmount = optionalNumber(fallback, 'dropoffFeeAmount') ?? getNumber(item, 'dropoffFeeAmount');
   const pickupRequired = getBoolean(
-    item,
+    fallback,
     'pickupRequiredSnapshot',
-    getBoolean(item, 'pickupRequired', getBoolean(fallback, 'pickupRequiredSnapshot', getBoolean(fallback, 'pickupRequired', false))),
+    getBoolean(item, 'pickupRequiredSnapshot', getBoolean(item, 'pickupRequired', false)),
   ) || pickupFeeAmount > 0;
   const dropoffRequired = getBoolean(
-    item,
+    fallback,
     'dropoffRequiredSnapshot',
-    getBoolean(item, 'dropoffRequired', getBoolean(fallback, 'dropoffRequiredSnapshot', getBoolean(fallback, 'dropoffRequired', false))),
+    getBoolean(item, 'dropoffRequiredSnapshot', getBoolean(item, 'dropoffRequired', false)),
   ) || dropoffFeeAmount > 0;
   const itemServiceFees = getMoneyLines(item, 'extraFees');
   const fallbackServiceFees = parseMoneyDetail(getString(fallback, 'extraFeeDetail'))
@@ -3044,6 +3250,7 @@ function toHistoricalCourseLine(
     // 订单明细是业务主数据；收据 payload 是历史快照，内部 JSON 的 Snowflake ID
     // 可能已经被原生 JSON.parse 转成不精确的 number，因此 ID 优先取订单明细。
     orderItemId: getString(fallback, 'id') || getString(item, 'orderItemId') || getString(item, 'id') || undefined,
+    orderLineNo: getNumber(fallback, 'lineNo') || getNumber(item, 'lineNo') || index + 1,
     courseType: getString(item, 'courseType') || getString(fallback, 'courseType'),
     gradeBand: getString(item, 'gradeBand') || getString(fallback, 'gradeBand'),
     periodKey: `${periodLabel || 'General'}::Standard`,
@@ -3061,27 +3268,33 @@ function toHistoricalCourseLine(
     periodLabel,
     durationLabel: '',
     timeSlotLabel: getString(item, 'timeSlotLabel') || getString(fallback, 'timeSlotLabel'),
-    startDate: normalizeDate(getString(item, 'startDate') || getString(fallback, 'startDate')) || undefined,
-    packageUnit: getString(item, 'packageUnit') || getString(fallback, 'packageUnit') || undefined,
-    packageQuantity: optionalNumber(item, 'packageQuantity') ?? optionalNumber(fallback, 'packageQuantity'),
-    packageTotalPrice: optionalNumber(item, 'packageTotalPrice') ?? optionalNumber(fallback, 'packageTotalPrice'),
-    attendanceOption: (getString(item, 'attendanceOption') || getString(fallback, 'attendanceOption') || 'NONE') as RegistrationCourseLine['attendanceOption'],
-    attendanceScheduleJson: getString(item, 'attendanceScheduleJson') || getString(fallback, 'attendanceScheduleJson') || undefined,
-    priceAmount: firstPositiveNumber(getNumber(item, 'priceAmount'), getNumber(fallback, 'priceAmount')),
-    originalPriceAmount: optionalNumber(item, 'originalPriceAmount') ?? optionalNumber(fallback, 'originalPriceAmount'),
-    manualPriceOverride: getBoolean(item, 'manualPriceOverride', false),
+    startDate: normalizeDate(getString(fallback, 'startDate') || getString(item, 'startDate')) || undefined,
+    packageUnit: getString(fallback, 'packageUnit') || getString(item, 'packageUnit') || undefined,
+    packageQuantity: optionalNumber(fallback, 'packageQuantity') ?? optionalNumber(item, 'packageQuantity'),
+    packageTotalPrice: optionalNumber(fallback, 'packageTotalPrice') ?? optionalNumber(item, 'packageTotalPrice'),
+    attendanceOption: (getString(fallback, 'attendanceOption') || getString(item, 'attendanceOption') || 'NONE') as RegistrationCourseLine['attendanceOption'],
+    attendanceScheduleJson: getString(fallback, 'attendanceScheduleJson') || getString(item, 'attendanceScheduleJson') || undefined,
+    priceAmount: optionalNumber(fallback, 'priceAmount') ?? getNumber(item, 'priceAmount'),
+    originalPriceAmount: optionalNumber(fallback, 'originalPriceAmount') ?? optionalNumber(item, 'originalPriceAmount'),
+    manualPriceOverride: getBoolean(fallback, 'manualPriceOverride', getBoolean(item, 'manualPriceOverride', false)),
     oneOnOneHours: optionalNumber(item, 'oneOnOneHours') ?? optionalNumber(fallback, 'oneOnOneHours'),
     oneOnOneBonusHours: optionalNumber(item, 'oneOnOneBonusHours') ?? optionalNumber(fallback, 'oneOnOneBonusHours'),
-    openingUsedHours: optionalNumber(item, 'openingUsedHours') ?? optionalNumber(fallback, 'openingUsedHours') ?? 0,
+    openingUsedHours: optionalNumber(fallback, 'openingUsedHours') ?? optionalNumber(item, 'openingUsedHours') ?? 0,
     oneOnOneUnits: optionalNumber(item, 'oneOnOneUnits') ?? optionalNumber(fallback, 'oneOnOneUnits'),
     groupBillingType: getString(item, 'groupBillingType') || undefined,
-    groupSessionCount: optionalNumber(item, 'sessions')
-      ?? optionalNumber(fallback, 'sessions')
+    groupSessionCount: optionalNumber(fallback, 'sessions')
+      ?? optionalNumber(item, 'sessions')
       ?? ((getString(item, 'packageUnit') || getString(fallback, 'packageUnit'))?.toUpperCase() === 'SESSION'
         ? optionalNumber(item, 'packageQuantity') ?? optionalNumber(fallback, 'packageQuantity')
         : undefined),
-    groupPurchasedMonths: optionalNumber(item, 'purchasedMonths') ?? groupMonthCountFromSnapshot(item),
-    groupDurationMode: durationModeForMonths(optionalNumber(item, 'purchasedMonths') ?? groupMonthCountFromSnapshot(item)),
+    groupPurchasedMonths: optionalNumber(fallback, 'purchasedMonths')
+      ?? optionalNumber(item, 'purchasedMonths')
+      ?? optionalNumber(fallback, 'packageQuantity')
+      ?? groupMonthCountFromSnapshot(item),
+    groupDurationMode: durationModeForMonths(optionalNumber(fallback, 'purchasedMonths')
+      ?? optionalNumber(item, 'purchasedMonths')
+      ?? optionalNumber(fallback, 'packageQuantity')
+      ?? groupMonthCountFromSnapshot(item)),
     groupStartMonth: getString(item, 'groupStartMonth') || getString(item, 'startMonth') || undefined,
     groupEndMonth: getString(item, 'groupEndMonth') || getString(item, 'endMonth') || undefined,
     groupRegistrationStartMonth: getString(item, 'startMonth') || undefined,
@@ -3100,8 +3313,8 @@ function toHistoricalCourseLine(
     pickupFeeAmount,
     dropoffFeeCharged: dropoffRequired,
     dropoffFeeAmount,
-    serviceFees: itemServiceFees.length > 0 ? itemServiceFees : fallbackServiceFees,
-    remark: getString(item, 'remark') || undefined,
+    serviceFees: fallbackServiceFees.length > 0 ? fallbackServiceFees : itemServiceFees,
+    remark: getString(fallback, 'remark') || getString(item, 'remark') || undefined,
   };
 }
 
@@ -3901,6 +4114,7 @@ function removePaymentLine(index: number) {
 }
 
 function addActivePaymentLine(courseRowKey?: string) {
+  if (editingCorrection.value) return;
   if (courseLines.value.length > 1
       && activePaymentLines.value.some((payment) =>
         !payment.isHistorical
@@ -3918,6 +4132,7 @@ function addActivePaymentLine(courseRowKey?: string) {
 }
 
 function removeActivePaymentLine(payment: PaymentLine) {
+  if (editingCorrection.value) return;
   const index = activePaymentLines.value.indexOf(payment);
   if (index < 0) return;
   const participantIndex = activeParticipantBilling.value?.participantIndex;
@@ -4155,6 +4370,13 @@ function availableGroupPlanQuantities(line: RegistrationCourseLine) {
   return Array.from({ length: maxAvailable }, (_, index) => maxAvailable - index);
 }
 
+function correctionSessionChoices(line: RegistrationCourseLine) {
+  const choices = availableGroupPlanQuantities(line);
+  const historical = line.groupSessionCount;
+  return editingCorrection.value && line.orderItemId && historical && !choices.includes(historical)
+    ? [historical, ...choices] : choices;
+}
+
 function availableGroupStartDates(line: RegistrationCourseLine) {
   const plan = selectedGroupPlan(line);
   let dates = line.groupScheduleDates ?? [];
@@ -4240,7 +4462,7 @@ async function handleGroupActualClassChange(line: RegistrationCourseLine) {
   await loadGroupClassDates(line);
 }
 
-async function loadGroupClassDates(line: RegistrationCourseLine) {
+async function loadGroupClassDates(line: RegistrationCourseLine, preserveHistorical = false) {
   const actualClass = selectedGroupActualClass(line);
   const plan = selectedGroupPlan(line);
   if (!actualClass || !plan) {
@@ -4265,14 +4487,14 @@ async function loadGroupClassDates(line: RegistrationCourseLine) {
     }
   }
   const choices = availableGroupStartDates(line);
-  if (!choices.includes(line.startDate ?? '')) {
+  if (!preserveHistorical && !choices.includes(line.startDate ?? '')) {
     line.startDate = choices[0];
   }
-  if (plan.packageUnit === 'SESSION') {
+  if (!preserveHistorical && plan.packageUnit === 'SESSION') {
     const maximum = availableGroupPlanQuantities(line)[0] ?? 0;
     if (numeric(line.groupSessionCount) > maximum) line.groupSessionCount = maximum || undefined;
   }
-  recalculateLinePrice(line);
+  if (!preserveHistorical) recalculateLinePrice(line);
 }
 
 function handleGroupStartDateChange(line: RegistrationCourseLine) {
@@ -4401,7 +4623,7 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
     const fullPrice = groupPlanDisplayPrice(plan, line.attendanceOption);
     const price = ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
     line.packageTotalPrice = fullPrice;
-    line.packageQuantity = configuredQuantity;
+    line.packageQuantity = selectedQuantity;
     line.originalPriceAmount = price;
     if (!line.manualPriceOverride) line.priceAmount = price;
     line.durationLabel = printRegistrationDurationLabel(line);
@@ -4921,6 +5143,8 @@ function attendanceOptionsForLine(line: RegistrationCourseLine) {
 }
 
 function handleAttendanceChange(line: RegistrationCourseLine) {
+  // 历史价格可能已调整；更正时先保留原价，金额变化由操作员明确输入。
+  if (editingCorrection.value) return;
   recalculateLinePrice(line);
 }
 
@@ -5715,7 +5939,7 @@ function buildPayload(): RegistrationIntakePayload {
     creditTopUpAmount: creditTopUpAmount.value > 0 ? roundMoney(creditTopUpAmount.value) : undefined,
     items: isCreditTopUpOnly.value ? [] : courseLines.value.map((line, index) => ({
       orderItemId: line.orderItemId,
-      lineNo: index + 1,
+      lineNo: editingCorrection.value ? line.orderLineNo ?? index + 1 : index + 1,
       registerClass: line.registerClass,
       courseType: line.courseType,
       courseProductId: line.courseProductId,
@@ -5775,11 +5999,13 @@ function buildPayload(): RegistrationIntakePayload {
       ...(isSharedPrivateLesson.value ? [] : payments.value
         .filter((payment) => payment.amount > 0 && !isRefundPayment(payment))
         .map((payment) => ({
+          paymentId: payment.paymentId,
           paymentMethod: payment.paymentMethod,
           amount: roundMoney(payment.amount),
-          paidAt: toLocalDateTime(payment.paidAt),
-          handledByName: handledByName.value,
-          remark: payment.remark?.trim() || undefined,
+          paidAt: payment.originalPaidAt && normalizeDate(payment.originalPaidAt) === payment.paidAt
+            ? payment.originalPaidAt : toLocalDateTime(payment.paidAt),
+          handledByName: payment.isHistorical ? payment.handledByName : handledByName.value,
+          remark: editingCorrection.value ? (payment.remark?.trim() ?? '') : (payment.remark?.trim() || undefined),
           allocations: buildCoursePaymentAllocations(payment),
         }))),
       ...(creditTopUpAmount.value > 0 ? [{
@@ -5813,12 +6039,14 @@ function toParticipantBillingPayload(billing: ParticipantBillingForm): Registrat
     payments: billing.payments
       .filter((payment) => payment.amount > 0 && !isRefundPayment(payment))
       .map((payment) => ({
+        paymentId: payment.paymentId,
         paymentMethod: payment.paymentMethod,
         amount: roundMoney(payment.amount),
-        paidAt: toLocalDateTime(payment.paidAt),
+        paidAt: payment.originalPaidAt && normalizeDate(payment.originalPaidAt) === payment.paidAt
+          ? payment.originalPaidAt : toLocalDateTime(payment.paidAt),
         participantIndex: billing.participantIndex,
-        handledByName: handledByName.value,
-        remark: payment.remark?.trim() || undefined,
+        handledByName: payment.isHistorical ? payment.handledByName : handledByName.value,
+        remark: editingCorrection.value ? (payment.remark?.trim() ?? '') : (payment.remark?.trim() || undefined),
         allocations: buildCoursePaymentAllocations(payment),
       })),
   };
@@ -6205,9 +6433,11 @@ function getHistoricalPayments(payload: Record<string, unknown> | null): Payment
   return getArray(payload, 'payments')
     .map((payment, index) => ({
       rowKey: `payload-payment-${getString(payment, 'paymentId') || index}`,
+      paymentId: getString(payment, 'paymentId') || undefined,
       paymentMethod: getString(payment, 'paymentMethod'),
       amount: getNumber(payment, 'amount'),
       paidAt: normalizeDate(getString(payment, 'paidAt')) || form.signupDate || today,
+      originalPaidAt: getString(payment, 'paidAt') || undefined,
       isHistorical: true,
       courseAllocations: {},
       handledByName: getString(payment, 'handledByName') || form.handledByName,

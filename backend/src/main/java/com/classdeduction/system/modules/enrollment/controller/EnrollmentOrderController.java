@@ -98,8 +98,9 @@ public class EnrollmentOrderController {
     @RequireRoles({"ADMIN", "STAFF"})
     public ApiResponse<Void> correctOrder(
             @Parameter(description = "报名单ID") @PathVariable Long id,
-            @Valid @RequestBody EnrollmentOrderCorrectionRequest request) {
-        enrollmentOrderService.correctOrder(id, request);
+            @Valid @RequestBody EnrollmentOrderCorrectionRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        enrollmentOrderService.correctOrder(id, request, currentUser);
         return ApiResponse.success("Updated successfully.", null);
     }
 

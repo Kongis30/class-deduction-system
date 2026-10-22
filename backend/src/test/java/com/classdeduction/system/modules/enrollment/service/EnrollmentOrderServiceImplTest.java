@@ -657,8 +657,8 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
-    void shouldSelfHealOrphanedV2EnrollmentWhenNoOverlappingActiveExists() {
-        // 回归：订单行只剩 CANCELLED 权益（历史孤儿），且该班无其它重叠 ACTIVE 时，更正应重建 ACTIVE 权益。
+    void shouldNotRestoreCancelledEnrollmentWhenCorrectingReceipt() {
+        // 已取消权益可能来自停课；编辑旧收据绝不能悄悄恢复在册状态。
         EnrollmentOrderEntity order = new EnrollmentOrderEntity();
         order.setId(2001L);
         order.setOrderStatus("CONFIRMED");
@@ -744,14 +744,7 @@ class EnrollmentOrderServiceImplTest {
 
         enrollmentOrderService.correctOrder(2001L, request);
 
-        verify(classEnrollmentMapper).insert(classEnrollmentCaptor.capture());
-        ClassEnrollmentEntity healed = classEnrollmentCaptor.getValue();
-        assertThat(healed.getStatus()).isEqualTo("ACTIVE");
-        assertThat(healed.getEnrollmentDate()).isEqualTo(LocalDate.of(2026, 9, 12));
-        assertThat(healed.getExpiryDate()).isEqualTo(LocalDate.of(2027, 6, 12));
-        assertThat(healed.getPurchasedQuantity()).isEqualTo(33);
-        assertThat(healed.getBillingType()).isEqualTo("PER_SESSION");
-        assertThat(healed.getEnrollmentOrderItemId()).isEqualTo(8001L);
+        verify(classEnrollmentMapper, never()).insert(any(ClassEnrollmentEntity.class));
     }
 
     @Test

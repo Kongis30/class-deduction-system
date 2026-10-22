@@ -42,6 +42,9 @@ public interface EnrollmentOrderService {
     /** 更正已保存收据，并同步订单、课包、班级报名和收据快照。 */
     void correctOrder(Long id, EnrollmentOrderCorrectionRequest request);
 
+    /** 由控制器传入可信的当前用户，写入更正审计。 */
+    void correctOrder(Long id, EnrollmentOrderCorrectionRequest request, CurrentUserResponse operator);
+
     /**
      * 取消报名订单。
      */

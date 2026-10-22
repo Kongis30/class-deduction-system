@@ -1,4 +1,5 @@
 import http from './http';
+import type { AxiosRequestConfig } from 'axios';
 import type { ApiResponse, PageResult } from '@/types/http';
 import type {
   CoursePackageItem,
@@ -78,6 +79,8 @@ export function updateCoursePackageDeductedHours(id: EntityId, deductedHours: nu
 }
 
 export interface EnrollmentOrderCorrectionPayload {
+  expectedVersion?: number;
+  correctionReason?: string;
   participants?: RegistrationStudentPayload[];
   participantBillings?: RegistrationParticipantBillingPayload[];
   studentName?: string;
@@ -172,6 +175,7 @@ export function forceVoidEnrollmentOrder(id: string | number, reason?: string) {
 // ─── Registration Intake ──────────────────────────────
 export interface RegistrationStudentPayload {
   studentId?: EntityId;
+  correctionChangedFields?: string[];
   studentName: string;
   englishName?: string;
   gender?: string;
@@ -193,6 +197,7 @@ export interface RegistrationStudentPayload {
 
 export interface RegistrationCourseItemPayload {
   orderItemId?: EntityId;
+  correctionChangedFields?: string[];
   lineNo?: number;
   registerClass?: string;
   courseType?: string;
@@ -248,6 +253,8 @@ export interface RegistrationCoursePaymentAllocationPayload {
 }
 
 export interface RegistrationPaymentPayload {
+  paymentId?: EntityId;
+  correctionChangedFields?: string[];
   paymentMethod: string;
   amount: number;
   paidAt?: string;

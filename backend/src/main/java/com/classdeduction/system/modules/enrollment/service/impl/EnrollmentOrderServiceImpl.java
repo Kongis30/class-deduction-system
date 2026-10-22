@@ -33,6 +33,7 @@ import com.classdeduction.system.modules.enrollment.dto.RefundRequest;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderItemEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentCorrectionLogEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderParticipantEntity;
 import com.classdeduction.system.modules.enrollment.entity.EnrollmentOrderCourseRefundStateEntity;
 import com.classdeduction.system.modules.enrollment.entity.PaymentAllocationEntity;
@@ -44,6 +45,7 @@ import com.classdeduction.system.modules.enrollment.entity.ReceiptRecordEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentCorrectionLogMapper;
 import com.classdeduction.system.modules.enrollment.mapper.PackageTeacherAssignmentMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderParticipantMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderCourseRefundStateMapper;
@@ -161,6 +163,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final PaymentAllocationService paymentAllocationService;
     private final PrivateLessonGroupMemberMapper privateLessonGroupMemberMapper;
     private final ReceiptRecordMapper receiptRecordMapper;
+    @Autowired
+    private EnrollmentCorrectionLogMapper correctionLogMapper;
     private final ClassBillingService classBillingService;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
@@ -469,18 +473,17 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 ? Map.of()
                 : Optional.ofNullable(classGroupMapper.selectBatchIds(itemClassIds)).orElse(List.of()).stream()
                         .collect(Collectors.toMap(ClassGroupEntity::getId, Function.identity(), (first, ignored) -> first));
-        List<Long> sessionItemIds = orderItems.stream()
-                .filter(item -> "SESSION".equalsIgnoreCase(item.getPackageUnit()))
+        List<Long> groupItemIds = orderItems.stream()
+                .filter(item -> isGroupItem(item))
                 .map(EnrollmentOrderItemEntity::getId).toList();
-        Map<Long, Integer> selectedSessionsByItemId = sessionItemIds.isEmpty() ? Map.of()
+        Map<Long, ClassEnrollmentEntity> entitlementByItemId = groupItemIds.isEmpty() ? Map.of()
                 : classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
-                        .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, sessionItemIds)
+                        .in(ClassEnrollmentEntity::getEnrollmentOrderItemId, groupItemIds)
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
                         .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
                         .orderByDesc(ClassEnrollmentEntity::getId)).stream()
-                        .filter(enrollment -> enrollment.getPurchasedQuantity() != null)
                         .collect(Collectors.toMap(ClassEnrollmentEntity::getEnrollmentOrderItemId,
-                                ClassEnrollmentEntity::getPurchasedQuantity, (newer, older) -> newer));
+                                Function.identity(), (newer, older) -> newer));
         List<PaymentRecordEntity> payments = listPaymentsByOrderId(id);
         List<ReceiptRecordEntity> receipts = listReceiptsByOrderIds(List.of(id));
         List<EnrollmentOrderParticipantEntity> participants = enrollmentOrderParticipantMapper.selectList(
@@ -558,13 +561,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     ClassGroupEntity itemClass = item.getClassId() == null
                             ? null
                             : itemClassesById.get(item.getClassId());
-                    return toOrderItemVO(item, selectedSessionsByItemId.get(item.getId()),
-                            itemClass == null ? null : itemClass.getClassName());
+                    return toOrderItemVO(item, itemClass == null ? null : itemClass.getClassName(),
+                            entitlementByItemId.get(item.getId()));
                 }).toList())
                 .participants(participants.stream().map(this::toParticipantVO).toList())
                 .payments(payments.stream().map(this::toPaymentVO).toList())
                 .packages(packages.stream().map(item -> toPackageListItem(item, student, primaryTeacherNameMap.get(item.getId()), productMap.get(item.getCourseProductId()))).toList())
                 .receipts(receipts.stream().map(item -> toReceiptVO(item, student.getStudentName())).toList())
+                .version(order.getVersion())
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .build();
@@ -1168,16 +1172,16 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item) {
-        return toOrderItemVO(item, null);
-    }
-
-    private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, Integer selectedSessions) {
-        return toOrderItemVO(item, selectedSessions, null);
+        return toOrderItemVO(item, null, null);
     }
 
     /** 将迁移后的项目、方案和逐课程班级名称返回给收据还原流程。 */
-    private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, Integer selectedSessions,
-                                                String className) {
+    private EnrollmentOrderItemVO toOrderItemVO(EnrollmentOrderItemEntity item, String className,
+                                                ClassEnrollmentEntity entitlement) {
+        // V2 订单行保存本次实购数量；旧班课可能仍用方案上限，优先保留其权益选购数。
+        Integer purchasedQuantity = item.getGroupProjectId() != null
+                ? wholeNumber(item.getPackageQuantity())
+                : entitlement == null ? wholeNumber(item.getPackageQuantity()) : entitlement.getPurchasedQuantity();
         return EnrollmentOrderItemVO.builder()
                 .id(item.getId())
                 .enrollmentOrderId(item.getEnrollmentOrderId())
@@ -1195,7 +1199,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .periodLabel(item.getPeriodLabel())
                 .timeSlotLabel(item.getTimeSlotLabel())
                 .startDate(item.getStartDate())
-                .sessions(selectedSessions)
+                .sessions("SESSION".equalsIgnoreCase(item.getPackageUnit())
+                        ? purchasedQuantity : null)
+                .purchasedMonths("MONTH".equalsIgnoreCase(item.getPackageUnit())
+                        ? purchasedQuantity : null)
+                .packageUnit(item.getPackageUnit())
+                .packageQuantity(item.getPackageQuantity())
+                .packageTotalPrice(item.getPackageTotalPrice())
+                .attendanceOption(item.getAttendanceOption())
+                .attendanceScheduleJson(item.getAttendanceScheduleJson())
+                .entitlementPurchasedQuantity(entitlement == null ? null : entitlement.getPurchasedQuantity())
+                .entitlementExpiryDate(entitlement == null ? null : entitlement.getExpiryDate())
+                .entitlementStatus(entitlement == null ? null : entitlement.getStatus())
                 .priceAmount(item.getPriceAmount())
                 .originalPriceAmount(item.getOriginalPriceAmount())
                 .manualPriceOverride(Boolean.TRUE.equals(item.getManualPriceOverride()))
@@ -1204,6 +1219,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .paidAmount(item.getPaidAmount())
                 .balanceAmount(item.getBalanceAmount())
                 .oneOnOneHours(item.getOneOnOneHours())
+                .openingUsedHours(item.getOpeningUsedHours())
                 .oneOnOneUnits(item.getOneOnOneUnits())
                 .pickupRequiredSnapshot(Boolean.TRUE.equals(item.getPickupRequiredSnapshot()))
                 .pickupAddressSnapshot(item.getPickupAddressSnapshot())
@@ -1331,7 +1347,50 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void correctOrder(Long id, EnrollmentOrderCorrectionRequest request) {
+        correctOrderInternal(id, request, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void correctOrder(Long id, EnrollmentOrderCorrectionRequest request, CurrentUserResponse operator) {
+        correctOrderInternal(id, request, operator);
+    }
+
+    /** 单事务更正原报名；控制器提供登录用户，审计与业务写入同时提交。 */
+    private void correctOrderInternal(Long id, EnrollmentOrderCorrectionRequest request, CurrentUserResponse operator) {
         EnrollmentOrderEntity order = requireOrderForUpdate(id);
+        if (operator != null && request.getExpectedVersion() == null) {
+            throw new BusinessException("CORRECTION_VERSION_REQUIRED",
+                    "Reload this registration before saving your edits.");
+        }
+        if (request.getExpectedVersion() != null
+                && !Objects.equals(request.getExpectedVersion(), order.getVersion())) {
+            throw new BusinessException("CORRECTION_ORDER_CHANGED",
+                    "This registration was changed by someone else. Reload it before saving your edits.");
+        }
+        if (operator != null && request.getItems() != null && request.getItems().stream()
+                .anyMatch(item -> item == null || item.getCorrectionChangedFields() == null)) {
+            throw new BusinessException("CORRECTION_FIELDS_REQUIRED",
+                    "Reload this registration before editing its course rows.");
+        }
+        if (operator != null && request.getParticipants() != null && request.getParticipants().stream()
+                .anyMatch(participant -> participant == null || participant.getCorrectionChangedFields() == null)) {
+            throw new BusinessException("CORRECTION_FIELDS_REQUIRED",
+                    "Reload this registration before editing its participants.");
+        }
+        if (operator != null && request.getPayments() != null && request.getPayments().stream()
+                .anyMatch(payment -> payment == null || payment.getCorrectionChangedFields() == null)) {
+            throw new BusinessException("CORRECTION_FIELDS_REQUIRED",
+                    "Reload this registration before editing its payments.");
+        }
+        if (operator != null && request.getParticipantBillings() != null
+                && request.getParticipantBillings().stream().filter(Objects::nonNull)
+                .filter(billing -> billing.getPayments() != null)
+                .flatMap(billing -> billing.getPayments().stream())
+                .anyMatch(payment -> payment == null || payment.getCorrectionChangedFields() == null)) {
+            throw new BusinessException("CORRECTION_FIELDS_REQUIRED",
+                    "Reload this registration before editing participant payments.");
+        }
         if (WholeDollarBilling.appliesTo(order)) {
             validateWholeDollarCorrection(request);
         }
@@ -1339,6 +1398,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("ORDER_CANCELLED_NOT_EDITABLE",
                     "Cancelled orders cannot be edited.");
         }
+        if (operator != null && (request.getPayments() != null
+                || participantPaymentsChanged(order.getId(), request.getParticipantBillings())
+                || correctedPaymentAllocationsChanged(request))
+                && !StringUtils.hasText(request.getCorrectionReason())) {
+            throw new BusinessException("CORRECTION_PAYMENT_REASON_REQUIRED",
+                    "Enter a reason for correcting the original payment details.");
+        }
+        String beforeSnapshot = correctionLogMapper == null ? null : correctionAuditSnapshot(order);
 
         List<EnrollmentOrderItemEntity> lockedItems = List.of();
         Map<Long, ClassGroupEntity> lockedGroupClasses = Map.of();
@@ -1357,6 +1424,13 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             GroupClassEntitlementRules.lockStudents(studentMapper, studentIds);
         }
         StudentEntity student = requireStudent(order.getStudentId());
+        ItemFeeTotals previousItemFees = itemFeeTotals(listOrderItemsByOrderId(order.getId()));
+        boolean studentChanged = StringUtils.hasText(request.getStudentName())
+                || request.getGrade() != null || request.getStudentClass() != null
+                || request.getSchool() != null || request.getGuardianPhone() != null
+                || request.getGuardianPhone2() != null || request.getPickupRequired() != null
+                || request.getPickupAddress() != null || request.getDropoffRequired() != null
+                || request.getDropoffAddress() != null;
         if (StringUtils.hasText(request.getStudentName())) {
             order.setStudentNameSnapshot(request.getStudentName().trim());
             student.setStudentName(request.getStudentName().trim());
@@ -1416,6 +1490,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         }
 
         // 课程、价格、课包和班级报名必须跟原订单行一起更正，不能重新创建报名单。
+        boolean itemAmountsChanged = correctedItemAmountsChanged(lockedItems, request.getItems());
+        if (studentChanged) studentMapper.updateById(student);
         if (request.getParticipants() != null && !request.getParticipants().isEmpty()) {
             applyCorrectedParticipants(order, request.getParticipants());
         }
@@ -1428,21 +1504,25 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         } else if (request.getPayments() != null) {
             reconcileCorrectedPayments(order, request.getPayments());
         }
-        boolean moneyChanged = request.getItems() != null || request.getPayments() != null
-                || request.getParticipantBillings() != null
-                || request.getExtraFees() != null || request.getDiscounts() != null
-                || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null;
+        boolean moneyChanged = itemAmountsChanged || correctedPaymentAmountsChanged(order.getId(), request)
+                || correctedPaymentAllocationsChanged(request)
+                || correctedParticipantDiscountsChanged(order.getId(), request.getParticipantBillings())
+                || request.getExtraFees() != null || request.getExtraFeeAmount() != null
+                || request.getDiscounts() != null || request.getDiscountAmount() != null
+                || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null
+                || request.getPickupFeeCharged() != null || request.getDropoffFeeCharged() != null;
         if (moneyChanged) {
-            applyCorrectedMoney(order, request);
+            applyCorrectedMoney(order, request, previousItemFees);
         }
-        studentMapper.updateById(student);
         enrollmentOrderMapper.updateById(order);
         // 更正金额相关内容后重放课程级分摊：价格/附加费/折扣变化需重算课程项应收，
         // 仅付款金额变化也需重放（课程分摊随付款金额演进）。
         if (moneyChanged) {
-            boolean priceChanged = request.getItems() != null || request.getExtraFees() != null
-                    || request.getDiscounts() != null
-                    || request.getPickupFeeAmount() != null || request.getDropoffFeeAmount() != null;
+            boolean priceChanged = itemAmountsChanged || request.getExtraFees() != null
+                    || request.getExtraFeeAmount() != null || request.getDiscounts() != null
+                    || request.getDiscountAmount() != null || request.getPickupFeeAmount() != null
+                    || request.getDropoffFeeAmount() != null
+                    || request.getPickupFeeCharged() != null || request.getDropoffFeeCharged() != null;
             if (priceChanged) {
                 invalidateItemAmountDue(order.getId());
             }
@@ -1467,8 +1547,157 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                     .set(EnrollmentOrderEntity::getCampusId, order.getCampusId()));
         }
 
-        // Keep every saved receipt snapshot in sync so print/preview and the order detail agree.
+        // 仅同步本次报名的普通收据；退款和 Credit 凭证有独立的资金事实。
         syncReceiptSnapshots(order, request.getCampusAddress(), request.getCampusPhone(), request.getTaxId(), request);
+        if (correctionLogMapper != null) {
+            EnrollmentCorrectionLogEntity log = new EnrollmentCorrectionLogEntity();
+            log.setOperatorUserId(operator == null ? null : operator.userId());
+            log.setOperatorNameSnapshot(operator == null ? "System" : operator.displayName());
+            log.setBizType("ENROLLMENT_ORDER");
+            log.setBizId(order.getId());
+            log.setOperationCode("EDIT_RECEIPT");
+            String reason = request.getCorrectionReason();
+            log.setOperationDesc(StringUtils.hasText(reason)
+                    ? "Correct original registration receipt: " + reason.trim().substring(0, Math.min(190, reason.trim().length()))
+                    : "Correct original registration receipt");
+            Map<String, Object> requestAudit = new LinkedHashMap<>();
+            requestAudit.put("before", beforeSnapshot);
+            requestAudit.put("changes", request);
+            log.setRequestSnapshot(jsonHelper.toJson(requestAudit));
+            log.setResponseSnapshot(correctionAuditSnapshot(requireOrder(order.getId())));
+            log.setOperateAt(AppTime.nowLocalDateTime());
+            correctionLogMapper.insert(log);
+        }
+    }
+
+    private String correctionAuditSnapshot(EnrollmentOrderEntity order) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("order", order);
+        state.put("items", listOrderItemsByOrderId(order.getId()));
+        state.put("payments", listPaymentsByOrderId(order.getId()));
+        state.put("receipts", listReceiptsByOrderIds(List.of(order.getId())));
+        return jsonHelper.toJson(state);
+    }
+
+    private boolean participantPaymentsChanged(Long orderId,
+                                               List<RegistrationIntakeRequest.ParticipantBillingPayload> billings) {
+        if (billings == null || billings.isEmpty()) return false;
+        Map<Long, PaymentRecordEntity> existing = listPaymentsByOrderId(orderId).stream()
+                .filter(payment -> "PAYMENT".equals(payment.getPaymentType()))
+                .filter(payment -> !"VOIDED".equals(payment.getPaymentStatus()))
+                .collect(Collectors.toMap(PaymentRecordEntity::getId, Function.identity()));
+        for (RegistrationIntakeRequest.ParticipantBillingPayload billing : billings) {
+            if (billing == null || billing.getPayments() == null) continue;
+            for (RegistrationIntakeRequest.PaymentPayload payload : billing.getPayments()) {
+                if (payload == null) return true;
+                PaymentRecordEntity previous = existing.get(payload.getPaymentId());
+                if (previous == null
+                        || !Objects.equals(previous.getPaymentMethod(), payload.getPaymentMethod())
+                        || !sameQuantity(previous.getAmount(), payload.getAmount())
+                        || !Objects.equals(previous.getPaidAt(), payload.getPaidAt())
+                        || !Objects.equals(normalizedPaymentRemark(previous.getRemark()),
+                        normalizedPaymentRemark(payload.getRemark()))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private String normalizedPaymentRemark(String remark) {
+        return remark == null ? "" : remark.trim();
+    }
+
+    private boolean correctedPaymentAmountsChanged(Long orderId, EnrollmentOrderCorrectionRequest request) {
+        if (request.getPayments() == null && request.getParticipantBillings() == null) return false;
+        Map<Long, PaymentRecordEntity> existing = listPaymentsByOrderId(orderId).stream()
+                .filter(payment -> "PAYMENT".equals(payment.getPaymentType()))
+                .filter(payment -> !"VOIDED".equals(payment.getPaymentStatus()))
+                .collect(Collectors.toMap(PaymentRecordEntity::getId, Function.identity()));
+        List<RegistrationIntakeRequest.PaymentPayload> edits = new ArrayList<>();
+        if (request.getPayments() != null) edits.addAll(request.getPayments());
+        if (request.getParticipantBillings() != null) {
+            for (RegistrationIntakeRequest.ParticipantBillingPayload billing : request.getParticipantBillings()) {
+                if (billing != null && billing.getPayments() != null) edits.addAll(billing.getPayments());
+            }
+        }
+        for (RegistrationIntakeRequest.PaymentPayload edit : edits) {
+            if (edit == null) continue;
+            PaymentRecordEntity previous = existing.get(edit.getPaymentId());
+            if (previous == null || edit.getAmount() != null
+                    && !sameQuantity(previous.getAmount(), edit.getAmount())) return true;
+        }
+        return false;
+    }
+
+    private boolean correctedPaymentAllocationsChanged(EnrollmentOrderCorrectionRequest request) {
+        if (request.getPayments() != null && request.getPayments().stream()
+                .filter(Objects::nonNull).anyMatch(payment -> changedPaymentField(payment, "allocations"))) return true;
+        return request.getParticipantBillings() != null && request.getParticipantBillings().stream()
+                .filter(Objects::nonNull).filter(billing -> billing.getPayments() != null)
+                .flatMap(billing -> billing.getPayments().stream()).filter(Objects::nonNull)
+                .anyMatch(payment -> changedPaymentField(payment, "allocations"));
+    }
+
+    private boolean changedPaymentField(RegistrationIntakeRequest.PaymentPayload payment, String field) {
+        return payment.getCorrectionChangedFields() == null
+                || payment.getCorrectionChangedFields().contains(field);
+    }
+
+    private boolean correctedParticipantDiscountsChanged(Long orderId,
+            List<RegistrationIntakeRequest.ParticipantBillingPayload> billings) {
+        if (billings == null) return false;
+        Map<Integer, EnrollmentOrderParticipantEntity> existing = listOrderParticipants(orderId).stream()
+                .collect(Collectors.toMap(EnrollmentOrderParticipantEntity::getParticipantIndex,
+                        Function.identity(), (first, ignored) -> first));
+        for (RegistrationIntakeRequest.ParticipantBillingPayload billing : billings) {
+            if (billing == null) continue;
+            EnrollmentOrderParticipantEntity previous = existing.get(billing.getParticipantIndex());
+            BigDecimal corrected = billing.getDiscountAmount() == null
+                    ? sumFeeLines(billing.getDiscounts()) : billing.getDiscountAmount();
+            if (previous == null || !sameQuantity(defaultAmount(previous.getDiscountAmount()), corrected)) return true;
+        }
+        return false;
+    }
+
+    /** 课程差异中只有金额或服务费变化才重算账务；补填 Attendance 不触发付款重放。 */
+    private boolean correctedItemAmountsChanged(List<EnrollmentOrderItemEntity> existing,
+                                                List<RegistrationIntakeRequest.CourseItemPayload> edits) {
+        if (edits == null || edits.isEmpty()) return false;
+        Map<Long, EnrollmentOrderItemEntity> byId = existing.stream()
+                .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, Function.identity()));
+        for (RegistrationIntakeRequest.CourseItemPayload edit : edits) {
+            if (attendanceOnlyCorrection(edit)) continue;
+            EnrollmentOrderItemEntity original = byId.get(edit.getOrderItemId());
+            if (original == null) continue;
+            if ((changedCourseField(edit, "priceAmount")
+                    && !sameQuantity(defaultAmount(original.getPriceAmount()), defaultAmount(edit.getPriceAmount())))
+                    || (changedCourseField(edit, "discountAmount") && edit.getDiscountAmount() != null
+                    && !sameQuantity(defaultAmount(original.getDiscountAmount()), defaultAmount(edit.getDiscountAmount())))
+                    || (changedCourseField(edit, "pickupRequired") || changedCourseField(edit, "pickupFeeAmount"))
+                    && !sameQuantity(defaultAmount(original.getPickupFeeAmount()),
+                    Boolean.TRUE.equals(edit.getPickupRequired()) ? defaultAmount(edit.getPickupFeeAmount()) : ZERO_AMOUNT)
+                    || (changedCourseField(edit, "dropoffRequired") || changedCourseField(edit, "dropoffFeeAmount"))
+                    && !sameQuantity(defaultAmount(original.getDropoffFeeAmount()),
+                    Boolean.TRUE.equals(edit.getDropoffRequired()) ? defaultAmount(edit.getDropoffFeeAmount()) : ZERO_AMOUNT)
+                    || (changedCourseField(edit, "serviceFees")
+                    && !sameQuantity(defaultAmount(original.getExtraFeeAmount()), sumFeeLines(edit.getServiceFees())))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean changedCourseField(RegistrationIntakeRequest.CourseItemPayload payload, String field) {
+        return payload.getCorrectionChangedFields() == null
+                || payload.getCorrectionChangedFields().contains(field);
+    }
+
+    private boolean attendanceOnlyCorrection(RegistrationIntakeRequest.CourseItemPayload payload) {
+        List<String> fields = payload.getCorrectionChangedFields();
+        return fields != null && !fields.isEmpty()
+                && fields.stream().allMatch(field -> "attendanceOption".equals(field)
+                || "attendanceScheduleJson".equals(field));
     }
 
     /** 新订单更正仍遵守原订单的整美元计价契约；旧订单不受此校验影响。 */
@@ -1483,11 +1712,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (request.getItems() != null) {
             for (RegistrationIntakeRequest.CourseItemPayload item : request.getItems()) {
                 if (item == null) continue;
-                WholeDollarBilling.requireInteger(item.getPriceAmount(), "Course price");
-                WholeDollarBilling.requireInteger(item.getDiscountAmount(), "Course discount");
-                WholeDollarBilling.requireInteger(item.getPickupFeeAmount(), "Course pickup fee");
-                WholeDollarBilling.requireInteger(item.getDropoffFeeAmount(), "Course drop-off fee");
-                validateWholeDollarLines(item.getServiceFees());
+                if (changedCourseField(item, "priceAmount")) WholeDollarBilling.requireInteger(item.getPriceAmount(), "Course price");
+                if (changedCourseField(item, "discountAmount")) WholeDollarBilling.requireInteger(item.getDiscountAmount(), "Course discount");
+                if (changedCourseField(item, "pickupFeeAmount")) WholeDollarBilling.requireInteger(item.getPickupFeeAmount(), "Course pickup fee");
+                if (changedCourseField(item, "dropoffFeeAmount")) WholeDollarBilling.requireInteger(item.getDropoffFeeAmount(), "Course drop-off fee");
+                if (changedCourseField(item, "serviceFees")) validateWholeDollarLines(item.getServiceFees());
             }
         }
         if (request.getParticipantBillings() != null) {
@@ -1511,8 +1740,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         if (payments == null) return;
         for (RegistrationIntakeRequest.PaymentPayload payment : payments) {
             if (payment == null) continue;
-            WholeDollarBilling.requireInteger(payment.getAmount(), "Payment");
-            if (payment.getAllocations() != null) {
+            if (changedPaymentField(payment, "amount")) WholeDollarBilling.requireInteger(payment.getAmount(), "Payment");
+            if (changedPaymentField(payment, "allocations") && payment.getAllocations() != null) {
                 for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payment.getAllocations()) {
                     if (allocation != null) WholeDollarBilling.requireInteger(allocation.getAmount(), "Course payment allocation");
                 }
@@ -1541,64 +1770,73 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 throw new BusinessException("PRIVATE_LESSON_PARTICIPANT_ID_MISMATCH",
                         "A receipt edit cannot replace a private lesson participant.");
             }
+            if (payload.getCorrectionChangedFields() != null && payload.getCorrectionChangedFields().isEmpty()) continue;
             StudentEntity student = requireStudent(participant.getStudentId());
             applyCorrectedStudentProfile(student, payload);
             studentMapper.updateById(student);
-            copyParticipantSnapshot(participant, student);
+            copyParticipantSnapshot(participant, student, payload);
             enrollmentOrderParticipantMapper.updateById(participant);
             if (index == 0) {
-                order.setStudentNameSnapshot(student.getStudentName());
-                order.setStudentClassSnapshot(student.getStudentClass());
-                order.setGradeSnapshot(student.getGrade());
-                order.setSchoolSnapshot(student.getSchool());
-                order.setParentPhoneSnapshot(student.getGuardianPhone());
-                order.setParentPhone2Snapshot(student.getGuardianPhone2());
-                order.setPickupRequiredSnapshot(student.getPickupRequired());
-                order.setPickupAddressSnapshot(student.getPickupAddress());
-                order.setDropoffRequiredSnapshot(student.getDropoffRequired());
-                order.setDropoffAddressSnapshot(student.getDropoffAddress());
+                if (changedStudentField(payload, "studentName")) order.setStudentNameSnapshot(student.getStudentName());
+                if (changedStudentField(payload, "studentClass")) order.setStudentClassSnapshot(student.getStudentClass());
+                if (changedStudentField(payload, "grade")) order.setGradeSnapshot(student.getGrade());
+                if (changedStudentField(payload, "school")) order.setSchoolSnapshot(student.getSchool());
+                if (changedStudentField(payload, "guardianPhone")) order.setParentPhoneSnapshot(student.getGuardianPhone());
+                if (changedStudentField(payload, "guardianPhone2")) order.setParentPhone2Snapshot(student.getGuardianPhone2());
+                if (changedStudentField(payload, "pickupRequired")) order.setPickupRequiredSnapshot(student.getPickupRequired());
+                if (changedStudentField(payload, "pickupAddress")) order.setPickupAddressSnapshot(student.getPickupAddress());
+                if (changedStudentField(payload, "dropoffRequired")) order.setDropoffRequiredSnapshot(student.getDropoffRequired());
+                if (changedStudentField(payload, "dropoffAddress")) order.setDropoffAddressSnapshot(student.getDropoffAddress());
             }
         }
     }
 
-    private void applyCorrectedStudentProfile(StudentEntity student,
-                                              RegistrationIntakeRequest.StudentPayload payload) {
-        if (payload.getStudentName() != null) student.setStudentName(payload.getStudentName().trim());
-        if (payload.getEnglishName() != null) student.setEnglishName(payload.getEnglishName());
-        if (payload.getGender() != null) student.setGender(payload.getGender());
-        if (payload.getBirthDate() != null) student.setBirthDate(payload.getBirthDate());
-        if (payload.getGrade() != null) student.setGrade(payload.getGrade());
-        if (payload.getStudentClass() != null) student.setStudentClass(payload.getStudentClass());
-        if (payload.getSchool() != null) student.setSchool(payload.getSchool());
-        if (payload.getGuardianName() != null) student.setGuardianName(payload.getGuardianName());
-        if (payload.getGuardianPhone() != null) student.setGuardianPhone(payload.getGuardianPhone());
-        if (payload.getGuardianPhone2() != null) student.setGuardianPhone2(payload.getGuardianPhone2());
-        if (payload.getGuardianEmail() != null) student.setGuardianEmail(payload.getGuardianEmail());
-        if (payload.getGuardianRelationType() != null) student.setGuardianRelationType(payload.getGuardianRelationType());
-        if (payload.getPickupRequired() != null) student.setPickupRequired(payload.getPickupRequired());
-        if (payload.getPickupAddress() != null) student.setPickupAddress(payload.getPickupAddress());
-        if (payload.getDropoffRequired() != null) student.setDropoffRequired(payload.getDropoffRequired());
-        if (payload.getDropoffAddress() != null) student.setDropoffAddress(payload.getDropoffAddress());
+    private boolean changedStudentField(RegistrationIntakeRequest.StudentPayload payload, String field) {
+        return payload.getCorrectionChangedFields() == null
+                || payload.getCorrectionChangedFields().contains(field);
     }
 
-    private void copyParticipantSnapshot(EnrollmentOrderParticipantEntity target, StudentEntity student) {
-        target.setStudentNameSnapshot(student.getStudentName());
-        target.setStudentNoSnapshot(student.getStudentNo());
-        target.setGradeSnapshot(student.getGrade());
-        target.setSchoolSnapshot(student.getSchool());
-        target.setStudentClassSnapshot(student.getStudentClass());
-        target.setGuardianNameSnapshot(student.getGuardianName());
-        target.setGuardianPhoneSnapshot(student.getGuardianPhone());
-        target.setGuardianPhone2Snapshot(student.getGuardianPhone2());
-        target.setGuardianEmailSnapshot(student.getGuardianEmail());
-        target.setPickupRequiredSnapshot(student.getPickupRequired());
-        target.setPickupAddressSnapshot(student.getPickupAddress());
-        target.setDropoffRequiredSnapshot(student.getDropoffRequired());
-        target.setDropoffAddressSnapshot(student.getDropoffAddress());
+    private void applyCorrectedStudentProfile(StudentEntity student,
+                                              RegistrationIntakeRequest.StudentPayload payload) {
+        if (changedStudentField(payload, "studentName") && payload.getStudentName() != null) student.setStudentName(payload.getStudentName().trim());
+        if (changedStudentField(payload, "englishName")) student.setEnglishName(payload.getEnglishName());
+        if (changedStudentField(payload, "gender")) student.setGender(payload.getGender());
+        if (changedStudentField(payload, "birthDate")) student.setBirthDate(payload.getBirthDate());
+        if (changedStudentField(payload, "grade")) student.setGrade(payload.getGrade());
+        if (changedStudentField(payload, "studentClass")) student.setStudentClass(payload.getStudentClass());
+        if (changedStudentField(payload, "school")) student.setSchool(payload.getSchool());
+        if (changedStudentField(payload, "guardianName")) student.setGuardianName(payload.getGuardianName());
+        if (changedStudentField(payload, "guardianPhone")) student.setGuardianPhone(payload.getGuardianPhone());
+        if (changedStudentField(payload, "guardianPhone2")) student.setGuardianPhone2(payload.getGuardianPhone2());
+        if (changedStudentField(payload, "guardianEmail")) student.setGuardianEmail(payload.getGuardianEmail());
+        if (changedStudentField(payload, "guardianRelationType")) student.setGuardianRelationType(payload.getGuardianRelationType());
+        if (changedStudentField(payload, "pickupRequired")) student.setPickupRequired(payload.getPickupRequired());
+        if (changedStudentField(payload, "pickupAddress")) student.setPickupAddress(payload.getPickupAddress());
+        if (changedStudentField(payload, "dropoffRequired")) student.setDropoffRequired(payload.getDropoffRequired());
+        if (changedStudentField(payload, "dropoffAddress")) student.setDropoffAddress(payload.getDropoffAddress());
+    }
+
+    private void copyParticipantSnapshot(EnrollmentOrderParticipantEntity target, StudentEntity student,
+                                         RegistrationIntakeRequest.StudentPayload payload) {
+        if (changedStudentField(payload, "studentName")) target.setStudentNameSnapshot(student.getStudentName());
+        if (changedStudentField(payload, "grade")) target.setGradeSnapshot(student.getGrade());
+        if (changedStudentField(payload, "school")) target.setSchoolSnapshot(student.getSchool());
+        if (changedStudentField(payload, "studentClass")) target.setStudentClassSnapshot(student.getStudentClass());
+        if (changedStudentField(payload, "guardianName")) target.setGuardianNameSnapshot(student.getGuardianName());
+        if (changedStudentField(payload, "guardianPhone")) target.setGuardianPhoneSnapshot(student.getGuardianPhone());
+        if (changedStudentField(payload, "guardianPhone2")) target.setGuardianPhone2Snapshot(student.getGuardianPhone2());
+        if (changedStudentField(payload, "guardianEmail")) target.setGuardianEmailSnapshot(student.getGuardianEmail());
+        if (changedStudentField(payload, "pickupRequired")) target.setPickupRequiredSnapshot(student.getPickupRequired());
+        if (changedStudentField(payload, "pickupAddress")) target.setPickupAddressSnapshot(student.getPickupAddress());
+        if (changedStudentField(payload, "dropoffRequired")) target.setDropoffRequiredSnapshot(student.getDropoffRequired());
+        if (changedStudentField(payload, "dropoffAddress")) target.setDropoffAddressSnapshot(student.getDropoffAddress());
     }
 
     private void reconcileCorrectedParticipantPayments(EnrollmentOrderEntity order,
                                                        List<RegistrationIntakeRequest.ParticipantBillingPayload> billings) {
+        Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo = listOrderItemsByOrderId(order.getId()).stream()
+                .collect(Collectors.toMap(EnrollmentOrderItemEntity::getLineNo, Function.identity(),
+                        (first, ignored) -> first));
         List<PaymentRecordEntity> existing = paymentRecordMapper.selectList(
                 new LambdaQueryWrapper<PaymentRecordEntity>()
                         .eq(PaymentRecordEntity::getEnrollmentOrderId, order.getId())
@@ -1609,37 +1847,12 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         for (RegistrationIntakeRequest.ParticipantBillingPayload billing : billings) {
             if (billing == null || billing.getParticipantIndex() == null) continue;
             List<PaymentRecordEntity> participantPayments = existing.stream()
-                    .filter(item -> Objects.equals(item.getParticipantIndex(), billing.getParticipantIndex()))
+                    .filter(item -> Objects.equals(item.getParticipantIndex(), billing.getParticipantIndex())
+                            || billing.getParticipantIndex() == 1 && item.getParticipantIndex() == null)
                     .toList();
             List<RegistrationIntakeRequest.PaymentPayload> payloads = billing.getPayments() == null
                     ? Collections.emptyList() : billing.getPayments();
-            for (int i = 0; i < Math.max(participantPayments.size(), payloads.size()); i++) {
-                if (i < payloads.size()) {
-                    RegistrationIntakeRequest.PaymentPayload payload = payloads.get(i);
-                    PaymentRecordEntity payment = i < participantPayments.size()
-                            ? participantPayments.get(i) : new PaymentRecordEntity();
-                    if (payment.getId() == null) {
-                        payment.setEnrollmentOrderId(order.getId());
-                        payment.setPaymentNo(BusinessNoGenerator.generatePaymentNo());
-                        payment.setPaymentType("PAYMENT");
-                    }
-                    payment.setParticipantIndex(billing.getParticipantIndex());
-                    payment.setPaymentMethod(payload.getPaymentMethod());
-                    payment.setPaymentStatus("PAID");
-                    payment.setAmount(defaultAmount(payload.getAmount()));
-                    payment.setPaidAt(payload.getPaidAt() == null ? AppTime.nowLocalDateTime() : payload.getPaidAt());
-                    payment.setHandledByUserId(payload.getHandledByUserId());
-                    payment.setHandledByName(payload.getHandledByName());
-                    payment.setRemark(payload.getRemark());
-                    if (payment.getId() == null) paymentRecordMapper.insert(payment);
-                    else paymentRecordMapper.updateById(payment);
-                } else {
-                    PaymentRecordEntity payment = participantPayments.get(i);
-                    payment.setPaymentStatus("VOIDED");
-                    payment.setAmount(ZERO_AMOUNT);
-                    paymentRecordMapper.updateById(payment);
-                }
-            }
+            reconcileCorrectionPaymentRows(order, participantPayments, payloads, billing.getParticipantIndex(), itemsByLineNo);
         }
     }
 
@@ -1763,20 +1976,31 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (item == null) {
                 throw new BusinessException("CORRECTION_ORDER_ITEM_NOT_FOUND", "Edited course row does not belong to this order.");
             }
+            if (attendanceOnlyCorrection(payload)) {
+                correctAttendanceOnly(item, payload);
+                continue;
+            }
+            if (changedCourseField(payload, "courseType")
+                    && isGroupItem(item) == "ONE_ON_ONE".equalsIgnoreCase(payload.getCourseType())) {
+                throw new BusinessException("CORRECTION_COURSE_TYPE_UNSUPPORTED",
+                        "Switching between group class and 1-on-1 requires a new registration.");
+            }
+            boolean entitlementChanged = entitlementTermsChanged(payload);
             ClassItemBefore previous = new ClassItemBefore(item.getLineNo(), item.getClassId(), item.getStartDate(),
                     item.getPackageUnit(), item.getPackageQuantity(), item.getCourseProductId(), item.getGradeBand(),
                     item.getGroupProjectId(), item.getGroupRegistrationPlanId());
             Long oldClassId = item.getClassId();
-            if (isGroupItem(item) && payload.getClassId() == null) {
+            if (entitlementChanged && isGroupItem(item) && payload.getClassId() == null) {
                 throw new BusinessException("GRADE_CLASS_REQUIRED",
                         "Select a class for each group-class course before saving the receipt.");
             }
-            if (isGroupItem(item)) {
+            if (entitlementChanged && isGroupItem(item)) {
                 validateCorrectedV2GroupSelection(order.getId(), payload, campusId, validateCampus, previous,
                         lockedClass(lockedGroupClasses, payload.getClassId()));
             }
             boolean classChanged = !Objects.equals(oldClassId, payload.getClassId());
-            if (payload.getClassId() != null && (validateCampus || (classChanged && campusId != null))) {
+            if (entitlementChanged && payload.getClassId() != null
+                    && (validateCampus || (classChanged && campusId != null))) {
                 ClassGroupEntity selectedClass = lockedClass(lockedGroupClasses, payload.getClassId());
                 boolean sharedV2Class = payload.getGroupProjectId() != null
                         && selectedClass != null && selectedClass.getCampusId() == null;
@@ -1788,60 +2012,147 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             }
             copyCorrectionItem(item, payload);
             enrollmentOrderItemMapper.updateById(item);
-            persistCorrectedItemTransportSnapshot(item, payload);
-            if (isGroupItem(item)) {
+            persistClearedCorrectionFields(item, payload);
+            if (changedCourseField(payload, "pickupRequired") || changedCourseField(payload, "pickupAddress")
+                    || changedCourseField(payload, "dropoffRequired") || changedCourseField(payload, "dropoffAddress")) {
+                persistCorrectedItemTransportSnapshot(item, payload);
+            }
+            if (entitlementChanged && isGroupItem(item)) {
                 migrateCorrectedClassEnrollment(order, item, previous,
                         payload.getSessions(), payload.getPurchasedMonths(),
                         lockedClass(lockedGroupClasses, item.getClassId()));
-            } else {
+            } else if (entitlementChanged) {
                 updateCorrectedOneOnOnePackage(order, item);
+            } else if (changedCourseField(payload, "attendanceOption")) {
+                updateClassEnrollmentAttendance(item);
             }
         }
         order.setClassId(resolveCorrectedOrderClassId(existingItems));
     }
 
+    /** 只补选 Attendance 时不读取现行方案计价，也不改动历史购买数量、期限及课次。 */
+    private void correctAttendanceOnly(EnrollmentOrderItemEntity item,
+                                       RegistrationIntakeRequest.CourseItemPayload payload) {
+        String attendance = payload.getAttendanceOption();
+        if (attendance == null || !Set.of("FULL_DAY", "MORNING", "AFTERNOON", "CUSTOM", "NONE").contains(attendance)) {
+            throw new BusinessException("CORRECTION_ATTENDANCE_INVALID", "Select a valid attendance option.");
+        }
+        enrollmentOrderItemMapper.update(null, new LambdaUpdateWrapper<EnrollmentOrderItemEntity>()
+                .eq(EnrollmentOrderItemEntity::getId, item.getId())
+                .set(EnrollmentOrderItemEntity::getAttendanceOption, attendance)
+                .set(EnrollmentOrderItemEntity::getAttendanceScheduleJson, payload.getAttendanceScheduleJson()));
+        item.setAttendanceOption(attendance);
+        item.setAttendanceScheduleJson(payload.getAttendanceScheduleJson());
+        updateClassEnrollmentAttendance(item);
+    }
+
+    private void updateClassEnrollmentAttendance(EnrollmentOrderItemEntity item) {
+        if (!isGroupItem(item)) return;
+        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getEnrollmentOrderItemId, item.getId())
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED"));
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            enrollment.setAttendanceOption(item.getAttendanceOption());
+            classEnrollmentMapper.updateById(enrollment);
+        }
+    }
+
+    private boolean entitlementTermsChanged(RegistrationIntakeRequest.CourseItemPayload payload) {
+        return List.of("courseType", "courseProductId", "coursePriceOptionId", "groupProjectId",
+                        "groupRegistrationPlanId", "classId", "gradeBand", "startDate", "packageUnit",
+                        "packageQuantity", "sessions", "purchasedMonths", "oneOnOneHours",
+                        "openingUsedHours", "oneOnOneUnits")
+                .stream().anyMatch(field -> changedCourseField(payload, field));
+    }
+
     private void copyCorrectionItem(EnrollmentOrderItemEntity item,
                                      RegistrationIntakeRequest.CourseItemPayload payload) {
-        item.setLineNo(payload.getLineNo() == null ? item.getLineNo() : payload.getLineNo());
-        item.setRegisterClass(payload.getRegisterClass());
-        item.setCourseType(payload.getCourseType());
-        item.setCourseProductId(payload.getCourseProductId());
-        item.setGroupProjectId(payload.getGroupProjectId());
-        item.setGroupRegistrationPlanId(payload.getGroupRegistrationPlanId());
-        item.setCoursePriceOptionId(payload.getCoursePriceOptionId());
-        item.setClassId(payload.getClassId());
-        item.setDetail(payload.getDetail());
-        item.setGradeBand(payload.getGradeBand());
-        item.setPeriodLabel(payload.getPeriodLabel());
-        item.setTimeSlotLabel(payload.getTimeSlotLabel());
-        item.setStartDate(payload.getStartDate());
-        item.setPackageUnit(payload.getPackageUnit());
-        item.setPackageQuantity(payload.getPackageQuantity());
-        item.setPackageTotalPrice(payload.getPackageTotalPrice());
-        item.setAttendanceOption(payload.getAttendanceOption());
-        item.setAttendanceScheduleJson(payload.getAttendanceScheduleJson());
-        item.setPriceAmount(defaultAmount(payload.getPriceAmount()));
-        item.setOriginalPriceAmount(defaultAmount(payload.getOriginalPriceAmount()));
-        item.setManualPriceOverride(payload.getManualPriceOverride());
-        if (payload.getDiscountAmount() != null) {
+        if (changedCourseField(payload, "lineNo") && payload.getLineNo() != null) item.setLineNo(payload.getLineNo());
+        if (changedCourseField(payload, "registerClass")) item.setRegisterClass(payload.getRegisterClass());
+        if (changedCourseField(payload, "courseType")) item.setCourseType(payload.getCourseType());
+        if (changedCourseField(payload, "courseProductId")) item.setCourseProductId(payload.getCourseProductId());
+        if (changedCourseField(payload, "groupProjectId")) item.setGroupProjectId(payload.getGroupProjectId());
+        if (changedCourseField(payload, "groupRegistrationPlanId")) item.setGroupRegistrationPlanId(payload.getGroupRegistrationPlanId());
+        if (changedCourseField(payload, "coursePriceOptionId")) item.setCoursePriceOptionId(payload.getCoursePriceOptionId());
+        if (changedCourseField(payload, "classId")) item.setClassId(payload.getClassId());
+        if (changedCourseField(payload, "detail")) item.setDetail(payload.getDetail());
+        if (changedCourseField(payload, "gradeBand")) item.setGradeBand(payload.getGradeBand());
+        if (changedCourseField(payload, "periodLabel")) item.setPeriodLabel(payload.getPeriodLabel());
+        if (changedCourseField(payload, "timeSlotLabel")) item.setTimeSlotLabel(payload.getTimeSlotLabel());
+        if (changedCourseField(payload, "startDate")) item.setStartDate(payload.getStartDate());
+        if (changedCourseField(payload, "packageUnit")) item.setPackageUnit(payload.getPackageUnit());
+        if (changedCourseField(payload, "packageQuantity")) item.setPackageQuantity(payload.getPackageQuantity());
+        if (changedCourseField(payload, "packageTotalPrice")) item.setPackageTotalPrice(payload.getPackageTotalPrice());
+        if (changedCourseField(payload, "attendanceOption")) item.setAttendanceOption(payload.getAttendanceOption());
+        if (changedCourseField(payload, "attendanceScheduleJson")) item.setAttendanceScheduleJson(payload.getAttendanceScheduleJson());
+        if (changedCourseField(payload, "priceAmount")) item.setPriceAmount(defaultAmount(payload.getPriceAmount()));
+        if (changedCourseField(payload, "originalPriceAmount")) item.setOriginalPriceAmount(defaultAmount(payload.getOriginalPriceAmount()));
+        if (changedCourseField(payload, "manualPriceOverride")) item.setManualPriceOverride(payload.getManualPriceOverride());
+        if (changedCourseField(payload, "discountAmount") && payload.getDiscountAmount() != null) {
             item.setDiscountAmount(defaultAmount(payload.getDiscountAmount()));
         }
-        item.setOneOnOneHours(payload.getOneOnOneHours());
-        item.setOpeningUsedHours(payload.getOpeningUsedHours());
-        item.setOneOnOneUnits(payload.getOneOnOneUnits());
-        item.setPickupRequiredSnapshot(Boolean.TRUE.equals(payload.getPickupRequired()));
-        item.setPickupAddressSnapshot(Boolean.TRUE.equals(payload.getPickupRequired())
-                ? normalizedAddress(payload.getPickupAddress()) : null);
-        item.setDropoffRequiredSnapshot(Boolean.TRUE.equals(payload.getDropoffRequired()));
-        item.setDropoffAddressSnapshot(Boolean.TRUE.equals(payload.getDropoffRequired())
-                ? normalizedAddress(payload.getDropoffAddress()) : null);
-        item.setPickupFeeAmount(Boolean.TRUE.equals(payload.getPickupRequired())
-                ? defaultAmount(payload.getPickupFeeAmount()) : ZERO_AMOUNT);
-        item.setDropoffFeeAmount(Boolean.TRUE.equals(payload.getDropoffRequired())
-                ? defaultAmount(payload.getDropoffFeeAmount()) : ZERO_AMOUNT);
-        item.setExtraFeeAmount(sumFeeLines(payload.getServiceFees()));
-        item.setExtraFeeDetail(jsonHelper.toJson(payload.getServiceFees()));
-        item.setRemark(payload.getRemark());
+        if (changedCourseField(payload, "oneOnOneHours")) item.setOneOnOneHours(payload.getOneOnOneHours());
+        if (changedCourseField(payload, "openingUsedHours")) item.setOpeningUsedHours(payload.getOpeningUsedHours());
+        if (changedCourseField(payload, "oneOnOneUnits")) item.setOneOnOneUnits(payload.getOneOnOneUnits());
+        if (changedCourseField(payload, "pickupRequired") || changedCourseField(payload, "pickupAddress")) {
+            item.setPickupRequiredSnapshot(Boolean.TRUE.equals(payload.getPickupRequired()));
+            item.setPickupAddressSnapshot(Boolean.TRUE.equals(payload.getPickupRequired())
+                    ? normalizedAddress(payload.getPickupAddress()) : null);
+        }
+        if (changedCourseField(payload, "dropoffRequired") || changedCourseField(payload, "dropoffAddress")) {
+            item.setDropoffRequiredSnapshot(Boolean.TRUE.equals(payload.getDropoffRequired()));
+            item.setDropoffAddressSnapshot(Boolean.TRUE.equals(payload.getDropoffRequired())
+                    ? normalizedAddress(payload.getDropoffAddress()) : null);
+        }
+        if (changedCourseField(payload, "pickupRequired") || changedCourseField(payload, "pickupFeeAmount")) {
+            item.setPickupFeeAmount(Boolean.TRUE.equals(payload.getPickupRequired())
+                    ? defaultAmount(payload.getPickupFeeAmount()) : ZERO_AMOUNT);
+        }
+        if (changedCourseField(payload, "dropoffRequired") || changedCourseField(payload, "dropoffFeeAmount")) {
+            item.setDropoffFeeAmount(Boolean.TRUE.equals(payload.getDropoffRequired())
+                    ? defaultAmount(payload.getDropoffFeeAmount()) : ZERO_AMOUNT);
+        }
+        if (changedCourseField(payload, "serviceFees")) {
+            item.setExtraFeeAmount(sumFeeLines(payload.getServiceFees()));
+            item.setExtraFeeDetail(jsonHelper.toJson(payload.getServiceFees()));
+        }
+        if (changedCourseField(payload, "remark")) item.setRemark(payload.getRemark());
+    }
+
+    /** MyBatis 的普通实体更新跳过 null；被操作员明确清空的快照字段需单独写入。 */
+    private void persistClearedCorrectionFields(EnrollmentOrderItemEntity item,
+                                                RegistrationIntakeRequest.CourseItemPayload payload) {
+        List<String> fields = payload.getCorrectionChangedFields();
+        if (fields == null) return;
+        boolean clear = fields.stream().anyMatch(field -> switch (field) {
+            case "registerClass" -> payload.getRegisterClass() == null;
+            case "detail" -> payload.getDetail() == null;
+            case "gradeBand" -> payload.getGradeBand() == null;
+            case "periodLabel" -> payload.getPeriodLabel() == null;
+            case "timeSlotLabel" -> payload.getTimeSlotLabel() == null;
+            case "attendanceScheduleJson" -> payload.getAttendanceScheduleJson() == null;
+            case "remark" -> payload.getRemark() == null;
+            default -> false;
+        });
+        if (!clear) return;
+        enrollmentOrderItemMapper.update(null, new LambdaUpdateWrapper<EnrollmentOrderItemEntity>()
+                .eq(EnrollmentOrderItemEntity::getId, item.getId())
+                .set(fields.contains("registerClass") && payload.getRegisterClass() == null,
+                        EnrollmentOrderItemEntity::getRegisterClass, null)
+                .set(fields.contains("detail") && payload.getDetail() == null,
+                        EnrollmentOrderItemEntity::getDetail, null)
+                .set(fields.contains("gradeBand") && payload.getGradeBand() == null,
+                        EnrollmentOrderItemEntity::getGradeBand, null)
+                .set(fields.contains("periodLabel") && payload.getPeriodLabel() == null,
+                        EnrollmentOrderItemEntity::getPeriodLabel, null)
+                .set(fields.contains("timeSlotLabel") && payload.getTimeSlotLabel() == null,
+                        EnrollmentOrderItemEntity::getTimeSlotLabel, null)
+                .set(fields.contains("attendanceScheduleJson") && payload.getAttendanceScheduleJson() == null,
+                        EnrollmentOrderItemEntity::getAttendanceScheduleJson, null)
+                .set(fields.contains("remark") && payload.getRemark() == null,
+                        EnrollmentOrderItemEntity::getRemark, null));
     }
 
     /** 由课程行更正流程调用，确保已取消的接送标记与地址能真正写入数据库。 */
@@ -1958,40 +2269,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .toList();
         boolean v2GroupItem = item.getGroupProjectId() != null;
         if (currentEnrollments.isEmpty()) {
-            // 条件自愈：订单行仍持有未删除的（已被作废的）权益，且该班不存在其它重叠的 ACTIVE 权益时，
-            // 判定为历史遗留的孤儿权益，按 item+plan 重建一条 ACTIVE。
-            // 若存在重叠 ACTIVE（如续报已把在册记录转挂到新订单项），则不自愈，走下方原"detached"报错。
-            if (v2GroupItem && targetClass != null && !enrollments.isEmpty()) {
-                ClassBillingService.ClassBilling orphanBilling = null;
-                try {
-                    orphanBilling = resolvePlanEntitlementBilling(item, targetClass);
-                    GroupClassEntitlementRules.requireNoOverlappingActiveEntitlement(classEnrollmentMapper,
-                            order.getStudentId(), targetClass.getId(),
-                            orphanBilling.enrollmentDate(), orphanBilling.expiryDate(), null);
-                } catch (BusinessException overlap) {
-                    if (!"GROUP_ENTITLEMENT_DATE_OVERLAP".equals(overlap.getCode())) {
-                        throw overlap;
-                    }
-                    orphanBilling = null;
-                }
-                if (orphanBilling != null) {
-                    ClassEnrollmentEntity rebuilt = new ClassEnrollmentEntity();
-                    rebuilt.setClassId(targetClass.getId());
-                    rebuilt.setStudentId(order.getStudentId());
-                    rebuilt.setEnrollmentOrderItemId(item.getId());
-                    rebuilt.setEnrollmentDate(orphanBilling.enrollmentDate());
-                    rebuilt.setExpiryDate(orphanBilling.expiryDate());
-                    rebuilt.setBillingType(v2GroupBillingType(item));
-                    rebuilt.setPurchasedQuantity(orphanBilling.purchasedQuantity());
-                    rebuilt.setAttendanceOption(item.getAttendanceOption());
-                    rebuilt.setGroupProjectId(item.getGroupProjectId());
-                    rebuilt.setGroupRegistrationPlanId(item.getGroupRegistrationPlanId());
-                    rebuilt.setStatus("ACTIVE");
-                    classEnrollmentMapper.insert(rebuilt);
-                    return;
-                }
-            }
-            // 续报会把在册记录转挂到新订单项；已停课的记录也不应因编辑旧收据而重新入班。
+            // 已取消或转挂续报的权益不得因编辑旧收据自动复活。
             Integer oldSessions = "SESSION".equalsIgnoreCase(previous.packageUnit())
                     ? originalReceiptSessions(order.getId(), previous.lineNo()) : null;
             Integer storedSessions = oldSessions == null ? wholeNumber(previous.packageQuantity()) : oldSessions;
@@ -2022,6 +2300,20 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         Integer originalMonths = "MONTH".equalsIgnoreCase(previous.packageUnit())
                 ? originalReceiptPurchasedMonths(order.getId(), previous.lineNo()) : null;
         boolean sameClass = Objects.equals(previous.classId(), item.getClassId());
+        if (!sameClass) {
+            List<Long> entitlementIds = currentEnrollments.stream().map(ClassEnrollmentEntity::getId).toList();
+            List<LessonRecordEntity> futureStudentRecords = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                    .in(LessonRecordEntity::getClassEnrollmentId, entitlementIds)
+                    .ge(LessonRecordEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
+                    .eq(LessonRecordEntity::getIsDeleted, 0)
+                    .orderByAsc(LessonRecordEntity::getPlannedStartAt)
+                    .last("LIMIT 1"));
+            if (futureStudentRecords != null && !futureStudentRecords.isEmpty()) {
+                throw new BusinessException("CORRECTION_FUTURE_CLASS_RECORDS",
+                        "This student has a future lesson on " + futureStudentRecords.get(0).getPlannedStartAt()
+                                + " in the old class. Resolve it before changing the class.");
+            }
+        }
         if (sameClass) {
             for (ClassEnrollmentEntity current : currentEnrollments) {
                 boolean cumulativeSessionEnrollment = "SESSION".equalsIgnoreCase(previous.packageUnit())
@@ -2038,10 +2330,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 LocalDate previousStart = previous.startDate() == null ? current.getEnrollmentDate() : previous.startDate();
                 boolean quantityChanged = "SESSION".equalsIgnoreCase(item.getPackageUnit())
                         ? selectedSessions != null && !Objects.equals(selectedSessions,
-                        originalSessions == null ? current.getPurchasedQuantity() : originalSessions)
+                        originalSessions == null ? wholeNumber(previous.packageQuantity()) : originalSessions)
                         : "MONTH".equalsIgnoreCase(item.getPackageUnit())
                         ? selectedMonths != null && !Objects.equals(selectedMonths,
-                        originalMonths == null ? wholeNumber(current.getPurchasedQuantity()) : originalMonths)
+                        originalMonths == null ? wholeNumber(previous.packageQuantity()) : originalMonths)
                         : !sameQuantity(previous.packageQuantity(), item.getPackageQuantity());
                 boolean unchanged = Objects.equals(previousStart, baseline)
                         && Objects.equals(previous.packageUnit(), item.getPackageUnit())
@@ -2077,6 +2369,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                             selectedSessions, selectedMonths);
                     billing = computeCorrectedClassBilling(targetClass, baseline, item, billingQuantity);
                 }
+                requireFutureLessonsWithinCoverage(current, billing);
                 updateClassEnrollmentFromCorrection(current, item, billing, v2GroupItem);
             }
             return;
@@ -2155,6 +2448,26 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         enrollment.setGroupProjectId(item.getGroupProjectId());
         enrollment.setGroupRegistrationPlanId(item.getGroupRegistrationPlanId());
         classEnrollmentMapper.updateById(enrollment);
+    }
+
+    /** 缩短或后移权益时，先处理已为该学生建立、将落在新有效期外的未来课次。 */
+    private void requireFutureLessonsWithinCoverage(ClassEnrollmentEntity enrollment,
+                                                     ClassBillingService.ClassBilling billing) {
+        List<LessonRecordEntity> futureRecords = lessonRecordMapper.selectList(
+                new LambdaQueryWrapper<LessonRecordEntity>()
+                        .eq(LessonRecordEntity::getClassEnrollmentId, enrollment.getId())
+                        .eq(LessonRecordEntity::getIsDeleted, 0)
+                        .ge(LessonRecordEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
+                        .orderByAsc(LessonRecordEntity::getPlannedStartAt));
+        if (futureRecords == null) return;
+        for (LessonRecordEntity record : futureRecords) {
+            LocalDate day = record.getPlannedStartAt().toLocalDate();
+            if (day.isBefore(billing.enrollmentDate()) || day.isAfter(billing.expiryDate())) {
+                throw new BusinessException("CORRECTION_FUTURE_CLASS_RECORDS",
+                        "This student has a future lesson on " + record.getPlannedStartAt()
+                                + " outside the corrected class coverage. Resolve it before saving.");
+            }
+        }
     }
 
     private void ensureCorrectionPlansDoNotOverlap(List<CorrectedEntitlementPlan> plans) {
@@ -2315,52 +2628,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return "MONTH".equalsIgnoreCase(item.getPackageUnit()) ? "MONTHLY" : "PER_SESSION";
     }
 
-    /**
-     * 孤儿权益自愈的周期推导：与报名口径一致，按方案覆盖期（FIXED_DATES）或滚动月推算，
-     * 不做课表排期校验（自愈只是恢复已有方案下的在册权益）。
-     */
-    private ClassBillingService.ClassBilling resolvePlanEntitlementBilling(EnrollmentOrderItemEntity item,
-                                                                           ClassGroupEntity targetClass) {
-        GroupRegistrationPlanEntity plan = item.getGroupRegistrationPlanId() == null
-                ? null : groupRegistrationPlanMapper.selectById(item.getGroupRegistrationPlanId());
-        if (plan == null || !Objects.equals(plan.getProjectId(), item.getGroupProjectId())) {
-            throw new BusinessException("GROUP_V2_SELECTION_MISMATCH",
-                    "The registration plan no longer belongs to the selected teaching project.");
-        }
-        int quantity = item.getPackageQuantity() == null ? 0 : item.getPackageQuantity().intValue();
-        String unit = plan.getPackageUnit() == null ? "" : plan.getPackageUnit().toUpperCase(java.util.Locale.ROOT);
-        LocalDate start;
-        if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType()) && plan.getCoverageStartDate() != null) {
-            // 固定日期方案：权益周期与报名口径一致，取方案覆盖期。
-            start = plan.getCoverageStartDate();
-        } else if (item.getStartDate() != null) {
-            start = item.getStartDate();
-        } else if (plan.getCoverageStartDate() != null) {
-            start = plan.getCoverageStartDate();
-        } else {
-            start = targetClass.getStartDate();
-        }
-        if (start == null) {
-            throw new BusinessException("GROUP_PLAN_DATES_INVALID", "The registration plan has no valid start date.");
-        }
-        if (plan.getCoverageStartDate() != null && start.isBefore(plan.getCoverageStartDate())) {
-            start = plan.getCoverageStartDate();
-        }
-        LocalDate end;
-        if ("FIXED_DATES".equalsIgnoreCase(plan.getCoverageType())) {
-            end = plan.getCoverageEndDate();
-        } else if ("MONTH".equals(unit)) {
-            end = GroupRegistrationCoverage.monthPackageEndDate(start, quantity);
-        } else {
-            end = targetClass.getEndDate() != null ? targetClass.getEndDate() : start.plusYears(3);
-        }
-        if (end == null || end.isBefore(start)) {
-            throw new BusinessException("GROUP_PLAN_DATES_INVALID", "The registration plan has an invalid date range.");
-        }
-        return new ClassBillingService.ClassBilling(start, end, quantity);
-    }
-
-    /** 收据编辑的 SESSION 数量来自学生选购次数，价格选项的 packageQuantity 只是上限。 */
+    /** 旧版班课仍可能把 packageQuantity 当方案上限；V2 实购数量由课程行与选购字段共同确定。 */
     private BigDecimal correctedBillingQuantity(EnrollmentOrderItemEntity item, String oldPackageUnit,
                                                 ClassEnrollmentEntity current, Integer selectedSessions,
                                                 Integer selectedMonths) {
@@ -2423,7 +2691,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return null;
     }
 
-    /** 收据快照保存学生实际购买月数；订单项 package_quantity 表示定价选项的月数上限。 */
+    /** 历史收据可能保存实购月数；缺失时应回退订单行实购数量，不能取当前权益累计数。 */
     private Integer originalReceiptPurchasedMonths(Long orderId, Integer lineNo) {
         List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(new LambdaQueryWrapper<ReceiptRecordEntity>()
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, orderId)
@@ -2458,7 +2726,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .eq(CoursePackageEntity::getIsDeleted, 0)
                 .last("LIMIT 1"));
         if (coursePackage == null) {
-            return;
+            throw new BusinessException("CORRECTION_PACKAGE_NOT_FOUND",
+                    "This course no longer has a package owned by the original registration. Review it before changing package terms.");
         }
         int consumed = safeInt(coursePackage.getConsumedUnits());
         int requested = item.getOneOnOneUnits() == null
@@ -2466,6 +2735,27 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 : item.getOneOnOneUnits();
         if (requested < consumed) {
             throw new BusinessException("CORRECTION_HOURS_BELOW_CONSUMED", "Package hours cannot be lower than hours already used.");
+        }
+        List<LessonOccurrenceEntity> futureLessons = Optional.ofNullable(lessonOccurrenceMapper.selectList(
+                new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                        .eq(LessonOccurrenceEntity::getPackageId, coursePackage.getId())
+                        .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                        .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED")
+                        .ge(LessonOccurrenceEntity::getPlannedStartAt, AppTime.nowLocalDateTime())
+                        .orderByAsc(LessonOccurrenceEntity::getPlannedStartAt)))
+                .orElse(List.of());
+        int futureUnits = futureLessons.stream().map(LessonOccurrenceEntity::getPlannedUnits)
+                .filter(Objects::nonNull).mapToInt(Integer::intValue).sum();
+        if (requested < consumed + futureUnits) {
+            throw new BusinessException("CORRECTION_HOURS_BELOW_SCHEDULED",
+                    "The corrected package must cover used hours and future scheduled lessons.");
+        }
+        if (!futureLessons.isEmpty()
+                && (!Objects.equals(coursePackage.getCourseProductId(), item.getCourseProductId())
+                || item.getStartDate() != null && !Objects.equals(coursePackage.getStartDate(), item.getStartDate()))) {
+            throw new BusinessException("CORRECTION_FUTURE_SCHEDULE_REVIEW",
+                    "This package has a future lesson on " + futureLessons.get(0).getPlannedStartAt()
+                            + ". Adjust the schedule before changing its course or start date.");
         }
         coursePackage.setCourseProductId(item.getCourseProductId());
         coursePackage.setPackageName(StringUtils.hasText(item.getDetail()) ? item.getDetail() : coursePackage.getPackageName());
@@ -2508,70 +2798,103 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .ne(PaymentRecordEntity::getPaymentStatus, "VOIDED")
                 .orderByAsc(PaymentRecordEntity::getPaidAt)
                 .orderByAsc(PaymentRecordEntity::getId));
-        for (int i = 0; i < Math.max(existing.size(), payloads.size()); i++) {
-            if (i < payloads.size()) {
-                RegistrationIntakeRequest.PaymentPayload payload = payloads.get(i);
-                PaymentRecordEntity payment = i < existing.size() ? existing.get(i) : new PaymentRecordEntity();
-                if (payment.getId() == null) {
-                    payment.setEnrollmentOrderId(order.getId());
-                    payment.setPaymentNo(BusinessNoGenerator.generatePaymentNo());
-                    payment.setPaymentType("PAYMENT");
+        reconcileCorrectionPaymentRows(order, existing, payloads, null, itemsByLineNo);
+    }
+
+    /** 付款按稳定 ID 对应；顺序变化不得把一笔真实付款改写成另一笔。 */
+    private void reconcileCorrectionPaymentRows(EnrollmentOrderEntity order,
+                                                List<PaymentRecordEntity> existing,
+                                                List<RegistrationIntakeRequest.PaymentPayload> payloads,
+                                                Integer participantIndex,
+                                                Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo) {
+        Map<Long, PaymentRecordEntity> existingById = existing.stream()
+                .collect(Collectors.toMap(PaymentRecordEntity::getId, Function.identity()));
+        Set<Long> retainedIds = new HashSet<>();
+        for (RegistrationIntakeRequest.PaymentPayload payload : payloads) {
+            if (payload == null) continue;
+            Long paymentId = payload.getPaymentId();
+            if (paymentId == null) {
+                throw new BusinessException("CORRECTION_NEW_PAYMENT_UNSUPPORTED",
+                        "Record new money through the payment workflow, not Edit Receipt.");
+            }
+            PaymentRecordEntity payment = existingById.get(paymentId);
+            if (payment == null || !retainedIds.add(paymentId)) {
+                throw new BusinessException("CORRECTION_PAYMENT_ID_INVALID",
+                        "A payment in this correction is missing or repeats its original payment ID.");
+            }
+            List<String> fields = payload.getCorrectionChangedFields();
+            if (fields == null || !fields.isEmpty()) {
+                if (participantIndex != null) payment.setParticipantIndex(participantIndex);
+                if (changedPaymentField(payload, "paymentMethod")) payment.setPaymentMethod(payload.getPaymentMethod());
+                if (changedPaymentField(payload, "amount")) payment.setAmount(payload.getAmount());
+                if (changedPaymentField(payload, "paidAt") && payload.getPaidAt() != null) payment.setPaidAt(payload.getPaidAt());
+                if (changedPaymentField(payload, "handledByUserId") && payload.getHandledByUserId() != null) {
+                    payment.setHandledByUserId(payload.getHandledByUserId());
                 }
-                payment.setPaymentMethod(payload.getPaymentMethod());
-                payment.setPaymentStatus("PAID");
-                payment.setAmount(defaultAmount(payload.getAmount()));
-                payment.setPaidAt(payload.getPaidAt() == null ? AppTime.nowLocalDateTime() : payload.getPaidAt());
-                payment.setHandledByUserId(payload.getHandledByUserId());
-                payment.setHandledByName(payload.getHandledByName());
-                payment.setRemark(payload.getRemark());
-                if (payment.getId() == null) paymentRecordMapper.insert(payment); else paymentRecordMapper.updateById(payment);
-                // allocations 是收据编辑中的当前值：空数组也代表用户已清空旧分摊，
-                // 不能继续保留原 allocation，否则后续重放会把旧金额带回当前付款。
-                if (payload.getAllocations() != null) {
-                    Map<Long, BigDecimal> allocations = new LinkedHashMap<>();
-                    for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payload.getAllocations()) {
-                        EnrollmentOrderItemEntity item = itemsByLineNo.get(allocation.getOrderItemLineNo());
-                        if (item == null || allocation.getAmount() == null) {
-                            throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
-                                    "A corrected payment references a course that is not in this order.");
-                        }
-                        allocations.merge(item.getId(), allocation.getAmount(), BigDecimal::add);
-                    }
-                    paymentAllocationService.replaceExplicitAllocations(payment, order.getId(), allocations);
+                if (changedPaymentField(payload, "handledByName") && payload.getHandledByName() != null) {
+                    payment.setHandledByName(payload.getHandledByName());
                 }
-            } else {
-                PaymentRecordEntity payment = existing.get(i);
-                payment.setPaymentStatus("VOIDED");
-                payment.setAmount(ZERO_AMOUNT);
+                if (changedPaymentField(payload, "remark")) payment.setRemark(payload.getRemark());
                 paymentRecordMapper.updateById(payment);
             }
+            if (itemsByLineNo != null && payload.getAllocations() != null
+                    && (changedPaymentField(payload, "allocations") || changedPaymentField(payload, "amount"))) {
+                Map<Long, BigDecimal> allocations = new LinkedHashMap<>();
+                for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payload.getAllocations()) {
+                    EnrollmentOrderItemEntity item = itemsByLineNo.get(allocation.getOrderItemLineNo());
+                    if (item == null || allocation.getAmount() == null) {
+                        throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                                "A corrected payment references a course that is not in this order.");
+                    }
+                    allocations.merge(item.getId(), allocation.getAmount(), BigDecimal::add);
+                }
+                paymentAllocationService.replaceExplicitAllocations(payment, order.getId(), allocations);
+            }
+        }
+        for (PaymentRecordEntity payment : existing) {
+            if (retainedIds.contains(payment.getId())) continue;
+            throw new BusinessException("CORRECTION_PAYMENT_MISSING",
+                    "An existing payment is missing from this correction. Use the refund workflow for returned money.");
         }
     }
 
-    private void applyCorrectedMoney(EnrollmentOrderEntity order, EnrollmentOrderCorrectionRequest request) {
-        BigDecimal tuition = request.getItems() == null ? defaultAmount(order.getTuitionSubtotalAmount()) : request.getItems().stream()
+    private record ItemFeeTotals(BigDecimal pickup, BigDecimal dropoff, BigDecimal extra) {
+    }
+
+    private ItemFeeTotals itemFeeTotals(List<EnrollmentOrderItemEntity> items) {
+        return new ItemFeeTotals(
+                items.stream().map(item -> defaultAmount(item.getPickupFeeAmount())).reduce(ZERO_AMOUNT, BigDecimal::add),
+                items.stream().map(item -> defaultAmount(item.getDropoffFeeAmount())).reduce(ZERO_AMOUNT, BigDecimal::add),
+                items.stream().map(item -> defaultAmount(item.getExtraFeeAmount())).reduce(ZERO_AMOUNT, BigDecimal::add));
+    }
+
+    private void applyCorrectedMoney(EnrollmentOrderEntity order, EnrollmentOrderCorrectionRequest request,
+                                     ItemFeeTotals previousItemFees) {
+        // 请求可以只包含改过的课程行；金额必须从本订单全部已保存课程计算。
+        List<EnrollmentOrderItemEntity> savedItems = listOrderItemsByOrderId(order.getId());
+        ItemFeeTotals currentItemFees = itemFeeTotals(savedItems);
+        BigDecimal tuition = request.getItems() == null ? defaultAmount(order.getTuitionSubtotalAmount()) : savedItems.stream()
                 .map(item -> defaultAmount(item.getPriceAmount())).reduce(ZERO_AMOUNT, BigDecimal::add);
-        boolean hasCourseServiceFees = hasCorrectedCourseServiceFees(request);
-        BigDecimal pickup = hasCourseServiceFees
-                ? sumCorrectedCoursePickupFees(request.getItems())
-                : resolveCorrectedRegistrationFee(request.getPickupFeeCharged(), request.getPickupFeeAmount(), order.getPickupFeeAmount());
-        BigDecimal dropoff = hasCourseServiceFees
-                ? sumCorrectedCourseDropoffFees(request.getItems())
-                : resolveCorrectedRegistrationFee(request.getDropoffFeeCharged(), request.getDropoffFeeAmount(), order.getDropoffFeeAmount());
-        BigDecimal extra = hasCourseServiceFees
-                ? sumCorrectedCourseServiceFees(request)
-                : request.getExtraFeeAmount() != null
+        BigDecimal pickup = request.getPickupFeeCharged() != null || request.getPickupFeeAmount() != null
+                ? resolveCorrectedRegistrationFee(request.getPickupFeeCharged(), request.getPickupFeeAmount(), order.getPickupFeeAmount())
+                : defaultAmount(order.getPickupFeeAmount()).add(currentItemFees.pickup()).subtract(previousItemFees.pickup());
+        BigDecimal dropoff = request.getDropoffFeeCharged() != null || request.getDropoffFeeAmount() != null
+                ? resolveCorrectedRegistrationFee(request.getDropoffFeeCharged(), request.getDropoffFeeAmount(), order.getDropoffFeeAmount())
+                : defaultAmount(order.getDropoffFeeAmount()).add(currentItemFees.dropoff()).subtract(previousItemFees.dropoff());
+        BigDecimal extra = request.getExtraFeeAmount() != null
                 ? defaultAmount(request.getExtraFeeAmount())
                 : request.getExtraFees() != null
-                ? sumFeeLines(request.getExtraFees())
-                : defaultAmount(order.getExtraFeeAmount());
+                ? currentItemFees.extra().add(sumFeeLines(request.getExtraFees()))
+                : defaultAmount(order.getExtraFeeAmount()).add(currentItemFees.extra()).subtract(previousItemFees.extra());
         BigDecimal discount = request.getParticipantBillings() != null && !request.getParticipantBillings().isEmpty()
                 ? request.getParticipantBillings().stream()
                 .filter(Objects::nonNull)
                 .map(item -> item.getDiscountAmount() == null
                         ? sumFeeLines(item.getDiscounts()) : defaultAmount(item.getDiscountAmount()))
                 .reduce(ZERO_AMOUNT, BigDecimal::add)
-                : request.getDiscountAmount() != null ? defaultAmount(request.getDiscountAmount()) : sumFeeLines(request.getDiscounts());
+                : request.getDiscountAmount() != null ? defaultAmount(request.getDiscountAmount())
+                : request.getDiscounts() != null ? sumFeeLines(request.getDiscounts())
+                : defaultAmount(order.getDiscountAmount());
         BigDecimal original = tuition.add(pickup).add(dropoff).add(extra).setScale(2, RoundingMode.HALF_UP);
         if (discount.compareTo(original) > 0) throw new BusinessException("DISCOUNT_EXCEEDS_AMOUNT", "Discount cannot exceed original amount.");
         boolean hasCorrectedPaymentPayload = (request.getParticipantBillings() != null
@@ -2604,67 +2927,21 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         order.setPickupFeeAmount(pickup);
         order.setDropoffFeeAmount(dropoff);
         order.setExtraFeeAmount(extra);
-        order.setExtraFeeDetail(jsonHelper.toJson(request.getExtraFees()));
+        if (request.getExtraFees() != null) order.setExtraFeeDetail(jsonHelper.toJson(request.getExtraFees()));
         order.setOriginalAmount(original);
         order.setDiscountAmount(discount);
-        order.setDiscountDetail(jsonHelper.toJson(request.getDiscounts()));
+        if (request.getDiscounts() != null) order.setDiscountDetail(jsonHelper.toJson(request.getDiscounts()));
         order.setReceivedAmount(received);
         order.setAmountDue(due);
         order.setBalanceAmount(due.subtract(received));
         order.setPaymentStatus(resolvePaymentStatus(original, discount, received));
     }
 
-    /** 更正收据时沿用首次报名的课程级费用口径。 */
-    private boolean hasCorrectedCourseServiceFees(EnrollmentOrderCorrectionRequest request) {
-        boolean itemFees = request.getItems() != null && request.getItems().stream()
-                .filter(Objects::nonNull)
-                .anyMatch(item -> Boolean.TRUE.equals(item.getPickupRequired())
-                        || Boolean.TRUE.equals(item.getDropoffRequired())
-                        || Boolean.TRUE.equals(item.getPickupFeeCharged())
-                        || Boolean.TRUE.equals(item.getDropoffFeeCharged())
-                        || defaultAmount(item.getPickupFeeAmount()).compareTo(ZERO_AMOUNT) > 0
-                        || defaultAmount(item.getDropoffFeeAmount()).compareTo(ZERO_AMOUNT) > 0
-                        || (item.getServiceFees() != null && !item.getServiceFees().isEmpty()));
-        boolean assignedExtraFees = request.getExtraFees() != null && request.getExtraFees().stream()
-                .filter(Objects::nonNull)
-                .anyMatch(item -> item.getOrderItemLineNo() != null);
-        return itemFees || assignedExtraFees;
-    }
-
-    private BigDecimal sumCorrectedCoursePickupFees(List<RegistrationIntakeRequest.CourseItemPayload> items) {
-        return items == null ? ZERO_AMOUNT : items.stream().filter(Objects::nonNull)
-                .map(item -> Boolean.TRUE.equals(item.getPickupRequired())
-                        ? defaultAmount(item.getPickupFeeAmount()) : ZERO_AMOUNT)
-                .reduce(ZERO_AMOUNT, BigDecimal::add);
-    }
-
-    private BigDecimal sumCorrectedCourseDropoffFees(List<RegistrationIntakeRequest.CourseItemPayload> items) {
-        return items == null ? ZERO_AMOUNT : items.stream().filter(Objects::nonNull)
-                .map(item -> Boolean.TRUE.equals(item.getDropoffRequired())
-                        ? defaultAmount(item.getDropoffFeeAmount()) : ZERO_AMOUNT)
-                .reduce(ZERO_AMOUNT, BigDecimal::add);
-    }
-
-    private BigDecimal sumCorrectedCourseServiceFees(EnrollmentOrderCorrectionRequest request) {
-        BigDecimal itemFees = request.getItems() == null ? ZERO_AMOUNT : request.getItems().stream()
-                .filter(Objects::nonNull)
-                .map(item -> sumFeeLines(item.getServiceFees()))
-                .reduce(ZERO_AMOUNT, BigDecimal::add);
-        BigDecimal assignedExtraFees = request.getExtraFees() == null ? ZERO_AMOUNT : request.getExtraFees().stream()
-                .filter(Objects::nonNull)
-                .filter(item -> item.getOrderItemLineNo() != null)
-                .map(RegistrationIntakeRequest.FeeLinePayload::getAmount)
-                .map(this::defaultAmount)
-                .reduce(ZERO_AMOUNT, BigDecimal::add);
-        return itemFees.add(assignedExtraFees);
-    }
-
     private BigDecimal resolveCorrectedRegistrationFee(Boolean charged,
                                                        BigDecimal requestedAmount,
                                                        BigDecimal existingAmount) {
-        if (charged != null || requestedAmount != null) {
-            return Boolean.TRUE.equals(charged) ? defaultAmount(requestedAmount) : ZERO_AMOUNT;
-        }
+        if (Boolean.FALSE.equals(charged)) return ZERO_AMOUNT;
+        if (requestedAmount != null) return defaultAmount(requestedAmount);
         return defaultAmount(existingAmount);
     }
 
@@ -2705,12 +2982,19 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                                       EnrollmentOrderCorrectionRequest request) {
         List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(
                 new LambdaQueryWrapper<ReceiptRecordEntity>()
-                        .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId()));
+                        .eq(ReceiptRecordEntity::getEnrollmentOrderId, order.getId())
+                        .isNull(ReceiptRecordEntity::getPaymentRecordId));
         for (ReceiptRecordEntity receipt : receipts) {
             Map<String, Object> payload = jsonHelper.fromJson(
                     receipt.getReceiptPayload(),
                     new TypeReference<LinkedHashMap<String, Object>>() {});
-            if (payload == null) {
+            if (payload == null || REFUND_RECEIPT_TEMPLATE.equalsIgnoreCase(receipt.getTemplateCode())
+                    || "REFUND".equals(payload.get("receiptType"))) {
+                continue;
+            }
+            // 纯充值凭证属于 Student Credit 台账，不随课程订单更正重写。
+            if (payload.get("creditTopUpAmount") != null
+                    && (!(payload.get("items") instanceof List<?> rows) || rows.isEmpty())) {
                 continue;
             }
             payload.put("studentName", order.getStudentNameSnapshot());
@@ -2738,7 +3022,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             payload.put("handledByName", order.getHandledByName());
             payload.put("registrationRemark", order.getRemark());
             if (request.getItems() != null) {
-                payload.put("items", request.getItems());
+                mergeCorrectedReceiptItems(payload, request.getItems());
             }
             if (request.getExtraFees() != null) {
                 payload.put("extraFees", request.getExtraFees());
@@ -2746,14 +3030,15 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (request.getDiscounts() != null) {
                 payload.put("discounts", request.getDiscounts());
             }
-            if (request.getPayments() != null) {
-                payload.put("payments", request.getPayments());
-            }
             payload.put("participants", receiptParticipantPayloads(order.getId()));
             payload.put("payments", receiptPaymentPayloads(order.getId()));
-            payload.put("pickupFeeCharged", request.getPickupFeeCharged());
+            if (request.getPickupFeeCharged() != null) {
+                payload.put("pickupFeeCharged", request.getPickupFeeCharged());
+            }
             payload.put("pickupFeeAmount", order.getPickupFeeAmount());
-            payload.put("dropoffFeeCharged", request.getDropoffFeeCharged());
+            if (request.getDropoffFeeCharged() != null) {
+                payload.put("dropoffFeeCharged", request.getDropoffFeeCharged());
+            }
             payload.put("dropoffFeeAmount", order.getDropoffFeeAmount());
             payload.put("tuitionSubtotalAmount", order.getTuitionSubtotalAmount());
             payload.put("extraFeeAmount", order.getExtraFeeAmount());
@@ -2767,18 +3052,72 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             payload.put("balanceAmount", receiptAmountDue.subtract(receiptPaidAmount));
             payload.put("paymentStatus", order.getPaymentStatus());
             if (request.getReceiptOptions() != null) {
-                payload.put("showTaxId", request.getReceiptOptions().getShowTaxId());
-                payload.put("taxId", request.getReceiptOptions().getTaxId());
-                payload.put("campusAddress", request.getReceiptOptions().getCampusAddress());
-                payload.put("campusPhone", request.getReceiptOptions().getCampusPhone());
-                payload.put("brandName", request.getReceiptOptions().getBrandName());
-                payload.put("logoUrl", request.getReceiptOptions().getLogoUrl());
-                payload.put("zelleQrCodeUrl", request.getReceiptOptions().getZelleQrCodeUrl());
-                payload.put("policyText", request.getReceiptOptions().getPolicyText());
+                RegistrationIntakeRequest.ReceiptOptionsPayload options = request.getReceiptOptions();
+                if (options.getShowTaxId() != null) payload.put("showTaxId", options.getShowTaxId());
+                if (options.getTaxId() != null) payload.put("taxId", options.getTaxId());
+                if (options.getCampusAddress() != null) payload.put("campusAddress", options.getCampusAddress());
+                if (options.getCampusPhone() != null) payload.put("campusPhone", options.getCampusPhone());
+                if (options.getBrandName() != null) payload.put("brandName", options.getBrandName());
+                if (options.getLogoUrl() != null) payload.put("logoUrl", options.getLogoUrl());
+                if (options.getZelleQrCodeUrl() != null) payload.put("zelleQrCodeUrl", options.getZelleQrCodeUrl());
+                if (options.getPolicyText() != null) payload.put("policyText", options.getPolicyText());
             }
             receipt.setReceiptPayload(jsonHelper.toJson(payload));
             receiptRecordMapper.updateById(receipt);
         }
+    }
+
+    /** 更正请求只带变化的课程行，保留同收据内其他课程快照及其展示字段。 */
+    private void mergeCorrectedReceiptItems(Map<String, Object> receiptPayload,
+                                            List<RegistrationIntakeRequest.CourseItemPayload> edits) {
+        if (!(receiptPayload.get("items") instanceof List<?> savedRows)) return;
+        Map<Long, RegistrationIntakeRequest.CourseItemPayload> editsById = edits.stream()
+                .filter(Objects::nonNull)
+                .filter(item -> item.getOrderItemId() != null)
+                .collect(Collectors.toMap(RegistrationIntakeRequest.CourseItemPayload::getOrderItemId,
+                        Function.identity()));
+        Map<Integer, RegistrationIntakeRequest.CourseItemPayload> editsByLine = edits.stream()
+                .filter(Objects::nonNull)
+                .filter(item -> item.getLineNo() != null)
+                .collect(Collectors.toMap(RegistrationIntakeRequest.CourseItemPayload::getLineNo,
+                        Function.identity(), (first, ignored) -> first));
+        List<Object> mergedRows = new ArrayList<>();
+        for (Object row : savedRows) {
+            if (!(row instanceof Map<?, ?> saved)) {
+                mergedRows.add(row);
+                continue;
+            }
+            Long itemId = null;
+            if (saved.get("orderItemId") != null) {
+                try {
+                    itemId = Long.valueOf(saved.get("orderItemId").toString());
+                } catch (NumberFormatException ignored) {
+                    // 旧收据快照中的 ID 可能已丢失精度，以下方 lineNo 回退定位。
+                }
+            }
+            RegistrationIntakeRequest.CourseItemPayload edit = itemId == null
+                    ? editsByLine.get(wholeNumber(saved.get("lineNo"))) : editsById.get(itemId);
+            if (edit == null) {
+                mergedRows.add(row);
+                continue;
+            }
+            Map<String, Object> merged = new LinkedHashMap<>();
+            saved.forEach((key, value) -> merged.put(String.valueOf(key), value));
+            Map<String, Object> changed = jsonHelper.fromJson(jsonHelper.toJson(edit),
+                    new TypeReference<LinkedHashMap<String, Object>>() {});
+            if (changed != null) {
+                if (edit.getCorrectionChangedFields() == null) {
+                    changed.remove("correctionChangedFields");
+                    merged.putAll(changed);
+                } else {
+                    for (String field : edit.getCorrectionChangedFields()) {
+                        merged.put(field, changed.get(field));
+                    }
+                }
+            }
+            mergedRows.add(merged);
+        }
+        receiptPayload.put("items", mergedRows);
     }
 
     private List<Map<String, Object>> receiptParticipantPayloads(Long orderId) {

@@ -145,6 +145,9 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Registration student payload")
     public static class StudentPayload {
 
+        /** 历史收据更正中相对原参与人实际修改的字段；新报名不使用。 */
+        private List<String> correctionChangedFields;
+
         @Schema(description = "Existing student ID when selecting a saved participant")
         private Long studentId;
 
@@ -206,6 +209,9 @@ public class RegistrationIntakeRequest {
     @Schema(description = "Registration course item payload")
     public static class CourseItemPayload extends EnrollmentOrderItemDTO {
 
+        /** 历史收据更正时相对原订单行实际修改的字段；新报名不使用。 */
+        private List<String> correctionChangedFields;
+
         @Schema(description = "Per-session group class purchased sessions", example = "10")
         private Integer sessions;
 
@@ -246,6 +252,12 @@ public class RegistrationIntakeRequest {
     @Setter
     @Schema(description = "Registration payment payload")
     public static class PaymentPayload {
+
+        /** 历史收据更正中相对原付款实际修改的字段；新报名不使用。 */
+        private List<String> correctionChangedFields;
+
+        @Schema(description = "Existing payment ID when correcting a saved registration")
+        private Long paymentId;
 
         @Schema(description = "Participant index within the shared private lesson", example = "2")
         private Integer participantIndex;

@@ -59,6 +59,7 @@ public record EnrollmentOrderDetailVO(
         List<PaymentRecordVO> payments,
         List<CoursePackageListItemVO> packages,
         List<ReceiptRecordVO> receipts,
+        Integer version,
         LocalDateTime createdAt,
         LocalDateTime updatedAt
 ) {
