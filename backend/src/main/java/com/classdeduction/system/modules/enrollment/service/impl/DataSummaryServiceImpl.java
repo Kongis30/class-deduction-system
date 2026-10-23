@@ -930,7 +930,9 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 order.getCreatedAt(),
                 order.getRegistrationOperatorUserId() != null ? order.getRegistrationOperatorUserId()
                         : (order.getCashierUserId() != null ? order.getCashierUserId() : order.getCreatedBy()),
-                order.getRegistrationOperatorName() != null ? order.getRegistrationOperatorName() : order.getHandledByName()
+                order.getRegistrationOperatorName() != null ? order.getRegistrationOperatorName() : order.getHandledByName(),
+                v2Enrollment != null && v2Enrollment.getLogicalCourseId() != null
+                        ? v2Enrollment.getLogicalCourseId() : item == null ? null : item.getLogicalCourseId()
         );
     }
 

@@ -121,6 +121,7 @@ CREATE TABLE `class_enrollment` (
   `class_id` bigint NOT NULL COMMENT 'Class group ID',
   `student_id` bigint NOT NULL COMMENT 'Student ID',
   `enrollment_order_item_id` bigint DEFAULT NULL COMMENT 'Source enrollment order item ID',
+  `logical_course_id` bigint DEFAULT NULL COMMENT 'First enrollment in this student course renewal chain',
   `enrollment_date` date NOT NULL COMMENT 'Enrollment date',
   `expiry_date` date NOT NULL COMMENT 'Expiry date',
   `billing_type` varchar(32) DEFAULT NULL COMMENT 'Snapshot of product billing type: PER_SESSION/MONTHLY',
@@ -140,6 +141,7 @@ CREATE TABLE `class_enrollment` (
   KEY `idx_enrollment_class` (`class_id`,`status`),
   KEY `idx_enrollment_student` (`student_id`),
   KEY `idx_enrollment_order_item` (`enrollment_order_item_id`),
+  KEY `idx_class_enrollment_logical_course` (`logical_course_id`,`student_id`,`is_deleted`),
   CONSTRAINT `fk_class_enrollment_order_item` FOREIGN KEY (`enrollment_order_item_id`) REFERENCES `enrollment_order_item` (`id`),
   CONSTRAINT `fk_enrollment_class_group` FOREIGN KEY (`class_id`) REFERENCES `class_group` (`id`),
   CONSTRAINT `fk_enrollment_student_user` FOREIGN KEY (`student_id`) REFERENCES `student` (`id`)
@@ -580,6 +582,7 @@ DROP TABLE IF EXISTS `enrollment_order_item`;
 CREATE TABLE `enrollment_order_item` (
   `id` bigint NOT NULL COMMENT 'Primary key ID',
   `enrollment_order_id` bigint NOT NULL COMMENT 'Enrollment order ID',
+  `logical_course_id` bigint DEFAULT NULL COMMENT 'Shared course identity for renewal purchase rows',
   `line_no` int NOT NULL DEFAULT '1' COMMENT 'Line number inside the enrollment order',
   `register_class` varchar(64) NOT NULL COMMENT 'Register Class label snapshot',
   `course_type` varchar(32) DEFAULT NULL COMMENT 'Structured course type snapshot',
@@ -623,6 +626,7 @@ CREATE TABLE `enrollment_order_item` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_enrollment_order_item_line` (`enrollment_order_id`,`line_no`,`is_deleted`),
   KEY `idx_enrollment_order_item_type` (`course_type`,`item_status`),
+  KEY `idx_order_item_logical_course` (`logical_course_id`,`is_deleted`),
   KEY `idx_enrollment_order_item_product` (`course_product_id`),
   KEY `idx_enrollment_order_item_option` (`course_price_option_id`),
   KEY `idx_enrollment_order_item_class` (`class_id`),

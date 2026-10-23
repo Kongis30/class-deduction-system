@@ -329,6 +329,7 @@ export interface EnrollmentOrderParticipantItem {
 export interface EnrollmentOrderLineItem {
   id: EntityId;
   enrollmentOrderId: EntityId;
+  logicalCourseId?: EntityId;
   lineNo: number;
   registerClass?: string;
   courseType?: string;
@@ -352,6 +353,7 @@ export interface EnrollmentOrderLineItem {
   attendanceOption?: string;
   attendanceScheduleJson?: string;
   entitlementPurchasedQuantity?: number;
+  classEnrollmentId?: EntityId;
   entitlementExpiryDate?: string;
   entitlementStatus?: string;
   priceAmount?: number;

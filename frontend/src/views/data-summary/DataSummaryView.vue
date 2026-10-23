@@ -902,12 +902,63 @@ const availableMonths = computed(() => {
     .map((value) => ({ value, label: dayjs(`${value}-01`).format('MMMM YYYY') }));
 });
 
-const monthFilteredRows = computed<DataSummaryDisplayRow[]>(() => {
-  if (selectedMonth.value === 'ALL') {
-    return displayProductRows.value;
-  }
-  return displayProductRows.value.filter((row) => monthKey(row) === selectedMonth.value);
-});
+const monthFilteredRows = computed<DataSummaryDisplayRow[]>(() => mergeLogicalCourseRows(
+  selectedMonth.value === 'ALL'
+    ? displayProductRows.value
+    : displayProductRows.value.filter((row) => monthKey(row) === selectedMonth.value),
+  displayProductRows.value,
+));
+
+/** 报表只合并展示，同一课程的订单行和付款仍各自保留，月份筛选按购买日期计费。 */
+function mergeLogicalCourseRows(monthRows: DataSummaryRow[], allRows: DataSummaryRow[]): DataSummaryDisplayRow[] {
+  const sourceGroups = new Map<string, DataSummaryRow[]>();
+  const keyFor = (row: DataSummaryRow) => row.logicalCourseId == null
+    ? `item:${row.orderItemId ?? row.orderId}:${row.studentId}`
+    : `course:${row.courseType}:${row.logicalCourseId}:${row.studentId}`;
+  allRows.forEach((row) => {
+    const key = keyFor(row);
+    sourceGroups.set(key, [...(sourceGroups.get(key) ?? []), row]);
+  });
+  const visibleGroups = new Map<string, DataSummaryRow[]>();
+  monthRows.forEach((row) => {
+    const key = keyFor(row);
+    visibleGroups.set(key, [...(visibleGroups.get(key) ?? []), row]);
+  });
+  return [...visibleGroups].map(([key, visible]) => {
+    const purchases = sourceGroups.get(key) ?? visible;
+    if (purchases.length === 1) return visible[0];
+    const ordered = [...purchases].sort((left, right) => (left.signupDate ?? '').localeCompare(right.signupDate ?? '')
+      || (left.registrationSavedAt ?? '').localeCompare(right.registrationSavedAt ?? '')
+      || String(left.orderItemId ?? '').localeCompare(String(right.orderItemId ?? '')));
+    const current = ordered[ordered.length - 1];
+    const sum = (field: keyof DataSummaryRow) => visible.reduce((total, row) => total + Number(row[field] ?? 0), 0);
+    const dates = (field: 'periodStartDate' | 'periodEndDate') => ordered.map((row) => row[field]).filter((date): date is string => Boolean(date));
+    const starts = dates('periodStartDate');
+    const ends = dates('periodEndDate');
+    const balance = sum('balanceAmount');
+    return {
+      ...current,
+      signupDate: ordered[0].signupDate,
+      periodStartDate: starts.length ? starts.sort()[0] : undefined,
+      periodEndDate: ends.length ? ends.sort().at(-1) : undefined,
+      expiryDate: ends.length ? ends.sort().at(-1) : undefined,
+      totalHours: ordered.reduce((total, row) => total + Number(row.totalHours ?? 0), 0),
+      usedHours: [...ordered].reverse().find((row) => row.usedHours != null)?.usedHours,
+      remainingHours: [...ordered].reverse().find((row) => row.remainingHours != null)?.remainingHours,
+      linePriceAmount: sum('linePriceAmount'),
+      pickupFeeAmount: sum('pickupFeeAmount'),
+      dropoffFeeAmount: sum('dropoffFeeAmount'),
+      extraFeeAmount: sum('extraFeeAmount'),
+      discountAmount: sum('discountAmount'),
+      amountDue: sum('amountDue'),
+      paidAmount: sum('paidAmount'),
+      balanceAmount: balance,
+      paymentStatus: balance < 0 ? (sum('paidAmount') > 0 ? 'PARTIAL' : 'UNPAID') : 'PAID',
+      overdue: balance < 0,
+      purchaseRows: ordered,
+    };
+  });
+}
 
 const filteredRows = computed<DataSummaryDisplayRow[]>(() => monthFilteredRows.value.filter((row) => {
   return columns.every((column) => matchesColumnFilter(row, column));
@@ -1223,6 +1274,11 @@ function setSaturdayRosterView(view: SaturdayRosterView) {
 }
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
+  if (row.purchaseRows && row.purchaseRows.length > 1) {
+    purchasePickerRows.value = row.purchaseRows;
+    purchasePickerVisible.value = true;
+    return;
+  }
   const menuWidth = 150;
   const menuHeight = 140;
   studentContextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
@@ -1245,6 +1301,13 @@ function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
   }).catch(() => {
     if (requestId === refundPreviewRequestId) refundPreviewStatus.value = 'error';
   });
+}
+
+function selectPurchaseAction(row: DataSummaryRow, action: 'receipt' | 'pay' | 'refund') {
+  purchasePickerVisible.value = false;
+  studentContextMenu.row = row;
+  if (action === 'receipt') viewStudentReceipt();
+  else openOrderAction(action);
 }
 
 function closeStudentContextMenu() {

@@ -1185,6 +1185,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return EnrollmentOrderItemVO.builder()
                 .id(item.getId())
                 .enrollmentOrderId(item.getEnrollmentOrderId())
+                .logicalCourseId(entitlement != null && entitlement.getLogicalCourseId() != null
+                        ? entitlement.getLogicalCourseId() : item.getLogicalCourseId())
                 .lineNo(item.getLineNo())
                 .registerClass(item.getRegisterClass())
                 .courseType(item.getCourseType())
@@ -1209,6 +1211,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .attendanceOption(item.getAttendanceOption())
                 .attendanceScheduleJson(item.getAttendanceScheduleJson())
                 .entitlementPurchasedQuantity(entitlement == null ? null : entitlement.getPurchasedQuantity())
+                .classEnrollmentId(entitlement == null ? null : entitlement.getId())
                 .entitlementExpiryDate(entitlement == null ? null : entitlement.getExpiryDate())
                 .entitlementStatus(entitlement == null ? null : entitlement.getStatus())
                 .priceAmount(item.getPriceAmount())
@@ -1986,6 +1989,14 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         "Switching between group class and 1-on-1 requires a new registration.");
             }
             boolean entitlementChanged = entitlementTermsChanged(payload);
+            if (entitlementChanged && item.getLogicalCourseId() != null
+                    && enrollmentOrderItemMapper.selectCount(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
+                            .eq(EnrollmentOrderItemEntity::getLogicalCourseId, item.getLogicalCourseId())
+                            .ne(EnrollmentOrderItemEntity::getId, item.getId())
+                            .eq(EnrollmentOrderItemEntity::getIsDeleted, 0)) > 0) {
+                throw new BusinessException("RENEWED_COURSE_TERMS_LOCKED",
+                        "This course has later purchases. Correcting its class or purchased duration requires a dedicated course adjustment.");
+            }
             ClassItemBefore previous = new ClassItemBefore(item.getLineNo(), item.getClassId(), item.getStartDate(),
                     item.getPackageUnit(), item.getPackageQuantity(), item.getCourseProductId(), item.getGradeBand(),
                     item.getGroupProjectId(), item.getGroupRegistrationPlanId());
@@ -3205,11 +3216,28 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         return amount.max(ZERO_AMOUNT).setScale(2, RoundingMode.HALF_UP);
     }
 
+    /** 多张私教收据共享一个课包时，旧退款/删除路径会按订单归属操作整个课包。 */
+    private void requireStandaloneOneOnOnePurchase(EnrollmentOrderEntity order) {
+        for (EnrollmentOrderItemEntity item : listOrderItemsByOrderId(order.getId())) {
+            if (item.getClassId() != null || item.getLogicalCourseId() == null) continue;
+            Long purchaseCount = enrollmentOrderItemMapper.selectCount(
+                    new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
+                            .eq(EnrollmentOrderItemEntity::getLogicalCourseId, item.getLogicalCourseId())
+                            .isNull(EnrollmentOrderItemEntity::getClassId)
+                            .eq(EnrollmentOrderItemEntity::getIsDeleted, 0));
+            if (purchaseCount != null && purchaseCount > 1) {
+                throw new BusinessException("LINKED_COURSE_MANUAL_REFUND_REQUIRED",
+                        "This 1-on-1 course has multiple purchases on one package. Review its lessons and payments together before refunding, cancelling, or deleting a receipt.");
+            }
+        }
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void cancelOrder(Long id) {
         EnrollmentOrderEntity order = requireOrderForUpdate(id);
         lockOrderClassGroupsForUpdate(order);
+        requireStandaloneOneOnOnePurchase(order);
 
         if ("CANCELLED".equals(order.getOrderStatus())) {
             throw new BusinessException("ORDER_ALREADY_CANCELLED", "Order is already cancelled.");
@@ -3234,6 +3262,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public ReceiptRecordVO refundOrder(Long id, RefundRequest request) {
         EnrollmentOrderEntity order = requireOrderForUpdate(id);
         lockOrderClassGroupsForUpdate(order);
+        requireStandaloneOneOnOnePurchase(order);
 
         if ("REFUNDED".equals(order.getPaymentStatus())) {
             throw new BusinessException("ORDER_ALREADY_REFUNDED", "Order has already been refunded.");
@@ -3475,6 +3504,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     @Override
     public RefundCoursePreviewVO previewRefund(Long id, Integer participantIndex) {
         EnrollmentOrderEntity order = requireOrder(id);
+        requireStandaloneOneOnOnePurchase(order);
         List<EnrollmentOrderParticipantEntity> participants = listOrderParticipants(order.getId());
         EnrollmentOrderParticipantEntity participant = participantIndex == null ? null
                 : findOrderParticipant(order.getId(), participantIndex);
@@ -4849,6 +4879,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public void deleteOrder(Long id) {
         EnrollmentOrderEntity order = requireOrderForUpdate(id);
         lockOrderClassGroupsForUpdate(order);
+        requireStandaloneOneOnOnePurchase(order);
         if (defaultAmount(order.getReceivedAmount()).compareTo(ZERO_AMOUNT) != 0) {
             throw new BusinessException("COURSE_REFUND_REQUIRED",
                     "Refund the order's payments before deleting its receipt.");
@@ -5290,6 +5321,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     public void forceVoidOrder(Long id, String reason) {
         EnrollmentOrderEntity order = requireOrderForUpdate(id);
         lockOrderClassGroupsForUpdate(order);
+        requireStandaloneOneOnOnePurchase(order);
 
         // 强制作废保留财务与消课历史，只关闭报名产物并软删订单，供清理历史脏数据。
         cancelEnrollmentArtifacts(order);

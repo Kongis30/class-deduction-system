@@ -31,6 +31,7 @@ export interface DataSummaryGroup {
 
 export interface DataSummaryRow {
   orderId: EntityId;
+  logicalCourseId?: EntityId;
   enrollmentNo: string;
   orderItemId?: EntityId;
   studentId: EntityId;

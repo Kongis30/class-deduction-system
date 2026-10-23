@@ -30,6 +30,9 @@ public class EnrollmentOrderItemEntity extends BaseEntity {
 
     private Long enrollmentOrderId;
 
+    /** 同一课程的购买行共用此 ID；班课为首笔权益 ID，私教为课包或共享课组 ID。 */
+    private Long logicalCourseId;
+
     private Integer lineNo;
 
     private String registerClass;

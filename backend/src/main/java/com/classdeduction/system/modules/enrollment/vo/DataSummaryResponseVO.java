@@ -117,7 +117,8 @@ public record DataSummaryResponseVO(
             Integer stoppedSessionCount,
             java.time.LocalDateTime registrationSavedAt,
             Long registrationOperatorUserId,
-            String registrationOperatorName
+            String registrationOperatorName,
+            Long logicalCourseId
     ) {
         private RowVO withoutFinancialAmounts() {
             return new RowVO(orderId, enrollmentNo, orderItemId, studentId, participantIndex,
@@ -130,7 +131,7 @@ public record DataSummaryResponseVO(
                     expiryDate, overdue, expiringSoon, lowOneOnOneHours, alertTypes, orderStatus,
                     reviewIssueCodes, privateLessonGroupId, privateLessonParticipantCount, itemStatus, refunded,
                     null, stoppedSessionCount, registrationSavedAt, registrationOperatorUserId,
-                    registrationOperatorName);
+                    registrationOperatorName, logicalCourseId);
         }
     }
 }

@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 public record EnrollmentOrderItemVO(
         Long id,
         Long enrollmentOrderId,
+        Long logicalCourseId,
         Integer lineNo,
         String registerClass,
         String courseType,
@@ -37,6 +38,7 @@ public record EnrollmentOrderItemVO(
         String attendanceOption,
         String attendanceScheduleJson,
         Integer entitlementPurchasedQuantity,
+        Long classEnrollmentId,
         LocalDate entitlementExpiryDate,
         String entitlementStatus,
         BigDecimal priceAmount,

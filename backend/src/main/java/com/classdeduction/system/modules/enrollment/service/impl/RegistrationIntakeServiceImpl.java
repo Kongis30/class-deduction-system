@@ -196,20 +196,24 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                         findPrivateLessonGroupIdByPackageId(request.getRenewPackageId()))
                         : createPrivateLessonGroup(order, orderItem, line, participantResolutions, request);
                 privateLessonGroupId = groupResult.groupId();
+                linkLogicalCourse(orderItem.getId(), groupResult.groupId());
                 artifacts.add(groupResult.primaryArtifact());
                 participantResults.addAll(groupResult.participants());
             } else {
                 if (line.oneOnOne) {
                     RegistrationIntakeResultVO.CourseArtifactVO artifact = createOneOnOneArtifact(
                             order, studentResolution.student(), line, allocatedPaid, request.getRenewPackageId());
+                    linkLogicalCourse(orderItem.getId(), artifact.packageId());
                     artifacts.add(artifact);
                     participantResults.add(toParticipantResult(
                             studentResolution, artifact.packageId(), artifact.packageNo(), line.priceAmount,
                             ensureStudentAccount(studentResolution.student())));
                 } else {
                     for (StudentResolution participant : participantResolutions) {
-                        artifacts.add(createGroupClassArtifact(participant.student(), line,
-                                request.getRenewClassEnrollmentId(), allowStudentConflicts(request)));
+                        RegistrationIntakeResultVO.CourseArtifactVO artifact = createGroupClassArtifact(
+                                participant.student(), line, request.getRenewClassEnrollmentId(),
+                                allowStudentConflicts(request));
+                        artifacts.add(artifact);
                     }
                 }
             }
@@ -1943,11 +1947,16 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             throw new BusinessException("RENEWAL_STUDENT_MISMATCH",
                     "Renewal package does not belong to the selected student.");
         }
+        if (renewalTarget != null && !isSameOneOnOnePackageCourse(renewalTarget, line)) {
+            throw new BusinessException("RENEWAL_PACKAGE_COURSE_MISMATCH",
+                    "Renewal must use the same course product and grade as the existing package.");
+        }
 
         CoursePackageEntity coursePackage = renewalTarget != null
                 ? renewalTarget
                 : allowExistingPackage ? resolveExistingOneOnOnePackageForLine(student.getId(), line, null) : null;
         if (coursePackage != null) {
+            linkLogicalCourse(coursePackage.getEnrollmentOrderItemId(), coursePackage.getId());
             int addedUnits = resolveOneOnOneUnits(line);
             int addedBonusUnits = resolveOneOnOneBonusUnits(line);
             coursePackage.setEnrollmentOrderId(order.getId());
@@ -2086,6 +2095,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
 
         List<PrivateLessonGroupMemberEntity> members = activePrivateLessonGroupMembers(groupId);
         validateSharedRenewalParticipants(members, participants);
+        linkLogicalCourse(group.getEnrollmentOrderItemId(), groupId);
         RegistrationIntakeResultVO.CourseArtifactVO primaryArtifact = null;
         List<RegistrationIntakeResultVO.ParticipantResultVO> participantResults = new ArrayList<>();
         for (PrivateLessonGroupMemberEntity member : members) {
@@ -2278,10 +2288,54 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                                                                                   ResolvedCourseLine line,
                                                                                   Long renewClassEnrollmentId,
                                                                                   boolean allowStudentConflicts) {
+        Long logicalCourseId = null;
         if (renewClassEnrollmentId != null) {
             ClassEnrollmentEntity source = requireRenewableClassEnrollment(renewClassEnrollmentId);
             if (!Objects.equals(source.getStudentId(), student.getId())) {
                 throw new BusinessException("RENEWAL_STUDENT_MISMATCH", "Renewal entitlement belongs to another student.");
+            }
+            if (!Objects.equals(source.getClassId(), line.classId)
+                    || !Objects.equals(source.getGroupProjectId(), line.groupProjectId)) {
+                throw new BusinessException("RENEWAL_CLASS_MISMATCH",
+                        "Renewal must use the same actual class and teaching project.");
+            }
+            EnrollmentOrderItemEntity sourceItem = enrollmentOrderItemMapper.selectById(source.getEnrollmentOrderItemId());
+            if (sourceItem == null || !"ACTIVE".equals(sourceItem.getItemStatus())) {
+                throw new BusinessException("RENEWAL_SOURCE_INACTIVE", "The original course purchase is inactive.");
+            }
+            EnrollmentOrderEntity sourceOrder = enrollmentOrderMapper.selectById(sourceItem.getEnrollmentOrderId());
+            if (sourceOrder == null || "CANCELLED".equals(sourceOrder.getOrderStatus())) {
+                throw new BusinessException("RENEWAL_SOURCE_INACTIVE", "The original course order is inactive.");
+            }
+            logicalCourseId = source.getLogicalCourseId() == null ? source.getId() : source.getLogicalCourseId();
+            if (source.getExpiryDate() == null || !line.entitlementStartDate.isAfter(source.getExpiryDate())) {
+                throw new BusinessException("RENEWAL_PERIOD_OVERLAP", "Renewal must begin after the previous course period.");
+            }
+            Long laterEnrollments = classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                    .eq(ClassEnrollmentEntity::getStudentId, student.getId())
+                    .eq(ClassEnrollmentEntity::getClassId, line.classId)
+                    .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                    .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
+                    .gt(ClassEnrollmentEntity::getExpiryDate, source.getExpiryDate()));
+            if (laterEnrollments != null && laterEnrollments > 0) {
+                throw new BusinessException("RENEWAL_SOURCE_NOT_LATEST",
+                        "This class has a later course period. Open the latest purchase to renew it.");
+            }
+            GroupRegistrationPlanEntity plan = groupRegistrationPlanMapper.selectById(line.groupRegistrationPlanId);
+            if ("MONTH".equals(sourceItem.getPackageUnit())
+                    && (!"MONTH".equals(line.packageUnit) || !"ROLLING_MONTHS".equals(plan.getCoverageType()))) {
+                throw new BusinessException("RENEWAL_MONTH_PLAN_REQUIRED",
+                        "Monthly renewal requires an active rolling-month registration plan.");
+            }
+            List<LocalDate> nextDates = findScheduledClassDates(line.classGroup, plan.getCoverageType(),
+                    plan.getCoverageStartDate(), plan.getCoverageEndDate(), source.getExpiryDate().plusDays(1), 1);
+            if (nextDates.isEmpty() || !nextDates.get(0).equals(line.entitlementStartDate)) {
+                throw new BusinessException("RENEWAL_PERIOD_GAP",
+                        "Choose the first scheduled lesson after the previous course period.");
+            }
+            if (source.getLogicalCourseId() == null) {
+                source.setLogicalCourseId(logicalCourseId);
+                classEnrollmentMapper.updateById(source);
             }
         }
         GroupClassEntitlementRules.requireNoOverlappingActiveEntitlement(classEnrollmentMapper,
@@ -2295,6 +2349,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         enrollment.setClassId(line.classId);
         enrollment.setStudentId(student.getId());
         enrollment.setEnrollmentOrderItemId(line.orderItemId);
+        enrollment.setLogicalCourseId(logicalCourseId);
         enrollment.setGroupProjectId(line.groupProjectId);
         enrollment.setGroupRegistrationPlanId(line.groupRegistrationPlanId);
         enrollment.setEnrollmentDate(line.entitlementStartDate);
@@ -2336,11 +2391,25 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if (enrollment == null || Integer.valueOf(1).equals(enrollment.getIsDeleted())) {
             throw new BusinessException("CLASS_ENROLLMENT_NOT_FOUND", "Class enrollment not found.");
         }
-        if (!"ACTIVE".equals(enrollment.getStatus())) {
+        if (!"ACTIVE".equals(enrollment.getStatus()) && !"EXPIRED".equals(enrollment.getStatus())) {
             throw new BusinessException("RENEWAL_CLASS_INACTIVE",
-                    "Only active group class enrollments can be renewed.");
+                    "Cancelled group class enrollments cannot be renewed.");
         }
         return enrollment;
+    }
+
+    /** 购买行只记录归属，不改变老师分配、旧付款或旧权益。 */
+    private void linkLogicalCourse(Long orderItemId, Long logicalCourseId) {
+        if (orderItemId == null || logicalCourseId == null) return;
+        EnrollmentOrderItemEntity item = enrollmentOrderItemMapper.selectById(orderItemId);
+        if (item == null) throw new BusinessException("COURSE_ITEM_NOT_FOUND", "Course purchase not found.");
+        if (item.getLogicalCourseId() != null && !Objects.equals(item.getLogicalCourseId(), logicalCourseId)) {
+            throw new BusinessException("RENEWAL_COURSE_MISMATCH", "Course purchase belongs to another course.");
+        }
+        if (item.getLogicalCourseId() == null) {
+            item.setLogicalCourseId(logicalCourseId);
+            enrollmentOrderItemMapper.updateById(item);
+        }
     }
 
     private int safeUnits(Integer value) {

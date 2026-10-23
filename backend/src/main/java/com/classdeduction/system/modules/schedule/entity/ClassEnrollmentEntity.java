@@ -30,6 +30,9 @@ public class ClassEnrollmentEntity extends BaseEntity {
 
     private Long enrollmentOrderItemId;
 
+    /** 同一学生同一班级续课时，指向首段权益；多人订单中的每位学生独立归属。 */
+    private Long logicalCourseId;
+
     /** 每个订单项目独立生成一份班课权益，续费不得覆盖既有权益。 */
     private Long groupProjectId;
 
