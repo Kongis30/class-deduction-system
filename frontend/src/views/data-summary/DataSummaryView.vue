@@ -550,6 +550,20 @@
       </button>
     </div>
 
+    <el-dialog v-model="purchasePickerVisible" title="Course purchases" class="purchase-picker" width="min(520px, 94vw)" append-to-body>
+      <div v-for="purchase in purchasePickerRows" :key="`${purchase.orderId}-${purchase.orderItemId}`" class="purchase-picker__row">
+        <div class="purchase-picker__details">
+          <strong>{{ formatDate(purchase.signupDate) }} · {{ purchase.enrollmentNo }}</strong>
+          <span>{{ formatPeriod(purchase) }} · Paid {{ formatMoney(purchase.paidAmount) }}</span>
+        </div>
+        <div class="purchase-picker__actions">
+          <el-button size="small" @click="selectPurchaseAction(purchase, 'receipt')">View receipt</el-button>
+          <el-button v-if="canPayFromDataSummary(purchase)" size="small" @click="selectPurchaseAction(purchase, 'pay')">Pay</el-button>
+          <el-button v-if="!isManager && purchase.orderPaymentStatus !== 'REFUNDED'" size="small" @click="selectPurchaseAction(purchase, 'refund')">Refund</el-button>
+        </div>
+      </div>
+    </el-dialog>
+
   </div>
 </template>
 
@@ -788,6 +802,8 @@ const studentContextMenu = reactive<{
   row: null,
 });
 const refundPreviewStatus = ref<'checking' | 'available' | 'none' | 'review' | 'error'>('checking');
+const purchasePickerVisible = ref(false);
+const purchasePickerRows = ref<DataSummaryRow[]>([]);
 let refundPreviewRequestId = 0;
 
 const knownProductIds = computed(() => new Set(products.value.map((product) => String(product.id))));
@@ -2661,6 +2677,31 @@ onMounted(() => {
   background: #eef6ff;
   color: #1d4ed8;
   outline: none;
+}
+
+:global(.purchase-picker__row) {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e5ebf0;
+}
+
+:global(.purchase-picker__details) {
+  display: grid;
+  gap: 4px;
+}
+
+:global(.purchase-picker__details span) {
+  color: #64748b;
+  font-size: 12px;
+}
+
+:global(.purchase-picker__actions) {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 4px;
 }
 
 .workbook-cell--balance-due {
