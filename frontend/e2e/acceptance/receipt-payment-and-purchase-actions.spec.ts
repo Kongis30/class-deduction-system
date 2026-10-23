@@ -39,8 +39,7 @@ test('Data Summary opens the same order when one course has multiple purchase ro
   await page.goto('/data-summary');
   const row = page.locator('.workbook-data-row').filter({ hasText: 'Single Student' });
   await expect(row).toHaveCount(1);
-  await row
-    .locator('.workbook-student-cell').click({ button: 'right' });
+  await row.click({ button: 'right' });
   await expect(page.getByRole('dialog', { name: 'Course purchases' })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: 'View receipt' })).toBeVisible();
   await page.getByRole('menuitem', { name: 'View receipt' }).click();

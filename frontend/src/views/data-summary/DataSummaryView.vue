@@ -328,6 +328,7 @@
                 v-for="(row, rowIndex) in classGroup.rows"
                 :key="rowKey(row)"
                 class="workbook-data-row"
+                @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
                 :class="{
                   'workbook-data-row--period-due': isPeriodRenewalDue(row),
                   'workbook-data-row--find-match': isStudentFindMatch(row),
@@ -351,7 +352,6 @@
                 </td>
                 <td
                   class="workbook-column--studentName workbook-student-cell"
-                  @contextmenu.prevent.stop="openStudentContextMenu($event, row)"
                 >
                   <span class="workbook-student-name">
                     {{ displayText(row.studentName) }}
