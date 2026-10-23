@@ -3472,14 +3472,8 @@ function toHistoricalCourseLine(
       ?? ((getString(item, 'packageUnit') || getString(fallback, 'packageUnit'))?.toUpperCase() === 'SESSION'
         ? optionalNumber(item, 'packageQuantity') ?? optionalNumber(fallback, 'packageQuantity')
         : undefined),
-    groupPurchasedMonths: optionalNumber(fallback, 'purchasedMonths')
-      ?? optionalNumber(item, 'purchasedMonths')
-      ?? optionalNumber(fallback, 'packageQuantity')
-      ?? groupMonthCountFromSnapshot(item),
-    groupDurationMode: durationModeForMonths(optionalNumber(fallback, 'purchasedMonths')
-      ?? optionalNumber(item, 'purchasedMonths')
-      ?? optionalNumber(fallback, 'packageQuantity')
-      ?? groupMonthCountFromSnapshot(item)),
+    groupPurchasedMonths: historicalPurchasedMonths(item, fallback),
+    groupDurationMode: durationModeForMonths(historicalPurchasedMonths(item, fallback)),
     groupStartMonth: getString(item, 'groupStartMonth') || getString(item, 'startMonth') || undefined,
     groupEndMonth: getString(item, 'groupEndMonth') || getString(item, 'endMonth') || undefined,
     groupRegistrationStartMonth: getString(item, 'startMonth') || undefined,
@@ -5342,6 +5336,18 @@ function groupMonthCountFromSnapshot(item: Record<string, unknown> | EnrollmentO
   const start = monthIndex(getString(item, 'startMonth'));
   const end = monthIndex(getString(item, 'endMonth'));
   return start === undefined || end === undefined || end < start ? undefined : end - start + 1;
+}
+
+function historicalPurchasedMonths(
+  item: Record<string, unknown> | EnrollmentOrderDetailItem['items'][number],
+  orderItem?: EnrollmentOrderDetailItem['items'][number],
+) {
+  // 订单明细保存实际购买数量；收据 JSON 只是快照，可能因旧版字段缺失或未同步而过期。
+  return optionalNumber(orderItem, 'purchasedMonths')
+    ?? optionalNumber(orderItem, 'packageQuantity')
+    ?? optionalNumber(item, 'purchasedMonths')
+    ?? optionalNumber(item, 'packageQuantity')
+    ?? groupMonthCountFromSnapshot(item);
 }
 
 function printTeacherOrClassLabel(line: RegistrationCourseLine) {
