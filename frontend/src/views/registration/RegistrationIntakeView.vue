@@ -380,6 +380,17 @@
             </tr>
           </thead>
           <tbody>
+            <tr v-if="renewClassEnrollmentId && renewalSourceItem" class="course-entry-row renewal-source-row screen-only">
+              <td>
+                <strong>{{ renewalSourceProductName }}</strong>
+                <small>Existing course · reference only</small>
+              </td>
+              <td>
+                <strong>{{ renewalSourceItem.gradeBand || '—' }}</strong>
+                <div>{{ renewalSourceItem.className || renewalSourceItem.periodLabel || '—' }}</div>
+              </td>
+              <td>Already purchased</td>
+            </tr>
             <tr v-for="(line, index) in courseLines" :key="line.rowKey" class="course-entry-row">
               <td>
                 <div v-if="isPrivateAllReceiptView || (isReadOnly && !editingCorrection)" class="receipt-course-display">
@@ -392,7 +403,7 @@
                       class="table-select table-select--primary"
                       popper-class="course-product-picker"
                       :placeholder="productSelectPlaceholder(line)"
-                      :disabled="!receiptEditingEnabled || productOptionsForLine(line).length === 0"
+                      :disabled="!receiptEditingEnabled || Boolean(renewPackageId) || productOptionsForLine(line).length === 0"
                       no-data-text="No linked courses"
                       no-match-text="No matching course"
                       filterable
@@ -413,6 +424,7 @@
                         />
                       </el-option-group>
                     </el-select>
+                    <small v-if="renewClassEnrollmentId && renewalSourceItem" class="renewal-new-course-label">New course · billed separately</small>
                     <button
                       v-if="receiptEditingEnabled && !editingCorrection && !isPrivateAllReceiptView && !isRenewalMode && (line.courseProductId || courseLines.length > 1)"
                       type="button"
@@ -453,7 +465,7 @@
                             v-model="line.groupProjectId"
                             class="table-select"
                             placeholder="Select project"
-                            :disabled="!receiptEditingEnabled || isRenewalMode || !line.courseProductId || isGroupCourseSetupLoading(line.courseProductId)"
+                            :disabled="!receiptEditingEnabled || !line.courseProductId || isGroupCourseSetupLoading(line.courseProductId)"
                             :loading="isGroupCourseSetupLoading(line.courseProductId)"
                             @change="() => handleGroupProjectChange(line)"
                           >
@@ -466,12 +478,12 @@
                           </el-select>
                         </label>
                         <label class="course-control">
-                          <span>Registration plan</span>
+                          <span>{{ isSameRenewalGroupCourse(line) ? 'Renewal plan / rate' : 'Registration plan' }}</span>
                           <el-select
                             v-model="line.groupRegistrationPlanId"
-                            class="table-select"
-                            placeholder="Select season or package"
-                            :disabled="!receiptEditingEnabled || (isRenewalMode && renewalRateMode === 'ORIGINAL') || !line.groupProjectId"
+                            :class="['table-select', { 'renewal-plan-select': isSameRenewalGroupCourse(line) }]"
+                            :placeholder="isSameRenewalGroupCourse(line) ? 'Choose renewal plan and rate' : 'Select season or package'"
+                            :disabled="!receiptEditingEnabled || !line.groupProjectId"
                             @change="() => handleGroupPlanChange(line)"
                           >
                             <el-option
@@ -481,6 +493,9 @@
                               :value="plan.id"
                             />
                           </el-select>
+                          <small v-if="renewClassEnrollmentId" class="renewal-plan-hint">
+                            {{ isSameRenewalGroupCourse(line) ? 'Same product and project: this purchase extends the existing course.' : 'Different product or project: this purchase creates a separate course.' }}
+                          </small>
                         </label>
                         <label class="course-control course-control--wide group-v2-registration__full-row">
                           <span>Actual class</span>
@@ -488,7 +503,7 @@
                             v-model="line.classId"
                             class="table-select option"
                             :placeholder="v2ClassSelectPlaceholder(line)"
-                            :disabled="!receiptEditingEnabled || isRenewalMode || !line.groupRegistrationPlanId || groupActualClassGroupsForLine(line).length === 0"
+                            :disabled="!receiptEditingEnabled || !line.groupRegistrationPlanId || groupActualClassGroupsForLine(line).length === 0"
                             filterable
                             @change="() => handleGroupActualClassChange(line)"
                           >
@@ -532,7 +547,7 @@
                             v-model="line.startDate"
                             class="table-select"
                             :placeholder="groupPlanStartPlaceholder(line)"
-                            :disabled="!receiptEditingEnabled || isRenewalMode || !line.classId || line.groupScheduleDatesLoading"
+                            :disabled="!receiptEditingEnabled || !line.classId || line.groupScheduleDatesLoading"
                             :loading="line.groupScheduleDatesLoading"
                             @change="() => handleGroupStartDateChange(line)"
                           >
@@ -551,7 +566,7 @@
                             v-model="line.groupPurchasedMonths"
                             class="table-price"
                             :min="1"
-                            :max="editingCorrection ? Math.max(groupPlanQuantity(line), line.groupPurchasedMonths ?? 0) : groupPlanQuantity(line)"
+                            :max="maxGroupMonthsForLine(line)"
                             :step="1"
                             :precision="0"
                             :disabled="!receiptEditingEnabled || !line.classId || !line.startDate || line.groupScheduleDatesLoading"
@@ -560,7 +575,7 @@
                         </label>
                         <label v-if="line.groupRegistrationPlanId && attendanceOptionsForLine(line).length > 0" class="course-control">
                           <span>Attendance</span>
-                          <el-select v-model="line.attendanceOption" class="table-select" :disabled="isRenewalMode && renewalRateMode === 'ORIGINAL'" @change="() => handleAttendanceChange(line)">
+                          <el-select v-model="line.attendanceOption" class="table-select" @change="() => handleAttendanceChange(line)">
                             <el-option v-for="option in attendanceOptionsForLine(line)" :key="option.value" :label="option.label" :value="option.value" />
                           </el-select>
                         </label>
@@ -810,7 +825,7 @@
                   <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
                 <template v-else>
-                  <MoneyAmountInput v-model="line.priceAmount" :min="0" :whole-dollars="wholeDollarForm" :disabled="isRenewalMode && renewalRateMode === 'ORIGINAL'" class="table-price" @change="() => handlePriceChange(line)" />
+                  <MoneyAmountInput v-model="line.priceAmount" :min="0" :whole-dollars="wholeDollarForm" class="table-price" @change="() => handlePriceChange(line)" />
                   <strong class="print-only print-course-price">{{ formatCourseLinePrice(line) }}</strong>
                 </template>
               </td>
@@ -859,11 +874,8 @@
       <section v-if="editingCorrection" class="paper-actions no-print" data-mobile-steps="2">
         <div v-for="line in courseLines.filter(canRenewHistoricalLine)" :key="`renew-${line.rowKey}`" class="renewal-entry">
           <span>{{ courseLineOptionLabel(line, courseLines.indexOf(line)) }}</span>
-          <label v-if="!isOneOnOneLine(line)" class="renewal-entry__months">Additional months
-            <el-input-number v-model="renewalMonthsByItem[String(line.orderItemId)]" :min="1" :max="24" size="small" />
-          </label>
-          <el-button size="small" @click="startCourseRenewal(line, 'ORIGINAL')">{{ isOneOnOneLine(line) ? 'Add hours' : 'Extend months at original rate' }}</el-button>
-          <el-button v-if="!isOneOnOneLine(line)" size="small" @click="startCourseRenewal(line, 'NEW')">Add course at new rate</el-button>
+          <el-button size="small" @click="startCourseRenewal(line)">{{ isOneOnOneLine(line) ? 'Add hours' : 'Add course' }}</el-button>
+          <small v-if="!isOneOnOneLine(line)">Same rate: increase Months above. Different rate: Add course and select a Registration plan.</small>
         </div>
       </section>
 
@@ -1360,7 +1372,7 @@ import type { GroupCourseProductSetup, GroupCourseProject, GroupRegistrationPlan
 import { fetchStudentCreditBalance } from '@/api/student-credit';
 import { fetchClassGroups } from '@/api/schedule';
 import { APP_BRAND_NAME } from '@/config/app-config';
-import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
+import type { CampusItem, ClassGroupItem, CoursePackageItem, CoursePriceOptionItem, CourseProductItem, DiscountPresetItem, EnrollmentOrderDetailItem, EnrollmentOrderLineItem, EntityId, PaymentMethodItem, StudentItem, TeacherItem } from '@/types/domain';
 import { getStoredAuthUser } from '@/utils/auth-storage';
 import { isAdminUser, isManagerUser, isStaffUser } from '@/types/auth';
 import { formatUsPhoneDisplay } from '@/utils/phone-format';
@@ -1664,11 +1676,13 @@ const isReadOnly = computed(() => Boolean(route.query.orderId));
 const renewPackageId = computed(() => getQueryValue(route.query.renewPackageId));
 const renewClassEnrollmentId = computed(() => getQueryValue(route.query.renewClassEnrollmentId));
 const isRenewalMode = computed(() => Boolean(renewPackageId.value || renewClassEnrollmentId.value));
-const renewalRateMode = computed(() => getQueryValue(route.query.renewalRate) || 'NEW');
 const renewalStartAfter = ref('');
-const renewalOriginalUnitPrice = ref<number | null>(null);
 const renewalPackageUnit = ref<string | null>(null);
-const renewalMonthsByItem = reactive<Record<string, number>>({});
+const renewalSourceItem = ref<EnrollmentOrderLineItem | null>(null);
+const renewalSourceProductId = ref<EntityId>();
+const renewalSourceProjectId = ref<EntityId>();
+const renewalSourceProductName = computed(() => courseProducts.value.find((product) =>
+  String(product.id) === String(renewalSourceProductId.value))?.productName ?? 'Existing course');
 const editingCorrection = ref(false);
 const savingCorrection = ref(false);
 const correctionBaseline = ref<EnrollmentOrderCorrectionPayload | null>(null);
@@ -2429,9 +2443,6 @@ async function startCorrection() {
       // 基础选项加载完成后重建一次编辑模型，把已停用课程与价格映射到可编辑表单。
       applyHistoricalOrder(historicalOrder.value);
       editingCorrection.value = true;
-      courseLines.value.forEach((line) => {
-        if (line.orderItemId) renewalMonthsByItem[String(line.orderItemId)] ??= 2;
-      });
       await Promise.all(courseLines.value
         .filter((line) => line.groupCourseModelV2 && line.courseProductId)
         .map((line) => loadGroupCourseSetup(line.courseProductId!, true, true)));
@@ -2464,8 +2475,8 @@ function canRenewHistoricalLine(line: RegistrationCourseLine) {
   return item?.itemStatus === 'ACTIVE' && (isOneOnOneLine(line) || Boolean(item.classEnrollmentId));
 }
 
-/** 续课是新购买：跳转至独立收款表单，原订单更正草稿不会被重放。 */
-async function startCourseRenewal(line: RegistrationCourseLine, rate: 'ORIGINAL' | 'NEW') {
+/** 新购买先预填原课；最终产品和项目决定是否续接原逻辑课程。 */
+async function startCourseRenewal(line: RegistrationCourseLine) {
   const source = historicalOrder.value;
   const item = source?.items.find((entry) => String(entry.id) === String(line.orderItemId));
   if (!source || !item) return;
@@ -2474,17 +2485,18 @@ async function startCourseRenewal(line: RegistrationCourseLine, rate: 'ORIGINAL'
     return;
   }
   try {
-    await ElMessageBox.confirm(
-      'Renewal creates a new purchase and receipt linked to this course. Save any unsaved receipt corrections first.',
-      'Continue to renewal',
-      { confirmButtonText: 'Continue', cancelButtonText: 'Stay here', type: 'info' },
-    );
+    if (correctionBaseline.value
+        && JSON.stringify(buildCurrentCorrectionPayload()) !== JSON.stringify(correctionBaseline.value)) {
+      await ElMessageBox.confirm(
+        'This receipt has unsaved changes. Save them before adding a course, or continue without those changes.',
+        'Unsaved receipt changes',
+        { confirmButtonText: 'Continue', cancelButtonText: 'Stay here', type: 'warning' },
+      );
+    }
     const query: Record<string, string> = {
       renewalSourceOrderId: String(source.id),
       renewalSourceItemId: String(item.id),
-      renewalRate: rate,
     };
-    if (!isOneOnOneLine(line)) query.renewalMonths = String(renewalMonthsByItem[String(item.id)] || 2);
     if (isOneOnOneLine(line)) {
       const response = await fetchCoursePackages({
         studentId: source.studentId,
@@ -2918,47 +2930,32 @@ async function loadGroupClassRenewal(enrollmentId: string) {
   );
   renewalStartAfter.value = expiryDate;
   renewalPackageUnit.value = sourceItem?.packageUnit ?? null;
+  renewalSourceItem.value = sourceItem ?? null;
+  renewalSourceProductId.value = sourceItem?.courseProductId ?? classGroup.productId;
+  renewalSourceProjectId.value = sourceItem?.groupProjectId ?? classGroup.groupProjectId;
   const line = createCourseLine();
   line.courseProductId = sourceItem?.courseProductId ?? classGroup.productId ?? stringToEntityId(getQueryValue(route.query.productId));
   await handleCourseProductChange(line);
   if (!line.courseProductId) throw new Error('The original course product is unavailable.');
   line.groupCourseModelV2 = true;
   line.groupProjectId = sourceItem?.groupProjectId ?? classGroup.groupProjectId;
-  const requestedMonths = Number(getQueryValue(route.query.renewalMonths) || 2);
-  if (!Number.isInteger(requestedMonths) || requestedMonths < 1 || requestedMonths > 24) {
-    throw new Error('Additional months must be between 1 and 24.');
-  }
   const plans = groupPlansForLine(line).filter((plan) => plan.packageUnit === sourceItem?.packageUnit || !sourceItem);
-  const plan = renewalRateMode.value === 'ORIGINAL'
-    ? plans.find((entry) => String(entry.id) === String(sourceItem?.groupRegistrationPlanId)
-        && (entry.packageUnit !== 'MONTH' || Number(entry.packageQuantity) >= requestedMonths))
-      ?? plans.find((entry) => entry.packageUnit === 'MONTH' && Number(entry.packageQuantity) >= requestedMonths)
-    : plans.find((entry) => entry.packageUnit === 'MONTH' && Number(entry.packageQuantity) === requestedMonths)
-      ?? plans.find((entry) => entry.packageUnit === 'MONTH' && Number(entry.packageQuantity) >= requestedMonths)
-      ?? plans.find((entry) => String(entry.id) === String(sourceItem?.groupRegistrationPlanId));
-  if (!plan) throw new Error('No active registration plan is available for this renewal.');
-  line.groupRegistrationPlanId = plan.id;
+  const plan = plans.find((entry) => String(entry.id) === String(sourceItem?.groupRegistrationPlanId)) ?? plans[0];
+  line.groupRegistrationPlanId = plan?.id;
   line.classId = classGroup.id;
   line.className = classGroup.className;
-  line.startDate = nextRenewalStartDate(expiryDate);
-  await handleGroupPlanChange(line);
-  line.attendanceOption = (sourceItem?.attendanceOption ?? line.attendanceOption) as RegistrationCourseLine['attendanceOption'];
-  if (plan.packageUnit === 'MONTH' && (!Number.isInteger(requestedMonths) || requestedMonths < 1
-      || requestedMonths > Number(plan.packageQuantity))) {
-    throw new Error(`This plan permits at most ${plan.packageQuantity} additional months. Choose another plan.`);
+  if (plan) await handleGroupPlanChange(line);
+  const sourceAttendance = sourceItem?.attendanceOption as RegistrationCourseLine['attendanceOption'];
+  if (attendanceOptionsForLine(line).some((option) => option.value === sourceAttendance)) {
+    line.attendanceOption = sourceAttendance;
   }
-  line.groupPurchasedMonths = plan.packageUnit === 'MONTH' ? requestedMonths : undefined;
-  line.startDate = nextRenewalStartDate(expiryDate);
-  await loadGroupClassDates(line);
-  if (renewalRateMode.value === 'ORIGINAL' && sourceItem?.packageUnit === 'MONTH') {
-    const originalMonths = Number(sourceItem.purchasedMonths ?? sourceItem.packageQuantity);
-    if (!originalMonths || !sourceItem.priceAmount) throw new Error('The original monthly price cannot be verified. Choose a new-rate purchase instead.');
-    renewalOriginalUnitPrice.value = Number(sourceItem.priceAmount) / originalMonths;
+  if (plan) {
+    line.startDate = nextRenewalStartDate(expiryDate);
+    await loadGroupClassDates(line);
   }
   handleRegistrationDurationChange(line);
-  applyOriginalRenewalRate(line);
   courseLines.value = [line];
-  ElMessage.success(`Renewal started for ${studentResponse.data.data.studentName}. Review the new purchase period and payment.`);
+  ElMessage.success(`New course added for ${studentResponse.data.data.studentName}. Choose its product, project, plan and payment.`);
 }
 
 function applyHistoricalOrder(order: EnrollmentOrderDetailItem) {
@@ -4415,9 +4412,17 @@ function selectedGroupProject(line: RegistrationCourseLine): GroupCourseProject 
 function groupPlansForLine(line: RegistrationCourseLine) {
   const plans = selectedGroupProject(line)?.plans ?? [];
   if (editingCorrection.value) return plans;
+  const sameCourse = isSameRenewalGroupCourse(line);
   return plans.filter((plan) => plan.status === 'ACTIVE'
-    && (!isRenewalMode.value || !renewalPackageUnit.value || plan.packageUnit === renewalPackageUnit.value)
-    && (!isRenewalMode.value || renewalPackageUnit.value !== 'MONTH' || plan.coverageType === 'ROLLING_MONTHS'));
+    && (!sameCourse || !renewalPackageUnit.value || plan.packageUnit === renewalPackageUnit.value)
+    && (!sameCourse || renewalPackageUnit.value !== 'MONTH' || plan.coverageType === 'ROLLING_MONTHS'));
+}
+
+/** 只有同产品、同教学项目的新购买才延续原逻辑课程；其他选择独立建课。 */
+function isSameRenewalGroupCourse(line: RegistrationCourseLine) {
+  return Boolean(renewClassEnrollmentId.value && line.courseProductId && line.groupProjectId
+    && String(line.courseProductId) === String(renewalSourceProductId.value)
+    && String(line.groupProjectId) === String(renewalSourceProjectId.value));
 }
 
 function selectedGroupPlan(line: RegistrationCourseLine): GroupRegistrationPlan | undefined {
@@ -4482,6 +4487,24 @@ function groupPlanQuantity(line: RegistrationCourseLine) {
   return Math.max(0, Math.floor(numeric(selectedGroupPlan(line)?.packageQuantity)));
 }
 
+function maxGroupMonthsForLine(line: RegistrationCourseLine) {
+  const plan = selectedGroupPlan(line);
+  const original = correctionBaseline.value?.items?.find((item) => String(item.orderItemId) === String(line.orderItemId));
+  if (!editingCorrection.value || !original || String(original.groupRegistrationPlanId) !== String(plan?.id)
+      || plan?.packageUnit !== 'MONTH' || plan.coverageType !== 'ROLLING_MONTHS') {
+    return Math.max(1, groupPlanQuantity(line));
+  }
+  const classEnd = selectedGroupActualClass(line)?.endDate;
+  const startMonth = line.startDate?.slice(0, 7);
+  const endMonth = classEnd?.slice(0, 7);
+  const monthsUntilClassEnd = startMonth && endMonth
+    ? (Number(endMonth.slice(0, 4)) - Number(startMonth.slice(0, 4))) * 12
+      + Number(endMonth.slice(5, 7)) - Number(startMonth.slice(5, 7)) + 1
+    : 36;
+  return Math.max(1, numeric(original.purchasedMonths ?? original.packageQuantity),
+    Math.min(36, monthsUntilClassEnd));
+}
+
 function availableGroupPlanQuantities(line: RegistrationCourseLine) {
   const total = groupPlanQuantity(line);
   const plan = selectedGroupPlan(line);
@@ -4506,11 +4529,11 @@ function availableGroupStartDates(line: RegistrationCourseLine) {
     dates = dates.filter((date) => (!plan.coverageStartDate || date >= plan.coverageStartDate)
       && (!plan.coverageEndDate || date <= plan.coverageEndDate));
   }
-  if (!isReadOnly.value || !editingCorrection.value) {
+  if ((!isReadOnly.value || !editingCorrection.value) && !isSameRenewalGroupCourse(line)) {
     const minimumDate = form.signupDate || today;
     dates = dates.filter((date) => date >= minimumDate);
   }
-  if (isRenewalMode.value && renewalStartAfter.value) {
+  if (isSameRenewalGroupCourse(line) && renewalStartAfter.value) {
     dates = dates.filter((date) => date > renewalStartAfter.value);
   }
   return dates;
@@ -4730,15 +4753,6 @@ function handleGroupSessionCountChange(line: RegistrationCourseLine) {
 function handleGroupMonthCountChange(line: RegistrationCourseLine) {
   line.manualPriceOverride = false;
   handleRegistrationDurationChange(line);
-  applyOriginalRenewalRate(line);
-}
-
-function applyOriginalRenewalRate(line: RegistrationCourseLine) {
-  if (!isRenewalMode.value || renewalRateMode.value !== 'ORIGINAL'
-      || renewalOriginalUnitPrice.value == null || line.packageUnit !== 'MONTH') return;
-  line.priceAmount = Math.ceil(renewalOriginalUnitPrice.value * numeric(line.groupPurchasedMonths));
-  line.manualPriceOverride = true;
-  line.remark = 'Renewal at the original purchase monthly rate';
 }
 
 function selectedClassGroup(line: RegistrationCourseLine) {
@@ -4815,8 +4829,20 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
       ? Math.max(1, Math.floor(numeric(line.groupPurchasedMonths) || configuredQuantity))
       : Math.max(1, Math.floor(numeric(line.groupSessionCount) || configuredQuantity));
     const fullPrice = groupPlanDisplayPrice(plan, line.attendanceOption);
-    const price = ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
-    line.packageTotalPrice = fullPrice;
+    const original = editingCorrection.value && line.orderItemId
+      ? correctionBaseline.value?.items?.find((item) => String(item.orderItemId) === String(line.orderItemId))
+      : undefined;
+    const originalMonths = numeric(original?.purchasedMonths ?? original?.packageQuantity);
+    // 原行加月份沿用保存时的月费率；选择另一方案或 Attendance 才按新方案重新计价。
+    const keepOriginalMonthlyRate = plan.packageUnit === 'MONTH' && plan.coverageType === 'ROLLING_MONTHS'
+      && originalMonths > 0 && numeric(original?.priceAmount) > 0
+      && String(original?.groupRegistrationPlanId) === String(plan.id)
+      && original?.attendanceOption === line.attendanceOption;
+    const price = keepOriginalMonthlyRate
+      ? ceilRegistrationAmount(numeric(original?.priceAmount) * selectedQuantity / originalMonths)
+      : ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
+    line.packageTotalPrice = keepOriginalMonthlyRate
+      ? numeric(original?.packageTotalPrice) || fullPrice : fullPrice;
     line.packageQuantity = selectedQuantity;
     line.originalPriceAmount = price;
     if (!line.manualPriceOverride) line.priceAmount = price;
@@ -4863,6 +4889,7 @@ function clearSelectedOption(line: RegistrationCourseLine) {
   line.groupScheduleDates = undefined;
   line.groupScheduleDatesLoading = false;
   line.classId = undefined;
+  line.className = undefined;
   line.teacherId = undefined;
   line.registerClass = '';
   line.detail = '';
@@ -6127,7 +6154,8 @@ function buildPayload(): RegistrationIntakePayload {
     campusName: campus?.campusName,
     signupDate: form.signupDate,
     renewPackageId: stringToEntityId(renewPackageId.value),
-    renewClassEnrollmentId: stringToEntityId(renewClassEnrollmentId.value),
+    renewClassEnrollmentId: isSameRenewalGroupCourse(courseLines.value[0])
+      ? stringToEntityId(renewClassEnrollmentId.value) : undefined,
     handledByName: handledByName.value,
     currencyCode: 'USD',
     creditTopUpAmount: creditTopUpAmount.value > 0 ? roundMoney(creditTopUpAmount.value) : undefined,
@@ -6317,8 +6345,10 @@ function formHasUnsavedContent() {
 
 function resetForNextRegistration() {
   renewalStartAfter.value = '';
-  renewalOriginalUnitPrice.value = null;
   renewalPackageUnit.value = null;
+  renewalSourceItem.value = null;
+  renewalSourceProductId.value = undefined;
+  renewalSourceProjectId.value = undefined;
   mobileRegistrationStep.value = 1;
   validationErrors.value = [];
   form.campusKey = '';
@@ -6399,10 +6429,7 @@ function nextRenewalStartDate(expiryDate?: string) {
     return today;
   }
   const expiry = new Date(`${expiryDate}T00:00:00`);
-  const current = new Date(`${today}T00:00:00`);
-  if (Number.isNaN(expiry.getTime()) || expiry < current) {
-    return today;
-  }
+  if (Number.isNaN(expiry.getTime())) return today;
   expiry.setDate(expiry.getDate() + 1);
   return formatDate(expiry);
 }
@@ -7563,6 +7590,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   height: 152px;
 }
 
+.renewal-source-row td {
+  height: auto;
+  background: #f3f7fb;
+  color: #617086;
+}
+
+.renewal-source-row small,
+.renewal-new-course-label {
+  display: block;
+  margin-top: 5px;
+  color: #78879a;
+  font-size: 11px;
+}
+
 .course-table th:nth-child(1),
 .course-table td:nth-child(1) {
   width: 26%;
@@ -7739,6 +7780,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   line-height: 1.2;
 }
 
+.renewal-plan-hint {
+  color: #526a82;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+:deep(.renewal-plan-select .el-select__wrapper) {
+  border-color: #78aef4;
+  background: #f3f8ff;
+}
+
 .course-control--wide {
   width: 100%;
 }
@@ -7849,16 +7901,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   font-weight: 600;
 }
 
-.renewal-entry__months {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  font-size: 12px;
-}
-
-.renewal-entry__months .el-input-number {
-  width: 105px;
+.renewal-entry small {
+  width: 100%;
+  color: #60758d;
 }
 
 .intake-adjustment-panel {

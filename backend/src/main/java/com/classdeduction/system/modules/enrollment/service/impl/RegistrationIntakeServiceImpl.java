@@ -2294,14 +2294,20 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             if (!Objects.equals(source.getStudentId(), student.getId())) {
                 throw new BusinessException("RENEWAL_STUDENT_MISMATCH", "Renewal entitlement belongs to another student.");
             }
-            if (!Objects.equals(source.getClassId(), line.classId)
-                    || !Objects.equals(source.getGroupProjectId(), line.groupProjectId)) {
-                throw new BusinessException("RENEWAL_CLASS_MISMATCH",
-                        "Renewal must use the same actual class and teaching project.");
-            }
             EnrollmentOrderItemEntity sourceItem = enrollmentOrderItemMapper.selectById(source.getEnrollmentOrderItemId());
             if (sourceItem == null || !"ACTIVE".equals(sourceItem.getItemStatus())) {
                 throw new BusinessException("RENEWAL_SOURCE_INACTIVE", "The original course purchase is inactive.");
+            }
+            Long sourceProductId = sourceItem.getCourseProductId();
+            if (sourceProductId == null) {
+                ClassGroupEntity sourceClass = classGroupMapper.selectById(source.getClassId());
+                sourceProductId = sourceClass == null ? null : sourceClass.getProductId();
+            }
+            // 逻辑课程按产品和项目续接；实际班级可变，日期与排课冲突仍在下方校验。
+            if (!Objects.equals(sourceProductId, line.courseProductId)
+                    || !Objects.equals(source.getGroupProjectId(), line.groupProjectId)) {
+                throw new BusinessException("RENEWAL_COURSE_MISMATCH",
+                        "Renewal must use the same course product and teaching project.");
             }
             EnrollmentOrderEntity sourceOrder = enrollmentOrderMapper.selectById(sourceItem.getEnrollmentOrderId());
             if (sourceOrder == null || "CANCELLED".equals(sourceOrder.getOrderStatus())) {
@@ -2311,15 +2317,20 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             if (source.getExpiryDate() == null || !line.entitlementStartDate.isAfter(source.getExpiryDate())) {
                 throw new BusinessException("RENEWAL_PERIOD_OVERLAP", "Renewal must begin after the previous course period.");
             }
-            Long laterEnrollments = classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+            LambdaQueryWrapper<ClassEnrollmentEntity> laterQuery = new LambdaQueryWrapper<ClassEnrollmentEntity>()
                     .eq(ClassEnrollmentEntity::getStudentId, student.getId())
-                    .eq(ClassEnrollmentEntity::getClassId, line.classId)
                     .eq(ClassEnrollmentEntity::getIsDeleted, 0)
                     .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
-                    .gt(ClassEnrollmentEntity::getExpiryDate, source.getExpiryDate()));
+                    .gt(ClassEnrollmentEntity::getExpiryDate, source.getExpiryDate());
+            if (source.getLogicalCourseId() == null) {
+                laterQuery.eq(ClassEnrollmentEntity::getClassId, source.getClassId());
+            } else {
+                laterQuery.eq(ClassEnrollmentEntity::getLogicalCourseId, logicalCourseId);
+            }
+            Long laterEnrollments = classEnrollmentMapper.selectCount(laterQuery);
             if (laterEnrollments != null && laterEnrollments > 0) {
                 throw new BusinessException("RENEWAL_SOURCE_NOT_LATEST",
-                        "This class has a later course period. Open the latest purchase to renew it.");
+                        "This course has a later period. Open the latest purchase to renew it.");
             }
             GroupRegistrationPlanEntity plan = groupRegistrationPlanMapper.selectById(line.groupRegistrationPlanId);
             if ("MONTH".equals(sourceItem.getPackageUnit())
