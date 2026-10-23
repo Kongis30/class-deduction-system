@@ -605,6 +605,7 @@
                             :step="1"
                             :precision="0"
                             :disabled="!receiptEditingEnabled || !line.classId || !line.startDate || line.groupScheduleDatesLoading"
+                            @input="(value) => handleGroupMonthInput(line, value)"
                             @change="() => handleGroupMonthCountChange(line)"
                           />
                         </label>
@@ -4818,6 +4819,13 @@ function handleGroupSessionCountChange(line: RegistrationCourseLine) {
   handleRegistrationDurationChange(line);
 }
 
+function handleGroupMonthInput(line: RegistrationCourseLine, value: number | null) {
+  if (value == null || !Number.isInteger(value) || value < 1) return;
+  line.groupPurchasedMonths = value;
+  line.manualPriceOverride = false;
+  handleRegistrationDurationChange(line);
+}
+
 function handleGroupMonthCountChange(line: RegistrationCourseLine) {
   line.manualPriceOverride = false;
   handleRegistrationDurationChange(line);
@@ -4897,20 +4905,9 @@ function recalculateLinePrice(line: RegistrationCourseLine) {
       ? Math.max(1, Math.floor(numeric(line.groupPurchasedMonths) || configuredQuantity))
       : Math.max(1, Math.floor(numeric(line.groupSessionCount) || configuredQuantity));
     const fullPrice = groupPlanDisplayPrice(plan, line.attendanceOption);
-    const original = editingCorrection.value && line.orderItemId
-      ? correctionBaseline.value?.items?.find((item) => String(item.orderItemId) === String(line.orderItemId))
-      : undefined;
-    const originalMonths = numeric(original?.purchasedMonths ?? original?.packageQuantity);
-    // 原行加月份沿用保存时的月费率；选择另一方案或 Attendance 才按新方案重新计价。
-    const keepOriginalMonthlyRate = plan.packageUnit === 'MONTH' && plan.coverageType === 'ROLLING_MONTHS'
-      && originalMonths > 0 && numeric(original?.priceAmount) > 0
-      && String(original?.groupRegistrationPlanId) === String(plan.id)
-      && original?.attendanceOption === line.attendanceOption;
-    const price = keepOriginalMonthlyRate
-      ? ceilRegistrationAmount(numeric(original?.priceAmount) * selectedQuantity / originalMonths)
-      : ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
-    line.packageTotalPrice = keepOriginalMonthlyRate
-      ? numeric(original?.packageTotalPrice) || fullPrice : fullPrice;
+    // Registration plan 确定单位费率；原订单实收和手工改价不能反推月单价。
+    const price = ceilRegistrationAmount(fullPrice * selectedQuantity / configuredQuantity);
+    line.packageTotalPrice = fullPrice;
     line.packageQuantity = selectedQuantity;
     line.originalPriceAmount = price;
     if (!line.manualPriceOverride) line.priceAmount = price;

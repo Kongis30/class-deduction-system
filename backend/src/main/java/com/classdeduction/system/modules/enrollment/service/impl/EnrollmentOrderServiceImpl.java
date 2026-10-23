@@ -2229,6 +2229,24 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             throw new BusinessException("GROUP_V2_PLAN_MISMATCH",
                     "The purchased quantity must fit within the selected registration plan.");
         }
+        if ("MONTH".equalsIgnoreCase(payload.getPackageUnit())
+                && "ROLLING_MONTHS".equalsIgnoreCase(plan.getCoverageType())
+                && (projectOrPlanChanged || selectedCountChanged)
+                && !Boolean.TRUE.equals(payload.getManualPriceOverride())) {
+            BigDecimal planPrice = ("MORNING".equalsIgnoreCase(payload.getAttendanceOption())
+                    || "AFTERNOON".equalsIgnoreCase(payload.getAttendanceOption())
+                    || "CUSTOM".equalsIgnoreCase(payload.getAttendanceOption()))
+                    && plan.getHalfDayPrice() != null ? plan.getHalfDayPrice() : plan.getFullDayPrice();
+            if (planPrice == null || plan.getPackageQuantity().signum() <= 0) {
+                throw new BusinessException("GROUP_PLAN_PRICE_INVALID", "The selected plan has no valid monthly rate.");
+            }
+            BigDecimal expectedPrice = WholeDollarBilling.ceil(planPrice.multiply(quantityToValidate)
+                    .divide(plan.getPackageQuantity(), 0, RoundingMode.CEILING));
+            if (payload.getPriceAmount() == null || expectedPrice.compareTo(payload.getPriceAmount()) != 0) {
+                throw new BusinessException("GROUP_PLAN_PRICE_MISMATCH",
+                        "Course price must equal the selected registration plan's monthly rate times the purchased months.");
+            }
+        }
         if (projectOrPlanChanged && (!"ACTIVE".equals(project.getStatus()) || !"ACTIVE".equals(plan.getStatus()))) {
             throw new BusinessException("GROUP_V2_SELECTION_INACTIVE",
                     "Choose an active teaching project and registration plan when changing the course.");

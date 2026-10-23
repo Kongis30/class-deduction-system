@@ -1031,11 +1031,8 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         if (configuredPrice.compareTo(ZERO_AMOUNT) <= 0) {
             throw new BusinessException("COURSE_LINE_PRICE_REQUIRED", "Plan price must be greater than zero.");
         }
-        BigDecimal proratedPrice = configuredPrice;
-        if (selectedQuantity < configuredQuantity) {
-            proratedPrice = configuredPrice.multiply(BigDecimal.valueOf(selectedQuantity))
-                    .divide(BigDecimal.valueOf(configuredQuantity), 0, RoundingMode.CEILING);
-        }
+        BigDecimal proratedPrice = configuredPrice.multiply(BigDecimal.valueOf(selectedQuantity))
+                .divide(BigDecimal.valueOf(configuredQuantity), 0, RoundingMode.CEILING);
         line.manualPriceOverride = Boolean.TRUE.equals(item.getManualPriceOverride());
         line.originalPriceAmount = WholeDollarBilling.ceil(proratedPrice);
         line.priceAmount = line.manualPriceOverride
