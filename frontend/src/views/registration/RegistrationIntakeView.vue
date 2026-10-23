@@ -4553,9 +4553,11 @@ function groupPlanQuantity(line: RegistrationCourseLine) {
 function maxGroupMonthsForLine(line: RegistrationCourseLine) {
   const plan = selectedGroupPlan(line);
   const original = correctionBaseline.value?.items?.find((item) => String(item.orderItemId) === String(line.orderItemId));
+  // 课程方案尚在异步加载时，用已回填的购买数量作为上限，避免 InputNumber 把历史数量夹成 1。
+  const lineQuantity = Math.max(numeric(line.groupPurchasedMonths), numeric(line.packageQuantity));
   if (!editingCorrection.value || !original || String(original.groupRegistrationPlanId) !== String(plan?.id)
       || plan?.packageUnit !== 'MONTH' || plan.coverageType !== 'ROLLING_MONTHS') {
-    return Math.max(1, groupPlanQuantity(line));
+    return Math.max(1, groupPlanQuantity(line), lineQuantity);
   }
   const classEnd = selectedGroupActualClass(line)?.endDate;
   const startMonth = line.startDate?.slice(0, 7);
@@ -4564,7 +4566,7 @@ function maxGroupMonthsForLine(line: RegistrationCourseLine) {
     ? (Number(endMonth.slice(0, 4)) - Number(startMonth.slice(0, 4))) * 12
       + Number(endMonth.slice(5, 7)) - Number(startMonth.slice(5, 7)) + 1
     : 36;
-  return Math.max(1, numeric(original.purchasedMonths ?? original.packageQuantity),
+  return Math.max(1, numeric(original.purchasedMonths ?? original.packageQuantity), lineQuantity,
     Math.min(36, monthsUntilClassEnd));
 }
 
