@@ -58,6 +58,7 @@ import com.classdeduction.system.modules.enrollment.service.ClassBillingService;
 import com.classdeduction.system.modules.schedule.service.ClassHolidayService;
 import com.classdeduction.system.modules.schedule.vo.ClassHolidayVO;
 import com.classdeduction.system.modules.enrollment.service.EnrollmentOrderService;
+import com.classdeduction.system.modules.enrollment.service.RegistrationIntakeService;
 import com.classdeduction.system.modules.enrollment.service.allocation.PaymentAllocationService;
 import com.classdeduction.system.modules.enrollment.util.BusinessNoGenerator;
 import com.classdeduction.system.modules.enrollment.util.GroupRegistrationCoverage;
@@ -165,6 +166,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private final ReceiptRecordMapper receiptRecordMapper;
     @Autowired
     private EnrollmentCorrectionLogMapper correctionLogMapper;
+    @Autowired
+    private RegistrationIntakeService registrationIntakeService;
     private final ClassBillingService classBillingService;
     private final PackageTeacherAssignmentMapper packageTeacherAssignmentMapper;
     private final StudentMapper studentMapper;
@@ -1671,6 +1674,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, Function.identity()));
         for (RegistrationIntakeRequest.CourseItemPayload edit : edits) {
             if (attendanceOnlyCorrection(edit)) continue;
+            if (edit.getOrderItemId() == null) return true;
             EnrollmentOrderItemEntity original = byId.get(edit.getOrderItemId());
             if (original == null) continue;
             if ((changedCourseField(edit, "priceAmount")
@@ -1973,7 +1977,31 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .collect(Collectors.toMap(EnrollmentOrderItemEntity::getId, item -> item));
         for (RegistrationIntakeRequest.CourseItemPayload payload : payloads) {
             if (payload.getOrderItemId() == null) {
-                throw new BusinessException("CORRECTION_ORDER_ITEM_REQUIRED", "Each edited course row must identify its original order item.");
+                if (payload.getCorrectionChangedFields() == null) {
+                    throw new BusinessException("CORRECTION_FIELDS_REQUIRED",
+                            "Reload this registration before adding a course row.");
+                }
+                if (listOrderItemsByOrderId(order.getId()).stream()
+                        .anyMatch(existing -> Objects.equals(existing.getLineNo(), payload.getLineNo()))) {
+                    throw new BusinessException("COURSE_LINE_NUMBER_DUPLICATE",
+                            "Course line numbers must be unique within an order.");
+                }
+                Long participantCount = enrollmentOrderParticipantMapper.selectCount(
+                        new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                                .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                                .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+                if (participantCount != null && participantCount > 1) {
+                    throw new BusinessException("MULTI_PARTICIPANT_COURSE_APPEND_UNSUPPORTED",
+                            "Add a course from the individual student's receipt for a shared registration.");
+                }
+                Long targetCampusId = campusId != null ? campusId : order.getCampusId();
+                List<EnrollmentOrderItemEntity> currentItems = listOrderItemsByOrderId(order.getId());
+                EnrollmentOrderItemEntity added = registrationIntakeService.appendCourseToOrder(
+                        order, student, payload, targetCampusId, currentItems, lockedGroupClasses);
+                payload.setOrderItemId(added.getId());
+                existingItems.add(added);
+                itemMap.put(added.getId(), added);
+                continue;
             }
             EnrollmentOrderItemEntity item = itemMap.get(payload.getOrderItemId());
             if (item == null) {
@@ -1989,11 +2017,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                         "Switching between group class and 1-on-1 requires a new registration.");
             }
             boolean entitlementChanged = entitlementTermsChanged(payload);
-            if (entitlementChanged && item.getLogicalCourseId() != null
-                    && enrollmentOrderItemMapper.selectCount(new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
-                            .eq(EnrollmentOrderItemEntity::getLogicalCourseId, item.getLogicalCourseId())
-                            .ne(EnrollmentOrderItemEntity::getId, item.getId())
-                            .eq(EnrollmentOrderItemEntity::getIsDeleted, 0)) > 0) {
+            if (entitlementChanged && hasOtherPurchasesInLogicalCourse(item)) {
                 throw new BusinessException("RENEWED_COURSE_TERMS_LOCKED",
                         "This course has later purchases. Correcting its class or purchased duration requires a dedicated course adjustment.");
             }
@@ -2038,7 +2062,43 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 updateClassEnrollmentAttendance(item);
             }
         }
-        order.setClassId(resolveCorrectedOrderClassId(existingItems));
+        order.setClassId(resolveCorrectedOrderClassId(listOrderItemsByOrderId(order.getId())));
+    }
+
+    /** 更正权益前查真实续购链；旧班课订单行可能尚未回填逻辑课程 ID。 */
+    private boolean hasOtherPurchasesInLogicalCourse(EnrollmentOrderItemEntity item) {
+        Long logicalCourseId = item.getLogicalCourseId();
+        if (isGroupItem(item)) {
+            if (logicalCourseId == null) {
+                logicalCourseId = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                                .eq(ClassEnrollmentEntity::getEnrollmentOrderItemId, item.getId())
+                                .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                        .stream().map(ClassEnrollmentEntity::getLogicalCourseId)
+                        .filter(Objects::nonNull).findFirst().orElse(null);
+            }
+        }
+        if (logicalCourseId == null) return false;
+        LambdaQueryWrapper<EnrollmentOrderItemEntity> otherPurchaseQuery = new LambdaQueryWrapper<EnrollmentOrderItemEntity>()
+                .eq(EnrollmentOrderItemEntity::getLogicalCourseId, logicalCourseId)
+                .ne(EnrollmentOrderItemEntity::getId, item.getId())
+                .eq(EnrollmentOrderItemEntity::getIsDeleted, 0);
+        if (isGroupItem(item)) {
+            otherPurchaseQuery.isNotNull(EnrollmentOrderItemEntity::getClassId);
+        } else {
+            otherPurchaseQuery.isNull(EnrollmentOrderItemEntity::getClassId);
+        }
+        Long otherPurchases = enrollmentOrderItemMapper.selectCount(otherPurchaseQuery);
+        if (otherPurchases != null && otherPurchases > 0) return true;
+        if (isGroupItem(item)) {
+            // 兼容尚未回填订单行 ID 的旧续购链。
+            Long otherEntitlements = classEnrollmentMapper.selectCount(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                    .eq(ClassEnrollmentEntity::getLogicalCourseId, logicalCourseId)
+                    .ne(ClassEnrollmentEntity::getEnrollmentOrderItemId, item.getId())
+                    .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
+                    .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+            return otherEntitlements != null && otherEntitlements > 0;
+        }
+        return false;
     }
 
     /** 只补选 Attendance 时不读取现行方案计价，也不改动历史购买数量、期限及课次。 */
@@ -2219,13 +2279,22 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 && !Objects.equals(selectedCount, previousSelectedCount);
         BigDecimal quantityToValidate = selectedCount == null
                 ? payload.getPackageQuantity() : BigDecimal.valueOf(selectedCount);
+        // 滚动月方案数量用于计算月单价；购买月份可超过方案默认月数。
+        boolean extendingOriginalMonthlyPlan = !projectOrPlanChanged
+                && "MONTH".equalsIgnoreCase(previous.packageUnit())
+                && "MONTH".equalsIgnoreCase(payload.getPackageUnit())
+                && "ROLLING_MONTHS".equalsIgnoreCase(plan.getCoverageType())
+                && quantityToValidate != null
+                && quantityToValidate.compareTo(BigDecimal.valueOf(36)) <= 0;
+        boolean exceedsPlanQuantity = quantityToValidate != null && plan.getPackageQuantity() != null
+                && quantityToValidate.compareTo(plan.getPackageQuantity()) > 0;
         // 历史订单保存的是购买时的方案条款。方案后来调整上限后，编辑收据中的姓名、金额等字段
         // 不应被当前方案配置挡住；只有变更方案或购买条款时才按当前配置重新校验。
         if ((projectOrPlanChanged || packageTermsChanged || selectedCountChanged)
                 && (!Objects.equals(plan.getPackageUnit(), payload.getPackageUnit())
                 || plan.getPackageQuantity() == null || quantityToValidate == null
                 || quantityToValidate.signum() <= 0
-                || quantityToValidate.compareTo(plan.getPackageQuantity()) > 0)) {
+                || exceedsPlanQuantity && !extendingOriginalMonthlyPlan)) {
             throw new BusinessException("GROUP_V2_PLAN_MISMATCH",
                     "The purchased quantity must fit within the selected registration plan.");
         }
@@ -2589,17 +2658,19 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         } catch (ArithmeticException | NullPointerException ex) {
             throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID", "The selected plan quantity must be a whole number.");
         }
-        if (configuredQuantity < 1 || quantity < 1 || quantity > configuredQuantity
+        String coverage = plan.getCoverageType() == null ? "" : plan.getCoverageType().toUpperCase(java.util.Locale.ROOT);
+        int maximumQuantity = "MONTH".equals(unit) && "ROLLING_MONTHS".equals(coverage)
+                ? 36 : configuredQuantity;
+        if (configuredQuantity < 1 || quantity < 1 || quantity > maximumQuantity
                 || !("SESSION".equals(unit) || "MONTH".equals(unit))) {
             throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID",
-                    "The selected sessions or months must fit within the registration plan.");
+                    "The selected sessions or months exceed the allowed duration.");
         }
 
         LocalDate classStart = targetClass.getStartDate() != null ? targetClass.getStartDate() : targetClass.getStartMonth();
         LocalDate classEnd = targetClass.getEndDate() != null ? targetClass.getEndDate()
                 : targetClass.getEndMonth() == null ? null
                 : targetClass.getEndMonth().withDayOfMonth(targetClass.getEndMonth().lengthOfMonth());
-        String coverage = plan.getCoverageType() == null ? "" : plan.getCoverageType().toUpperCase(java.util.Locale.ROOT);
         LocalDate start = item.getStartDate() != null ? item.getStartDate()
                 : plan.getCoverageStartDate() != null ? plan.getCoverageStartDate()
                 : classStart != null ? classStart : order.getSignupDate();
@@ -2619,6 +2690,11 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             end = GroupRegistrationCoverage.monthPackageEndDate(start, quantity);
         } else {
             end = classEnd == null ? start.plusYears(3) : classEnd;
+        }
+        if ("MONTH".equals(unit) && quantity > configuredQuantity && classEnd != null
+                && java.time.YearMonth.from(end).isAfter(java.time.YearMonth.from(classEnd))) {
+            throw new BusinessException("GROUP_PLAN_DATES_INVALID",
+                    "The added months extend beyond the actual class end date.");
         }
         if (end == null || end.isBefore(start)) {
             throw new BusinessException("GROUP_PLAN_DATES_INVALID", "The selected registration plan has an invalid date range.");
@@ -2704,8 +2780,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private Integer originalReceiptSessions(Long orderId, Integer lineNo) {
         List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(new LambdaQueryWrapper<ReceiptRecordEntity>()
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, orderId)
+                .isNull(ReceiptRecordEntity::getPaymentRecordId)
                 .orderByDesc(ReceiptRecordEntity::getId));
         for (ReceiptRecordEntity receipt : receipts) {
+            if (REFUND_RECEIPT_TEMPLATE.equalsIgnoreCase(receipt.getTemplateCode())) continue;
             Map<String, Object> snapshot = jsonHelper.fromJson(receipt.getReceiptPayload(),
                     new TypeReference<LinkedHashMap<String, Object>>() {});
             if (snapshot == null || !(snapshot.get("items") instanceof List<?> rows)) continue;
@@ -2724,8 +2802,10 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     private Integer originalReceiptPurchasedMonths(Long orderId, Integer lineNo) {
         List<ReceiptRecordEntity> receipts = receiptRecordMapper.selectList(new LambdaQueryWrapper<ReceiptRecordEntity>()
                 .eq(ReceiptRecordEntity::getEnrollmentOrderId, orderId)
+                .isNull(ReceiptRecordEntity::getPaymentRecordId)
                 .orderByDesc(ReceiptRecordEntity::getId));
         for (ReceiptRecordEntity receipt : receipts) {
+            if (REFUND_RECEIPT_TEMPLATE.equalsIgnoreCase(receipt.getTemplateCode())) continue;
             Map<String, Object> snapshot = jsonHelper.fromJson(receipt.getReceiptPayload(),
                     new TypeReference<LinkedHashMap<String, Object>>() {});
             if (snapshot == null || !(snapshot.get("items") instanceof List<?> rows)) continue;
@@ -2843,8 +2923,8 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (payload == null) continue;
             Long paymentId = payload.getPaymentId();
             if (paymentId == null) {
-                throw new BusinessException("CORRECTION_NEW_PAYMENT_UNSUPPORTED",
-                        "Record new money through the payment workflow, not Edit Receipt.");
+                createCorrectionPayment(order, payload, participantIndex, itemsByLineNo);
+                continue;
             }
             PaymentRecordEntity payment = existingById.get(paymentId);
             if (payment == null || !retainedIds.add(paymentId)) {
@@ -2884,6 +2964,87 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (retainedIds.contains(payment.getId())) continue;
             throw new BusinessException("CORRECTION_PAYMENT_MISSING",
                     "An existing payment is missing from this correction. Use the refund workflow for returned money.");
+        }
+    }
+
+    /** 在当前报名订单中追加付款流水；Edit Receipt 的付款不会另建订单或收据。 */
+    private void createCorrectionPayment(EnrollmentOrderEntity order,
+                                         RegistrationIntakeRequest.PaymentPayload payload,
+                                         Integer participantIndex,
+                                         Map<Integer, EnrollmentOrderItemEntity> itemsByLineNo) {
+        BigDecimal amount = payload.getAmount();
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0
+                || amount.stripTrailingZeros().scale() > 2) {
+            throw new BusinessException("INVALID_PAYMENT_AMOUNT",
+                    "Payment amount must be greater than zero and use at most 2 decimal places.");
+        }
+        if (WholeDollarBilling.appliesTo(order)) {
+            WholeDollarBilling.requireInteger(amount, "Payment");
+        }
+        if (!StringUtils.hasText(payload.getPaymentMethod())) {
+            throw new BusinessException("PAYMENT_METHOD_REQUIRED", "Select a payment method.");
+        }
+        requireActivePaymentMethod(payload.getPaymentMethod());
+        if ("OTHER".equalsIgnoreCase(payload.getPaymentMethod()) && !StringUtils.hasText(payload.getRemark())) {
+            throw new BusinessException("PAYMENT_METHOD_DETAIL_REQUIRED",
+                    "Payment method details are required when using Other.");
+        }
+
+        Integer targetParticipantIndex = participantIndex != null ? participantIndex : payload.getParticipantIndex();
+        Long creditStudentId = order.getStudentId();
+        if (targetParticipantIndex != null) {
+            EnrollmentOrderParticipantEntity participant = enrollmentOrderParticipantMapper.selectOne(
+                    new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                            .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                            .eq(EnrollmentOrderParticipantEntity::getParticipantIndex, targetParticipantIndex)
+                            .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+            if (participant == null) {
+                throw new BusinessException("PAYMENT_PARTICIPANT_NOT_FOUND",
+                        "The selected student is not part of this enrollment order.");
+            }
+            creditStudentId = participant.getStudentId();
+        } else {
+            Long participantCount = enrollmentOrderParticipantMapper.selectCount(
+                    new LambdaQueryWrapper<EnrollmentOrderParticipantEntity>()
+                            .eq(EnrollmentOrderParticipantEntity::getEnrollmentOrderId, order.getId())
+                            .eq(EnrollmentOrderParticipantEntity::getIsDeleted, 0));
+            if (participantCount != null && participantCount > 1) {
+                throw new BusinessException("PAYMENT_PARTICIPANT_REQUIRED",
+                        "Select the student who is making this payment.");
+            }
+        }
+
+        PaymentRecordEntity payment = new PaymentRecordEntity();
+        payment.setEnrollmentOrderId(order.getId());
+        payment.setParticipantIndex(targetParticipantIndex);
+        payment.setPaymentNo(BusinessNoGenerator.generatePaymentNo());
+        payment.setPaymentMethod(payload.getPaymentMethod());
+        payment.setPaymentType("PAYMENT");
+        payment.setPaymentStatus("PAID");
+        payment.setAmount(amount);
+        payment.setPaidAt(payload.getPaidAt() == null ? AppTime.nowLocalDateTime() : payload.getPaidAt());
+        payment.setHandledByUserId(payload.getHandledByUserId() != null
+                ? payload.getHandledByUserId() : order.getCashierUserId());
+        payment.setHandledByName(StringUtils.hasText(payload.getHandledByName())
+                ? payload.getHandledByName() : order.getHandledByName());
+        payment.setRemark(payload.getRemark());
+        paymentRecordMapper.insert(payment);
+
+        if (StudentCreditService.PAYMENT_METHOD_CODE.equalsIgnoreCase(payload.getPaymentMethod())) {
+            studentCreditService.consumeForPayment(creditStudentId, amount, order.getId(), payment.getId(),
+                    payment.getHandledByUserId(), payment.getHandledByName(), payment.getRemark());
+        }
+        if (payload.getAllocations() != null && !payload.getAllocations().isEmpty()) {
+            Map<Long, BigDecimal> allocations = new LinkedHashMap<>();
+            for (RegistrationIntakeRequest.CoursePaymentAllocationPayload allocation : payload.getAllocations()) {
+                EnrollmentOrderItemEntity item = allocation == null ? null : itemsByLineNo.get(allocation.getOrderItemLineNo());
+                if (item == null || allocation.getAmount() == null) {
+                    throw new BusinessException("COURSE_PAYMENT_ALLOCATION_INVALID",
+                            "A corrected payment references a course that is not in this order.");
+                }
+                allocations.merge(item.getId(), allocation.getAmount(), BigDecimal::add);
+            }
+            paymentAllocationService.recordExplicitAllocations(payment, order.getId(), allocations);
         }
     }
 
@@ -3099,7 +3260,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     /** 更正请求只带变化的课程行，保留同收据内其他课程快照及其展示字段。 */
     private void mergeCorrectedReceiptItems(Map<String, Object> receiptPayload,
                                             List<RegistrationIntakeRequest.CourseItemPayload> edits) {
-        if (!(receiptPayload.get("items") instanceof List<?> savedRows)) return;
+        List<?> savedRows = receiptPayload.get("items") instanceof List<?> rows ? rows : List.of();
         Map<Long, RegistrationIntakeRequest.CourseItemPayload> editsById = edits.stream()
                 .filter(Objects::nonNull)
                 .filter(item -> item.getOrderItemId() != null)
@@ -3111,6 +3272,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 .collect(Collectors.toMap(RegistrationIntakeRequest.CourseItemPayload::getLineNo,
                         Function.identity(), (first, ignored) -> first));
         List<Object> mergedRows = new ArrayList<>();
+        Set<Long> representedItemIds = new HashSet<>();
         for (Object row : savedRows) {
             if (!(row instanceof Map<?, ?> saved)) {
                 mergedRows.add(row);
@@ -3120,6 +3282,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
             if (saved.get("orderItemId") != null) {
                 try {
                     itemId = Long.valueOf(saved.get("orderItemId").toString());
+                    representedItemIds.add(itemId);
                 } catch (NumberFormatException ignored) {
                     // 旧收据快照中的 ID 可能已丢失精度，以下方 lineNo 回退定位。
                 }
@@ -3130,6 +3293,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 mergedRows.add(row);
                 continue;
             }
+            if (edit.getOrderItemId() != null) representedItemIds.add(edit.getOrderItemId());
             Map<String, Object> merged = new LinkedHashMap<>();
             saved.forEach((key, value) -> merged.put(String.valueOf(key), value));
             Map<String, Object> changed = jsonHelper.fromJson(jsonHelper.toJson(edit),
@@ -3145,6 +3309,18 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
                 }
             }
             mergedRows.add(merged);
+        }
+        // 新增课程行已在同一订单事务中获得 orderItemId；把完整行写回原收据快照，
+        // 这样 View Receipt 和再次进入 Edit Receipt 都仍然落在这张原订单收据上。
+        for (RegistrationIntakeRequest.CourseItemPayload edit : edits) {
+            if (edit == null || edit.getOrderItemId() == null
+                    || representedItemIds.contains(edit.getOrderItemId())) continue;
+            Map<String, Object> added = jsonHelper.fromJson(jsonHelper.toJson(edit),
+                    new TypeReference<LinkedHashMap<String, Object>>() {});
+            if (added == null) continue;
+            added.remove("correctionChangedFields");
+            mergedRows.add(added);
+            representedItemIds.add(edit.getOrderItemId());
         }
         receiptPayload.put("items", mergedRows);
     }

@@ -197,6 +197,7 @@ export interface RegistrationStudentPayload {
 
 export interface RegistrationCourseItemPayload {
   orderItemId?: EntityId;
+  renewalSourceOrderItemId?: EntityId;
   correctionChangedFields?: string[];
   lineNo?: number;
   registerClass?: string;

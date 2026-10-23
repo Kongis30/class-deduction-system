@@ -21,6 +21,9 @@ public class EnrollmentOrderItemDTO {
     /** 历史报名单更正时用于定位原订单行；新报名时为空。 */
     private Long orderItemId;
 
+    /** 在原订单中加报时用于定位续接的课程行；产品或教学项目改动后按新课程处理。 */
+    private Long renewalSourceOrderItemId;
+
     @Min(value = 1, message = "Line number must be at least 1")
     @Schema(description = "Line number inside the enrollment order", example = "1")
     private Integer lineNo;

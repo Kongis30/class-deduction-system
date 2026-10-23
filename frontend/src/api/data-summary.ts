@@ -113,6 +113,13 @@ export interface DataSummaryResponse {
   classCourseSummaries: DataSummaryGroup[];
   paymentStatusSummaries: DataSummaryGroup[];
   rows: DataSummaryRow[];
+  logicalCoursePeriods?: Array<{
+    studentId: EntityId;
+    logicalCourseId: EntityId;
+    startDate: string;
+    endDate: string;
+    segments: Array<{ startDate: string; endDate: string }>;
+  }>;
 }
 
 export function fetchDataSummary(params: DataSummaryQuery = {}) {

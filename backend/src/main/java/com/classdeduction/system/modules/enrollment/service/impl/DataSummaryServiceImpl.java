@@ -51,6 +51,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -329,7 +330,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 buildGroups(rows, orderMap, GroupKind.COURSE_TYPE),
                 buildGroups(rows, orderMap, GroupKind.CLASS_COURSE),
                 buildGroups(rows, orderMap, GroupKind.PAYMENT_STATUS),
-                rows
+                rows,
+                logicalCoursePeriods(rows)
         );
     }
 
@@ -1313,6 +1315,51 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private BigDecimal displayBalanceAmount(BigDecimal storedBalanceAmount) {
         BigDecimal balance = amount(storedBalanceAmount);
         return positive(balance) ? balance.negate() : balance;
+    }
+
+    /** 报表逐笔计费，但课程 Period 只从有效班课权益读取，避免已退款购买延长期限。 */
+    private List<DataSummaryResponseVO.LogicalCoursePeriodVO> logicalCoursePeriods(
+            List<DataSummaryResponseVO.RowVO> rows) {
+        Set<Long> logicalIds = rows.stream()
+                .filter(row -> row.logicalCourseId() != null && !"ONE_ON_ONE".equals(row.courseType()))
+                .map(DataSummaryResponseVO.RowVO::logicalCourseId)
+                .collect(Collectors.toSet());
+        if (logicalIds.isEmpty()) return List.of();
+        List<ClassEnrollmentEntity> validEntitlements = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .in(ClassEnrollmentEntity::getLogicalCourseId, logicalIds)
+                        .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+        Map<String, List<ClassEnrollmentEntity>> byCourse = validEntitlements.stream()
+                .filter(item -> item.getStudentId() != null && item.getEnrollmentDate() != null
+                        && item.getExpiryDate() != null)
+                .collect(Collectors.groupingBy(item -> item.getStudentId() + ":" + item.getLogicalCourseId()));
+        List<DataSummaryResponseVO.LogicalCoursePeriodVO> periods = new ArrayList<>();
+        for (List<ClassEnrollmentEntity> course : byCourse.values()) {
+            course.sort(Comparator.comparing(ClassEnrollmentEntity::getEnrollmentDate));
+            List<DataSummaryResponseVO.PeriodSegmentVO> segments = new ArrayList<>();
+            for (ClassEnrollmentEntity entitlement : course) {
+                LocalDate start = entitlement.getEnrollmentDate();
+                LocalDate end = entitlement.getExpiryDate();
+                if (!segments.isEmpty()) {
+                    DataSummaryResponseVO.PeriodSegmentVO last = segments.get(segments.size() - 1);
+                    boolean contiguous = !start.isAfter(last.endDate().plusDays(1))
+                            || "MONTHLY".equals(entitlement.getBillingType())
+                            && !YearMonth.from(start).isAfter(YearMonth.from(last.endDate()).plusMonths(1));
+                    if (contiguous) {
+                        segments.set(segments.size() - 1, new DataSummaryResponseVO.PeriodSegmentVO(
+                                last.startDate(), end.isAfter(last.endDate()) ? end : last.endDate()));
+                        continue;
+                    }
+                }
+                segments.add(new DataSummaryResponseVO.PeriodSegmentVO(start, end));
+            }
+            ClassEnrollmentEntity first = course.get(0);
+            periods.add(new DataSummaryResponseVO.LogicalCoursePeriodVO(
+                    first.getStudentId(), first.getLogicalCourseId(),
+                    segments.get(0).startDate(), segments.get(segments.size() - 1).endDate(), segments));
+        }
+        return periods;
     }
 
     private DataSummaryResponseVO emptyResponse() {

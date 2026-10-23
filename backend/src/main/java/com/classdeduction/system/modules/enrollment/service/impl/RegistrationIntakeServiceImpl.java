@@ -260,6 +260,112 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 .build();
     }
 
+    /** 在已有订单内增加课程购买行，并复用对应逻辑课包/班课权益。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public EnrollmentOrderItemEntity appendCourseToOrder(EnrollmentOrderEntity order,
+                                                         StudentEntity student,
+                                                         RegistrationIntakeRequest.CourseItemPayload payload,
+                                                         Long campusId,
+                                                         List<EnrollmentOrderItemEntity> currentItems,
+                                                         Map<Long, ClassGroupEntity> lockedClasses) {
+        if (order == null || student == null || payload == null || payload.getLineNo() == null) {
+            throw new BusinessException("COURSE_ITEM_REQUIRED", "A complete course row is required.");
+        }
+        List<RegistrationIntakeRequest.CourseItemPayload> payloads = List.of(payload);
+        Map<Long, ClassGroupEntity> classes = lockedClasses == null ? Map.of() : lockedClasses;
+        List<ResolvedCourseLine> resolved = resolveCourseLines(payloads, campusId, classes);
+        lockAndRevalidateCourseProducts(resolved);
+        ResolvedCourseLine line = resolved.get(0);
+        line.lineNo = payload.getLineNo();
+        line.discountAmount = defaultAmount(payload.getDiscountAmount());
+        line.initialPaidAmount = ZERO_AMOUNT;
+        BigDecimal fees = defaultAmount(line.pickupFeeAmount)
+                .add(defaultAmount(line.dropoffFeeAmount))
+                .add(sumFeeLines(line.serviceFees));
+        line.amountDue = defaultAmount(line.priceAmount).add(fees).subtract(line.discountAmount)
+                .setScale(2, RoundingMode.HALF_UP);
+        if (line.amountDue.compareTo(ZERO_AMOUNT) < 0) {
+            throw new BusinessException("COURSE_DISCOUNT_EXCEEDS_AMOUNT",
+                    "A course discount cannot exceed that course's price and fees.");
+        }
+
+        EnrollmentOrderItemEntity orderItem = createOrderItem(order.getId(), line);
+        line.orderItemId = orderItem.getId();
+        EnrollmentOrderItemEntity source = findRenewalSource(order.getId(), payload, currentItems, line);
+        if (line.oneOnOne) {
+            Long packageId = source == null ? null : resolveRenewalPackageId(source);
+            if (source != null && packageId == null) {
+                throw new BusinessException("RENEWAL_PACKAGE_NOT_FOUND",
+                        "The existing 1-on-1 course package could not be found for this order.");
+            }
+            RegistrationIntakeResultVO.CourseArtifactVO artifact = createOneOnOneArtifact(
+                    order, student, line, ZERO_AMOUNT, packageId, line.priceAmount, false);
+            linkLogicalCourse(orderItem.getId(), artifact.packageId());
+        } else {
+            Long sourceEnrollmentId = source == null ? null : latestEnrollmentId(source.getId());
+            if (source != null && source.getGroupProjectId() != null && sourceEnrollmentId == null) {
+                throw new BusinessException("RENEWAL_CLASS_ENROLLMENT_NOT_FOUND",
+                        "The existing group-class entitlement could not be found for this order.");
+            }
+            createGroupClassArtifact(student, line, sourceEnrollmentId, false);
+        }
+        return orderItem;
+    }
+
+    private EnrollmentOrderItemEntity findRenewalSource(Long orderId,
+                                                        RegistrationIntakeRequest.CourseItemPayload payload,
+                                                        List<EnrollmentOrderItemEntity> currentItems,
+                                                        ResolvedCourseLine line) {
+        List<EnrollmentOrderItemEntity> items = currentItems == null ? Collections.emptyList() : currentItems;
+        EnrollmentOrderItemEntity requested = payload.getRenewalSourceOrderItemId() == null ? null
+                : items.stream().filter(item -> Objects.equals(item.getId(), payload.getRenewalSourceOrderItemId()))
+                .findFirst().orElseThrow(() -> new BusinessException("RENEWAL_SOURCE_NOT_IN_ORDER",
+                        "The selected renewal source does not belong to this order."));
+        if (requested != null) return sameLogicalCourse(requested, line) ? requested : null;
+        return items.stream()
+                .filter(item -> "ACTIVE".equals(item.getItemStatus()))
+                .filter(item -> sameLogicalCourse(item, line))
+                .max(Comparator.comparing(EnrollmentOrderItemEntity::getLineNo,
+                        Comparator.nullsFirst(Integer::compareTo)))
+                .orElse(null);
+    }
+
+    private boolean sameLogicalCourse(EnrollmentOrderItemEntity item, ResolvedCourseLine line) {
+        if (line.oneOnOne) {
+            return "ONE_ON_ONE".equalsIgnoreCase(item.getCourseType())
+                    && Objects.equals(item.getCourseProductId(), line.courseProductId)
+                    && normalizedGrade(item.getGradeBand()).equals(normalizedGrade(line.gradeBand));
+        }
+        return item.getGroupProjectId() != null
+                && Objects.equals(item.getCourseProductId(), line.courseProductId)
+                && Objects.equals(item.getGroupProjectId(), line.groupProjectId);
+    }
+
+    private Long resolveRenewalPackageId(EnrollmentOrderItemEntity source) {
+        Long packageId = source.getLogicalCourseId();
+        CoursePackageEntity coursePackage = packageId == null ? null : coursePackageMapper.selectById(packageId);
+        if (coursePackage == null) {
+            coursePackage = coursePackageMapper.selectOne(new LambdaQueryWrapper<CoursePackageEntity>()
+                    .eq(CoursePackageEntity::getEnrollmentOrderItemId, source.getId())
+                    .eq(CoursePackageEntity::getIsDeleted, 0)
+                    .last("LIMIT 1"));
+        }
+        return coursePackage == null ? null : coursePackage.getId();
+    }
+
+    private Long latestEnrollmentId(Long orderItemId) {
+        return classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getEnrollmentOrderItemId, orderItemId)
+                        .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0))
+                .stream()
+                .max(Comparator.comparing(ClassEnrollmentEntity::getExpiryDate,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .map(ClassEnrollmentEntity::getId)
+                .orElse(null);
+    }
+
     /** 报名写入与产品模式变更共用行锁；锁后复核产品类型，避免并发生成另一教学模式的订单。 */
     private void lockAndRevalidateCourseProducts(List<ResolvedCourseLine> lines) {
         List<Long> productIds = lines.stream()
@@ -1013,7 +1119,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         } catch (ArithmeticException | NullPointerException ex) {
             throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID", "Plan quantity must be a whole number.");
         }
-        if (configuredQuantity < 1 || selectedQuantity < 1 || selectedQuantity > configuredQuantity) {
+        int maximumQuantity = "MONTH".equals(plan.getPackageUnit())
+                && "ROLLING_MONTHS".equals(plan.getCoverageType()) ? 36 : configuredQuantity;
+        if (configuredQuantity < 1 || selectedQuantity < 1 || selectedQuantity > maximumQuantity) {
             throw new BusinessException("GROUP_PLAN_QUANTITY_INVALID",
                     "Selected months or sessions must be within the plan limit.");
         }
@@ -1025,8 +1133,11 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             line.packageQuantity = BigDecimal.valueOf(selectedQuantity);
         }
 
-        BigDecimal configuredPrice = "FULL_DAY".equals(line.attendanceOption) || plan.getHalfDayPrice() == null
-                ? plan.getFullDayPrice() : plan.getHalfDayPrice();
+        boolean halfDay = "MORNING".equals(line.attendanceOption)
+                || "AFTERNOON".equals(line.attendanceOption)
+                || "CUSTOM".equals(line.attendanceOption);
+        BigDecimal configuredPrice = halfDay && plan.getHalfDayPrice() != null
+                ? plan.getHalfDayPrice() : plan.getFullDayPrice();
         configuredPrice = requireNonNegativeAmount(configuredPrice, "COURSE_PRICE_REQUIRED", "Plan price is required.");
         if (configuredPrice.compareTo(ZERO_AMOUNT) <= 0) {
             throw new BusinessException("COURSE_LINE_PRICE_REQUIRED", "Plan price must be greater than zero.");
@@ -1061,6 +1172,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
             LocalDate coverageEnd = "FIXED_DATES".equals(plan.getCoverageType())
                     ? plan.getCoverageEndDate()
                     : GroupRegistrationCoverage.monthPackageEndDate(requestedStart, selectedQuantity);
+            if (selectedQuantity > configuredQuantity && classEnd != null && coverageEnd.isAfter(classEnd)) {
+                throw new BusinessException("GROUP_PLAN_DATES_INVALID",
+                        "The purchased months extend beyond the actual class end date.");
+            }
             if (classEnd != null && coverageEnd.isAfter(classEnd)) coverageEnd = classEnd;
             line.entitlementExpiryDate = coverageEnd;
         } else {
@@ -2306,6 +2421,10 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 throw new BusinessException("RENEWAL_COURSE_MISMATCH",
                         "Renewal must use the same course product and teaching project.");
             }
+            if (!Objects.equals(sourceItem.getPackageUnit(), line.packageUnit)) {
+                throw new BusinessException("RENEWAL_UNIT_MISMATCH",
+                        "A renewal must use the same unit as the original course.");
+            }
             EnrollmentOrderEntity sourceOrder = enrollmentOrderMapper.selectById(sourceItem.getEnrollmentOrderId());
             if (sourceOrder == null || "CANCELLED".equals(sourceOrder.getOrderStatus())) {
                 throw new BusinessException("RENEWAL_SOURCE_INACTIVE", "The original course order is inactive.");
@@ -2345,6 +2464,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
                 source.setLogicalCourseId(logicalCourseId);
                 classEnrollmentMapper.updateById(source);
             }
+            linkLogicalCourse(sourceItem.getId(), logicalCourseId);
         }
         GroupClassEntitlementRules.requireNoOverlappingActiveEntitlement(classEnrollmentMapper,
                 student.getId(), line.classId, line.entitlementStartDate, line.entitlementExpiryDate, null);
@@ -2368,6 +2488,9 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         enrollment.setAttendanceOption(normalizeAttendanceOption(line.attendanceOption));
         enrollment.setStatus("ACTIVE");
         classEnrollmentMapper.insert(enrollment);
+        if (logicalCourseId != null) {
+            linkLogicalCourse(line.orderItemId, logicalCourseId);
+        }
 
         return RegistrationIntakeResultVO.CourseArtifactVO.builder()
                 .orderItemId(line.orderItemId)
@@ -2379,7 +2502,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     private CoursePackageEntity requireRenewableOneOnOnePackage(Long packageId) {
-        CoursePackageEntity coursePackage = coursePackageMapper.selectById(packageId);
+        CoursePackageEntity coursePackage = coursePackageMapper.selectByIdForUpdate(packageId);
         if (coursePackage == null || Integer.valueOf(1).equals(coursePackage.getIsDeleted())) {
             throw new BusinessException("COURSE_PACKAGE_NOT_FOUND", "Course package not found.");
         }
@@ -2395,7 +2518,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     private ClassEnrollmentEntity requireRenewableClassEnrollment(Long enrollmentId) {
-        ClassEnrollmentEntity enrollment = classEnrollmentMapper.selectById(enrollmentId);
+        ClassEnrollmentEntity enrollment = classEnrollmentMapper.selectByIdForUpdate(enrollmentId);
         if (enrollment == null || Integer.valueOf(1).equals(enrollment.getIsDeleted())) {
             throw new BusinessException("CLASS_ENROLLMENT_NOT_FOUND", "Class enrollment not found.");
         }

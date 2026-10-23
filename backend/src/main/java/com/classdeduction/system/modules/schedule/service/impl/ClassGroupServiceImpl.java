@@ -206,24 +206,28 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     @Override
     public List<Map<String, Object>> listEnrolledStudents(Long classId, CurrentUserResponse currentUser) {
         requireClassForRead(classId, currentUser);
-        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+        List<ClassEnrollmentEntity> rosterEnrollments = classEnrollmentMapper.selectList(
                 new LambdaQueryWrapper<ClassEnrollmentEntity>()
                         .eq(ClassEnrollmentEntity::getClassId, classId)
                         .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0)
         );
-        if (enrollments.isEmpty()) {
+        if (rosterEnrollments.isEmpty()) {
             return Collections.emptyList();
         }
-        enrollments = enrollments.stream()
-                .filter(enrollment -> "ACTIVE".equalsIgnoreCase(enrollment.getStatus()))
-                .toList();
-        if (enrollments.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        // 批量加载学生
-        List<Long> studentIds = enrollments.stream()
+        Set<Long> logicalIds = rosterEnrollments.stream().map(ClassEnrollmentEntity::getLogicalCourseId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        List<ClassEnrollmentEntity> linkedEnrollments = logicalIds.isEmpty() ? List.of()
+                : classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .in(ClassEnrollmentEntity::getLogicalCourseId, logicalIds)
+                        .in(ClassEnrollmentEntity::getStatus, "ACTIVE", "EXPIRED")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0));
+        Map<Long, ClassEnrollmentEntity> allSegmentsById = new LinkedHashMap<>();
+        rosterEnrollments.forEach(enrollment -> allSegmentsById.put(enrollment.getId(), enrollment));
+        linkedEnrollments.forEach(enrollment -> allSegmentsById.put(enrollment.getId(), enrollment));
+        Map<String, List<ClassEnrollmentEntity>> segmentsByCourse = allSegmentsById.values().stream()
+                .collect(Collectors.groupingBy(this::logicalEnrollmentKey, LinkedHashMap::new, Collectors.toList()));
+        List<Long> studentIds = rosterEnrollments.stream()
                 .map(ClassEnrollmentEntity::getStudentId)
                 .toList();
         Map<Long, StudentEntity> studentMap = studentMapper.selectBatchIds(studentIds).stream()
@@ -231,25 +235,44 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
         LocalDate today = LocalDate.now();
         Map<Long, List<LocalDate>> confirmedLessonDatesByStudent = loadConfirmedLessonDatesByStudent(classId);
-        Map<Long, List<LocalDate>> confirmedLessonDatesByEntitlement = loadConfirmedLessonDatesByEntitlement(classId);
+        Set<Long> segmentClassIds = allSegmentsById.values().stream().map(ClassEnrollmentEntity::getClassId)
+                .filter(Objects::nonNull).collect(Collectors.toSet());
+        Map<Long, List<LocalDate>> confirmedLessonDatesByEntitlement =
+                loadConfirmedLessonDatesByEntitlements(segmentClassIds);
         List<Map<String, Object>> result = new ArrayList<>();
-        for (ClassEnrollmentEntity enrollment : enrollments) {
+        Set<String> displayedCourses = new HashSet<>();
+        for (ClassEnrollmentEntity enrollment : rosterEnrollments) {
+            String courseKey = logicalEnrollmentKey(enrollment);
+            if (displayedCourses.contains(courseKey)) continue;
             StudentEntity student = studentMap.get(enrollment.getStudentId());
             if (student == null) continue;
-            Long usedSessions = null;
-            Integer remainingSessions = null;
-            if ("PER_SESSION".equals(enrollment.getBillingType()) && enrollment.getPurchasedQuantity() != null) {
-                List<LocalDate> usedDates = enrollment.getGroupProjectId() == null
-                        ? confirmedLessonDatesByStudent.getOrDefault(enrollment.getStudentId(), Collections.emptyList())
-                        : confirmedLessonDatesByEntitlement.getOrDefault(enrollment.getId(), Collections.emptyList());
-                usedSessions = countUsedSessions(enrollment, usedDates);
-                remainingSessions = Math.max(enrollment.getPurchasedQuantity() - usedSessions.intValue(), 0);
+            List<ClassEnrollmentEntity> segments = segmentsByCourse.getOrDefault(courseKey, List.of(enrollment)).stream()
+                    .sorted(Comparator.comparing(ClassEnrollmentEntity::getEnrollmentDate,
+                            Comparator.nullsLast(Comparator.naturalOrder())))
+                    .toList();
+            ClassEnrollmentEntity latestSegment = segments.get(segments.size() - 1);
+            if (!Objects.equals(latestSegment.getClassId(), classId)
+                    && enrollment.getExpiryDate() != null && enrollment.getExpiryDate().isBefore(today)) {
+                continue;
             }
+            displayedCourses.add(courseKey);
+            LocalDate firstDate = segments.stream().map(ClassEnrollmentEntity::getEnrollmentDate)
+                    .filter(Objects::nonNull).min(LocalDate::compareTo).orElse(enrollment.getEnrollmentDate());
+            LocalDate lastDate = segments.stream().map(ClassEnrollmentEntity::getExpiryDate)
+                    .filter(Objects::nonNull).max(LocalDate::compareTo).orElse(enrollment.getExpiryDate());
+            boolean perSession = "PER_SESSION".equals(enrollment.getBillingType());
+            int purchased = segments.stream().mapToInt(segment -> safeQuantity(segment.getPurchasedQuantity())).sum();
+            long used = perSession ? segments.stream().mapToLong(segment -> {
+                List<LocalDate> dates = segment.getGroupProjectId() == null
+                        ? confirmedLessonDatesByStudent.getOrDefault(segment.getStudentId(), List.of())
+                        : confirmedLessonDatesByEntitlement.getOrDefault(segment.getId(), List.of());
+                return countUsedSessions(segment, dates);
+            }).sum() : 0;
 
             String expiryStatus;
-            if (enrollment.getExpiryDate().isBefore(today)) {
+            if (lastDate != null && lastDate.isBefore(today)) {
                 expiryStatus = "EXPIRED";
-            } else if (enrollment.getExpiryDate().isBefore(today.plusDays(30))) {
+            } else if (lastDate != null && lastDate.isBefore(today.plusDays(30))) {
                 expiryStatus = "EXPIRING_SOON";
             } else {
                 expiryStatus = "NORMAL";
@@ -257,12 +280,14 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             Map<String, Object> item = new HashMap<>();
             item.put("studentId", enrollment.getStudentId());
             item.put("studentName", student.getStudentName());
-            item.put("enrollmentDate", enrollment.getEnrollmentDate());
-            item.put("expiryDate", enrollment.getExpiryDate());
+            item.put("logicalCourseId", enrollment.getLogicalCourseId() == null ? enrollment.getId() : enrollment.getLogicalCourseId());
+            item.put("enrollmentDate", firstDate);
+            item.put("expiryDate", lastDate);
             item.put("billingType", enrollment.getBillingType());
-            item.put("purchasedQuantity", enrollment.getPurchasedQuantity());
-            item.put("usedSessions", usedSessions);
-            item.put("remainingSessions", remainingSessions);
+            item.put("purchasedQuantity", purchased);
+            item.put("usedSessions", perSession ? used : null);
+            item.put("remainingSessions", perSession ? Math.max(purchased - used, 0) : null);
+            item.put("purchaseSegments", segments.stream().map(this::purchaseSegmentView).toList());
             item.put("enrollmentStatus", enrollment.getStatus());
             item.put("expiryStatus", expiryStatus);
             result.add(item);
@@ -278,6 +303,26 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             return 0;
         });
         return result;
+    }
+
+    /** 未续课的旧在册独立成课；已续课的各权益段按学生和链根归组。 */
+    private String logicalEnrollmentKey(ClassEnrollmentEntity enrollment) {
+        return enrollment.getStudentId() + ":" + (enrollment.getLogicalCourseId() == null
+                ? enrollment.getId() : enrollment.getLogicalCourseId());
+    }
+
+    private int safeQuantity(Integer quantity) {
+        return quantity == null ? 0 : quantity;
+    }
+
+    private Map<String, Object> purchaseSegmentView(ClassEnrollmentEntity segment) {
+        Map<String, Object> view = new LinkedHashMap<>();
+        view.put("classEnrollmentId", segment.getId());
+        view.put("classId", segment.getClassId());
+        view.put("enrollmentDate", segment.getEnrollmentDate());
+        view.put("expiryDate", segment.getExpiryDate());
+        view.put("purchasedQuantity", safeQuantity(segment.getPurchasedQuantity()));
+        return view;
     }
 
     @Override
@@ -751,10 +796,16 @@ public class ClassGroupServiceImpl implements ClassGroupService {
     }
 
     private Map<Long, List<LocalDate>> loadConfirmedLessonDatesByEntitlement(Long classGroupId) {
+        return loadConfirmedLessonDatesByEntitlements(Set.of(classGroupId));
+    }
+
+    /** 课程汇总跨实际班级读取消课日期，单次课的原权益关联保持不变。 */
+    private Map<Long, List<LocalDate>> loadConfirmedLessonDatesByEntitlements(Set<Long> classGroupIds) {
+        if (classGroupIds.isEmpty()) return Collections.emptyMap();
         List<LessonOccurrenceEntity> occurrences = lessonOccurrenceMapper.selectList(
                 new LambdaQueryWrapper<LessonOccurrenceEntity>()
                         .select(LessonOccurrenceEntity::getId, LessonOccurrenceEntity::getPlannedStartAt)
-                        .eq(LessonOccurrenceEntity::getClassGroupId, classGroupId));
+                        .in(LessonOccurrenceEntity::getClassGroupId, classGroupIds));
         if (occurrences.isEmpty()) return Collections.emptyMap();
         Map<Long, LocalDate> datesByOccurrence = occurrences.stream()
                 .filter(item -> item.getPlannedStartAt() != null)
@@ -1156,6 +1207,17 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             return Collections.emptyList();
         }
 
+        LocalDate today = LocalDate.now();
+        Map<String, ClassEnrollmentEntity> currentByCourse = new LinkedHashMap<>();
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            String key = logicalEnrollmentKey(enrollment);
+            ClassEnrollmentEntity previous = currentByCourse.get(key);
+            if (previous == null || preferStudentCourseEnrollment(enrollment, previous, today)) {
+                currentByCourse.put(key, enrollment);
+            }
+        }
+        enrollments = new ArrayList<>(currentByCourse.values());
+
         List<Long> classIds = enrollments.stream()
                 .map(ClassEnrollmentEntity::getClassId)
                 .toList();
@@ -1188,6 +1250,23 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             result.add(item);
         }
         return result;
+    }
+
+    /** 学生课表优先显示当前有效班，未来才显示下一班，避免续课换班后出现两门课。 */
+    private boolean preferStudentCourseEnrollment(ClassEnrollmentEntity candidate,
+                                                  ClassEnrollmentEntity previous, LocalDate today) {
+        int candidateRank = enrollmentDateRank(candidate, today);
+        int previousRank = enrollmentDateRank(previous, today);
+        if (candidateRank != previousRank) return candidateRank < previousRank;
+        if (candidateRank == 1) {
+            return candidate.getEnrollmentDate().isBefore(previous.getEnrollmentDate());
+        }
+        return candidate.getExpiryDate().isAfter(previous.getExpiryDate());
+    }
+
+    private int enrollmentDateRank(ClassEnrollmentEntity enrollment, LocalDate today) {
+        if (!enrollment.getEnrollmentDate().isAfter(today) && !enrollment.getExpiryDate().isBefore(today)) return 0;
+        return enrollment.getEnrollmentDate().isAfter(today) ? 1 : 2;
     }
 
     @Override

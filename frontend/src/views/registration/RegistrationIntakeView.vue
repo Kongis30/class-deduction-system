@@ -461,7 +461,7 @@
                     </el-select>
                     <small v-if="renewClassEnrollmentId && renewalSourceItem" class="renewal-new-course-label">New course · billed separately</small>
                     <button
-                      v-if="receiptEditingEnabled && !editingCorrection && !isPrivateAllReceiptView && !isRenewalMode && (line.courseProductId || courseLines.length > 1)"
+                      v-if="receiptEditingEnabled && !isPrivateAllReceiptView && (editingCorrection ? !line.orderItemId : !isRenewalMode && (line.courseProductId || courseLines.length > 1))"
                       type="button"
                       class="remove-row no-print"
                       aria-label="Clear course"
@@ -608,6 +608,10 @@
                             @input="(value) => handleGroupMonthInput(line, value)"
                             @change="() => handleGroupMonthCountChange(line)"
                           />
+                          <small v-if="isSameRenewalGroupCourse(line)" class="renewal-plan-hint">
+                            {{ renewalSourceQuantityForLine(line) }} previous + {{ line.groupPurchasedMonths || 0 }} new =
+                            {{ numeric(renewalSourceQuantityForLine(line)) + numeric(line.groupPurchasedMonths) }} months total
+                          </small>
                         </label>
                         <label v-if="line.groupRegistrationPlanId && attendanceOptionsForLine(line).length > 0" class="course-control">
                           <span>Attendance</span>
@@ -911,7 +915,7 @@
         <div v-for="line in courseLines.filter(canRenewHistoricalLine)" :key="`renew-${line.rowKey}`" class="renewal-entry">
           <span>{{ courseLineOptionLabel(line, courseLines.indexOf(line)) }}</span>
           <el-button size="small" @click="startCourseRenewal(line)">{{ isOneOnOneLine(line) ? 'Add hours' : 'Add course' }}</el-button>
-          <small v-if="!isOneOnOneLine(line)">Same rate: increase Months above. Different rate: Add course and select a Registration plan.</small>
+          <small v-if="!isOneOnOneLine(line)">Added to this receipt. Choose another plan here to use a different rate.</small>
         </div>
       </section>
 
@@ -1125,7 +1129,7 @@
                   <span v-if="courseRefundAmount(line.rowKey) > 0" class="course-payment-refund-total">
                     Refunded {{ formatMoney(courseRefundAmount(line.rowKey)) }}
                   </span>
-                  <el-button v-if="!editingCorrection" class="action-secondary" text @click="addActivePaymentLine(line.rowKey)">Add payment</el-button>
+                  <el-button class="action-secondary" text @click="addActivePaymentLine(line.rowKey)">Add payment</el-button>
                   <strong>Balance {{ formatMoney(activeCourseAmountDue(line, lineIndex) - coursePaymentAllocationTotal(line.rowKey)) }}</strong>
                 </footer>
               </article>
@@ -1437,6 +1441,8 @@ interface RegistrationCourseLine {
   rowKey: string;
   orderItemId?: EntityId;
   orderLineNo?: number;
+  renewalSourceOrderItemId?: EntityId;
+  renewalStartAfter?: string;
   courseType: string;
   gradeBand: string;
   periodKey: string;
@@ -2546,82 +2552,89 @@ function canRenewHistoricalLine(line: RegistrationCourseLine) {
 
 /** 新购买先预填原课；最终产品和项目决定是否续接原逻辑课程。 */
 async function startCourseRenewal(line: RegistrationCourseLine) {
-  const source = historicalOrder.value;
-  const item = source?.items.find((entry) => String(entry.id) === String(line.orderItemId));
-  if (!source || !item) return;
-  if (!isOneOnOneLine(line) && (source.participants?.length ?? 0) > 1) {
-    ElMessage.warning('This receipt includes multiple students. Open the individual student enrollment to renew the correct course.');
+  if (!historicalOrder.value || !line.orderItemId) return;
+  if ((historicalOrder.value.participants?.length ?? 0) > 1) {
+    ElMessage.warning('Add a course from the individual student receipt for a shared registration.');
     return;
   }
-  try {
-    if (correctionBaseline.value
-        && JSON.stringify(buildCurrentCorrectionPayload()) !== JSON.stringify(correctionBaseline.value)) {
-      await ElMessageBox.confirm(
-        'This receipt has unsaved changes. Save them before adding a course, or continue without those changes.',
-        'Unsaved receipt changes',
-        { confirmButtonText: 'Continue', cancelButtonText: 'Stay here', type: 'warning' },
-      );
-    }
-    const query: Record<string, string> = {
-      renewalSourceOrderId: String(source.id),
-      renewalSourceItemId: String(item.id),
-    };
-    if (isOneOnOneLine(line)) {
-      const response = await fetchCoursePackages({
-        studentId: source.studentId,
-        courseProductId: item.courseProductId,
-        teachingMode: 'ONE_ON_ONE',
-        pageNum: 1,
-        pageSize: 200,
-      });
-      const candidates = response.data.data.records.filter((coursePackage) =>
-        item.logicalCourseId == null
-          ? source.packages.some((saved) => String(saved.id) === String(coursePackage.id))
-          : String(coursePackage.id) === String(item.logicalCourseId)
-            || String(coursePackage.privateLessonGroupId) === String(item.logicalCourseId));
-      if (candidates.length !== 1) throw new Error('Cannot identify one course package for this purchase. Open the package and renew from there.');
-      query.renewPackageId = String(candidates[0].id);
-    } else {
-      if (!item.classEnrollmentId || !item.classId) throw new Error('The original class enrollment is unavailable.');
-      query.renewClassEnrollmentId = String(item.classEnrollmentId);
-      query.classId = String(item.classId);
-      query.productId = String(item.courseProductId ?? '');
-      query.studentId = String(source.studentId);
-    }
-    editingCorrection.value = false;
-    correctionBaseline.value = null;
-    await router.push({ name: 'registration', query });
-    resetForNextRegistration();
-    await loadInitialData();
-    await loadRenewalRegistration();
-  } catch (error) {
-    if (error !== 'cancel' && error !== 'close') ElMessage.error(extractErrorMessage(error));
+  const sourceItem = latestRenewalSourceItem(line);
+  const sourceLine = courseLines.value.find((candidate) =>
+    String(candidate.orderItemId) === String(sourceItem.id)) ?? line;
+  const existingLineNos = courseLines.value.map((item) => item.orderLineNo ?? 0);
+  const added: RegistrationCourseLine = {
+    ...sourceLine,
+    rowKey: `course-${++rowSeed}`,
+    orderItemId: undefined,
+    orderLineNo: Math.max(0, ...existingLineNos) + 1,
+    renewalSourceOrderItemId: sourceItem.id,
+    renewalStartAfter: latestRenewalExpiry(sourceItem),
+    manualPriceOverride: false,
+    serviceFees: sourceLine.serviceFees.map((fee) => ({ ...fee, rowKey: `money-${++rowSeed}` })),
+    priceAmount: 0,
+    originalPriceAmount: undefined,
+  };
+  courseLines.value.push(added);
+  if (isV2GroupLine(added) && added.courseProductId) {
+    await loadGroupCourseSetup(added.courseProductId, true, true);
+    await handleGroupPlanChange(added);
+  } else {
+    recalculateLinePrice(added);
   }
+  await nextTick();
+  ElMessage.success('Course row added to this receipt.');
+}
+
+function latestRenewalSourceItem(line: RegistrationCourseLine) {
+  const items = historicalOrder.value?.items ?? [];
+  const current = items.find((item) => String(item.id) === String(line.orderItemId));
+  if (!current) throw new Error('The original course row could not be found. Reload this receipt and try again.');
+  const logicalCourseId = current.logicalCourseId;
+  const candidates = logicalCourseId == null ? [current] : items.filter((item) =>
+    String(item.logicalCourseId) === String(logicalCourseId)
+      && item.itemStatus === 'ACTIVE');
+  return [...candidates].sort((left, right) =>
+    String(left.entitlementExpiryDate ?? left.startDate ?? '').localeCompare(
+      String(right.entitlementExpiryDate ?? right.startDate ?? ''),
+    ) || (left.lineNo ?? 0) - (right.lineNo ?? 0)).at(-1) ?? current;
+}
+
+function latestRenewalExpiry(source: EnrollmentOrderLineItem) {
+  const items = historicalOrder.value?.items ?? [];
+  const related = source.logicalCourseId == null ? [source] : items.filter((item) =>
+    String(item.logicalCourseId) === String(source.logicalCourseId)
+      && item.itemStatus === 'ACTIVE');
+  return related.map((item) => item.entitlementExpiryDate).filter(Boolean).sort().at(-1) ?? source.entitlementExpiryDate;
+}
+
+function renewalSourceQuantityForLine(line: RegistrationCourseLine) {
+  const source = line.renewalSourceOrderItemId == null ? renewalSourceItem.value
+    : historicalOrder.value?.items.find((item) => String(item.id) === String(line.renewalSourceOrderItemId));
+  return source?.purchasedMonths ?? source?.packageQuantity ?? renewalSourceQuantity.value;
 }
 
 async function saveCorrection() {
-  if (savingCorrection.value) return;
+  if (savingCorrection.value) return false;
   const orderId = Array.isArray(route.query.orderId) ? route.query.orderId[0] : route.query.orderId;
   if (!orderId) {
-    return;
+    return false;
   }
   if (!fullStudentName.value.trim()) {
     ElMessage.warning('Student name cannot be empty.');
-    return;
+    return false;
   }
   const correction = changedCorrectionPayload(buildCurrentCorrectionPayload());
   if (!correction) {
-    return;
+    return false;
   }
   for (const item of correction.items ?? []) {
     if (!(item.correctionChangedFields ?? []).includes('priceAmount')) continue;
     if (numeric(item.priceAmount) <= 0) {
       ElMessage.warning(`Course ${item.lineNo}: price must be greater than zero.`);
-      return;
+      return false;
     }
     if (item.manualPriceOverride && !item.remark?.trim()) {
       ElMessage.warning(`Course ${item.lineNo}: enter a reason for the manual price.`);
-      return;
+      return false;
     }
   }
   savingCorrection.value = true;
@@ -2631,7 +2644,7 @@ async function saveCorrection() {
         (billing.payments ?? []).some((payment) => (payment.correctionChangedFields ?? []).length > 0));
     if (paymentsChanged) {
       const answer = await ElMessageBox.prompt(
-        'Record why these original payment details need correction. New money received or refunded belongs in the payment or refund workflow.',
+        'Record why this order’s payment details are being changed or a payment is being added. Use the refund workflow for returned money.',
         'Payment correction reason',
         { confirmButtonText: 'Continue', cancelButtonText: 'Keep editing', inputValidator: (value) => Boolean(value.trim()) || 'Enter a reason.' },
       );
@@ -2650,8 +2663,10 @@ async function saveCorrection() {
     editingCorrection.value = false;
     correctionBaseline.value = null;
     await loadHistoricalOrder();
+    return historicalOrder.value !== null;
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') ElMessage.error(extractErrorMessage(error));
+    return false;
   } finally {
     savingCorrection.value = false;
   }
@@ -2665,8 +2680,11 @@ function correctionImpactSummary(changes: EnrollmentOrderCorrectionPayload): str
   const impact: string[] = [];
   for (const item of changes.items ?? []) {
     const before = previousItems.get(String(item.orderItemId));
-    if (!before) continue;
     const label = `Course ${item.lineNo}`;
+    if (!before) {
+      impact.push(`${label}: this course will be added to the existing order and receipt.`);
+      continue;
+    }
     if (String(item.classId ?? '') !== String(before.classId ?? '')) impact.push(`${label}: class will change.`);
     if (item.startDate !== before.startDate) impact.push(`${label}: first lesson ${before.startDate ?? '—'} → ${item.startDate ?? '—'}.`);
     const oldQuantity = before.purchasedMonths ?? before.sessions ?? before.packageQuantity;
@@ -2710,13 +2728,18 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       const currentItems = current.items ?? [];
       const previousById = new Map(previousItems.map((item) => [String(item.orderItemId), item]));
       if (JSON.stringify(currentItems) === JSON.stringify(previousItems)) continue;
-      if (currentItems.length !== previousItems.length
-          || currentItems.some((item) => !item.orderItemId || !previousById.has(String(item.orderItemId)))) {
-        ElMessage.warning('Course rows cannot be added or removed in Edit Receipt.');
+      const currentIds = currentItems.filter((item) => item.orderItemId).map((item) => String(item.orderItemId));
+      if (currentIds.length !== previousItems.length
+          || new Set(currentIds).size !== currentIds.length
+          || previousItems.some((item) => !currentIds.includes(String(item.orderItemId)))) {
+        ElMessage.warning('Original course rows cannot be removed or replaced in Edit Receipt.');
         return null;
       }
-      const changedItems = currentItems.filter((item) =>
-        JSON.stringify(item) !== JSON.stringify(previousById.get(String(item.orderItemId)))).map((item) => {
+      const changedItems = currentItems.filter((item) => !item.orderItemId
+        || JSON.stringify(item) !== JSON.stringify(previousById.get(String(item.orderItemId)))).map((item) => {
+        if (!item.orderItemId) {
+          return { ...item, correctionChangedFields: Object.keys(item) };
+        }
         const before = previousById.get(String(item.orderItemId));
         if (!before) return item;
         const changedFields = Object.keys(item).filter((key) =>
@@ -2744,8 +2767,8 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       continue;
     }
     if (key === 'payments' && JSON.stringify(current.payments) !== JSON.stringify(original.payments)) {
-      if (!sameCorrectionPaymentIds(current.payments ?? [], original.payments ?? [])) {
-        ElMessage.warning('New payments and refunds must use their own workflow.');
+      if (!preservesOriginalCorrectionPayments(current.payments ?? [], original.payments ?? [])) {
+        ElMessage.warning('Existing payments cannot be removed or replaced. Use the refund workflow for returned money.');
         return null;
       }
       changes.payments = annotateCorrectionPayments(current.payments ?? [], original.payments ?? []);
@@ -2761,9 +2784,9 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
       }
       if (currentBillings.some((billing) => {
         const before = previousBillings.find((item) => item.participantIndex === billing.participantIndex);
-        return !sameCorrectionPaymentIds(billing.payments ?? [], before?.payments ?? []);
+        return !preservesOriginalCorrectionPayments(billing.payments ?? [], before?.payments ?? []);
       })) {
-        ElMessage.warning('New payments and refunds must use their own workflow.');
+        ElMessage.warning('Existing payments cannot be removed or replaced. Use the refund workflow for returned money.');
         return null;
       }
       changes.participantBillings = currentBillings.map((billing) => {
@@ -2783,10 +2806,12 @@ function changedCorrectionPayload(current: EnrollmentOrderCorrectionPayload): En
   return Object.keys(changes).length > 1 ? changes : null;
 }
 
-function sameCorrectionPaymentIds(current: RegistrationPaymentPayload[], previous: RegistrationPaymentPayload[]) {
-  const previousIds = new Set(previous.map((payment) => String(payment.paymentId)));
-  return current.length === previous.length && current.every((payment) =>
-    payment.paymentId && previousIds.has(String(payment.paymentId)));
+function preservesOriginalCorrectionPayments(current: RegistrationPaymentPayload[], previous: RegistrationPaymentPayload[]) {
+  const previousIds = previous.map((payment) => String(payment.paymentId));
+  const currentIds = current.flatMap((payment) => payment.paymentId == null ? [] : [String(payment.paymentId)]);
+  return currentIds.length === previousIds.length
+    && new Set(currentIds).size === currentIds.length
+    && previousIds.every((paymentId) => currentIds.includes(paymentId));
 }
 
 function annotateCorrectionPayments(current: RegistrationPaymentPayload[], previous: RegistrationPaymentPayload[]) {
@@ -3653,11 +3678,15 @@ function addCourseLine() {
 }
 
 function clearOrRemoveCourseLine(index: number) {
+  const line = courseLines.value[index];
+  if (editingCorrection.value && line?.orderItemId) {
+    ElMessage.warning('Existing course rows cannot be removed from Edit Receipt.');
+    return;
+  }
   if (courseLines.value.length > 1) {
     removeCourseLine(index);
     return;
   }
-  const line = courseLines.value[index];
   if (!line) return;
   const hasDiscount = discounts.value.some((discount) =>
     discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
@@ -3716,6 +3745,10 @@ function removeCourseLine(index: number) {
   }
   const line = courseLines.value[index];
   if (!line) return;
+  if (editingCorrection.value && line.orderItemId) {
+    ElMessage.warning('Existing course rows cannot be removed from Edit Receipt.');
+    return;
+  }
   const hasDiscount = discounts.value.some((discount) =>
     discount.courseRowKey === line.rowKey && numeric(discount.amount) > 0);
   const hasPayment = payments.value.some((payment) =>
@@ -4293,7 +4326,6 @@ function removePaymentLine(index: number) {
 }
 
 function addActivePaymentLine(courseRowKey?: string) {
-  if (editingCorrection.value) return;
   if (courseLines.value.length > 1
       && activePaymentLines.value.some((payment) =>
         !payment.isHistorical
@@ -4465,7 +4497,8 @@ function isGroupCourseSetupLoading(productId?: EntityId) {
 
 function groupProjectsForLine(line: RegistrationCourseLine) {
   const projects = groupSetupForLine(line)?.projects ?? [];
-  return editingCorrection.value ? projects : projects.filter((project) => project.status === 'ACTIVE');
+  return editingCorrection.value && line.orderItemId
+    ? projects : projects.filter((project) => project.status === 'ACTIVE');
 }
 
 function selectedGroupProject(line: RegistrationCourseLine): GroupCourseProject | undefined {
@@ -4474,18 +4507,31 @@ function selectedGroupProject(line: RegistrationCourseLine): GroupCourseProject 
 
 function groupPlansForLine(line: RegistrationCourseLine) {
   const plans = selectedGroupProject(line)?.plans ?? [];
-  if (editingCorrection.value) return plans;
+  if (editingCorrection.value && line.orderItemId) return plans;
   const sameCourse = isSameRenewalGroupCourse(line);
+  const sourceUnit = renewalSourceForLine(line)?.packageUnit ?? renewalPackageUnit.value;
   return plans.filter((plan) => plan.status === 'ACTIVE'
-    && (!sameCourse || !renewalPackageUnit.value || plan.packageUnit === renewalPackageUnit.value)
-    && (!sameCourse || renewalPackageUnit.value !== 'MONTH' || plan.coverageType === 'ROLLING_MONTHS'));
+    && (!sameCourse || !sourceUnit || plan.packageUnit === sourceUnit)
+    && (!sameCourse || sourceUnit !== 'MONTH' || plan.coverageType === 'ROLLING_MONTHS'));
 }
 
-/** 只有同产品、同教学项目的新购买才延续原逻辑课程；其他选择独立建课。 */
+function renewalSourceForLine(line: RegistrationCourseLine) {
+  if (line.renewalSourceOrderItemId != null) {
+    return historicalOrder.value?.items.find((item) =>
+      String(item.id) === String(line.renewalSourceOrderItemId));
+  }
+  return renewalSourceItem.value;
+}
+
+/** 同订单内只有相同产品和教学项目才续接原逻辑课程。 */
 function isSameRenewalGroupCourse(line: RegistrationCourseLine) {
-  return Boolean(renewClassEnrollmentId.value && line.courseProductId && line.groupProjectId
-    && String(line.courseProductId) === String(renewalSourceProductId.value)
-    && String(line.groupProjectId) === String(renewalSourceProjectId.value));
+  const source = renewalSourceForLine(line);
+  const sourceProductId = source?.courseProductId ?? renewalSourceProductId.value;
+  const sourceProjectId = source?.groupProjectId ?? renewalSourceProjectId.value;
+  return Boolean((line.renewalSourceOrderItemId != null || renewClassEnrollmentId.value)
+    && line.courseProductId && line.groupProjectId
+    && String(line.courseProductId) === String(sourceProductId)
+    && String(line.groupProjectId) === String(sourceProjectId));
 }
 
 function selectedGroupPlan(line: RegistrationCourseLine): GroupRegistrationPlan | undefined {
@@ -4555,8 +4601,7 @@ function maxGroupMonthsForLine(line: RegistrationCourseLine) {
   const original = correctionBaseline.value?.items?.find((item) => String(item.orderItemId) === String(line.orderItemId));
   // 课程方案尚在异步加载时，用已回填的购买数量作为上限，避免 InputNumber 把历史数量夹成 1。
   const lineQuantity = Math.max(numeric(line.groupPurchasedMonths), numeric(line.packageQuantity));
-  if (!editingCorrection.value || !original || String(original.groupRegistrationPlanId) !== String(plan?.id)
-      || plan?.packageUnit !== 'MONTH' || plan.coverageType !== 'ROLLING_MONTHS') {
+  if (plan?.packageUnit !== 'MONTH' || plan.coverageType !== 'ROLLING_MONTHS') {
     return Math.max(1, groupPlanQuantity(line), lineQuantity);
   }
   const classEnd = selectedGroupActualClass(line)?.endDate;
@@ -4566,7 +4611,9 @@ function maxGroupMonthsForLine(line: RegistrationCourseLine) {
     ? (Number(endMonth.slice(0, 4)) - Number(startMonth.slice(0, 4))) * 12
       + Number(endMonth.slice(5, 7)) - Number(startMonth.slice(5, 7)) + 1
     : 36;
-  return Math.max(1, numeric(original.purchasedMonths ?? original.packageQuantity), lineQuantity,
+  const previousQuantity = editingCorrection.value && String(original?.groupRegistrationPlanId) === String(plan.id)
+    ? numeric(original?.purchasedMonths ?? original?.packageQuantity) : 0;
+  return Math.max(1, groupPlanQuantity(line), lineQuantity, previousQuantity,
     Math.min(36, monthsUntilClassEnd));
 }
 
@@ -4598,8 +4645,9 @@ function availableGroupStartDates(line: RegistrationCourseLine) {
     const minimumDate = form.signupDate || today;
     dates = dates.filter((date) => date >= minimumDate);
   }
-  if (isSameRenewalGroupCourse(line) && renewalStartAfter.value) {
-    dates = dates.filter((date) => date > renewalStartAfter.value);
+  const renewalEnd = line.renewalStartAfter || renewalStartAfter.value;
+  if (isSameRenewalGroupCourse(line) && renewalEnd) {
+    dates = dates.filter((date) => date > renewalEnd);
   }
   return dates;
 }
@@ -5881,8 +5929,9 @@ function validateRegistrationDuration(line: RegistrationCourseLine, label: strin
     const selected = plan?.packageUnit === 'MONTH'
       ? numeric(line.groupPurchasedMonths)
       : numeric(line.groupSessionCount);
-    if (!plan || configured < 1 || !Number.isInteger(selected) || selected < 1 || selected > configured) {
-      errors.push(`${label}: enter a valid quantity within the selected plan limit.`);
+    const maximum = plan?.packageUnit === 'MONTH' ? maxGroupMonthsForLine(line) : configured;
+    if (!plan || configured < 1 || !Number.isInteger(selected) || selected < 1 || selected > maximum) {
+      errors.push(`${label}: enter a valid quantity within the course period.`);
       return true;
     }
     return false;
@@ -6234,6 +6283,7 @@ function buildPayload(): RegistrationIntakePayload {
     creditTopUpAmount: creditTopUpAmount.value > 0 ? roundMoney(creditTopUpAmount.value) : undefined,
     items: isCreditTopUpOnly.value ? [] : courseLines.value.map((line, index) => ({
       orderItemId: line.orderItemId,
+      renewalSourceOrderItemId: line.renewalSourceOrderItemId,
       lineNo: editingCorrection.value ? line.orderLineNo ?? index + 1 : index + 1,
       registerClass: line.registerClass,
       courseType: line.courseType,

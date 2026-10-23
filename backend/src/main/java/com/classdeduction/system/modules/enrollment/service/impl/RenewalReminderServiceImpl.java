@@ -184,7 +184,19 @@ public class RenewalReminderServiceImpl implements RenewalReminderService {
             RenewalReminderOverviewVO.SettingsVO settings, LocalDate today, String brandName) {
         List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(new LambdaQueryWrapper<ClassEnrollmentEntity>()
                 .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                .eq(ClassEnrollmentEntity::getIsDeleted, 0)
                 .isNotNull(ClassEnrollmentEntity::getExpiryDate));
+        // 同一课程续购后只用最新有效权益提醒，避免旧购买段重复催续。
+        Map<String, ClassEnrollmentEntity> latestByCourse = new LinkedHashMap<>();
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            String key = enrollment.getStudentId() + ":" + (enrollment.getLogicalCourseId() == null
+                    ? enrollment.getId() : enrollment.getLogicalCourseId());
+            ClassEnrollmentEntity previous = latestByCourse.get(key);
+            if (previous == null || enrollment.getExpiryDate().isAfter(previous.getExpiryDate())) {
+                latestByCourse.put(key, enrollment);
+            }
+        }
+        enrollments = new ArrayList<>(latestByCourse.values());
         Map<Long, StudentEntity> students = loadStudents(enrollments.stream()
                 .map(ClassEnrollmentEntity::getStudentId)
                 .filter(Objects::nonNull)

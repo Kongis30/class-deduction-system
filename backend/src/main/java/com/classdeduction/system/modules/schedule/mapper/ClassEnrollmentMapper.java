@@ -13,6 +13,10 @@ import java.util.Map;
 @Mapper
 public interface ClassEnrollmentMapper extends BaseMapper<ClassEnrollmentEntity> {
 
+    /** 续课事务锁定来源权益，同一权益不能并发续接两次。 */
+    @Select("SELECT * FROM class_enrollment WHERE id = #{id} AND is_deleted = 0 FOR UPDATE")
+    ClassEnrollmentEntity selectByIdForUpdate(@Param("id") Long id);
+
     /**
      * 查询班课下所有报名状态，包含已退出的软删除记录，用于进度页状态过滤。
      */

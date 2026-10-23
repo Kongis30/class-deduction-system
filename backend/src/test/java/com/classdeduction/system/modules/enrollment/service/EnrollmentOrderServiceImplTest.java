@@ -433,6 +433,30 @@ class EnrollmentOrderServiceImplTest {
     }
 
     @Test
+    void shouldAppendEditReceiptPaymentToTheCurrentOrder() {
+        EnrollmentOrderEntity order = new EnrollmentOrderEntity();
+        order.setId(2001L);
+        order.setStudentId(101L);
+        order.setHandledByName("Admin");
+        RegistrationIntakeRequest.PaymentPayload payload = new RegistrationIntakeRequest.PaymentPayload();
+        payload.setPaymentMethod("CASH");
+        payload.setAmount(new BigDecimal("125.00"));
+        payload.setPaidAt(LocalDateTime.of(2026, 10, 23, 10, 30));
+        payload.setCorrectionChangedFields(List.of("paymentMethod", "amount", "paidAt"));
+
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+                enrollmentOrderService, "createCorrectionPayment", order, payload, null, Map.of());
+
+        verify(paymentRecordMapper).insert(paymentCaptor.capture());
+        PaymentRecordEntity added = paymentCaptor.getValue();
+        assertThat(added.getEnrollmentOrderId()).isEqualTo(2001L);
+        assertThat(added.getPaymentType()).isEqualTo("PAYMENT");
+        assertThat(added.getPaymentMethod()).isEqualTo("CASH");
+        assertThat(added.getAmount()).isEqualByComparingTo("125.00");
+        assertThat(added.getPaidAt()).isEqualTo(payload.getPaidAt());
+    }
+
+    @Test
     void shouldRejectInactiveOneOnOneProduct() {
         EnrollmentCreateRequest request = buildCreateRequest();
         CourseProductEntity product = buildCourseProduct();

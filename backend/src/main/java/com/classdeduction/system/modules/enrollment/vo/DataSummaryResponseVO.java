@@ -18,8 +18,17 @@ public record DataSummaryResponseVO(
         List<SummaryGroupVO> courseTypeSummaries,
         List<SummaryGroupVO> classCourseSummaries,
         List<SummaryGroupVO> paymentStatusSummaries,
-        List<RowVO> rows
+        List<RowVO> rows,
+        List<LogicalCoursePeriodVO> logicalCoursePeriods
 ) {
+
+    public DataSummaryResponseVO(Long totalRegistrationCount, BigDecimal totalIncomeAmount,
+                                 BigDecimal totalOutstandingAmount, List<SummaryGroupVO> campusSummaries,
+                                 List<SummaryGroupVO> courseTypeSummaries, List<SummaryGroupVO> classCourseSummaries,
+                                 List<SummaryGroupVO> paymentStatusSummaries, List<RowVO> rows) {
+        this(totalRegistrationCount, totalIncomeAmount, totalOutstandingAmount, campusSummaries,
+                courseTypeSummaries, classCourseSummaries, paymentStatusSummaries, rows, List.of());
+    }
 
     public DataSummaryResponseVO withoutFinancialAmounts() {
         return new DataSummaryResponseVO(totalRegistrationCount, null, null,
@@ -27,8 +36,15 @@ public record DataSummaryResponseVO(
                 courseTypeSummaries.stream().map(SummaryGroupVO::withoutFinancialAmounts).toList(),
                 classCourseSummaries.stream().map(SummaryGroupVO::withoutFinancialAmounts).toList(),
                 paymentStatusSummaries.stream().map(SummaryGroupVO::withoutFinancialAmounts).toList(),
-                rows.stream().map(RowVO::withoutFinancialAmounts).toList());
+                rows.stream().map(RowVO::withoutFinancialAmounts).toList(), logicalCoursePeriods);
     }
+
+    /** 课程有效期由有效权益段计算；金额仍属于逐笔订单行。 */
+    public record LogicalCoursePeriodVO(Long studentId, Long logicalCourseId,
+                                        LocalDate startDate, LocalDate endDate,
+                                        List<PeriodSegmentVO> segments) {}
+
+    public record PeriodSegmentVO(LocalDate startDate, LocalDate endDate) {}
 
     @Schema(description = "Data summary group")
     @JsonInclude(JsonInclude.Include.NON_NULL)

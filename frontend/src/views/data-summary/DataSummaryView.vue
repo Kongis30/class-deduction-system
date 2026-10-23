@@ -665,7 +665,10 @@ interface ProductTab {
 }
 
 type SaturdayRosterView = 'FALL' | 'SPRING' | 'ALL';
-type DataSummaryDisplayRow = DataSummaryRow;
+type DataSummaryDisplayRow = DataSummaryRow & {
+  purchaseRows?: DataSummaryRow[];
+  periodSegments?: Array<{ startDate: string; endDate: string }>;
+};
 
 const authStore = useAuthStore();
 const appStore = useAppStore();
@@ -741,6 +744,11 @@ const workbookScrollRef = ref<HTMLDivElement | null>(null);
 const mobileTableScale = ref(DEFAULT_MOBILE_TABLE_SCALE);
 const savingOrder = ref(false);
 const rows = ref<DataSummaryRow[]>([]);
+const logicalCoursePeriods = ref(new Map<string, {
+  startDate: string;
+  endDate: string;
+  segments: Array<{ startDate: string; endDate: string }>;
+}>());
 const products = ref<CourseProductItem[]>([]);
 const activeTabId = ref<string>('');
 const rosterPrintDialogVisible = ref(false);
@@ -926,7 +934,20 @@ function mergeLogicalCourseRows(monthRows: DataSummaryRow[], allRows: DataSummar
   });
   return [...visibleGroups].map(([key, visible]) => {
     const purchases = sourceGroups.get(key) ?? visible;
-    if (purchases.length === 1) return visible[0];
+    const first = purchases[0];
+    const coursePeriod = first?.logicalCourseId == null ? undefined
+      : logicalCoursePeriods.value.get(`${first.studentId}:${first.logicalCourseId}`);
+    const withEffectivePeriod = (row: DataSummaryDisplayRow): DataSummaryDisplayRow => {
+      if (row.logicalCourseId == null || isPrivateLessonRow(row)) return row;
+      return {
+        ...row,
+        periodStartDate: coursePeriod?.startDate,
+        periodEndDate: coursePeriod?.endDate,
+        expiryDate: coursePeriod?.endDate,
+        periodSegments: coursePeriod?.segments ?? [],
+      };
+    };
+    if (purchases.length === 1) return withEffectivePeriod(visible[0]);
     const ordered = [...purchases].sort((left, right) => (left.signupDate ?? '').localeCompare(right.signupDate ?? '')
       || (left.registrationSavedAt ?? '').localeCompare(right.registrationSavedAt ?? '')
       || String(left.orderItemId ?? '').localeCompare(String(right.orderItemId ?? '')));
@@ -936,7 +957,7 @@ function mergeLogicalCourseRows(monthRows: DataSummaryRow[], allRows: DataSummar
     const starts = dates('periodStartDate');
     const ends = dates('periodEndDate');
     const balance = sum('balanceAmount');
-    return {
+    return withEffectivePeriod({
       ...current,
       signupDate: ordered[0].signupDate,
       periodStartDate: starts.length ? starts.sort()[0] : undefined,
@@ -956,7 +977,7 @@ function mergeLogicalCourseRows(monthRows: DataSummaryRow[], allRows: DataSummar
       paymentStatus: balance < 0 ? (sum('paidAmount') > 0 ? 'PARTIAL' : 'UNPAID') : 'PAID',
       overdue: balance < 0,
       purchaseRows: ordered,
-    };
+    });
   });
 }
 
@@ -1235,8 +1256,11 @@ async function loadPage() {
 
     if (summaryResult.status === 'fulfilled') {
       rows.value = summaryResult.value.data.data.rows ?? [];
+      logicalCoursePeriods.value = new Map((summaryResult.value.data.data.logicalCoursePeriods ?? [])
+        .map(period => [`${period.studentId}:${period.logicalCourseId}`, period] as const));
     } else {
       rows.value = [];
+      logicalCoursePeriods.value = new Map();
       ElMessage.error(extractErrorMessage(summaryResult.reason));
     }
 
@@ -1274,7 +1298,9 @@ function setSaturdayRosterView(view: SaturdayRosterView) {
 }
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
-  if (row.purchaseRows && row.purchaseRows.length > 1) {
+  const purchaseOrderIds = new Set((row.purchaseRows ?? []).map((purchase) => String(purchase.orderId)));
+  if (row.purchaseRows && purchaseOrderIds.size > 1) {
+    closeStudentContextMenu();
     purchasePickerRows.value = row.purchaseRows;
     purchasePickerVisible.value = true;
     return;
@@ -1836,6 +1862,11 @@ function formatDate(value?: string) {
 function formatPeriod(row: DataSummaryRow) {
   if (isPrivateLessonRow(row)) {
     return row.totalHours == null ? '—' : `${Number(row.totalHours).toFixed(1)}h`;
+  }
+  const segments = (row as DataSummaryDisplayRow).periodSegments;
+  if (segments?.length === 0) return '—';
+  if (segments && segments.length > 1) {
+    return segments.map(segment => `${formatDate(segment.startDate)} - ${formatDate(segment.endDate)}`).join('; ');
   }
   if (!row.periodStartDate && !row.periodEndDate) {
     return displayText(row.periodLabel);
