@@ -383,13 +383,45 @@
             <tr v-if="renewClassEnrollmentId && renewalSourceItem" class="course-entry-row renewal-source-row screen-only">
               <td>
                 <strong>{{ renewalSourceProductName }}</strong>
-                <small>Existing course · reference only</small>
+                <small>Existing course · already purchased</small>
               </td>
               <td>
-                <strong>{{ renewalSourceItem.gradeBand || '—' }}</strong>
-                <div>{{ renewalSourceItem.className || renewalSourceItem.periodLabel || '—' }}</div>
+                <div class="detail-row detail-row--group renewal-source-details">
+                  <div class="course-control renewal-source-field">
+                    <span>Teaching project</span>
+                    <strong>{{ renewalSourceProjectName }}</strong>
+                  </div>
+                  <div class="course-control renewal-source-field">
+                    <span>Registration plan</span>
+                    <strong>{{ renewalSourceItem.periodLabel || '—' }}</strong>
+                  </div>
+                  <div class="course-control renewal-source-field group-v2-registration__full-row">
+                    <span>Actual class</span>
+                    <strong>{{ renewalSourceClassName }}</strong>
+                  </div>
+                  <div class="course-control renewal-source-field">
+                    <span>First lesson date</span>
+                    <strong>{{ formatDateValue(renewalSourceItem.startDate) }}</strong>
+                  </div>
+                  <div class="course-control renewal-source-field">
+                    <span>{{ renewalSourceItem.packageUnit === 'MONTH' ? 'Months' : 'Sessions' }}</span>
+                    <strong>{{ renewalSourceQuantity }}</strong>
+                  </div>
+                  <div class="course-control renewal-source-field">
+                    <span>Attendance</span>
+                    <strong>{{ renewalSourceAttendance }}</strong>
+                  </div>
+                  <div class="course-control renewal-source-field">
+                    <span>Last covered date</span>
+                    <strong>{{ formatDateValue(renewalSourceItem.entitlementExpiryDate) }}</strong>
+                  </div>
+                </div>
               </td>
-              <td>Already purchased</td>
+              <td class="renewal-source-price">
+                <strong>{{ renewalSourceItem.priceAmount == null ? '—' : formatMoney(renewalSourceItem.priceAmount) }}</strong>
+                <small v-if="renewalSourceMonthlyRate">{{ renewalSourceMonthlyRate }} / month</small>
+                <small>Not charged again</small>
+              </td>
             </tr>
             <tr v-for="(line, index) in courseLines" :key="line.rowKey" class="course-entry-row">
               <td>
@@ -397,7 +429,10 @@
                   <strong>{{ printCourseProductLabel(line) }}</strong>
                 </div>
                 <div v-else>
-                  <div class="course-class-cell course-picker-control screen-only">
+                  <div
+                    class="course-class-cell course-picker-control screen-only"
+                    :class="{ 'course-picker-control--renewal': renewClassEnrollmentId && renewalSourceItem }"
+                  >
                     <el-select
                       v-model="line.courseProductId"
                       class="table-select table-select--primary"
@@ -1682,7 +1717,40 @@ const renewalSourceItem = ref<EnrollmentOrderLineItem | null>(null);
 const renewalSourceProductId = ref<EntityId>();
 const renewalSourceProjectId = ref<EntityId>();
 const renewalSourceProductName = computed(() => courseProducts.value.find((product) =>
-  String(product.id) === String(renewalSourceProductId.value))?.productName ?? 'Existing course');
+  String(product.id) === String(renewalSourceProductId.value))?.productName
+  || classGroups.value.find((group) => String(group.id) === String(renewalSourceItem.value?.classId))?.productName
+  || renewalSourceItem.value?.registerClass || 'Existing course');
+const renewalSourceProjectName = computed(() => renewalSourceItem.value?.gradeBand
+  || classGroups.value.find((group) => String(group.id) === String(renewalSourceItem.value?.classId))?.groupProjectName
+  || '—');
+const renewalSourceClassName = computed(() => {
+  const source = renewalSourceItem.value;
+  const group = classGroups.value.find((item) => String(item.id) === String(source?.classId));
+  return [group?.campusName, source?.className || group?.actualClass || group?.className].filter(Boolean).join(' · ') || '—';
+});
+const renewalSourceQuantity = computed(() => {
+  const source = renewalSourceItem.value;
+  return source?.packageUnit === 'MONTH'
+    ? source.purchasedMonths ?? source.packageQuantity ?? '—'
+    : source?.sessions ?? source?.packageQuantity ?? '—';
+});
+const renewalSourceAttendance = computed(() => {
+  const labels: Record<string, string> = {
+    FULL_DAY: 'Full day',
+    MORNING: 'Morning half day',
+    AFTERNOON: 'Afternoon half day',
+    CUSTOM: 'Custom',
+    NONE: '—',
+  };
+  const option = renewalSourceItem.value?.attendanceOption ?? 'NONE';
+  return labels[option] ?? option;
+});
+const renewalSourceMonthlyRate = computed(() => {
+  const source = renewalSourceItem.value;
+  const months = Number(source?.purchasedMonths ?? source?.packageQuantity);
+  return source?.packageUnit === 'MONTH' && months > 0 && source.priceAmount != null
+    ? formatMoney(source.priceAmount / months) : '';
+});
 const editingCorrection = ref(false);
 const savingCorrection = ref(false);
 const correctionBaseline = ref<EnrollmentOrderCorrectionPayload | null>(null);
@@ -7596,6 +7664,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   color: #617086;
 }
 
+.renewal-source-details {
+  align-items: start;
+}
+
+.renewal-source-field strong {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 5px 8px;
+  border: 1px solid #dbe4ee;
+  border-radius: 4px;
+  background: #fff;
+  color: #263a53;
+  font-size: 12px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.renewal-source-price strong {
+  display: block;
+  color: #263a53;
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .renewal-source-row small,
 .renewal-new-course-label {
   display: block;
@@ -7633,6 +7726,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.course-picker-control--renewal {
+  flex-wrap: wrap;
+}
+
+.course-picker-control--renewal .renewal-new-course-label {
+  flex: 0 0 100%;
+  margin-top: 0;
 }
 
 .course-picker-control :deep(.el-select) {
