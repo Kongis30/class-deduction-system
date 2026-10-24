@@ -9,6 +9,8 @@ const admin = {
 };
 
 test('Data Summary prints a deduplicated whole-class roster without requiring a registration plan', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
   await page.addInitScript((user) => {
     localStorage.setItem('jbt_auth_token', 'test-token');
     localStorage.setItem('jbt_auth_user', JSON.stringify(user));
@@ -139,4 +141,5 @@ test('Data Summary prints a deduplicated whole-class roster without requiring a 
   await expect(planPrintRoot).toContainText('Student 70');
   await expect(planPrintRoot).not.toContainText('Spring Student');
   await expect(planPrintRoot).not.toContainText('Other Class Student');
+  expect(pageErrors).toEqual([]);
 });
