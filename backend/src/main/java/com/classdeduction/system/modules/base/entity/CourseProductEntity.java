@@ -12,6 +12,7 @@ import lombok.ToString;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 /**
  * Course product entity defining default units and pricing templates.
@@ -63,6 +64,11 @@ public class CourseProductEntity extends BaseEntity {
     private BigDecimal listPrice;
 
     private String status;
+
+    /** Product 归档时间；归档只控制展示和新业务入口，不改动历史业务数据。 */
+    private LocalDateTime archivedAt;
+
+    private Long archivedBy;
 
     private String notes;
 }

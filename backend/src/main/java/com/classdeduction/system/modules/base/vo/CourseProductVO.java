@@ -21,6 +21,8 @@ public record CourseProductVO(
         String teachingMode,
         Integer sortOrder,
         String status,
+        LocalDateTime archivedAt,
+        Long archivedBy,
         String notes,
         Boolean referenced,
         Long referenceCount,

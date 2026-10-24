@@ -463,6 +463,13 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                     .toList();
         }
         if (activeEnrollments.isEmpty()) {
+            boolean adminCancellation = !isTeacherUser(currentUser) && body != null
+                    && "CANCELLED".equals(body.get("resultStatus"));
+            if (adminCancellation) {
+                occ.setPlanningStatus("MERGED");
+                lessonOccurrenceMapper.updateById(occ);
+                return Map.of("confirmedCount", 0, "occurrenceId", occurrenceId, "confirmStage", CONFIRM_STAGE_CONFIRMED);
+            }
             throw new BusinessException("NO_ACTIVE_STUDENTS", "No active eligible students in this class lesson.");
         }
         // 为每个在册学生创建 lesson_record（班课确认频率低，无需批量优化）
@@ -484,10 +491,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 pendingRecord == null ? occ.getPlannedTeacherId() : pendingRecord.getActualTeacherId());
         Long actualClassroomId = parseLongParam(body, "actualClassroomId",
                 pendingRecord == null ? occ.getPlannedClassroomId() : pendingRecord.getActualClassroomId());
-        if (actualTeacherId == null) {
-            throw new BusinessException("CLASS_TEACHER_REQUIRED",
-                    "Assign a teacher before confirming this class lesson.");
-        }
         Integer actualUnits = body != null && body.get("actualUnits") instanceof Number
                 ? Integer.valueOf(((Number) body.get("actualUnits")).intValue())
                 : pendingRecord == null ? null : pendingRecord.getActualUnits();
@@ -501,6 +504,11 @@ public class ClassGroupServiceImpl implements ClassGroupService {
                 ? (String) body.get("notes") : pendingRecord == null ? null : pendingRecord.getNotes();
         String resultStatus = body != null && body.get("resultStatus") instanceof String s && !s.isBlank()
                 ? s : pendingRecord == null ? "COMPLETED" : pendingRecord.getResultStatus();
+        boolean adminCancellation = !teacherConfirm && "CANCELLED".equals(resultStatus);
+        if (actualTeacherId == null && !adminCancellation) {
+            throw new BusinessException("CLASS_TEACHER_REQUIRED",
+                    "Assign a teacher before confirming this class lesson.");
+        }
         Set<String> allowedStatuses = teacherConfirm
                 ? ALLOWED_TEACHER_CONFIRM_STATUSES
                 : ALLOWED_ADMIN_CONFIRM_STATUSES;
@@ -532,7 +540,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
         if (teacherConfirm) {
             validateTeacherClassConfirm(occ, resultStatus, currentUser);
-        } else {
+        } else if (!adminCancellation) {
             ensureNoClassConfirmConflicts(occ, activeEnrollments, actualTeacherId,
                     actualClassroomId, actualStartAt, actualEndAt);
         }
@@ -934,7 +942,7 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             throw new BusinessException("GROUP_PROJECT_INVALID", "Select a teaching project from this product.");
         }
         CourseProductEntity product = productId == null ? null : courseProductMapper.selectByIdForUpdate(productId);
-        if (product == null || !"GROUP".equals(product.getTeachingMode())) {
+        if (product == null || !"GROUP".equals(product.getTeachingMode()) || product.getArchivedAt() != null) {
             throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Group course product not found.");
         }
         Long campusId = parseLongFromBody(body, "campusId");
@@ -1347,6 +1355,35 @@ public class ClassGroupServiceImpl implements ClassGroupService {
 
         // 5. 软删除班课本身；订单中的 class_id 保留，历史数据仍可追溯。
         classGroupMapper.deleteById(classId);
+    }
+
+    /** 归档专用终止路径：不同于删除，保留班级、报名和固定课表行供历史追溯。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void endClassForProductArchive(Long classId, Long operatorId) {
+        ClassGroupEntity classGroup = classGroupMapper.selectByIdForUpdate(classId);
+        if (classGroup == null || !"ACTIVE".equals(classGroup.getStatus())) {
+            return;
+        }
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        classGroup.setStatus("INACTIVE");
+        classGroup.setUpdatedAt(now);
+        classGroup.setUpdatedBy(operatorId);
+        classGroupMapper.updateById(classGroup);
+
+        List<ClassEnrollmentEntity> enrollments = classEnrollmentMapper.selectList(
+                new LambdaQueryWrapper<ClassEnrollmentEntity>()
+                        .eq(ClassEnrollmentEntity::getClassId, classId)
+                        .eq(ClassEnrollmentEntity::getStatus, "ACTIVE")
+                        .eq(ClassEnrollmentEntity::getIsDeleted, 0)
+                        .orderByAsc(ClassEnrollmentEntity::getId)
+                        .last("FOR UPDATE"));
+        for (ClassEnrollmentEntity enrollment : enrollments) {
+            enrollment.setStatus("CANCELLED");
+            enrollment.setUpdatedAt(now);
+            enrollment.setUpdatedBy(operatorId);
+            classEnrollmentMapper.updateById(enrollment);
+        }
     }
 
     // ========== 批量查询辅助方法 ==========

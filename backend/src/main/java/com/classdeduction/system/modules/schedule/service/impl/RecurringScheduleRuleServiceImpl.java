@@ -9,9 +9,11 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.ClassroomEntity;
+import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.ClassroomMapper;
+import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
@@ -99,6 +101,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
     private final TeacherMapper teacherMapper;
     private final ClassroomMapper classroomMapper;
     private final JsonHelper jsonHelper;
+    private final CourseProductMapper courseProductMapper;
 
     @Override
     public List<ScheduleStudentOptionVO> listOneOnOneScheduleStudents() {
@@ -369,6 +372,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         CoursePackageEntity coursePackage = coursePackageMapper.selectById(rule.getPackageId());
         if (coursePackage == null || !"ACTIVE".equals(coursePackage.getPackageStatus())) {
             return 0;
+        }
+        if (coursePackage.getCourseProductId() != null) {
+            // 与归档共用 Product 行锁，避免归档确认后续排任务又写入未来课次。
+            CourseProductEntity product = courseProductMapper.selectByIdForUpdate(coursePackage.getCourseProductId());
+            if (product == null || product.getArchivedAt() != null) return 0;
         }
         coursePackage = primaryPackageForPrivateGroup(coursePackage, rule.getPrivateLessonGroupId());
         List<RecurringScheduleSlotEntity> slots = recurringScheduleSlotMapper.selectList(

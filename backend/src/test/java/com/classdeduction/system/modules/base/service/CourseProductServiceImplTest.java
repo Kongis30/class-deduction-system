@@ -15,11 +15,17 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.service.impl.CourseProductServiceImpl;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentCorrectionLogMapper;
+import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.service.LessonRecordService;
 import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import org.apache.ibatis.builder.MapperBuilderAssistant;
 import org.apache.ibatis.session.Configuration;
@@ -34,6 +40,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -65,6 +72,18 @@ class CourseProductServiceImplTest {
     private GroupRegistrationPlanMapper groupRegistrationPlanMapper;
     @Mock
     private ClassHolidayMapper classHolidayMapper;
+    @Mock
+    private LessonOccurrenceMapper lessonOccurrenceMapper;
+    @Mock
+    private LessonRecordMapper lessonRecordMapper;
+    @Mock
+    private LessonRecordService lessonRecordService;
+    @Mock
+    private RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    @Mock
+    private CoursePackageService coursePackageService;
+    @Mock
+    private EnrollmentCorrectionLogMapper operationLogMapper;
 
     private CourseProductServiceImpl courseProductService;
 
@@ -93,7 +112,13 @@ class CourseProductServiceImplTest {
                 classGroupScheduleSlotMapper,
                 groupCourseProjectMapper,
                 groupRegistrationPlanMapper,
-                classHolidayMapper
+                classHolidayMapper,
+                lessonOccurrenceMapper,
+                lessonRecordMapper,
+                lessonRecordService,
+                recurringScheduleRuleMapper,
+                coursePackageService,
+                operationLogMapper
         );
     }
 
@@ -252,6 +277,72 @@ class CourseProductServiceImplTest {
 
         verify(courseProductMapper, never()).updateById(any(CourseProductEntity.class));
         verify(coursePriceOptionMapper, never()).update(isNull(), any());
+    }
+
+    @Test
+    void shouldRequireReviewWhenArchiveImpactChanged() {
+        CourseProductEntity product = product(8L, "Current course", 1);
+        when(courseProductMapper.selectByIdForUpdate(8L)).thenReturn(product);
+        when(courseProductMapper.selectArchivePreview(8L)).thenReturn(Map.of(
+                "classCount", 1L, "activeEnrollmentCount", 2L, "activePackageCount", 0L,
+                "recurringRuleCount", 0L, "unfinishedLessonCount", 0L, "estimatedDeductedHours", 0.0));
+
+        assertThatThrownBy(() -> courseProductService.archiveCourseProduct(8L, 100L, "stale"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("COURSE_PRODUCT_ARCHIVE_PREVIEW_CHANGED"));
+
+        verify(courseProductMapper, never()).updateById(any(CourseProductEntity.class));
+    }
+
+    @Test
+    void shouldArchiveProductAsInactiveAfterBlockersAreCleared() {
+        CourseProductEntity product = product(9L, "Finished course", 1);
+        when(courseProductMapper.selectByIdForUpdate(9L)).thenReturn(product);
+        when(courseProductMapper.selectArchivePreview(9L)).thenReturn(Map.of(
+                "classCount", 0L, "activeEnrollmentCount", 0L, "activePackageCount", 0L,
+                "recurringRuleCount", 0L, "unfinishedLessonCount", 0L, "estimatedDeductedHours", 0.0));
+        when(classGroupMapper.selectList(any())).thenReturn(List.of());
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of());
+        when(coursePriceOptionMapper.selectList(any())).thenReturn(List.of());
+        when(groupCourseProjectMapper.selectList(any())).thenReturn(List.of());
+
+        String fingerprint = courseProductService.previewCourseProductArchive(9L).fingerprint();
+        courseProductService.archiveCourseProduct(9L, 100L, fingerprint);
+
+        verify(courseProductMapper).updateById(argThat((CourseProductEntity updated) ->
+                "INACTIVE".equals(updated.getStatus())
+                        && updated.getArchivedAt() != null
+                        && Long.valueOf(100L).equals(updated.getArchivedBy())
+                        && Long.valueOf(100L).equals(updated.getUpdatedBy())));
+    }
+
+    @Test
+    void shouldRestoreArchivedProductAndKeepItInactive() {
+        CourseProductEntity product = product(10L, "Archived course", 1);
+        product.setStatus("INACTIVE");
+        product.setArchivedAt(java.time.LocalDateTime.parse("2026-10-01T10:00:00"));
+        product.setArchivedBy(99L);
+        when(courseProductMapper.selectByIdForUpdate(10L)).thenReturn(product);
+
+        courseProductService.restoreCourseProduct(10L, 100L);
+
+        verify(courseProductMapper).restoreArchivedProduct(eq(10L), eq(100L), any());
+        verify(courseProductMapper, never()).updateById(any(CourseProductEntity.class));
+    }
+
+    @Test
+    void shouldRejectReactivatingProductUntilItIsRestored() {
+        CourseProductEntity product = product(11L, "Archived course", 1);
+        product.setArchivedAt(java.time.LocalDateTime.parse("2026-10-01T10:00:00"));
+        when(courseProductMapper.selectByIdForUpdate(11L)).thenReturn(product);
+        CourseProductSaveRequest request = buildGroupRequest();
+        request.setStatus("ACTIVE");
+
+        assertThatThrownBy(() -> courseProductService.updateCourseProduct(11L, request))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        error -> assertThat(error.getCode()).isEqualTo("ARCHIVED_PRODUCT_CANNOT_ACTIVATE"));
+
+        verify(courseProductMapper, never()).updateById(any(CourseProductEntity.class));
     }
 
     private CourseProductEntity product(Long id, String name, int sortOrder) {

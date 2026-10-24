@@ -351,6 +351,7 @@ export interface CourseProductQuery {
   teachingMode?: string;
   pageNum?: number;
   pageSize?: number;
+  archiveScope?: 'CURRENT' | 'ARCHIVED' | 'ALL';
 }
 
 export function fetchCourseProducts(params: CourseProductQuery = {}) {
@@ -394,6 +395,30 @@ export function copyCourseProduct(id: EntityId, productName: string, dateShiftYe
 
 export function updateCourseProduct(id: EntityId, data: CourseProductSavePayload) {
   return http.put(`/v1/base/course-products/${id}`, data);
+}
+
+export interface CourseProductArchivePreview {
+  productId: EntityId;
+  productName: string;
+  classCount: number;
+  activeEnrollmentCount: number;
+  activePackageCount: number;
+  recurringRuleCount: number;
+  unfinishedLessonCount: number;
+  estimatedDeductedHours: number;
+  fingerprint: string;
+}
+
+export function fetchCourseProductArchivePreview(id: EntityId) {
+  return http.get<ApiResponse<CourseProductArchivePreview>>(`/v1/base/course-products/${id}/archive-preview`);
+}
+
+export function archiveCourseProductWithPreview(id: EntityId, previewFingerprint: string) {
+  return http.post(`/v1/base/course-products/${id}/archive`, { previewFingerprint });
+}
+
+export function restoreCourseProduct(id: EntityId) {
+  return http.post(`/v1/base/course-products/${id}/restore`);
 }
 
 export function deleteCourseProduct(id: EntityId) {

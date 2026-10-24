@@ -62,9 +62,11 @@
             </button>
           </div>
           <el-input v-model="filters.productName" placeholder="Search course" clearable @input="handleFilterChange" />
-          <el-select v-model="filters.status" placeholder="All statuses" clearable @change="handleFilterChange">
+          <el-select v-model="filters.status" placeholder="All statuses" @change="handleFilterChange">
             <el-option label="Active" value="ACTIVE" />
             <el-option label="Inactive" value="INACTIVE" />
+            <el-option label="Archived" value="ARCHIVED" />
+            <el-option label="All statuses" value="ALL" />
           </el-select>
         </div>
       </div>
@@ -101,6 +103,7 @@
                     <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
                       {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                     </el-tag>
+                    <el-tag v-if="row.archivedAt" size="small" type="warning" effect="plain">Archived</el-tag>
                   </span>
                 </div>
               </template>
@@ -118,6 +121,8 @@
                       <el-dropdown-menu>
                         <el-dropdown-item command="copy">Copy</el-dropdown-item>
                         <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                        <el-dropdown-item v-if="isAdmin && !row.archivedAt" command="archive" divided>Archive</el-dropdown-item>
+                        <el-dropdown-item v-if="isAdmin && row.archivedAt" command="restore" divided>Restore from archive</el-dropdown-item>
                         <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
@@ -145,6 +150,7 @@
                     <el-tag size="small" :type="row.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
                       {{ row.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                     </el-tag>
+                    <el-tag v-if="row.archivedAt" size="small" type="warning" effect="plain">Archived</el-tag>
                   </strong>
                 </div>
               </template>
@@ -176,6 +182,8 @@
                       <el-dropdown-menu>
                         <el-dropdown-item command="copy">Copy</el-dropdown-item>
                         <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                        <el-dropdown-item v-if="isAdmin && !row.archivedAt" command="archive" divided>Archive</el-dropdown-item>
+                        <el-dropdown-item v-if="isAdmin && row.archivedAt" command="restore" divided>Restore from archive</el-dropdown-item>
                         <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
@@ -194,12 +202,15 @@
                 <el-tag size="small" :type="product.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
                   {{ product.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                 </el-tag>
+                <el-tag v-if="product.archivedAt" size="small" type="warning" effect="plain">Archived</el-tag>
                 <el-dropdown trigger="click" @command="command => handleProductRowAction(String(command), product)">
                   <el-button text class="mobile-product-row__more">More <el-icon><ArrowDown /></el-icon></el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="copy">Copy</el-dropdown-item>
                       <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                      <el-dropdown-item v-if="isAdmin && !product.archivedAt" command="archive" divided>Archive</el-dropdown-item>
+                      <el-dropdown-item v-if="isAdmin && product.archivedAt" command="restore" divided>Restore from archive</el-dropdown-item>
                       <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
@@ -218,12 +229,15 @@
                 <el-tag size="small" :type="product.status === 'ACTIVE' ? 'success' : 'info'" effect="plain">
                   {{ product.status === 'ACTIVE' ? 'Active' : 'Inactive' }}
                 </el-tag>
+                <el-tag v-if="product.archivedAt" size="small" type="warning" effect="plain">Archived</el-tag>
                 <el-dropdown trigger="click" @command="command => handleProductRowAction(String(command), product)">
                   <el-button text class="mobile-product-row__more">More <el-icon><ArrowDown /></el-icon></el-button>
                   <template #dropdown>
                     <el-dropdown-menu>
                       <el-dropdown-item command="copy">Copy</el-dropdown-item>
                       <el-dropdown-item command="edit">Edit</el-dropdown-item>
+                      <el-dropdown-item v-if="isAdmin && !product.archivedAt" command="archive" divided>Archive</el-dropdown-item>
+                      <el-dropdown-item v-if="isAdmin && product.archivedAt" command="restore" divided>Restore from archive</el-dropdown-item>
                       <el-dropdown-item command="delete" divided class="table-actions__delete">Delete</el-dropdown-item>
                     </el-dropdown-menu>
                   </template>
@@ -367,7 +381,7 @@
 <script setup lang="ts">
 import { ArrowDown, Close, Plus, QuestionFilled, Search } from '@element-plus/icons-vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, h, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
@@ -376,6 +390,9 @@ import {
   deleteCourseProduct,
   forceDeleteCourseProduct,
   fetchCourseProducts,
+  fetchCourseProductArchivePreview,
+  archiveCourseProductWithPreview,
+  restoreCourseProduct,
   updateCourseProduct,
   type CourseProductQuery,
   type CourseProductSavePayload,
@@ -414,7 +431,7 @@ const createdNextStep = ref<{
 
 const filters = reactive({
   productName: '',
-  status: '',
+  status: 'ACTIVE' as 'ACTIVE' | 'INACTIVE' | 'ARCHIVED' | 'ALL',
 });
 
 const pagination = reactive({
@@ -580,7 +597,8 @@ async function loadData() {
   try {
     const params: CourseProductQuery = {
       keyword: filters.productName || undefined,
-      status: filters.status || undefined,
+      status: filters.status === 'ACTIVE' || filters.status === 'INACTIVE' ? filters.status : undefined,
+      archiveScope: filters.status === 'ARCHIVED' ? 'ARCHIVED' : filters.status === 'ALL' ? 'ALL' : 'CURRENT',
       pageNum: pagination.page,
       pageSize: pagination.size,
     };
@@ -667,7 +685,70 @@ function handleProductRowAction(command: string, row: CourseProductItem) {
     openProductDialog(row);
   } else if (command === 'delete') {
     void handleDelete(row);
+  } else if (command === 'archive') {
+    void changeProductArchive(row, true);
+  } else if (command === 'restore') {
+    void changeProductArchive(row, false);
   }
+}
+
+async function changeProductArchive(row: CourseProductItem, archive: boolean) {
+  if (!isAdmin.value) return;
+  let archivedSummary: Awaited<ReturnType<typeof fetchCourseProductArchivePreview>>['data']['data'] | null = null;
+  try {
+    if (!archive) {
+      await ElMessageBox.confirm(
+        `Restore "${row.productName}" to current course lists? It will remain inactive. Classes, enrollments, packages, schedules, and cancelled lessons will not be restored.`,
+        'Restore course',
+        { type: 'warning', confirmButtonText: 'Restore as inactive', cancelButtonText: 'Cancel' },
+      );
+    } else {
+      let preview = (await fetchCourseProductArchivePreview(row.id)).data.data;
+      while (true) {
+        await ElMessageBox.confirm(archiveImpactMessage(preview), 'Archive course product', {
+          type: 'warning',
+          confirmButtonText: 'Archive and end courses',
+          confirmButtonClass: 'el-button--danger',
+          cancelButtonText: 'Cancel',
+          distinguishCancelAndClose: true,
+        });
+        try {
+          await archiveCourseProductWithPreview(row.id, preview.fingerprint);
+          archivedSummary = preview;
+          break;
+        } catch (error: any) {
+          const response = error?.response?.data;
+          if (response?.code !== 'COURSE_PRODUCT_ARCHIVE_PREVIEW_CHANGED' || !response?.data) throw error;
+          preview = response.data;
+          ElMessage.warning('The impact changed while you were reviewing it. Please review and confirm the updated counts.');
+        }
+      }
+    }
+    if (!archive) await restoreCourseProduct(row.id);
+    ElMessage.success(archive && archivedSummary
+      ? `Archived. Ended ${archivedSummary.classCount} classes, cancelled ${archivedSummary.activeEnrollmentCount} enrollments, stopped ${archivedSummary.recurringRuleCount} rules, and cancelled ${archivedSummary.unfinishedLessonCount} lessons.`
+      : 'Course restored as inactive.');
+    await loadData();
+  } catch (error: any) {
+    // Element Plus confirmation rejects with these values when the user dismisses the dialog.
+    if (error === 'cancel' || error === 'close') return;
+    ElMessage.error(error?.response?.data?.message ?? `Course ${archive ? 'archive' : 'restore'} failed.`);
+  }
+}
+
+function archiveImpactMessage(preview: Awaited<ReturnType<typeof fetchCourseProductArchivePreview>>['data']['data']) {
+  const count = (value: number) => value.toLocaleString();
+  return h('div', { class: 'archive-impact' }, [
+    h('p', `Archiving “${preview.productName}” will stop new enrollment and terminate its active teaching activity.`),
+    h('ul', [
+      h('li', `${count(preview.classCount)} active classes; ${count(preview.activeEnrollmentCount)} active enrollments will be ended.`),
+      h('li', `${count(preview.activePackageCount)} active or paused packages will be closed. Their current balances and ledgers will be retained.`),
+      h('li', `${count(preview.recurringRuleCount)} recurring schedule rules will be stopped.`),
+      h('li', `${count(preview.unfinishedLessonCount)} unfinished lessons and future occurrences will be cancelled.`),
+      h('li', `Estimated total package deduction: ${Number(preview.estimatedDeductedHours).toFixed(1)} hours, including each active member of shared private lessons. Cancellation follows the existing administrator Cancel flow.`),
+    ]),
+    h('p', 'Completed lessons and historical orders, receipts, refunds, and financial records will remain. Restoring this product will not revive ended classes, enrollments, packages, schedules, or cancelled lessons.'),
+  ]);
 }
 
 async function submitCopy() {
@@ -679,7 +760,7 @@ async function submitCopy() {
     const response = await copyCourseProduct(source.id, productName, copyDateShiftYears.value);
     const productId = response.data.data;
     copyDialogVisible.value = false;
-    filters.status = '';
+    filters.status = 'ACTIVE';
     pagination.page = 1;
     ElMessage.success('Course copied. Review its prices and schedule before activating it.');
     await loadData();
@@ -919,7 +1000,7 @@ loadData();
 
 .product-toolbar__filters {
   display: grid;
-  grid-template-columns: minmax(220px, 320px) 140px;
+  grid-template-columns: minmax(220px, 320px) minmax(140px, 160px);
   gap: 8px;
 }
 
@@ -1268,9 +1349,9 @@ loadData();
 
 @media (max-width: 920px) {
   .product-toolbar { align-items: stretch; flex-direction: column; }
-  .product-toolbar__filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .product-toolbar__filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(132px, 160px); }
   .product-toolbar__filters > * { min-width: 0; width: 100% !important; }
-  .product-toolbar__filters--mobile { grid-template-columns: 1fr; }
+  .product-toolbar__filters--mobile { grid-template-columns: minmax(0, 1fr) minmax(132px, 160px); }
   .mobile-search-toggle-row { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 }
 
@@ -1282,7 +1363,7 @@ loadData();
   .panel-header__actions :deep(.el-button) { width: 100%; min-height: 42px; margin: 0; }
   .product-toolbar { margin-bottom: 6px; }
   .mobile-search-toggle-row { align-items: center; justify-content: space-between; margin-bottom: 6px; }
-  .product-toolbar__filters { grid-template-columns: 1fr; }
+  .product-toolbar__filters { grid-template-columns: minmax(0, 1fr) minmax(120px, 145px); }
   .product-toolbar__filters :deep(.el-input__wrapper),
   .product-toolbar__filters :deep(.el-select__wrapper) { min-height: 42px; }
   .product-toolbar__filters :deep(.el-input__inner),

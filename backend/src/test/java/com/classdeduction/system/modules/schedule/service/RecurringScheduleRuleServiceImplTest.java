@@ -115,6 +115,9 @@ class RecurringScheduleRuleServiceImplTest {
     private ClassroomMapper classroomMapper;
 
     @Mock
+    private com.classdeduction.system.modules.base.mapper.CourseProductMapper courseProductMapper;
+
+    @Mock
     private LessonRecordMapper lessonRecordMapper;
 
     @Captor
@@ -155,7 +158,8 @@ class RecurringScheduleRuleServiceImplTest {
                 studentMapper,
                 teacherMapper,
                 classroomMapper,
-                jsonHelper
+                jsonHelper,
+                courseProductMapper
         );
         org.mockito.Mockito.lenient().when(coursePackageMapper.selectByIdForUpdate(any()))
                 .thenAnswer(invocation -> coursePackageMapper.selectById(invocation.getArgument(0)));

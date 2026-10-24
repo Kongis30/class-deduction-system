@@ -377,7 +377,7 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
         Map<Long, CourseProductEntity> lockedProducts = new LinkedHashMap<>();
         for (Long productId : productIds) {
             CourseProductEntity product = courseProductMapper.selectByIdForUpdate(productId);
-            if (product == null || !"ACTIVE".equals(product.getStatus())) {
+            if (product == null || product.getArchivedAt() != null || !"ACTIVE".equals(product.getStatus())) {
                 throw new BusinessException("COURSE_PRODUCT_INVALID", "The selected course is no longer active.");
             }
             lockedProducts.put(productId, product);
@@ -3257,9 +3257,12 @@ public class RegistrationIntakeServiceImpl implements RegistrationIntakeService 
     }
 
     private CourseProductEntity requireCourseProduct(Long id) {
-        CourseProductEntity product = courseProductMapper.selectById(id);
+        CourseProductEntity product = courseProductMapper.selectByIdForUpdate(id);
         if (product == null) {
             throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
+        }
+        if (product.getArchivedAt() != null) {
+            throw new BusinessException("COURSE_PRODUCT_ARCHIVED", "Archived products cannot accept new registrations.");
         }
         return product;
     }

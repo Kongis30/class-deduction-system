@@ -24,4 +24,7 @@ public class CourseProductPageQuery extends PageQuery {
 
     @Schema(description = "Course type", example = "SATURDAY")
     private String courseType;
+
+    @Schema(description = "Archive scope: CURRENT, ARCHIVED, or ALL", example = "CURRENT")
+    private String archiveScope;
 }

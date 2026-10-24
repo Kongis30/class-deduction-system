@@ -54,6 +54,9 @@ public interface ClassGroupService {
     /** 删除班课：取消未来课次、删除报名记录、软删除班课本身 */
     void deleteClassGroup(Long classId);
 
+    /** 归档 Product 时终止班级及在册报名，保留班级、报名和课表历史行。 */
+    void endClassForProductArchive(Long classId, Long operatorId);
+
     /** 获取教室占用的活跃班课列表（含解析后的时段） */
     List<Map<String, Object>> listByClassroom(Long classroomId);
 }

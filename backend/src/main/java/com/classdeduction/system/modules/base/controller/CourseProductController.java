@@ -9,7 +9,9 @@ import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
 import com.classdeduction.system.modules.base.dto.CourseProductOrderRequest;
 import com.classdeduction.system.modules.base.dto.CourseProductCopyRequest;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
+import com.classdeduction.system.modules.base.dto.CourseProductArchiveRequest;
 import com.classdeduction.system.modules.base.service.CourseProductService;
+import com.classdeduction.system.modules.base.vo.CourseProductArchivePreviewVO;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -76,6 +78,34 @@ public class CourseProductController {
                                                  @Valid @RequestBody CourseProductSaveRequest request) {
         courseProductService.updateCourseProduct(id, request);
         return ApiResponse.success("Updated successfully.", null);
+    }
+
+    @GetMapping("/{id}/archive-preview")
+    @RequireRoles({"ADMIN"})
+    @Operation(summary = "Preview the effects of archiving a course product")
+    public ApiResponse<CourseProductArchivePreviewVO> previewCourseProductArchive(@PathVariable Long id) {
+        return ApiResponse.success(courseProductService.previewCourseProductArchive(id));
+    }
+
+    @PostMapping("/{id}/archive")
+    @RequireRoles({"ADMIN"})
+    @Operation(summary = "Archive a course product")
+    public ApiResponse<Void> archiveCourseProduct(
+            @PathVariable Long id,
+            @Valid @RequestBody CourseProductArchiveRequest request,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        courseProductService.archiveCourseProduct(id, currentUser.userId(), request.previewFingerprint());
+        return ApiResponse.success("Course archived.", null);
+    }
+
+    @PostMapping("/{id}/restore")
+    @RequireRoles({"ADMIN"})
+    @Operation(summary = "Restore an archived course product")
+    public ApiResponse<Void> restoreCourseProduct(
+            @PathVariable Long id,
+            @RequestAttribute(AuthInterceptor.CURRENT_USER_ATTRIBUTE) CurrentUserResponse currentUser) {
+        courseProductService.restoreCourseProduct(id, currentUser.userId());
+        return ApiResponse.success("Course restored as inactive.", null);
     }
 
     @PutMapping("/tab-order")

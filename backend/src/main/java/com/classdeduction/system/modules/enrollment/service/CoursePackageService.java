@@ -67,4 +67,7 @@ public interface CoursePackageService {
      * 关闭课时包。
      */
     void closePackage(Long id);
+
+    /** 关闭课包并保留归档操作人审计。 */
+    void closePackage(Long id, Long operatorId);
 }

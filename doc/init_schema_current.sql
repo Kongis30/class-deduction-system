@@ -407,6 +407,8 @@ CREATE TABLE `course_product` (
   `default_teacher_id` bigint DEFAULT NULL COMMENT 'Default teacher ID (for class group products)',
   `list_price` decimal(12,2) NOT NULL DEFAULT '0.00' COMMENT 'Reference list price; sale price comes from course_price_option',
   `status` varchar(32) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Status: ACTIVE/INACTIVE',
+  `archived_at` datetime(3) DEFAULT NULL COMMENT 'Product archive time; historical business rows remain unchanged',
+  `archived_by` bigint DEFAULT NULL COMMENT 'User who archived the product',
   `notes` varchar(500) DEFAULT NULL COMMENT 'Notes',
   `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
   `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',

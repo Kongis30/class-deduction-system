@@ -1228,6 +1228,12 @@ public class CoursePackageServiceImpl implements CoursePackageService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void closePackage(Long id) {
+        closePackage(id, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void closePackage(Long id, Long operatorId) {
         CoursePackageEntity coursePackage = requireCoursePackage(id);
 
         // Validate that the package can be closed
@@ -1237,6 +1243,7 @@ public class CoursePackageServiceImpl implements CoursePackageService {
 
         // Mark as closed
         coursePackage.setPackageStatus("CLOSED");
+        if (operatorId != null) coursePackage.setUpdatedBy(operatorId);
         coursePackageMapper.updateById(coursePackage);
     }
 

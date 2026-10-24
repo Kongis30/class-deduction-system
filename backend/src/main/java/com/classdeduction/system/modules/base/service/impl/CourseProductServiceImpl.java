@@ -3,8 +3,10 @@ package com.classdeduction.system.modules.base.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
 import com.classdeduction.system.common.model.PageResponse;
+import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.entity.CoursePriceOptionEntity;
@@ -16,16 +18,30 @@ import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.service.CourseProductService;
+import com.classdeduction.system.modules.base.vo.CourseProductArchivePreviewVO;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
 import com.classdeduction.system.modules.enrollment.entity.CoursePackageEntity;
+import com.classdeduction.system.modules.enrollment.entity.EnrollmentCorrectionLogEntity;
 import com.classdeduction.system.modules.enrollment.mapper.CoursePackageMapper;
+import com.classdeduction.system.modules.enrollment.mapper.EnrollmentCorrectionLogMapper;
 import com.classdeduction.system.modules.enrollment.mapper.EnrollmentOrderItemMapper;
+import com.classdeduction.system.modules.enrollment.service.CoursePackageService;
+import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
+import com.classdeduction.system.modules.lesson.entity.LessonRecordEntity;
+import com.classdeduction.system.modules.lesson.mapper.LessonRecordMapper;
+import com.classdeduction.system.modules.lesson.service.LessonRecordService;
+import com.classdeduction.system.modules.lesson.vo.LessonRecordConfirmResultVO;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassGroupScheduleSlotEntity;
 import com.classdeduction.system.modules.schedule.entity.ClassHolidayEntity;
+import com.classdeduction.system.modules.schedule.entity.LessonOccurrenceEntity;
+import com.classdeduction.system.modules.schedule.entity.RecurringScheduleRuleEntity;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassGroupScheduleSlotMapper;
 import com.classdeduction.system.modules.schedule.mapper.ClassHolidayMapper;
+import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
+import com.classdeduction.system.modules.schedule.mapper.RecurringScheduleRuleMapper;
+import com.classdeduction.system.modules.schedule.service.ClassGroupService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -33,10 +49,16 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.time.LocalDate;
 
 /**
  * Course product service for maintaining reusable course templates.
@@ -54,16 +76,27 @@ public class CourseProductServiceImpl implements CourseProductService {
     private final CoursePackageMapper coursePackageMapper;
     private final EnrollmentOrderItemMapper enrollmentOrderItemMapper;
     private final ClassGroupMapper classGroupMapper;
-    private final com.classdeduction.system.modules.schedule.service.ClassGroupService classGroupService;
+    private final ClassGroupService classGroupService;
     private final PlatformTransactionManager transactionManager;
     private final CoursePriceOptionMapper coursePriceOptionMapper;
     private final ClassGroupScheduleSlotMapper classGroupScheduleSlotMapper;
     private final GroupCourseProjectMapper groupCourseProjectMapper;
     private final GroupRegistrationPlanMapper groupRegistrationPlanMapper;
     private final ClassHolidayMapper classHolidayMapper;
+    private final LessonOccurrenceMapper lessonOccurrenceMapper;
+    private final LessonRecordMapper lessonRecordMapper;
+    private final LessonRecordService lessonRecordService;
+    private final RecurringScheduleRuleMapper recurringScheduleRuleMapper;
+    private final CoursePackageService coursePackageService;
+    private final EnrollmentCorrectionLogMapper operationLogMapper;
 
     @Override
     public PageResponse<CourseProductVO> pageCourseProducts(CourseProductPageQuery query) {
+        String archiveScope = StringUtils.hasText(query.getArchiveScope())
+                ? query.getArchiveScope().trim().toUpperCase(Locale.ROOT) : "CURRENT";
+        if (!Set.of("CURRENT", "ARCHIVED", "ALL").contains(archiveScope)) {
+            throw new BusinessException("INVALID_PRODUCT_ARCHIVE_SCOPE", "Archive scope must be CURRENT, ARCHIVED, or ALL.");
+        }
         Page<CourseProductEntity> page = new Page<>(query.getPageNum(), query.getPageSize());
         LambdaQueryWrapper<CourseProductEntity> wrapper = new LambdaQueryWrapper<CourseProductEntity>()
                 .and(StringUtils.hasText(query.getKeyword()), w -> w
@@ -79,6 +112,8 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .eq(StringUtils.hasText(query.getStatus()), CourseProductEntity::getStatus, query.getStatus())
                 .eq(StringUtils.hasText(query.getTeachingMode()), CourseProductEntity::getTeachingMode, query.getTeachingMode())
                 .eq(StringUtils.hasText(query.getCourseType()), CourseProductEntity::getCourseType, query.getCourseType())
+                .isNull("CURRENT".equals(archiveScope), CourseProductEntity::getArchivedAt)
+                .isNotNull("ARCHIVED".equals(archiveScope), CourseProductEntity::getArchivedAt)
                 .orderByAsc(CourseProductEntity::getSortOrder)
                 .orderByDesc(CourseProductEntity::getCreatedAt);
         IPage<CourseProductEntity> result = courseProductMapper.selectPage(page, wrapper);
@@ -118,6 +153,8 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .teachingMode(entity.getTeachingMode())
                 .sortOrder(entity.getSortOrder() == null ? 99 : entity.getSortOrder())
                 .status(entity.getStatus())
+                .archivedAt(entity.getArchivedAt())
+                .archivedBy(entity.getArchivedBy())
                 .notes(entity.getNotes())
                 .createdAt(entity.getCreatedAt())
                 .updatedAt(entity.getUpdatedAt())
@@ -172,6 +209,8 @@ public class CourseProductServiceImpl implements CourseProductService {
             copy.setProductName(normalizedName);
             copy.setRegisterClass(normalizedName);
             copy.setStatus("INACTIVE");
+            copy.setArchivedAt(null);
+            copy.setArchivedBy(null);
             copy.setStartDate(shiftDate(copy.getStartDate(), dateShiftYears));
             copy.setStartMonth(shiftDate(copy.getStartMonth(), dateShiftYears));
             copy.setEndMonth(shiftDate(copy.getEndMonth(), dateShiftYears));
@@ -369,6 +408,13 @@ public class CourseProductServiceImpl implements CourseProductService {
         if (entity == null) {
             throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
         }
+        if (entity.getArchivedAt() != null && "ACTIVE".equalsIgnoreCase(request.getStatus())) {
+            throw new BusinessException("ARCHIVED_PRODUCT_CANNOT_ACTIVATE",
+                    "Restore the archived course before activating it.");
+        }
+        if (entity.getArchivedAt() != null && !StringUtils.hasText(request.getStatus())) {
+            request.setStatus("INACTIVE");
+        }
         if (!StringUtils.hasText(request.getProductCode())) {
             request.setProductCode(entity.getProductCode());
         }
@@ -382,6 +428,281 @@ public class CourseProductServiceImpl implements CourseProductService {
         }
         applyCourseProduct(entity, request);
         courseProductMapper.updateById(entity);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CourseProductArchivePreviewVO previewCourseProductArchive(Long id) {
+        CourseProductEntity product = requireCourseProduct(id);
+        return buildArchivePreview(product);
+    }
+
+    /** 执行一次事务内的级联归档；课次通过管理员既有确认入口结算，失败则整体回滚。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void archiveCourseProduct(Long id, Long operatorId, String previewFingerprint) {
+        CourseProductEntity product = courseProductMapper.selectByIdForUpdate(id);
+        if (product == null) {
+            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
+        }
+        if (product.getArchivedAt() != null) {
+            return;
+        }
+        LocalDateTime archivedAt = AppTime.nowLocalDateTime();
+        CourseProductArchivePreviewVO currentPreview = buildArchivePreview(product);
+        if (!Objects.equals(currentPreview.fingerprint(), previewFingerprint)) {
+            throw new BusinessException("COURSE_PRODUCT_ARCHIVE_PREVIEW_CHANGED",
+                    "The archive impact changed. Review the updated counts and confirm again.", currentPreview);
+        }
+
+        // 产品行锁与新报名/建班共用；归档事务持锁期间这些入口无法在确认快照后插入新依赖。
+        List<ClassGroupEntity> classes = classGroupMapper.selectList(new LambdaQueryWrapper<ClassGroupEntity>()
+                .eq(ClassGroupEntity::getProductId, id)
+                .eq(ClassGroupEntity::getIsDeleted, 0)
+                .orderByAsc(ClassGroupEntity::getId)
+                .last("FOR UPDATE"));
+        List<Long> classIds = classes.stream().map(ClassGroupEntity::getId).toList();
+        List<CoursePackageEntity> packages = coursePackageMapper.selectList(new LambdaQueryWrapper<CoursePackageEntity>()
+                .eq(CoursePackageEntity::getCourseProductId, id)
+                .eq(CoursePackageEntity::getIsDeleted, 0)
+                .orderByAsc(CoursePackageEntity::getId)
+                .last("FOR UPDATE"));
+        List<Long> packageIds = packages.stream().map(CoursePackageEntity::getId).toList();
+
+        // 先停止一切自动续排，再逐条走管理员 Cancel 状态机，避免异步任务在级联过程中补课次。
+        List<RecurringScheduleRuleEntity> rules = packageIds.isEmpty() ? List.of()
+                : recurringScheduleRuleMapper.selectList(new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                        .in(RecurringScheduleRuleEntity::getPackageId, packageIds)
+                        .in(RecurringScheduleRuleEntity::getRuleStatus, List.of("ACTIVE", "PAUSED"))
+                        .eq(RecurringScheduleRuleEntity::getIsDeleted, 0)
+                        .orderByAsc(RecurringScheduleRuleEntity::getId)
+                        .last("FOR UPDATE"));
+        List<LessonOccurrenceEntity> privateOccurrences = loadUnfinishedPackageOccurrences(packageIds);
+        List<LessonOccurrenceEntity> classOccurrences = loadUnfinishedClassOccurrences(classIds);
+        CourseProductArchivePreviewVO lockedPreview = buildArchivePreview(product);
+        if (!Objects.equals(lockedPreview.fingerprint(), previewFingerprint)) {
+            throw new BusinessException("COURSE_PRODUCT_ARCHIVE_PREVIEW_CHANGED",
+                    "The archive impact changed. Review the updated counts and confirm again.", lockedPreview);
+        }
+        for (RecurringScheduleRuleEntity rule : rules) {
+            rule.setRuleStatus("ENDED");
+            rule.setUpdatedBy(operatorId);
+            recurringScheduleRuleMapper.updateById(rule);
+        }
+
+        CurrentUserResponse admin = archiveOperator(operatorId);
+        cancelPrivateOccurrences(privateOccurrences, admin);
+        cancelClassOccurrences(classOccurrences, admin);
+
+        // 入口禁用、班级/报名终止、课包关闭都在当前事务中完成，保留原始业务记录和余额流水。
+        deactivateRegistrationEntrypoints(id, operatorId);
+        for (ClassGroupEntity classGroup : classes) {
+            if ("ACTIVE".equals(classGroup.getStatus())) {
+                classGroupService.endClassForProductArchive(classGroup.getId(), operatorId);
+            }
+        }
+        for (CoursePackageEntity coursePackage : packages) {
+            if (Set.of("ACTIVE", "PAUSED").contains(coursePackage.getPackageStatus())) {
+                coursePackageService.closePackage(coursePackage.getId(), operatorId);
+            }
+        }
+
+        product.setStatus("INACTIVE");
+        product.setArchivedAt(archivedAt);
+        product.setArchivedBy(operatorId);
+        product.setUpdatedBy(operatorId);
+        courseProductMapper.updateById(product);
+        writeArchiveAudit(product, operatorId, lockedPreview, archivedAt);
+    }
+
+    private CourseProductArchivePreviewVO buildArchivePreview(CourseProductEntity product) {
+        Map<String, Object> row = courseProductMapper.selectArchivePreview(product.getId());
+        long classCount = number(row, "classCount");
+        long enrollments = number(row, "activeEnrollmentCount");
+        long packages = number(row, "activePackageCount");
+        long rules = number(row, "recurringRuleCount");
+        long lessons = number(row, "unfinishedLessonCount");
+        BigDecimal hours = row.get("estimatedDeductedHours") instanceof Number value
+                ? new BigDecimal(value.toString()).setScale(1, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(1);
+        String impact = String.join("|", Long.toString(classCount), Long.toString(enrollments),
+                Long.toString(packages), Long.toString(rules), Long.toString(lessons), hours.toPlainString());
+        return new CourseProductArchivePreviewVO(product.getId(), product.getProductName(), classCount,
+                enrollments, packages, rules, lessons, hours, fingerprint(impact));
+    }
+
+    private long number(Map<String, Object> row, String key) {
+        Object value = row == null ? null : row.get(key);
+        if (value == null && row != null) {
+            value = row.entrySet().stream().filter(entry -> key.equalsIgnoreCase(entry.getKey()))
+                    .map(Map.Entry::getValue).findFirst().orElse(null);
+        }
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private String fingerprint(String impact) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(impact.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable.", exception);
+        }
+    }
+
+    private CurrentUserResponse archiveOperator(Long operatorId) {
+        return new CurrentUserResponse(operatorId, "system", "Product archive", "ADMIN", null, null, List.of("ADMIN"));
+    }
+
+    private List<LessonOccurrenceEntity> loadUnfinishedPackageOccurrences(List<Long> packageIds) {
+        if (packageIds.isEmpty()) return List.of();
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getPackageId, packageIds)
+                .and(status -> status.isNull(LessonOccurrenceEntity::getPlanningStatus)
+                        .or().notIn(LessonOccurrenceEntity::getPlanningStatus, List.of("CANCELLED", "MERGED")))
+                .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                .orderByAsc(LessonOccurrenceEntity::getId)
+                .last("FOR UPDATE"));
+    }
+
+    private List<LessonOccurrenceEntity> loadUnfinishedClassOccurrences(List<Long> classIds) {
+        if (classIds.isEmpty()) return List.of();
+        return lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                .in(LessonOccurrenceEntity::getClassGroupId, classIds)
+                .and(status -> status.isNull(LessonOccurrenceEntity::getPlanningStatus)
+                        .or().notIn(LessonOccurrenceEntity::getPlanningStatus, List.of("CANCELLED", "MERGED")))
+                .eq(LessonOccurrenceEntity::getIsDeleted, 0)
+                .orderByAsc(LessonOccurrenceEntity::getId)
+                .last("FOR UPDATE"));
+    }
+
+    private void cancelPrivateOccurrences(List<LessonOccurrenceEntity> occurrences, CurrentUserResponse admin) {
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            List<LessonRecordEntity> records = lessonRecordMapper.selectList(new LambdaQueryWrapper<LessonRecordEntity>()
+                    .eq(LessonRecordEntity::getOccurrenceId, occurrence.getId())
+                    .eq(LessonRecordEntity::getIsDeleted, 0));
+            LessonRecordEntity pending = records.stream()
+                    .filter(record -> "PENDING_ADMIN".equals(record.getConfirmStage()))
+                    .findFirst().orElse(null);
+            if (records.stream().anyMatch(record -> "CONFIRMED".equals(record.getConfirmStage()))) {
+                throw new BusinessException("COURSE_PRODUCT_ARCHIVE_LESSON_CONFLICT",
+                        "An unfinished occurrence already has a confirmed lesson record (occurrence " + occurrence.getId() + "). Refresh and review it before archiving.");
+            }
+            LessonRecordConfirmRequest request = archiveCancelRequest(occurrence);
+            LessonRecordConfirmResultVO result;
+            if (pending != null) {
+                result = lessonRecordService.adminConfirmLesson(pending.getId(), request, admin);
+            } else {
+                result = lessonRecordService.confirmLesson(request, admin);
+            }
+            double expectedHours = (occurrence.getPlannedUnits() == null ? 0 : occurrence.getPlannedUnits()) / 2.0;
+            if (result.deductedUnits() == null || Math.abs(result.deductedUnits() - expectedHours) > 0.001) {
+                throw new BusinessException("COURSE_PRODUCT_ARCHIVE_CANCEL_RULE_INVALID",
+                        "The active Cancel rule did not deduct the full planned hours for occurrence "
+                                + occurrence.getId() + ". Update the Cancel rule before archiving.");
+            }
+            Long generatedMakeups = lessonOccurrenceMapper.selectCount(new LambdaQueryWrapper<LessonOccurrenceEntity>()
+                    .eq(LessonOccurrenceEntity::getSourceOccurrenceId, occurrence.getId())
+                    .ne(LessonOccurrenceEntity::getPlanningStatus, "CANCELLED"));
+            if (generatedMakeups != null && generatedMakeups > 0) {
+                throw new BusinessException("COURSE_PRODUCT_ARCHIVE_CANCEL_CREATED_MAKEUP",
+                        "The active Cancel rule generated a replacement lesson for occurrence "
+                                + occurrence.getId() + ". Update the Cancel rule before archiving.");
+            }
+        }
+    }
+
+    private void cancelClassOccurrences(List<LessonOccurrenceEntity> occurrences, CurrentUserResponse admin) {
+        for (LessonOccurrenceEntity occurrence : occurrences) {
+            Map<String, Object> cancel = new HashMap<>();
+            cancel.put("resultStatus", "CANCELLED");
+            cancel.put("actualTeacherId", occurrence.getPlannedTeacherId());
+            cancel.put("actualClassroomId", occurrence.getPlannedClassroomId());
+            cancel.put("notes", "Cancelled when course product was archived.");
+            classGroupService.confirmLesson(occurrence.getClassGroupId(), occurrence.getId(), cancel, admin);
+        }
+    }
+
+    private LessonRecordConfirmRequest archiveCancelRequest(LessonOccurrenceEntity occurrence) {
+        LessonRecordConfirmRequest request = new LessonRecordConfirmRequest();
+        request.setOccurrenceId(occurrence.getId());
+        request.setResultStatus("CANCELLED");
+        request.setNotes("Cancelled when course product was archived.");
+        return request;
+    }
+
+    private void deactivateRegistrationEntrypoints(Long productId, Long operatorId) {
+        for (CoursePriceOptionEntity option : coursePriceOptionMapper.selectList(
+                new LambdaQueryWrapper<CoursePriceOptionEntity>()
+                        .eq(CoursePriceOptionEntity::getCourseProductId, productId)
+                        .eq(CoursePriceOptionEntity::getStatus, "ACTIVE")
+                        .eq(CoursePriceOptionEntity::getIsDeleted, 0)
+                        .orderByAsc(CoursePriceOptionEntity::getId))) {
+            option.setStatus("INACTIVE");
+            option.setUpdatedBy(operatorId);
+            coursePriceOptionMapper.updateById(option);
+        }
+        List<GroupCourseProjectEntity> projects = groupCourseProjectMapper.selectList(
+                new LambdaQueryWrapper<GroupCourseProjectEntity>()
+                        .eq(GroupCourseProjectEntity::getCourseProductId, productId)
+                        .eq(GroupCourseProjectEntity::getIsDeleted, 0)
+                        .orderByAsc(GroupCourseProjectEntity::getId));
+        if (projects.isEmpty()) return;
+        List<Long> projectIds = projects.stream().map(GroupCourseProjectEntity::getId).toList();
+        for (GroupCourseProjectEntity project : projects) {
+            if ("ACTIVE".equals(project.getStatus())) {
+                project.setStatus("INACTIVE");
+                project.setUpdatedBy(operatorId);
+                groupCourseProjectMapper.updateById(project);
+            }
+        }
+        for (GroupRegistrationPlanEntity plan : groupRegistrationPlanMapper.selectList(
+                new LambdaQueryWrapper<GroupRegistrationPlanEntity>()
+                        .in(GroupRegistrationPlanEntity::getProjectId, projectIds)
+                        .eq(GroupRegistrationPlanEntity::getIsDeleted, 0)
+                        .orderByAsc(GroupRegistrationPlanEntity::getId))) {
+            if ("ACTIVE".equals(plan.getStatus())) {
+                plan.setStatus("INACTIVE");
+                plan.setUpdatedBy(operatorId);
+                groupRegistrationPlanMapper.updateById(plan);
+            }
+        }
+    }
+
+    private void writeArchiveAudit(CourseProductEntity product,
+                                   Long operatorId,
+                                   CourseProductArchivePreviewVO impact,
+                                   LocalDateTime operatedAt) {
+        EnrollmentCorrectionLogEntity audit = new EnrollmentCorrectionLogEntity();
+        audit.setOperatorUserId(operatorId);
+        audit.setOperatorNameSnapshot("Admin " + operatorId);
+        audit.setBizType("COURSE_PRODUCT");
+        audit.setBizId(product.getId());
+        audit.setOperationCode("ARCHIVE_CASCADE");
+        audit.setOperationDesc("Archived product with cascade: " + impact.classCount() + " classes, "
+                + impact.activeEnrollmentCount() + " enrollments, " + impact.activePackageCount()
+                + " packages, " + impact.unfinishedLessonCount() + " lessons.");
+        audit.setRequestSnapshot("{\"previewFingerprint\":\"" + impact.fingerprint() + "\"}");
+        audit.setResponseSnapshot("{\"classes\":" + impact.classCount()
+                + ",\"activeEnrollments\":" + impact.activeEnrollmentCount()
+                + ",\"packages\":" + impact.activePackageCount()
+                + ",\"recurringRules\":" + impact.recurringRuleCount()
+                + ",\"cancelledLessons\":" + impact.unfinishedLessonCount()
+                + ",\"estimatedDeductedHours\":" + impact.estimatedDeductedHours().toPlainString() + "}");
+        audit.setOperateAt(operatedAt);
+        operationLogMapper.insert(audit);
+    }
+
+    /** 恢复只清除归档标记，Product 保持 Inactive，避免旧课程意外重新接受报名。 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void restoreCourseProduct(Long id, Long operatorId) {
+        CourseProductEntity product = courseProductMapper.selectByIdForUpdate(id);
+        if (product == null) {
+            throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
+        }
+        if (product.getArchivedAt() == null) {
+            throw new BusinessException("COURSE_PRODUCT_NOT_ARCHIVED", "Course is not archived.");
+        }
+        courseProductMapper.restoreArchivedProduct(id, operatorId, AppTime.nowLocalDateTime());
     }
 
     /**
@@ -686,6 +1007,8 @@ public class CourseProductServiceImpl implements CourseProductService {
                 .teachingMode(entity.getTeachingMode())
                 .sortOrder(entity.getSortOrder() == null ? 99 : entity.getSortOrder())
                 .status(entity.getStatus())
+                .archivedAt(entity.getArchivedAt())
+                .archivedBy(entity.getArchivedBy())
                 .notes(entity.getNotes())
                 .referenced(countProductReferences(entity.getId()) > 0)
                 .referenceCount(countProductReferences(entity.getId()))

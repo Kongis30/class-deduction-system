@@ -4,6 +4,7 @@ import com.classdeduction.system.common.model.PageResponse;
 import com.classdeduction.system.modules.base.dto.CourseProductPageQuery;
 import com.classdeduction.system.modules.base.dto.CourseProductSaveRequest;
 import com.classdeduction.system.modules.base.vo.CourseProductVO;
+import com.classdeduction.system.modules.base.vo.CourseProductArchivePreviewVO;
 
 import java.util.List;
 
@@ -21,6 +22,12 @@ public interface CourseProductService {
     Long copyCourseProduct(Long sourceId, String newProductName, int dateShiftYears);
 
     void updateCourseProduct(Long id, CourseProductSaveRequest request);
+
+    CourseProductArchivePreviewVO previewCourseProductArchive(Long id);
+
+    void archiveCourseProduct(Long id, Long operatorId, String previewFingerprint);
+
+    void restoreCourseProduct(Long id, Long operatorId);
 
     /**
      * 保存 Data Summary Product Tab 的系统级共享顺序（ADMIN 专用）。

@@ -674,7 +674,7 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
     }
 
     private void validateOneOnOneProduct(CourseProductEntity product) {
-        if (!"ACTIVE".equals(product.getStatus())) {
+        if (product.getArchivedAt() != null || !"ACTIVE".equals(product.getStatus())) {
             throw new BusinessException("COURSE_PRODUCT_INACTIVE", "Course product is not active.");
         }
         if (!"ONE_ON_ONE".equals(product.getTeachingMode())) {
@@ -937,6 +937,9 @@ public class EnrollmentOrderServiceImpl implements EnrollmentOrderService {
         CourseProductEntity product = courseProductMapper.selectByIdForUpdate(courseProductId);
         if (product == null) {
             throw new BusinessException("COURSE_PRODUCT_NOT_FOUND", "Course product not found.");
+        }
+        if (product.getArchivedAt() != null) {
+            throw new BusinessException("COURSE_PRODUCT_ARCHIVED", "Archived products cannot be used for new enrollment or package creation.");
         }
         return product;
     }
