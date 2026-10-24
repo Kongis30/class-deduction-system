@@ -105,34 +105,47 @@
     </div>
     <el-dialog
       v-model="rosterPrintDialogVisible"
+      class="roster-print-dialog"
       title="Print class roster"
-      width="min(480px, calc(100vw - 32px))"
+      width="min(640px, calc(100vw - 32px))"
       append-to-body
       destroy-on-close
     >
       <div class="roster-print-picker">
-        <p>Choose a class. The registration plan is optional; leave it on All plans to print the whole class.</p>
+        <p>Choose a class to print its student list.</p>
         <el-select
           v-model="selectedRosterPrintClassKey"
           class="roster-print-picker__select"
+          popper-class="roster-print-campus-popper"
           filterable
           clearable
           placeholder="Select a class"
           @change="selectedRosterPrintPlanKey = ROSTER_ALL_PLANS"
         >
-          <el-option
-            v-for="group in rosterPrintClassGroups"
-            :key="group.key"
-            :label="rosterPrintClassLabel(group)"
-            :value="group.key"
-          />
+          <el-option-group
+            v-for="campusGroup in rosterPrintCampusGroups"
+            :key="campusGroup.campusName"
+            :label="campusGroup.campusName"
+          >
+            <el-option
+              v-for="group in campusGroup.classes"
+              :key="group.key"
+              :label="rosterPrintClassLabel(group)"
+              :value="group.key"
+            >
+              <div class="roster-print-picker__option">
+                <strong>{{ group.className }}</strong>
+                <span>{{ rosterPrintClassMeta(group) }}</span>
+              </div>
+            </el-option>
+          </el-option-group>
         </el-select>
         <el-select
+          v-if="selectedRosterPrintClassGroup"
           v-model="selectedRosterPrintPlanKey"
           class="roster-print-picker__select"
           filterable
           clearable
-          :disabled="!selectedRosterPrintClassGroup"
           placeholder="All plans (optional)"
           @clear="selectedRosterPrintPlanKey = ROSTER_ALL_PLANS"
         >
@@ -667,6 +680,11 @@ interface RosterPrintClassGroup {
   plans: RosterPrintGroup[];
 }
 
+interface RosterPrintCampusGroup {
+  campusName: string;
+  classes: RosterPrintClassGroup[];
+}
+
 interface RosterPrintClassDraft {
   key: string;
   productName: string;
@@ -1184,6 +1202,28 @@ function mergeRosterPlans(group: RosterPrintClassGroup): RosterPrintGroup {
   };
 }
 
+/** 班级下拉按校区分组；未设置校区归入 Campus not set。 */
+const rosterPrintCampusGroups = computed<RosterPrintCampusGroup[]>(() => {
+  const groups = new Map<string, RosterPrintClassGroup[]>();
+  rosterPrintClassGroups.value.forEach((group) => {
+    const campusName = rosterPrintCampusName(group.campusName);
+    const classes = groups.get(campusName) ?? [];
+    classes.push(group);
+    groups.set(campusName, classes);
+  });
+  return [...groups.entries()]
+    .map(([campusName, classes]) => ({
+      campusName,
+      classes: [...classes].sort((left, right) => naturalCompare(left.className, right.className)
+        || naturalCompare(left.projectName, right.projectName)),
+    }))
+    .sort((left, right) => naturalCompare(left.campusName, right.campusName));
+});
+
+function rosterPrintCampusName(campusName: string) {
+  return campusName === '—' ? 'Campus not set' : campusName;
+}
+
 function printClassRoster() {
   if (!rosterPrintClassGroups.value.length) return;
   selectedRosterPrintClassKey.value = '';
@@ -1258,7 +1298,11 @@ const rosterPrinter = createIsolatedPrinter(() => rosterPrintRef.value, {
 });
 
 function rosterPrintClassLabel(group: RosterPrintClassGroup) {
-  return [group.className, group.campusName, group.projectName].filter(Boolean).join(' · ');
+  return [group.className, rosterPrintCampusName(group.campusName)].filter(Boolean).join(' · ');
+}
+
+function rosterPrintClassMeta(group: RosterPrintClassGroup) {
+  return [group.projectName, rosterStudentCount(group.studentCount)].filter(Boolean).join(' · ');
 }
 
 function rosterPrintPlanLabel(group: RosterPrintGroup) {
@@ -2351,33 +2395,73 @@ onMounted(() => {
   display: none;
 }
 
+.roster-print-dialog :deep(.el-dialog__header) {
+  padding: 22px 28px 6px;
+}
+
+.roster-print-dialog :deep(.el-dialog__title) {
+  color: #2f3237;
+  font-size: 24px;
+  font-weight: 400;
+}
+
+.roster-print-dialog :deep(.el-dialog__headerbtn) {
+  top: 22px;
+  right: 24px;
+}
+
+.roster-print-dialog :deep(.el-dialog__body) {
+  padding: 0 28px 24px;
+}
+
+.roster-print-dialog :deep(.el-dialog__footer) {
+  padding: 12px 28px 24px;
+}
+
 .roster-print-picker {
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
 .roster-print-picker p {
   margin: 0;
-  color: #64748b;
-  font-size: 13px;
+  color: #5f6368;
+  font-size: 16px;
 }
 
 .roster-print-picker__select {
   width: 100%;
 }
 
+.roster-print-picker__select :deep(.el-select__wrapper) {
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px #cfd8e3 inset;
+}
+
+.roster-print-picker__select :deep(.el-select__placeholder) {
+  font-size: 16px;
+}
+
+:global(.roster-print-campus-popper .el-select-dropdown__item) {
+  height: 44px;
+  padding: 0 16px;
+  line-height: 44px;
+}
+
 :global(.roster-print-campus-popper .el-select-group__title) {
-  height: 30px;
-  margin: 4px 8px;
-  padding: 0 10px;
+  height: 34px;
+  margin: 4px 10px;
+  padding: 0 12px;
   border: 1px solid #d3dfec;
   border-left: 3px solid #648bb5;
   border-radius: 4px;
   background: #edf4fb;
   color: #34465d;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
-  line-height: 28px;
+  line-height: 32px;
 }
 
 :global(.roster-print-campus-popper .el-select-group__wrap:not(:last-of-type)) {
@@ -2397,14 +2481,20 @@ onMounted(() => {
 .roster-print-picker__option strong {
   overflow: hidden;
   color: #243447;
+  font-size: 17px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.roster-print-picker__option span,
+.roster-print-picker__option span {
+  color: #7b8794;
+  font-size: 14px;
+}
+
 .roster-print-picker__count {
   color: #7b8794;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .workbook-toolbar__stat {
