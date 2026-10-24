@@ -201,8 +201,8 @@
         <table>
           <colgroup>
             <template v-for="column in rosterPrintLayout.columns" :key="column">
-              <col :style="{ width: `${60 / rosterPrintLayout.columns}%` }" />
-              <col :style="{ width: `${40 / rosterPrintLayout.columns}%` }" />
+              <col :style="{ width: `${50 / rosterPrintLayout.columns}%` }" />
+              <col :style="{ width: `${50 / rosterPrintLayout.columns}%` }" />
             </template>
           </colgroup>
           <thead>
@@ -1299,14 +1299,13 @@ const rosterPrintLayout = computed(() => {
   const columns = Math.max(1, Math.min(ROSTER_MAX_COLUMNS, Math.ceil(studentCount / ROSTER_TARGET_ROWS)));
   const rows = Math.max(1, Math.ceil(studentCount / columns));
   const rowScale = Math.min(1, ROSTER_TARGET_ROWS / rows);
-  // 学生列占 60%，学校列占 40%；按最长文本估算字号，保证单元格保持单行。
+  // Student 和 School 列各占一半；按最长文本估算字号，保证单元格保持单行。
   const longestName = Math.max(1, ...students.map((student) => student.name.length));
   const longestSchool = Math.max(1, ...students.map((student) => student.school.length));
-  const studentCellWidth = (ROSTER_PAGE_WIDTH_MM / columns) * 0.6 - 3;
-  const schoolCellWidth = (ROSTER_PAGE_WIDTH_MM / columns) * 0.4 - 3;
+  const cellWidth = (ROSTER_PAGE_WIDTH_MM / columns) * 0.5 - 3;
   // 0.3528 是 1pt 对应的毫米数，0.55 是 Arial 平均字符宽度系数。
-  const fontForName = studentCellWidth / (0.55 * 0.3528 * longestName);
-  const fontForSchool = schoolCellWidth / (0.55 * 0.3528 * longestSchool);
+  const fontForName = cellWidth / (0.55 * 0.3528 * longestName);
+  const fontForSchool = cellWidth / (0.55 * 0.3528 * longestSchool);
   const textScale = Math.max(0.45, Math.min(1, fontForName / 10, fontForSchool / 10));
   return { columns, rows, scale: Math.min(rowScale, textScale) };
 });

@@ -97,6 +97,11 @@ test('Data Summary prints a deduplicated whole-class roster without requiring a 
   await expect(printRoot.locator('.roster-print__campus')).toHaveText('North Campus');
   // 71 人超过单页 25 行，应自动扩展为 3 个学生列（6 个表头单元格）。
   await expect(printRoot.locator('thead th')).toHaveCount(6);
+  const columnWidths = await printRoot.locator('colgroup col').evaluateAll((columns) => (
+    columns.map((column) => (column as HTMLElement).style.width)
+  ));
+  expect(columnWidths).toHaveLength(6);
+  expect(new Set(columnWidths).size).toBe(1);
   await expect(printRoot.locator('tbody tr')).toHaveCount(24);
   await expect(printRoot).toContainText('Student 70');
   await expect(printRoot).toContainText('Spring Student');
