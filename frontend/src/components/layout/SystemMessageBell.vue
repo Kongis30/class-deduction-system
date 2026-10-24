@@ -1,36 +1,82 @@
 <template>
   <div v-if="isAdmin" class="system-message-bell">
-    <button
-      type="button"
-      class="system-message-bell__trigger"
-      :aria-label="unreadCount ? `${unreadCount} unread system messages` : 'System messages'"
-      title="System messages"
-      @click="openMessages"
+    <el-popover
+      :visible="inboxVisible"
+      :placement="inboxPlacement"
+      :width="inboxWidth"
+      :teleported="true"
+      :show-arrow="false"
+      trigger="manual"
+      popper-class="system-message-inbox-popover"
+      @update:visible="inboxVisible = $event"
     >
-      <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99" class="system-message-bell__badge">
-        <el-icon><Bell /></el-icon>
-      </el-badge>
-      <span v-if="!appStore.isMobileViewport">Messages</span>
-    </button>
+      <template #reference>
+        <button
+          type="button"
+          class="system-message-bell__trigger"
+          :aria-label="unreadCount ? `${unreadCount} unread system messages` : 'System messages'"
+          :aria-expanded="inboxVisible"
+          title="System messages"
+          @click="toggleInbox"
+        >
+          <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99" class="system-message-bell__badge">
+            <el-icon><Bell /></el-icon>
+          </el-badge>
+        </button>
+      </template>
+
+      <section class="system-message-inbox" aria-label="System message list">
+        <header class="system-message-inbox__header">
+          <div>
+            <strong>System messages</strong>
+            <span v-if="unreadCount" class="system-message-dialog__unread">{{ unreadCount }} unread</span>
+          </div>
+          <el-button size="small" circle aria-label="Close system messages" @click="inboxVisible = false">
+            <el-icon><Close /></el-icon>
+          </el-button>
+        </header>
+
+        <p v-if="loadError" class="system-message-dialog__notice">
+          Could not load messages. <button type="button" @click="loadInbox">Retry</button>
+        </p>
+        <div v-else-if="loading && messages.length === 0" class="system-message-inbox__empty">Loading messages…</div>
+        <div v-else-if="messages.length === 0" class="system-message-inbox__empty">No system messages yet.</div>
+        <div v-else class="system-message-inbox__list">
+          <button
+            v-for="message in messages"
+            :key="message.id"
+            type="button"
+            class="system-message-inbox__item"
+            :class="{ 'system-message-inbox__item--unread': !message.readAt }"
+            @click="openMessage(message)"
+          >
+            <span class="system-message-inbox__copy">
+              <strong :title="message.title">{{ message.title }}</strong>
+              <small>{{ formatWeekRange(message.weekStartDate, message.weekEndDate) }}</small>
+            </span>
+            <time v-if="message.createdAt" class="system-message-inbox__sent-at" :datetime="message.createdAt">
+              {{ formatSentAt(message.createdAt) }}
+            </time>
+          </button>
+        </div>
+      </section>
+    </el-popover>
 
     <el-dialog
-      v-model="dialogVisible"
-      title="System messages"
+      v-model="detailVisible"
+      :title="activeMessage?.title ?? 'Birthday reminder'"
       :width="dialogWidth"
       :show-close="false"
       :close-on-click-modal="true"
       :append-to-body="true"
-      aria-label="System messages"
+      aria-label="Birthday reminder details"
       class="system-message-bell__dialog"
     >
       <template #header>
         <header class="system-message-dialog__header">
-          <div class="system-message-dialog__title">
-            <strong>System messages</strong>
-            <span class="system-message-dialog__unread">{{ unreadCount }} unread</span>
-          </div>
+          <strong>{{ activeMessage?.title ?? 'Birthday reminder' }}</strong>
           <div class="system-message-dialog__actions">
-            <el-button size="small" circle aria-label="Close system messages" @click="dialogVisible = false">
+            <el-button size="small" circle aria-label="Close birthday reminder" @click="detailVisible = false">
               <el-icon><Close /></el-icon>
             </el-button>
           </div>
@@ -38,34 +84,29 @@
       </template>
 
       <div class="system-message-dialog__body">
-        <p v-if="loadError" class="system-message-dialog__notice">
-          Could not load messages. <button type="button" @click="loadInbox">Retry</button>
-        </p>
-        <div v-else-if="loading && messages.length === 0" class="system-message-dialog__empty">Loading messages…</div>
-        <div v-else-if="messages.length === 0" class="system-message-dialog__empty">No system messages yet.</div>
-
-        <template v-else-if="activeMessage">
-          <div class="system-message-focus">
-            <div>
-              <span class="system-message-dialog__eyebrow">{{ activeMessage.title }}</span>
-              <h2>{{ formatWeekRange(activeMessage.weekStartDate, activeMessage.weekEndDate) }}</h2>
-            </div>
-            <div class="system-message-focus__summary">
-              <span class="system-message-focus__count">{{ birthdaySummary(activeMessage.itemCount) }}</span>
-              <el-button
-                size="small"
-                circle
-                plain
-                class="system-message-print-button"
-                aria-label="Print birthday list"
-                title="Print birthday list"
-                @click="printMessage"
-              >
-                <el-icon><Printer /></el-icon>
-              </el-button>
-            </div>
+        <p v-if="readError" class="system-message-dialog__notice">Could not mark this message as read. It will remain unread.</p>
+        <div v-if="activeMessage" class="system-message-focus">
+          <div>
+            <span class="system-message-dialog__eyebrow">{{ activeMessage.title }}</span>
+            <h2>{{ formatWeekRange(activeMessage.weekStartDate, activeMessage.weekEndDate) }}</h2>
           </div>
+          <div class="system-message-focus__summary">
+            <span class="system-message-focus__count">{{ birthdaySummary(activeMessage.itemCount) }}</span>
+            <el-button
+              size="small"
+              circle
+              plain
+              class="system-message-print-button"
+              aria-label="Print birthday list"
+              title="Print birthday list"
+              @click="printMessage"
+            >
+              <el-icon><Printer /></el-icon>
+            </el-button>
+          </div>
+        </div>
 
+        <div v-if="activeMessage" class="system-message-detail">
           <div class="system-message-table-wrap">
             <table class="system-message-table">
               <thead>
@@ -93,23 +134,8 @@
               </tbody>
             </table>
           </div>
-
-          <section v-if="historyMessages.length" class="system-message-history" aria-label="Previous messages">
-            <h3>Previous weeks</h3>
-            <button
-              v-for="message in historyMessages"
-              :key="message.id"
-              type="button"
-              class="system-message-history__item"
-              :class="{ 'system-message-history__item--unread': !message.readAt }"
-              @click="selectMessage(message)"
-            >
-              <span class="system-message-bell__unread-dot" aria-hidden="true" />
-              <span>{{ formatWeekRange(message.weekStartDate, message.weekEndDate) }}</span>
-              <small>{{ message.itemCount }} {{ message.itemCount === 1 ? 'birthday' : 'birthdays' }}</small>
-            </button>
-          </section>
-        </template>
+        </div>
+        <div v-else class="system-message-dialog__empty">This message is no longer available.</div>
       </div>
     </el-dialog>
   </div>
@@ -133,7 +159,9 @@ const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 const inbox = ref<SystemMessageInbox>({ unreadCount: 0, messages: [] });
 const loading = ref(false);
 const loadError = ref(false);
-const dialogVisible = ref(false);
+const readError = ref(false);
+const inboxVisible = ref(false);
+const detailVisible = ref(false);
 const selectedMessageId = ref<string | null>(null);
 let pollTimer: number | undefined;
 let requestPending = false;
@@ -141,10 +169,10 @@ let requestPending = false;
 const messages = computed(() => inbox.value.messages);
 const unreadCount = computed(() => inbox.value.unreadCount);
 const dialogWidth = 'min(680px, calc(100vw - 24px))';
+const inboxWidth = computed(() => appStore.isMobileViewport ? 'min(360px, calc(100vw - 20px))' : 340);
+const inboxPlacement = computed<'top-start' | 'right-end'>(() => appStore.isMobileViewport ? 'top-start' : 'right-end');
 const activeMessage = computed(() => messages.value.find(message => String(message.id) === selectedMessageId.value)
-  ?? messages.value[0]
   ?? null);
-const historyMessages = computed(() => messages.value.filter(message => message.id !== activeMessage.value?.id));
 
 async function loadInbox() {
   if (!isAdmin.value || requestPending || document.visibilityState === 'hidden') return;
@@ -153,9 +181,6 @@ async function loadInbox() {
   try {
     const response = await fetchSystemMessageInbox();
     inbox.value = response.data.data;
-    if (!messages.value.some(message => String(message.id) === selectedMessageId.value)) {
-      selectedMessageId.value = messages.value[0] ? String(messages.value[0].id) : null;
-    }
     loadError.value = false;
   } catch {
     loadError.value = true;
@@ -172,29 +197,31 @@ async function markRead(message: SystemMessageItem) {
   inbox.value.unreadCount = Math.max(0, inbox.value.unreadCount - 1);
 }
 
-async function selectMessage(message: SystemMessageItem) {
+async function openMessage(message: SystemMessageItem) {
   selectedMessageId.value = String(message.id);
+  inboxVisible.value = false;
+  detailVisible.value = true;
+  readError.value = false;
   try {
     await markRead(message);
   } catch {
-    loadError.value = true;
+    readError.value = true;
   }
 }
 
-// 点击铃铛打开收件箱，默认选中最新一周并在展示内容时标为已读。
-async function openMessages() {
-  dialogVisible.value = true;
-  await loadInbox();
-  if (activeMessage.value) await selectMessage(activeMessage.value);
+// 铃铛只展开收件箱；只有点击具体消息才进入生日名单详情。
+function toggleInbox() {
+  inboxVisible.value = !inboxVisible.value;
+  if (inboxVisible.value) void loadInbox();
 }
 
 async function openStudent(studentId: BirthdayStudentMessageItem['studentId'], message: SystemMessageItem) {
   try {
     await markRead(message);
   } catch {
-    loadError.value = true;
+    readError.value = true;
   }
-  dialogVisible.value = false;
+  detailVisible.value = false;
   await router.push({
     name: 'admin-config-people',
     query: { tab: 'students', studentId },
@@ -276,6 +303,17 @@ function formatBirthdayDate(value: string) {
   return formatDateOnly(value, { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
+function formatSentAt(value: string) {
+  // 后端 createdAt 是美国东部本地时间，不带时区；按原始时钟显示并标注 ET。
+  const parts = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!parts) return value;
+  const localTime = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]), Number(parts[4]), Number(parts[5])));
+  const formatted = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+  }).format(localTime);
+  return `${formatted} ET`;
+}
+
 function handleVisibilityChange() {
   if (document.visibilityState === 'visible') void loadInbox();
 }
@@ -304,14 +342,14 @@ onBeforeUnmount(() => {
 .system-message-bell { display: inline-flex; min-width: 0; }
 .system-message-bell__trigger {
   display: inline-flex;
+  width: 42px;
   min-height: 42px;
   align-items: center;
   justify-content: center;
-  gap: 9px;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  padding: 0 12px;
+  padding: 0;
   color: rgba(255, 255, 255, 0.78);
   font: inherit;
   font-size: 13px;
@@ -321,16 +359,38 @@ onBeforeUnmount(() => {
 .system-message-bell__trigger:focus-visible { outline: none; background: rgba(255, 255, 255, 0.1); color: #fff; }
 .system-message-bell__trigger > .el-icon { font-size: 18px; }
 .system-message-bell__badge :deep(.el-badge__content) { border: 1px solid #17212f; }
-.system-message-bell__unread-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: transparent; }
-.system-message-history__item--unread .system-message-bell__unread-dot { background: #3987e8; }
+
+:global(.system-message-inbox-popover.el-popper) {
+  box-sizing: border-box;
+  max-width: calc(100vw - 20px);
+  overflow: hidden;
+  border: 1px solid #e1e7ef;
+  border-radius: 12px;
+  padding: 0 !important;
+  box-shadow: 0 14px 38px rgb(24 43 67 / 18%);
+}
+.system-message-inbox { display: flex; height: 360px; max-height: calc(100dvh - 104px); min-height: 180px; flex-direction: column; color: #26384c; }
+.system-message-inbox__header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #edf1f5; padding: 0 12px 0 15px; }
+.system-message-inbox__header > div { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.system-message-inbox__header strong { color: #26384c; font-size: 14px; font-weight: 650; }
+.system-message-inbox__list { display: grid; min-height: 0; flex: 1 1 auto; align-content: start; gap: 6px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
+.system-message-inbox__item { display: flex; width: 100%; min-height: 68px; align-items: stretch; justify-content: space-between; gap: 8px; border: 1px solid #e1e7ef; border-radius: 8px; background: #fff; padding: 9px 12px 7px; color: inherit; text-align: left; cursor: pointer; }
+.system-message-inbox__item:hover { background: #f7faff; }
+.system-message-inbox__copy { display: grid; min-width: 0; flex: 1 1 auto; align-content: center; gap: 4px; }
+.system-message-inbox__copy strong { overflow: hidden; color: #33485f; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.system-message-inbox__item--unread .system-message-inbox__copy strong { color: #243a53; }
+.system-message-inbox__copy small { color: #78889b; font-size: 11px; }
+.system-message-inbox__sent-at { align-self: flex-end; flex: 0 0 auto; color: #8a96a5; font-size: 9px; line-height: 1.2; white-space: nowrap; }
+.system-message-inbox__empty { display: grid; min-height: 118px; place-items: center; padding: 16px; color: #7c8999; font-size: 12px; text-align: center; }
+:global(.system-message-inbox-popover .el-popper__arrow) { display: none; }
 
 .system-message-dialog__header { display: flex; min-height: 30px; align-items: center; justify-content: space-between; gap: 12px; }
-.system-message-dialog__title { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .system-message-dialog__header strong { color: #26384c; font-size: 15px; font-weight: 650; line-height: 1.2; }
 .system-message-dialog__unread { border-radius: 999px; background: #f1f5f9; padding: 3px 7px; color: #718198; font-size: 10px; line-height: 1; white-space: nowrap; }
 .system-message-dialog__eyebrow { color: #74859a; font-size: 10px; font-weight: 700; letter-spacing: 0.09em; }
 .system-message-dialog__actions { display: flex; flex: 0 0 auto; gap: 4px; }
 .system-message-dialog__body { display: grid; min-height: 0; max-height: min(68vh, 620px); flex: 1 1 auto; gap: 18px; overflow-y: auto; overscroll-behavior: contain; color: #26384c; }
+.system-message-detail { display: grid; gap: 18px; }
 .system-message-focus { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; border-bottom: 1px solid #e7ecf2; padding: 0 0 14px; }
 .system-message-focus h2 { margin: 4px 0 0; color: #24384f; font-size: 20px; font-weight: 650; line-height: 1.25; }
 .system-message-focus__summary { display: flex; align-items: center; gap: 10px; }
@@ -353,12 +413,6 @@ onBeforeUnmount(() => {
 .system-message-table__student:hover { color: #2878d0; }
 .system-message-table time { color: #334b65; font-weight: 600; white-space: nowrap; }
 .system-message-table__empty { padding: 24px 12px !important; color: #7c8999 !important; text-align: center; }
-.system-message-history { display: grid; gap: 2px; }
-.system-message-history h3 { margin: 0 0 4px; color: #718198; font-size: 11px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; }
-.system-message-history__item { display: flex; min-height: 38px; align-items: center; gap: 9px; border: 0; border-top: 1px solid #edf1f5; background: #fff; padding: 7px 2px; color: #344a61; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
-.system-message-history__item > span:nth-child(2) { flex: 1; }
-.system-message-history__item small { color: #7c8999; font-size: 11px; }
-.system-message-history__item:hover { background: #f8fafc; }
 .system-message-dialog__empty { padding: 34px 12px; color: #7c8999; font-size: 13px; text-align: center; }
 .system-message-dialog__notice { margin: 0; color: #b54747; font-size: 12px; }
 .system-message-dialog__notice button { border: 0; background: transparent; color: #2878d0; cursor: pointer; }
