@@ -1730,6 +1730,37 @@ CREATE TABLE `teacher_payment_item` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `system_message`
+--
+
+DROP TABLE IF EXISTS `system_message`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `system_message` (
+  `id` bigint NOT NULL COMMENT 'Primary key ID',
+  `recipient_user_id` bigint NOT NULL COMMENT 'Administrator receiving the message',
+  `message_type` varchar(32) NOT NULL COMMENT 'Message type',
+  `week_start_date` date NOT NULL COMMENT 'Business week start in America/New_York',
+  `title` varchar(128) NOT NULL COMMENT 'Message title',
+  `item_count` int NOT NULL DEFAULT 0 COMMENT 'Number of students in the message',
+  `students_payload` json NOT NULL COMMENT 'Student names and birthdays for this week',
+  `read_at` datetime(3) DEFAULT NULL COMMENT 'Read time in application time zone',
+  `created_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT 'Created at',
+  `created_by` bigint DEFAULT NULL COMMENT 'Created by user ID',
+  `updated_at` datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) COMMENT 'Updated at',
+  `updated_by` bigint DEFAULT NULL COMMENT 'Updated by user ID',
+  `is_deleted` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'Soft delete flag',
+  `deleted_at` datetime(3) DEFAULT NULL COMMENT 'Deleted at',
+  `deleted_by` bigint DEFAULT NULL COMMENT 'Deleted by user ID',
+  `version` int NOT NULL DEFAULT 0 COMMENT 'Optimistic lock version',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_system_message_recipient_week` (`recipient_user_id`, `message_type`, `week_start_date`),
+  KEY `idx_system_message_inbox` (`recipient_user_id`, `read_at`, `week_start_date`),
+  CONSTRAINT `fk_system_message_recipient` FOREIGN KEY (`recipient_user_id`) REFERENCES `sys_user` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='In-app system messages';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Dumping events for database 'class_deduction_system'
 --
 

@@ -1,6 +1,6 @@
 import http from './http';
 import type { ApiResponse, PageResult } from '@/types/http';
-import type { BrandConfigItem, EntityId, NotificationTemplateItem, NotificationConfigItem, NotificationTriggerRuleItem } from '@/types/domain';
+import type { BrandConfigItem, EntityId, NotificationTemplateItem, NotificationConfigItem, NotificationTriggerRuleItem, SystemMessageInbox } from '@/types/domain';
 
 // ─── Brand Config ───────────────────────────────────
 
@@ -72,6 +72,16 @@ export function updateNotificationConfig(data: NotificationConfigUpdatePayload) 
 
 export function sendTestEmail() {
   return http.post<ApiResponse<null>>('/v1/system/notification-config/test');
+}
+
+// ─── In-app messages ───────────────────────────────────
+
+export function fetchSystemMessageInbox() {
+  return http.get<ApiResponse<SystemMessageInbox>>('/v1/system/messages');
+}
+
+export function markSystemMessageRead(id: EntityId) {
+  return http.put<ApiResponse<null>>(`/v1/system/messages/${id}/read`);
 }
 
 // ─── Trigger Rules ──────────────────────────────────────

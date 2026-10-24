@@ -6,7 +6,8 @@ import java.time.ZoneId;
 
 public final class AppTime {
 
-    public static final ZoneId APP_ZONE_ID = ZoneId.of("America/New_York");
+    public static final String APP_TIME_ZONE = "America/New_York";
+    public static final ZoneId APP_ZONE_ID = ZoneId.of(APP_TIME_ZONE);
 
     private AppTime() {
     }

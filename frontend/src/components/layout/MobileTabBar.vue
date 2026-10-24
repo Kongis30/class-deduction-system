@@ -1,58 +1,57 @@
 <template>
-  <nav
-    ref="navElement"
-    v-show="!isKeyboardOpen"
-    class="mobile-tab-bar"
-    aria-label="Primary navigation. Swipe or drag horizontally to see more pages."
-    @pointerdown="onDragStart"
-    @pointermove="onDragMove"
-    @pointerup="onDragEnd"
-    @pointercancel="onDragEnd"
-    @click.capture="blockClickAfterDrag"
-  >
-    <RouterLink
-      v-for="item in navigationItems"
-      :key="item.key"
-      :to="item.path"
-      class="mobile-tab-bar__item"
-      :class="{ 'mobile-tab-bar__item--active': isActive(item.path) }"
-      :aria-current="isActive(item.path) ? 'page' : undefined"
+  <div v-show="!isKeyboardOpen" class="mobile-navigation-bar">
+    <div v-if="isAdmin" class="mobile-navigation-bar__message">
+      <SystemMessageBell />
+    </div>
+    <nav
+      ref="navElement"
+      class="mobile-tab-bar"
+      aria-label="Primary navigation. Swipe or drag horizontally to see more pages."
+      @pointerdown="onDragStart"
+      @pointermove="onDragMove"
+      @pointerup="onDragEnd"
+      @pointercancel="onDragEnd"
+      @click.capture="blockClickAfterDrag"
     >
-      <el-icon><component :is="resolveIcon(item.icon)" /></el-icon>
-      <span>{{ tabLabel(item) }}</span>
-    </RouterLink>
-  </nav>
+      <RouterLink
+        v-for="item in navigationItems"
+        :key="item.key"
+        :to="item.path"
+        class="mobile-tab-bar__item"
+        :class="{ 'mobile-tab-bar__item--active': isActive(item.path) }"
+        :aria-current="isActive(item.path) ? 'page' : undefined"
+      >
+        <el-icon><component :is="resolveIcon(item.icon)" /></el-icon>
+        <span>{{ tabLabel(item) }}</span>
+      </RouterLink>
+    </nav>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
-import { Calendar, DataAnalysis, Files, Money, Setting, Tickets, User, Van } from '@element-plus/icons-vue';
+import { Calendar, DataAnalysis, Files, Money, Tickets, Van } from '@element-plus/icons-vue';
 import { RouterLink, useRoute } from 'vue-router';
 
 import type { AppMenuItem } from '@/types/menu';
 import { useAuthStore } from '@/stores/auth';
 import { useMobileKeyboardState } from '@/composables/useMobileKeyboardState';
-import { getMenusForUser, getSecondaryMenusForUser } from '@/utils/menu';
+import { getMenusForUser } from '@/utils/menu';
+import { isAdminUser } from '@/types/auth';
+import SystemMessageBell from './SystemMessageBell.vue';
 
 const route = useRoute();
 const authStore = useAuthStore();
 const { isKeyboardOpen } = useMobileKeyboardState();
 const navElement = ref<HTMLElement | null>(null);
+const isAdmin = computed(() => isAdminUser(authStore.currentUser));
 
-const iconMap = { Calendar, DataAnalysis, Files, Money, Setting, Tickets, User, Van };
-const navigationItems = computed(() => {
-  const primaryItems = getMenusForUser(authStore.currentUser);
-  const secondaryItems = getSecondaryMenusForUser(authStore.currentUser).flatMap(group =>
-    (group.children ?? []).map(item => ({ ...item, icon: item.icon ?? group.icon })),
-  );
-  const seenPaths = new Set<string>();
-
-  return [...primaryItems, ...secondaryItems].filter((item): item is AppMenuItem & { path: string } => {
-    if (!item.path || seenPaths.has(item.path)) return false;
-    seenPaths.add(item.path);
-    return true;
-  });
-});
+const iconMap = { Calendar, DataAnalysis, Files, Money, Tickets, Van };
+// 底部导航复用桌面侧栏的主菜单，不把 Back Office 子项重复铺到导航栏。
+const navigationItems = computed(() =>
+  getMenusForUser(authStore.currentUser)
+    .filter((item): item is AppMenuItem & { path: string } => Boolean(item.path)),
+);
 
 let dragPointerId: number | null = null;
 let dragStartX = 0;
@@ -72,20 +71,6 @@ function tabLabel(item: AppMenuItem) {
     'pickup-dropoff-list': 'Pickup list',
     'student-credit': 'Credit',
     'daily-registrations': 'Daily reg.',
-    'admin-guide': 'Guide',
-    'config-people': 'People',
-    'enrollment-orders': 'Enrollments',
-    'course-packages': 'Packages',
-    'receipt-history': 'Receipts',
-    'course-products': 'Products',
-    'course-prices': 'Prices',
-    'schedule-rules': 'Schedule',
-    'config-teacher-pay-rates': 'Pay rates',
-    'teacher-payments': 'Payroll',
-    'config-payment-methods': 'Methods',
-    'config-receipt': 'Brand',
-    'config-campuses': 'Campuses',
-    'config-notifications': 'Alerts',
     'my-teacher-calendar': 'Calendar',
     'my-lessons': 'Lessons',
     'my-payroll': 'Pay',
@@ -156,22 +141,39 @@ watch(() => route.path, () => void scrollActiveItemIntoView());
 </script>
 
 <style scoped>
-.mobile-tab-bar {
+.mobile-navigation-bar {
   position: fixed;
   z-index: 900;
   right: 0;
   bottom: 0;
   left: 0;
   display: flex;
-  gap: 4px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  align-items: center;
   min-height: calc(60px + env(safe-area-inset-bottom));
-  padding: 4px 8px env(safe-area-inset-bottom);
   border-top: 1px solid #e4e7ec;
   background: rgb(255 255 255 / 96%);
   box-shadow: 0 -6px 20px rgb(16 42 67 / 7%);
   backdrop-filter: blur(16px);
+}
+
+.mobile-navigation-bar__message {
+  display: flex;
+  width: 54px;
+  flex: 0 0 54px;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+}
+
+.mobile-tab-bar {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: 60px;
+  padding: 4px 8px env(safe-area-inset-bottom) 0;
   overscroll-behavior-x: contain;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;

@@ -45,6 +45,7 @@
     </div>
 
     <div class="sidebar__footer">
+      <SystemMessageBell v-if="!appStore.isMobileViewport" />
       <el-popover placement="right-end" :width="280" trigger="click">
         <template #reference>
           <button type="button" class="sidebar__settings-button" aria-label="Open settings">
@@ -96,6 +97,7 @@ import { APP_SHORT_NAME } from '@/config/app-config';
 import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
 import { getMenusForUser } from '@/utils/menu';
+import SystemMessageBell from './SystemMessageBell.vue';
 
 const appStore = useAppStore();
 const route = useRoute();

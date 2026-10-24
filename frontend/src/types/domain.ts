@@ -858,6 +858,31 @@ export interface NotificationTriggerRuleItem {
   updatedAt?: string;
 }
 
+export interface BirthdayStudentMessageItem {
+  studentId: EntityId;
+  studentName: string;
+  grade?: string;
+  campusName?: string;
+  birthdayDate: string;
+}
+
+export interface SystemMessageItem {
+  id: EntityId;
+  messageType: string;
+  title: string;
+  weekStartDate: string;
+  weekEndDate: string;
+  itemCount: number;
+  students: BirthdayStudentMessageItem[];
+  createdAt?: string;
+  readAt?: string | null;
+}
+
+export interface SystemMessageInbox {
+  unreadCount: number;
+  messages: SystemMessageItem[];
+}
+
 // ─── Auth ──────────────────────────────────────────────
 
 export interface TeacherAccountItem {
