@@ -1035,7 +1035,7 @@ class RecurringScheduleRuleServiceImplTest {
         coursePackage.setConsumedUnits(4);
         coursePackage.setRemainingUnits(24);
         RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
-        request.getSlots().get(0).setSlotId(6001L);
+        // 旧表单重建周课位时可能漏传 slotId；单一课位仍须延续历史时间线。
         request.getSlots().get(0).setTeacherId(3002L);
 
         RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
@@ -1128,6 +1128,7 @@ class RecurringScheduleRuleServiceImplTest {
         verify(lessonRecordMapper, org.mockito.Mockito.never()).updateById(any(LessonRecordEntity.class));
 
         verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
+        assertThat(slotCaptor.getValue().getSlotLineageId()).isEqualTo(7001L);
         assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(24);
         verify(lessonOccurrenceMapper, times(5)).insert(occurrenceCaptor.capture());
         List<LessonOccurrenceEntity> generated = occurrenceCaptor.getAllValues();

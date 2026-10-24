@@ -764,7 +764,9 @@
           </el-form-item>
           <el-form-item v-if="adjustForm.deliveryMode === 'IN_PERSON'" label="Classroom">
             <el-select v-model="adjustForm.classroomId" filterable clearable placeholder="Optional" style="width: 100%">
-              <el-option v-for="classroom in classrooms" :key="classroom.id" :label="classroom.roomName" :value="classroom.id" />
+              <el-option-group v-for="group in classroomOptionGroups" :key="group.key" :label="group.label">
+                <el-option v-for="classroom in group.classrooms" :key="classroom.id" :label="classroom.roomName" :value="classroom.id" />
+              </el-option-group>
             </el-select>
           </el-form-item>
         </template>
@@ -834,7 +836,7 @@ import { createScheduleAdjustment } from '@/api/schedule';
 import { useAuthStore } from '@/stores/auth';
 import { useAppStore } from '@/stores/app';
 import { isAdminOrStaffUser, isAdminUser, isManagerUser, isStudentUser, isTeacherUser } from '@/types/auth';
-import type { EntityId } from '@/types/domain';
+import type { ClassroomItem, EntityId } from '@/types/domain';
 import { findSignaturePackage, signatureLessonRows, withSignatureHistory } from '@/utils/one-on-one-signature-data';
 import { renderOneOnOneSignatureSheetDocument } from '@/utils/signature-sheet-print';
 
@@ -890,7 +892,26 @@ const pageTitle = computed(() => isStudent.value ? 'My Courses & Hours' : '1-on-
 const loading = ref(false);
 const submitting = ref(false);
 const teacherOptions = ref<{ id: EntityId; teacherName: string }[]>([]);
-const classrooms = ref<{ id: EntityId; roomName: string }[]>([]);
+const classrooms = ref<ClassroomItem[]>([]);
+const classroomOptionGroups = computed(() => {
+  const groups = new Map<string, { key: string; label: string; classrooms: ClassroomItem[] }>();
+  for (const classroom of classrooms.value) {
+    const campusName = classroom.campus?.trim() || 'Unassigned campus';
+    const key = String(classroom.campusId ?? campusName);
+    const group = groups.get(key);
+    if (group) {
+      group.classrooms.push(classroom);
+    } else {
+      groups.set(key, { key, label: campusName, classrooms: [classroom] });
+    }
+  }
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      classrooms: [...group.classrooms].sort((a, b) => a.roomName.localeCompare(b.roomName)),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
 const teachers = ref<OneOnOneTeacher[]>([]);
 const activeTeacher = ref<OneOnOneTeacher | null>(null);
 const activeStudent = ref<OneOnOneStudent | null>(null);
@@ -1306,7 +1327,9 @@ async function loadTeachers() {
   if (!canManageLessonResources.value) return;
   try {
     const res = await fetchAllTeachers();
-    teacherOptions.value = res.data.data.map(item => ({ id: item.id, teacherName: item.teacherName }));
+    teacherOptions.value = res.data.data
+      .map(item => ({ id: item.id, teacherName: item.teacherName }))
+      .sort((a, b) => a.teacherName.localeCompare(b.teacherName, undefined, { sensitivity: 'base' }));
   } catch {
     teacherOptions.value = [];
   }
@@ -1316,7 +1339,7 @@ async function loadClassrooms() {
   if (!canManageLessonResources.value) return;
   try {
     const res = await fetchAllClassrooms();
-    classrooms.value = res.data.data.map(item => ({ id: item.id, roomName: item.roomName }));
+    classrooms.value = res.data.data;
   } catch {
     classrooms.value = [];
   }

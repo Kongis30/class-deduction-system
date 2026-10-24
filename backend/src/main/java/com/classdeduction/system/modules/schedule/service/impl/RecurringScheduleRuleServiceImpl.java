@@ -679,6 +679,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         List<RecurringScheduleSlotEntity> existingSlots = recurringScheduleSlotMapper.selectList(
                 new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                         .eq(RecurringScheduleSlotEntity::getRuleId, id));
+        preserveUnambiguousEditedSlotLineages(request.getSlots(), existingSlots, allOccurrences);
         if (isCourseDetailsOnlyChange(existingRule, existingSlots, request, privateLessonGroupId, newStatus)) {
             Set<Long> existingOccurrenceIds = allOccurrences.stream()
                     .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
@@ -2183,6 +2184,49 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
     private Long slotLineageId(RecurringScheduleSlotEntity slot) {
         return slot == null ? null : slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId();
+    }
+
+    /** 编辑请求丢失 slotId 时，仅对唯一对应的历史课位延续 lineage；歧义时阻止历史课次脱链。 */
+    private void preserveUnambiguousEditedSlotLineages(
+            List<RecurringScheduleSlotRequest> requestedSlots,
+            List<RecurringScheduleSlotEntity> existingSlots,
+            List<LessonOccurrenceEntity> occurrences) {
+        if (requestedSlots == null || requestedSlots.isEmpty() || existingSlots.isEmpty()) return;
+
+        Set<Long> existingSlotIds = existingSlots.stream()
+                .map(RecurringScheduleSlotEntity::getId)
+                .collect(Collectors.toSet());
+        boolean containsStaleSlotId = requestedSlots.stream()
+                .map(RecurringScheduleSlotRequest::getSlotId)
+                .filter(Objects::nonNull)
+                .anyMatch(slotId -> !existingSlotIds.contains(slotId));
+        if (containsStaleSlotId) {
+            throw new BusinessException("STALE_SCHEDULE_SLOT",
+                    "This schedule changed after it was opened. Refresh it before saving so lesson history stays attached.");
+        }
+
+        Set<Long> referencedSlotIds = requestedSlots.stream()
+                .map(RecurringScheduleSlotRequest::getSlotId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        List<RecurringScheduleSlotEntity> unmatchedHistoricalSlots = existingSlots.stream()
+                .filter(slot -> !referencedSlotIds.contains(slot.getId()))
+                .filter(slot -> occurrences.stream().anyMatch(occurrence ->
+                        Objects.equals(occurrence.getScheduleSlotId(), slot.getId())))
+                .toList();
+        List<RecurringScheduleSlotRequest> unlinkedRows = requestedSlots.stream()
+                .filter(slot -> slot.getSlotId() == null)
+                .toList();
+
+        if (unmatchedHistoricalSlots.isEmpty() || unlinkedRows.isEmpty()) return;
+        if (unmatchedHistoricalSlots.size() == 1 && unlinkedRows.size() == 1) {
+            unlinkedRows.get(0).setSlotId(unmatchedHistoricalSlots.get(0).getId());
+            return;
+        }
+
+        throw new BusinessException("AMBIGUOUS_SLOT_LINEAGE",
+                "This schedule contains lesson history that cannot be matched safely to the edited slots. "
+                        + "Refresh the schedule and edit the existing slot rows so lesson history remains attached.");
     }
 
     /** 检查本次是否只更换既有周课位的老师，供服务端安全推导未手动改写的各 slot 新额度。 */
