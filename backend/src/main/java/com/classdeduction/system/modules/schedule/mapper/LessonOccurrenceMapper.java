@@ -10,6 +10,7 @@ import org.apache.ibatis.annotations.Results;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +41,15 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
     int softDeleteFutureUnprocessed(@Param("ids") List<Long> ids,
                                     @Param("effectiveAt") LocalDateTime effectiveAt);
 
+    /** 分配额缩减时移除末尾普通课，同时让后续增额可以在该日期重新生成课次。 */
+    @Update("UPDATE lesson_occurrence SET planning_status = 'CANCELLED', is_deleted = 1, deleted_at = #{effectiveAt}, "
+            + "updated_at = #{effectiveAt} WHERE id = #{id} AND is_deleted = 0 "
+            + "AND planning_status = 'SCHEDULED' AND planned_start_at >= #{effectiveAt} "
+            + "AND NOT EXISTS (SELECT 1 FROM lesson_record lr "
+            + "WHERE lr.occurrence_id = lesson_occurrence.id AND lr.is_deleted = 0)")
+    int softDeleteAllocationTrimmedOccurrence(@Param("id") Long id,
+                                               @Param("effectiveAt") LocalDateTime effectiveAt);
+
     /** 周期排课教室变更时允许显式清空旧教室，同时保留课次的其他单次调整字段。 */
     @Update("UPDATE lesson_occurrence SET planned_classroom_id = #{classroomId}, delivery_mode = #{deliveryMode}, "
             + "updated_at = CURRENT_TIMESTAMP WHERE id = #{id} AND is_deleted = 0 "
@@ -63,6 +73,27 @@ public interface LessonOccurrenceMapper extends BaseMapper<LessonOccurrenceEntit
                                @Param("classroomId") Long classroomId,
                                @Param("deliveryMode") String deliveryMode,
                                @Param("effectiveAt") LocalDateTime effectiveAt);
+
+    /** 老师交接时将未来未处理例外并入新规则，保留单课信息并转移额度归属。 */
+    @Update("UPDATE lesson_occurrence SET schedule_rule_id = #{targetRuleId}, schedule_slot_id = #{targetSlotId}, "
+            + "allocation_anchor_date = #{targetAnchorDate}, "
+            + "planned_teacher_id = #{teacherId}, "
+            + "allocation_owner_teacher_id = #{teacherId}, updated_at = CURRENT_TIMESTAMP "
+            + "WHERE id = #{id} AND is_deleted = 0 AND planned_start_at >= #{effectiveAt} "
+            + "AND planning_status <> 'CANCELLED' "
+            + "AND schedule_rule_id = #{expectedRuleId} AND schedule_slot_id = #{expectedSlotId} "
+            + "AND planned_teacher_id <=> #{expectedTeacherId} "
+            + "AND NOT EXISTS (SELECT 1 FROM lesson_record lr "
+            + "WHERE lr.occurrence_id = lesson_occurrence.id AND lr.is_deleted = 0)")
+    int handoffFutureOccurrence(@Param("id") Long id,
+                                @Param("expectedRuleId") Long expectedRuleId,
+                                @Param("expectedSlotId") Long expectedSlotId,
+                                @Param("targetRuleId") Long targetRuleId,
+                                @Param("targetSlotId") Long targetSlotId,
+                                @Param("targetAnchorDate") LocalDate targetAnchorDate,
+                                @Param("expectedTeacherId") Long expectedTeacherId,
+                                @Param("teacherId") Long teacherId,
+                                @Param("effectiveAt") LocalDateTime effectiveAt);
 
     /** 读取排课时段的课程名称变更链，用于还原快照缺失的历史课次名称。 */
     @Select({"<script>",

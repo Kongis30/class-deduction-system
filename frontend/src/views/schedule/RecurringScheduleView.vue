@@ -1,7 +1,7 @@
 <template>
   <div class="page-stack schedule-page">
     <section class="schedule-panel">
-      <div class="schedule-panel__header">
+      <div v-if="!appStore.isMobileViewport" class="schedule-panel__header">
         <span class="schedule-panel__title">Schedule Private Lessons</span>
       </div>
 
@@ -20,7 +20,7 @@
             :aria-expanded="mobileStudentListExpanded"
             @click="mobileStudentListExpanded = true"
           >
-            <span class="mobile-selection-summary__step">STUDENT · CHANGE</span>
+            <span class="mobile-selection-summary__step">STUDENT</span>
             <strong>{{ selectedStudentName }}</strong>
             <el-icon><ArrowRight /></el-icon>
           </button>
@@ -113,9 +113,9 @@
             :aria-expanded="mobilePackageListExpanded"
             @click="mobilePackageListExpanded = true"
           >
-            <span class="mobile-selection-summary__step">COURSE PACKAGE · CHANGE</span>
+            <span class="mobile-selection-summary__step">COURSE PACKAGE</span>
             <strong>{{ selectedPackageName }}</strong>
-            <small>{{ selectedPackage?.packageStatus }} · {{ selectedPackage ? projectedRemainingForPackage(selectedPackage) : 0 }}h remaining</small>
+            <small>{{ selectedPackage?.packageStatus }} · {{ selectedPackage ? remainingForPackage(selectedPackage) : 0 }}h remaining</small>
             <el-icon><ArrowRight /></el-icon>
           </button>
           <div id="mobile-schedule-package-list" v-show="!appStore.isMobileViewport || !selectedPackageId || mobilePackageListExpanded" class="col-panel__body">
@@ -127,6 +127,10 @@
             <div v-else-if="loadingPackages" class="col-panel__hint">
               <el-icon class="is-loading" :size="20"><Loading /></el-icon>
               <span>Loading packages...</span>
+            </div>
+            <div v-else-if="packageLoadError" class="col-panel__hint col-panel__hint--error">
+              <span>{{ packageLoadError }}</span>
+              <el-button link type="primary" @click="retryLoadPackages">Retry</el-button>
             </div>
             <div v-else-if="studentPackages.length === 0" class="col-panel__hint">
               No active or paused packages for this student.
@@ -463,7 +467,7 @@
                 />
               </label>
               <label class="slot-teacher-row__field slot-teacher-row__field--hours">
-                <span>Schedule total</span>
+                <span>Allocated total (includes completed lessons)</span>
                 <span class="slot-teacher-row__hours-control">
                   <el-input-number
                     v-model="slot.allocatedHours"
@@ -497,7 +501,7 @@
           class="edit-schedule__change-hint"
           type="info"
           :closable="false"
-          title="The new teacher takes over this slot’s remaining unreserved hours and full lesson history. Past lessons keep their original teacher; unresolved past lessons can still be processed from the new teacher’s 1-on-1 Lessons page."
+          title="The new teacher takes over this slot’s full lesson timeline. Completed and processed records keep their original teacher and deduction. Unprocessed, individually adjusted future lessons keep their date, time, classroom, and lesson name while moving to the new teacher; regular future lessons follow the edited weekly schedule."
         />
         <el-alert
           v-if="isEditing && !hasSchedulePlanChanges"
@@ -511,7 +515,7 @@
           class="edit-schedule__change-hint"
           type="warning"
           :closable="false"
-          title="The future schedule or allocated hours changed. Historical lessons stay unchanged; the adjusted allocation must fit the available package balance."
+          title="Changing only allocated hours keeps the current schedule period and adds or removes eligible future lessons at the end. Changing a teacher or recurring time starts a new period; review the teacher handoff and future schedule before saving. Historical lesson records and deductions stay unchanged."
         />
       </div>
 
@@ -1087,7 +1091,10 @@ interface WeeklyAdjustmentRow {
 }
 
 const loadingPackages = ref(false);
+const packageLoadError = ref('');
 let packageLoadSequence = 0;
+let packageLoadAbortController: AbortController | null = null;
+let preferredPackageForRetry: EntityId | undefined;
 const route = useRoute();
 const router = useRouter();
 const editDialogVisible = ref(false);
@@ -1587,6 +1594,7 @@ function onCalMouseUp() {
 
 onMounted(() => document.addEventListener('mouseup', onCalMouseUp));
 onUnmounted(() => document.removeEventListener('mouseup', onCalMouseUp));
+onUnmounted(() => packageLoadAbortController?.abort());
 
 const displayMonday = ref(currentCalendarWeekRange().startDate);
 
@@ -1875,20 +1883,25 @@ watch(
 
 // ─── Student selection ─────────────────────────
 // 一次取得当前学生的在读与停课课包；分页取全，避免课包多时漏掉停课入口。
-async function fetchSchedulePackages(studentId: EntityId): Promise<CoursePackageItem[]> {
+async function fetchSchedulePackages(studentId: EntityId, signal: AbortSignal): Promise<CoursePackageItem[]> {
   const pageSize = 200;
   const query = { studentId, packageStatuses: 'ACTIVE,PAUSED', teachingMode: 'ONE_ON_ONE', pageSize };
-  const first = await fetchCoursePackages({ ...query, pageNum: 1 });
+  const requestConfig = { signal, timeout: 8000 };
+  const first = await fetchCoursePackages({ ...query, pageNum: 1 }, requestConfig);
   const { records, total } = first.data.data;
   if (total <= records.length) return records;
   const pages = Array.from({ length: Math.ceil(total / pageSize) - 1 }, (_, index) => index + 2);
-  const remaining = await Promise.all(pages.map(pageNum => fetchCoursePackages({ ...query, pageNum })));
+  const remaining = await Promise.all(pages.map(pageNum => fetchCoursePackages({ ...query, pageNum }, requestConfig)));
   return records.concat(...remaining.map(response => response.data.data.records));
 }
 
 async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
   // 快速切换学生时丢弃较晚返回的旧请求，避免覆盖当前选择。
+  packageLoadAbortController?.abort();
+  const abortController = new AbortController();
+  packageLoadAbortController = abortController;
   const requestSequence = ++packageLoadSequence;
+  preferredPackageForRetry = preferredPackageId;
   selectedStudentId.value = id;
   mobileStudentListExpanded.value = false;
   mobileStudentSearchExpanded.value = false;
@@ -1898,9 +1911,20 @@ async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
   allPackageRules.value = {};
   currentWeekOccurrences.value = [];
   editBusyOccurrences.value = [];
+  packageLoadError.value = '';
   loadingPackages.value = true;
+  let timedOut = false;
+  const loadDeadline = window.setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+    if (requestSequence === packageLoadSequence) {
+      studentPackages.value = [];
+      packageLoadError.value = 'Loading course packages timed out. Please try again.';
+      loadingPackages.value = false;
+    }
+  }, 15000);
   try {
-    const packages = await fetchSchedulePackages(id);
+    const packages = await fetchSchedulePackages(id, abortController.signal);
     if (requestSequence !== packageLoadSequence) return;
     studentPackages.value = packages;
     selectedPackageId.value = preferredPackageId == null
@@ -1910,11 +1934,23 @@ async function onStudentSelect(id: EntityId, preferredPackageId?: EntityId) {
     loadingPackages.value = false;
     // 排课规则用于冲突检查，后台加载即可，不阻塞已取得的课包列表。
     void loadAllPackageRules(studentPackages.value, requestSequence);
-  } catch {
-    if (requestSequence === packageLoadSequence) studentPackages.value = [];
+  } catch (error) {
+    if (requestSequence === packageLoadSequence && (!abortController.signal.aborted || timedOut)) {
+      studentPackages.value = [];
+      packageLoadError.value = timedOut
+        ? 'Loading course packages timed out. Please try again.'
+        : `Could not load course packages. ${extractErrorMessage(error)}`;
+    }
   } finally {
+    window.clearTimeout(loadDeadline);
     if (requestSequence === packageLoadSequence) loadingPackages.value = false;
   }
+}
+
+// 由课包加载失败提示调用，沿用当前学生和入口课包，避免用户重新走选择流程。
+function retryLoadPackages() {
+  if (selectedStudentId.value == null) return;
+  void onStudentSelect(selectedStudentId.value, preferredPackageForRetry);
 }
 
 /** 选择侧栏的单个排课单位；1 对 2 传入主课包和成员姓名，排课规则仍只创建一份。 */
@@ -2243,7 +2279,7 @@ const allocatedHours = computed(() =>
   editForm.slots.reduce((sum, s) => sum + (s.allocatedHours || 0), 0)
 );
 
-// 时段、课时或老师变化建立新排课版本；教室和课程名称仅更新未来课次。
+// 老师、每周时段或单课时长变化建立新排课版本；分配额变化沿用周期并校准末尾课次。
 const hasSchedulePlanChanges = computed(() => {
   if (!isEditing.value) return false;
   if (editForm.slots.length !== originalEditSlots.value.length) return true;
@@ -2280,8 +2316,7 @@ const allocatableForNewScheduleHours = computed(() => packageHours(Math.max(0, M
     - (isEditing.value ? (currentRule.value?.preservedReservedHours ?? 0) : 0),
 ))));
 const allocationExceedsRemaining = computed(() =>
-  (!isEditing.value || hasSchedulePlanChanges.value)
-    && allocatedHours.value > allocatableForNewScheduleHours.value);
+  !isEditing.value && allocatedHours.value > allocatableForNewScheduleHours.value);
 
 async function openCreateDialog() {
   if (selectedPackage.value?.packageStatus !== 'ACTIVE') return;
@@ -2482,8 +2517,8 @@ async function submitEditForm() {
       });
       const data = result.data.data;
       ElMessage.success(
-        `Schedule updated. ${data.generatedOccurrenceCount} occurrences regenerated, ` +
-        `${data.preservedOccurrenceCount} preserved (${data.confirmedOccurrenceCount} confirmed).`
+        `Schedule updated. ${data.generatedOccurrenceCount} new occurrences generated; ` +
+        `${data.preservedOccurrenceCount} existing lessons preserved (${data.confirmedOccurrenceCount} confirmed).`
       );
       editDialogVisible.value = false;
       await Promise.all([loadAllPackageRules(), refreshScheduleStudentList()]);
@@ -3146,6 +3181,8 @@ function disabledPastDate(date: Date) {
   font-size: 13px;
   text-align: center;
 }
+
+.col-panel__hint--error { color: #b42318; }
 
 .col-students { width: 220px; flex-shrink: 0; }
 .col-packages { width: 220px; flex-shrink: 0; }
@@ -4063,7 +4100,7 @@ function disabledPastDate(date: Date) {
     display: flex;
     flex: 0 0 auto;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
     border: 0;
     overflow: visible;
     background: transparent;
@@ -4084,8 +4121,12 @@ function disabledPastDate(date: Date) {
   }
 
   .col-panel--mobile-collapsed {
-    min-height: 62px;
+    min-height: 48px;
     overflow: hidden;
+    border: 0;
+    border-bottom: 1px solid #dce5ee;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .col-students:not(.col-panel--mobile-collapsed) {
@@ -4121,13 +4162,13 @@ function disabledPastDate(date: Date) {
   .mobile-selection-summary {
     position: relative;
     display: flex;
-    min-height: 62px;
+    min-height: 48px;
     width: 100%;
-    flex-direction: column;
-    align-items: flex-start;
+    flex-direction: row;
+    align-items: center;
     justify-content: center;
-    gap: 3px;
-    padding: 8px 46px 8px 14px;
+    gap: 8px;
+    padding: 6px 38px 6px 12px;
     border: 0;
     background: #fff;
     color: #25364c;
@@ -4147,26 +4188,30 @@ function disabledPastDate(date: Date) {
     max-width: 100%;
     overflow: hidden;
     color: #1d3048;
-    font-size: 14px;
+    font-size: 13px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
   .mobile-selection-summary small {
+    overflow: hidden;
+    max-width: 42%;
     color: #687b91;
     font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mobile-selection-summary > .el-icon {
     position: absolute;
     top: 50%;
-    right: 14px;
+    right: 12px;
     color: #6481a0;
     transform: translateY(-50%);
   }
 
   .schedule-panel__header {
-    margin: 0 2px 8px;
+    display: none;
   }
 
   .schedule-panel__title {
@@ -4244,70 +4289,88 @@ function disabledPastDate(date: Date) {
   }
 
   .schedule-info {
-    padding: 12px;
-    border: 1px solid #d6e0eb;
-    border-radius: 9px;
+    padding: 8px 10px 4px;
+    border: 0;
+    border-bottom: 1px solid #e2e9f0;
+    border-radius: 0;
     background: #fff;
   }
 
   .schedule-info__header {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 12px;
+    align-items: center;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 7px 10px;
+    margin-bottom: 6px;
   }
 
   .schedule-info__title {
-    min-width: 0;
-    color: #1e334d;
-    font-size: 16px;
-    line-height: 1.35;
+    display: none;
   }
 
   .schedule-info__actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
+    flex-wrap: nowrap;
     width: 100%;
     max-width: none;
-    justify-content: stretch;
-    gap: 8px;
+    justify-content: flex-start;
+    gap: 6px;
   }
 
   .schedule-info__actions > .el-button,
   .schedule-info__actions > .el-dropdown {
+    flex: 0 1 auto;
     min-width: 0;
     margin: 0;
   }
 
+  .schedule-info__actions > .el-button {
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
   .schedule-info__actions > .el-dropdown {
+    flex: 0 0 auto;
     width: auto;
-    justify-self: start;
   }
 
   .schedule-info__actions > .el-dropdown > .el-button {
-    width: 112px;
+    min-height: 36px;
+    padding: 0 10px;
   }
 
   .schedule-summary {
-    gap: 0 10px;
+    gap: 0 12px;
   }
 
   .summary-field {
     min-width: 0;
-    padding: 8px 0;
+    flex-direction: row;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 3px 6px;
+    padding: 6px 0;
     border-top: 1px solid #edf1f5;
   }
 
   .summary-field label {
     color: #73849a;
-    font-size: 11px;
+    font-size: 10px;
+    white-space: nowrap;
   }
 
   .summary-field span {
+    min-width: 0;
     color: #334861;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.4;
     overflow-wrap: anywhere;
+  }
+
+  .summary-field :deep(.el-tag) {
+    height: 22px;
+    line-height: 20px;
   }
 
   .schedule-calendar {

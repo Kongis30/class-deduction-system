@@ -597,6 +597,203 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldShowHistoricalSlotLessonsToNewTeacherWithoutChargingNewPeriod() {
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        LocalDateTime now = AppTime.nowLocalDateTime();
+
+        RecurringScheduleRuleEntity oldRule = new RecurringScheduleRuleEntity();
+        oldRule.setId(5001L);
+        oldRule.setPackageId(coursePackage.getId());
+        oldRule.setRuleStatus("PAUSED");
+        oldRule.setCreatedAt(now.minusDays(30));
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5002L);
+        currentRule.setPackageId(coursePackage.getId());
+        currentRule.setRuleStatus("ACTIVE");
+        currentRule.setCreatedAt(now.minusDays(1));
+        currentRule.setAllocationPeriodStartedAt(now.minusDays(1));
+
+        RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
+        oldSlot.setId(6001L);
+        oldSlot.setRuleId(oldRule.getId());
+        oldSlot.setSlotLineageId(7001L);
+        oldSlot.setTeacherId(301L);
+        oldSlot.setSlotStatus("DELETED");
+        RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
+        currentSlot.setId(6002L);
+        currentSlot.setRuleId(currentRule.getId());
+        currentSlot.setSlotLineageId(7001L);
+        currentSlot.setTeacherId(302L);
+        currentSlot.setAllocatedUnits(8);
+        currentSlot.setSlotStatus("ACTIVE");
+
+        LessonOccurrenceEntity historical = buildOneOnOneOccurrence();
+        historical.setScheduleRuleId(oldRule.getId());
+        historical.setScheduleSlotId(oldSlot.getId());
+        historical.setPlannedTeacherId(301L);
+        historical.setPlannedStartAt(now.minusDays(3));
+        historical.setPlannedEndAt(now.minusDays(3).plusHours(2));
+        historical.setPlannedUnits(4);
+        historical.setPlanningStatus("MERGED");
+        LessonRecordEntity historicalRecord = confirmedDeduction(5001L, historical, 4);
+        historicalRecord.setConfirmedAt(now.minusDays(2));
+        historicalRecord.setPlannedTeacherId(301L);
+        historicalRecord.setActualTeacherId(301L);
+        LessonOccurrenceEntity future = buildOneOnOneOccurrence();
+        future.setId(4002L);
+        future.setLessonNo("O2O202610240002");
+        future.setScheduleRuleId(currentRule.getId());
+        future.setScheduleSlotId(currentSlot.getId());
+        future.setPlannedTeacherId(302L);
+        future.setAllocationOwnerTeacherId(302L);
+        future.setPlannedStartAt(now.plusDays(1));
+        future.setPlannedEndAt(now.plusDays(1).plusHours(2));
+        future.setPlannedUnits(4);
+
+        TeacherEntity newTeacher = new TeacherEntity();
+        newTeacher.setId(302L);
+        newTeacher.setTeacherNo("T302");
+        newTeacher.setTeacherName("Ms Sophia");
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(historical, future));
+        when(lessonRecordMapper.selectList(any())).thenReturn(List.of(historicalRecord));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher(), newTeacher));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).extracting(OneOnOneTeacherVO::teacherId).contains(302L);
+        OneOnOneTeacherVO newTeacherView = result.stream()
+                .filter(item -> item.teacherId().equals(302L)).findFirst().orElseThrow();
+        assertThat(newTeacherView.students()).singleElement().satisfies(student ->
+                assertThat(student.packages()).singleElement().satisfies(pkg -> {
+                    assertThat(pkg.lessons()).hasSize(2);
+                    assertThat(pkg.lessons()).anySatisfy(lesson -> {
+                        assertThat(lesson.occurrenceId()).isEqualTo(historical.getId());
+                        assertThat(lesson.plannedTeacherId()).isEqualTo(301L);
+                    });
+                    assertThat(pkg.teacherHours()).singleElement().satisfies(hours -> {
+                        assertThat(hours.teacherId()).isEqualTo(302L);
+                        assertThat(hours.allocatedUnits()).isEqualTo(4.0);
+                        assertThat(hours.deductedUnits()).isZero();
+                        assertThat(hours.remainingUnits()).isEqualTo(4.0);
+                    });
+                }));
+        assertThat(historicalRecord.getOccurrenceId()).isEqualTo(historical.getId());
+        assertThat(historicalRecord.getPlannedTeacherId()).isEqualTo(301L);
+        assertThat(historicalRecord.getDeductedUnits()).isEqualTo(4);
+    }
+
+    @Test
+    void shouldKeepUnresolvedPastLessonVisibleUnderItsOriginalTeacherAcrossSchedulePeriods() {
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        CoursePackageEntity coursePackage = buildOneOnOnePackage();
+        coursePackage.setRemainingUnits(12);
+
+        RecurringScheduleRuleEntity oldRule = new RecurringScheduleRuleEntity();
+        oldRule.setId(5001L);
+        oldRule.setPackageId(coursePackage.getId());
+        oldRule.setRuleStatus("ENDED");
+        oldRule.setCreatedAt(now.minusDays(10));
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5002L);
+        currentRule.setPackageId(coursePackage.getId());
+        currentRule.setRuleStatus("ACTIVE");
+        currentRule.setCreatedAt(now.minusDays(1));
+        currentRule.setAllocationPeriodStartedAt(now.minusDays(1));
+
+        RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
+        oldSlot.setId(6001L);
+        oldSlot.setRuleId(oldRule.getId());
+        oldSlot.setSlotLineageId(7001L);
+        oldSlot.setTeacherId(301L);
+        oldSlot.setSlotStatus("DELETED");
+        RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
+        currentSlot.setId(6002L);
+        currentSlot.setRuleId(currentRule.getId());
+        currentSlot.setSlotLineageId(7002L);
+        currentSlot.setTeacherId(302L);
+        currentSlot.setAllocatedUnits(12);
+        currentSlot.setSlotStatus("ACTIVE");
+
+        LessonOccurrenceEntity oldPending = buildOneOnOneOccurrence();
+        oldPending.setScheduleRuleId(oldRule.getId());
+        oldPending.setScheduleSlotId(oldSlot.getId());
+        oldPending.setAllocationOwnerTeacherId(301L);
+        oldPending.setPlannedTeacherId(301L);
+        oldPending.setPlannedStartAt(now.minusDays(2));
+        oldPending.setPlannedEndAt(now.minusDays(2).plusHours(2));
+        oldPending.setPlannedUnits(4);
+
+        LessonOccurrenceEntity currentFirst = buildOneOnOneOccurrence();
+        currentFirst.setId(4002L);
+        currentFirst.setLessonNo("O2O202610240002");
+        currentFirst.setScheduleRuleId(currentRule.getId());
+        currentFirst.setScheduleSlotId(currentSlot.getId());
+        currentFirst.setAllocationOwnerTeacherId(302L);
+        currentFirst.setPlannedTeacherId(302L);
+        currentFirst.setPlannedStartAt(now.plusDays(1));
+        currentFirst.setPlannedEndAt(now.plusDays(1).plusHours(2));
+        currentFirst.setPlannedUnits(4);
+        LessonOccurrenceEntity currentSecond = buildOneOnOneOccurrence();
+        currentSecond.setId(4003L);
+        currentSecond.setLessonNo("O2O202610240003");
+        currentSecond.setScheduleRuleId(currentRule.getId());
+        currentSecond.setScheduleSlotId(currentSlot.getId());
+        currentSecond.setAllocationOwnerTeacherId(302L);
+        currentSecond.setPlannedTeacherId(302L);
+        currentSecond.setPlannedStartAt(now.plusDays(8));
+        currentSecond.setPlannedEndAt(now.plusDays(8).plusHours(2));
+        currentSecond.setPlannedUnits(4);
+
+        TeacherEntity currentTeacher = new TeacherEntity();
+        currentTeacher.setId(302L);
+        currentTeacher.setTeacherNo("T302");
+        currentTeacher.setTeacherName("Mr Roland");
+        when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
+        when(lessonOccurrenceMapper.selectList(any()))
+                .thenReturn(List.of(oldPending, currentFirst, currentSecond));
+        when(lessonRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
+        when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher(), currentTeacher));
+
+        List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), null);
+
+        assertThat(result).extracting(OneOnOneTeacherVO::teacherId).containsExactlyInAnyOrder(301L, 302L);
+        OneOnOneTeacherVO oldTeacherView = result.stream()
+                .filter(item -> item.teacherId().equals(301L)).findFirst().orElseThrow();
+        assertThat(oldTeacherView.students().get(0).packages().get(0).lessons())
+                .singleElement()
+                .satisfies(lesson -> {
+                    assertThat(lesson.occurrenceId()).isEqualTo(oldPending.getId());
+                    assertThat(lesson.plannedTeacherId()).isEqualTo(301L);
+                    assertThat(lesson.plannedUnits()).isEqualTo(2.0);
+                });
+        OneOnOneTeacherVO currentTeacherView = result.stream()
+                .filter(item -> item.teacherId().equals(302L)).findFirst().orElseThrow();
+        assertThat(currentTeacherView.students().get(0).packages().get(0).lessons()).hasSize(2);
+        assertThat(currentTeacherView.students().get(0).packages().get(0).allocatedUnits()).isEqualTo(6.0);
+        assertThat(currentTeacherView.students().get(0).packages().get(0).scheduledReservedUnits()).isEqualTo(6.0);
+
+        List<OneOnOneTeacherVO> originalTeacherResult = lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), teacherUser());
+        assertThat(originalTeacherResult).singleElement().satisfies(teacher -> {
+            assertThat(teacher.teacherId()).isEqualTo(301L);
+            assertThat(teacher.students().get(0).packages().get(0).lessons())
+                    .singleElement()
+                    .satisfies(lesson -> assertThat(lesson.occurrenceId()).isEqualTo(oldPending.getId()));
+        });
+    }
+
+    @Test
     void shouldKeepAllocatedHoursPackageWideAndExcludeConfirmedLessons() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         coursePackage.setConsumedUnits(4);
@@ -1160,9 +1357,15 @@ class LessonOccurrenceServiceImplTest {
         currentRule.setRuleStatus("ACTIVE");
         currentRule.setSupersedesRuleId(5001L);
         currentRule.setCreatedAt(now.minusDays(3));
+        RecurringScheduleSlotEntity historicalSlot = new RecurringScheduleSlotEntity();
+        historicalSlot.setId(6001L);
+        historicalSlot.setRuleId(5001L);
+        historicalSlot.setSlotLineageId(7001L);
+        historicalSlot.setTeacherId(301L);
         RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
         currentSlot.setId(6002L);
         currentSlot.setRuleId(currentRule.getId());
+        currentSlot.setSlotLineageId(7001L);
         currentSlot.setTeacherId(301L);
         currentSlot.setAllocatedUnits(4);
         currentSlot.setCreatedAt(now.minusDays(3));
@@ -1172,6 +1375,7 @@ class LessonOccurrenceServiceImplTest {
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(record));
         when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(historicalSlot));
         when(studentMapper.selectBatchIds(any())).thenReturn(List.of(buildStudent()));
         when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
 
@@ -1179,9 +1383,9 @@ class LessonOccurrenceServiceImplTest {
                 new OneOnOneDeductionQuery(), null).get(0);
         assertThat(teacher.students().get(0).packages().get(0).teacherHours())
                 .singleElement().satisfies(hours -> {
-                    assertThat(hours.allocatedUnits()).isEqualTo(3.0);
+                    assertThat(hours.allocatedUnits()).isEqualTo(2.0);
                     assertThat(hours.deductedUnits()).isEqualTo(2.0);
-                    assertThat(hours.remainingUnits()).isEqualTo(1.0);
+                    assertThat(hours.remainingUnits()).isZero();
                 });
     }
 
@@ -1247,9 +1451,9 @@ class LessonOccurrenceServiceImplTest {
                 new OneOnOneDeductionQuery(), null).get(0);
         assertThat(teacher.students().get(0).packages().get(0).teacherHours())
                 .singleElement().satisfies(hours -> {
-                    assertThat(hours.allocatedUnits()).isEqualTo(8.0);
+                    assertThat(hours.allocatedUnits()).isEqualTo(6.0);
                     assertThat(hours.deductedUnits()).isEqualTo(2.0);
-                    assertThat(hours.remainingUnits()).isEqualTo(6.0);
+                    assertThat(hours.remainingUnits()).isEqualTo(4.0);
                 });
     }
 

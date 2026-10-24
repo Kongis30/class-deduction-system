@@ -37,6 +37,14 @@ public interface RecurringScheduleSlotMapper extends BaseMapper<RecurringSchedul
     int removeLeaveCarryover(@Param("slotId") Long slotId, @Param("ruleId") Long ruleId,
                              @Param("units") int units);
 
+    /** 同一排课周期内调整分配额，使用旧值做并发保护并保留课位 ID。 */
+    @Update("UPDATE recurring_schedule_slot SET allocated_units = #{units}, updated_at = CURRENT_TIMESTAMP "
+            + "WHERE id = #{slotId} AND rule_id = #{ruleId} "
+            + "AND COALESCE(allocated_units, 0) = #{expectedUnits} "
+            + "AND slot_status = 'ACTIVE' AND is_deleted = 0")
+    int updateAllocatedUnits(@Param("slotId") Long slotId, @Param("ruleId") Long ruleId,
+                             @Param("expectedUnits") int expectedUnits, @Param("units") int units);
+
     /** 读取已软删除的旧时段，供保留课次继续匹配原周期配置。 */
     @Select("""
             <script>

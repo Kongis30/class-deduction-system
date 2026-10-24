@@ -429,7 +429,11 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     rule.getId(), rule.getPrivateLessonGroupId());
         }
         for (AllocationCorrection correction : corrections) {
-            if (lessonOccurrenceMapper.updateById(correction.after()) != 1) {
+            int updated = "CANCELLED".equals(correction.after().getPlanningStatus())
+                    ? lessonOccurrenceMapper.softDeleteAllocationTrimmedOccurrence(
+                            correction.after().getId(), now)
+                    : lessonOccurrenceMapper.updateById(correction.after());
+            if (updated != 1) {
                 throw new BusinessException("SCHEDULE_CHANGED", "A lesson changed while reconciling its schedule.");
             }
             insertAllocationReconciliationLog(correction.before(), correction.after());
@@ -683,6 +687,16 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             return updateCourseDetailsOnly(existingRule, existingSlots, allOccurrences, existingRecords,
                     request, coursePackage, student.getId(), privateLessonGroupId);
         }
+        if (allowNewPeriod && isSamePeriodAllocationChange(existingRule, existingSlots, request,
+                privateLessonGroupId, newStatus)) {
+            Set<Long> occurrenceIds = allOccurrences.stream()
+                    .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet());
+            Map<Long, LessonRecordEntity> records = latestRecordsForPackage(occurrenceIds, coursePackage.getId());
+            ScheduleRuleUpdateResultVO detailsResult = updateCourseDetailsOnly(existingRule, existingSlots,
+                    allOccurrences, records, request, coursePackage, student.getId(), privateLessonGroupId);
+            return updateAllocationWithinPeriod(existingRule, existingSlots, allOccurrences, records,
+                    request, coursePackage, detailsResult);
+        }
         boolean startsNewPeriod = allowNewPeriod
                 && !"ENDED".equals(newStatus)
                 && hasScheduleDefinitionChanged(existingRule, existingSlots, request, privateLessonGroupId);
@@ -738,13 +752,32 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         preservedForBalance.addAll(endedPeriodOccurrences);
 
         boolean teacherHandoffOnly = startsNewPeriod && isTeacherHandoffOnly(request.getSlots(), existingSlots);
+        Map<Long, Long> handoffTeacherByLineage = startsNewPeriod
+                ? teacherHandoffTargetsByLineage(request.getSlots(), existingSlots)
+                : Collections.emptyMap();
+        Map<Long, RecurringScheduleSlotEntity> handoffSlotsById = Collections.emptyMap();
+        List<LessonOccurrenceEntity> futureHandoffOccurrences = Collections.emptyList();
+        Map<Long, Integer> futureHandoffUnitsBySlot = Collections.emptyMap();
         if (startsNewPeriod) {
+            List<LessonOccurrenceEntity> handoffCandidates = mergeOccurrences(toPreserve, endedPeriodOccurrences);
+            handoffSlotsById = loadOccurrenceSlots(handoffCandidates);
+            Map<Long, LessonRecordEntity> handoffRecords = new HashMap<>(recordByOccurrenceId);
+            handoffRecords.putAll(latestRecordsForPackage(
+                    handoffCandidates.stream().map(LessonOccurrenceEntity::getId).toList(), coursePackage.getId()));
+            futureHandoffOccurrences = futureOccurrencesForTeacherHandoff(
+                    handoffCandidates, handoffSlotsById, handoffRecords,
+                    handoffTeacherByLineage, AppTime.nowLocalDateTime());
+            futureHandoffUnitsBySlot = futureHandoffUnitsBySourceSlot(
+                    existingSlots, futureHandoffOccurrences, handoffSlotsById,
+                    handoffTeacherByLineage);
             applyImplicitTeacherHandoffs(request.getSlots(), existingSlotsById, allOccurrences,
-                    recordByOccurrenceId, AppTime.nowLocalDateTime(), teacherHandoffOnly);
+                    recordByOccurrenceId, AppTime.nowLocalDateTime(), teacherHandoffOnly,
+                    futureHandoffUnitsBySlot);
         }
         if (startsNewPeriod && validateRemainingAllocation) {
             validateNewPeriodAllocations(request.getSlots(), coursePackage, id,
-                    preservedForBalance, balanceRecords, teacherHandoffOnly);
+                    preservedForBalance, balanceRecords, teacherHandoffOnly,
+                    futureHandoffUnitsBySlot.values().stream().mapToInt(Integer::intValue).sum());
         }
 
         // g) Delete classified occurrences FIRST (before slot FK cleanup)
@@ -808,6 +841,35 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             saveStartingBalances(targetRule, coursePackage, privateLessonGroupId);
         }
 
+        List<LessonOccurrenceEntity> classroomUpdates = buildInheritedClassroomUpdates(
+                toPreserve, recordByOccurrenceId, existingSlotsById, newSlots);
+
+        Map<Long, RecurringScheduleSlotEntity> handoffTargetSlotsByOccurrence = new HashMap<>();
+        Map<Long, RecurringScheduleSlotEntity> handoffSourceSlotsByOccurrence = new HashMap<>();
+        Map<Long, Long> handoffExpectedTeachersByOccurrence = new HashMap<>();
+        if (!futureHandoffOccurrences.isEmpty()) {
+            Map<Long, RecurringScheduleSlotEntity> targetSlotsByLineage = newSlots.stream()
+                    .collect(Collectors.toMap(this::slotLineageId, slot -> slot, (left, right) -> left));
+            for (LessonOccurrenceEntity occurrence : futureHandoffOccurrences) {
+                RecurringScheduleSlotEntity source = handoffSlotsById.get(occurrence.getScheduleSlotId());
+                RecurringScheduleSlotEntity target = targetSlotsByLineage.get(slotLineageId(source));
+                if (target == null) {
+                    throw new BusinessException("SCHEDULE_HANDOFF_SLOT_MISSING",
+                            "The updated schedule no longer contains the slot for a future lesson being handed off.");
+                }
+                handoffTargetSlotsByOccurrence.put(occurrence.getId(), target);
+                handoffSourceSlotsByOccurrence.put(occurrence.getId(), source);
+                handoffExpectedTeachersByOccurrence.put(occurrence.getId(),
+                        occurrence.getPlannedTeacherId() == null && source != null
+                                ? source.getTeacherId() : occurrence.getPlannedTeacherId());
+                occurrence.setScheduleRuleId(targetRuleId);
+                occurrence.setScheduleSlotId(target.getId());
+                occurrence.setAllocationAnchorDate(occurrence.getPlannedStartAt().toLocalDate());
+                occurrence.setPlannedTeacherId(target.getTeacherId());
+                occurrence.setAllocationOwnerTeacherId(target.getTeacherId());
+            }
+        }
+
         // i) Build and insert new occurrences only for an active package and rule.
         // A paused package may update its future slot configuration, but lesson generation
         // must wait for the explicit resume action so its restart date is respected.
@@ -820,25 +882,43 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                     recordByOccurrenceId, newSlots, targetRule);
             newOccurrences = capGeneratedOccurrencesToPackageBalance(newOccurrences,
                     preservedForBalance, balanceRecords, coursePackage);
-            if (startsNewPeriod) {
-                ensureAllocatedHoursWereGenerated(newSlots, newOccurrences);
+            if (allowNewPeriod) {
+                List<LessonOccurrenceEntity> scheduledOccurrences = new ArrayList<>(preservedForBalance);
+                scheduledOccurrences.addAll(newOccurrences);
+                ensureCurrentPeriodAllocationIsCovered(newSlots, scheduledOccurrences,
+                        balanceRecords, targetRule);
             }
         }
 
         // 普通未来课次会随规则重建；保留的未来例外若仍继承规则教室，也要同步到新槽位配置。
-        List<LessonOccurrenceEntity> classroomUpdates = buildInheritedClassroomUpdates(
-                toPreserve, recordByOccurrenceId, existingSlotsById, newSlots);
         ensureNoClassroomConflicts(classroomUpdates, toPreserve, newOccurrences, id);
 
         // j) Conflict check excluding this rule's preserved occurrences
-        ensureNoConflictsExcludingPrivateLessonGroup(newOccurrences, student.getId(),
-                id, targetRule.getPrivateLessonGroupId());
+        List<LessonOccurrenceEntity> conflictCandidates = new ArrayList<>(newOccurrences);
+        conflictCandidates.addAll(futureHandoffOccurrences);
+        ensureNoConflictsExcludingPrivateLessonGroup(conflictCandidates, student.getId(),
+                id, targetRule.getPrivateLessonGroupId(), futureHandoffOccurrences.stream()
+                        .map(LessonOccurrenceEntity::getId).collect(Collectors.toSet()));
 
         for (LessonOccurrenceEntity update : classroomUpdates) {
             if (lessonOccurrenceMapper.updateInheritedClassroom(update.getId(), update.getPlannedClassroomId(),
                     update.getDeliveryMode(), AppTime.nowLocalDateTime()) != 1) {
                 throw new BusinessException("LESSON_CHANGED",
                         "A lesson has started or entered the deduction process. Refresh the schedule before editing it.");
+            }
+        }
+        for (LessonOccurrenceEntity occurrence : futureHandoffOccurrences) {
+            RecurringScheduleSlotEntity targetSlot = handoffTargetSlotsByOccurrence.get(occurrence.getId());
+            RecurringScheduleSlotEntity sourceSlot = handoffSourceSlotsByOccurrence.get(occurrence.getId());
+            Long expectedTeacherId = handoffExpectedTeachersByOccurrence.get(occurrence.getId());
+            if (targetSlot == null || lessonOccurrenceMapper.handoffFutureOccurrence(
+                    occurrence.getId(), sourceSlot == null ? null : sourceSlot.getRuleId(),
+                    sourceSlot == null ? null : sourceSlot.getId(), targetRuleId, targetSlot.getId(),
+                    occurrence.getAllocationAnchorDate(),
+                    expectedTeacherId, targetSlot.getTeacherId(),
+                    AppTime.nowLocalDateTime()) != 1) {
+                throw new BusinessException("LESSON_CHANGED",
+                        "A future lesson changed while its teacher was being handed off. Refresh the schedule and try again.");
             }
         }
         newOccurrences.forEach(lessonOccurrenceMapper::insert);
@@ -924,6 +1004,113 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             }
         }
         return true;
+    }
+
+    /** 仅改变已有固定课位分配额时沿用周期，不重建规则或改写课次时间线。 */
+    private boolean isSamePeriodAllocationChange(RecurringScheduleRuleEntity rule,
+                                                 List<RecurringScheduleSlotEntity> currentSlots,
+                                                 RecurringScheduleRuleUpdateRequest request,
+                                                 Long privateLessonGroupId,
+                                                 String newStatus) {
+        if (!Objects.equals(rule.getPrivateLessonGroupId(), privateLessonGroupId)
+                || !Objects.equals(rule.getRuleStatus(), newStatus)
+                || !Objects.equals(rule.getStartDate(), request.getStartDate())
+                || !Objects.equals(rule.getEndDate(), request.getEndDate() == null
+                        ? rule.getEndDate() : request.getEndDate())
+                || currentSlots.size() != request.getSlots().size()) {
+            return false;
+        }
+        Map<Long, RecurringScheduleSlotEntity> currentById = currentSlots.stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        if (request.getSlots().stream().map(RecurringScheduleSlotRequest::getSlotId)
+                .distinct().count() != request.getSlots().size()) {
+            return false;
+        }
+        boolean allocationChanged = false;
+        for (RecurringScheduleSlotRequest requested : request.getSlots()) {
+            RecurringScheduleSlotEntity current = currentById.get(requested.getSlotId());
+            if (current == null) return false;
+            if (!Objects.equals(current.getTeacherId(), requested.getTeacherId())
+                    || !Objects.equals(current.getWeekday(), requested.getWeekday())
+                    || !Objects.equals(current.getStartTime(), requested.getStartTime())
+                    || !Objects.equals(current.getEndTime(), requested.getEndTime())
+                    || !Objects.equals(current.getPlannedUnits(), requested.getPlannedUnits())) {
+                return false;
+            }
+            allocationChanged |= safeUnits(current.getAllocatedUnits())
+                    != safeUnits(requested.getAllocatedUnits());
+        }
+        return allocationChanged;
+    }
+
+    /** 同周期额度调整只追加或安全回收末尾普通课，不触碰历史、例外课和有记录课次。 */
+    private ScheduleRuleUpdateResultVO updateAllocationWithinPeriod(
+            RecurringScheduleRuleEntity rule,
+            List<RecurringScheduleSlotEntity> currentSlots,
+            List<LessonOccurrenceEntity> occurrences,
+            Map<Long, LessonRecordEntity> recordsByOccurrenceId,
+            RecurringScheduleRuleUpdateRequest request,
+            CoursePackageEntity coursePackage,
+            ScheduleRuleUpdateResultVO detailsResult) {
+        validateSlotAllocations(request.getSlots(), coursePackage, rule.getId());
+        Map<Long, RecurringScheduleSlotRequest> requestedById = request.getSlots().stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotRequest::getSlotId, slot -> slot));
+        LocalDateTime now = AppTime.nowLocalDateTime();
+        LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
+
+        for (RecurringScheduleSlotEntity current : currentSlots) {
+            int nextUnits = safeUnits(requestedById.get(current.getId()).getAllocatedUnits());
+            if (nextUnits >= safeUnits(current.getAllocatedUnits())) continue;
+            List<LessonOccurrenceEntity> slotOccurrences = occurrences.stream()
+                    .filter(occurrence -> Objects.equals(current.getId(), occurrence.getScheduleSlotId()))
+                    .filter(occurrence -> PrivateSchedulePeriod.contains(occurrence,
+                            recordsByOccurrenceId.get(occurrence.getId()), rule, periodStart))
+                    .filter(occurrence -> !"CANCELLED".equals(occurrence.getPlanningStatus()))
+                    .toList();
+            int accountedUnits = slotOccurrences.stream().mapToInt(occurrence -> reservedAllocationUnits(
+                    occurrence, recordsByOccurrenceId.get(occurrence.getId()))).sum();
+            int excess = accountedUnits - nextUnits;
+            if (excess <= 0) continue;
+            int removableUnits = slotOccurrences.stream()
+                    .filter(occurrence -> "REGULAR".equals(occurrence.getOccurrenceType()))
+                    .filter(occurrence -> "SCHEDULED".equals(occurrence.getPlanningStatus()))
+                    .filter(occurrence -> occurrence.getPlannedStartAt() != null
+                            && !occurrence.getPlannedStartAt().isBefore(now))
+                    .filter(occurrence -> !recordsByOccurrenceId.containsKey(occurrence.getId()))
+                    .mapToInt(occurrence -> Math.max(0, safeUnits(occurrence.getPlannedUnits())))
+                    .sum();
+            if (removableUnits < excess) {
+                throw new BusinessException("SLOT_ALLOCATION_BELOW_RESERVED",
+                        "This allocation cannot be reduced by that amount because the difference is reserved by started, adjusted, or processed lessons.");
+            }
+        }
+
+        for (RecurringScheduleSlotEntity current : currentSlots) {
+            int oldUnits = safeUnits(current.getAllocatedUnits());
+            int nextUnits = safeUnits(requestedById.get(current.getId()).getAllocatedUnits());
+            if (oldUnits == nextUnits) continue;
+            if (recurringScheduleSlotMapper.updateAllocatedUnits(current.getId(), rule.getId(),
+                    oldUnits, nextUnits) != 1) {
+                throw new BusinessException("SCHEDULE_CHANGED",
+                        "The schedule allocation changed while you were editing it. Refresh and try again.");
+            }
+            current.setAllocatedUnits(nextUnits);
+        }
+        recurringScheduleRuleMapper.updateCourseDetails(rule.getId(), firstSlotClassroomId(currentSlots),
+                request.getNotes());
+
+        int generatedCount = renewOneRule(rule);
+        if ("ACTIVE".equals(coursePackage.getPackageStatus()) && "ACTIVE".equals(rule.getRuleStatus())) {
+            List<LessonOccurrenceEntity> activeOccurrences = listActivePackageOccurrences(coursePackage.getId());
+            Map<Long, LessonRecordEntity> activeRecords =
+                    listActiveRecordsByOccurrenceId(activeOccurrences, coursePackage.getId());
+            ensureCurrentPeriodAllocationIsCovered(currentSlots, activeOccurrences, activeRecords, rule);
+        }
+        int confirmedCount = (int) recordsByOccurrenceId.values().stream()
+                .filter(record -> "CONFIRMED".equals(record.getConfirmStage())).count();
+        return new ScheduleRuleUpdateResultVO(rule.getId(), currentSlots.size(),
+                detailsResult.preservedOccurrenceCount(),
+                0, generatedCount, confirmedCount, null, null);
     }
 
     /** 只同步未来、未开始且未进入消课流程的课次，不删除或重建课次、不改变分配额。 */
@@ -1457,6 +1644,12 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
 
     private void ensureNoConflictsExcludingRule(List<LessonOccurrenceEntity> candidates,
                                                 Long studentId, Long excludeRuleId) {
+        ensureNoConflictsExcludingRule(candidates, studentId, excludeRuleId, Collections.emptySet());
+    }
+
+    private void ensureNoConflictsExcludingRule(List<LessonOccurrenceEntity> candidates,
+                                                Long studentId, Long excludeRuleId,
+                                                Set<Long> excludeOccurrenceIds) {
         if (candidates.isEmpty()) {
             return;
         }
@@ -1464,7 +1657,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         LocalDateTime windowEnd = candidates.stream().map(LessonOccurrenceEntity::getPlannedEndAt).max(LocalDateTime::compareTo).orElseThrow();
 
         List<LessonOccurrenceEntity> studentOccurrences = listStudentOccupiedOccurrences(
-                studentId, windowStart, windowEnd, excludeRuleId);
+                studentId, windowStart, windowEnd, excludeRuleId).stream()
+                .filter(occurrence -> !excludeOccurrenceIds.contains(occurrence.getId())).toList();
         Set<Long> teacherIds = candidates.stream()
                 .map(LessonOccurrenceEntity::getPlannedTeacherId)
                 .filter(Objects::nonNull)
@@ -1475,6 +1669,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .ne(LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+        teacherOccurrences = teacherOccurrences.stream()
+                .filter(occurrence -> !excludeOccurrenceIds.contains(occurrence.getId())).toList();
         Set<Long> classroomIds = candidates.stream().map(LessonOccurrenceEntity::getPlannedClassroomId)
                 .filter(Objects::nonNull).collect(Collectors.toSet());
         List<LessonOccurrenceEntity> classroomOccurrences = classroomIds.isEmpty() ? Collections.emptyList() : lessonOccurrenceMapper.selectList(new LambdaQueryWrapper<LessonOccurrenceEntity>()
@@ -1483,6 +1679,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .ne(LessonOccurrenceEntity::getScheduleRuleId, excludeRuleId)
                 .lt(LessonOccurrenceEntity::getPlannedStartAt, windowEnd)
                 .gt(LessonOccurrenceEntity::getPlannedEndAt, windowStart));
+        classroomOccurrences = classroomOccurrences.stream()
+                .filter(occurrence -> !excludeOccurrenceIds.contains(occurrence.getId())).toList();
 
         List<String> conflicts = new ArrayList<>();
         List<ScheduleConflictDetailVO> details = new ArrayList<>();
@@ -1538,7 +1736,16 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                                                               Long primaryStudentId,
                                                               Long excludeRuleId,
                                                               Long privateLessonGroupId) {
-        ensureNoConflictsExcludingRule(candidates, primaryStudentId, excludeRuleId);
+        ensureNoConflictsExcludingPrivateLessonGroup(candidates, primaryStudentId,
+                excludeRuleId, privateLessonGroupId, Collections.emptySet());
+    }
+
+    private void ensureNoConflictsExcludingPrivateLessonGroup(List<LessonOccurrenceEntity> candidates,
+                                                              Long primaryStudentId,
+                                                              Long excludeRuleId,
+                                                              Long privateLessonGroupId,
+                                                              Set<Long> excludeOccurrenceIds) {
+        ensureNoConflictsExcludingRule(candidates, primaryStudentId, excludeRuleId, excludeOccurrenceIds);
         if (privateLessonGroupId == null) {
             return;
         }
@@ -1547,7 +1754,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 continue;
             }
             ensureNoConflictsExcludingRule(copyCandidatesForStudent(candidates, member.getStudentId()),
-                    member.getStudentId(), excludeRuleId);
+                    member.getStudentId(), excludeRuleId, excludeOccurrenceIds);
         }
     }
 
@@ -1777,7 +1984,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                                               Long previousRuleId,
                                               List<LessonOccurrenceEntity> preservedOccurrences,
                                               Map<Long, LessonRecordEntity> recordByOccurrenceId,
-                                              boolean allowEmptySlotAllocations) {
+                                              boolean allowEmptySlotAllocations,
+                                              int transferredFutureUnits) {
         int allocated = 0;
         for (RecurringScheduleSlotRequest slot : slots) {
             if (slot.getTeacherId() == null || !StringUtils.hasText(slot.getSubjectName())
@@ -1792,7 +2000,8 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 - pendingDeductionUnits(coursePackage.getId())
                 - otherRuleReservedUnits(coursePackage.getId(), previousRuleId)
                 - preservedNonPendingUnits(preservedOccurrences, recordByOccurrenceId,
-                        AppTime.nowLocalDateTime()));
+                        AppTime.nowLocalDateTime())
+                + transferredFutureUnits);
         if (allocated > available) {
             throw new BusinessException("SLOT_ALLOCATION_EXCEEDS_PACKAGE",
                     "Allocated hours exceed the current package balance after pending lessons and preserved schedule exceptions are accounted for.");
@@ -1859,25 +2068,122 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                                               List<LessonOccurrenceEntity> previousOccurrences,
                                               Map<Long, LessonRecordEntity> recordsByOccurrenceId,
                                               LocalDateTime changedAt,
-                                              boolean teacherHandoffOnly) {
+                                              boolean teacherHandoffOnly,
+                                              Map<Long, Integer> futureHandoffUnitsBySlot) {
         for (RecurringScheduleSlotRequest requested : requestedSlots) {
             if (requested.getSlotId() == null) continue;
             RecurringScheduleSlotEntity previous = previousSlotsById.get(requested.getSlotId());
             boolean teacherChanged = previous != null
                     && !Objects.equals(previous.getTeacherId(), requested.getTeacherId());
-            if (previous == null || (!teacherChanged && !teacherHandoffOnly)
-                    || !Objects.equals(safeUnits(previous.getAllocatedUnits()),
-                            safeUnits(requested.getAllocatedUnits()))) {
-                continue;
-            }
-            int transferableUnits = rolloverAllocatedUnits(previous, previousOccurrences,
+            if (previous == null || (!teacherChanged && !teacherHandoffOnly)) continue;
+            int rolloverUnits = rolloverAllocatedUnits(previous, previousOccurrences,
                     recordsByOccurrenceId, changedAt);
+            int transferableUnits = rolloverUnits
+                    + futureHandoffUnitsBySlot.getOrDefault(previous.getId(), 0);
+            int requestedUnits = safeUnits(requested.getAllocatedUnits());
+            int futureHandoffUnits = futureHandoffUnitsBySlot.getOrDefault(previous.getId(), 0);
+            if (teacherChanged && requestedUnits < futureHandoffUnits) {
+                throw new BusinessException("SLOT_ALLOCATION_BELOW_HANDOFF",
+                        "The new teacher allocation must cover future adjusted lessons being handed off.");
+            }
+            boolean allocationWasAutoFilled = requestedUnits == safeUnits(previous.getAllocatedUnits())
+                    || requestedUnits == rolloverUnits;
+            if (teacherChanged && allocationWasAutoFilled) {
+                requested.setAllocatedUnits(transferableUnits);
+            }
             if (transferableUnits <= 0 && !teacherHandoffOnly) {
                 throw new BusinessException("NO_TRANSFERABLE_SLOT_ALLOCATION",
                         "This slot has no future unreserved hours to transfer. Remove the slot or set a valid new allocation.");
             }
-            requested.setAllocatedUnits(Math.max(0, transferableUnits));
         }
+    }
+
+    /** 只把明确变更老师的 slot lineage 映射到新老师，供保留未来课次与额度一起交接。 */
+    private Map<Long, Long> teacherHandoffTargetsByLineage(
+            List<RecurringScheduleSlotRequest> requestedSlots,
+            List<RecurringScheduleSlotEntity> existingSlots) {
+        Map<Long, RecurringScheduleSlotEntity> existingById = existingSlots.stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+        Map<Long, Long> targets = new HashMap<>();
+        for (RecurringScheduleSlotRequest request : requestedSlots) {
+            RecurringScheduleSlotEntity existing = request.getSlotId() == null
+                    ? null : existingById.get(request.getSlotId());
+            if (existing == null || Objects.equals(existing.getTeacherId(), request.getTeacherId())) continue;
+            targets.put(slotLineageId(existing), request.getTeacherId());
+        }
+        return targets;
+    }
+
+    /** 合并当前周期将保留的课次和旧周期保留课次，按课次 ID 去重。 */
+    private List<LessonOccurrenceEntity> mergeOccurrences(List<LessonOccurrenceEntity> first,
+                                                          List<LessonOccurrenceEntity> second) {
+        Map<Long, LessonOccurrenceEntity> unique = new LinkedHashMap<>();
+        first.stream().filter(item -> item.getId() != null)
+                .forEach(item -> unique.put(item.getId(), item));
+        second.stream().filter(item -> item.getId() != null)
+                .forEach(item -> unique.putIfAbsent(item.getId(), item));
+        return new ArrayList<>(unique.values());
+    }
+
+    /** 批量取课次来源 slot，包含已软删除的旧周期 slot 以恢复 lineage。 */
+    private Map<Long, RecurringScheduleSlotEntity> loadOccurrenceSlots(List<LessonOccurrenceEntity> occurrences) {
+        List<Long> slotIds = occurrences.stream()
+                .map(LessonOccurrenceEntity::getScheduleSlotId)
+                .filter(Objects::nonNull).distinct().toList();
+        if (slotIds.isEmpty()) return Collections.emptyMap();
+        return recurringScheduleSlotMapper.selectIncludingDeletedByIds(slotIds).stream()
+                .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot, (left, right) -> left));
+    }
+
+    /** 只交接未来未取消、且没有消课记录的课次；历史记录快照保持原值。 */
+    private List<LessonOccurrenceEntity> futureOccurrencesForTeacherHandoff(
+            List<LessonOccurrenceEntity> candidates,
+            Map<Long, RecurringScheduleSlotEntity> slotsById,
+            Map<Long, LessonRecordEntity> recordsByOccurrenceId,
+            Map<Long, Long> teacherByLineage,
+            LocalDateTime effectiveAt) {
+        List<LessonOccurrenceEntity> transferable = new ArrayList<>();
+        for (LessonOccurrenceEntity occurrence : candidates) {
+            if (occurrence.getPlannedStartAt() == null
+                    || occurrence.getPlannedStartAt().isBefore(effectiveAt)
+                    || "CANCELLED".equals(occurrence.getPlanningStatus())) continue;
+            RecurringScheduleSlotEntity source = slotsById.get(occurrence.getScheduleSlotId());
+            if (!teacherByLineage.containsKey(slotLineageId(source))) continue;
+            if (recordsByOccurrenceId.containsKey(occurrence.getId())) {
+                throw new BusinessException("FUTURE_HANDOFF_HAS_LESSON_RECORD",
+                        "A future lesson in this slot already has a lesson record. Resolve that record before changing the recurring teacher.");
+            }
+            transferable.add(occurrence);
+        }
+        return transferable;
+    }
+
+    /** 未来例外课次随 slot 一起交接，其预留课时也计入新老师分配。 */
+    private Map<Long, Integer> futureHandoffUnitsBySourceSlot(
+            List<RecurringScheduleSlotEntity> existingSlots,
+            List<LessonOccurrenceEntity> futureOccurrences,
+            Map<Long, RecurringScheduleSlotEntity> occurrenceSlotsById,
+            Map<Long, Long> teacherByLineage) {
+        Map<Long, Integer> unitsByLineage = new HashMap<>();
+        for (LessonOccurrenceEntity occurrence : futureOccurrences) {
+            RecurringScheduleSlotEntity source = occurrenceSlotsById.get(occurrence.getScheduleSlotId());
+            Long lineageId = slotLineageId(source);
+            if (lineageId != null) {
+                unitsByLineage.merge(lineageId, Math.max(0, safeUnits(occurrence.getPlannedUnits())), Integer::sum);
+            }
+        }
+        Map<Long, Integer> unitsBySlot = new HashMap<>();
+        for (RecurringScheduleSlotEntity existing : existingSlots) {
+            Long lineageId = slotLineageId(existing);
+            if (teacherByLineage.containsKey(lineageId)) {
+                unitsBySlot.put(existing.getId(), unitsByLineage.getOrDefault(lineageId, 0));
+            }
+        }
+        return unitsBySlot;
+    }
+
+    private Long slotLineageId(RecurringScheduleSlotEntity slot) {
+        return slot == null ? null : slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId();
     }
 
     /** 检查本次是否只更换既有周课位的老师，供服务端安全推导未手动改写的各 slot 新额度。 */
@@ -2329,6 +2635,40 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
         if (generatedUnits != allocatedUnits) {
             throw new BusinessException("SCHEDULE_ALLOCATION_NOT_FULLY_GENERATED",
                     "Generated lesson hours do not match the allocated hours. Check the package balance, schedule date range, and conflicting lessons; no changes were saved.");
+        }
+    }
+
+    /** 手动保存排课后，核对本周期每个课位的分配额都由保留课次和新课次覆盖。 */
+    private void ensureCurrentPeriodAllocationIsCovered(
+            List<RecurringScheduleSlotEntity> slots,
+            List<LessonOccurrenceEntity> scheduledOccurrences,
+            Map<Long, LessonRecordEntity> recordByOccurrenceId,
+            RecurringScheduleRuleEntity rule) {
+        LocalDateTime periodStart = PrivateSchedulePeriod.startAt(rule);
+        Map<Long, Integer> accountedUnitsBySlot = new HashMap<>();
+        for (LessonOccurrenceEntity occurrence : scheduledOccurrences) {
+            if (Objects.equals(occurrence.getIsDeleted(), 1)
+                    || "CANCELLED".equals(occurrence.getPlanningStatus())
+                    || !Objects.equals(rule.getId(), occurrence.getScheduleRuleId())
+                    || occurrence.getScheduleSlotId() == null
+                    || !PrivateSchedulePeriod.contains(occurrence,
+                            recordByOccurrenceId.get(occurrence.getId()), rule, periodStart)) {
+                continue;
+            }
+            accountedUnitsBySlot.merge(occurrence.getScheduleSlotId(),
+                    reservedAllocationUnits(occurrence, recordByOccurrenceId.get(occurrence.getId())),
+                    Integer::sum);
+        }
+
+        for (RecurringScheduleSlotEntity slot : slots) {
+            if (!"ACTIVE".equals(slot.getSlotStatus())) continue;
+            int allocatedUnits = Math.max(0, safeUnits(slot.getAllocatedUnits()));
+            int accountedUnits = accountedUnitsBySlot.getOrDefault(slot.getId(), 0);
+            if (accountedUnits != allocatedUnits) {
+                throw new BusinessException("SCHEDULE_ALLOCATION_NOT_FULLY_GENERATED",
+                        "Generated lesson hours do not match the allocated hours after preserving existing lessons. "
+                                + "Resolve pending lessons or adjust the allocation; no changes were saved.");
+            }
         }
     }
 

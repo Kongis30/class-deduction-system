@@ -1756,7 +1756,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
             }
         }
-        // 未确认课次仅用于保留老师入口与排课校验；老师余额必须由同周期分配额减最终消课计算。
+        // 未处理课次保留其原授课老师入口，包含已结束的旧周期课次；余额仍只按当前周期分配额计算。
         for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
             Long packageId = entry.getKey();
             List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
@@ -1774,8 +1774,9 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 if (PrivateLessonAllocation.isPendingProcessing(occurrence, record, now)) {
                     int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
                     pendingProcessingByPackage.merge(packageId, units, Integer::sum);
-                    if (currentPeriod && occurrence.getPlannedTeacherId() != null) {
-                        Long teacherId = occurrence.getAllocationOwnerTeacherId() != null
+                    if (occurrence.getPlannedTeacherId() != null) {
+                        // 旧周期课次仍归原授课老师处理，不能因新 slot lineage 不同而从老师入口隐藏。
+                        Long teacherId = currentPeriod && occurrence.getAllocationOwnerTeacherId() != null
                                 ? occurrence.getAllocationOwnerTeacherId() : occurrence.getPlannedTeacherId();
                         unconfirmedScheduledByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
@@ -1864,7 +1865,10 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     .getOrDefault(coursePackage.getId(), Collections.emptyMap()).containsKey(requestedTeacherId);
             boolean hasCurrentOneOffAssignment = !currentOwners.isEmpty()
                     && hasCurrentOneOffAssignment(requestedTeacherId, occurrences, currentOwners);
-            if (!currentOwners.isEmpty() && !hasCurrentAllocation && !hasCurrentOneOffAssignment) {
+            boolean hasPendingLesson = hoursContext.unconfirmedScheduledByTeacherByPackage()
+                    .getOrDefault(coursePackage.getId(), Collections.emptyMap()).containsKey(requestedTeacherId);
+            if (!currentOwners.isEmpty() && !hasCurrentAllocation
+                    && !hasCurrentOneOffAssignment && !hasPendingLesson) {
                 return Collections.emptySet();
             }
             return Set.of(requestedTeacherId);
