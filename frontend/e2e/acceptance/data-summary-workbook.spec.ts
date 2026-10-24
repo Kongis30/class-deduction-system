@@ -323,7 +323,7 @@ test('打印班级名单前必须选择一个班级，且只打印所选班级',
   await expect(printButton).toBeDisabled();
   await page.getByPlaceholder('Select a class').click();
   await page.locator('.el-select-dropdown__item').first().click();
-  await expect(page.getByText('2 students will be printed')).toBeVisible();
+  await expect(page.getByText('2 students · one page')).toBeVisible();
   await expect(printButton).toBeEnabled();
   await printButton.click();
 

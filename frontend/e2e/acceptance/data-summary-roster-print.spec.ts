@@ -8,7 +8,7 @@ const admin = {
   roleCodes: ['ADMIN'],
 };
 
-test('Data Summary prints the selected class plan roster on one page', async ({ page }) => {
+test('Data Summary prints a deduplicated whole-class roster without requiring a registration plan', async ({ page }) => {
   await page.addInitScript((user) => {
     localStorage.setItem('jbt_auth_token', 'test-token');
     localStorage.setItem('jbt_auth_user', JSON.stringify(user));
@@ -23,6 +23,7 @@ test('Data Summary prints the selected class plan roster on one page', async ({ 
     school: 'North School',
     courseProductId: '8001',
     courseProductName: 'After School',
+    groupProjectName: 'After School Project',
     classId: '9001',
     className: 'G1',
     campusId: '7001',
@@ -41,9 +42,15 @@ test('Data Summary prints the selected class plan roster on one page', async ({ 
     orderId: '2001', orderItemId: '3001', studentId: '4001', studentName: 'Spring Student',
     classId: '9001', registrationPlanId: '502', registrationPlanName: 'Spring Plan',
   });
+  // 同一学生在两个 plan 下重复报名，整班名单只能出现一次。
   rosterRows.push({
     ...rosterRows[0],
-    orderId: '2002', orderItemId: '3002', studentId: '4002', studentName: 'Other Class Student',
+    orderId: '2002', orderItemId: '3002', studentId: '3000', studentName: 'Student 01',
+    classId: '9001', registrationPlanId: '502', registrationPlanName: 'Spring Plan',
+  });
+  rosterRows.push({
+    ...rosterRows[0],
+    orderId: '2003', orderItemId: '3003', studentId: '4002', studentName: 'Other Class Student',
     classId: '9002', className: 'G2', registrationPlanId: '503', registrationPlanName: 'G2 Plan',
   });
 
@@ -65,33 +72,57 @@ test('Data Summary prints the selected class plan roster on one page', async ({ 
   await page.getByRole('button', { name: 'Print class roster' }).click();
   const dialog = page.getByRole('dialog', { name: 'Print class roster' });
   const selectors = dialog.locator('.el-select__wrapper');
-  await selectors.nth(0).click();
-  await page.getByRole('option', { name: /G1 · North Campus · After School/ }).click();
-  await selectors.nth(1).click();
-  await expect(page.getByRole('option', { name: 'Fall Plan · 70 students' })).toBeVisible();
-  await expect(page.getByRole('option', { name: 'Spring Plan · 1 student' })).toBeVisible();
-  await selectors.nth(0).click();
-  await page.getByRole('option', { name: /G2 · North Campus · After School/ }).click();
-  await selectors.nth(1).click();
-  await expect(page.getByRole('option', { name: 'G2 Plan · 1 student' })).toBeVisible();
-  await expect(page.getByRole('option', { name: 'Fall Plan · 70 students' })).not.toBeAttached();
-  await selectors.nth(0).click();
-  await page.getByRole('option', { name: /G1 · North Campus · After School/ }).click();
-  await selectors.nth(1).click();
-  await page.getByRole('option', { name: 'Fall Plan · 70 students' }).click();
-  await expect(dialog.getByText('70 students · one page')).toBeVisible();
+  const printButton = dialog.getByRole('button', { name: 'Print', exact: true });
 
-  // 列表覆盖两个报名月份，打印名单不得随当前月份筛选缩小。
-  await dialog.getByRole('button', { name: 'Print', exact: true }).click();
+  await expect(printButton).toBeDisabled();
+  await selectors.nth(0).click();
+  await page.getByRole('option', { name: /G1 · North Campus · After School · After School Project/ }).click();
+
+  // 只选班级即可打印，默认覆盖该班全部 plan。
+  await expect(printButton).toBeEnabled();
+  await expect(dialog.getByText('71 students · one page')).toBeVisible();
+
+  await selectors.nth(1).click();
+  await expect(page.getByRole('option', { name: 'All plans · 71 students' })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'Fall Plan · 70 students' })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'Spring Plan · 2 students' })).toBeVisible();
+  await page.getByRole('option', { name: 'All plans · 71 students' }).click();
+  await expect(dialog.getByText('71 students · one page')).toBeVisible();
+
+  await printButton.click();
   const printRoot = page.locator('#print-document-root .roster-print__page');
   await expect(printRoot).toHaveCount(1);
-  await expect(printRoot.locator('tbody tr')).toHaveCount(35);
+  await expect(printRoot.locator('h1')).toHaveText('After School');
+  await expect(printRoot.locator('h2')).toContainText('After School Project · G1');
+  await expect(printRoot.locator('.roster-print__campus')).toHaveText('North Campus');
+  // 71 人超过单页 25 行，应自动扩展为 3 个学生列（6 个表头单元格）。
+  await expect(printRoot.locator('thead th')).toHaveCount(6);
+  await expect(printRoot.locator('tbody tr')).toHaveCount(24);
   await expect(printRoot).toContainText('Student 70');
-  await expect(printRoot).not.toContainText('Spring Student');
+  await expect(printRoot).toContainText('Spring Student');
+  await expect(printRoot.getByText('Student 01', { exact: true })).toHaveCount(1);
   await expect(printRoot).not.toContainText('Other Class Student');
 
   await page.emulateMedia({ media: 'print' });
   const pdf = await page.pdf({ format: 'Letter', preferCSSPageSize: true });
   const pageCount = (pdf.toString('latin1').match(/\/Type\s*\/Page\b/g) ?? []).length;
   expect(pageCount).toBe(1);
+
+  // plan 下拉框仍保留，选择单个 plan 时只打印该 plan。
+  await page.emulateMedia({ media: 'screen' });
+  await page.getByRole('button', { name: 'Print class roster' }).click();
+  const planDialog = page.getByRole('dialog', { name: 'Print class roster' });
+  const planSelectors = planDialog.locator('.el-select__wrapper');
+  await planSelectors.nth(0).click();
+  await page.getByRole('option', { name: /G1 · North Campus · After School · After School Project/ }).click();
+  await planSelectors.nth(1).click();
+  await page.getByRole('option', { name: 'Fall Plan · 70 students' }).click();
+  await expect(planDialog.getByText('70 students · one page')).toBeVisible();
+  await planDialog.getByRole('button', { name: 'Print', exact: true }).click();
+
+  const planPrintRoot = page.locator('#print-document-root .roster-print__page');
+  await expect(planPrintRoot).toHaveCount(1);
+  await expect(planPrintRoot).toContainText('Student 70');
+  await expect(planPrintRoot).not.toContainText('Spring Student');
+  await expect(planPrintRoot).not.toContainText('Other Class Student');
 });

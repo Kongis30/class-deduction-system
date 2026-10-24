@@ -6,10 +6,12 @@ import com.classdeduction.system.common.util.JsonHelper;
 import com.classdeduction.system.modules.base.entity.CampusEntity;
 import com.classdeduction.system.modules.base.entity.CourseProductEntity;
 import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.entity.TeacherEntity;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -86,6 +88,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
     private final ClassEnrollmentMapper classEnrollmentMapper;
     private final CourseProductMapper courseProductMapper;
     private final GroupRegistrationPlanMapper groupRegistrationPlanMapper;
+    private final GroupCourseProjectMapper groupCourseProjectMapper;
     private final TeacherMapper teacherMapper;
     private final HourLedgerMapper hourLedgerMapper;
     private final StudentMapper studentMapper;
@@ -453,6 +456,16 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         Map<Long, GroupRegistrationPlanEntity> plans = planIds.isEmpty() ? Collections.emptyMap()
                 : groupRegistrationPlanMapper.selectBatchIds(planIds).stream()
                         .collect(Collectors.toMap(GroupRegistrationPlanEntity::getId, Function.identity()));
+        Set<Long> projectIds = new LinkedHashSet<>();
+        classGroups.values().stream().map(ClassGroupEntity::getGroupProjectId)
+                .filter(Objects::nonNull).forEach(projectIds::add);
+        items.stream().map(EnrollmentOrderItemEntity::getGroupProjectId)
+                .filter(Objects::nonNull).forEach(projectIds::add);
+        plans.values().stream().map(GroupRegistrationPlanEntity::getProjectId)
+                .filter(Objects::nonNull).forEach(projectIds::add);
+        Map<Long, GroupCourseProjectEntity> groupProjects = projectIds.isEmpty() ? Collections.emptyMap()
+                : groupCourseProjectMapper.selectBatchIds(projectIds).stream()
+                        .collect(Collectors.toMap(GroupCourseProjectEntity::getId, Function.identity()));
         Set<Long> v2ItemIds = items.stream()
                 .filter(item -> item.getGroupRegistrationPlanId() != null && item.getId() != null)
                 .map(EnrollmentOrderItemEntity::getId)
@@ -471,7 +484,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                             enrollment -> new EnrollmentItemStudentKey(
                                     enrollment.getEnrollmentOrderItemId(), enrollment.getStudentId()),
                             Function.identity(), (first, ignored) -> first, LinkedHashMap::new));
-        return new Context(classGroups, products, primaryAssignments, teachers, plans, classEnrollments);
+        return new Context(classGroups, products, primaryAssignments, teachers, plans, groupProjects, classEnrollments);
     }
 
     private Comparator<ClassEnrollmentEntity> classEnrollmentSelectionOrder() {
@@ -691,6 +704,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 coursePackage == null ? null : coursePackage.getCourseProductId(),
                 classGroup == null ? null : classGroup.getProductId());
         CourseProductEntity product = productId == null ? null : context.products().get(productId);
+        Long groupProjectId = firstNonNull(classGroup == null ? null : classGroup.getGroupProjectId(),
+                item == null ? null : item.getGroupProjectId(),
+                registrationPlan == null ? null : registrationPlan.getProjectId());
+        GroupCourseProjectEntity groupProject = groupProjectId == null ? null : context.groupProjects().get(groupProjectId);
 
         Long teacherId = firstNonNull(item == null ? null : item.getTeacherId(),
                 coursePackage == null ? null : teacherIdByPackage(coursePackage.getId(), context),
@@ -892,6 +909,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 classGroup == null ? null : classGroup.getClassName(),
                 productId,
                 product == null ? null : product.getProductName(),
+                groupProject == null ? null : groupProject.getProjectName(),
                 registerClass,
                 courseType,
                 detail,
@@ -1460,6 +1478,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             Map<Long, PackageTeacherAssignmentEntity> primaryAssignments,
             Map<Long, TeacherEntity> teachers,
             Map<Long, GroupRegistrationPlanEntity> registrationPlans,
+            Map<Long, GroupCourseProjectEntity> groupProjects,
             Map<EnrollmentItemStudentKey, ClassEnrollmentEntity> classEnrollments
     ) {
     }

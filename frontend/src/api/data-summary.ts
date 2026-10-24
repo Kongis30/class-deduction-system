@@ -59,6 +59,8 @@ export interface DataSummaryRow {
   className?: string;
   courseProductId?: EntityId;
   courseProductName?: string;
+  /** V2 教学项目名称；历史数据可能为空。 */
+  groupProjectName?: string;
   registerClass?: string;
   courseType?: string;
   privateLessonGroupId?: EntityId;

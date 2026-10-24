@@ -137,14 +137,14 @@
       destroy-on-close
     >
       <div class="roster-print-picker">
-        <p>Choose a class and registration plan to print the complete student list.</p>
+        <p>Choose a class. The registration plan is optional; leave it on All plans to print the whole class.</p>
         <el-select
           v-model="selectedRosterPrintClassKey"
           class="roster-print-picker__select"
           filterable
           clearable
           placeholder="Select a class"
-          @change="selectedRosterPrintPlanKey = ''"
+          @change="selectedRosterPrintPlanKey = ROSTER_ALL_PLANS"
         >
           <el-option
             v-for="group in rosterPrintClassGroups"
@@ -159,8 +159,14 @@
           filterable
           clearable
           :disabled="!selectedRosterPrintClassGroup"
-          placeholder="Select a registration plan"
+          placeholder="All plans (optional)"
+          @clear="selectedRosterPrintPlanKey = ROSTER_ALL_PLANS"
         >
+          <el-option
+            v-if="selectedRosterPrintClassGroup"
+            :label="`All plans · ${rosterStudentCount(selectedRosterPrintClassGroup.studentCount)}`"
+            :value="ROSTER_ALL_PLANS"
+          />
           <el-option
             v-for="group in selectedRosterPrintClassGroup?.plans ?? []"
             :key="group.key"
@@ -180,20 +186,39 @@
       </template>
     </el-dialog>
     <div ref="rosterPrintRef" class="roster-print" aria-hidden="true">
-      <section v-for="group in selectedRosterPrintGroups" :key="group.key" class="roster-print__page" :style="rosterPrintDensityStyle(group)">
-        <h1>{{ group.projectName }}</h1>
-        <h2>{{ group.className }} · {{ group.planName }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
-        <p class="roster-print__campus">{{ group.campusName }}</p>
+      <section
+        v-if="selectedRosterPrintGroup"
+        :key="selectedRosterPrintGroup.key"
+        class="roster-print__page"
+        :style="rosterPrintPageStyle"
+      >
+        <h1>{{ selectedRosterPrintGroup.productName }}</h1>
+        <h2>
+          <span v-if="selectedRosterPrintGroup.projectName">{{ selectedRosterPrintGroup.projectName }} · </span>
+          {{ selectedRosterPrintGroup.className }}<span v-if="selectedRosterPrintGroup.teacherNames.length"> — {{ selectedRosterPrintGroup.teacherNames.join(', ') }}</span>
+        </h2>
+        <p class="roster-print__campus">{{ selectedRosterPrintGroup.campusName }}</p>
         <table>
+          <colgroup>
+            <template v-for="column in rosterPrintLayout.columns" :key="column">
+              <col :style="{ width: `${60 / rosterPrintLayout.columns}%` }" />
+              <col :style="{ width: `${40 / rosterPrintLayout.columns}%` }" />
+            </template>
+          </colgroup>
           <thead>
-            <tr><th>Student</th><th>School</th><th>Student</th><th>School</th></tr>
+            <tr>
+              <template v-for="column in rosterPrintLayout.columns" :key="column">
+                <th>Student</th>
+                <th>School</th>
+              </template>
+            </tr>
           </thead>
           <tbody>
-            <tr v-for="(pair, index) in rosterPrintStudentPairs(group.students)" :key="index">
-              <td>{{ pair[0]?.name ?? '' }}</td>
-              <td>{{ pair[0]?.school ?? '' }}</td>
-              <td>{{ pair[1]?.name ?? '' }}</td>
-              <td>{{ pair[1]?.school ?? '' }}</td>
+            <tr v-for="(rowStudents, rowIndex) in rosterPrintRows" :key="rowIndex">
+              <template v-for="(student, columnIndex) in rowStudents" :key="columnIndex">
+                <td>{{ student?.name ?? '' }}</td>
+                <td>{{ student?.school ?? '' }}</td>
+              </template>
             </tr>
           </tbody>
         </table>
@@ -640,24 +665,55 @@ interface WorkbookCampusGroup {
   classGroups: WorkbookClassGroup[];
 }
 
+interface RosterPrintStudent {
+  key: string;
+  name: string;
+  school: string;
+}
+
 interface RosterPrintGroup {
   key: string;
   classKey: string;
   planId: string;
   planName: string;
+  productName: string;
   projectName: string;
   className: string;
   campusName: string;
   teacherNames: string[];
-  students: Array<{ key: string; name: string; school: string }>;
+  students: RosterPrintStudent[];
 }
 
 interface RosterPrintClassGroup {
   key: string;
+  productName: string;
+  projectName: string;
   className: string;
   campusName: string;
-  projectName: string;
+  studentCount: number;
   plans: RosterPrintGroup[];
+}
+
+interface RosterPrintClassDraft {
+  key: string;
+  productName: string;
+  projectName: string;
+  className: string;
+  campusName: string;
+  plans: Map<string, RosterPrintPlanDraft>;
+}
+
+interface RosterPrintPlanDraft {
+  key: string;
+  classKey: string;
+  planId: string;
+  planName: string;
+  productName: string;
+  projectName: string;
+  className: string;
+  campusName: string;
+  teacherNames: Set<string>;
+  students: Map<string, RosterPrintStudent>;
 }
 
 /** 每个 Product Tab 独立保留的视图状态（月份、筛选、排序）。 */
@@ -704,6 +760,11 @@ const DEFAULT_MOBILE_TABLE_SCALE = 0.72;
 const MAX_MOBILE_TABLE_SCALE = 1.6;
 const PERIOD_RENEWAL_WARNING_DAYS = 10;
 const CLASS_SORT_ORDER = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7', 'G8', 'ELT', 'SHSAT', 'PSAT', 'SAT', 'ESL', 'TBD'];
+const ROSTER_ALL_PLANS = '__ALL_PLANS__';
+/** 班级名单必须单页打印：超过目标行数时自动增加学生列数。 */
+const ROSTER_TARGET_ROWS = 25;
+const ROSTER_MAX_COLUMNS = 6;
+const ROSTER_PAGE_WIDTH_MM = 196;
 
 interface PinchZoomGesture {
   startDistance: number;
@@ -767,7 +828,7 @@ const activeTabId = ref<string>('');
 const rosterPrintDialogVisible = ref(false);
 const rosterPrintRef = ref<HTMLElement | null>(null);
 const selectedRosterPrintClassKey = ref('');
-const selectedRosterPrintPlanKey = ref('');
+const selectedRosterPrintPlanKey = ref(ROSTER_ALL_PLANS);
 const selectedMonth = ref<string>('ALL');
 const saturdayRosterView = ref<SaturdayRosterView>('ALL');
 const studentFindOpen = ref(false);
@@ -1103,34 +1164,21 @@ const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
 
 /** 按当前产品范围汇总完整有效名单，不沿用月份或表格列筛选。 */
 const rosterPrintClassGroups = computed<RosterPrintClassGroup[]>(() => {
-  const classes = new Map<string, {
-    key: string;
-    className: string;
-    campusName: string;
-    projectName: string;
-    plans: Map<string, {
-      key: string;
-      classKey: string;
-      planId: string;
-      planName: string;
-      projectName: string;
-      className: string;
-      campusName: string;
-      teacherNames: Set<string>;
-      students: Map<string, { key: string; name: string; school: string }>;
-    }>;
-  }>();
+  const classes = new Map<string, RosterPrintClassDraft>();
 
   activeProductRows.value.forEach((row) => {
-    const projectName = row.courseProductName?.trim() || activeProduct.value?.productName || 'Class roster';
+    const productName = row.courseProductName?.trim() || activeProduct.value?.productName || 'Class roster';
+    const projectName = row.groupProjectName?.trim() || '';
     const className = displayText(displayClassName(row));
     const campusName = displayText(row.campusName);
     const classIdentity = row.classId == null ? className : String(row.classId);
-    const classKey = [row.courseProductId ?? projectName, row.campusId ?? campusName, classIdentity].join('::');
+    const classKey = [row.courseProductId ?? productName, row.campusId ?? campusName, classIdentity].join('::');
     let classGroup = classes.get(classKey);
     if (!classGroup) {
-      classGroup = { key: classKey, className, campusName, projectName, plans: new Map() };
+      classGroup = { key: classKey, productName, projectName, className, campusName, plans: new Map() };
       classes.set(classKey, classGroup);
+    } else if (!classGroup.projectName && projectName) {
+      classGroup.projectName = projectName;
     }
 
     const legacyPlanLabel = row.registrationTermCode?.trim() || row.periodLabel?.trim();
@@ -1149,13 +1197,16 @@ const rosterPrintClassGroups = computed<RosterPrintClassGroup[]>(() => {
         classKey,
         planId,
         planName,
-        projectName,
+        productName,
+        projectName: projectName || classGroup.projectName,
         className,
         campusName,
         teacherNames: new Set(),
         students: new Map(),
       };
       classGroup.plans.set(planKey, planGroup);
+    } else if (!planGroup.projectName && projectName) {
+      planGroup.projectName = projectName;
     }
 
     const teacherName = row.teacherName?.trim();
@@ -1171,25 +1222,56 @@ const rosterPrintClassGroups = computed<RosterPrintClassGroup[]>(() => {
   });
 
   return [...classes.values()]
-    .map((group) => ({
-      ...group,
-      plans: [...group.plans.values()]
+    .map((group) => {
+      const plans = [...group.plans.values()]
         .map((plan) => ({
           ...plan,
           teacherNames: [...plan.teacherNames].sort(naturalCompare),
           students: [...plan.students.values()].sort((left, right) => naturalCompare(left.name, right.name)),
         }))
-        .sort((left, right) => naturalCompare(left.planName, right.planName)),
-    }))
+        .sort((left, right) => naturalCompare(left.planName, right.planName));
+      const studentKeys = new Set<string>();
+      plans.forEach((plan) => plan.students.forEach((student) => studentKeys.add(student.key)));
+      return {
+        ...group,
+        studentCount: studentKeys.size,
+        plans,
+      };
+    })
     .sort((left, right) => naturalCompare(left.campusName, right.campusName)
       || naturalCompare(left.className, right.className)
+      || naturalCompare(left.productName, right.productName)
       || naturalCompare(left.projectName, right.projectName));
 });
+
+/** 未指定 plan 时合并整班所有 plan 的学生，并按学生去重。 */
+function mergeRosterPlans(group: RosterPrintClassGroup): RosterPrintGroup {
+  const students = new Map<string, RosterPrintStudent>();
+  const teacherNames = new Set<string>();
+  group.plans.forEach((plan) => {
+    plan.teacherNames.forEach((name) => teacherNames.add(name));
+    plan.students.forEach((student) => {
+      if (!students.has(student.key)) students.set(student.key, student);
+    });
+  });
+  return {
+    key: `${group.key}::${ROSTER_ALL_PLANS}`,
+    classKey: group.key,
+    planId: ROSTER_ALL_PLANS,
+    planName: 'All plans',
+    productName: group.productName,
+    projectName: group.projectName,
+    className: group.className,
+    campusName: group.campusName,
+    teacherNames: [...teacherNames].sort(naturalCompare),
+    students: [...students.values()].sort((left, right) => naturalCompare(left.name, right.name)),
+  };
+}
 
 function printClassRoster() {
   if (!rosterPrintClassGroups.value.length) return;
   selectedRosterPrintClassKey.value = '';
-  selectedRosterPrintPlanKey.value = '';
+  selectedRosterPrintPlanKey.value = ROSTER_ALL_PLANS;
   rosterPrintDialogVisible.value = true;
 }
 
@@ -1197,43 +1279,53 @@ const selectedRosterPrintClassGroup = computed(() =>
   rosterPrintClassGroups.value.find(group => group.key === selectedRosterPrintClassKey.value) ?? null,
 );
 
-const selectedRosterPrintGroup = computed(() =>
+const selectedRosterPrintPlanGroup = computed(() =>
   selectedRosterPrintClassGroup.value?.plans.find(group => group.key === selectedRosterPrintPlanKey.value) ?? null,
 );
 
-const selectedRosterPrintGroups = computed(() =>
-  selectedRosterPrintGroup.value ? [selectedRosterPrintGroup.value] : [],
-);
-
-const rosterPrinter = createIsolatedPrinter(() => rosterPrintRef.value, {
-  pageRule: '@page { size: letter portrait; margin: 10mm; }',
+const selectedRosterPrintGroup = computed<RosterPrintGroup | null>(() => {
+  const classGroup = selectedRosterPrintClassGroup.value;
+  if (!classGroup) return null;
+  const planKey = selectedRosterPrintPlanKey.value;
+  return !planKey || planKey === ROSTER_ALL_PLANS
+    ? mergeRosterPlans(classGroup)
+    : selectedRosterPrintPlanGroup.value;
 });
 
-function rosterPrintClassLabel(group: RosterPrintClassGroup) {
-  return [group.className, group.campusName, group.projectName].filter(Boolean).join(' · ');
-}
+/** 单页打印布局：优先单列，行数放不下时自动增加学生列数。 */
+const rosterPrintLayout = computed(() => {
+  const students = selectedRosterPrintGroup.value?.students ?? [];
+  const studentCount = students.length;
+  const columns = Math.max(1, Math.min(ROSTER_MAX_COLUMNS, Math.ceil(studentCount / ROSTER_TARGET_ROWS)));
+  const rows = Math.max(1, Math.ceil(studentCount / columns));
+  const rowScale = Math.min(1, ROSTER_TARGET_ROWS / rows);
+  // 学生列占 60%，学校列占 40%；按最长文本估算字号，保证单元格保持单行。
+  const longestName = Math.max(1, ...students.map((student) => student.name.length));
+  const longestSchool = Math.max(1, ...students.map((student) => student.school.length));
+  const studentCellWidth = (ROSTER_PAGE_WIDTH_MM / columns) * 0.6 - 3;
+  const schoolCellWidth = (ROSTER_PAGE_WIDTH_MM / columns) * 0.4 - 3;
+  // 0.3528 是 1pt 对应的毫米数，0.55 是 Arial 平均字符宽度系数。
+  const fontForName = studentCellWidth / (0.55 * 0.3528 * longestName);
+  const fontForSchool = schoolCellWidth / (0.55 * 0.3528 * longestSchool);
+  const textScale = Math.max(0.45, Math.min(1, fontForName / 10, fontForSchool / 10));
+  return { columns, rows, scale: Math.min(rowScale, textScale) };
+});
 
-function rosterPrintPlanLabel(group: RosterPrintGroup) {
-  return `${group.planName} · ${rosterStudentCount(group.students.length)}`;
-}
-
-function rosterStudentCount(count: number) {
-  return `${count} ${count === 1 ? 'student' : 'students'}`;
-}
-
-/** 两列并排放置学生，减少长名单的纵向占用。 */
-function rosterPrintStudentPairs(students: RosterPrintGroup['students']) {
-  const pairs: Array<[typeof students[number] | undefined, typeof students[number] | undefined]> = [];
-  for (let index = 0; index < students.length; index += 2) {
-    pairs.push([students[index], students[index + 1]]);
+const rosterPrintRows = computed<Array<Array<RosterPrintStudent | undefined>>>(() => {
+  const group = selectedRosterPrintGroup.value;
+  if (!group) return [];
+  const { columns } = rosterPrintLayout.value;
+  const rows: Array<Array<RosterPrintStudent | undefined>> = [];
+  for (let index = 0; index < group.students.length; index += columns) {
+    const row: Array<RosterPrintStudent | undefined> = group.students.slice(index, index + columns);
+    while (row.length < columns) row.push(undefined);
+    rows.push(row);
   }
-  return pairs;
-}
+  return rows;
+});
 
-/** 按名单长度压缩字号和单元格间距，优先保证一页内完整打印。 */
-function rosterPrintDensityStyle(group: RosterPrintGroup) {
-  const rowCount = Math.ceil(group.students.length / 2);
-  const scale = Math.min(1, 25 / Math.max(rowCount, 1));
+const rosterPrintPageStyle = computed(() => {
+  const scale = rosterPrintLayout.value.scale;
   return {
     '--roster-title-size': `${20 * scale}pt`,
     '--roster-heading-size': `${14 * scale}pt`,
@@ -1244,6 +1336,22 @@ function rosterPrintDensityStyle(group: RosterPrintGroup) {
     '--roster-heading-gap': `${4 * scale}mm`,
     '--roster-caption-gap': `${2 * scale}mm`,
   };
+});
+
+const rosterPrinter = createIsolatedPrinter(() => rosterPrintRef.value, {
+  pageRule: '@page { size: letter portrait; margin: 10mm; }',
+});
+
+function rosterPrintClassLabel(group: RosterPrintClassGroup) {
+  return [group.className, group.campusName, group.productName, group.projectName].filter(Boolean).join(' · ');
+}
+
+function rosterPrintPlanLabel(group: RosterPrintGroup) {
+  return `${group.planName} · ${rosterStudentCount(group.students.length)}`;
+}
+
+function rosterStudentCount(count: number) {
+  return `${count} ${count === 1 ? 'student' : 'students'}`;
 }
 
 function confirmPrintClassRoster() {
@@ -3159,21 +3267,24 @@ th.workbook-column--studentName {
   }
 
   .roster-print th {
-    width: 25%;
     padding: var(--roster-cell-padding);
     border: 1px solid #b8c7d4;
     background: #e9f1f8;
     text-align: left;
     font-size: var(--roster-header-size);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .roster-print td {
-    width: 25%;
     padding: var(--roster-cell-padding);
     border: 1px solid #b8c7d4;
     background: #d2e4f4;
     vertical-align: middle;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .roster-print tr {

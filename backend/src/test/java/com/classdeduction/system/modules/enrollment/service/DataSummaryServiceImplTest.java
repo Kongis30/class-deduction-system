@@ -5,7 +5,9 @@ import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.classdeduction.system.modules.base.mapper.CampusMapper;
 import com.classdeduction.system.modules.base.mapper.CourseProductMapper;
 import com.classdeduction.system.modules.base.entity.GroupRegistrationPlanEntity;
+import com.classdeduction.system.modules.base.entity.GroupCourseProjectEntity;
 import com.classdeduction.system.modules.base.mapper.GroupRegistrationPlanMapper;
+import com.classdeduction.system.modules.base.mapper.GroupCourseProjectMapper;
 import com.classdeduction.system.modules.base.entity.StudentEntity;
 import com.classdeduction.system.modules.base.mapper.StudentMapper;
 import com.classdeduction.system.modules.base.mapper.TeacherMapper;
@@ -106,6 +108,9 @@ class DataSummaryServiceImplTest {
     private GroupRegistrationPlanMapper groupRegistrationPlanMapper;
 
     @Mock
+    private GroupCourseProjectMapper groupCourseProjectMapper;
+
+    @Mock
     private TeacherMapper teacherMapper;
 
     @Mock
@@ -147,6 +152,7 @@ class DataSummaryServiceImplTest {
                 classEnrollmentMapper,
                 courseProductMapper,
                 groupRegistrationPlanMapper,
+                groupCourseProjectMapper,
                 teacherMapper,
                 hourLedgerMapper,
                 studentMapper,
@@ -157,6 +163,7 @@ class DataSummaryServiceImplTest {
         lenient().when(enrollmentOrderParticipantMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(privateLessonGroupMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(coursePackageMapper.selectList(any())).thenReturn(Collections.emptyList());
+        lenient().when(groupCourseProjectMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
         lenient().when(paymentRecordMapper.selectList(any())).thenReturn(Collections.emptyList());
         lenient().when(studentMapper.selectBatchIds(any())).thenReturn(Collections.emptyList());
     }
@@ -499,6 +506,9 @@ class DataSummaryServiceImplTest {
         plan.setTermCode("FALL");
         plan.setCoverageStartDate(LocalDate.of(2026, 9, 12));
         plan.setCoverageEndDate(LocalDate.of(2026, 12, 12));
+        GroupCourseProjectEntity project = new GroupCourseProjectEntity();
+        project.setId(51L);
+        project.setProjectName("SHSAT");
         ClassEnrollmentEntity entitlement = new ClassEnrollmentEntity();
         entitlement.setId(71L);
         entitlement.setEnrollmentOrderItemId(21L);
@@ -520,6 +530,7 @@ class DataSummaryServiceImplTest {
         when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(item));
         when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(classGroup));
         when(groupRegistrationPlanMapper.selectBatchIds(any())).thenReturn(List.of(plan));
+        when(groupCourseProjectMapper.selectBatchIds(any())).thenReturn(List.of(project));
         // Mapper 返回顺序不保证；取消的旧权益即使先返回，也不能覆盖新有效期。
         when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(replacedEntitlement, entitlement));
         when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "100.00")));
@@ -530,6 +541,7 @@ class DataSummaryServiceImplTest {
             assertThat(row.registrationTermCode()).isEqualTo("FALL");
             assertThat(row.registrationPlanId()).isEqualTo(61L);
             assertThat(row.registrationPlanName()).isEqualTo("Fall Registration");
+            assertThat(row.groupProjectName()).isEqualTo("SHSAT");
             assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 19));
             assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 12));
         });
