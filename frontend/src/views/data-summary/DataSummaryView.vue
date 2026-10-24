@@ -114,7 +114,7 @@
         </div>
         <el-button
           size="small"
-          :disabled="rosterPrintGroups.length === 0"
+          :disabled="rosterPrintClassGroups.length === 0"
           @click="printClassRoster"
         >
           Print class roster
