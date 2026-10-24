@@ -783,7 +783,7 @@ class LessonRecordServiceImplTest {
     }
 
     @Test
-    void shouldAllowTeacherToConfirmAgainAfterAdminRejects() {
+    void shouldAllowTeacherToConfirmRejectedRecordForFarFutureLesson() {
         LessonRecordEntity rejectedRecord = buildPendingRecord();
         rejectedRecord.setConfirmStage("REJECTED");
         rejectedRecord.setRejectReason("Actual time needs correction.");
@@ -795,7 +795,11 @@ class LessonRecordServiceImplTest {
         request.setResultStatus("COMPLETED");
         request.setNotes("Teacher corrected and confirmed again.");
 
-        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildRecentOccurrence());
+        LessonOccurrenceEntity farFutureOccurrence = buildRecentOccurrence();
+        farFutureOccurrence.setPlannedStartAt(LocalDateTime.now(
+                com.classdeduction.system.common.time.AppTime.APP_ZONE_ID).plusDays(30));
+        farFutureOccurrence.setPlannedEndAt(farFutureOccurrence.getPlannedStartAt().plusHours(2));
+        when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(farFutureOccurrence);
         when(lessonRecordMapper.selectOne(any())).thenReturn(rejectedRecord);
         when(coursePackageMapper.selectById(501L)).thenReturn(buildPackage(10, 2));
         when(studentMapper.selectById(601L)).thenReturn(buildStudent());

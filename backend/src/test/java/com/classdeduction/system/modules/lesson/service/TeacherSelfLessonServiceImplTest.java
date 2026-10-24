@@ -134,13 +134,13 @@ class TeacherSelfLessonServiceImplTest {
     }
 
     @Test
-    void shouldRejectConfirmationMoreThanFourteenDaysBeforeLesson() {
-        LocalDateTime startAt = AppTime.nowLocalDateTime().plusDays(14).plusMinutes(1);
+    void shouldAllowConfirmationMoreThanFourteenDaysBeforeLesson() {
+        LocalDateTime startAt = AppTime.nowLocalDateTime().plusDays(30);
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrenceAt(startAt));
 
-        assertThatThrownBy(() -> teacherSelfLessonService.confirmOwnLesson(confirmRequest(), currentTeacherUser()))
-                .isInstanceOf(BusinessException.class)
-                .hasMessage("Lesson confirmation is available 14 days before the planned start time.");
+        assertThatCode(() -> teacherSelfLessonService.confirmOwnLesson(confirmRequest(), currentTeacherUser()))
+                .doesNotThrowAnyException();
+        verify(lessonRecordService).initialConfirmLesson(any(), any());
     }
 
     @Test

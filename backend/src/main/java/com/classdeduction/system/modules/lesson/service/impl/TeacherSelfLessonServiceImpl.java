@@ -2,7 +2,6 @@ package com.classdeduction.system.modules.lesson.service.impl;
 
 import com.classdeduction.system.common.dto.CurrentUserResponse;
 import com.classdeduction.system.common.exception.BusinessException;
-import com.classdeduction.system.common.time.AppTime;
 import com.classdeduction.system.modules.lesson.dto.LessonRecordConfirmRequest;
 import com.classdeduction.system.modules.lesson.dto.TeacherLessonConfirmRequest;
 import com.classdeduction.system.modules.lesson.service.LessonRecordService;
@@ -13,7 +12,6 @@ import com.classdeduction.system.modules.schedule.mapper.LessonOccurrenceMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.Set;
 
 /**
@@ -24,7 +22,6 @@ import java.util.Set;
 public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
 
     private static final Set<String> ALLOWED_SELF_CONFIRM_STATUSES = Set.of("COMPLETED", "NO_SHOW", "FORMAL_LEAVE");
-    private static final int FUTURE_CONFIRM_WINDOW_DAYS = 14;
 
     private final LessonOccurrenceMapper lessonOccurrenceMapper;
     private final LessonRecordService lessonRecordService;
@@ -38,7 +35,6 @@ public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
             throw new BusinessException("TEACHER_STATUS_NOT_ALLOWED", "Teachers can only confirm completed, no-show, or formal-leave results.");
         }
         LessonOccurrenceEntity occurrence = requireOccurrence(request.getOccurrenceId());
-        validateTeacherConfirmWindow(occurrence);
 
         LessonRecordConfirmRequest delegateRequest = new LessonRecordConfirmRequest();
         delegateRequest.setOccurrenceId(request.getOccurrenceId());
@@ -63,13 +59,4 @@ public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
         return occurrence;
     }
 
-    /**
-     * 老师可从开课前 14 天开始确认，开课后不再限制确认时间。
-     */
-    private void validateTeacherConfirmWindow(LessonOccurrenceEntity occurrence) {
-        LocalDateTime now = AppTime.nowLocalDateTime();
-        if (occurrence.getPlannedStartAt().isAfter(now.plusDays(FUTURE_CONFIRM_WINDOW_DAYS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Lesson confirmation is available 14 days before the planned start time.");
-        }
-    }
 }

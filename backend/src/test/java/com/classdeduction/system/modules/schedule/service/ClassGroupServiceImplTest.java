@@ -765,6 +765,27 @@ class ClassGroupServiceImplTest {
     }
 
     @Test
+    void shouldAllowTeacherToConfirmClassLessonMoreThanFourteenDaysAhead() {
+        LocalDateTime startAt = AppTime.nowLocalDateTime().plusDays(30);
+        LessonOccurrenceEntity occurrence = scheduledOccurrence(startAt);
+        ClassGroupEntity classGroup = new ClassGroupEntity();
+        LocalDate lessonDate = startAt.toLocalDate();
+        ClassEnrollmentEntity enrollment = activeEnrollment(601L, lessonDate.minusDays(30), lessonDate.plusDays(30));
+
+        when(classGroupMapper.selectByIdForUpdate(501L)).thenReturn(classGroup);
+        when(lessonOccurrenceMapper.selectByIdForUpdate(1001L)).thenReturn(occurrence);
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(enrollment));
+        when(lessonRecordMapper.selectOne(any())).thenReturn(null);
+
+        classGroupService.confirmLesson(501L, 1001L,
+                Map.of("resultStatus", "COMPLETED"), teacherUser(701L));
+
+        verify(lessonRecordMapper).insert(recordCaptor.capture());
+        assertThat(recordCaptor.getValue().getConfirmStage()).isEqualTo("PENDING_ADMIN");
+        assertThat(recordCaptor.getValue().getTeacherConfirmedByUserId()).isEqualTo(1002L);
+    }
+
+    @Test
     void shouldRejectClassActualHoursThatDoNotMatchTimeRange() {
         LessonOccurrenceEntity occurrence = scheduledOccurrence(LocalDateTime.of(2026, 4, 12, 10, 0));
         ClassEnrollmentEntity enrollment = activeEnrollment(601L,

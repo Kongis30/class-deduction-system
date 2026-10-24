@@ -66,7 +66,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
             "COMPLETED", "CANCELLED");
     private static final Set<String> CHARGEABLE_CLASS_RESULT_STATUSES = Set.of(
             "COMPLETED", "CANCELLED");
-    private static final int TEACHER_FUTURE_CONFIRM_WINDOW_DAYS = 14;
     private static final DateTimeFormatter CONFLICT_DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final DateTimeFormatter CONFLICT_TIME = DateTimeFormatter.ofPattern("HH:mm");
 
@@ -1495,10 +1494,6 @@ public class ClassGroupServiceImpl implements ClassGroupService {
         }
         if (!ALLOWED_TEACHER_CONFIRM_STATUSES.contains(resultStatus)) {
             throw new BusinessException("TEACHER_STATUS_NOT_ALLOWED", "Teachers can only confirm completed class lessons.");
-        }
-        LocalDateTime now = AppTime.nowLocalDateTime();
-        if (occurrence.getPlannedStartAt().isAfter(now.plusDays(TEACHER_FUTURE_CONFIRM_WINDOW_DAYS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Lesson confirmation is available 14 days before the planned start time.");
         }
     }
 

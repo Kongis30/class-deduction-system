@@ -77,7 +77,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
     private static final String CONFIRM_STAGE_CONFIRMED = "CONFIRMED";
     private static final String CONFIRM_STAGE_REJECTED = "REJECTED";
     private static final Set<String> ALLOWED_TEACHER_CONFIRM_STATUSES = Set.of("COMPLETED", "NO_SHOW", "FORMAL_LEAVE");
-    private static final int TEACHER_FUTURE_CONFIRM_WINDOW_DAYS = 14;
     private static final int MAX_CONFIRM_QUERY_DAYS = 180;
 
     private final LessonRecordMapper lessonRecordMapper;
@@ -1044,10 +1043,6 @@ public class LessonRecordServiceImpl implements LessonRecordService {
             throw new BusinessException("FORBIDDEN", "Teachers can only confirm lessons assigned to them or handed over to them.");
         }
 
-        LocalDateTime now = AppTime.nowLocalDateTime();
-        if (occurrence.getPlannedStartAt().isAfter(now.plusDays(TEACHER_FUTURE_CONFIRM_WINDOW_DAYS))) {
-            throw new BusinessException("TEACHER_CONFIRM_TOO_EARLY", "Lesson confirmation is available 14 days before the planned start time.");
-        }
     }
 
     /** 老师提交考勤时按当前 slot 接手人授权；课次原老师快照和消课归属不随授权变化。 */

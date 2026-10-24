@@ -180,7 +180,7 @@ const guideCopy: Record<GuideLang, GuideCopy> = {
         title: '确认课程并扣课',
         summary: '老师只确认一次课程结果，管理员审核后才正式扣课。',
         steps: [
-          { order: '1', title: '老师点击 Confirm', detail: '老师在 My Lessons 中切换 1-on-1 或 Group class。Confirm 在开课前 14 天出现，课程结束后不会过期。' },
+          { order: '1', title: '老师点击 Confirm', detail: '老师在 My Lessons 中切换 1-on-1 或 Group class。符合状态和权限条件的课次都可以提前提交确认。' },
           { order: '2', title: '填写课程结果', detail: '选择 Completed、Formal Leave 或 No Show；正常完成时填写实际开始时间和时长。' },
           { order: '3', title: '管理员审核扣课', detail: '老师提交后显示 Awaiting admin review。管理员点击 Review & deduct 后才扣课并计入老师工资。' },
         ],
@@ -297,7 +297,7 @@ const guideCopy: Record<GuideLang, GuideCopy> = {
         title: 'Confirm and Deduct a Lesson',
         summary: 'The teacher confirms the result once. Admin review completes the deduction.',
         steps: [
-          { order: '1', title: 'Teacher selects Confirm', detail: 'In My Lessons, choose 1-on-1 or Group class. Confirm appears 14 days before the lesson and does not expire after it ends.' },
+          { order: '1', title: 'Teacher selects Confirm', detail: 'In My Lessons, choose 1-on-1 or Group class. Eligible lessons can be submitted for confirmation in advance.' },
           { order: '2', title: 'Enter the lesson result', detail: 'Choose Completed, Formal Leave, or No Show. For a completed lesson, enter actual start time and duration.' },
           { order: '3', title: 'Admin reviews and deducts', detail: 'Teacher submission shows Awaiting admin review. Hours and payroll are updated only after admin selects Review & deduct.' },
         ],
