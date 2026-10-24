@@ -890,6 +890,14 @@ const productRows = computed(() => {
 const refundedProductRows = computed(() => productRows.value.filter((row) => row.refunded));
 const stoppedProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus === 'STOPPED'));
 const activeProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus !== 'STOPPED'));
+const visibleStoppedRows = computed(() => stoppedProductRows.value.filter((row) =>
+  selectedMonth.value === 'ALL' || monthKey(row) === selectedMonth.value,
+));
+const visibleRefundRows = computed(() => sortDataRows(refundedProductRows.value.filter((row) =>
+  (selectedMonth.value === 'ALL' || monthKey(row) === selectedMonth.value)
+    && columns.every((column) => matchesColumnFilter(row, column)),
+)));
+
 const selectOptions = computed<Record<ColumnKey, string[]>>(() => {
   return Object.fromEntries(columns.map((column) => {
     if (column.filterType !== 'select') {
