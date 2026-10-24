@@ -1342,7 +1342,7 @@ const rosterPrinter = createIsolatedPrinter(() => rosterPrintRef.value, {
 });
 
 function rosterPrintClassLabel(group: RosterPrintClassGroup) {
-  return [group.className, group.campusName, group.productName, group.projectName].filter(Boolean).join(' · ');
+  return [group.className, group.campusName, group.projectName].filter(Boolean).join(' · ');
 }
 
 function rosterPrintPlanLabel(group: RosterPrintGroup) {

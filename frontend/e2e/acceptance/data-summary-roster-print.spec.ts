@@ -76,7 +76,7 @@ test('Data Summary prints a deduplicated whole-class roster without requiring a 
 
   await expect(printButton).toBeDisabled();
   await selectors.nth(0).click();
-  await page.getByRole('option', { name: /G1 · North Campus · After School · After School Project/ }).click();
+  await page.getByRole('option', { name: /G1 · North Campus · After School Project/ }).click();
 
   // 只选班级即可打印，默认覆盖该班全部 plan。
   await expect(printButton).toBeEnabled();
@@ -119,7 +119,7 @@ test('Data Summary prints a deduplicated whole-class roster without requiring a 
   const planDialog = page.getByRole('dialog', { name: 'Print class roster' });
   const planSelectors = planDialog.locator('.el-select__wrapper');
   await planSelectors.nth(0).click();
-  await page.getByRole('option', { name: /G1 · North Campus · After School · After School Project/ }).click();
+  await page.getByRole('option', { name: /G1 · North Campus · After School Project/ }).click();
   await planSelectors.nth(1).click();
   await page.getByRole('option', { name: 'Fall Plan · 70 students' }).click();
   await expect(planDialog.getByText('70 students · one page')).toBeVisible();
