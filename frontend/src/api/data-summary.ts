@@ -114,6 +114,7 @@ export interface DataSummaryResponse {
   paymentStatusSummaries: DataSummaryGroup[];
   rows: DataSummaryRow[];
   logicalCoursePeriods?: Array<{
+    orderId: EntityId;
     studentId: EntityId;
     logicalCourseId: EntityId;
     startDate: string;

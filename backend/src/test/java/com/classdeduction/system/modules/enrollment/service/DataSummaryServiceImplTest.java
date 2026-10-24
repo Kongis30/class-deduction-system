@@ -533,6 +533,57 @@ class DataSummaryServiceImplTest {
     }
 
     @Test
+    void shouldKeepLogicalCoursePeriodsWithinEachReceiptOrder() {
+        EnrollmentOrderEntity original = order(1L, "400.00", "400.00", "0.00");
+        EnrollmentOrderEntity separate = order(2L, "400.00", "400.00", "0.00");
+        separate.setStudentId(1L);
+        EnrollmentOrderItemEntity first = item(21L, 1, "400.00");
+        first.setLogicalCourseId(71L);
+        first.setClassId(31L);
+        EnrollmentOrderItemEntity second = item(22L, 1, "400.00");
+        second.setEnrollmentOrderId(2L);
+        second.setLogicalCourseId(71L);
+        second.setClassId(31L);
+
+        ClassGroupEntity group = new ClassGroupEntity();
+        group.setId(31L);
+        group.setClassName("G3");
+        ClassEnrollmentEntity firstTerm = new ClassEnrollmentEntity();
+        firstTerm.setId(71L);
+        firstTerm.setEnrollmentOrderItemId(21L);
+        firstTerm.setLogicalCourseId(71L);
+        firstTerm.setStudentId(1L);
+        firstTerm.setEnrollmentDate(LocalDate.of(2026, 9, 1));
+        firstTerm.setExpiryDate(LocalDate.of(2026, 10, 31));
+        firstTerm.setStatus("ACTIVE");
+        ClassEnrollmentEntity laterTerm = new ClassEnrollmentEntity();
+        laterTerm.setId(72L);
+        laterTerm.setEnrollmentOrderItemId(22L);
+        laterTerm.setLogicalCourseId(71L);
+        laterTerm.setStudentId(1L);
+        laterTerm.setEnrollmentDate(LocalDate.of(2026, 11, 1));
+        laterTerm.setExpiryDate(LocalDate.of(2026, 12, 31));
+        laterTerm.setStatus("ACTIVE");
+
+        when(enrollmentOrderMapper.selectList(any())).thenReturn(List.of(original, separate));
+        when(enrollmentOrderItemMapper.selectList(any())).thenReturn(List.of(first, second));
+        when(classGroupMapper.selectBatchIds(any())).thenReturn(List.of(group));
+        when(classEnrollmentMapper.selectList(any())).thenReturn(List.of(firstTerm, laterTerm));
+        when(paymentRecordMapper.selectList(any())).thenReturn(List.of(payment(1L, "400.00"), payment(2L, "400.00")));
+
+        DataSummaryResponseVO response = dataSummaryService.getSummary(new DataSummaryQuery());
+
+        assertThat(response.logicalCoursePeriods()).hasSize(2);
+        assertThat(response.logicalCoursePeriods()).anySatisfy(period -> {
+            assertThat(period.orderId()).isEqualTo(1L);
+            assertThat(period.endDate()).isEqualTo(LocalDate.of(2026, 10, 31));
+        }).anySatisfy(period -> {
+            assertThat(period.orderId()).isEqualTo(2L);
+            assertThat(period.startDate()).isEqualTo(LocalDate.of(2026, 11, 1));
+        });
+    }
+
+    @Test
     void shouldFallBackToPlanCoverageWhenOnlyCancelledEntitlementExists() {
         // 回归：仅剩 CANCELLED 权益（孤儿）时，不能显示作废权益的过期日期，
         // 应回退到 FIXED_DATES 方案的覆盖期。

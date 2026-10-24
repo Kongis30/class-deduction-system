@@ -1317,9 +1317,13 @@ public class DataSummaryServiceImpl implements DataSummaryService {
         return positive(balance) ? balance.negate() : balance;
     }
 
-    /** 报表逐笔计费，但课程 Period 只从有效班课权益读取，避免已退款购买延长期限。 */
+    /** 课程 Period 从本次报名的有效权益读取，避免其他订单或已退款购买延长期限。 */
     private List<DataSummaryResponseVO.LogicalCoursePeriodVO> logicalCoursePeriods(
             List<DataSummaryResponseVO.RowVO> rows) {
+        Map<Long, Long> orderIdByItemId = rows.stream()
+                .filter(row -> row.orderItemId() != null && row.orderId() != null)
+                .collect(Collectors.toMap(DataSummaryResponseVO.RowVO::orderItemId,
+                        DataSummaryResponseVO.RowVO::orderId, (first, ignored) -> first));
         Set<Long> logicalIds = rows.stream()
                 .filter(row -> row.logicalCourseId() != null && !"ONE_ON_ONE".equals(row.courseType()))
                 .map(DataSummaryResponseVO.RowVO::logicalCourseId)
@@ -1332,8 +1336,10 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                         .eq(ClassEnrollmentEntity::getIsDeleted, 0));
         Map<String, List<ClassEnrollmentEntity>> byCourse = validEntitlements.stream()
                 .filter(item -> item.getStudentId() != null && item.getEnrollmentDate() != null
-                        && item.getExpiryDate() != null)
-                .collect(Collectors.groupingBy(item -> item.getStudentId() + ":" + item.getLogicalCourseId()));
+                        && item.getExpiryDate() != null
+                        && orderIdByItemId.containsKey(item.getEnrollmentOrderItemId()))
+                .collect(Collectors.groupingBy(item -> orderIdByItemId.get(item.getEnrollmentOrderItemId())
+                        + ":" + item.getStudentId() + ":" + item.getLogicalCourseId()));
         List<DataSummaryResponseVO.LogicalCoursePeriodVO> periods = new ArrayList<>();
         for (List<ClassEnrollmentEntity> course : byCourse.values()) {
             course.sort(Comparator.comparing(ClassEnrollmentEntity::getEnrollmentDate));
@@ -1356,6 +1362,7 @@ public class DataSummaryServiceImpl implements DataSummaryService {
             }
             ClassEnrollmentEntity first = course.get(0);
             periods.add(new DataSummaryResponseVO.LogicalCoursePeriodVO(
+                    orderIdByItemId.get(first.getEnrollmentOrderItemId()),
                     first.getStudentId(), first.getLogicalCourseId(),
                     segments.get(0).startDate(), segments.get(segments.size() - 1).endDate(), segments));
         }

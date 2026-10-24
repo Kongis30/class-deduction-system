@@ -550,19 +550,6 @@
       </button>
     </div>
 
-    <el-dialog v-model="purchasePickerVisible" title="Course purchases" class="purchase-picker" width="min(520px, 94vw)" append-to-body>
-      <div v-for="purchase in purchasePickerRows" :key="`${purchase.orderId}-${purchase.orderItemId}`" class="purchase-picker__row">
-        <div class="purchase-picker__details">
-          <strong>{{ formatDate(purchase.signupDate) }} · {{ purchase.enrollmentNo }}</strong>
-          <span>{{ formatPeriod(purchase) }} · Paid {{ formatMoney(purchase.paidAmount) }}</span>
-        </div>
-        <div class="purchase-picker__actions">
-          <el-button size="small" @click="selectPurchaseAction(purchase, 'receipt')">View receipt</el-button>
-          <el-button v-if="canPayFromDataSummary(purchase)" size="small" @click="selectPurchaseAction(purchase, 'pay')">Pay</el-button>
-          <el-button v-if="!isManager && purchase.orderPaymentStatus !== 'REFUNDED'" size="small" @click="selectPurchaseAction(purchase, 'refund')">Refund</el-button>
-        </div>
-      </div>
-    </el-dialog>
 
   </div>
 </template>
@@ -802,8 +789,6 @@ const studentContextMenu = reactive<{
   row: null,
 });
 const refundPreviewStatus = ref<'checking' | 'available' | 'none' | 'review' | 'error'>('checking');
-const purchasePickerVisible = ref(false);
-const purchasePickerRows = ref<DataSummaryRow[]>([]);
 let refundPreviewRequestId = 0;
 
 const knownProductIds = computed(() => new Set(products.value.map((product) => String(product.id))));
@@ -933,12 +918,12 @@ const monthFilteredRows = computed<DataSummaryDisplayRow[]>(() => mergeLogicalCo
   displayProductRows.value,
 ));
 
-/** 报表只合并展示，同一课程的订单行和付款仍各自保留，月份筛选按购买日期计费。 */
+/** 同一报名内的续课购买合成一行；不同订单或不同课程仍各自保留收据入口。 */
 function mergeLogicalCourseRows(monthRows: DataSummaryRow[], allRows: DataSummaryRow[]): DataSummaryDisplayRow[] {
   const sourceGroups = new Map<string, DataSummaryRow[]>();
   const keyFor = (row: DataSummaryRow) => row.logicalCourseId == null
-    ? `item:${row.orderItemId ?? row.orderId}:${row.studentId}`
-    : `course:${row.courseType}:${row.logicalCourseId}:${row.studentId}`;
+    ? `item:${row.orderId}:${row.orderItemId ?? ''}:${row.studentId}`
+    : `course:${row.orderId}:${row.courseType}:${row.logicalCourseId}:${row.studentId}`;
   allRows.forEach((row) => {
     const key = keyFor(row);
     sourceGroups.set(key, [...(sourceGroups.get(key) ?? []), row]);
@@ -952,9 +937,9 @@ function mergeLogicalCourseRows(monthRows: DataSummaryRow[], allRows: DataSummar
     const purchases = sourceGroups.get(key) ?? visible;
     const first = purchases[0];
     const coursePeriod = first?.logicalCourseId == null ? undefined
-      : logicalCoursePeriods.value.get(`${first.studentId}:${first.logicalCourseId}`);
+      : logicalCoursePeriods.value.get(`${first.orderId}:${first.studentId}:${first.logicalCourseId}`);
     const withEffectivePeriod = (row: DataSummaryDisplayRow): DataSummaryDisplayRow => {
-      if (row.logicalCourseId == null || isPrivateLessonRow(row)) return row;
+      if (row.logicalCourseId == null || isPrivateLessonRow(row) || !coursePeriod) return row;
       return {
         ...row,
         periodStartDate: coursePeriod?.startDate,
@@ -1273,7 +1258,7 @@ async function loadPage() {
     if (summaryResult.status === 'fulfilled') {
       rows.value = summaryResult.value.data.data.rows ?? [];
       logicalCoursePeriods.value = new Map((summaryResult.value.data.data.logicalCoursePeriods ?? [])
-        .map(period => [`${period.studentId}:${period.logicalCourseId}`, period] as const));
+        .map(period => [`${period.orderId}:${period.studentId}:${period.logicalCourseId}`, period] as const));
     } else {
       rows.value = [];
       logicalCoursePeriods.value = new Map();
@@ -1314,13 +1299,6 @@ function setSaturdayRosterView(view: SaturdayRosterView) {
 }
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
-  const purchaseOrderIds = new Set((row.purchaseRows ?? []).map((purchase) => String(purchase.orderId)));
-  if (row.purchaseRows && purchaseOrderIds.size > 1) {
-    closeStudentContextMenu();
-    purchasePickerRows.value = row.purchaseRows;
-    purchasePickerVisible.value = true;
-    return;
-  }
   const menuWidth = 150;
   const menuHeight = 140;
   studentContextMenu.x = Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8));
@@ -1330,26 +1308,19 @@ function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
   refundPreviewStatus.value = 'checking';
   const requestId = ++refundPreviewRequestId;
   if (isManager || !row.orderId || row.orderPaymentStatus === 'REFUNDED') return;
-  // 右键时只读取当前报名的退款预览；课程可退金额与提交退款使用同一接口口径。
+  // 多个续课购买行共享收据；退款预览须汇总这些行，具体退款购买由订单页选择。
   void fetchRefundPreview(row.orderId, row.participantIndex ?? undefined).then(({ data }) => {
     if (requestId !== refundPreviewRequestId) return;
-    const course = row.orderItemId == null ? null : data.data.items.find(
-      (item) => String(item.orderItemId) === String(row.orderItemId));
-    const refundable = row.orderItemId == null
-      ? data.data.items.reduce((total, item) => total + Math.max(0, item.paidAmount), 0)
-      : course?.paidAmount ?? 0;
+    const itemIds = new Set((row.purchaseRows ?? [row])
+      .map((purchase) => String(purchase.orderItemId ?? '')));
+    const refundable = data.data.items
+      .filter((item) => row.orderItemId == null || itemIds.has(String(item.orderItemId)))
+      .reduce((total, item) => total + Math.max(0, item.paidAmount), 0);
     refundPreviewStatus.value = refundable > 0 ? 'available'
       : (data.data.unassignedPaymentAmount ?? 0) > 0 ? 'review' : 'none';
   }).catch(() => {
     if (requestId === refundPreviewRequestId) refundPreviewStatus.value = 'error';
   });
-}
-
-function selectPurchaseAction(row: DataSummaryRow, action: 'receipt' | 'pay' | 'refund') {
-  purchasePickerVisible.value = false;
-  studentContextMenu.row = row;
-  if (action === 'receipt') viewStudentReceipt();
-  else openOrderAction(action);
 }
 
 function closeStudentContextMenu() {
@@ -1384,16 +1355,20 @@ function openOrderAction(action: 'pay' | 'refund') {
   if (!row?.orderId) {
     return;
   }
+  const hasMultiplePurchases = (row.purchaseRows?.length ?? 0) > 1;
   router.push({
     name: 'enrollment-orders',
     query: {
       orderId: String(row.orderId),
       action,
       productName: row.courseProductName || undefined,
-      orderItemId: row.orderItemId != null
+      orderItemId: !hasMultiplePurchases && row.orderItemId != null
         ? String(row.orderItemId)
         : undefined,
-      courseBalance: action === 'pay' && row.balanceAmount != null
+      orderItemIds: action === 'refund' && hasMultiplePurchases
+        ? row.purchaseRows?.map((purchase) => String(purchase.orderItemId)).join(',')
+        : undefined,
+      courseBalance: action === 'pay' && !hasMultiplePurchases && row.balanceAmount != null
         ? String(Math.abs(Number(row.balanceAmount)))
         : undefined,
       participantIndex: (action === 'pay' || action === 'refund') && row.participantIndex != null
@@ -1826,6 +1801,7 @@ function classSortRank(value: string) {
 }
 
 function rowKey(row: DataSummaryDisplayRow) {
+  if (row.purchaseRows?.length) return `course-${row.orderId}-${row.courseType}-${row.logicalCourseId}-${row.studentId}`;
   return [
     row.orderId,
     row.orderItemId ?? [row.classId ?? '', row.courseProductId ?? '', row.enrollmentNo ?? ''].join(':'),
@@ -2677,31 +2653,6 @@ onMounted(() => {
   background: #eef6ff;
   color: #1d4ed8;
   outline: none;
-}
-
-:global(.purchase-picker__row) {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid #e5ebf0;
-}
-
-:global(.purchase-picker__details) {
-  display: grid;
-  gap: 4px;
-}
-
-:global(.purchase-picker__details span) {
-  color: #64748b;
-  font-size: 12px;
-}
-
-:global(.purchase-picker__actions) {
-  display: flex;
-  flex-wrap: wrap;
-  align-content: center;
-  gap: 4px;
 }
 
 .workbook-cell--balance-due {

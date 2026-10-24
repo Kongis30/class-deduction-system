@@ -39,8 +39,8 @@ public record DataSummaryResponseVO(
                 rows.stream().map(RowVO::withoutFinancialAmounts).toList(), logicalCoursePeriods);
     }
 
-    /** 课程有效期由有效权益段计算；金额仍属于逐笔订单行。 */
-    public record LogicalCoursePeriodVO(Long studentId, Long logicalCourseId,
+    /** 课程有效期按报名订单隔离，避免两笔独立报名共用课程 ID 时串联期限。 */
+    public record LogicalCoursePeriodVO(Long orderId, Long studentId, Long logicalCourseId,
                                         LocalDate startDate, LocalDate endDate,
                                         List<PeriodSegmentVO> segments) {}
 
