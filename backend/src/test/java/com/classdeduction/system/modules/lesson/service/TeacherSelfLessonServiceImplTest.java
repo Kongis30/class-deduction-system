@@ -76,16 +76,40 @@ class TeacherSelfLessonServiceImplTest {
     }
 
     @Test
-    void shouldRejectWhenTeacherConfirmsAnotherTeachersLesson() {
+    void shouldDelegateHandedOverLessonOwnershipToRecordService() {
         LocalDateTime now = AppTime.nowLocalDateTime();
         TeacherLessonConfirmRequest request = new TeacherLessonConfirmRequest();
         request.setOccurrenceId(1001L);
         request.setResultStatus("COMPLETED");
         when(lessonOccurrenceMapper.selectById(1001L)).thenReturn(buildOccurrence(9111L, now));
+        when(lessonRecordService.initialConfirmLesson(any(), any()))
+                .thenThrow(new BusinessException("FORBIDDEN",
+                        "Teachers can only confirm lessons assigned to them or handed over to them."));
 
         assertThatThrownBy(() -> teacherSelfLessonService.confirmOwnLesson(request, currentTeacherUser()))
                 .isInstanceOf(BusinessException.class)
-                .hasMessage("Teachers can only confirm their own planned lessons.");
+                .hasMessage("Teachers can only confirm lessons assigned to them or handed over to them.");
+        verify(lessonRecordService).initialConfirmLesson(requestCaptor.capture(), any());
+        assertThat(requestCaptor.getValue().getActualTeacherId()).isNull();
+    }
+
+    @Test
+    void shouldSubmitHandedOverLessonAsCurrentTeacher() {
+        TeacherLessonConfirmRequest request = confirmRequest();
+        when(lessonOccurrenceMapper.selectById(1001L))
+                .thenReturn(buildOccurrence(9111L, AppTime.nowLocalDateTime()));
+        when(lessonRecordService.initialConfirmLesson(any(), any()))
+                .thenReturn(LessonRecordConfirmResultVO.builder()
+                        .lessonRecordId(5001L)
+                        .occurrenceId(1001L)
+                        .build());
+
+        LessonRecordConfirmResultVO result = teacherSelfLessonService.confirmOwnLesson(
+                request, currentTeacherUser());
+
+        assertThat(result.occurrenceId()).isEqualTo(1001L);
+        verify(lessonRecordService).initialConfirmLesson(requestCaptor.capture(), any());
+        assertThat(requestCaptor.getValue().getActualTeacherId()).isNull();
     }
 
     @Test

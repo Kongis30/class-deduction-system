@@ -1138,9 +1138,11 @@ class RecurringScheduleRuleServiceImplTest {
     }
 
     @Test
-    void teacherHandoffRejectsFutureLessonThatAlreadyHasARecord() {
+    void teacherHandoffKeepsFutureLessonRecordAndTransfersRemainingHours() {
         RecurringScheduleRuleEntity existing = buildExistingRule();
         CoursePackageEntity coursePackage = buildPackage();
+        coursePackage.setTotalUnits(28);
+        coursePackage.setRemainingUnits(28);
         RecurringScheduleRuleUpdateRequest request = buildUpdateRequest(4);
         request.getSlots().get(0).setSlotId(6001L);
         request.getSlots().get(0).setTeacherId(3002L);
@@ -1160,9 +1162,11 @@ class RecurringScheduleRuleServiceImplTest {
                 request.getStartDate().plusWeeks(1), 4, "ADJUSTED");
         future.setScheduleSlotId(oldSlot.getId());
         future.setPlannedTeacherId(3001L);
+        future.setAllocationOwnerTeacherId(3001L);
         LessonRecordEntity futureRecord = buildRecord(future.getId(), 0);
         futureRecord.setPackageId(coursePackage.getId());
         futureRecord.setConfirmStage("PENDING_ADMIN");
+        futureRecord.setPlannedTeacherId(3001L);
         TeacherEntity replacement = buildTeacher();
         replacement.setId(3002L);
 
@@ -1173,15 +1177,34 @@ class RecurringScheduleRuleServiceImplTest {
         when(classroomMapper.selectById(4001L)).thenReturn(buildClassroom());
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(oldSlot));
         when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(future));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(Collections.emptyList());
+        int[] occurrenceQueries = {0};
+        when(lessonOccurrenceMapper.selectList(any())).thenAnswer(invocation ->
+                occurrenceQueries[0]++ < 2 ? List.of(future) : Collections.emptyList());
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(futureRecord));
+        doAnswer(invocation -> {
+            RecurringScheduleRuleEntity inserted = invocation.getArgument(0);
+            inserted.setId(5002L);
+            return 1;
+        }).when(recurringScheduleRuleMapper).insert(any(RecurringScheduleRuleEntity.class));
+        doAnswer(invocation -> {
+            RecurringScheduleSlotEntity inserted = invocation.getArgument(0);
+            inserted.setId(6002L);
+            return 1;
+        }).when(recurringScheduleSlotMapper).insert(any(RecurringScheduleSlotEntity.class));
 
-        assertThatThrownBy(() -> recurringScheduleRuleService.updateRule(5001L, request))
-                .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("already has a lesson record");
+        ScheduleRuleUpdateResultVO result = recurringScheduleRuleService.updateRule(5001L, request);
 
-        verify(recurringScheduleRuleMapper, org.mockito.Mockito.never())
-                .insert(any(RecurringScheduleRuleEntity.class));
+        assertThat(result.ruleId()).isEqualTo(5002L);
+        assertThat(future.getScheduleRuleId()).isEqualTo(5001L);
+        assertThat(future.getScheduleSlotId()).isEqualTo(6001L);
+        assertThat(future.getPlannedTeacherId()).isEqualTo(3001L);
+        assertThat(futureRecord.getPlannedTeacherId()).isEqualTo(3001L);
+        verify(recurringScheduleSlotMapper).insert(slotCaptor.capture());
+        assertThat(slotCaptor.getValue().getAllocatedUnits()).isEqualTo(24);
+        verify(lessonOccurrenceMapper, times(6)).insert(occurrenceCaptor.capture());
+        assertThat(occurrenceCaptor.getAllValues()).allSatisfy(occurrence ->
+                assertThat(occurrence.getPlannedTeacherId()).isEqualTo(3002L));
         verify(lessonOccurrenceMapper, org.mockito.Mockito.never())
                 .handoffFutureOccurrence(any(), any(), any(), any(), any(), any(), any(), any(), any());
     }

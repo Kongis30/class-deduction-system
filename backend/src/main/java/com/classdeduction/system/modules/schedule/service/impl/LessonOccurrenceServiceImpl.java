@@ -1176,7 +1176,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             if (currentUser.teacherId() == null) {
                 throw new BusinessException("TEACHER_BINDING_REQUIRED", "This teacher account is not linked to a teacher profile.");
             }
-            if (!Objects.equals(entity.getPlannedTeacherId(), currentUser.teacherId())) {
+            if (!canTeacherViewOccurrence(entity, currentUser.teacherId())) {
                 throw new BusinessException("FORBIDDEN", "Teachers can only view their own calendar.");
             }
             return;
@@ -1195,6 +1195,43 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
             }
             throw new BusinessException("FORBIDDEN", "Students can only view their own calendar.");
         }
+    }
+
+    /** 课次详情与消课操作采用相同的交接归属：同一 slot lineage 由现任老师接手，历史授课快照不改。 */
+    private boolean canTeacherViewOccurrence(LessonOccurrenceEntity occurrence, Long teacherId) {
+        if (occurrence.getClassGroupId() != null || occurrence.getScheduleSlotId() == null) {
+            return Objects.equals(occurrence.getPlannedTeacherId(), teacherId);
+        }
+        RecurringScheduleSlotEntity sourceSlot = recurringScheduleSlotMapper
+                .selectIncludingDeletedByIds(List.of(occurrence.getScheduleSlotId()))
+                .stream().findFirst().orElse(null);
+        if (sourceSlot == null) {
+            return Objects.equals(occurrence.getPlannedTeacherId(), teacherId);
+        }
+        Long lineageId = sourceSlot.getSlotLineageId() == null
+                ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
+        List<Long> activeRuleIds = recurringScheduleRuleMapper.selectList(
+                        new LambdaQueryWrapper<RecurringScheduleRuleEntity>()
+                                .eq(RecurringScheduleRuleEntity::getRuleStatus, "ACTIVE")
+                                .and(scope -> scope.eq(RecurringScheduleRuleEntity::getPackageId,
+                                                occurrence.getPackageId())
+                                        .or(occurrence.getPrivateLessonGroupId() != null,
+                                                group -> group.eq(RecurringScheduleRuleEntity::getPrivateLessonGroupId,
+                                                        occurrence.getPrivateLessonGroupId()))))
+                .stream().map(RecurringScheduleRuleEntity::getId).filter(Objects::nonNull).toList();
+        if (!activeRuleIds.isEmpty()) {
+            List<RecurringScheduleSlotEntity> sameLineage = recurringScheduleSlotMapper.selectList(
+                            new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
+                                    .in(RecurringScheduleSlotEntity::getRuleId, activeRuleIds)
+                                    .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"))
+                    .stream().filter(slot -> Objects.equals(lineageId,
+                            slot.getSlotLineageId() == null ? slot.getId() : slot.getSlotLineageId()))
+                    .toList();
+            if (!sameLineage.isEmpty()) {
+                return sameLineage.stream().anyMatch(slot -> Objects.equals(slot.getTeacherId(), teacherId));
+            }
+        }
+        return Objects.equals(occurrence.getPlannedTeacherId(), teacherId);
     }
 
     private boolean isStudentEnrolledInClassForOccurrence(Long studentId, LessonOccurrenceEntity occurrence) {
@@ -1627,6 +1664,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
         Map<Long, Integer> allocatedByPackage = new HashMap<>();
         Map<Long, Map<Long, Integer>> allocatedByTeacherByPackage = new HashMap<>();
         Map<Long, Map<Long, Long>> currentSlotTeacherByLineageByPackage = new HashMap<>();
+        Map<Long, RecurringScheduleSlotEntity> recurringSlotsById = new HashMap<>();
         Map<Long, Long> currentRuleByPackage = new HashMap<>();
         Map<Long, RecurringScheduleRuleEntity> rulesById = new HashMap<>();
         Map<Long, LocalDateTime> periodStartByRule = new HashMap<>();
@@ -1659,6 +1697,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     new LambdaQueryWrapper<RecurringScheduleSlotEntity>()
                             .in(RecurringScheduleSlotEntity::getRuleId, packageIdsByRule.keySet())
                             .eq(RecurringScheduleSlotEntity::getSlotStatus, "ACTIVE"));
+            currentSlots.forEach(slot -> recurringSlotsById.put(slot.getId(), slot));
             Map<Long, Long> currentSlotTeacherById = new HashMap<>();
             for (RecurringScheduleSlotEntity slot : currentSlots) {
                 currentSlotTeacherById.put(slot.getId(), slot.getTeacherId());
@@ -1685,6 +1724,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     ? Collections.emptyMap()
                     : recurringScheduleSlotMapper.selectIncludingDeletedByIds(historicalSlotIds).stream()
                             .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot));
+            recurringSlotsById.putAll(historicalSlotsById);
             for (Long packageId : currentRuleByPackage.keySet()) {
                 allocatedByPackage.putIfAbsent(packageId, 0);
             }
@@ -1756,7 +1796,7 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                 }
             }
         }
-        // 未处理课次保留其原授课老师入口，包含已结束的旧周期课次；余额仍只按当前周期分配额计算。
+        // 未处理课次的操作入口随同一 slot lineage 的现任老师转移；历史老师快照和余额计算保持原值。
         for (Map.Entry<Long, List<LessonOccurrenceEntity>> entry : occurrencesByPackage.entrySet()) {
             Long packageId = entry.getKey();
             List<LessonOccurrenceEntity> packageOccurrences = entry.getValue();
@@ -1775,9 +1815,16 @@ public class LessonOccurrenceServiceImpl implements LessonOccurrenceService {
                     int units = Math.max(0, safeUnits(occurrence.getPlannedUnits()));
                     pendingProcessingByPackage.merge(packageId, units, Integer::sum);
                     if (occurrence.getPlannedTeacherId() != null) {
-                        // 旧周期课次仍归原授课老师处理，不能因新 slot lineage 不同而从老师入口隐藏。
                         Long teacherId = currentPeriod && occurrence.getAllocationOwnerTeacherId() != null
                                 ? occurrence.getAllocationOwnerTeacherId() : occurrence.getPlannedTeacherId();
+                        RecurringScheduleSlotEntity sourceSlot = recurringSlotsById.get(occurrence.getScheduleSlotId());
+                        if (sourceSlot != null) {
+                            Long lineageId = sourceSlot.getSlotLineageId() == null
+                                    ? sourceSlot.getId() : sourceSlot.getSlotLineageId();
+                            teacherId = currentSlotTeacherByLineageByPackage
+                                    .getOrDefault(packageId, Collections.emptyMap())
+                                    .getOrDefault(lineageId, teacherId);
+                        }
                         unconfirmedScheduledByTeacherByPackage
                                 .computeIfAbsent(packageId, key -> new HashMap<>())
                                 .merge(teacherId, units, Integer::sum);

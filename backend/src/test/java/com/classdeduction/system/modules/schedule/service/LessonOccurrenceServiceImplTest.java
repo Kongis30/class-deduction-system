@@ -207,6 +207,38 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
+    void shouldGiveCurrentSlotTeacherAccessToHandedOverLessonDetail() {
+        LessonOccurrenceEntity occurrence = buildOneOnOneOccurrence();
+        occurrence.setScheduleSlotId(6001L);
+        RecurringScheduleSlotEntity oldSlot = new RecurringScheduleSlotEntity();
+        oldSlot.setId(6001L);
+        oldSlot.setSlotLineageId(7001L);
+        oldSlot.setTeacherId(301L);
+        RecurringScheduleSlotEntity currentSlot = new RecurringScheduleSlotEntity();
+        currentSlot.setId(6002L);
+        currentSlot.setSlotLineageId(7001L);
+        currentSlot.setRuleId(5002L);
+        currentSlot.setTeacherId(302L);
+        RecurringScheduleRuleEntity currentRule = new RecurringScheduleRuleEntity();
+        currentRule.setId(5002L);
+        currentRule.setPackageId(occurrence.getPackageId());
+        currentRule.setRuleStatus("ACTIVE");
+        when(lessonOccurrenceMapper.selectById(occurrence.getId())).thenReturn(occurrence);
+        when(recurringScheduleSlotMapper.selectIncludingDeletedByIds(any())).thenReturn(List.of(oldSlot));
+        when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
+        when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
+        when(teacherMapper.selectBatchIds(any())).thenReturn(List.of(buildTeacher()));
+
+        CurrentUserResponse newTeacher = new CurrentUserResponse(
+                9002L, "new-teacher", "New Teacher", "TEACHER", 302L, null, List.of("TEACHER"));
+        assertThat(lessonOccurrenceService.getOccurrence(occurrence.getId(), newTeacher).id())
+                .isEqualTo(occurrence.getId());
+        assertThatThrownBy(() -> lessonOccurrenceService.getOccurrence(occurrence.getId(), teacherUser()))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Teachers can only view their own calendar.");
+    }
+
+    @Test
     void shouldShowAllPrivateGroupStudentsInTeacherLessonList() {
         LessonOccurrenceEntity sharedLesson = buildOneOnOneOccurrence();
         sharedLesson.setPrivateLessonGroupId(7001L);
@@ -597,7 +629,7 @@ class LessonOccurrenceServiceImplTest {
     }
 
     @Test
-    void shouldShowHistoricalSlotLessonsToNewTeacherWithoutChargingNewPeriod() {
+    void shouldMoveHistoricalAndUnprocessedLessonsToCurrentTeacherTimeline() {
         CoursePackageEntity coursePackage = buildOneOnOnePackage();
         LocalDateTime now = AppTime.nowLocalDateTime();
 
@@ -639,6 +671,16 @@ class LessonOccurrenceServiceImplTest {
         historicalRecord.setConfirmedAt(now.minusDays(2));
         historicalRecord.setPlannedTeacherId(301L);
         historicalRecord.setActualTeacherId(301L);
+        LessonOccurrenceEntity oldPending = buildOneOnOneOccurrence();
+        oldPending.setId(4003L);
+        oldPending.setLessonNo("O2O202610240003");
+        oldPending.setScheduleRuleId(oldRule.getId());
+        oldPending.setScheduleSlotId(oldSlot.getId());
+        oldPending.setPlannedTeacherId(301L);
+        oldPending.setAllocationOwnerTeacherId(301L);
+        oldPending.setPlannedStartAt(now.minusDays(2));
+        oldPending.setPlannedEndAt(now.minusDays(2).plusHours(2));
+        oldPending.setPlannedUnits(4);
         LessonOccurrenceEntity future = buildOneOnOneOccurrence();
         future.setId(4002L);
         future.setLessonNo("O2O202610240002");
@@ -655,7 +697,7 @@ class LessonOccurrenceServiceImplTest {
         newTeacher.setTeacherNo("T302");
         newTeacher.setTeacherName("Ms Sophia");
         when(coursePackageMapper.selectList(any())).thenReturn(List.of(coursePackage));
-        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(historical, future));
+        when(lessonOccurrenceMapper.selectList(any())).thenReturn(List.of(historical, oldPending, future));
         when(lessonRecordMapper.selectList(any())).thenReturn(List.of(historicalRecord));
         when(recurringScheduleRuleMapper.selectList(any())).thenReturn(List.of(currentRule));
         when(recurringScheduleSlotMapper.selectList(any())).thenReturn(List.of(currentSlot));
@@ -666,14 +708,18 @@ class LessonOccurrenceServiceImplTest {
         List<OneOnOneTeacherVO> result = lessonOccurrenceService.listOneOnOneDeductions(
                 new OneOnOneDeductionQuery(), null);
 
-        assertThat(result).extracting(OneOnOneTeacherVO::teacherId).contains(302L);
+        assertThat(result).extracting(OneOnOneTeacherVO::teacherId).containsExactly(302L);
         OneOnOneTeacherVO newTeacherView = result.stream()
                 .filter(item -> item.teacherId().equals(302L)).findFirst().orElseThrow();
         assertThat(newTeacherView.students()).singleElement().satisfies(student ->
                 assertThat(student.packages()).singleElement().satisfies(pkg -> {
-                    assertThat(pkg.lessons()).hasSize(2);
+                    assertThat(pkg.lessons()).hasSize(3);
                     assertThat(pkg.lessons()).anySatisfy(lesson -> {
                         assertThat(lesson.occurrenceId()).isEqualTo(historical.getId());
+                        assertThat(lesson.plannedTeacherId()).isEqualTo(301L);
+                    });
+                    assertThat(pkg.lessons()).anySatisfy(lesson -> {
+                        assertThat(lesson.occurrenceId()).isEqualTo(oldPending.getId());
                         assertThat(lesson.plannedTeacherId()).isEqualTo(301L);
                     });
                     assertThat(pkg.teacherHours()).singleElement().satisfies(hours -> {
@@ -686,6 +732,8 @@ class LessonOccurrenceServiceImplTest {
         assertThat(historicalRecord.getOccurrenceId()).isEqualTo(historical.getId());
         assertThat(historicalRecord.getPlannedTeacherId()).isEqualTo(301L);
         assertThat(historicalRecord.getDeductedUnits()).isEqualTo(4);
+        assertThat(lessonOccurrenceService.listOneOnOneDeductions(
+                new OneOnOneDeductionQuery(), teacherUser())).isEmpty();
     }
 
     @Test

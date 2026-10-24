@@ -508,14 +508,14 @@
           class="edit-schedule__change-hint"
           type="info"
           :closable="false"
-          title="Changing a teacher, classroom, or lesson name updates future lessons only. Existing lesson records and allocated hours stay unchanged."
+          title="Changing a classroom or lesson name updates future lessons only. Existing lesson records and allocated hours stay unchanged."
         />
         <el-alert
           v-else-if="isEditing && hasSchedulePlanChanges"
           class="edit-schedule__change-hint"
           type="warning"
           :closable="false"
-          title="Changing only allocated hours keeps the current schedule period and adds or removes eligible future lessons at the end. Changing a teacher or recurring time starts a new period; review the teacher handoff and future schedule before saving. Historical lesson records and deductions stay unchanged."
+          title="Changing only allocated hours keeps the current schedule period. Changing a teacher or recurring time starts a new period. The new teacher receives the full lesson timeline and can handle unfinished lessons; historical teaching and deduction records stay unchanged."
         />
       </div>
 

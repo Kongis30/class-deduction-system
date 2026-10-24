@@ -2135,7 +2135,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
                 .collect(Collectors.toMap(RecurringScheduleSlotEntity::getId, slot -> slot, (left, right) -> left));
     }
 
-    /** 只交接未来未取消、且没有消课记录的课次；历史记录快照保持原值。 */
+    /** 只更新尚无消课记录的未来课次；已有记录沿原 slot 保留，由现任老师按 lineage 接手操作入口。 */
     private List<LessonOccurrenceEntity> futureOccurrencesForTeacherHandoff(
             List<LessonOccurrenceEntity> candidates,
             Map<Long, RecurringScheduleSlotEntity> slotsById,
@@ -2150,8 +2150,7 @@ public class RecurringScheduleRuleServiceImpl implements RecurringScheduleRuleSe
             RecurringScheduleSlotEntity source = slotsById.get(occurrence.getScheduleSlotId());
             if (!teacherByLineage.containsKey(slotLineageId(source))) continue;
             if (recordsByOccurrenceId.containsKey(occurrence.getId())) {
-                throw new BusinessException("FUTURE_HANDOFF_HAS_LESSON_RECORD",
-                        "A future lesson in this slot already has a lesson record. Resolve that record before changing the recurring teacher.");
+                continue;
             }
             transferable.add(occurrence);
         }

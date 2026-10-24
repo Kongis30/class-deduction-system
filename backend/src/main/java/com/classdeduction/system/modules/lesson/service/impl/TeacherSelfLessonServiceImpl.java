@@ -37,13 +37,15 @@ public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
         if (!ALLOWED_SELF_CONFIRM_STATUSES.contains(request.getResultStatus())) {
             throw new BusinessException("TEACHER_STATUS_NOT_ALLOWED", "Teachers can only confirm completed, no-show, or formal-leave results.");
         }
-        LessonOccurrenceEntity occurrence = requireOwnedOccurrence(request.getOccurrenceId(), currentUser.teacherId());
+        LessonOccurrenceEntity occurrence = requireOccurrence(request.getOccurrenceId());
         validateTeacherConfirmWindow(occurrence);
 
         LessonRecordConfirmRequest delegateRequest = new LessonRecordConfirmRequest();
         delegateRequest.setOccurrenceId(request.getOccurrenceId());
         delegateRequest.setResultStatus(request.getResultStatus());
-        delegateRequest.setActualTeacherId(currentUser.teacherId());
+        // 接手老师可以提交旧课次，但不能仅因提交人变更就改写实际授课老师。
+        delegateRequest.setActualTeacherId(currentUser.teacherId().equals(occurrence.getPlannedTeacherId())
+                ? currentUser.teacherId() : null);
         delegateRequest.setActualClassroomId(occurrence.getPlannedClassroomId());
         delegateRequest.setActualStartAt(request.getActualStartAt());
         delegateRequest.setActualEndAt(request.getActualEndAt());
@@ -52,13 +54,11 @@ public class TeacherSelfLessonServiceImpl implements TeacherSelfLessonService {
         return lessonRecordService.initialConfirmLesson(delegateRequest, currentUser);
     }
 
-    private LessonOccurrenceEntity requireOwnedOccurrence(Long occurrenceId, Long teacherId) {
+    /** 当前接手老师的权限由下游 LessonRecordService 按 slot lineage 统一校验。 */
+    private LessonOccurrenceEntity requireOccurrence(Long occurrenceId) {
         LessonOccurrenceEntity occurrence = lessonOccurrenceMapper.selectById(occurrenceId);
         if (occurrence == null) {
             throw new BusinessException("LESSON_OCCURRENCE_NOT_FOUND", "Lesson occurrence not found.");
-        }
-        if (!teacherId.equals(occurrence.getPlannedTeacherId())) {
-            throw new BusinessException("FORBIDDEN", "Teachers can only confirm their own planned lessons.");
         }
         return occurrence;
     }
