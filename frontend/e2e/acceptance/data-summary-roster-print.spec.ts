@@ -48,6 +48,12 @@ test('Data Summary prints a deduplicated whole-class roster without requiring a 
     orderId: '2002', orderItemId: '3002', studentId: '3000', studentName: 'Student 01',
     classId: '9001', registrationPlanId: '502', registrationPlanName: 'Spring Plan',
   });
+  // 历史数据可能为同一个展示班级保留多个 classId，下拉选项中只能出现一次。
+  rosterRows.push({
+    ...rosterRows[0],
+    orderId: '2004', orderItemId: '3004', studentId: '3000', studentName: 'Student 01',
+    classId: '9003', registrationPlanId: '501', registrationPlanName: 'Fall Plan',
+  });
   rosterRows.push({
     ...rosterRows[0],
     orderId: '2003', orderItemId: '3003', studentId: '4002', studentName: 'Other Class Student',
@@ -76,6 +82,7 @@ test('Data Summary prints a deduplicated whole-class roster without requiring a 
 
   await expect(printButton).toBeDisabled();
   await selectors.nth(0).click();
+  await expect(page.getByRole('option', { name: /G1 · North Campus · After School Project/ })).toHaveCount(1);
   await page.getByRole('option', { name: /G1 · North Campus · After School Project/ }).click();
 
   // 只选班级即可打印，默认覆盖该班全部 plan。

@@ -1087,8 +1087,8 @@ const rosterPrintClassGroups = computed<RosterPrintClassGroup[]>(() => {
     const projectName = row.groupProjectName?.trim() || '';
     const className = displayText(displayClassName(row));
     const campusName = displayText(row.campusName);
-    const classIdentity = row.classId == null ? className : String(row.classId);
-    const classKey = [row.courseProductId ?? productName, row.campusId ?? campusName, classIdentity].join('::');
+    // 同一班级可能残留多个 classId（历史季节班/迁移副本）；下拉框只展示班级、校区、project，因此按展示身份合并。
+    const classKey = [row.courseProductId ?? productName, row.campusId ?? campusName, className, projectName].join('::');
     let classGroup = classes.get(classKey);
     if (!classGroup) {
       classGroup = { key: classKey, productName, projectName, className, campusName, plans: new Map() };
