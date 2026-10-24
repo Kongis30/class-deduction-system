@@ -81,6 +81,8 @@ public record DataSummaryResponseVO(
             LocalDate periodEndDate,
             String periodLabel,
             String registrationTermCode,
+            Long registrationPlanId,
+            String registrationPlanName,
             String attendanceOption,
             @Schema(description = "Custom attendance slot description, e.g. 9am-10am for CUSTOM rows.")
             String timeSlotLabel,
@@ -139,7 +141,8 @@ public record DataSummaryResponseVO(
         private RowVO withoutFinancialAmounts() {
             return new RowVO(orderId, enrollmentNo, orderItemId, studentId, participantIndex,
                     studentName, studentClass, school, grade, gradeBand, signupDate, periodStartDate,
-                    periodEndDate, periodLabel, registrationTermCode, attendanceOption, timeSlotLabel, campusId, campusName,
+                    periodEndDate, periodLabel, registrationTermCode, registrationPlanId, registrationPlanName,
+                    attendanceOption, timeSlotLabel, campusId, campusName,
                     classId, className, courseProductId, courseProductName, registerClass, courseType,
                     detail, phone, phone2, pickupRequired, pickupAddress, dropoffRequired, dropoffAddress,
                     pickupDropoffLabel, paymentMethod, paymentStatus, orderPaymentStatus, null, null, null, null, null,

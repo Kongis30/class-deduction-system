@@ -494,6 +494,7 @@ class DataSummaryServiceImplTest {
         classGroup.setEndDate(LocalDate.of(2027, 6, 12));
         GroupRegistrationPlanEntity plan = new GroupRegistrationPlanEntity();
         plan.setId(61L);
+        plan.setPlanName("Fall Registration");
         plan.setCoverageType("FIXED_DATES");
         plan.setTermCode("FALL");
         plan.setCoverageStartDate(LocalDate.of(2026, 9, 12));
@@ -527,6 +528,8 @@ class DataSummaryServiceImplTest {
 
         assertThat(response.rows()).singleElement().satisfies(row -> {
             assertThat(row.registrationTermCode()).isEqualTo("FALL");
+            assertThat(row.registrationPlanId()).isEqualTo(61L);
+            assertThat(row.registrationPlanName()).isEqualTo("Fall Registration");
             assertThat(row.periodStartDate()).isEqualTo(LocalDate.of(2026, 9, 19));
             assertThat(row.periodEndDate()).isEqualTo(LocalDate.of(2026, 12, 12));
         });

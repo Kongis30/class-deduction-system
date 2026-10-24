@@ -2,9 +2,13 @@
  * 将打印区域复制到应用根节点之外，避免页面布局、滚动容器和导航栏影响浏览器的打印快照。
  * 页面仍负责渲染业务内容；此处只管理打印生命周期和 DOM 隔离。
  */
-export function createIsolatedPrinter(getSource: () => HTMLElement | null | undefined) {
+export function createIsolatedPrinter(
+  getSource: () => HTMLElement | null | undefined,
+  options: { pageRule?: string } = {},
+) {
   let attached = false;
   let preparedForPrint = false;
+  let pageStyle: HTMLStyleElement | null = null;
 
   // 浏览器直接执行 ⌘P 时也会触发 beforeprint，必须同步准备打印节点。
   function prepare(): boolean {
@@ -37,6 +41,11 @@ export function createIsolatedPrinter(getSource: () => HTMLElement | null | unde
     });
 
     root.replaceChildren(copy);
+    if (options.pageRule && !pageStyle) {
+      pageStyle = document.createElement('style');
+      pageStyle.textContent = options.pageRule;
+      document.head.appendChild(pageStyle);
+    }
     document.body.classList.add('has-isolated-print');
     preparedForPrint = true;
     return true;
@@ -44,6 +53,8 @@ export function createIsolatedPrinter(getSource: () => HTMLElement | null | unde
 
   function clear() {
     preparedForPrint = false;
+    pageStyle?.remove();
+    pageStyle = null;
     document.body.classList.remove('has-isolated-print');
     document.getElementById('print-document-root')?.remove();
   }

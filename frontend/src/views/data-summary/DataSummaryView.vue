@@ -35,7 +35,7 @@
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="export-excel" :disabled="sortedRows.length + visibleRefundRows.length === 0">Export Excel</el-dropdown-item>
-              <el-dropdown-item command="print-roster" :disabled="rosterPrintGroups.length === 0">Print class roster</el-dropdown-item>
+              <el-dropdown-item command="print-roster" :disabled="rosterPrintClassGroups.length === 0">Print class roster</el-dropdown-item>
               <template v-if="isSaturdayProductTab">
                 <el-dropdown-item command="roster-fall">Fall roster</el-dropdown-item>
                 <el-dropdown-item command="roster-spring">Spring roster</el-dropdown-item>
@@ -137,35 +137,39 @@
       destroy-on-close
     >
       <div class="roster-print-picker">
-        <p>Choose a class to print its student list.</p>
+        <p>Choose a class and registration plan to print the complete student list.</p>
         <el-select
-          v-model="selectedRosterPrintKey"
+          v-model="selectedRosterPrintClassKey"
           class="roster-print-picker__select"
-          popper-class="roster-print-campus-popper"
           filterable
           clearable
           placeholder="Select a class"
+          @change="selectedRosterPrintPlanKey = ''"
         >
-          <el-option-group
-            v-for="campusGroup in rosterPrintCampusGroups"
-            :key="campusGroup.campusName"
-            :label="campusGroup.campusName"
-          >
-            <el-option
-              v-for="group in campusGroup.classes"
-              :key="group.key"
-              :label="rosterPrintOptionLabel(group)"
-              :value="group.key"
-            >
-              <div class="roster-print-picker__option">
-                <strong>{{ group.className }}</strong>
-                <span>{{ group.projectName }} · {{ group.students.length }} students</span>
-              </div>
-            </el-option>
-          </el-option-group>
+          <el-option
+            v-for="group in rosterPrintClassGroups"
+            :key="group.key"
+            :label="rosterPrintClassLabel(group)"
+            :value="group.key"
+          />
+        </el-select>
+        <el-select
+          v-model="selectedRosterPrintPlanKey"
+          class="roster-print-picker__select"
+          filterable
+          clearable
+          :disabled="!selectedRosterPrintClassGroup"
+          placeholder="Select a registration plan"
+        >
+          <el-option
+            v-for="group in selectedRosterPrintClassGroup?.plans ?? []"
+            :key="group.key"
+            :label="rosterPrintPlanLabel(group)"
+            :value="group.key"
+          />
         </el-select>
         <span v-if="selectedRosterPrintGroup" class="roster-print-picker__count">
-          {{ selectedRosterPrintGroup.students.length }} students will be printed
+          {{ rosterStudentCount(selectedRosterPrintGroup.students.length) }} · one page
         </span>
       </div>
       <template #footer>
@@ -176,18 +180,20 @@
       </template>
     </el-dialog>
     <div ref="rosterPrintRef" class="roster-print" aria-hidden="true">
-      <section v-for="group in selectedRosterPrintGroups" :key="group.key" class="roster-print__page">
+      <section v-for="group in selectedRosterPrintGroups" :key="group.key" class="roster-print__page" :style="rosterPrintDensityStyle(group)">
         <h1>{{ group.projectName }}</h1>
-        <h2>{{ group.className }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
+        <h2>{{ group.className }} · {{ group.planName }}<span v-if="group.teacherNames.length"> — {{ group.teacherNames.join(', ') }}</span></h2>
         <p class="roster-print__campus">{{ group.campusName }}</p>
         <table>
           <thead>
-            <tr><th>Student</th><th>School</th></tr>
+            <tr><th>Student</th><th>School</th><th>Student</th><th>School</th></tr>
           </thead>
           <tbody>
-            <tr v-for="student in group.students" :key="student.key">
-              <td>{{ student.name }}</td>
-              <td>{{ student.school }}</td>
+            <tr v-for="(pair, index) in rosterPrintStudentPairs(group.students)" :key="index">
+              <td>{{ pair[0]?.name ?? '' }}</td>
+              <td>{{ pair[0]?.school ?? '' }}</td>
+              <td>{{ pair[1]?.name ?? '' }}</td>
+              <td>{{ pair[1]?.school ?? '' }}</td>
             </tr>
           </tbody>
         </table>
@@ -636,6 +642,9 @@ interface WorkbookCampusGroup {
 
 interface RosterPrintGroup {
   key: string;
+  classKey: string;
+  planId: string;
+  planName: string;
   projectName: string;
   className: string;
   campusName: string;
@@ -643,9 +652,12 @@ interface RosterPrintGroup {
   students: Array<{ key: string; name: string; school: string }>;
 }
 
-interface RosterPrintCampusGroup {
+interface RosterPrintClassGroup {
+  key: string;
+  className: string;
   campusName: string;
-  classes: RosterPrintGroup[];
+  projectName: string;
+  plans: RosterPrintGroup[];
 }
 
 /** 每个 Product Tab 独立保留的视图状态（月份、筛选、排序）。 */
@@ -754,7 +766,8 @@ const products = ref<CourseProductItem[]>([]);
 const activeTabId = ref<string>('');
 const rosterPrintDialogVisible = ref(false);
 const rosterPrintRef = ref<HTMLElement | null>(null);
-const selectedRosterPrintKey = ref('');
+const selectedRosterPrintClassKey = ref('');
+const selectedRosterPrintPlanKey = ref('');
 const selectedMonth = ref<string>('ALL');
 const saturdayRosterView = ref<SaturdayRosterView>('ALL');
 const studentFindOpen = ref(false);
@@ -1088,34 +1101,68 @@ const groupedCampusRows = computed<WorkbookCampusGroup[]>(() => {
   return [...groups.values()];
 });
 
-/** 打印名单沿用当前产品、月份和表格筛选结果，并按实际班级汇总。 */
-const rosterPrintGroups = computed<RosterPrintGroup[]>(() => {
-  const groups = new Map<string, {
+/** 按当前产品范围汇总完整有效名单，不沿用月份或表格列筛选。 */
+const rosterPrintClassGroups = computed<RosterPrintClassGroup[]>(() => {
+  const classes = new Map<string, {
     key: string;
-    projectName: string;
     className: string;
     campusName: string;
-    teacherNames: Set<string>;
-    students: Map<string, { key: string; name: string; school: string }>;
+    projectName: string;
+    plans: Map<string, {
+      key: string;
+      classKey: string;
+      planId: string;
+      planName: string;
+      projectName: string;
+      className: string;
+      campusName: string;
+      teacherNames: Set<string>;
+      students: Map<string, { key: string; name: string; school: string }>;
+    }>;
   }>();
 
-  uniqueSourceRows(sortedRows.value).forEach((row) => {
+  activeProductRows.value.forEach((row) => {
     const projectName = row.courseProductName?.trim() || activeProduct.value?.productName || 'Class roster';
     const className = displayText(displayClassName(row));
     const campusName = displayText(row.campusName);
     const classIdentity = row.classId == null ? className : String(row.classId);
-    const key = [row.courseProductId ?? projectName, row.campusId ?? campusName, classIdentity].join('::');
-    let group = groups.get(key);
-    if (!group) {
-      group = { key, projectName, className, campusName, teacherNames: new Set(), students: new Map() };
-      groups.set(key, group);
+    const classKey = [row.courseProductId ?? projectName, row.campusId ?? campusName, classIdentity].join('::');
+    let classGroup = classes.get(classKey);
+    if (!classGroup) {
+      classGroup = { key: classKey, className, campusName, projectName, plans: new Map() };
+      classes.set(classKey, classGroup);
+    }
+
+    const legacyPlanLabel = row.registrationTermCode?.trim() || row.periodLabel?.trim();
+    const planId = row.registrationPlanId == null
+      ? `legacy:${legacyPlanLabel || 'unspecified'}`
+      : String(row.registrationPlanId);
+    const planName = row.registrationPlanName?.trim()
+      || (row.registrationPlanId == null
+        ? legacyPlanLabel ? `Legacy · ${legacyPlanLabel}` : 'Legacy / no registration plan'
+        : `Plan ${planId}`);
+    const planKey = `${classKey}::${planId}`;
+    let planGroup = classGroup.plans.get(planKey);
+    if (!planGroup) {
+      planGroup = {
+        key: planKey,
+        classKey,
+        planId,
+        planName,
+        projectName,
+        className,
+        campusName,
+        teacherNames: new Set(),
+        students: new Map(),
+      };
+      classGroup.plans.set(planKey, planGroup);
     }
 
     const teacherName = row.teacherName?.trim();
-    if (teacherName) group.teacherNames.add(teacherName);
+    if (teacherName) planGroup.teacherNames.add(teacherName);
     const studentKey = String(row.studentId ?? `${row.studentName ?? ''}:${row.school ?? ''}`);
-    if (!group.students.has(studentKey)) {
-      group.students.set(studentKey, {
+    if (!planGroup.students.has(studentKey)) {
+      planGroup.students.set(studentKey, {
         key: studentKey,
         name: displayText(row.studentName),
         school: displayText(row.school),
@@ -1123,50 +1170,80 @@ const rosterPrintGroups = computed<RosterPrintGroup[]>(() => {
     }
   });
 
-  return [...groups.values()]
+  return [...classes.values()]
     .map((group) => ({
       ...group,
-      teacherNames: [...group.teacherNames].sort(naturalCompare),
-      students: [...group.students.values()].sort((left, right) => naturalCompare(left.name, right.name)),
+      plans: [...group.plans.values()]
+        .map((plan) => ({
+          ...plan,
+          teacherNames: [...plan.teacherNames].sort(naturalCompare),
+          students: [...plan.students.values()].sort((left, right) => naturalCompare(left.name, right.name)),
+        }))
+        .sort((left, right) => naturalCompare(left.planName, right.planName)),
     }))
     .sort((left, right) => naturalCompare(left.campusName, right.campusName)
       || naturalCompare(left.className, right.className)
       || naturalCompare(left.projectName, right.projectName));
 });
 
-/** 打印选择器先按校区归组，组内按班级和产品名称排序。 */
-const rosterPrintCampusGroups = computed<RosterPrintCampusGroup[]>(() => {
-  const groups = new Map<string, RosterPrintGroup[]>();
-  rosterPrintGroups.value.forEach((group) => {
-    const campusName = group.campusName === '—' ? 'Campus not set' : group.campusName;
-    const classes = groups.get(campusName) ?? [];
-    classes.push(group);
-    groups.set(campusName, classes);
-  });
-
-  return [...groups.entries()]
-    .map(([campusName, classes]) => ({ campusName, classes }))
-    .sort((left, right) => naturalCompare(left.campusName, right.campusName));
-});
-
 function printClassRoster() {
-  if (!rosterPrintGroups.value.length) return;
-  selectedRosterPrintKey.value = '';
+  if (!rosterPrintClassGroups.value.length) return;
+  selectedRosterPrintClassKey.value = '';
+  selectedRosterPrintPlanKey.value = '';
   rosterPrintDialogVisible.value = true;
 }
 
+const selectedRosterPrintClassGroup = computed(() =>
+  rosterPrintClassGroups.value.find(group => group.key === selectedRosterPrintClassKey.value) ?? null,
+);
+
 const selectedRosterPrintGroup = computed(() =>
-  rosterPrintGroups.value.find(group => group.key === selectedRosterPrintKey.value) ?? null,
+  selectedRosterPrintClassGroup.value?.plans.find(group => group.key === selectedRosterPrintPlanKey.value) ?? null,
 );
 
 const selectedRosterPrintGroups = computed(() =>
   selectedRosterPrintGroup.value ? [selectedRosterPrintGroup.value] : [],
 );
 
-const rosterPrinter = createIsolatedPrinter(() => rosterPrintRef.value);
+const rosterPrinter = createIsolatedPrinter(() => rosterPrintRef.value, {
+  pageRule: '@page { size: letter portrait; margin: 10mm; }',
+});
 
-function rosterPrintOptionLabel(group: RosterPrintGroup) {
-  return [group.className, group.projectName].join(' · ');
+function rosterPrintClassLabel(group: RosterPrintClassGroup) {
+  return [group.className, group.campusName, group.projectName].filter(Boolean).join(' · ');
+}
+
+function rosterPrintPlanLabel(group: RosterPrintGroup) {
+  return `${group.planName} · ${rosterStudentCount(group.students.length)}`;
+}
+
+function rosterStudentCount(count: number) {
+  return `${count} ${count === 1 ? 'student' : 'students'}`;
+}
+
+/** 两列并排放置学生，减少长名单的纵向占用。 */
+function rosterPrintStudentPairs(students: RosterPrintGroup['students']) {
+  const pairs: Array<[typeof students[number] | undefined, typeof students[number] | undefined]> = [];
+  for (let index = 0; index < students.length; index += 2) {
+    pairs.push([students[index], students[index + 1]]);
+  }
+  return pairs;
+}
+
+/** 按名单长度压缩字号和单元格间距，优先保证一页内完整打印。 */
+function rosterPrintDensityStyle(group: RosterPrintGroup) {
+  const rowCount = Math.ceil(group.students.length / 2);
+  const scale = Math.min(1, 25 / Math.max(rowCount, 1));
+  return {
+    '--roster-title-size': `${20 * scale}pt`,
+    '--roster-heading-size': `${14 * scale}pt`,
+    '--roster-caption-size': `${9 * scale}pt`,
+    '--roster-table-size': `${10 * scale}pt`,
+    '--roster-header-size': `${8 * scale}pt`,
+    '--roster-cell-padding': `${1.5 * scale}mm`,
+    '--roster-heading-gap': `${4 * scale}mm`,
+    '--roster-caption-gap': `${2 * scale}mm`,
+  };
 }
 
 function confirmPrintClassRoster() {
@@ -3030,11 +3107,6 @@ th.workbook-column--studentName {
 }
 
 @media print {
-  @page data-summary-roster {
-    size: portrait;
-    margin: 16mm;
-  }
-
   .roster-print,
   .roster-print * {
     visibility: visible !important;
@@ -3043,18 +3115,13 @@ th.workbook-column--studentName {
   .roster-print {
     display: block !important;
     width: 100%;
-    page: data-summary-roster;
     color: #111;
     font-family: Arial, sans-serif;
   }
 
   .roster-print__page {
-    min-height: 250mm;
-    break-after: page;
-    page-break-after: always;
-  }
-
-  .roster-print__page:last-child {
+    break-inside: avoid;
+    page-break-inside: avoid;
     break-after: auto;
     page-break-after: auto;
   }
@@ -3067,45 +3134,51 @@ th.workbook-column--studentName {
   }
 
   .roster-print h1 {
-    padding-top: 8mm;
-    font-size: 32pt;
+    padding-top: 2mm;
+    font-size: var(--roster-title-size);
   }
 
   .roster-print h2 {
-    margin-top: 12mm;
-    font-size: 25pt;
+    margin-top: var(--roster-heading-gap);
+    font-size: var(--roster-heading-size);
   }
 
   .roster-print__campus {
-    margin: 5mm 0 3mm;
+    margin: var(--roster-caption-gap) 0;
     text-align: center;
-    font-size: 12pt;
+    font-size: var(--roster-caption-size);
     color: #555;
   }
 
   .roster-print table {
-    width: 84%;
-    margin: 10mm auto 0;
+    width: 100%;
+    margin: 3mm auto 0;
     border-collapse: collapse;
     table-layout: fixed;
-    font-size: 16pt;
+    font-size: var(--roster-table-size);
   }
 
   .roster-print th {
-    width: 50%;
-    padding: 4mm;
+    width: 25%;
+    padding: var(--roster-cell-padding);
     border: 1px solid #b8c7d4;
     background: #e9f1f8;
     text-align: left;
-    font-size: 12pt;
+    font-size: var(--roster-header-size);
   }
 
   .roster-print td {
-    width: 50%;
-    padding: 4mm;
+    width: 25%;
+    padding: var(--roster-cell-padding);
     border: 1px solid #b8c7d4;
     background: #d2e4f4;
     vertical-align: middle;
+    overflow-wrap: anywhere;
+  }
+
+  .roster-print tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
 }

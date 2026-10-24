@@ -882,6 +882,8 @@ public class DataSummaryServiceImpl implements DataSummaryService {
                 periodEndDate,
                 item == null ? null : item.getPeriodLabel(),
                 registrationPlan == null ? null : registrationPlan.getTermCode(),
+                registrationPlan == null ? null : registrationPlan.getId(),
+                registrationPlan == null ? null : registrationPlan.getPlanName(),
                 resolveAttendanceOption(item),
                 item == null ? null : item.getTimeSlotLabel(),
                 resolvedCampusId,
