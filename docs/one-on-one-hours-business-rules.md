@@ -239,7 +239,7 @@ Allocated 与 Starting 不因这次消课变动。
 | --- | --- | --- |
 | Angela Li | Mr. Spencer 14 → 10 | 旧周期已扣 2h 保留 |
 | Bella Huang | Mr. Judy 110 → 100；Ms. Joey 42 不变 | 旧周期待处理 10h 保留 |
-| Brian Huang | Mr. David 40 → 36 | 旧周期待处理 4h 保留 |
+| Brian Huang | Mr. David 40 → 36 → 40 | 2026-10-24 复核后恢复 4h，见 [修复记录](data-repair/2026-10-24/brian-huang-allocation.md) |
 | Brian Zheng | Mr. Blum 14 → 12；Ms. Lau 12 不变 | 旧周期已扣记录保留 |
 | Darian Lin | Mr. David 16 → 12 | 旧周期待处理 4h 保留 |
 | David Jin | Mr. Erik 40 → 34 | 旧周期待处理 6h 及计划取消痕迹保留 |
