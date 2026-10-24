@@ -36,11 +36,6 @@
             <el-dropdown-menu>
               <el-dropdown-item command="export-excel" :disabled="sortedRows.length + visibleRefundRows.length === 0">Export Excel</el-dropdown-item>
               <el-dropdown-item command="print-roster" :disabled="rosterPrintClassGroups.length === 0">Print class roster</el-dropdown-item>
-              <template v-if="isSaturdayProductTab">
-                <el-dropdown-item command="roster-fall">Fall roster</el-dropdown-item>
-                <el-dropdown-item command="roster-spring">Spring roster</el-dropdown-item>
-                <el-dropdown-item command="roster-all">All roster</el-dropdown-item>
-              </template>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -91,27 +86,6 @@
         </span>
       </div>
       <div v-if="!isMobileViewport" class="workbook-toolbar__export">
-        <div v-if="isSaturdayProductTab" class="saturday-roster-control">
-          <el-button-group aria-label="Saturday class roster">
-            <el-button
-              v-for="option in saturdayRosterOptions"
-              :key="option.value"
-              size="small"
-              :type="saturdayRosterView === option.value ? 'primary' : 'default'"
-              :aria-pressed="saturdayRosterView === option.value"
-              @click="setSaturdayRosterView(option.value)"
-            >
-              {{ option.label }}
-            </el-button>
-          </el-button-group>
-          <el-tooltip
-            v-if="saturdayRosterView === 'ALL' && unclassifiedSaturdayRowCount > 0"
-            content="Records without an identifiable season appear only in All roster."
-            placement="top"
-          >
-            <span class="saturday-roster-control__hint">{{ unclassifiedSaturdayRowCount }} unclassified</span>
-          </el-tooltip>
-        </div>
         <el-button
           size="small"
           :disabled="rosterPrintClassGroups.length === 0"
@@ -603,7 +577,6 @@ import type { CourseProductItem } from '@/types/domain';
 import { useRouter } from 'vue-router';
 import { formatUsPhoneDisplay, matchesPhoneSearch } from '@/utils/phone-format';
 import { formatRoundedUsd } from '@/utils/money-display';
-import { countUnclassifiedSaturdayRows, filterSaturdayRosterRows } from '@/utils/saturday-roster';
 import { createIsolatedPrinter } from '@/utils/isolated-print';
 
 type ColumnKey =
@@ -719,7 +692,6 @@ interface RosterPrintPlanDraft {
 /** 每个 Product Tab 独立保留的视图状态（月份、筛选、排序）。 */
 interface ProductViewState {
   selectedMonth: string;
-  saturdayRosterView: SaturdayRosterView;
   columnFilters: Record<ColumnKey, ColumnFilter>;
   sortKey: ColumnKey | null;
   sortDirection: SortDirection;
@@ -733,7 +705,6 @@ interface ProductTab {
   privateLesson?: boolean;
 }
 
-type SaturdayRosterView = 'FALL' | 'SPRING' | 'ALL';
 type DataSummaryDisplayRow = DataSummaryRow & {
   purchaseRows?: DataSummaryRow[];
   periodSegments?: Array<{ startDate: string; endDate: string }>;
@@ -743,12 +714,6 @@ const authStore = useAuthStore();
 const appStore = useAppStore();
 const isMobileViewport = computed(() => appStore.isMobileViewport);
 const isManager = isManagerUser(authStore.currentUser);
-
-const saturdayRosterOptions: Array<{ value: SaturdayRosterView; label: string }> = [
-  { value: 'FALL', label: 'Fall roster' },
-  { value: 'SPRING', label: 'Spring roster' },
-  { value: 'ALL', label: 'All roster' },
-];
 
 /** 全局工作表页签固定在最左，展示全部报名数据。 */
 const ALL_TAB_ID = '__ALL__';
@@ -830,7 +795,6 @@ const rosterPrintRef = ref<HTMLElement | null>(null);
 const selectedRosterPrintClassKey = ref('');
 const selectedRosterPrintPlanKey = ref(ROSTER_ALL_PLANS);
 const selectedMonth = ref<string>('ALL');
-const saturdayRosterView = ref<SaturdayRosterView>('ALL');
 const studentFindOpen = ref(false);
 const studentFindQuery = ref('');
 const studentFindIndex = ref(0);
@@ -908,60 +872,12 @@ const productRows = computed(() => {
 const refundedProductRows = computed(() => productRows.value.filter((row) => row.refunded));
 const stoppedProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus === 'STOPPED'));
 const activeProductRows = computed(() => productRows.value.filter((row) => !row.refunded && row.itemStatus !== 'STOPPED'));
-const displayStoppedRows = computed(() => isSaturdayProductTab.value
-  ? filterSaturdayRosterRows(stoppedProductRows.value, saturdayRosterView.value)
-  : stoppedProductRows.value);
-const displayRefundRows = computed(() => isSaturdayProductTab.value
-  ? filterSaturdayRosterRows(refundedProductRows.value, saturdayRosterView.value)
-  : refundedProductRows.value);
-const visibleStoppedRows = computed(() => displayStoppedRows.value.filter((row) =>
-  selectedMonth.value === 'ALL' || monthKey(row) === selectedMonth.value,
-));
-const visibleRefundRows = computed(() => sortDataRows(displayRefundRows.value.filter((row) =>
-  (selectedMonth.value === 'ALL' || monthKey(row) === selectedMonth.value)
-    && columns.every((column) => matchesColumnFilter(row, column)),
-)));
-
-/** 周六班特殊显示的名称回退识别：产品/班级名里出现「周六」或「Saturday」即视为周六班。 */
-const SATURDAY_NAME_PATTERN = /saturday|周六/i;
-
-const isSaturdayProductTab = computed(() => {
-  const product = activeProduct.value;
-  if (!product) {
-    // 全量/未分配视图不做周六班特殊显示，避免混合数据误触发拆行。
-    return false;
-  }
-  if (product.courseType?.toUpperCase() === 'SATURDAY') {
-    return true;
-  }
-  // course_product.course_type 无历史维护入口，产品名或行班级名兜底识别。
-  if (SATURDAY_NAME_PATTERN.test(product.productName)) {
-    return true;
-  }
-  return productRows.value.some((row) =>
-    row.courseType?.toUpperCase() === 'SATURDAY'
-    || SATURDAY_NAME_PATTERN.test(row.registerClass ?? '')
-    || SATURDAY_NAME_PATTERN.test(row.className ?? '')
-    || SATURDAY_NAME_PATTERN.test(row.courseProductName ?? ''));
-});
-
-const displayProductRows = computed<DataSummaryDisplayRow[]>(() => {
-  if (!isSaturdayProductTab.value) {
-    return activeProductRows.value;
-  }
-  return filterSaturdayRosterRows(activeProductRows.value, saturdayRosterView.value);
-});
-
-const unclassifiedSaturdayRowCount = computed(() => isSaturdayProductTab.value
-  ? countUnclassifiedSaturdayRows([...activeProductRows.value, ...stoppedProductRows.value])
-  : 0);
-
 const selectOptions = computed<Record<ColumnKey, string[]>>(() => {
   return Object.fromEntries(columns.map((column) => {
     if (column.filterType !== 'select') {
       return [column.key, []];
     }
-    const values = [...displayProductRows.value, ...displayRefundRows.value]
+    const values = [...activeProductRows.value, ...refundedProductRows.value]
       .map((row) => selectValue(row, column.key));
     return [column.key, [...new Set(values)].sort(naturalCompare)];
   })) as Record<ColumnKey, string[]>;
@@ -974,7 +890,7 @@ function monthKey(row: DataSummaryRow) {
 
 const availableMonths = computed(() => {
   const keys = new Set<string>();
-  [...displayProductRows.value, ...displayStoppedRows.value, ...displayRefundRows.value].forEach((row) => {
+  [...activeProductRows.value, ...stoppedProductRows.value, ...refundedProductRows.value].forEach((row) => {
     const key = monthKey(row);
     if (key) {
       keys.add(key);
@@ -987,9 +903,9 @@ const availableMonths = computed(() => {
 
 const monthFilteredRows = computed<DataSummaryDisplayRow[]>(() => mergeLogicalCourseRows(
   selectedMonth.value === 'ALL'
-    ? displayProductRows.value
-    : displayProductRows.value.filter((row) => monthKey(row) === selectedMonth.value),
-  displayProductRows.value,
+    ? activeProductRows.value
+    : activeProductRows.value.filter((row) => monthKey(row) === selectedMonth.value),
+  activeProductRows.value,
 ));
 
 /** 同一报名内的续课购买合成一行；不同订单或不同课程仍各自保留收据入口。 */
@@ -1391,7 +1307,6 @@ function copyFilter(filter: ColumnFilter): ColumnFilter {
 function snapshotCurrentState(): ProductViewState {
   return {
     selectedMonth: selectedMonth.value,
-    saturdayRosterView: saturdayRosterView.value,
     columnFilters: Object.fromEntries(
       columns.map((column) => [column.key, copyFilter(columnFilters[column.key])]),
     ) as Record<ColumnKey, ColumnFilter>,
@@ -1403,7 +1318,6 @@ function snapshotCurrentState(): ProductViewState {
 function createDefaultState(): ProductViewState {
   return {
     selectedMonth: 'ALL',
-    saturdayRosterView: 'ALL',
     columnFilters: Object.fromEntries(
       columns.map((column) => [column.key, createEmptyFilter()]),
     ) as Record<ColumnKey, ColumnFilter>,
@@ -1414,7 +1328,6 @@ function createDefaultState(): ProductViewState {
 
 function restoreState(state: ProductViewState) {
   selectedMonth.value = state.selectedMonth;
-  saturdayRosterView.value = state.saturdayRosterView ?? 'ALL';
   columns.forEach((column) => {
     Object.assign(columnFilters[column.key], copyFilter(state.columnFilters[column.key]));
   });
@@ -1476,10 +1389,6 @@ function selectTab(tabId: string) {
   }
   activeTabId.value = tabId;
   restoreState(tabStates.get(tabId) ?? createDefaultState());
-}
-
-function setSaturdayRosterView(view: SaturdayRosterView) {
-  saturdayRosterView.value = view;
 }
 
 function openStudentContextMenu(event: MouseEvent, row: DataSummaryDisplayRow) {
@@ -2266,9 +2175,6 @@ function setMobileTableScale(scale: number) {
 function handleMobileOverflowCommand(command: string) {
   if (command === 'export-excel') exportExcel();
   if (command === 'print-roster') printClassRoster();
-  if (command === 'roster-fall') setSaturdayRosterView('FALL');
-  if (command === 'roster-spring') setSaturdayRosterView('SPRING');
-  if (command === 'roster-all') setSaturdayRosterView('ALL');
 }
 
 function naturalCompare(left: string, right: string) {
@@ -2499,18 +2405,6 @@ onMounted(() => {
 .roster-print-picker__count {
   color: #7b8794;
   font-size: 12px;
-}
-
-.saturday-roster-control {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.saturday-roster-control__hint {
-  color: #7b8794;
-  font-size: 11px;
 }
 
 .workbook-toolbar__stat {
